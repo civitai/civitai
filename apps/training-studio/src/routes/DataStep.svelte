@@ -77,6 +77,7 @@
     splitTags,
     startLabelPass,
     tagsHaveTrigger,
+    splitBlobRepeats,
     withFilterTags,
     type DatasetFilter,
     type Img,
@@ -133,15 +134,29 @@
     onBack: () => void;
   } = $props();
 
-  // Uploads are content-addressed; the orchestrator rejects a dataset naming one blob twice (at Start,
-  // by a hash the user can't map to a file), so every ingress dedupes on the key.
+  // Uploads are content-addressed, so a repeated file comes back as the same blob. Every ingress skips
+  // the repeat by default (it is usually an accident) but holds it, so "Keep them" can add it back
+  // for a user who repeats an image on purpose to weight it; buildStep stages each copy separately.
   const keyOfImg = (img: Img) => (img.blobId ? trainingBlobKey(img.blobId) : undefined);
   const ownerOf = (key: string, selfId: number) =>
     images.find((i) => i.id !== selfId && keyOfImg(i) === key);
-  let dupOwnerIds = $state<number[]>([]);
+  let dupSkips = $state<{ ownerId: number; copy: Img }[]>([]);
+  // A held copy goes with its original: the notice names originals, so it must not outlive them.
+  function dropDupSkips(keep: (ownerId: number) => boolean = () => false) {
+    for (const { ownerId, copy } of dupSkips)
+      if (!keep(ownerId) && copy.previewUrl.startsWith('blob:'))
+        URL.revokeObjectURL(copy.previewUrl);
+    dupSkips = dupSkips.filter((s) => keep(s.ownerId));
+  }
+  const pruneDupSkips = () => dropDupSkips((ownerId) => images.some((i) => i.id === ownerId));
+  function keepDupSkips() {
+    images = [...images, ...dupSkips.map((s) => s.copy)];
+    dupSkips = [];
+    void maybeAutoLabel();
+  }
   const dupNotice = $derived.by(() => {
-    const owners = dupOwnerIds
-      .map((id) => images.find((i) => i.id === id))
+    const owners = dupSkips
+      .map((s) => images.find((i) => i.id === s.ownerId))
       .filter((i): i is Img => !!i);
     const names = [...new Set(owners.map((i) => i.name))];
     const shown = names.slice(0, 3).join(', ');
@@ -163,6 +178,7 @@
         })),
         { silent: true }
       );
+    return () => dropDupSkips();
   });
 
   const type = $derived(loraTypeById(selection.loraType));
@@ -376,8 +392,10 @@
           sourceLabel: dropped.sourceLabel,
           labelTried: dropped.labelTried,
         });
-      dupOwnerIds = [...dupOwnerIds, owner.id];
-      remove(id);
+      // Held, not removed: its preview URL lives on until "Keep them" or the notice is dismissed.
+      if (dropped)
+        dupSkips = [...dupSkips, { ownerId: owner.id, copy: { ...dropped, ...uploadedFields(blob) } }];
+      images = images.filter((x) => x.id !== id);
       return;
     }
     patch(id, uploadedFields(blob));
@@ -405,29 +423,15 @@
     }[],
     { silent = false }: { silent?: boolean } = {}
   ) {
-    // Skip blobs already in the dataset (the picker can't see what's here) or repeated in the batch.
-    const have = new Map<string, number>();
-    for (const i of images) {
-      const key = keyOfImg(i);
-      if (key && !have.has(key)) have.set(key, i.id);
-    }
-    const skipped: number[] = [];
-    const fresh: ((typeof items)[number] & { id: number })[] = [];
-    for (const item of items) {
-      const key = trainingBlobKey(item.blobId);
-      const owner = have.get(key);
-      if (owner !== undefined) {
-        skipped.push(owner);
-        continue;
-      }
-      const id = nextImgId();
-      have.set(key, id);
-      fresh.push({ ...item, id });
-    }
-    if (!silent && skipped.length) dupOwnerIds = [...dupOwnerIds, ...skipped];
-    if (fresh.length === 0) return;
+    // The picker can't see what's already here, so a repeat is held for "Keep them" rather than added.
+    const { fresh, held: skipped } = splitBlobRepeats(
+      images.map((i) => ({ id: i.id, key: keyOfImg(i) })),
+      items,
+      (item) => trainingBlobKey(item.blobId),
+      { silent, nextId: nextImgId }
+    );
     const toHydrate: { id: number; air: string; workflowId: string }[] = [];
-    const added: Img[] = fresh.map(({ id, ...item }) => {
+    const toImg = ({ id, ...item }: (typeof fresh)[number]): Img => {
       const label = item.caption?.trim() ?? '';
       if (!item.url && item.previewWorkflowId)
         toHydrate.push({ id, air: item.blobId, workflowId: item.previewWorkflowId });
@@ -449,7 +453,17 @@
         sourceLabel: item.caption || undefined,
         labelTried: label ? true : undefined,
       };
-    });
+    };
+    if (skipped.length) {
+      // Only a silent reuse seed carries preview workflow ids, and it holds nothing.
+      const held = skipped.map(({ ownerId, item }) => ({
+        ownerId,
+        copy: toImg({ ...item, previewWorkflowId: undefined, id: nextImgId() }),
+      }));
+      dupSkips = [...dupSkips, ...held];
+    }
+    if (fresh.length === 0) return;
+    const added = fresh.map(toImg);
     images = [...images, ...added];
     void hydrateBlobPreviews(toHydrate);
     void maybeAutoLabel();
@@ -648,6 +662,7 @@
     const tile = images.find((x) => x.id === id);
     if (tile) URL.revokeObjectURL(tile.previewUrl);
     images = images.filter((x) => x.id !== id);
+    pruneDupSkips();
   }
 
   const epoch = datasetEpoch();
@@ -671,9 +686,9 @@
       labelRun = null;
     }
     images = kept;
+    pruneDupSkips();
     if (kept.length === 0) {
       epoch.bump();
-      dupOwnerIds = [];
       labelAllNotice = null;
     }
     // A filter left over an emptied view would show a blank grid with the rest of the dataset hidden.
@@ -1114,13 +1129,18 @@
     <Alert.Root class="flex items-start justify-between gap-3 border-dark-4 bg-dark-6 text-dark-2">
       <span>
         Skipped {dupNotice.count} duplicate{dupNotice.count === 1 ? '' : 's'} — same content as
-        <strong class="text-dark-0">{dupNotice.names}</strong>.
+        <strong class="text-dark-0">{dupNotice.names}</strong>. Keep {dupNotice.count === 1
+          ? 'it'
+          : 'them'} to train on {dupNotice.count === 1 ? 'that image' : 'those images'} more than once.
       </span>
+      <Button variant="outline" size="xs" class="-my-0.5 ml-auto shrink-0" onclick={keepDupSkips}>
+        Keep {dupNotice.count === 1 ? 'it' : 'them'}
+      </Button>
       <Button
         variant="ghost"
         size="icon-xs"
         aria-label="Dismiss duplicate notice"
-        onclick={() => (dupOwnerIds = [])}
+        onclick={() => dropDupSkips()}
         class="-my-0.5 shrink-0 text-dark-2"
       >
         <IconX size={14} stroke={2} />

@@ -115,6 +115,42 @@ describe('extra ai-toolkit fields on the wire', () => {
   });
 });
 
+describe('a dataset that repeats an image', () => {
+  it('stages each repeat of a blob under its own path, keeping its caption', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-repeat' } });
+    await submitTrainingBatch(
+      client,
+      [
+        {
+          ...baseRun(),
+          items: [
+            { air: 'urn:air:other:other:orchestrator:blob@KEYA.png', caption: 'first' },
+            { air: 'urn:air:other:other:orchestrator:blob@KEYB.png', caption: 'other' },
+            { air: 'urn:air:other:other:orchestrator:blob@keya.png', caption: 'second' },
+            { air: 'urn:air:other:other:orchestrator:blob@KEYA.png', caption: 'third' },
+          ],
+        },
+      ],
+      { checkText }
+    );
+    const items = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.trainingData.items;
+    expect(items).toEqual([
+      { air: 'urn:air:other:other:orchestrator:blob@KEYA.png', caption: 'first' },
+      { air: 'urn:air:other:other:orchestrator:blob@KEYB.png', caption: 'other' },
+      {
+        air: 'urn:air:other:other:orchestrator:blob@keya.png',
+        caption: 'second',
+        path: 'keya_2.png',
+      },
+      {
+        air: 'urn:air:other:other:orchestrator:blob@KEYA.png',
+        caption: 'third',
+        path: 'keya_3.png',
+      },
+    ]);
+  });
+});
+
 describe('the trigger word check', () => {
   it("checks every run's trigger word before submitting any", async () => {
     const events: unknown[] = [];
@@ -499,6 +535,14 @@ describe('edit LoRA pairs', () => {
     expect(
       submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.trainingData.items
     ).toHaveLength(4);
+  });
+
+  it('sends a pair placed at the same path twice once, never under a made-up path', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-same-path' } });
+    await submitTraining(client, { ...editRun(), items: [...pair('0001'), ...pair('0001')] });
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.trainingData.items).toEqual(
+      pair('0001')
+    );
   });
 
   it('never flags a plain dataset as edit training', async () => {

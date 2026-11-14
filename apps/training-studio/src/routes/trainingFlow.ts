@@ -984,3 +984,39 @@ export function buildTrainingRuns(
     };
   });
 }
+
+/** Split incoming blob items into tiles to add and repeats to hold for "Keep them". `existing` is the
+ *  dataset's blob keys by tile id. A silent re-seed (a Back/Continue remount re-sending the same
+ *  items) skips only copies already present, so a reused dataset's own repeats survive the first
+ *  seed and are not added again on the next. */
+export function splitBlobRepeats<T>(
+  existing: { id: number; key: string | undefined }[],
+  items: T[],
+  keyOf: (item: T) => string,
+  { silent, nextId }: { silent: boolean; nextId: () => number }
+): { fresh: (T & { id: number })[]; held: { ownerId: number; item: T }[] } {
+  const owners = new Map<string, number>();
+  const haveCount = new Map<string, number>();
+  for (const { id, key } of existing) {
+    if (!key) continue;
+    if (!owners.has(key)) owners.set(key, id);
+    haveCount.set(key, (haveCount.get(key) ?? 0) + 1);
+  }
+  const batchCount = new Map<string, number>();
+  const fresh: (T & { id: number })[] = [];
+  const held: { ownerId: number; item: T }[] = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    const seen = (batchCount.get(key) ?? 0) + 1;
+    batchCount.set(key, seen);
+    const owner = owners.get(key);
+    if (silent ? seen <= (haveCount.get(key) ?? 0) : owner !== undefined) {
+      if (!silent && owner !== undefined) held.push({ ownerId: owner, item });
+      continue;
+    }
+    const id = nextId();
+    if (owner === undefined) owners.set(key, id);
+    fresh.push({ ...item, id });
+  }
+  return { fresh, held };
+}

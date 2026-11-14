@@ -62,6 +62,7 @@ import {
 } from '$lib/service-status-core';
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
+import { extOfAir } from '$lib/media';
 import { isMatureRating, type DatasetRating, type StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
@@ -199,6 +200,29 @@ export function trainingBlobKey(air: string): string {
   return blobIdFromAir(air.trim()).toLowerCase();
 }
 
+/** The orchestrator rejects a dataset naming one blob twice under its default file name, so each
+ *  repeat of a blob (a user weighting an image by keeping its duplicate) is staged under its own
+ *  `path`, as edit training already places one starting image in several pairs. An edit dataset's
+ *  items carry their pair paths; one placed at the same path twice is dropped. */
+function stageRepeats(items: TrainingItem[]): TrainingItem[] {
+  const seen = new Map<string, number>();
+  const staged: TrainingItem[] = [];
+  for (const item of items) {
+    const key = item.path ?? trainingBlobKey(item.air);
+    const count = (seen.get(key) ?? 0) + 1;
+    seen.set(key, count);
+    if (count === 1) staged.push(item);
+    else if (!item.path) staged.push({ ...item, path: repeatPath(key, count) });
+  }
+  return staged;
+}
+
+/** `abc.png` → `abc_2.png`: the extension stays last so the trainer still reads it as media. */
+function repeatPath(blobKey: string, copy: number): string {
+  const ext = extOfAir(blobKey);
+  return ext ? `${blobKey.slice(0, -ext.length - 1)}_${copy}.${ext}` : `${blobKey}_${copy}`;
+}
+
 /** The extra knobs `obj` actually carries — a submit or continuation sends only what was set, never
  *  an invented default. Iterates `EXTRA_PARAM_FIELDS` so a sixth knob can't be dropped here. */
 function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unknown> {
@@ -214,15 +238,7 @@ function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unk
  *  data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
  *  minimal SDK type doesn't declare — the same cast-past-the-type the whatif and the main app's builders use. */
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
-  // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice. An
-  // edit dataset places items by path instead, where one starting image may serve several pairs.
-  const seen = new Set<string>();
-  const items = run.items.filter((item) => {
-    const key = item.path ?? trainingBlobKey(item.air);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const items = stageRepeats(run.items);
   const trainingData = { type: 'blobs', items };
   const optimizerType = run.optimizer.toLowerCase();
   // Prodigy finds its own step size and expects lr 1 (the main trainer forces it the same way);

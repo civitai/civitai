@@ -49,6 +49,7 @@ import {
   type SamplePrompt,
   blockedSelectionMessage,
   cardUnavailability,
+  splitBlobRepeats,
 } from './trainingFlow';
 
 const rows = (texts: string[]): SamplePrompt[] => texts.map((text, id) => ({ id, text }));
@@ -817,5 +818,36 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
     expect(cardUnavailability(klein, on, status)).toBeNull();
     expect(newRun(klein, on, status).versionKey).toBe('flux2klein_4b');
     expect(newRun(klein, on).versionKey).toBe('flux2klein_9b');
+  });
+});
+
+describe('splitBlobRepeats', () => {
+  const split = (existing: string[], items: string[], silent: boolean) => {
+    let next = 100;
+    const { fresh, held } = splitBlobRepeats(
+      existing.map((key, i) => ({ id: i + 1, key })),
+      items.map((key) => ({ key })),
+      (item) => item.key,
+      { silent, nextId: () => next++ }
+    );
+    return { fresh: fresh.map((f) => f.key), held: held.map((h) => [h.item.key, h.ownerId]) };
+  };
+
+  it('holds a pick already in the dataset, or repeated in the batch, against its original', () => {
+    expect(split(['a'], ['a', 'b', 'b'], false)).toEqual({
+      fresh: ['b'],
+      held: [
+        ['a', 1],
+        ['b', 100],
+      ],
+    });
+  });
+
+  it("keeps a reused dataset's own repeats on the first seed", () => {
+    expect(split([], ['a', 'a', 'b'], true)).toEqual({ fresh: ['a', 'a', 'b'], held: [] });
+  });
+
+  it('adds nothing when a remount re-seeds what is already there, and holds nothing', () => {
+    expect(split(['a', 'a', 'b'], ['a', 'a', 'b'], true)).toEqual({ fresh: [], held: [] });
   });
 });
