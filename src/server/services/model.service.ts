@@ -283,6 +283,7 @@ import {
   allBrowsingLevelsFlag,
   modelBrowsingLevelLimit,
   nsfwBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type { CommercialUse, DomainColor, ModelType } from '~/shared/utils/prisma/enums';
@@ -1961,7 +1962,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     number,
     { modelVersionId: number; images: ImagesForModelVersions[] }
   > = {};
-  const { excludedTagIds, status } = input;
+  const { status } = input;
+  // As getModelsRaw resolved them: the viewer's own plus the browsing-settings tags.
+  const { excludedTagIds } = rawInput;
   if (!!modelVersionIds.length) {
     if (input.pending) {
       const images = await getImagesForModelVersion({
@@ -2058,16 +2061,15 @@ export const getModelsWithImagesAndModelVersions = async ({
           model,
           showSfwFace
         );
-        // The image cache holds every level; send only what this viewer's settings show.
-        const versionImages = input.browsingLevel
-          ? filterImagesForViewer(faceImages, {
-              browsingLevel: input.browsingLevel,
-              modelNsfw: model.nsfw,
-              disablePoi: rawInput.disablePoi,
-              disableMinor: rawInput.disableMinor,
-              viewer: user,
-            })
-          : faceImages;
+        // The image cache holds every level; send only what this viewer's settings show, and
+        // only public images to a caller that names no level.
+        const versionImages = filterImagesForViewer(faceImages, {
+          browsingLevel: input.browsingLevel || publicBrowsingLevelsFlag,
+          modelNsfw: model.nsfw,
+          disablePoi: rawInput.disablePoi,
+          disableMinor: rawInput.disableMinor,
+          viewer: user,
+        });
         const filteredImages = excludedTagIds
           ? versionImages.filter(
               (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
@@ -4286,14 +4288,11 @@ export const upsertModel = async (
     if (modelMeta?.showcaseCollectionId) {
       // Best-effort — model create should not fail if the showcase collection
       // can't be written to (e.g. user references one they don't own).
-      await saveItemInCollections({
-        input: {
-          collections: [{ collectionId: modelMeta.showcaseCollectionId }],
-          modelId: result.id,
-          type: 'Model',
-          userId,
-          isModerator,
-        },
+      await addModelToShowcaseCollection({
+        modelId: result.id,
+        collectionId: modelMeta.showcaseCollectionId,
+        userId,
+        isModerator,
       }).catch((error) =>
         logToAxiom({
           type: 'error',
@@ -4798,24 +4797,38 @@ export const upsertModel = async (
         ).catch(() => undefined);
     }
 
+    // The model is already saved: a refused add puts the previous showcase back, and is returned
+    // only after the follow-ups below run.
+    let showcaseAddError: unknown;
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
-        await saveItemInCollections({
-          input: {
-            collections: [{ collectionId: modelMeta.showcaseCollectionId }],
-            modelId: id,
-            type: 'Model',
-            userId,
-            isModerator,
-          },
-        }).catch((error) =>
-          logToAxiom({
-            type: 'error',
-            name: 'save-model-showcase-collection',
-            error,
-            message: error.message,
-          })
-        );
+        await addModelToShowcaseCollection({
+          modelId: id,
+          collectionId: modelMeta.showcaseCollectionId,
+          userId,
+          isModerator,
+        }).catch(async (error) => {
+          showcaseAddError = error;
+          const previous = (beforeUpdate.meta as ModelMeta | null)?.showcaseCollectionId ?? null;
+          await updateModelById({
+            id,
+            data: {},
+            meta: (stored) =>
+              ({
+                ...stored,
+                ...(stored?.showcaseCollectionId === modelMeta.showcaseCollectionId && {
+                  showcaseCollectionId: previous,
+                }),
+              } as ModelMeta),
+          }).catch((revertError) =>
+            logToAxiom({
+              type: 'error',
+              name: 'revert-model-showcase-collection',
+              error: revertError,
+              message: revertError.message,
+            })
+          );
+        });
       } else {
         saveItemInCollections({
           input: {
@@ -4857,6 +4870,8 @@ export const upsertModel = async (
         context: { name: result.name, isModerator },
       });
     }
+
+    if (showcaseAddError) throw showcaseAddError;
 
     return withoutModeratorOnlyMeta(result);
   }
@@ -6907,19 +6922,54 @@ export async function copyGallerySettingsToAllModelsByUser({
   return result;
 }
 
+/**
+ * A showcase collection must list its model. A model already in it is left alone: re-saving would
+ * demand write access and a tag the caller may not have, and would clear an existing item's tag.
+ */
+async function addModelToShowcaseCollection({
+  modelId,
+  collectionId,
+  userId,
+  isModerator,
+}: {
+  modelId: number;
+  collectionId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const existing = await dbWrite.collectionItem.findFirst({
+    where: { collectionId, modelId },
+    select: { id: true },
+  });
+  if (existing) return;
+  const status = await saveItemInCollections({
+    input: { collections: [{ collectionId }], modelId, type: 'Model', userId, isModerator },
+  });
+  if (status !== 'added')
+    throw throwBadRequestError('The model could not be added to that collection');
+}
+
 export async function setModelShowcaseCollection({
   id,
   collectionId,
   userId,
   isModerator,
+  modelAlreadyInCollection,
 }: SetModelCollectionShowcaseInput & {
   userId: number;
   isModerator?: boolean;
+  /** The caller has already written this model's item into the collection; nothing to add. */
+  modelAlreadyInCollection?: boolean;
 }) {
-  const model = await getModel({ id, select: { id: true, userId: true } });
+  const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
+  if (!isModerator && isRemovedWithOwner(model.meta)) throw removedWithOwnerEditError();
+
+  // Add first so a refused add leaves the showcase unchanged.
+  if (collectionId != null && !modelAlreadyInCollection)
+    await addModelToShowcaseCollection({ modelId: id, collectionId, userId, isModerator });
 
   const updated = await updateModelById({
     id,
@@ -7073,6 +7123,7 @@ export async function migrateResourceToCollection({
     id: modelId,
     userId: model.userId,
     isModerator,
+    modelAlreadyInCollection: true,
   });
 
   // Bust caches

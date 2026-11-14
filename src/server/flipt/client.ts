@@ -13,6 +13,10 @@ export enum FLIPT_FEATURE_FLAGS {
   REVIEW_BATCHES_MINT = 'review-batches-mint',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
+  // The remix-source sweep and the post-scan prompt check send an age-check hit to the external
+  // classifier instead of blocking on it. DEFAULT-OFF: isFlipt is false for an unknown flag or an
+  // unreachable Flipt, which keeps the block.
+  SHADOW_AGE_PROMPT = 'shadow-age-prompt',
   // Percentage rollout keyed on the file id: the share of files whose mini response leads with
   // the content-hash download url. Each file's url changes once over the ramp. Create the key in
   // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
@@ -31,10 +35,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
   // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
   FEED_SERVICE_DEGRADE = 'feed-service-degrade',
-  // Off-switch for the image feed's shorter feed-service budget: on puts it back from 2.5s to 5s
-  // (`FEED_PRIMARY_TIMEOUT_MS`). Off, unknown or an uninitialised client keep 2.5s. Global boolean,
-  // read at most once per 5s per process (`createCachedFlagGate`).
-  FEED_SERVICE_TIMEOUT_WIDEN = 'feed-service-timeout-widen',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.

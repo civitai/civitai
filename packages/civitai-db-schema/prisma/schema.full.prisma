@@ -2140,6 +2140,7 @@ model Post {
   moderatorNsfwLevelBasis Int?
 
   images          Image[]
+  texts           PostText[]
   tags            TagsOnPost[]
   reactions       PostReaction[]
   helper          PostHelper?
@@ -2300,6 +2301,7 @@ model Image {
   appSubListingPendingImages AppSubListing[] @relation("AppSubListingPendingImage")
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -5380,6 +5382,7 @@ enum CommentEntityType {
   appListing
   crucible
   storyline
+  postText
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -10905,6 +10908,29 @@ model ImageCaption {
   updatedAt DateTime @updatedAt
 }
 
+/// Storylines: a text item in a post's reading order, between or around its images. `index` shares
+/// `Image.index`'s number space on the post; ties sort images first, then texts by id.
+model PostText {
+  id        Int      @id @default(autoincrement())
+  postId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  /// Who wrote it, the post's author when written. Not a relation, as `ImageCaption.userId`.
+  userId    Int
+  index     Int
+  /// Sanitized HTML.
+  content   String
+  /// The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned; reset to 0 by an edit).
+  nsfwLevel Int      @default(0)
+  /// The text scan refused it (poi / minor): never shown to readers. A clean, current verdict clears it.
+  refused   Boolean  @default(false)
+  /// Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
+  csamHeld  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId, index])
+}
+
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
 /// are listed before everyone else's. A row is an invitation until the user accepts it: until
 /// then they are not shown on the storyline and have no collaborator rights.
@@ -11022,6 +11048,13 @@ enum ServiceOfferingStatus {
   Removed
 }
 
+enum ServiceOfferingIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
 /// What the seller shows before the buyer accepts. `None` skips the preview: the
 /// buyer accepts the delivery on trust.
 enum ServicePreviewKind {
@@ -11120,11 +11153,24 @@ model ServiceOffering {
   title             String
   description       String
   coverImageId      Int?
+  coverImage        Image?                @relation("ServiceOfferingCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
-  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  /// The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+  /// seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+  /// `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
   maxNsfwLevel      Int                   @default(2)
+  /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+  /// written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+  /// copies it here.
+  declaredNsfwLevel Int?
+  /// Where the title and description are in their content check.
+  ingestion         ServiceOfferingIngestionStatus @default(Pending)
+  /// The check submitted for the current text. Cleared when the text changes, so a result for
+  /// earlier text is not applied to it.
+  scanWorkflowId    String?
+  scannedAt         DateTime?
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
@@ -11147,6 +11193,7 @@ model ServiceOffering {
   @@unique([id, sellerId])
   @@index([sellerId, status])
   @@index([status, createdAt])
+  @@index([coverImageId])
 }
 
 model ServiceOfferingReport {

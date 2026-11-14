@@ -1,13 +1,7 @@
 /**
- * Story Writers board: give recent articles a system category (`Article.systemCategoryId`), which
- * otherwise only new scans and edits get. Deleted once the board's window is all classified.
- *
- * POST /api/admin/temp/article-category-backfill   (moderator session or `Authorization: Bearer <moderator API key>`)
- *   { "afterId"?: 0, "limit"?: 100, "concurrency"?: 2, "dryRun"?: true }
- *     Selects up to `limit` articles after `afterId`, by id, that the board could score and that have
- *     no system category yet. A dry run returns them and submits nothing. Otherwise each gets one
- *     category call (billed); its callback writes the category later. Page with `nextAfterId`; a
- *     chunk re-run before its callbacks land sends those calls again.
+ * Temporary: gives recent articles a system category for the Story Writers board; delete once its
+ * window is classified. Re-running a chunk before its callbacks land resubmits (and bills) those
+ * calls, so page with `nextAfterId`.
  */
 import * as z from 'zod';
 import { runArticleCategoryBackfill } from '~/server/services/text-scan/article-category-backfill';

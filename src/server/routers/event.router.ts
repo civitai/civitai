@@ -1,8 +1,8 @@
-import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import type { EventInput } from '~/server/schema/event.schema';
 import {
+  donateToEventSchema,
   eventCosmeticScoresSchema,
   eventSchema,
   placeableContentPageSchema,
@@ -125,7 +125,7 @@ export const eventRouter = router({
     .mutation(({ ctx, input }) => activateEventCosmetic({ user: eventUserOf(ctx), ...input })),
   donate: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialTip, blockApiKeys: true })
-    .input(eventSchema.extend({ amount: z.number() }))
+    .input(donateToEventSchema)
     .mutation(({ input, ctx }) => donate({ userId: ctx.user.id, ...input })),
   getDonors: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

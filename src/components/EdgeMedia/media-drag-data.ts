@@ -12,3 +12,15 @@ export function setMediaDragData(
   dataTransfer.setData(CIVITAI_MEDIA_ID_MIME, String(mediaId));
   dataTransfer.setData(CIVITAI_MEDIA_TYPE_MIME, type);
 }
+
+/** The site media a drag carries, as `setMediaDragData` wrote it. */
+export function getMediaDragData(
+  dataTransfer: Pick<DataTransfer, 'getData'>
+): { id: number; type: 'image' | 'video' } | undefined {
+  const raw = dataTransfer.getData(CIVITAI_MEDIA_ID_MIME);
+  if (!raw) return undefined;
+  const id = parseInt(raw, 10);
+  if (!Number.isFinite(id)) return undefined;
+  const type = dataTransfer.getData(CIVITAI_MEDIA_TYPE_MIME);
+  return { id, type: type === 'video' ? 'video' : 'image' };
+}

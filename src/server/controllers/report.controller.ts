@@ -228,6 +228,7 @@ export async function createEntityAppealHandler({
       userId,
       buzzType: getAllowedAccountTypes(ctx.features)[0],
       skipFee,
+      idempotencyKey: input.idempotencyKey,
     });
 
     return appeal;

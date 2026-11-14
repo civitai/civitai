@@ -140,6 +140,7 @@ import type {
   StorylineWhoCanContinue,
   StorylineFollowScope,
   ServiceOfferingStatus,
+  ServiceOfferingIngestionStatus,
   ServicePreviewKind,
   ServiceBuzzType,
   ServiceDealStatus,
@@ -4944,6 +4945,33 @@ export type PostTag = {
   upVotes: number;
   downVotes: number;
 };
+export type PostText = {
+  id: Generated<number>;
+  postId: number;
+  /**
+   * Who wrote it, the post's author when written. Not a relation, as `ImageCaption.userId`.
+   */
+  userId: number;
+  index: number;
+  /**
+   * Sanitized HTML.
+   */
+  content: string;
+  /**
+   * The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned; reset to 0 by an edit).
+   */
+  nsfwLevel: Generated<number>;
+  /**
+   * The text scan refused it (poi / minor): never shown to readers. A clean, current verdict clears it.
+   */
+  refused: Generated<boolean>;
+  /**
+   * Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
+   */
+  csamHeld: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type PressMention = {
   id: Generated<number>;
   title: string;
@@ -5630,9 +5658,27 @@ export type ServiceOffering = {
   acceptsBlue: Generated<boolean>;
   previewKind: Generated<ServicePreviewKind>;
   /**
-   * The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+   * The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+   * seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+   * `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
    */
   maxNsfwLevel: Generated<number>;
+  /**
+   * The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+   * written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+   * copies it here.
+   */
+  declaredNsfwLevel: number | null;
+  /**
+   * Where the title and description are in their content check.
+   */
+  ingestion: Generated<ServiceOfferingIngestionStatus>;
+  /**
+   * The check submitted for the current text. Cleared when the text changes, so a result for
+   * earlier text is not applied to it.
+   */
+  scanWorkflowId: string | null;
+  scannedAt: Timestamp | null;
   deliveryDays: number;
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;
@@ -6897,6 +6943,7 @@ export type DB = {
   PostResourceHelper: PostResourceHelper;
   PostStat: PostStat;
   PostTag: PostTag;
+  PostText: PostText;
   PressMention: PressMention;
   Price: Price;
   PricingSlot: PricingSlot;

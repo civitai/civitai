@@ -26,6 +26,7 @@ import { getCollectionBlockAudience } from '~/server/services/home-block-collect
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getFeaturedCollectionsState } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
@@ -42,7 +43,6 @@ import type {
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
-import { isDefined } from '~/utils/type-guards';
 
 export const getHomeBlocksHandler = async ({
   ctx,
@@ -92,6 +92,10 @@ export const getHomeBlocksHandler = async ({
       // Get the core data for each home block:
       const homeBlocksWithData = await Promise.all(
         homeBlocks.map(async (homeBlock) => {
+          // Saving the editor removes any of the viewer's blocks it did not list, so a block that
+          // cannot be shown (not readable, nothing to render, or failing to render) is listed
+          // without its data.
+          const unlisted = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
           if (homeBlock.type === HomeBlockType.Collection) {
             const { fromSystem } = await resolveHomeBlockSource(homeBlock);
             const audience = await getCollectionBlockAudience({
@@ -99,26 +103,30 @@ export const getHomeBlocksHandler = async ({
               collectionId: (homeBlock.metadata as HomeBlockMetaSchema).collection?.id,
               viewer: eventViewerOf(ctx),
             });
-            // Saving the editor removes any of the viewer's blocks it did not list, so a block
-            // that cannot be shown (not readable, or its collection gone) is listed without it.
-            const unlisted = { ...homeBlock, metadata: homeBlock.metadata as HomeBlockMetaSchema };
             if (audience === 'none') return unlisted;
-            const data = await getHomeBlockData({
-              homeBlock,
-              user: ctx.user,
-              input,
-              coverage,
-            }).catch((error) => {
-              if (error instanceof TRPCError && error.code === 'NOT_FOUND') return null;
-              throw error;
-            });
-            return data ?? unlisted;
           }
-          return getHomeBlockData({ homeBlock, user: ctx.user, input, coverage });
+          const data = await getHomeBlockData({
+            homeBlock,
+            user: ctx.user,
+            input,
+            coverage,
+          }).catch((error) => {
+            if (!(error instanceof TRPCError && error.code === 'NOT_FOUND'))
+              logToAxiom({
+                name: 'home-block-editor-list',
+                type: 'error',
+                message: 'a block failed to render; listed without its data',
+                homeBlockId: homeBlock.id,
+                homeBlockType: homeBlock.type,
+                error: (error as Error)?.message,
+              }).catch(() => undefined);
+            return null;
+          });
+          return data ?? unlisted;
         })
       );
 
-      return homeBlocksWithData.filter(isDefined);
+      return homeBlocksWithData;
     }
 
     return homeBlocks.map((homeBlock) => ({

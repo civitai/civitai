@@ -56,7 +56,7 @@ export function CsamContextTextSelect({
                   <Group gap="xs">
                     <Text size="sm" fw={600}>
                       {candidate.source === 'postDescription'
-                        ? `Post ${candidate.postId} description`
+                        ? `Post ${candidate.postId} text`
                         : `Comment ${candidate.id}`}
                     </Text>
                     <Badge size="xs" variant="light">
