@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
+import { mergeDetailItems } from '~/components/Image/Detail/detail-items';
 import {
   buildSubwayStops,
+  getPathTexts,
   canonAheadForkStops,
   getForkShare,
   getPathImagesPaging,
@@ -494,5 +496,38 @@ describe('storylinePositionLabel', () => {
     expect(
       storylinePositionLabel({ number: 2, length: undefined, path: [{ onMain: false }] })
     ).toBe('Chapter 2');
+  });
+});
+
+describe('getPathTexts', () => {
+  const stub = (id: number, postId: number, index = 0) => ({ id, postId, index, nsfwLevel: 1 });
+
+  it("reads each chapter's texts in its place, and none from a chapter the reader cannot see", () => {
+    // Chapter 2 (post 20) shows only text to this reader; chapter 3 is hidden (no post).
+    const chapters = [
+      { post: { id: 10 } },
+      { post: { id: 20 } },
+      { post: null },
+      { post: { id: 40 } },
+    ];
+    const { texts, postOrder } = getPathTexts(chapters, [
+      stub(1, 10, 0),
+      stub(2, 20),
+      stub(3, 30),
+      stub(4, 40, -1),
+    ]);
+    const images = [
+      { id: 100, postId: 10, index: 0 },
+      { id: 101, postId: 10, index: 1 },
+      { id: 400, postId: 40, index: 0 },
+    ];
+    expect(mergeDetailItems(images, texts, postOrder).map((item) => item.key)).toEqual([
+      'img:100',
+      'txt:1',
+      'img:101',
+      'txt:2',
+      'txt:4',
+      'img:400',
+    ]);
   });
 });

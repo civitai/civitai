@@ -172,6 +172,7 @@ export function ImageGuard2({
 function ImageGuardContentInner({
   show,
   explain,
+  explainLabel = 'This image is rated',
   browsingLevel,
   tosViolation,
   children,
@@ -179,6 +180,7 @@ function ImageGuardContentInner({
 }: {
   show: boolean;
   explain?: boolean;
+  explainLabel?: string;
   browsingLevel: number;
   tosViolation?: boolean;
   children: React.ReactNode;
@@ -194,7 +196,7 @@ function ImageGuardContentInner({
               style={{ transform: 'translate(-50%, -60%)' }}
             >
               <Text size="sm" className="shadow-black/50 text-shadow-sm">
-                This image is rated
+                {explainLabel}
               </Text>
               <Badge
                 color="red"
@@ -414,10 +416,13 @@ export function ImageGuardContent({
   image,
   children,
   explain = true,
+  explainLabel,
   ...connectProps
 }: {
   image: ImageProps;
   explain?: boolean;
+  /** The line above the rating badge on a blurred item. */
+  explainLabel?: string;
   children: (show: boolean) => React.ReactElement | null;
 } & ConnectProps) {
   const state = useImageGuard({ image, ...connectProps });
@@ -429,6 +434,7 @@ export function ImageGuardContent({
       browsingLevel={browsingLevel}
       tosViolation={tosViolation}
       explain={explain}
+      explainLabel={explainLabel}
     >
       {children(show)}
     </ImageGuardContentInner>

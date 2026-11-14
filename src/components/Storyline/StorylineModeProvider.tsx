@@ -18,6 +18,7 @@ import {
   useStorylineTracking,
 } from '~/components/Storyline/storyline.queries';
 import {
+  getPathTexts,
   getStorylineWalk,
   hideHiddenUsersChapters,
   parseIdListParam,
@@ -29,6 +30,7 @@ import {
   STORYLINE_VIA_PARAM,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useHiddenUserIds } from '~/components/Storyline/storyline.queries';
+import type { DetailText } from '~/components/Image/Detail/detail-items';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { QS } from '~/utils/qs';
 
@@ -43,6 +45,8 @@ export type ActiveStorylineMode = {
   path: StorylinePath;
   images: ImagesInfiniteModel[];
   chapterIdOfImage: (imageId: number) => number | undefined;
+  /** A text slide's chapter, by its post. */
+  chapterIdOfPost: (postId: number) => number | undefined;
   jumpToChapter: (chapterId: number) => void;
   /**
    * The mode moving the detail to an image. The URL alone cannot: it trails the carousel until it
@@ -135,7 +139,9 @@ export function StorylineModeProvider({
    */
   children: (
     storylineImages: ImagesInfiniteModel[] | undefined,
-    modeKey: string
+    modeKey: string,
+    /** The path's text items and its posts in reading order, with `storylineImages`. */
+    storylineTexts?: { texts: DetailText[]; postOrder: number[] }
   ) => React.ReactNode;
 }) {
   const enabled = useStorylinesEnabled();
@@ -174,6 +180,10 @@ export function StorylineModeProvider({
   const walk = useMemo(
     () => getStorylineWalk(path?.chapters ?? [], images),
     [path?.chapters, images]
+  );
+  const storylineTexts = useMemo(
+    () => getPathTexts(path?.chapters ?? [], path?.texts ?? []),
+    [path]
   );
 
   const seekListeners = useRef(new Set<(imageId: number) => void>());
@@ -279,6 +289,7 @@ export function StorylineModeProvider({
       path,
       images,
       chapterIdOfImage: (imageId) => walk.chapterIdByImageId.get(imageId),
+      chapterIdOfPost: (postId) => walk.chapterIdByPostId.get(postId),
       jumpToChapter,
       onSeek,
       continueTo,
@@ -309,7 +320,11 @@ export function StorylineModeProvider({
 
   return (
     <StorylineModeContext.Provider value={value}>
-      {children(storylineImages, storylineImages ? `storyline-${chapterId}` : 'feed')}
+      {children(
+        storylineImages,
+        storylineImages ? `storyline-${chapterId}` : 'feed',
+        storylineImages ? storylineTexts : undefined
+      )}
     </StorylineModeContext.Provider>
   );
 }

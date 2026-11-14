@@ -88,6 +88,19 @@ export function orderPathImages<
     );
 }
 
+/**
+ * The text slides a path shows, and its posts in reading order. Only chapters this reader sees
+ * keep a post, so a tombstoned or hidden user's chapter brings no text.
+ */
+export function getPathTexts<T extends { postId: number }>(
+  chapters: { post: { id: number } | null }[],
+  texts: T[]
+) {
+  const postOrder = chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : []));
+  const onPath = new Set(postOrder);
+  return { texts: texts.filter((text) => onPath.has(text.postId)), postOrder };
+}
+
 export function getStorylineWalk(
   chapters: StorylinePathChapter[],
   images: { id: number; postId: number | null }[]
@@ -104,7 +117,7 @@ export function getStorylineWalk(
     chapterIdByImageId.set(image.id, chapterId);
     if (!firstImageIdByChapterId.has(chapterId)) firstImageIdByChapterId.set(chapterId, image.id);
   }
-  return { chapterIdByImageId, firstImageIdByChapterId };
+  return { chapterIdByImageId, firstImageIdByChapterId, chapterIdByPostId };
 }
 
 const tombstoneLabels: Record<NonNullable<StorylinePathChapter['tombstone']>, string> = {
