@@ -4,8 +4,10 @@ import { NsfwLevel } from '~/server/common/enums';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { SessionUser } from '~/types/session';
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
+  recordAudit: vi.fn(),
   fetched: [] as number[][],
   hiddenFor: [] as (number | undefined)[],
   rows: new Map<number, Record<string, unknown>>(),
@@ -15,6 +17,10 @@ const h = vi.hoisted(() => ({
   fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
 }));
 
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   ensureFliptInitialized: async () => undefined,
@@ -287,4 +293,21 @@ describe('semantic comic search: the query audit', () => {
     // The refused correction's candidates are never hydrated.
     expect(h.fetched).toEqual([]);
   });
+});
+
+describeSemanticAuditContract({
+  index: 'comics',
+  run: ({ source, user, cursor }) => {
+    for (const id of [10, 12]) h.rows.set(id, comic(id));
+    return searchSemanticComics({
+      input: { query: 'space pirates', browsingLevel: PG, limit: 10, cursor },
+      user,
+      browsingLevelCap: undefined,
+      candidateSource: source,
+    });
+  },
+  ids: [10, 12],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });

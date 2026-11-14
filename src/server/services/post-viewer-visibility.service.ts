@@ -2,6 +2,7 @@ import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getPostDetail } from '~/server/services/post.service';
+import { pendingCsamHoldTextIds } from '~/server/services/post-text-hold';
 import { isPostTextShownToViewer } from '~/server/services/post-text.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -41,11 +42,15 @@ export async function assertPostTextVisible(
   if (!text) throw throwNotFoundError('Text not found');
   const post = await assertPostVisibleToViewer({ id: text.postId, user: ctx.user });
   const seesAll = !!ctx.user && (ctx.user.id === post.user.id || !!ctx.user.isModerator);
+  const pending = await pendingCsamHoldTextIds([textId]);
   if (
-    !isPostTextShownToViewer(text, {
-      browsingLevel: storylineReaderLevel(ctx, undefined),
-      seesAll,
-    })
+    !isPostTextShownToViewer(
+      { ...text, csamHeld: text.csamHeld || pending.has(textId) },
+      {
+        browsingLevel: storylineReaderLevel(ctx, undefined),
+        seesAll,
+      }
+    )
   )
     throw throwNotFoundError('Text not found');
   return { postId: text.postId };

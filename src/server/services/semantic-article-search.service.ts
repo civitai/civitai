@@ -8,6 +8,7 @@ import { getArticles } from '~/server/services/article.service';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
+  beginSemanticAudit,
   queryVerdictLevel,
   recordRefusal,
   isNonModClampOn,
@@ -70,6 +71,12 @@ export async function searchSemanticArticles({
   const addonsFor = (level: number) =>
     resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
   let addons = addonsFor(browsingLevel);
+  const audit = beginSemanticAudit({
+    index: 'articles',
+    viewer: user,
+    query: input.query,
+    firstPage: !input.cursor,
+  });
   const refusalOf = async (text: string, stage: QueryStage) => {
     const refusal = await semanticQueryRefusal(text, {
       browsingLevel,
@@ -77,11 +84,12 @@ export async function searchSemanticArticles({
       isModerator: user?.isModerator,
     });
     recordRefusal(track, refusal, text, 'articles_semantic', stage);
+    audit.verdict(refusal);
     return refusal;
   };
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return none;
+  if (verdictLevel === 'refuse') return audit.done(none, browsingLevel);
   if (verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
@@ -158,6 +166,7 @@ export async function searchSemanticArticles({
 
   const search = auditedTextCandidates({
     source: candidateSource,
+    viewer: { isModerator: !!user?.isModerator },
     text: input.query,
     filter,
     audit: (correction) => refusalOf(correction, 'correction'),
@@ -178,6 +187,7 @@ export async function searchSemanticArticles({
     shown: page.items.length,
   }).catch(() => undefined);
 
-  if (search.state.refused) return none;
-  return { ...page, correctedQuery: search.state.correctedQuery };
+  audit.candidates(search.state.first);
+  if (search.state.refused) return audit.done(none, browsingLevel);
+  return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }

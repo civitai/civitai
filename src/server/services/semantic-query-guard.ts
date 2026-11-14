@@ -15,6 +15,16 @@ import {
   getFliptLocalOverride,
 } from '~/server/flipt/client';
 import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
+import {
+  IDS_WITHHELD_VERDICTS,
+  recordSemanticAudit,
+  type SemanticAuditEntry,
+} from '~/server/services/semantic-search-audit.service';
+import {
+  GUARD_NONE,
+  type GuardRead,
+  type SearchCollection,
+} from '~/server/services/semantic-search-client';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metadata/audit';
@@ -168,4 +178,52 @@ export function recordRefusal(
   countQueryVerdict(index, refusal, stage);
   if (refusal !== 'minor' && refusal !== 'poi-minor') return;
   track?.action({ type: 'CSAM_Help_Triggered', details: { query, index } }).catch(() => undefined);
+}
+
+/**
+ * What one semantic search learns along the way, recorded as one row when its first page is
+ * returned. Services report verdicts and candidate results to it as they happen.
+ */
+export function beginSemanticAudit({
+  index,
+  viewer,
+  query,
+  firstPage,
+}: {
+  index: SearchCollection;
+  viewer: SemanticAuditEntry['viewer'];
+  query: string | undefined;
+  firstPage: boolean;
+}) {
+  let wordVerdict: QueryRefusal = false;
+  let withholdIds = false;
+  let candidates: { guard?: GuardRead; cacheHit?: boolean } | undefined;
+  return {
+    verdict(refusal: QueryRefusal) {
+      if (!refusal) return;
+      wordVerdict ||= refusal;
+      if (IDS_WITHHELD_VERDICTS.has(refusal)) withholdIds = true;
+    },
+    candidates(result: { guard?: GuardRead; cacheHit?: boolean } | undefined) {
+      candidates ??= result;
+    },
+    done<R extends { items: { id: number }[] }>(result: R, browsingLevel: number): R {
+      if (firstPage)
+        recordSemanticAudit({
+          index,
+          viewer,
+          query: query ?? '',
+          browsingLevel,
+          wordVerdict,
+          withholdIds,
+          // Called but sent no guard: a cached block from before the guard result, or an old service.
+          guard: candidates
+            ? candidates.guard ?? { ...GUARD_NONE, outcome: 'unknown' }
+            : GUARD_NONE,
+          cacheHit: candidates?.cacheHit ?? false,
+          resultIds: result.items.map((x) => x.id),
+        });
+      return result;
+    },
+  };
 }

@@ -8,8 +8,10 @@ import type { CandidateFilter, CandidateSource } from '~/server/services/semanti
 import type { SessionUser } from '~/types/session';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
+  recordAudit: vi.fn(),
   pg: null as null | PGlite,
   // What the feed's read returns per id: its own gates and cover are tested with the feed.
   cards: new Map<number, { userId: number; status: string }>(),
@@ -20,6 +22,10 @@ const h = vi.hoisted(() => ({
   fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
 }));
 
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/services/storyline.service', () => ({
   getStorylinesInfinite: async (args: { ids: number[] }) => {
     h.feedCalls.push(args);
@@ -301,4 +307,20 @@ describe('semantic storyline search', () => {
     expect(shown(await search([1], { correctedQuery: 'corrected' }))).toEqual([]);
     expect(shown(await search([1], { correctedQuery: 'fine' }))).toEqual([1]);
   });
+});
+
+describeSemanticAuditContract({
+  index: 'storylines',
+  run: async ({ source, user, cursor }) => {
+    for (const id of [1, 2]) await storyline(id);
+    return searchSemanticStorylines({
+      input: { query: 'dragon heist', browsingLevel: PG, limit: 10, cursor },
+      user,
+      candidateSource: source,
+    });
+  },
+  ids: [1, 2],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });

@@ -28,6 +28,10 @@ export enum FLIPT_FEATURE_FLAGS {
   // clamp). DISABLED LIFTS THE CLAMP: non-moderators search at their own browsing level. A missing
   // key, an evaluation error or no Flipt client all keep the clamp ON (`isNonModClampOn`).
   SEMANTIC_SEARCH_NONMOD_CLAMP = 'semantic-search-nonmod-clamp',
+  // On: semantic searches send the search service the request id and the viewer's levels and
+  // moderator status, and key the candidate cache on the guard's mode and version. Create the key
+  // (disabled) before this deploys: a missing key logs on every eval.
+  SEMANTIC_SEARCH_AUDIT = 'semantic-search-audit',
   // On: the image feed's feed-service call runs behind a circuit breaker, and an anonymous first
   // page the feed fails to answer is served from that pod's last good copy (10 min) instead of a
   // 503 (`~/server/services/feed-primary-degrade`). DEFAULT-OFF: `isFliptSync` returns null for an

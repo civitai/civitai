@@ -587,6 +587,12 @@ export function makeBlockStepBodySchema(stepIds: [string, ...string[]]) {
       kind: z.literal('step'),
       step: z.enum(stepIds),
       params: z.record(z.string(), z.unknown()),
+      // The Buzz pool tried FIRST — the same field and rule as `textToImage`'s
+      // `accountType`: blocks.router moves it to the front of the domain-allowed
+      // currencies and keeps the rest as fallback, and REJECTS a pick outside that
+      // set. Top-level, not in `params`: `params` is the step's own `.strict()`
+      // contract and a currency is not a step parameter.
+      accountType: blockAccountTypeSchema.optional(),
     })
     .strict();
 }
@@ -699,6 +705,11 @@ const blockPassThroughStepShape = {
   // draft claimed identity here and in `blocks.router`; measured false.)
   input: z.record(z.string(), z.unknown()),
   maxBuzz: z.number().int().min(1).max(PASS_THROUGH_MAX_BUZZ),
+  // The Buzz pool tried FIRST, the rest of the domain-allowed set kept as fallback;
+  // a pick outside that set is REJECTED (`resolveBlockCurrenciesForAccount`). Server
+  // field, never forwarded into `input`. INCLUDED in the confirmed-quote body hash, so
+  // a quote priced with one pool cannot be submitted with another.
+  accountType: blockAccountTypeSchema.optional(),
   // Present on a CONFIRMED submit only — the viewer-confirmed fixed-price quote
   // (`stepQuote.quoteId` on the estimate reply) this job is charged against in place
   // of the per-call budget. Excluded from the body hash that binds a quote to its
@@ -815,6 +826,10 @@ export const blockMultiStepWorkflowBodySchema = z
     kind: z.literal('workflow'),
     steps: z.array(blockMultiStepWorkflowStepSchema).min(1),
     arguments: z.record(z.string(), z.unknown()).optional(),
+    // PER-WORKFLOW, not per-step: the orchestrator takes ONE `currencies` list for
+    // the whole workflow, so a per-step pick could not be honoured. Same rule as the
+    // pass-through arm's `accountType`.
+    accountType: blockAccountTypeSchema.optional(),
   })
   .strict()
   // `arguments` too: a step input can `$ref` it, so it reaches the orchestrator the same way.

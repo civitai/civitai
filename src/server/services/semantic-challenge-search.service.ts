@@ -207,6 +207,7 @@ export async function searchSemanticChallenges({
     source: candidateSource,
     text: input.query,
     filter,
+    viewer: { isModerator: !!user?.isModerator },
     audit: (correction) => refusalOf(correction, 'correction'),
   });
   const page = await collectPage({
