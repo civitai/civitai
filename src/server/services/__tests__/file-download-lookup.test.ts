@@ -828,9 +828,6 @@ describe('getFileForModelVersion — the direct flag reaches resolveDownloadUrl'
       redCapable: false,
     });
 
-    // toStrictEqual, not toEqual: toEqual treats an undefined-valued key as equal
-    // to a MISSING one, so it cannot tell `{ direct: undefined }` from `{}` — which
-    // is exactly the distinction the comment above claims this assertion makes.
     expect(optionsArg()).toStrictEqual({ direct: undefined, ...ATTRIBUTION });
     expect(optionsArg()?.direct).not.toBe(true);
   });
