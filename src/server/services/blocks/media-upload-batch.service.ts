@@ -19,8 +19,10 @@ import {
  *      every file, then writes the audit row (`app_block_upload_batches`).
  *   2. `presignMediaUploadBatchItem` — one per upload attempt: mints the upload URL with the
  *      VIEWER's orchestrator token, so every file is the viewer's own upload. Only for a
- *      batch of this viewer and app, while it is open, and at most twice per declared file,
- *      counted by the file's position (`presign_counts`).
+ *      batch of this viewer and app, while it is open, and at most three times per declared
+ *      file, counted by the file's position (`presign_counts`).
+ *   3b. Recording is idempotent: a key already in the row is success again, so a retried record
+ *      whose first answer was lost is not refused.
  *   3. `recordMediaUploadBatchItem` — one per uploaded file: appends its blob key to the row, at
  *      most one key per file.
  *
@@ -40,8 +42,12 @@ import {
  * time.
  */
 
-/** Upload URLs one file may take: its first try and the client's one retry. */
-export const MEDIA_UPLOAD_BATCH_PRESIGNS_PER_ITEM = 2;
+/**
+ * Upload URLs one file may take: its first try, the client's one upload retry, and one spare for a
+ * presign whose URL was minted but whose answer never reached the client (a dropped connection or a
+ * proxy timeout), which the client then presigns again.
+ */
+export const MEDIA_UPLOAD_BATCH_PRESIGNS_PER_ITEM = 3;
 /** How long after it starts a batch may still mint URLs and record files. */
 export const MEDIA_UPLOAD_BATCH_OPEN_MS = 6 * 60 * 60 * 1000;
 /** The quota counters' lifetime: past the end of their UTC day. */
@@ -261,8 +267,15 @@ export async function recordMediaUploadBatchItem({
         AND cardinality("blob_keys") < "item_count"
         AND NOT (${blobKey} = ANY("blob_keys"))
       RETURNING "expires_at"`.catch(rethrowMissingTable);
-  if (rows.length === 0) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'this batch cannot record more files' });
-  }
-  return { expiresAt: rows[0].expires_at };
+  if (rows.length > 0) return { expiresAt: rows[0].expires_at };
+  // Idempotent: a key this batch already holds (a retried record whose first answer was lost) is
+  // success again, with the same answer. Same batch, viewer and app.
+  const recorded = await dbWrite.$queryRaw<{ expires_at: Date }[]>`
+      SELECT "expires_at" FROM "app_block_upload_batches"
+      WHERE "id" = ${batchId}
+        AND "user_id" = ${actor.userId}
+        AND "app_block_id" = ${actor.appBlockId}
+        AND ${blobKey} = ANY("blob_keys")`.catch(rethrowMissingTable);
+  if (recorded.length > 0) return { expiresAt: recorded[0].expires_at };
+  throw new TRPCError({ code: 'FORBIDDEN', message: 'this batch cannot record more files' });
 }

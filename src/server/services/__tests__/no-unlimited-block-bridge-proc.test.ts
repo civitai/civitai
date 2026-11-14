@@ -200,7 +200,7 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   presignMediaUploadBatchItem: {
     buckets: [],
-    why: 'NONE OF THESE BUCKETS. Bounded by its batch instead: only for an open batch of this viewer and app, and at most two upload URLs per file the daily batch quota was charged for at startMediaUploadBatch. The per-install catalog bucket would let one viewer’s 1,000-file batch drain every viewer’s allowance on a page app.',
+    why: 'NONE OF THESE BUCKETS. Bounded by its batch instead: only for an open batch of this viewer and app, and at most three upload URLs per file the daily batch quota was charged for at startMediaUploadBatch. The per-install catalog bucket would let one viewer’s 1,000-file batch drain every viewer’s allowance on a page app.',
   },
   previewQuoteGrant: {
     buckets: ['catalog'],

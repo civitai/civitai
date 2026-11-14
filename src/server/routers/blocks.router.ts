@@ -6071,7 +6071,7 @@ export const blocksRouter = router({
    * are the viewer's files, uploaded and checked as theirs.
    *
    * RATE LIMIT: none of the bridge buckets. Bounded by the batch instead: only for an open batch of
-   * this viewer and app, and at most two URLs per declared file, counted by its position.
+   * this viewer and app, and at most three URLs per declared file, counted by its position.
    */
   presignMediaUploadBatchItem: protectedProcedure
     .meta({ blockApiKeys: true })

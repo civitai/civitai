@@ -429,7 +429,7 @@ export type AppBlockUploadBatch = {
    */
   presign_count: Generated<number>;
   /**
-   * Upload URLs minted per declared file, by position: at most two each.
+   * Upload URLs minted per declared file, by position: at most three each.
    */
   presign_counts: Generated<number[]>;
   /**

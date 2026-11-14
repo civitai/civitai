@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS "app_block_upload_batches" (
   "expires_at" TIMESTAMPTZ(6) NOT NULL
 );
 
+-- Added after the table was first drafted; a no-op where the CREATE above made it.
+ALTER TABLE "app_block_upload_batches"
+  ADD COLUMN IF NOT EXISTS "presign_counts" INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[];
+
 CREATE INDEX IF NOT EXISTS "app_block_upload_batches_user_created_idx"
   ON "app_block_upload_batches" ("user_id", "created_at" DESC);
 CREATE INDEX IF NOT EXISTS "app_block_upload_batches_app_created_idx"

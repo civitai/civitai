@@ -547,7 +547,8 @@ read that file. As of this writing the families are:
   per UTC day) when the batch starts. The byte half is charged on the sizes the
   host declares (the bytes go straight to the orchestrator, whose own per-file
   limits apply); the file count is enforced by the server, which mints at most
-  two upload URLs per declared file. The host reads its current block token for
+  three upload URLs per declared file (a first try, one upload retry, and a
+  spare for a URL whose answer was lost); recording a file is idempotent. The host reads its current block token for
   every call, so a batch can outlive the token it started with. Every upload URL is minted with the
   viewer's own orchestrator token, so every file gets the orchestrator's content
   scan, and a blocked file is answered as an error for that item. Each batch is
