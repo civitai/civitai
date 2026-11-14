@@ -25,6 +25,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/cosmetic/create': () => import('~/pages/api/mod/cosmetic/create'),
   '/api/mod/cosmetic/delete': () => import('~/pages/api/mod/cosmetic/delete'),
   '/api/mod/cosmetic/holdings-removed': () => import('~/pages/api/mod/cosmetic/holdings-removed'),
+  '/api/mod/cosmetic/refund-box-purchase': () =>
+    import('~/pages/api/mod/cosmetic/refund-box-purchase'),
   '/api/mod/cosmetic/unassign': () => import('~/pages/api/mod/cosmetic/unassign'),
   '/api/mod/cosmetic/update': () => import('~/pages/api/mod/cosmetic/update'),
   '/api/mod/creator-services/deal-file-url': () =>
@@ -92,6 +94,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/text-scan/csam-hold/resolve'),
   '/api/mod/text-scan/model-rules-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
+  '/api/mod/tipalti-resync-payee': () => import('~/pages/api/mod/tipalti-resync-payee'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/buzz-membership-end': () => import('~/pages/api/mod/user/buzz-membership-end'),
   '/api/mod/user/cancel-pending-workflows': () =>

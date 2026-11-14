@@ -11,6 +11,7 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'ChatMessage',
   'CommentV3',
   'UserProfile',
+  'ServiceOffering',
   'PostText',
 ] as const;
 
@@ -23,6 +24,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   ChatMessage: 'Chat message',
   CommentV3: 'Comment',
   UserProfile: 'Profile',
+  ServiceOffering: 'Service',
   PostText: 'Storyline text',
 };
 
@@ -75,6 +77,7 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'Post',
   'Model',
   'Article',
+  'ServiceOffering',
   'PostText',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);

@@ -28,6 +28,8 @@ type Write = {
   amount: number;
   fromAccountId: number;
   toAccountId?: number;
+  fromAccountType?: string;
+  type?: number;
 };
 
 export const timeoutError = () =>
@@ -41,6 +43,7 @@ export function createFakeBuzzLedger() {
   const balances = new Map<number, number>();
   const faults: Fault[] = [];
   let lookupError: Error | null = null;
+  let hiddenLookups = 0;
   let seq = 0;
   let releaseHung: () => void = () => undefined;
   let hung = false;
@@ -83,6 +86,13 @@ export function createFakeBuzzLedger() {
     },
     failLookups: (error: Error | null = new Error('buzz read failed')) => {
       lookupError = error;
+    },
+    /**
+     * The next `count` prefix listings answer as if nothing were held: a read that has not yet
+     * seen a committed write.
+     */
+    hideNextLookups: (count = 1) => {
+      hiddenLookups = count;
     },
     setBalance: (userId: number, balance: number) => balances.set(userId, balance),
     balanceOf,
@@ -173,6 +183,10 @@ export function createFakeBuzzLedger() {
     },
     getMultiAccountTransactionsByPrefix: async (prefix: string) => {
       if (lookupError) throw lookupError;
+      if (hiddenLookups > 0) {
+        hiddenLookups--;
+        return [];
+      }
       return [...held.values()].filter(
         (t) =>
           t.externalTransactionId.startsWith(prefix) &&
@@ -189,11 +203,27 @@ export function createFakeBuzzLedger() {
       const reversed = legs.filter((t) => held.has(`refund-${t.transactionId}`));
       return { reversed, missing: legs.filter((t) => !reversed.includes(t)) };
     },
+    // The account types and the transaction type are what the write was sent with; a multi-account
+    // leg reports its own source type (the first, as each fake leg has one source).
     getTransactionByExternalId: async (externalId: string) => {
       if (lookupError) throw lookupError;
-      const t = held.get(externalId);
+      const t = held.get(externalId) as
+        | (Write & {
+            fromAccountType?: string;
+            fromAccountTypes?: string[];
+            toAccountType?: string;
+            type?: unknown;
+          })
+        | undefined;
       return t
-        ? { amount: t.amount, fromAccountId: t.fromAccountId, toAccountId: t.toAccountId }
+        ? {
+            amount: t.amount,
+            fromAccountId: t.fromAccountId,
+            toAccountId: t.toAccountId,
+            fromAccountType: t.fromAccountType ?? t.fromAccountTypes?.[0],
+            toAccountType: t.toAccountType,
+            type: t.type,
+          }
         : null;
     },
     /**

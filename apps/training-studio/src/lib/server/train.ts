@@ -29,10 +29,13 @@ export async function submitTrainingBatch(
   /** null in the dev-login preview, which has no session to send the check with. */
   cookie: string | null,
   /** From `datasetRatingFor`; undefined counts datasets from the upload rating. */
-  datasetRating?: DatasetRating
+  datasetRating?: DatasetRating,
+  /** From `isKohyaAllowed`; a Kohya run is refused without it. */
+  kohyaAllowed = false
 ): Promise<SubmittedBatch> {
   return core.submitTrainingBatch(orchestratorClient(token), runs, {
     status: await getTrainingServiceStatus(),
+    kohyaAllowed,
     checkText: requestTextCheck(cookie, userId),
     datasetRating,
     onMatureCount: datasetRating
@@ -70,10 +73,12 @@ export async function continueTraining(
   opts: ContinueOpts,
   /** null in the dev-login preview, which has no session to send the check with. */
   cookie: string | null,
-  datasetRating?: DatasetRating
+  datasetRating?: DatasetRating,
+  kohyaAllowed = false
 ): Promise<string> {
   return core.continueTraining(orchestratorClient(token), opts, {
     status: await getTrainingServiceStatus(),
+    kohyaAllowed,
     datasetRating,
     checkText: requestTextCheck(cookie, userId),
     callbacks: workflowSignalCallbacks(userId),
@@ -86,10 +91,12 @@ export async function continueTrainingWhatIf(
   token: string,
   userId: number,
   opts: ContinueOpts,
-  datasetRating?: DatasetRating
+  datasetRating?: DatasetRating,
+  kohyaAllowed = false
 ): Promise<{ cost: number | null; steps: number | undefined; matureCount: number }> {
   return core.continueTrainingWhatIf(orchestratorClient(token), opts, {
     status: await getTrainingServiceStatus(),
+    kohyaAllowed,
     datasetRating,
     // The quote is the continuation's Review: rate the source's unrated images before the submit.
     onMatureCount: datasetRating

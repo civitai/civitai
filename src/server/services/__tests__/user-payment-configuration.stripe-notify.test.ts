@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type Stripe from 'stripe';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { StripeConnectStatus } from '~/server/common/enums';
 // Module scope: see the note in user-payment-configuration.tipalti-status.test.ts.
 import { updateByStripeConnectAccount } from '~/server/services/user-payment-configuration.service';
@@ -53,5 +54,8 @@ describe('updateByStripeConnectAccount when the notification fails', () => {
 
     expect(updated).toMatchObject({ stripeAccountStatus: status });
     expect(mockCreateNotification).toHaveBeenCalledWith(expect.objectContaining({ type }));
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'createNotification', error: expect.any(Error) })
+    );
   });
 });

@@ -270,6 +270,8 @@ export type StorylineFollowScope = "Canon" | "Endorsed" | "Everything";
 
 export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
 
+export type ServiceOfferingIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
 
 export type ServiceBuzzType = "yellow" | "blue" | "green";
@@ -1789,6 +1791,7 @@ export interface Image {
   appSubListingPendingImages?: AppSubListing[];
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
+  serviceOfferingCovers?: ServiceOffering[];
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
@@ -6893,10 +6896,15 @@ export interface ServiceOffering {
   title: string;
   description: string;
   coverImageId: number | null;
+  coverImage?: Image | null;
   price: number;
   acceptsBlue: boolean;
   previewKind: ServicePreviewKind;
   maxNsfwLevel: number;
+  declaredNsfwLevel: number | null;
+  ingestion: ServiceOfferingIngestionStatus;
+  scanWorkflowId: string | null;
+  scannedAt: Date | null;
   deliveryDays: number;
   revisionsIncluded: number;
   maxOpenDeals: number | null;

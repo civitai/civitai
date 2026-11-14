@@ -375,6 +375,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-audio-training',
   },
+  // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
+  trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
