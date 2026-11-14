@@ -25,6 +25,7 @@ export const MODEL3D_COLLECTION: CollectionSpec<Model3DPayload> = {
       },
     ],
     ['nsfwLevel', { type: 'integer', lookup: true, range: false, on_disk: true }],
+    ['thumbnailNsfwLevel', { type: 'integer', lookup: true, range: false, on_disk: true }],
     ['tagIds', { type: 'integer', lookup: true, range: false, on_disk: true }],
     ['animated', { type: 'bool', on_disk: true }],
     ['license', { type: 'keyword', on_disk: true }],

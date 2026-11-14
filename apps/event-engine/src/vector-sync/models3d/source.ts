@@ -21,6 +21,9 @@ export const MODEL3D_ELIGIBLE_SQL = `(m.status = 'Published' AND m."deletedAt" I
     AND ti."userId" = m."userId" AND NOT ti.minor AND NOT ti.poi
     AND NOT ${heldImageSql('ti')}))`;
 
+/** The thumbnail `ti`'s level, the site's `model3dThumbnailLevelText`, pinned by the parity test. */
+export const MODEL3D_THUMBNAIL_LEVEL_SQL = 'ti."nsfwLevel"';
+
 export type Model3DPayload = {
   /** Exact-title key, see normalizeTitle. */
   title_normalized: string;
@@ -32,6 +35,11 @@ export type Model3DPayload = {
   tagIds: number[];
   /** The set bits of Model3D.nsfwLevel (never 0 here: unrated models are not indexed). */
   nsfwLevel: number[];
+  /**
+   * The set bits of the thumbnail's own level (the site's `model3dThumbnailLevelText`), which the
+   * models3d gate also requires: the vector is the thumbnail, rated apart from the model.
+   */
+  thumbnailNsfwLevel: number[];
   /** generationParams.enableAnimation, the feed's "animated" filter. */
   animated: boolean;
   /** Model3DLicense.name. */
@@ -60,6 +68,7 @@ type Row = {
   username: string | null;
   thumbnailImageId: number;
   thumbnailUrl: string;
+  thumbnailNsfwLevel: number;
   tags: { id: number; name: string }[];
 };
 
@@ -74,6 +83,7 @@ export async function getModel3DDocs(
        COALESCE(m."generationParams"->>'enableAnimation' = 'true', false) AS animated,
        l.name AS license, m."publishedAt", m."userId", u.username,
        m."thumbnailImageId", ti.url AS "thumbnailUrl",
+       ${MODEL3D_THUMBNAIL_LEVEL_SQL} AS "thumbnailNsfwLevel",
        COALESCE((SELECT json_agg(json_build_object('id', t.id, 'name', t.name) ORDER BY t.name)
          FROM "TagsOnModel3D" tm JOIN "Tag" t ON t.id = tm."tagId"
          WHERE tm."model3dId" = m.id), '[]') AS tags
@@ -101,6 +111,7 @@ export async function getModel3DDocs(
       tags,
       tagIds: row.tags.map((t) => t.id),
       nsfwLevel: nsfwLevels(row.nsfwLevel),
+      thumbnailNsfwLevel: nsfwLevels(row.thumbnailNsfwLevel),
       animated: row.animated,
       license: row.license,
       publishedAt: row.publishedAt ? new Date(row.publishedAt).toISOString() : null,

@@ -5,8 +5,15 @@ import {
   type ParityRow,
   type ParitySpec,
 } from '~/__tests__/eligibility-parity';
-import { MODEL3D_ELIGIBLE_SQL } from '../../../../apps/event-engine/src/vector-sync/models3d/source';
-import { model3dSemanticEligibleText } from '~/server/services/semantic-model3d-eligibility';
+import {
+  MODEL3D_ELIGIBLE_SQL,
+  MODEL3D_THUMBNAIL_LEVEL_SQL,
+} from '../../../../apps/event-engine/src/vector-sync/models3d/source';
+import {
+  model3dSemanticEligibleText,
+  model3dThumbnailLevelText,
+} from '~/server/services/semantic-model3d-eligibility';
+import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 
 // Users: 1 clean, 2 banned, 3 deleted, 4 a CsamReport's subject, 5 its secondary user, 6 under an
 // evidence hold, 7 a released hold, 8 a reported image owner, -1 the placeholder owner (named on a
@@ -193,5 +200,21 @@ describe('3D model semantic search eligibility', () => {
       copy: COPY.replace(` AND NOT m.poi`, ''),
     });
     expect(result.copy).toEqual({ missing: [], extra: ['poi'] });
+  });
+  it("the payload's thumbnail level is the site's", async () => {
+    const harness = await startPglitePrisma(SCHEMA);
+    try {
+      const levels = [1, 2, 4, 8, 16, 5];
+      for (const [i, level] of levels.entries())
+        await harness.pg.exec(model(i + 1, 'eligible', { thumbnailLevel: String(level) }).insert);
+      const { rows } = await harness.pg.query<{ id: number; site: number; copy: number }>(
+        `SELECT m.id, ${model3dThumbnailLevelText()} AS site, ${MODEL3D_THUMBNAIL_LEVEL_SQL} AS copy
+         ${FROM} JOIN "Image" ti ON ti.id = m."thumbnailImageId" ORDER BY m.id`
+      );
+      expect(rows.map((r) => Number(r.copy))).toEqual(rows.map((r) => Number(r.site)));
+      expect(rows.map((r) => Number(r.site))).toEqual(levels);
+    } finally {
+      await harness.stop();
+    }
   });
 });
