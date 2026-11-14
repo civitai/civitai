@@ -1,4 +1,4 @@
-import client, { type Counter, type Histogram, type Registry } from 'prom-client';
+import client, { type Counter, type Gauge, type Histogram, type Registry } from 'prom-client';
 import { middleware } from '~/server/trpc';
 
 const NAME = 'semantic_search_request_seconds';
@@ -56,6 +56,25 @@ export function countQueryRuleRead(type: string, source: string, reg: Registry =
       registers: [reg],
     });
   counter.inc({ type, source });
+}
+
+const RULE_STALE = 'semantic_search_query_rule_stale_seconds';
+
+/** Age of the last good rules copy this pod is serving while the blocklist is unreadable; 0 when fresh. */
+export function setQueryRuleStaleAge(
+  type: string,
+  seconds: number,
+  reg: Registry = client.register
+) {
+  const gauge =
+    (reg.getSingleMetric(RULE_STALE) as Gauge<string> | undefined) ??
+    new client.Gauge({
+      name: RULE_STALE,
+      help: 'Age in seconds of the semantic search query rules copy served while the blocklist is unreadable (0 when read fresh)',
+      labelNames: ['type'],
+      registers: [reg],
+    });
+  gauge.set({ type }, seconds);
 }
 
 const CACHE_NAME = 'semantic_search_candidate_cache_total';

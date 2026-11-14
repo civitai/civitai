@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import promClient from 'prom-client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BlocklistType } from '~/server/common/enums';
 import type * as BlocklistService from '~/server/services/blocklist.service';
@@ -24,6 +25,7 @@ import {
   queryVerdictLevel,
   recordRefusal,
   semanticQueryRefusal,
+  type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
   allBrowsingLevelsFlag,
@@ -86,6 +88,41 @@ describe('createQueryRuleReader', () => {
     expect(await reader.read(POI_TYPE)).toEqual({ terms: ['replaced'], source: 'fallback' });
   });
 
+  it('serves a warm pod its last good copy during an outage, ahead of the file, past 5 minutes', async () => {
+    const path = join(dir, 'older.txt');
+    await writeFile(path, `${POI_TYPE} fromfile\n`);
+    const reader = createQueryRuleReader({ fallbackPath: path });
+    h.readBlocklistWithSource.mockResolvedValue({
+      dto: { type: POI_TYPE, data: [POI] },
+      source: 'db',
+    });
+    const t0 = Date.now();
+    await reader.read(POI_TYPE);
+
+    h.readBlocklistWithSource.mockImplementation(async () => {
+      throw new Error('db down');
+    });
+    vi.spyOn(Date, 'now').mockReturnValue(t0 + 6 * 60_000);
+    try {
+      expect(await reader.read(POI_TYPE)).toEqual({ terms: [POI], source: 'stale' });
+      const gauge = await promClient.register
+        .getSingleMetric('semantic_search_query_rule_stale_seconds')
+        ?.get();
+      const age = gauge?.values.find((v) => v.labels.type === POI_TYPE)?.value ?? 0;
+      expect(age).toBeGreaterThanOrEqual(360);
+    } finally {
+      vi.mocked(Date.now).mockRestore();
+    }
+  });
+
+  it('refuses on a cold pod during an outage with no file', async () => {
+    h.readBlocklistWithSource.mockImplementation(async () => {
+      throw new Error('db down');
+    });
+    setQueryRuleReaderForTests(createQueryRuleReader({ fallbackPath: join(dir, 'absent.txt') }));
+    expect(await refusal('a red bicycle', false)).toBe('error');
+  });
+
   it('throws when neither the blocklist nor the file can be read', async () => {
     h.readBlocklistWithSource.mockImplementation(async () => {
       throw new Error('db down');
@@ -142,7 +179,7 @@ describe('recordRefusal', () => {
   });
 
   it('fires no help event for a minor-addition match, and still fires one for the minor list', async () => {
-    const track = { action: vi.fn(async () => undefined) };
+    const track: QueryTracker = { action: vi.fn<QueryTracker['action']>(async () => true) };
     const verdict = await refusal(`a ${MINOR} portrait`, false);
     recordRefusal(track, verdict, `a ${MINOR} portrait`, 'test_index');
     expect(track.action).not.toHaveBeenCalled();

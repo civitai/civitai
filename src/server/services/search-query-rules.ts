@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { BlocklistType } from '~/server/common/enums';
-import { countQueryRuleRead } from '~/server/metrics/semantic-search.metrics';
+import { countQueryRuleRead, setQueryRuleStaleAge } from '~/server/metrics/semantic-search.metrics';
 import {
   readBlocklistWithSource,
   type BlocklistReadSource,
@@ -12,7 +12,7 @@ export const QUERY_RULE_TYPES = [
   BlocklistType.SemanticSearchMinorSafe,
 ] as const;
 export type QueryRuleType = (typeof QUERY_RULE_TYPES)[number];
-export type QueryRuleSource = BlocklistReadSource | 'fallback';
+export type QueryRuleSource = BlocklistReadSource | 'stale' | 'fallback';
 
 export interface QueryRuleReader {
   read(type: QueryRuleType): Promise<{ terms: string[]; source: QueryRuleSource }>;
@@ -40,19 +40,30 @@ export function parseFallbackRules(text: string): Map<QueryRuleType, string[]> {
 }
 
 /**
- * The blocklist (Redis, then its last-known copy, then the row), and the fallback file only when
- * that throws. The file is read on every fallback, never held, so a re-sealed Secret applies at the
- * next read. If both fail, the error propagates: the caller refuses.
+ * In order: the blocklist (Redis, then its 5-minute last-known copy, then the row); this reader's
+ * own last good copy, at any age; the fallback file; else the error propagates and the caller
+ * refuses. A stale copy can only lack rules added since it was read, never be looser than what this
+ * pod already enforced, so it outranks the hand-sealed file. `semantic_search_query_rule_stale_seconds`
+ * carries its age; a rule removed during the outage lingers until the blocklist reads again.
+ * The file is read on every fallback, never held, so a re-sealed Secret applies at the next read.
  */
 export function createQueryRuleReader({
   fallbackPath = FALLBACK_RULES_PATH,
 }: { fallbackPath?: string } = {}): QueryRuleReader {
+  const lastGood = new Map<QueryRuleType, { terms: string[]; at: number }>();
   return {
     async read(type) {
       try {
         const { dto, source } = await readBlocklistWithSource(type);
+        lastGood.set(type, { terms: dto.data, at: Date.now() });
+        setQueryRuleStaleAge(type, 0);
         return { terms: dto.data, source };
       } catch {
+        const known = lastGood.get(type);
+        if (known) {
+          setQueryRuleStaleAge(type, (Date.now() - known.at) / 1000);
+          return { terms: known.terms, source: 'stale' };
+        }
         const rules = parseFallbackRules(await readFile(fallbackPath, 'utf8'));
         return { terms: rules.get(type) ?? [], source: 'fallback' };
       }
