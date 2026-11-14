@@ -97,6 +97,7 @@ export function AddUserContentModal({ collectionId }: Props) {
           });
           await queryUtils.image.getInfinite.invalidate();
           await queryUtils.collection.getById.invalidate({ id: collectionId });
+          await queryUtils.collection.getEntryCount.invalidate({ id: collectionId });
           await queryUtils.collection.getAllUser.invalidate();
         },
         onError(error) {
@@ -127,6 +128,7 @@ export function AddUserContentModal({ collectionId }: Props) {
     saveCollectionItemsMutation.mutate(data, {
       onSuccess: async () => {
         handleClose();
+        await queryUtils.collection.getEntryCount.invalidate({ id: collectionId });
         await queryUtils.image.getInfinite.invalidate();
       },
       onError(error) {
