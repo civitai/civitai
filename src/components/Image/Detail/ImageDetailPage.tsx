@@ -37,11 +37,13 @@ function ImageDetailRoute({ query }: { query: Record<string, any> }) {
 
   return (
     <StorylineModeProvider>
-      {(storylineImages, modeKey) => (
+      {(storylineImages, modeKey, storylineTexts) => (
         <ImageDetailProvider
           key={`${imageId}-${modeKey}`}
           imageId={imageId}
           filters={filters}
+          texts={storylineTexts?.texts}
+          postOrder={storylineTexts?.postOrder}
           images={storylineImages}
         >
           <ImageDetail2 />

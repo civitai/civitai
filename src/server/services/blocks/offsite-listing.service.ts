@@ -2291,10 +2291,10 @@ async function readListingEditRedMedia(listingId: string): Promise<ListingEditRe
   const images = ids.length
     ? await dbWrite.image.findMany({ where: { id: { in: ids } }, select: { id: true, url: true } })
     : [];
-  const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  const { listingMediaEdgeUrl } = await import('~/server/services/blocks/listing-media-url');
   const urlOf = (id: number | null, width: number) => {
     const url = id == null ? null : images.find((i) => i.id === id)?.url;
-    return url ? getEdgeUrl(url, { width }) : null;
+    return url ? listingMediaEdgeUrl(url, width) : null;
   };
   return {
     available: red.available,
@@ -2420,7 +2420,8 @@ async function loadListingEditView(
   connectRequestedScopes: number | null;
   connectScopeJustifications: Record<string, string> | null;
 }> {
-  const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  const { LISTING_COVER_WIDTH, LISTING_ICON_WIDTH, LISTING_SCREENSHOT_WIDTH, listingMediaEdgeUrl } =
+    await import('~/server/services/blocks/listing-media-url');
   // Guarded, SEPARATE read of the manual-apply `source_repo_url` column — never added
   // to the select below, which would 500 the whole author edit-prefill page until a
   // human runs the migration. Degrades to null; see app-listing-source-repo.service.
@@ -2507,16 +2508,16 @@ async function loadListingEditView(
     assets: {
       icon: {
         imageId: row.iconId,
-        url: row.icon?.url ? getEdgeUrl(row.icon.url, { width: 256 }) : null,
+        url: row.icon?.url ? listingMediaEdgeUrl(row.icon.url, LISTING_ICON_WIDTH) : null,
       },
       cover: {
         imageId: row.coverId,
-        url: row.cover?.url ? getEdgeUrl(row.cover.url, { width: 1200 }) : null,
+        url: row.cover?.url ? listingMediaEdgeUrl(row.cover.url, LISTING_COVER_WIDTH) : null,
       },
       screenshots: row.screenshots.map((s) => ({
         id: s.id,
         imageId: s.imageId,
-        url: s.image?.url ? getEdgeUrl(s.image.url, { width: 1200 }) : null,
+        url: s.image?.url ? listingMediaEdgeUrl(s.image.url, LISTING_SCREENSHOT_WIDTH) : null,
         caption: s.caption,
         order: s.order,
       })),

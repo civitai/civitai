@@ -138,8 +138,8 @@ export async function checkSharedReportRateLimit(
 // DOCUMENT STORE (`/api/v1/blocks/storage/*`). Same fixed-window counter, own sub-namespaces
 // so the new surface never shares a bucket with the legacy one. Keyed on the resolved app id,
 // which is per (app, namespace) for review previews. Shared DOCUMENT writes do not have a bucket
-// here: they spend the token-bucket write budget below (`reserveSharedWrite`), as the legacy
-// append/update do.
+// here: they spend a token-bucket write budget below (`reserveSharedWrite` with
+// `DOC_STORE_SHARED_WRITE_BUDGET`), their own, not the one the legacy append/update spend.
 //   reads             — per (app, viewer), or per (app, client IP) for an anonymous viewer;
 //   writes            — per (app, viewer): private document writes, and every DELETE (a
 //                       viewer's own shared documents included — see the route);
@@ -212,7 +212,12 @@ export async function checkSubListingSyncRateLimit(
   return checkFixedWindow(`${base}:d`, SUB_LISTING_SYNC_DAILY_MAX, 24 * 60 * 60);
 }
 
-// ── WRITE BUDGET (append + update, one shared budget per (user, app)) ─────────
+// ── WRITE BUDGETS (shared writes, one budget per (surface, user, app)) ────────
+//
+// Two budgets, each under its own Redis key namespace (`keyspace`), so the two surfaces never
+// spend from, or apply different capacities to, the same bucket:
+//   - SHARED_WRITE_BUDGET — the legacy shared-KV append + update;
+//   - DOC_STORE_SHARED_WRITE_BUDGET — the document store's shared creates + updates.
 //
 // Token buckets: the budget refills continuously, and only writes that LAND spend it — the
 // caller reserves a token before moderation and releases it if the write never lands
@@ -222,6 +227,11 @@ export async function checkSubListingSyncRateLimit(
 
 export type TokenBucketParams = { capacity: number; refillIntervalMs: number };
 export type SharedWriteBudgetParams = {
+  /**
+   * The Redis key segment the (user, app) hash lives under. Each budget has its own: one key
+   * holding two budgets' capacities would make each one's arithmetic wrong for the other.
+   */
+  keyspace: string;
   burst: TokenBucketParams;
   daily: TokenBucketParams;
   rejections: TokenBucketParams;
@@ -230,6 +240,8 @@ export type SharedWriteBudgetParams = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const SHARED_WRITE_BUDGET: SharedWriteBudgetParams = {
+  // The key every legacy budget already lives under (unchanged, so no live bucket resets).
+  keyspace: 'shared-write:v2',
   // 10 covers a normal session or a verification walk without waiting.
   burst: { capacity: 10, refillIntervalMs: 6 * 60 * 1000 },
   // Matches the 50-row per-user cap (SHARED_KV_PER_USER_ROW_CAP). It refills continuously
@@ -250,6 +262,23 @@ export const SHARED_WRITE_BUDGET: SharedWriteBudgetParams = {
   // caller with more refused writes in flight than tokens left goes into debt at all, and the
   // floor caps the wait at (capacity + 1) × refillIntervalMs.
   rejections: { capacity: 10, refillIntervalMs: 30 * 60 * 1000 },
+};
+
+/**
+ * The document store's shared document writes (create + update), per (user, app). What it bounds
+ * is the inline moderation scan each shared write runs, not storage: the store's own ceilings
+ * (a user may hold up to `DEFAULT_DOC_STORE_LIMITS.userDocs` shared documents) bound that. It is
+ * sized for apps that cache several documents per generation, which the legacy 10 / 50 starved
+ * after a handful of generations.
+ */
+export const DOC_STORE_SHARED_WRITE_BUDGET: SharedWriteBudgetParams = {
+  keyspace: 'docs-shared-write:v1',
+  burst: { capacity: 30, refillIntervalMs: 60 * 1000 },
+  daily: { capacity: 300, refillIntervalMs: DAY_MS / 300 },
+  // The legacy bucket, unchanged: it bounds moderation spent on writes that do NOT land, and an
+  // app caching its own results has no reason to be refused more often. The larger burst does
+  // raise the daily ceiling on rejection charges (see the DEBT note above).
+  rejections: SHARED_WRITE_BUDGET.rejections,
 };
 
 /**
@@ -314,8 +343,8 @@ export type SharedWriteReservation =
     }
   | { allowed: false; retryAfterSeconds: number };
 
-function sharedWriteBudgetKey(userId: number, appBlockId: string) {
-  return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:shared-write:v2:${appBlockId}:${userId}`;
+function sharedWriteBudgetKey(keyspace: string, userId: number, appBlockId: string) {
+  return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:${keyspace}:${appBlockId}:${userId}`;
 }
 
 function budgetArgs(params: SharedWriteBudgetParams) {
@@ -326,7 +355,8 @@ function budgetArgs(params: SharedWriteBudgetParams) {
 }
 
 /**
- * Reserve one write token from the (user, app) budget shared by append and update. Refused
+ * Reserve one write token from a (user, app) budget: by default the legacy one append and update
+ * share; the document store passes `DOC_STORE_SHARED_WRITE_BUDGET`. Refused
  * (consuming nothing) while the burst, daily or rejection bucket is empty; `retryAfterSeconds`
  * is the wait until the binding bucket has a token. Fails open.
  */
@@ -335,7 +365,7 @@ export async function reserveSharedWrite(
   appBlockId: string,
   params: SharedWriteBudgetParams = SHARED_WRITE_BUDGET
 ): Promise<SharedWriteReservation> {
-  const key = sharedWriteBudgetKey(userId, appBlockId);
+  const key = sharedWriteBudgetKey(params.keyspace, userId, appBlockId);
   const args = budgetArgs(params);
   let reply: unknown;
   try {

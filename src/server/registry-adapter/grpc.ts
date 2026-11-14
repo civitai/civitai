@@ -18,6 +18,8 @@
  *     the call is anonymous. `invalid_token` is UNAUTHENTICATED with an `ErrorInfo` reason
  *     `invalid_token`, before the stream or at the token's expiry / revocation after it; a user
  *     whose ratings changed mid-stream gets OUT_OF_RANGE / `cursor_expired`.
+ *   - A subscription over a cap on open subscriptions (`limits.ts`) is UNAVAILABLE /
+ *     `unavailable`, before the stream.
  *   - A consumer that leaves the call's buffer full for `SLOW_CONSUMER_MS` is ended at once with
  *     an RST_STREAM that clients read as `RESOURCE_EXHAUSTED`, the status of `slow_consumer`
  *     (a status in trailers would queue behind what it never reads; `resetSlowConsumer`).
@@ -44,8 +46,15 @@ import {
   watchPrincipal,
   wwwAuthenticate,
 } from '~/server/registry-adapter/auth';
+import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
+import {
+  clientAddress,
+  peerAddress,
+  regionRestricted,
+} from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
   SLOW_CONSUMER_MS,
@@ -379,6 +388,19 @@ function openCall(
   };
 }
 
+/**
+ * A call's origin (`request-origin.ts`): its string metadata as headers (the last value of each,
+ * as `authorizationOf` reads it) and its peer's address.
+ */
+function originOf(call: Call): RequestOrigin {
+  const headers: Record<string, string> = {};
+  for (const [name, values] of Object.entries(call.metadata.toJSON())) {
+    const strings = values.filter((v): v is string => typeof v === 'string');
+    if (strings.length > 0) headers[name] = strings[strings.length - 1];
+  }
+  return { headers, remoteAddress: peerAddress(call.getPeer()) };
+}
+
 /** The `authorization` metadata of a call: its last string value. */
 function authorizationOf(call: Call): string | undefined {
   const values = call.metadata
@@ -396,6 +418,10 @@ export function createGrpcServer(
     verifyToken?: VerifyToken;
     resource?: ResourceConfig;
     tokenRecheckMs?: number;
+    /** As for HTTP: the caps (`limits.ts`), the same limiter as the HTTP binding's. */
+    limiter?: SubscriptionLimiter;
+    /** As for HTTP: the site's region rule unless replaced. */
+    regionRestricted?: (origin: RequestOrigin) => boolean;
   } = {}
 ): grpc.Server {
   const subscribe = createSubscriber(adapter);
@@ -409,6 +435,7 @@ export function createGrpcServer(
       const sink = openCall(call, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       const run = async () => {
         let unwatch: (() => void) | undefined;
+        let slot: SubscriptionSlot | undefined;
         try {
           const r = call.request;
           const request = subscribeRequest({
@@ -417,7 +444,14 @@ export function createGrpcServer(
             urns: r.urns,
             filter: r.filter,
           });
-          const principal = await authenticate(authorizationOf(call), opts.verifyToken);
+          const origin = originOf(call);
+          // The total and per-address caps before the token is verified; per token once it is.
+          slot = opts.limiter?.acquire(clientAddress(origin));
+          const restricted = opts.regionRestricted ?? regionRestricted;
+          const principal = await authenticate(authorizationOf(call), opts.verifyToken, {
+            regionRestricted: () => restricted(origin),
+          });
+          slot?.claim(principal.subject);
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),
@@ -445,6 +479,7 @@ export function createGrpcServer(
           call.emit('error', status);
         } finally {
           unwatch?.();
+          slot?.release();
         }
       };
       void run();

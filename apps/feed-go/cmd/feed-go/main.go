@@ -24,6 +24,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
+	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
@@ -108,10 +109,20 @@ func run(log *slog.Logger) error {
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
 		Addons:   &feed.AddonSource{Sys: sys},
 		Config: feed.Config{
-			CreatorPromotions:       cfg.CreatorPromotion,
+			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
+			ImageIndexFeed:          cfg.ImageIndexFeed,
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
+	}
+	// Without FEED_SERVICE_URL the Node app answers from Postgres (feedPrimaryAvailable() false: local
+	// development only); with the index flag mirrored on, those requests fall back here instead.
+	if cfg.FeedServiceURL != "" {
+		// Fetch bounds each call (feedsvc.Timeout); the transport keeps enough idle connections for
+		// the shadow workers' bounded completion fan-out, so a burst does not open new ones per call.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.MaxIdleConnsPerHost = 16
+		deps.Feed = &feedsvc.Client{BaseURL: cfg.FeedServiceURL, HTTP: &http.Client{Transport: tr}}
 	}
 	srv := &server.Server{
 		Resolver:       resolver,
@@ -139,12 +150,12 @@ func run(log *slog.Logger) error {
 		srv.Fallback = proxy
 	}
 
-	public := http.NewServeMux()
-	public.Handle("/api/trpc/"+server.Procedure, srv)
-	internal := http.NewServeMux()
-	internal.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-	internal.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	internal.HandleFunc("/internal/shadow/"+server.Procedure, srv.ShadowHandler)
+	public := server.PublicMux(srv)
+	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
+	internal := server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), cfg.Pprof)
+	if cfg.Pprof {
+		log.Info("pprof enabled on the internal listener", "addr", cfg.InternalAddr, "path", "/debug/pprof/")
+	}
 
 	servers := []*http.Server{
 		{Addr: cfg.InternalAddr, Handler: internal, ReadHeaderTimeout: 5 * time.Second},

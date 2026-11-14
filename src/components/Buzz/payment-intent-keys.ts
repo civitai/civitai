@@ -16,20 +16,33 @@ import { mintPurchaseKey } from '~/utils/purchase-key';
  * included (`withPurchaseIntentKey`, intent `cosmetic:<shopItemId>`).
  */
 const held = new Map<string, string>();
+const mintedAt = new Map<string, number>();
 
 export function paymentIntentKey(intent: string): string {
   const existing = held.get(intent);
   if (existing) return existing;
   const key = mintPurchaseKey();
   held.set(intent, key);
+  mintedAt.set(key, Date.now());
   return key;
+}
+
+/**
+ * When `key` was minted (epoch ms), the same on every retry under it: for a server that files the
+ * charge under a time as well as the key (a bounty's creation charge carries its charge time).
+ */
+export function paymentIntentKeyMintedAt(key: string): number | undefined {
+  return mintedAt.get(key);
 }
 
 /** Ends the action `key` was minted for, if it has: `error` absent is success. */
 export function settlePaymentIntentKey(intent: string, key: string, error?: unknown) {
   if (error !== undefined && !purchaseCanBeRetriedFresh(error)) return;
   // Only the key this attempt used: a newer attempt may already hold the slot.
-  if (held.get(intent) === key) held.delete(intent);
+  if (held.get(intent) === key) {
+    held.delete(intent);
+    mintedAt.delete(key);
+  }
 }
 
 /** Sends `send` under the intent's key and settles the key by the outcome. */

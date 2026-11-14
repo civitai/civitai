@@ -83,7 +83,7 @@ func (c *QueryCache) Key(b Built) string {
 var statementTimeout = 20 * time.Second
 
 // FetchRows runs the page query through the cache. A query that runs past statementTimeout yields an
-// empty page (never cached), as Node answers a statement timeout (getAllImages: "feeds can accept an
+// empty page (never cached) unless the query asks to throw, as Node answers a statement timeout (getAllImages: "feeds can accept an
 // empty page after a timeout"), so a slow replica is not handed on to the Node app to run again. Only
 // this query's own deadline does that: a cancelled or expired caller context is still an error.
 func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]RawImage, error) {
@@ -101,7 +101,7 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	qctx, cancel := context.WithTimeout(ctx, statementTimeout)
 	defer cancel()
 	timedOut := func() bool {
-		return ctx.Err() == nil && errors.Is(qctx.Err(), context.DeadlineExceeded)
+		return !b.ThrowOnStatementTimeout && ctx.Err() == nil && errors.Is(qctx.Err(), context.DeadlineExceeded)
 	}
 	rows, err := db.Query(qctx, b.SQL, b.Args...)
 	if err != nil {
@@ -395,6 +395,9 @@ func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 		{Key: "user", Val: user},
 		{Key: "stats", Val: stats},
 		{Key: "reactions", Val: reactions},
+		// `tagsByImageId?.get(i.id)`: only built for include 'tags' (withTags, a fallback shape here),
+		// so always undefined. Node's wire carries it as `null` + ["undefined"]; the comparator
+		// decodes both the same (internal/shadow applyUndefined).
 		{Key: "tags", Val: superjson.Undefined{}},
 		{Key: "tagIds", Val: orUndefined(tagIDs, hasTagIDs)},
 		{Key: "cosmetic", Val: frame},

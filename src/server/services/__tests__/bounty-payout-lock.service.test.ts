@@ -728,6 +728,34 @@ describe('awardBountyEntry', () => {
     ]);
   });
 
+  // An invariant guard (green before keyed creation existed too): a keyed creation's prefix
+  // (`bounty-k-<user>-<key>-<time>`) is priced like any other, by the time its last segment carries.
+  it('prices a keyed creation charge by the time its prefix carries last', async () => {
+    benefactors[0].buzzTransactionId = [
+      'bounty-k-5-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-1792454400000',
+    ];
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { accountType: 'yellow', amount: 100 },
+    ]);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledWith(
+      'bounty-k-5-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-1792454400000'
+    );
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        amount: 100,
+        externalTransactionId: 'bounty-award-b4-u5-yellow',
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5],
+          supporterAmounts: [100],
+          supporterChargedAt: [1792454400],
+        },
+      }),
+    ]);
+  });
+
   it('refuses a refunded bounty read under the lock', async () => {
     bounty!.refunded = true;
     await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow();
