@@ -53,11 +53,12 @@ export function hasComFaceSql(alias: string) {
 }
 
 // Mature with no civitai.com face, where one could be added: the nsfw rating is not locked (a lock is
-// a moderator's call or the listing intent check's) and no flag rules a face out, as the main app's
-// com-face endpoint does.
+// a moderator's call or the listing intent check's), no flag rules a face out, as the main app's
+// com-face endpoint does, and the listing intent check has no standing detection, which refuses one.
 export function comFaceReadySql(alias: string) {
   const m = sql.raw(`${alias}.`);
-  return sql<boolean>`(${m}"nsfw" and not ('nsfw' = any(coalesce(${m}"lockedProperties", array[]::text[]))) and not ${m}"minor" and not ${m}"poi" and not ${m}"sfwOnly" and ${m}"mode" is distinct from 'TakenDown' and not ${hasComFaceSql(alias)})`;
+  const intentDetected = sql`coalesce((${m}"meta"->'comFaceIntent'->>'detected')::boolean and not (${m}"meta"->'comFaceIntent' ? 'overturnedAt'), false)`;
+  return sql<boolean>`(${m}"nsfw" and not ('nsfw' = any(coalesce(${m}"lockedProperties", array[]::text[]))) and not ${m}"minor" and not ${m}"poi" and not ${m}"sfwOnly" and ${m}"mode" is distinct from 'TakenDown' and not ${hasComFaceSql(alias)} and not ${intentDetected})`;
 }
 
 /** How many of the creator's live models could be listed on civitai.com with a face. */

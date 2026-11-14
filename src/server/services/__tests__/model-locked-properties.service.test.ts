@@ -1292,6 +1292,21 @@ describe('upsertModel — content flags the row ends up with', () => {
         expect(mockDbWrite.model.update).not.toHaveBeenCalled();
       });
 
+      // The flow's first read saw no rating; the scan rated it before the flow's row lock.
+      it('refuses the private flow when the scan rated the model after its first read', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        mockDbWrite.model.findUnique.mockResolvedValueOnce({
+          ...storedModel,
+          nsfw: false,
+          lockedProperties: [],
+          meta: {},
+        });
+        await expect(
+          privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, nsfw: false })
+        ).rejects.toThrow('Mature content on a model marked as SFW is not permitted.');
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
       it('still refuses when the same save edits the text', async () => {
         mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
         await expect(
@@ -1321,6 +1336,21 @@ describe('upsertModel — content flags the row ends up with', () => {
         ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
       });
 
+      // The read before the save's transaction saw no rating; the scan rated it before the save's row lock.
+      it('refuses when the scan rated the model after the read the save started from', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        mockDbWrite.model.findUnique.mockResolvedValueOnce({
+          ...storedModel,
+          nsfw: false,
+          lockedProperties: [],
+          meta: {},
+        });
+        await expect(
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
+        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
       it('lets it through once a clean rescan has dropped the marker', async () => {
         mockStored({ nsfw: true, lockedProperties: [], meta: {} });
         await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
@@ -1329,7 +1359,10 @@ describe('upsertModel — content flags the row ends up with', () => {
 
       it('lets it through once a moderator has ruled on the rating', async () => {
         mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
-        mockDbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+        // Read by the guard before the save's transaction and again on the locked row.
+        mockDbWrite.modActivity.findFirst
+          .mockResolvedValueOnce({ id: 1 } as never)
+          .mockResolvedValueOnce({ id: 1 } as never);
         await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
         expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
       });

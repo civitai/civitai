@@ -3496,6 +3496,10 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
       sfwOnly: true,
       poi: true,
       gallerySettings: true,
+      name: true,
+      description: true,
+      sfwName: true,
+      sfwCoverImageId: true,
     },
   });
   return row && { ...row, meta: row.meta as ModelMeta | null };
@@ -3947,16 +3951,24 @@ export async function leavePrivateWithHeldVerdict(
   if (applied) await finishHeldVerdictApply(modelId);
 }
 
+/**
+ * The private flow's locks: the stored ones, plus nsfw while the text scan's rating holds it. That
+ * rating carries no lock, but this flow keeps it, dropping the owner's nsfw as for a locked setting.
+ */
+function locksWithScanRating(row: { meta: unknown; lockedProperties: string[] | null }) {
+  const locks = row.lockedProperties ?? [];
+  const source = (row.meta as ModelMeta | null)?.systemNsfwLock?.source;
+  return source && SCAN_RATING_SOURCES.includes(source) ? uniq([...locks, 'nsfw']) : locks;
+}
+
 export const SCAN_RATING_KEPT_MESSAGE =
   "This model was rated mature from its civitai.red title and description, so it stays marked mature, and a civitai.com version is what lists it on civitai.com. To change that, edit the title and description and save them first; once they're checked and pass, you can change the rating.";
 
 /**
- * The text scan's mature rating carries no lock, so the owner can add a .com face; without this the
- * owner could undo the rating alone (untick mature, face or not, or remove the face that listed a
- * model already not mature). An
- * edit to the text is no exemption, as a rescan may never follow it (it dedups on the scanned text):
- * the scan's marker goes only when a rescan reads the text as not mature, and with it this guard.
- * Judged on the face as it will be stored, so it runs after `normalizeSfwFaceInput`.
+ * Holds the text scan's mature rating, which carries no lock, against an owner's save that unticks
+ * mature (face or not) or removes the face that listed a model already not mature. A text edit is no
+ * exemption: only a rescan reading the text as not mature drops the scan's marker, and this guard.
+ * Runs after `normalizeSfwFaceInput`, and again on the locked row inside the save's transaction.
  */
 async function assertScanRatingKept({
   modelId,
@@ -4000,6 +4012,7 @@ async function assertScanRatingKept({
   // SFW-only has no such handoff, so it is held to the guard like any other save.
   if (after('minor') || after('poi')) return;
 
+  // Not `hasCompleteSfwFace`: the save's face is judged as stored, before its level is recomputed.
   const hasFace = (face: { sfwName?: string | null; sfwCoverImageId?: number | null }) =>
     face.sfwName != null && face.sfwCoverImageId != null;
   const faceAfter = hasFace({
@@ -4385,6 +4398,9 @@ export const upsertModel = async (
           prevGallerySettings;
         if (!isModerator && locked) {
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
+          // The scan's rating has no lock to enforce here: a rating that landed since the read
+          // above is held by its guard, judged again on this row.
+          await assertScanRatingKept({ modelId: id, before: locked, data });
           const profanityRefusal = profanityDetected
             ? profanityRatingRefusal(locked, locked.lockedProperties, data)
             : null;
@@ -7400,10 +7416,6 @@ export const privateModelFromTraining = async ({
   if (!model) return null;
 
   const isOwner = model.userId === user.id || user.isModerator;
-  // The text scan's rating carries no lock, but this flow keeps it: the owner's nsfw value is
-  // dropped, as for a locked setting.
-  const scanRatingSource = (model.meta as ModelMeta | null)?.systemNsfwLock?.source;
-  const keepsScanRating = !!scanRatingSource && SCAN_RATING_SOURCES.includes(scanRatingSource);
   if (!isOwner) return null;
 
   if (data.name !== undefined && isModelNameTooLong(data.name, model.name))
@@ -7425,9 +7437,7 @@ export const privateModelFromTraining = async ({
 
   enforceLockedProperties({
     data,
-    storedLockedProperties: keepsScanRating
-      ? [...model.lockedProperties, 'nsfw']
-      : model.lockedProperties,
+    storedLockedProperties: locksWithScanRating(model),
     isModerator: user.isModerator,
   });
 
@@ -7472,10 +7482,10 @@ export const privateModelFromTraining = async ({
         try {
           if (!locked) throw throwNotFoundError(`No model with id ${id}`);
           assertPrivateFlowPublishable({ ...locked, isModerator: user.isModerator });
-          // Against this locked row as well as the read above: a lock set since then wins.
+          // Against this locked row as well as the read above: a lock or scan rating set since wins.
           enforceLockedProperties({
             data,
-            storedLockedProperties: locked.lockedProperties,
+            storedLockedProperties: locksWithScanRating(locked),
             isModerator: user.isModerator,
           });
           assertAllowedContentFlags(locked, { ...data, sfwOnly: true });

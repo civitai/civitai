@@ -82,7 +82,10 @@ describe('comFaceReadySql', () => {
         (5, true, NULL, true, false, false, NULL, NULL, NULL, NULL),
         (6, true, NULL, false, false, false, 'TakenDown', NULL, NULL, NULL),
         (7, true, NULL, false, false, false, NULL, 'Safe name', 11, NULL),
-        (8, true, NULL, false, false, false, NULL, 'Safe name', NULL, '{"comFaceRemoved": {}}');
+        (8, true, NULL, false, false, false, NULL, 'Safe name', NULL, '{"comFaceRemoved": {}}'),
+        (9, true, NULL, false, false, false, NULL, NULL, NULL, '{"comFaceIntent": {"detected": true}}'),
+        (10, true, NULL, false, false, false, NULL, NULL, NULL, '{"comFaceIntent": {"detected": true, "overturnedAt": "x"}}'),
+        (11, true, NULL, false, false, false, NULL, NULL, NULL, '{"comFaceIntent": {"detected": false}}');
     `);
     const where = (comFaceReadySql('"Model"') as unknown as {
       render: () => { text: string; params: unknown[] };
@@ -92,8 +95,8 @@ describe('comFaceReadySql', () => {
       where.params
     );
     // 2: not mature. 3: nsfw locked. 5: minor. 6: taken down. 7: has a face. 8 is in: a removed
-    // face can be added again.
-    expect(rows.map((r) => r.id)).toEqual([1, 4, 8]);
+    // face can be added again. 9: the intent check's detection refuses a face; 10: overturned.
+    expect(rows.map((r) => r.id)).toEqual([1, 4, 8, 10, 11]);
     await ready.close();
   });
 });
