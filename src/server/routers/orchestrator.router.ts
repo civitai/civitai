@@ -269,11 +269,17 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowQuerySchema)
     .query(async ({ ctx, input }) => {
-      return queryWorkflows({
+      const result = await queryWorkflows({
         ...input,
         token: ctx.token,
         hideMatureContent: ctx.hideMatureContent,
       });
+      return {
+        ...result,
+        items: result.items.map((workflow) =>
+          withoutTrainingWeightHandles(workflow, { isModerator: ctx.user.isModerator })
+        ),
+      };
     }),
   getWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

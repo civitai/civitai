@@ -5,11 +5,16 @@ import type * as WorkflowSteps from '~/server/services/orchestrator/workflowStep
 // 🔴 Do NOT mock `~/env/server` here — see `deprecated-rewards.gate.test.ts` for why importing
 // `orchestrator.router` relies on the canonical env mock.
 
-const h = vi.hoisted(() => ({ getWorkflow: vi.fn(), patchWorkflowSteps: vi.fn() }));
+const h = vi.hoisted(() => ({
+  getWorkflow: vi.fn(),
+  queryWorkflows: vi.fn(),
+  patchWorkflowSteps: vi.fn(),
+}));
 
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof Workflows>()),
   getWorkflow: h.getWorkflow,
+  queryWorkflows: h.queryWorkflows,
 }));
 vi.mock('~/server/services/orchestrator/workflowSteps', async (importOriginal) => ({
   ...(await importOriginal<typeof WorkflowSteps>()),
@@ -177,6 +182,27 @@ describe('orchestrator.getWorkflow — a training run’s weights', () => {
       steps: Record<string, unknown>[];
     };
     expect(result.steps[0]).not.toHaveProperty('preparation');
+  });
+});
+
+describe('orchestrator.queryWorkflowsByTags — a training run’s weights', () => {
+  beforeEach(() => {
+    h.queryWorkflows.mockReset().mockImplementation(async () => ({
+      nextCursor: undefined,
+      items: [workflow(), workflow([generationStep])],
+    }));
+  });
+
+  it('names no epoch weights to a non-moderator', async () => {
+    const { items } = await caller().queryWorkflowsByTags({ tags: ['training'] });
+    expect(items).toHaveLength(2);
+    expect(JSON.stringify(items)).not.toMatch(/EPOCH1|SOURCE-EPOCH5/);
+    expect(items[1]).toEqual(workflow([generationStep]));
+  });
+
+  it('names them to a moderator', async () => {
+    const { items } = await caller(true).queryWorkflowsByTags({ tags: ['training'] });
+    expect(items).toEqual([workflow(), workflow([generationStep])]);
   });
 });
 
