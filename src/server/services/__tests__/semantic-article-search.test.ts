@@ -13,6 +13,15 @@ const h = vi.hoisted(() => ({
   includesPoi: vi.fn<(prompt?: string) => string | false>(),
   includesMinor: vi.fn<(prompt?: string) => boolean>(),
   addons: [] as unknown[],
+  isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
+  evalBoolean: vi.fn<() => { enabled: unknown }>(),
+  fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isFlipt: h.isFlipt,
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => h.fliptClient,
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -95,6 +104,9 @@ const ranking =
   };
 
 beforeEach(() => {
+  h.isFlipt.mockReset().mockResolvedValue(false);
+  h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
+  h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
   sent = [];
   h.fetched = [];
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
@@ -264,13 +276,56 @@ describe('semantic article search: the query audit and the browsing level', () =
     ['all levels', 31, [1, 2]],
     ['NSFW levels only', 4 | 8, [1]],
   ])('clamps a non-moderator asking for %s to the safe levels', async (_name, level, expected) => {
+    h.evalBoolean.mockReturnValue({ enabled: true });
     await run({ browsingLevel: level });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: expected });
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), false);
   });
 
   it('clamps a signed-out visitor too', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: true });
     await run({ browsingLevel: 31, user: undefined });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
+  });
+
+  it('lifts the clamp when the key is present and disabled', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: false });
+    await run({ browsingLevel: 31 });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+  });
+
+  it.each([
+    ['the client is unavailable', () => (h.fliptClient = null)],
+    [
+      'the key is missing',
+      () =>
+        h.evalBoolean.mockImplementation(() => {
+          throw new Error('flag not found');
+        }),
+    ],
+    ['the answer is malformed', () => h.evalBoolean.mockReturnValue({ enabled: undefined })],
+  ])('holds the clamp when %s', async (_name, arrange) => {
+    arrange();
+    await run({ browsingLevel: 31 });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
+  });
+
+  it("applies the level's add-on tag exclusions server-side", async () => {
+    h.addons = [{ type: 'some', nsfwLevels: [4], excludedTagIds: [9001] }];
+    await run({ browsingLevel: 31 });
+    expect(sent[0].excludedTagIds).toContain(9001);
+  });
+
+  it('recomputes the add-ons at the narrowed level', async () => {
+    h.addons = [{ type: 'none', nsfwLevels: [4, 8, 16], excludedTagIds: [9200] }];
+    h.includesInappropriate.mockReturnValue('minor');
+    await run({ browsingLevel: 31 });
+    expect(sent[0].excludedTagIds).toContain(9200);
+  });
+
+  it('narrows a minor query to the safe levels once the clamp is off', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    await run({ browsingLevel: 31 });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
   });
 

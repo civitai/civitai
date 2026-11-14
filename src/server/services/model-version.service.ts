@@ -31,7 +31,6 @@ import {
   constants,
   isNonCommercialBaseModel,
   notCommerciallyAvailableMessage,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -214,11 +213,13 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   getBaseModelConfig,
   getBaseModelsByGroup,
   getEcosystemTurboSettings,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
@@ -784,11 +785,14 @@ export const upsertModelVersion = async ({
     surface: 'modelVersion',
     ...patternLogIds,
   });
-  // Trigger words are part of the listing the .com face re-check reads (queued after commit).
+  // Version names and trigger words show on .com unchanged: the .com face re-check rates them
+  // (queued after commit).
   const trainedWordsChanged =
     data.trainedWords !== undefined &&
     [...new Set(data.trainedWords)].sort().join('\n') !==
       [...new Set(storedText?.trainedWords ?? [])].sort().join('\n');
+  const comTextChanged =
+    trainedWordsChanged || (data.name !== undefined && data.name !== storedText?.name);
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -875,17 +879,13 @@ export const upsertModelVersion = async ({
   }
 
   // Validate NSFW + restricted base model combination
-  if (
-    model.nsfw &&
-    data.baseModel &&
-    nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
-  ) {
+  if (model.nsfw && data.baseModel && isMatureRestricted(data.baseModel, 'models')) {
     throw throwBadRequestError(
       `NSFW models cannot use base models with license restrictions. The base model "${
         data.baseModel
-      }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`
+      }" is restricted for NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`
     );
   }
 
@@ -1063,7 +1063,7 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) {
+    if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
     }
@@ -1322,7 +1322,7 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) {
+    if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
     }
@@ -1955,16 +1955,16 @@ export const publishModelVersionsWithEarlyAccess = async ({
     if (
       version.model.nsfw &&
       version.baseModel &&
-      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+      isMatureRestricted(version.baseModel, 'models')
     ) {
       throw throwBadRequestError(
         `Cannot publish NSFW model version "${
           version.name
         }" with restricted base model. The base model "${
           version.baseModel
-        }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-          ', '
-        )}`
+        }" does not permit NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+          'models'
+        ).join(', ')}`
       );
     }
 
@@ -2114,14 +2114,14 @@ export const publishModelVersionById = async ({
   if (
     currentVersion.model.nsfw &&
     currentVersion.baseModel &&
-    nsfwRestrictedBaseModels.includes(currentVersion.baseModel as BaseModel)
+    isMatureRestricted(currentVersion.baseModel, 'models')
   ) {
     throw throwBadRequestError(
       `Cannot publish NSFW model version with restricted base model. The base model "${
         currentVersion.baseModel
-      }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`
+      }" does not permit NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`
     );
   }
 
@@ -3210,7 +3210,9 @@ export function publicModelResponseKey(
   modelId: number,
   browsingLevel: number
 ): RedisKeyTemplateCache {
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
+  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
+  // so entries built by the previous code are not read.
+  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
 }
 
 // Best-effort, fail-open invalidation of the origin-side public response cache for

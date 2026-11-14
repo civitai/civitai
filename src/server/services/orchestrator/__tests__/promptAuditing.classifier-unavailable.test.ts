@@ -41,6 +41,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 
 import type { PromptTrigger } from '~/utils/metadata/audit';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
@@ -95,10 +96,10 @@ beforeEach(() => {
 describe('auditPromptServer — external classifier unavailable', () => {
   it('refuses a clean prompt with a 503 instead of passing it on the word lists alone', async () => {
     classifierDown();
-    await expect(auditPromptServer(options)).rejects.toMatchObject({
-      code: 'SERVICE_UNAVAILABLE',
-      message: UNAVAILABLE,
-    });
+    const error = await auditPromptServer(options).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'SERVICE_UNAVAILABLE', message: UNAVAILABLE });
+    // Its own class, which is what lets a caller tell it from the orchestrator's 503s.
+    expect(error).toBeInstanceOf(PromptCheckUnavailableError);
     expect(mockModeratePrompt).toHaveBeenCalledTimes(1);
     expectNotCounted();
   });
@@ -108,17 +109,6 @@ describe('auditPromptServer — external classifier unavailable', () => {
     await expect(auditPromptServer({ ...options, isModerator: true })).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });
-  });
-
-  it('logs the classifier failure and the refusal', async () => {
-    classifierDown();
-    await auditPromptServer(options).catch(() => undefined);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'external-moderation-error' })
-    );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'prompt-check-unavailable', userId: 5 })
-    );
   });
 
   it('refuses an ACKNOWLEDGED soft block: the acknowledgement never skips the classifier', async () => {

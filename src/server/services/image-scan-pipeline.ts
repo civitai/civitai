@@ -1,8 +1,6 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
 import { dbWrite } from '~/server/db/client';
-import { clickhouse } from '~/server/clickhouse/client';
-import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
@@ -79,7 +77,7 @@ import {
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
-import { withRetries } from '~/utils/errorHandling';
+import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
 import {
   FEEDBACK_CAPTURE_OWNER_ID,
   isFeedbackCaptureOwner,
@@ -196,23 +194,6 @@ export async function sendIngestionSignal({
 
 // Blocked-content detection
 // --------------------------------------------------
-async function getIsImageBlocked(hash: bigint) {
-  if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
-
-  const client = clickhouse;
-  // $query has no retry of its own, and the observed failure is a dropped socket.
-  const rows = await withRetries(
-    () => client.$query<{ count: number }>`
-      SELECT cast(count() as int) as count
-      FROM blocked_images
-      WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
-    `,
-    2,
-    250
-  );
-
-  return (rows?.[0]?.count ?? 0) > 0;
-}
 
 export async function logPerceptualHashMatch({
   imageId,

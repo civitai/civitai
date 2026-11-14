@@ -1766,7 +1766,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // added the guard said "seven" — which double-counted `blocks/me.ts`, a route that declares
     // `requiredScope: 'user:read:self'` and is therefore not in this population at all. At the
     // time of writing the derivation yields
-    // `blocks/{gated-images,generation-resources,images,models,tools,user-checkpoint/set}.ts`;
+    // `blocks/{gated-images,generation-resources,generation-samplers,images,models,resource-intent,tools,user-checkpoint/set}.ts`;
     // `no-unguarded-block-rest-token.test.ts` re-derives it and the number here is prose. They declare no
     // `requiredScope` and, enumerated, reference `claims.scopes` NOWHERE: they authorize on
     // token validity alone and derive their only authority from `claims.maxBrowsingLevel`. So a
@@ -2324,6 +2324,9 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   // could fragment the `endpoint` column.
   'gated-images',
   'generation-resources',
+  // `/api/v1/blocks/generation-samplers` — the per-family sampler catalog. Static: it takes no
+  // parameters at all, so there is no `:seg` position on this route.
+  'generation-samplers',
   'images',
   'increment',
   'item',

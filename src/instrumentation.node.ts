@@ -5,11 +5,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
-import {
-  BatchSpanProcessor,
-  ParentBasedSampler,
-  TraceIdRatioBasedSampler,
-} from '@opentelemetry/sdk-trace-node';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { logs } from '@opentelemetry/api-logs';
 import {
   createOtelLoggerProvider,
@@ -23,12 +19,14 @@ import {
   buildOtelInstrumentations,
   isHttpInstrumentationEnabled,
 } from '~/server/otel-instrumentations';
+import { buildHeadSampling } from '~/server/otel-root-presample';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
 import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
+import { startWarmupAndHealthMetricsLoop } from '~/server/health/start-after-warmup';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
 // Build this app's Kysely clients (over the existing pgDb pools) eagerly at server start, so the first
@@ -115,9 +113,10 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
-// The last-known Flipt flag state in sysRedis (DARK unless FLIPT_SNAPSHOT_MAX_AGE_MS is set; then
-// nothing is registered, read or written): read only when this pod cannot reach Flipt at startup
-// (so its default-on flags are not all OFF), kept current by healthy pods. Registered BEFORE the
+// The last-known Flipt flag state in sysRedis. DARK by default: while FLIPT_SNAPSHOT_MAX_AGE_MS is
+// unset or 0, no store is registered and nothing is read or written. Once it is set, the stored
+// state is read only when this pod cannot reach Flipt (so its default-on flags are not all OFF),
+// and pods with live state keep it current. Registered BEFORE the
 // block below, whose awaited gate is this process's first Flipt init. Dynamic for the same reason as
 // that block (keeps Flipt and sysRedis out of this module's static graph); never affects boot.
 try {
@@ -168,19 +167,10 @@ try {
 // reads its result, so it cannot change readiness. It runs in every process that runs this file,
 // which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
 // calls register()). It is DARK by default: it runs only when HEALTH_METRICS_INTERVAL_MS is a positive number. See ~/server/health/metrics-loop.
-const warmupModule = import('~/server/warmup');
-void warmupModule
-  .then((m) => m.runWarmup())
-  .catch((err) => {
-    console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
-  });
-void Promise.all([import('~/server/health/metrics-loop'), warmupModule.catch(() => null)])
-  .then(([loop, warmup]) =>
-    loop.startHealthMetricsLoopWhenWarm(warmup ? warmup.isWarm : () => true)
-  )
-  .catch((err) => {
-    console.error('[instrumentation.node] health metrics loop start failed (fail-open):', err);
-  });
+void startWarmupAndHealthMetricsLoop({
+  warmup: import('~/server/warmup'),
+  metricsLoop: import('~/server/health/metrics-loop'),
+});
 
 // Attach the OTel sink to the shared structured logger.
 //
@@ -239,17 +229,11 @@ if (!OTEL_ENABLED) {
     const parsedRatio = parseFloat(process.env.OTEL_TRACES_SAMPLE_RATIO ?? '');
     const sampleRatio =
       Number.isFinite(parsedRatio) && parsedRatio >= 0 && parsedRatio <= 1 ? parsedRatio : 0.1;
-    const ratioSampler = new TraceIdRatioBasedSampler(sampleRatio);
-    const sampler = new ParentBasedSampler({
-      root: ratioSampler,
-      // This is a PUBLIC API with no traceparent stripping at the edge, so an
-      // untrusted client could send `traceparent: ...-01` to force a sampled
-      // decision. ParentBased's default `remoteParentSampled` is AlwaysOn, which
-      // would let any client defeat the sampling cap and re-saturate CPU — the
-      // exact failure this change prevents. Apply the ratio to remote parents
-      // too. Local parents still inherit, so intra-process traces stay coherent.
-      remoteParentSampled: ratioSampler,
-    });
+    // ParentBased over TraceIdRatio(sampleRatio), with the ratio applied to remote sampled parents
+    // too (see the comment in buildHeadSampling), plus root pre-sampling's id generator and HTTP
+    // ignore hook (`otel-root-presample` flag, default off — see ~/server/otel-root-presample).
+    // One function, so the hook and the sampler share one ratio sampler.
+    const headSampling = buildHeadSampling(sampleRatio);
     console.log(`[instrumentation.node] OTEL trace sampling ratio: ${sampleRatio}`);
     console.log(
       `[instrumentation.node] OTEL inbound HTTP instrumentation: ${
@@ -292,7 +276,8 @@ if (!OTEL_ENABLED) {
     // Create SDK with trace processor and auto-instrumentations
     const sdk = new NodeSDK({
       resource,
-      sampler,
+      sampler: headSampling.sampler,
+      idGenerator: headSampling.idGenerator,
       spanProcessor: new CredentialRedactingSpanProcessor(new BatchSpanProcessor(traceExporter)),
       // RedisInstrumentation intentionally omitted: at ~5,400 redis ops/s it was
       // the highest-frequency span source (~4 spans/request) and the dominant
@@ -318,7 +303,9 @@ if (!OTEL_ENABLED) {
       // HttpInstrumentation (inbound-only) unless OTEL_HTTP_INSTRUMENTATION=off. The choice,
       // and what turning it off does and does not remove, is documented in
       // ~/server/otel-instrumentations.
-      instrumentations: buildOtelInstrumentations(),
+      instrumentations: buildOtelInstrumentations(process.env, {
+        ignoreIncomingRequestHook: headSampling.ignoreIncomingRequestHook,
+      }),
     });
 
     sdk.start();
@@ -333,6 +320,10 @@ if (!OTEL_ENABLED) {
         m.registerWithSpanSkipUnsampledGate();
         console.log(
           '[instrumentation.node] withSpan skip-unsampled gate armed (flag-controlled: otel-withspan-skip-unsampled)'
+        );
+        m.registerRootPresampleGate();
+        console.log(
+          '[instrumentation.node] root pre-sample gate armed (flag-controlled: otel-root-presample)'
         );
       })
       .catch((err) => {

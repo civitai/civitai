@@ -17,6 +17,7 @@ import { CreatorScoreExplainer } from '~/components/Account/CreatorScoreExplaine
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
+import { rarityLabel } from '~/components/CreatorJourney/milestone-rarity';
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
 import {
   DISCORD_CLAIM_PARAM,
@@ -305,7 +306,7 @@ function BadgeStrip({
   earnedKeys,
   nextKey,
 }: {
-  tiers: CreatorScoreTier[];
+  tiers: (CreatorScoreTier & { rarity: number | null })[];
   earnedKeys: Set<string>;
   nextKey?: string;
 }) {
@@ -323,10 +324,13 @@ function BadgeStrip({
             : tier.key === nextKey
             ? 'next'
             : 'locked';
+          const rarity = rarityLabel(tier.rarity);
           return (
             <Tooltip
               key={tier.key}
-              label={`${tier.name} · ${numberWithCommas(tier.threshold)}`}
+              label={[tier.name, numberWithCommas(tier.threshold), rarity]
+                .filter(Boolean)
+                .join(' · ')}
               withArrow
               withinPortal
             >

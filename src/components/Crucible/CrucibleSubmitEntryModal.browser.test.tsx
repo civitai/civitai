@@ -218,6 +218,13 @@ beforeEach(() => {
   mocks.user = { id: 42, muted: false };
 });
 
+// Each submit carries the entry's idempotency key (a uuid), so a retry cannot charge its fee twice.
+const entryOf = (imageId: number) => ({
+  crucibleId: 1,
+  imageId,
+  idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/),
+});
+
 describe('CrucibleSubmitEntryModal — free entries', () => {
   test('a first entry within the free ones submits without a charge', async () => {
     renderModal();
@@ -478,9 +485,7 @@ describe('CrucibleSubmitEntryModal — generator picks enter once scanned', () =
       />
     );
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
   });
 });
@@ -535,6 +540,25 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     expect(mocks.submitEntry.mock.calls.map(([input]) => input.imageId).sort()).toEqual([77, 78]);
   });
 
+  test('reports a failed scan in the batch notice only, not a toast of its own as well', async () => {
+    const { rerender } = await startBatch();
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.addImageOnSuccess!({ id: 78 });
+    mocks.images = [image(77), { ...image(78), ingestion: ImageIngestionStatus.Error }];
+    await rerender();
+
+    await vi.waitFor(() =>
+      expect(mocks.showErrorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "1 couldn't be entered" })
+      )
+    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(1));
+    expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77));
+    expect(mocks.showErrorNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Processing failed' })
+    );
+  });
+
   // A scan that sends an upload to review drops it from the library rather than settling it.
   test('counts an upload that leaves the library mid-scan as failed, and enters the rest', async () => {
     const { rerender } = await startBatch();
@@ -549,9 +573,7 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     mocks.images = [image(77)];
     await rerender();
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
     await vi.waitFor(() =>
       expect(mocks.showErrorNotification).toHaveBeenCalledWith(
@@ -583,14 +605,80 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     mocks.images = [image(77)];
     await rerender();
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
     await vi.waitFor(() =>
       expect(mocks.showErrorNotification).toHaveBeenCalledWith(
         expect.objectContaining({ title: "1 couldn't be entered" })
       )
     );
+  });
+});
+
+describe('CrucibleSubmitEntryModal — an upload whose scan fails', () => {
+  const props = {
+    crucibleId: 1,
+    crucibleName: 'Free first',
+    entryFee: 50,
+    entryLimit: 3,
+    freeEntriesPerUser: 1,
+    nsfwLevel: 1,
+    contentType: MediaType.image,
+    currentEntryCount: 0,
+  };
+
+  test('stays in the list marked "Processing failed", unselectable, and says so', async () => {
+    mocks.images = [];
+    const view = await renderModal();
+
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.images = [{ ...image(77), ingestion: ImageIngestionStatus.Pending }];
+    await view.rerender(<CrucibleSubmitEntryModal {...props} />);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(mocks.showErrorNotification, 'still scanning').not.toHaveBeenCalled();
+
+    mocks.images = [{ ...image(77), ingestion: ImageIngestionStatus.Error }];
+    await view.rerender(<CrucibleSubmitEntryModal {...props} />);
+
+    await vi.waitFor(() =>
+      expect(mocks.showErrorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Processing failed' })
+      )
+    );
+    const tileOf = (id: number) =>
+      document
+        .querySelector<HTMLElement>(`[data-testid="entry-media"][data-src="image-${id}"]`)!
+        .closest<HTMLElement>('.group')!;
+    await vi.waitFor(() => expect(tileOf(77).textContent).toContain('Processing failed'));
+    expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
+    expect(plainSubmit()!.textContent, 'not picked for the entrant').not.toMatch(/Submit [1-9]/);
+
+    tileOf(77).click();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    expect(plainSubmit()!.textContent).not.toMatch(/Submit [1-9]/);
+    // Positive control: a scanned upload beside it does select, so the click above was real.
+    mocks.images = [{ ...image(77), ingestion: ImageIngestionStatus.Error }, image(78)];
+    await view.rerender(<CrucibleSubmitEntryModal {...props} />);
+    await vi.waitFor(() => expect(tileOf(78)).toBeTruthy());
+    tileOf(78).click();
+    await vi.waitFor(() => expect(plainSubmit()!.textContent).toMatch(/Submit [1-9]/));
+    expect(plainSubmit()!.textContent).toContain('Submit 1 Entry');
+    expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CrucibleSubmitEntryModal — the same image listed twice', () => {
+  // A failed upload added to page 1 can come back on a later page once its rescan succeeds.
+  test('shows it once', async () => {
+    mocks.images = [image(1), image(2), image(1)];
+    await renderModal();
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('[data-testid="entry-media"]').length).toBeGreaterThan(0)
+    );
+    expect(
+      [...document.querySelectorAll('[data-testid="entry-media"]')].map((el) =>
+        el.getAttribute('data-src')
+      )
+    ).toEqual(['image-1', 'image-2']);
   });
 });

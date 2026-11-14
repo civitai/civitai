@@ -792,8 +792,8 @@ export async function createBuzzTransaction(
     fromAccountType?: BuzzAccountType;
     insufficientFundsErrorMsg?: string;
   },
-  // Optional per-call overrides. Absent, the client's write defaults apply: a 10s bound, and a
-  // retry only when the request provably never left.
+  // Optional per-call overrides. Absent, the client's write defaults apply: no deadline (the call
+  // waits for Buzz's answer), and a retry only when the request provably never left.
   opts?: BuzzWriteOptions
 ) {
   if (entityType && entityId && toAccountId === undefined) {
@@ -837,28 +837,57 @@ export async function createBuzzTransaction(
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
+  // The package requires an id so a lost response can be looked up. A caller with a business
+  // key passes one derived from it (and a retry of that caller reuses it); for one that does
+  // not, this id is minted ONCE per call, before the client's own retries, so the client never
+  // resends a write under a second id. It does not make a caller's own re-run idempotent.
   const externalTransactionId = payload.externalTransactionId || crypto.randomUUID();
+  return postBuzzTransaction(
+    { ...payload, entityId, entityType, toAccountId, amount, details, externalTransactionId },
+    opts
+  );
+}
+
+type PostBuzzTransactionInput = Omit<CreateBuzzTransactionInput, 'toAccountId'> & {
+  fromAccountId: number;
+  fromAccountType?: BuzzAccountType;
+  toAccountId: number;
+  externalTransactionId: string;
+};
+
+async function postBuzzTransaction(
+  { entityId, entityType, details, externalTransactionId, ...payload }: PostBuzzTransactionInput,
+  opts?: BuzzWriteOptions
+) {
   const data = await buzzService.createTransaction(
     {
       ...payload,
-      // The package requires an id so a lost response can be looked up. A caller with a business
-      // key passes one derived from it (and a retry of that caller reuses it); for one that does
-      // not, this id is minted ONCE per call, before the client's own retries, so the client never
-      // resends a write under a second id. It does not make a caller's own re-run idempotent.
       externalTransactionId,
       details: {
         ...(details ?? {}),
         entityId: entityId ?? details?.entityId,
         entityType: entityType ?? details?.entityType,
       },
-      amount,
-      toAccountId,
     },
     opts
   );
 
   // The key it was filed under, so a caller can reconcile by it (`getTransactionByExternalId`).
   return { ...data, externalTransactionId };
+}
+
+/**
+ * Resends a write under the same `externalTransactionId` after its first send ended with an
+ * unknown outcome. The ledger keeps external ids unique: one it already holds is answered with
+ * 200 and the EXISTING transaction's id, moving nothing (on a short balance too, since it checks
+ * for a committed id before answering "insufficient funds"); one it does not hold is charged now,
+ * once, and a first send still in flight then loses on the unique index. Either way one charge.
+ *
+ * No balance pre-check: the balance it would read may already reflect the first send's charge.
+ * A 200 with a null id is the ledger's "insufficient funds" for an id it does not hold.
+ */
+export async function resendBuzzTransaction(input: PostBuzzTransactionInput) {
+  return postBuzzTransaction(input);
 }
 
 export async function upsertBuzzTip({
@@ -1175,9 +1204,11 @@ export async function completeStripeBuzzTransaction({
 export async function refundTransaction(
   transactionId: string,
   description?: string,
-  details?: MixedObject
+  details?: MixedObject,
+  // A refund made while holding a charge-key lock needs a deadline (refundUnlessRecorded).
+  opts?: BuzzWriteOptions
 ) {
-  return buzzService.refundTransaction(transactionId, { description, details });
+  return buzzService.refundTransaction(transactionId, { description, details }, opts);
 }
 
 /**

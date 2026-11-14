@@ -274,6 +274,7 @@ import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflo
 import { collectTrainingTriggerWords } from '~/server/services/blocks/block-training-trigger-word';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
+import { checkAppStepResources } from '~/server/services/blocks/app-step-resources';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -1058,6 +1059,15 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
     // (SFW, per the App-Blocks product decision) block gets the SFW audit too.
     isGreen: allowMatureContent === false,
   };
+}
+
+/**
+ * The maturity fields of a real submit: the token's ceiling, held to PG-13 with mature content
+ * refused when a resource's base model restricts mature generation (`capsGenerationOutput`).
+ */
+function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | undefined) {
+  if (capOutput) return { nsfwLevel: 'pg13' as const, allowMatureContent: false };
+  return allowMatureContent === false ? { allowMatureContent: false } : {};
 }
 
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
@@ -2019,7 +2029,7 @@ async function createBlockTextToImageStep(opts: {
     // the population phase 3's reject/degrade decision has to be measured on.
     'block'
   );
-  const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
+  const { steps, workflowMetadata, capOutput } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
@@ -2076,6 +2086,7 @@ async function createBlockTextToImageStep(opts: {
         ? { ...workflowMetadata, [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions }
         : workflowMetadata,
     modelSubstitutions,
+    capOutput,
   };
 }
 
@@ -7788,11 +7799,12 @@ export const blocksRouter = router({
         // `createBlockTextToImageStep` returns it. Mirrors the normal form path
         // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
         // already stripped fields the block context lacks (e.g. remixOfId).
-        const { step, workflowMetadata, modelSubstitutions } = await createBlockTextToImageStep({
-          input: generateInput,
-          user,
-          isGreen,
-        });
+        const { step, workflowMetadata, modelSubstitutions, capOutput } =
+          await createBlockTextToImageStep({
+            input: generateInput,
+            user,
+            isGreen,
+          });
         const submitted = await submitWorkflow({
           token,
           body: {
@@ -7801,8 +7813,9 @@ export const blocksRouter = router({
             currencies,
             metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
-            // rejects mature output when this is false. Token-claim derived.
-            ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+            // rejects mature output when this is false. Token-claim derived, and a base model
+            // that restricts mature generation holds it to PG-13 whatever the token allows.
+            ...blockOutputClamp(capOutput, allowMatureContent),
             // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
             // OWN internal 3× retry of THIS call — collapses to the existing
             // workflow on the orchestrator (dedupe on (userId, externalId)) → no
@@ -10443,11 +10456,10 @@ async function submitCustomComfyWorkflow(opts: {
   // ── Entitlement gate (plan §6). A raw customComfy step submits its `resources`
   // AIR array DIRECTLY, bypassing the generation-graph path's automatic
   // resolveCanGenerateForVersions. Run the SAME belt the txt2img page branch uses
-  // over EVERY civitai version the recipe pins (v1 = fixed public LoRAs) BEFORE
-  // emitting the step — so the code-reviewed registry can't be quietly edited to
-  // point at a gated / early-access / Private / unpublished version without the
-  // belt catching it. The huggingface staticAirs carry no civitai entitlement
-  // (exempt-by-construction). checkpointPolicy:'pinned' → no user checkpoint in v1.
+  // over the recipe's `checkpoints` and `loras` BEFORE emitting the step — so the
+  // code-reviewed registry can't be quietly edited to point at a gated /
+  // early-access / Private / unpublished version without the belt catching it.
+  // `staticAirs` are checked by `checkAppStepResources` below.
   const versionIds = recipe ? recipeCivitaiVersionIds(recipe) : [];
   if (recipe && versionIds.length > 0) {
     const gates: ReturnType<typeof buildGateVersion>[] = [];
@@ -10455,7 +10467,6 @@ async function submitCustomComfyWorkflow(opts: {
       const resolvedVersion = await resolvePageResourceContext(versionId);
       gates.push(buildGateVersion(resolvedVersion.gate));
     }
-    assertNoRestrictedBaseModels({ baseModels: gates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates,
       viewer: { id: userId, isModerator: !!user.isModerator },
@@ -10464,9 +10475,24 @@ async function submitCustomComfyWorkflow(opts: {
     });
   }
 
-  // A recipe's Hugging Face AIRs depend on the engine its params pick, so check the built step's.
-  if (recipe && params)
-    assertNoRestrictedBaseModels({ airs: recipe.buildStep(params, {}).resources });
+  // 🔴 THE STEP INPUT IS CONSTRUCTED SERVER-SIDE FROM AN ALLOWLISTED SET OF
+  // FIELDS — the app's body is NEVER spread into it. `CustomComfyInput` also
+  // carries `sessionOwnerApiToken` (a Civitai API token forwarded to the
+  // claiming worker), `comfyImage` (an arbitrary OCI container), `minVramGb`
+  // (changes the worker tier, and therefore the Buzz/second rate the whole
+  // ceiling argument rests on), `sessionId`, `useSageAttention` and
+  // `minimumDurationSeconds`. A spread would hand every one of those to the
+  // app. Only these three keys are ever emitted; the wire schema's `.strict()`
+  // is the second belt, rejecting a body that names any of them at all.
+  const stepInput = inlineBody
+    ? {
+        resources: inlineBody.resources,
+        trace: 'binary' as const,
+        workflow: inlineBody.workflow,
+      }
+    : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
+  // Every resource the graph loads must be a Civitai version; their base models decide the cap.
+  const { capOutput } = await checkAppStepResources(stepInput);
 
   const token = await getOrchestratorToken(userId, ctx);
 
@@ -10743,22 +10769,6 @@ async function submitCustomComfyWorkflow(opts: {
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
   const submittedAt = Date.now();
   try {
-    // 🔴 THE STEP INPUT IS CONSTRUCTED SERVER-SIDE FROM AN ALLOWLISTED SET OF
-    // FIELDS — the app's body is NEVER spread into it. `CustomComfyInput` also
-    // carries `sessionOwnerApiToken` (a Civitai API token forwarded to the
-    // claiming worker), `comfyImage` (an arbitrary OCI container), `minVramGb`
-    // (changes the worker tier, and therefore the Buzz/second rate the whole
-    // ceiling argument rests on), `sessionId`, `useSageAttention` and
-    // `minimumDurationSeconds`. A spread would hand every one of those to the
-    // app. Only these three keys are ever emitted; the wire schema's `.strict()`
-    // is the second belt, rejecting a body that names any of them at all.
-    const stepInput = inlineBody
-      ? {
-          resources: inlineBody.resources,
-          trace: 'binary' as const,
-          workflow: inlineBody.workflow,
-        }
-      : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
     // Stamp the SAME per-engine timeout the ceiling above was reserved against —
     // the timeout is the physical cap for that reservation (v1.1). For an inline
     // body that timeout IS the declared `maxBuzz`.
@@ -10773,7 +10783,7 @@ async function submitCustomComfyWorkflow(opts: {
         tags,
         currencies,
         // Authoritative maturity clamp on the real submit — token-claim derived.
-        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        ...blockOutputClamp(capOutput, allowMatureContent),
         // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s OWN
         // internal 3× retry of THIS call — collapses to the existing workflow on the
         // orchestrator → no second Buzz charge. Always present.
@@ -12620,6 +12630,7 @@ async function estimatePassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
+  await checkAppStepResources(body.input);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // The token mint is INSIDE the quote's catch on this path and outside it on
@@ -12835,6 +12846,7 @@ async function submitPassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
+  const { capOutput } = await checkAppStepResources(body.input);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   await auditPassThroughPrompts({
@@ -13095,7 +13107,7 @@ async function submitPassThroughStepWorkflow(opts: {
         steps: [orchestratorStep as any],
         tags,
         currencies,
-        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        ...blockOutputClamp(capOutput, allowMatureContent),
         externalId: blockExternalId,
       },
     });
@@ -13419,6 +13431,7 @@ async function estimateMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
+  await checkAppStepResources(body);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   // A mint failure is a missing quote here (`unavailable`), not a throw as on the
@@ -13503,6 +13516,7 @@ async function submitMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
+  const { capOutput } = await checkAppStepResources(body);
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -13750,7 +13764,7 @@ async function submitMultiStepWorkflow(opts: {
         steps: orchestratorSteps as any,
         tags,
         currencies,
-        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        ...blockOutputClamp(capOutput, allowMatureContent),
         ...(body.arguments ? { arguments: body.arguments } : {}),
         // Which steps this submit named, so a later poll can tell them from a
         // step the orchestrator added. See `WORKFLOW_METADATA_BLOCK_STEPS_KEY`.
@@ -14283,6 +14297,8 @@ type QuotedGrantSubmitPlan = {
   invocation: { step: string; variant: string };
   /** Constant settle labels (metric cardinality). */
   settle: { engine: string; recipe: string };
+  /** Hold the output to PG-13 (`blockOutputClamp`). */
+  capOutput?: boolean;
 };
 
 /**
@@ -14570,7 +14586,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
           steps: [plan.step as any],
           tags: plan.tags,
           currencies,
-          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          ...blockOutputClamp(!!plan.capOutput, allowMatureContent),
           externalId: blockExternalId,
         },
       });
@@ -14947,6 +14963,8 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
   body: PassThroughStepBody & { quoteId: string };
 }) {
   const { ctx, claims, body } = opts;
+  // Set by the preflight, read by the plan.
+  let capOutput = false;
   return submitConfirmedQuoteWorkflow({
     ctx,
     claims,
@@ -14968,6 +14986,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           steps: [body],
         });
         await assertBlockTrainingModelsAllowed([body]);
+        capOutput = (await checkAppStepResources(body.input)).capOutput;
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -15003,6 +15022,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           },
           invocation: { step: body.$type, variant: PASS_THROUGH_ENGINE_LABEL },
           settle: { engine: PASS_THROUGH_ENGINE_LABEL, recipe: PASS_THROUGH_RECIPE_LABEL },
+          capOutput,
         };
       },
     },

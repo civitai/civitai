@@ -25,8 +25,10 @@ vi.mock('~/server/db/pgDb', () => ({
 
 import {
   BLOCK_HIDE_MAX_COMMENTS,
+  blockHideCandidatesSql,
   hideBlockedUserCommentsOnOwnContent,
   SECTION_OWNERS,
+  SECTION_TYPES_AWAITING_ENUM,
 } from '~/server/services/block-hide-comments.service';
 import { CommentEntityType } from '~/shared/utils/prisma/enums';
 
@@ -57,6 +59,7 @@ beforeAll(async () => {
     CREATE TABLE "Challenge" (id int PRIMARY KEY, "createdById" int);
     CREATE TABLE app_listings (serial_id int PRIMARY KEY, user_id int);
     CREATE TABLE "ComicChapter" (id int PRIMARY KEY, "projectId" int);
+    CREATE TABLE "PostText" (id int PRIMARY KEY, "postId" int);
     CREATE TYPE "CommentEntityType" AS ENUM (${Object.values(CommentEntityType)
       .map((t) => `'${t}'`)
       .join(', ')});
@@ -175,6 +178,14 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
 
 describe('SECTION_OWNERS', () => {
   // A comment section with no owner here is never hidden on a block.
+  // The query casts each type to the enum, so naming one the database lacks fails every block.
+  it('names no type whose enum value is still to be applied', () => {
+    expect(SECTION_TYPES_AWAITING_ENUM.length).toBeGreaterThan(0);
+    for (const type of SECTION_TYPES_AWAITING_ENUM)
+      expect(blockHideCandidatesSql).not.toContain(`'${type}'`);
+    expect(blockHideCandidatesSql).toContain(`'post'::`);
+  });
+
   it('resolves an owner for every comment entity type', () => {
     expect(Object.keys(SECTION_OWNERS).sort()).toEqual(Object.values(CommentEntityType).sort());
   });
@@ -235,6 +246,11 @@ describe('SECTION_OWNERS', () => {
       `INSERT INTO "Storyline" (id, "userId") VALUES (:mine, ${BLOCKER}), (:theirs, ${OTHER_OWNER})`,
     ],
     [
+      'postText',
+      `INSERT INTO "Post" (id, "userId") VALUES (:mine, ${BLOCKER}), (:theirs, ${OTHER_OWNER});
+       INSERT INTO "PostText" (id, "postId") VALUES (:mine, :mine), (:theirs, :theirs)`,
+    ],
+    [
       'comicChapter',
       `INSERT INTO "ComicProject" (id, "userId") VALUES (:mine, ${BLOCKER}), (:theirs, ${OTHER_OWNER});
        INSERT INTO "ComicChapter" (id, "projectId") VALUES (:mine, :mine), (:theirs, :theirs)`,
@@ -247,7 +263,7 @@ describe('SECTION_OWNERS', () => {
     await holder.db.exec(`
       TRUNCATE "CommentV3", "Image", "Post", "Article", "Model", "ResourceReview", "Bounty",
         "BountyEntry", "Model3D", "Model3DReview", "Challenge", app_listings, "Crucible",
-        "Storyline", "ComicProject", "ComicChapter";
+        "Storyline", "ComicProject", "ComicChapter", "PostText";
       ${SECTIONS.map(([, sql], i) =>
         sql.replaceAll(':mine', String(mine(i))).replaceAll(':theirs', String(theirs(i)))
       ).join(';\n')};
@@ -271,6 +287,18 @@ describe('SECTION_OWNERS', () => {
     const { rows } = await holder.db.query<{ entityType: string; id: number }>(
       `SELECT "entityType", id FROM "CommentV3" WHERE hidden ORDER BY id`
     );
-    expect(rows).toEqual(SECTIONS.map(([type], i) => ({ entityType: type, id: mine(i) })));
+    expect(rows).toEqual(
+      SECTIONS.flatMap(([type], i) =>
+        SECTION_TYPES_AWAITING_ENUM.includes(type) ? [] : [{ entityType: type, id: mine(i) }]
+      )
+    );
+  });
+
+  it("finds the blocker's own section of each type left out until its enum value exists", async () => {
+    for (const type of SECTION_TYPES_AWAITING_ENUM) {
+      const i = SECTIONS.findIndex(([t]) => t === type);
+      const { rows } = await holder.db.query<{ id: number }>(SECTION_OWNERS[type](String(BLOCKER)));
+      expect(rows.map((r) => Object.values(r)[0])).toEqual([mine(i)]);
+    }
   });
 });

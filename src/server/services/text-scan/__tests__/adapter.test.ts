@@ -113,14 +113,15 @@ describe('createTextScanAdapter', () => {
     expect(await createTextScanShadowAdapter('Post').isEnabled!({ entityId: 1 })).toBe(enabled);
   });
 
-  it('registers a hookless shadow adapter for each of the 16 entities', () => {
+  it('registers a hookless shadow adapter for each of the 17 entities', () => {
     const adapters = textScanShadowAdapters();
-    expect(Object.keys(adapters)).toHaveLength(16);
+    expect(Object.keys(adapters)).toHaveLength(17);
     for (const key of [
       'Crucible:shadow',
       'Collection:shadow',
       'Storyline:shadow',
       'ImageCaption:shadow',
+      'PostText:shadow',
       'ModelRules:shadow',
     ]) {
       expect(adapters[key]).toBeDefined();

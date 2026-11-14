@@ -699,6 +699,18 @@ describe('submitEntry — content type', () => {
     dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
   };
 
+  it('refuses an entry-draft upload whose scan failed, and says to upload it again', async () => {
+    draftOf();
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      ingestion: 'Error',
+    });
+
+    await expect(submit()).rejects.toThrow(/Processing this upload failed/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.post.updateMany).not.toHaveBeenCalled();
+  });
+
   it("enters the caller's own draft image and schedules its post for the crucible's end", async () => {
     const endAt = new Date(Date.now() + 3 * 24 * 60 * 60_000);
     dbMock.dbRead.crucible.findUnique.mockResolvedValue({
@@ -1139,7 +1151,7 @@ describe('submitEntry — one submit at a time per user', () => {
     expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
       'lock:crucible-entry:1:42',
       expect.stringMatching(/^[0-9a-f-]{36}$/),
-      { PX: 30_000, NX: true }
+      { PX: 180_000, NX: true }
     );
   });
 
