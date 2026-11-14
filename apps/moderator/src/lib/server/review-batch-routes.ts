@@ -36,7 +36,6 @@ async function authorizedBatch(
   if (!batch || batch.tier !== tier || batch.viewer !== user.id) error(404, 'Not available here.');
   if (!(await mintingKeyLive(batch.keyId))) error(404, 'Not available here.');
   if (!sheet.batches.includes(batch.hash)) {
-    // The tier here is the route's and the stored batch's, never anything the client sent.
     const joined = tier === 'general' && sheet.join ? await sheet.join(batch.hash) : false;
     if (!joined) error(404, 'Not available here.');
   }
