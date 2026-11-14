@@ -1,13 +1,20 @@
 import { useState } from 'react';
-import { Stack, Text } from '@mantine/core';
-import { IconClock, IconFlag } from '@tabler/icons-react';
-import { Countdown } from '~/components/Countdown/Countdown';
+import { Badge, Group, Stack, Text } from '@mantine/core';
+import {
+  IconArrowUpRight,
+  IconClock,
+  IconFlag,
+  IconFlagCheck,
+  IconHourglassHigh,
+  IconTrophy,
+  IconUsers,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { Popover } from '~/components/MantineOverlays';
 import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { useFlag } from '~/components/HatTurf/FlagRace/FlagRaceContext';
 import { flagCounting, flagGap, flagLeader } from '~/components/HatTurf/FlagRace/flag-race.utils';
-import { useFlagClock } from '~/components/HatTurf/FlagRace/FlagCountdown';
+import { FinalHourCountdown, useFlagClock } from '~/components/HatTurf/FlagRace/FlagCountdown';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import {
   FALLBACK_COLOR,
@@ -21,7 +28,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 const RING_STROKE = 4;
 const DISC_RADIUS = 14;
 const HOUR_MS = 60 * 60 * 1000;
-const finalHourAt = (closesAt: Date | string) => new Date(new Date(closesAt).getTime() - HOUR_MS);
 
 /** A home-row flag's corner badge: who holds it, its points, and once closed, who won them. */
 export function FlagBadge({ imageId, className }: { imageId: number; className?: string }) {
@@ -59,7 +65,6 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
         <button
           type="button"
           className={clsx(classes.badge, classes.chip, finalHour && 'animate-pulse', className)}
-          // A smaller dial than a Turf badge's: the flag's points and clock are what matter here.
           style={{ '--hat-turf-badge-size': '18px' } as React.CSSProperties}
           aria-label={`${label} Show details`}
           aria-expanded={open}
@@ -123,7 +128,7 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
                 {clock.phase === 'final' ? (
                   'Any moment'
                 ) : (
-                  <Countdown endTime={finalHourAt(summary.closesAt)} format="short" />
+                  <FinalHourCountdown closesAt={summary.closesAt} />
                 )}
               </span>
             )
@@ -137,46 +142,163 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
   );
 }
 
+/** A flag's details: its pot, the teams' hats as one bar, the viewer's team's gap, and its clock. */
 function FlagDetails({ imageId }: { imageId: number }) {
   const found = useFlag(imageId);
   const feed = useTurfFeed();
+  const teamColor = useTeamColor();
+  const clock = useFlagClock(found?.summary);
   if (!found) return null;
   const { summary, flag, rank } = found;
-  const gap = flagGap(flag.hatsByTeam, feed?.team);
+  const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
+  const closed = summary.closed;
+  const counting = flagCounting(summary);
+  const teams = Object.entries(flag.hatsByTeam)
+    .filter(([, hats]) => hats > 0)
+    .sort(([, a], [, b]) => b - a);
+  const total = teams.reduce((sum, [, hats]) => sum + hats, 0);
+  const gap = closed ? null : flagGap(flag.hatsByTeam, feed?.team);
 
   return (
-    <Stack gap={6}>
-      <Text fw={700} size="sm">
-        Flag #{rank}
-        {summary.closed ? ': closed' : ''}
-      </Text>
-      {summary.closed ? (
-        <Text size="sm">
-          {!flagCounting(summary) && flag.winners.length
-            ? `${flag.winners.join(' and ')} won this flag.`
-            : 'This flag is done taking hats. Its result is on its way.'}
-        </Text>
-      ) : (
-        <>
-          <Text size="sm">Points up for grabs: {abbreviateNumber(flag.pot)}</Text>
-          <Text size="sm">Players on this flag: {abbreviateNumber(flag.players)}</Text>
-          <Text size="sm" c="dimmed">
-            The race ends at a random moment in its final hour.
+    <Stack gap={8} data-testid="flag-details">
+      <Group justify="space-between" wrap="nowrap" gap={8}>
+        <Group gap={6} wrap="nowrap">
+          {closed ? <IconFlagCheck size={16} /> : <IconFlag size={16} />}
+          <Text fw={700} size="sm">
+            Flag #{rank}
           </Text>
-          {gap !== null && feed?.team && (
+        </Group>
+        {closed ? (
+          <Badge variant="light" color="gray" radius="xl">
+            Closed
+          </Badge>
+        ) : (
+          <Badge
+            variant="light"
+            color="yellow"
+            radius="xl"
+            leftSection={<IconTrophy size={12} />}
+            data-testid="flag-details-pot"
+          >
+            {abbreviateNumber(flag.pot)} pts
+          </Badge>
+        )}
+      </Group>
+
+      {closed &&
+        (counting ? (
+          <Group gap={6} wrap="nowrap" c="dimmed">
+            <IconHourglassHigh size={16} />
+            <Text size="sm">Counting results…</Text>
+          </Group>
+        ) : flag.winners.length ? (
+          <Group
+            gap={8}
+            wrap="nowrap"
+            className="rounded-md px-2 py-1.5"
+            style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}
+            data-testid="flag-details-winner"
+          >
+            <IconTrophy size={16} color={colorOf(flag.winners[0])} />
             <Text size="sm">
-              {gap > 0
-                ? `${feed.team} leads by ${abbreviateNumber(gap)} hats`
-                : gap === 0
-                ? `${feed.team} is level with the lead`
-                : `${feed.team} is behind by ${abbreviateNumber(-gap)} hats`}
+              <Text span fw={700} c={colorOf(flag.winners[0])}>
+                {flag.winners.join(' & ')}
+              </Text>{' '}
+              {flag.winners.length > 1 ? 'split' : 'won'}{' '}
+              <Text span fw={700}>
+                {abbreviateNumber(flag.pot)} pts
+              </Text>
             </Text>
-          )}
-          <Text size="xs" c="dimmed">
-            Add hats with the hat button on the flag.
+          </Group>
+        ) : (
+          <Text size="sm" c="dimmed">
+            Nobody placed a hat here.
           </Text>
-        </>
+        ))}
+
+      {total > 0 ? (
+        <div>
+          <div
+            className="flex h-2.5 overflow-hidden rounded-full"
+            style={{ backgroundColor: 'var(--mantine-color-dark-4)' }}
+            role="img"
+            aria-label={teams.map(([team, hats]) => `${team} ${hats}`).join(', ')}
+          >
+            {teams.map(([team, hats]) => (
+              <span
+                key={team}
+                style={{ width: `${(hats / total) * 100}%`, backgroundColor: colorOf(team) }}
+              />
+            ))}
+          </div>
+          <Group gap={10} mt={6}>
+            {teams.map(([team, hats]) => (
+              <Group key={team} gap={4} wrap="nowrap">
+                <span
+                  className="inline-block size-2 rounded-full"
+                  style={{ backgroundColor: colorOf(team) }}
+                />
+                <Text size="xs" fw={600} aria-label={`${team}: ${hats} hats`}>
+                  {abbreviateNumber(hats)}
+                </Text>
+              </Group>
+            ))}
+          </Group>
+        </div>
+      ) : (
+        !closed && (
+          <Text size="sm" c="dimmed">
+            No hats yet. Be the first.
+          </Text>
+        )
       )}
+
+      {gap !== null && feed?.team && (
+        <Group
+          gap={6}
+          wrap="nowrap"
+          className="rounded-md px-2 py-1"
+          style={{ backgroundColor: 'rgba(34,139,230,0.12)' }}
+          data-testid="flag-details-gap"
+        >
+          <IconArrowUpRight size={14} />
+          <Text size="xs">
+            {gap > 0 ? (
+              <>
+                {feed.team} leads by <b>{abbreviateNumber(gap)}</b>
+              </>
+            ) : (
+              <>
+                {feed.team} needs <b>{plural(-gap + 1, 'hat', 'hats')}</b> to take it
+              </>
+            )}
+          </Text>
+        </Group>
+      )}
+
+      <Group gap={12} c="dimmed">
+        <Group gap={4} wrap="nowrap">
+          <IconUsers size={14} />
+          <Text size="xs">{plural(flag.players, 'player', 'players')}</Text>
+        </Group>
+        {clock && clock.phase !== 'closed' && (
+          <Group gap={4} wrap="nowrap">
+            <IconClock size={14} />
+            <Text size="xs">
+              {clock.phase === 'final' ? (
+                'Could end any moment'
+              ) : (
+                <>
+                  Final hour in <FinalHourCountdown closesAt={summary.closesAt} />
+                </>
+              )}
+            </Text>
+          </Group>
+        )}
+      </Group>
     </Stack>
   );
 }
+
+const plural = (n: number, one: string, many: string) =>
+  `${abbreviateNumber(n)} ${n === 1 ? one : many}`;
