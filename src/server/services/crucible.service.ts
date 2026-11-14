@@ -2015,8 +2015,12 @@ function getEntryLockKey(crucibleId: number, userId: number): RedisKeyTemplateSy
 }
 
 // Long enough to cover a submit's charge and insert; the token stops an expired holder's release
-// from deleting the lock a later submit took.
-const ENTRY_LOCK_TTL_MS = 30_000;
+// from deleting the lock a later submit took. A keyed submit can run its Buzz lookups, a charge and
+// one resend, the record transaction (45s bound) and up to three refund attempts after a refused
+// insert (each a short lock transaction), on the order of 100s at worst, so the lock lasts longer
+// than that. It is released at the end of every submit; the TTL matters only for a holder that
+// died, which blocks that user's next submit until it lapses.
+const ENTRY_LOCK_TTL_MS = 180_000;
 const ENTRY_REFUND_ATTEMPTS = 3;
 
 /**
@@ -2390,6 +2394,9 @@ export const submitEntry = async ({
               },
               CHARGE_LOCKED_REFUND
             ),
+          // A refusal at the entry cutoff is routine, and a retry is then refused before it reaches
+          // the charge, so the refund is retried here (each attempt its own short transaction).
+          refundAttempts: ENTRY_REFUND_ATTEMPTS,
         }
       );
     };

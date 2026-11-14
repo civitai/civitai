@@ -319,6 +319,36 @@ describe('a crucible entry fee across an unknown outcome', () => {
     });
   });
 
+  // A refusal at the cutoff is routine, and a retry is then refused before it reaches the charge,
+  // so one failed refund attempt must not leave the fee held.
+  it('a refund that fails once after a refused entry is retried: refunded, nothing saved', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0 as never);
+    buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
+
+    await expect(enter(KEY)).rejects.toThrow(/not accepting entries|closed/);
+
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    expect(ledger.refunds()).toHaveLength(1);
+    expect(entries).toHaveLength(0);
+  });
+
+  // The first charge spent the balance and the retry's lookup has not seen it yet, so the app's
+  // balance check refuses. The charge is looked up again before that refusal stands.
+  it('a retry refused for balance while its earlier charge is held continues from that charge', async () => {
+    ledger.setBalance(USER, FEE);
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await expect(enter(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+    ledger.hideNextLookups(1);
+
+    await enter(KEY);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(entries).toHaveLength(1);
+    expect(pool).toBe(FEE);
+  });
+
   it('a new entry (a new key) charges again', async () => {
     await enter(KEY);
     await enter(OTHER_KEY, OTHER_IMAGE_ID);

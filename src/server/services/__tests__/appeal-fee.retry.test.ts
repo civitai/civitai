@@ -192,6 +192,22 @@ describe('an appeal fee across an unknown outcome', () => {
     expect(appeals).toHaveLength(1);
   });
 
+  // The ledger checks the balance before it looks at ids, so a retry whose lookup has not seen the
+  // earlier charge yet is declined for the balance that charge spent. The charge is looked up
+  // again before the decline stands: a 400 would release the client's key with the fee held.
+  it('a retry declined for balance while its earlier charge is held continues from that charge', async () => {
+    ledger.setBalance(USER, FEE);
+    loseEveryAnswer();
+    await expect(appeal(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+    ledger.hideNextLookups(1);
+
+    await appeal(KEY);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(appeals).toHaveLength(1);
+  });
+
   it('a retry after the appeal was recorded (response lost) answers with it and charges nothing more', async () => {
     const first = await appeal(KEY);
 

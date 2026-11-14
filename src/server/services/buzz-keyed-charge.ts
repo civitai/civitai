@@ -253,6 +253,33 @@ async function assertHeldChargeMatches(
   }
 }
 
+/** How many times, and how far apart, a refused keyed charge looks for a held one first. */
+export const HELD_AFTER_REFUSAL_LOOKUPS = 3;
+export const HELD_AFTER_REFUSAL_PAUSE_MS = 250;
+
+/**
+ * Legs held under `prefix`, looked up a few times apart: a write the ledger committed can be
+ * missing from its first read. Empty when none appear. A lookup that fails says nothing about
+ * them, so it is "may have gone through" (the client keeps its key) rather than the refusal.
+ */
+async function heldAfterRefusal(
+  prefix: string,
+  outcomeContext: { externalTransactionId: string; userId: number; amount?: number }
+): Promise<HeldLeg[]> {
+  for (let attempt = 1; ; attempt++) {
+    let legs: HeldLeg[];
+    try {
+      legs = await getMultiAccountTransactionsByPrefix(prefix);
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown(outcomeContext, 'lookup after a refused charge failed', {
+        lookupError,
+      });
+    }
+    if (legs.length || attempt >= HELD_AFTER_REFUSAL_LOOKUPS) return legs;
+    await new Promise((resolve) => setTimeout(resolve, HELD_AFTER_REFUSAL_PAUSE_MS));
+  }
+}
+
 /**
  * The prefix twin of `chargeByExternalId`, for a charge made through the multi-account endpoint
  * (`charge`, which files its legs under `prefix`). Charges once per action when the prefix derives
@@ -268,6 +295,9 @@ async function assertHeldChargeMatches(
  *   looks at ids, so a resend after a first charge that spent the balance is refused; held legs
  *   are this action's charge and the flow continues from them. `beforeCharging` (the app's own
  *   balance or eligibility checks) runs only when nothing is held, for the same reason.
+ * - A refusal (`beforeCharging`, or the ledger declining the send) looks for held legs again, a
+ *   few times apart: both balance checks run before ids are looked at, and the first lookup can
+ *   miss a charge an earlier request committed. Held, it continues from them as below.
  * - Held legs (found by the lookup, or answered `duplicate` by a send) are this request's charge
  *   only when they match `expected`: amount, accounts, account types and transaction type.
  *   Otherwise a 400 (`PAYMENT_KEY_REUSED_MESSAGE`), before anything is recorded.
@@ -309,25 +339,47 @@ export async function chargeByPrefix(
   }
 
   if (!replayed) {
-    await beforeCharging?.();
-    let sent: Awaited<ReturnType<typeof charge>>;
+    // A refusal: `beforeCharging` failing, a send that provably moved nothing, or a clean answer
+    // with no transaction (the ledger's "insufficient funds").
+    let refusal: unknown;
+    let sent: Awaited<ReturnType<typeof charge>> | undefined;
     try {
-      sent = await charge();
+      await beforeCharging?.();
     } catch (error) {
-      if (chargeWasDeclined(error)) throw declined(error);
+      refusal = error;
+    }
+    if (refusal === undefined) {
       try {
         sent = await charge();
-      } catch (resendError) {
-        throw paymentOutcomeUnknown(outcomeContext, 'resend failed after unknown outcome', {
-          error,
-          resendError,
-        });
+      } catch (error) {
+        if (chargeWasDeclined(error)) refusal = declined(error);
+        else
+          try {
+            sent = await charge();
+          } catch (resendError) {
+            throw paymentOutcomeUnknown(outcomeContext, 'resend failed after unknown outcome', {
+              error,
+              resendError,
+            });
+          }
       }
+      if (refusal === undefined && !sent?.transactionIds?.length) refusal = declined();
     }
-    if (!sent.transactionIds?.length) throw declined();
-    replayed = sent.transactionIds.some((leg) => leg.duplicate === true);
-    // A send answered `duplicate` reused legs this lookup did not see: list them again.
-    listed = undefined;
+
+    if (refusal !== undefined) {
+      // Both balance checks (the app's and the ledger's) run before anything looks at ids. With a
+      // key, an earlier request's charge under it may have spent the balance while the lookup
+      // above could not see it yet (the read can lag the write). Then the action is paid and
+      // continues from that charge, rather than being refused and the client's key released.
+      const held = reusable ? await heldAfterRefusal(prefix, outcomeContext) : [];
+      if (!held.length) throw refusal;
+      listed = held;
+      replayed = true;
+    } else {
+      replayed = !!sent?.transactionIds?.some((leg) => leg.duplicate === true);
+      // A send answered `duplicate` reused legs this lookup did not see: list them again.
+      listed = undefined;
+    }
   }
 
   if (reusable && replayed) await assertHeldChargeMatches(prefix, context, expected, listed);

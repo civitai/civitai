@@ -52,6 +52,8 @@ export const CHARGE_LOCKED_READ = { timeoutMs: 3_000, retries: 0 };
  * The client's default would retry it (refunds retry every failure), multiplying the deadline.
  */
 export const CHARGE_LOCKED_REFUND = { timeoutMs: 10_000, retries: 0 };
+/** Between refund attempts after a failed record (`recordKeyedCharge`'s `refundAttempts`), times the attempt. */
+export const CHARGE_REFUND_RETRY_PAUSE_MS = 250;
 
 /**
  * After a charge succeeded, how an error from the record step reaches the user. A refusal (a 4xx:
@@ -150,7 +152,11 @@ export async function refundUnlessRecorded(
  *
  * A failed `record` refunds the charge under the same lock unless another request recorded it
  * (`refundUnlessRecorded`, `refund` bounded by `CHARGE_LOCKED_REFUND`), then throws
- * `recordFailed(error)` (the record's own error by default). Any other failure after the charge is
+ * `recordFailed(error)` (the record's own error by default). `refundAttempts` (default 1) retries a
+ * refund that failed, each attempt its own short lock transaction with a pause between them, never
+ * one held across the attempts; for a refusal the caller treats as routine, where a retry of the
+ * action is refused before it reaches the charge and so could not continue from it. When every
+ * attempt fails: "may have gone through". Any other failure after the charge is
  * `recordStepError`: "may have gone through", with no refund.
  */
 export async function recordKeyedCharge<T>(
@@ -162,12 +168,14 @@ export async function recordKeyedCharge<T>(
     record,
     refund,
     recordFailed = (error) => error,
+    refundAttempts = 1,
   }: {
     findRecorded: (tx: Prisma.TransactionClient) => Promise<T | null | undefined>;
     isRefunded: () => Promise<boolean>;
     record: (tx: Prisma.TransactionClient) => Promise<T>;
     refund: () => Promise<unknown>;
     recordFailed?: (error: unknown) => unknown;
+    refundAttempts?: number;
   }
 ): Promise<T> {
   let writeFailed = false;
@@ -185,11 +193,19 @@ export async function recordKeyedCharge<T>(
     });
   } catch (error) {
     if (!writeFailed) throw recordStepError(error, { externalTransactionId: key, ...context });
-    await refundUnlessRecorded(key, context, {
-      isRecorded: async (tx) => (await findRecorded(tx)) != null,
-      isRefunded,
-      refund,
-    });
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await refundUnlessRecorded(key, context, {
+          isRecorded: async (tx) => (await findRecorded(tx)) != null,
+          isRefunded,
+          refund,
+        });
+        break;
+      } catch (refundError) {
+        if (attempt >= refundAttempts) throw refundError;
+        await new Promise((resolve) => setTimeout(resolve, CHARGE_REFUND_RETRY_PAUSE_MS * attempt));
+      }
+    }
     throw recordFailed(error);
   }
 }
