@@ -152,6 +152,16 @@ describe('post-scan prompt check — age check behind shadow-age-prompt', () => 
     expect(shadowEvents()[0]).toMatchObject({ blocked: true });
   });
 
+  it('flag on, classifier clean: an age match that cannot be isolated keeps the block', async () => {
+    const outcome = await scan('a 14 year old harmed');
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(moderatePrompt).not.toHaveBeenCalled();
+    expect(shadowEvents()[0]).toMatchObject({
+      classifierStatus: 'fell-back-to-regex',
+      blocked: true,
+    });
+  });
+
   it('control: that word alone blocks', async () => {
     expect((await scan(hardWord)).ingestion).toBe('Blocked');
   });
