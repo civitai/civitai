@@ -9,7 +9,8 @@ import { trpc } from '~/utils/trpc';
  * asked only once the post's storyline read (usually cached by the entry chip) marks it as one.
  */
 export function usePostDetailTexts(postId: number | undefined, { enabled }: { enabled: boolean }) {
-  const active = enabled && !!useFeatureFlags().storylineText;
+  const textOn = !!useFeatureFlags().storylineText;
+  const active = enabled && textOn;
   const isChapter = !!useStorylineForPost(postId, { enabled: active }) && active;
   const { data: post } = trpc.post.get.useQuery({ id: postId ?? 0 }, { enabled: isChapter });
   return useMemo<DetailText[] | undefined>(() => {
