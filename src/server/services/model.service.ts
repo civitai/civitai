@@ -6499,17 +6499,10 @@ export async function getHeldGalleryLevel(selector: ImageModelSelector) {
   const modelIds = await resolveImageModelIds(selector);
   if (!modelIds) return 0;
 
-  // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
-  const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
-  await limitConcurrency(
-    [...modelIds].map((id) => async () => {
-      galleries.push(await getGallerySettingsByModelId({ id }));
-    }),
-    5
-  );
+  const levels = await getShowcaseHeldLevels([...modelIds].map((modelId) => ({ modelId })));
   let held: number | undefined;
-  for (const gallery of galleries)
-    if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
+  for (const level of levels.values())
+    held = Flags.intersection(held ?? allBrowsingLevelsFlag, level);
   return held;
 }
 
@@ -6566,13 +6559,8 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   if (!versionIds.length) return held;
   const versions = await versionModelCache().fetch(versionIds);
 
-  const levels = new Map<number, number>();
-  await limitConcurrency(
-    uniq(Object.values(versions).map((version) => version.modelId)).map((id) => async () => {
-      const gallery = await getGallerySettingsByModelId({ id });
-      if (gallery?.sfwHeld) levels.set(id, gallery.level);
-    }),
-    5
+  const levels = await getShowcaseHeldLevels(
+    Object.values(versions).map((version) => ({ modelId: version.modelId }))
   );
   if (!levels.size) return held;
   const owners = await dbRead.model.findMany({

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 
 vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
   bustModelGallerySettings: vi.fn(),
@@ -130,7 +132,7 @@ describe('getHeldGalleryLevel', () => {
     expect(await getHeldGalleryLevel({ postId: 100 })).toBeUndefined();
   });
 
-  it('fails rather than skipping a model whose settings it cannot read', async () => {
+  it('holds a model whose settings it cannot read at SFW rather than skipping it', async () => {
     const read = dbMock.dbRead.model.findFirst.getMockImplementation();
     for (const db of [dbMock.dbRead, dbMock.dbWrite])
       db.model.findFirst.mockImplementation((async (args: { where: { id: number } }) => {
@@ -138,7 +140,9 @@ describe('getHeldGalleryLevel', () => {
         return read?.(args as never);
       }) as never);
 
-    await expect(getHeldGalleryLevel({ modelIds: [3, 1] })).rejects.toThrow('read failed');
+    const level = await getHeldGalleryLevel({ modelIds: [3, 1] });
+    expect(level).toBeDefined();
+    expect(Flags.intersection(level!, ~sfwBrowsingLevelsFlag)).toBe(0);
   });
 
   it('holds nothing for a model it does not know', async () => {
