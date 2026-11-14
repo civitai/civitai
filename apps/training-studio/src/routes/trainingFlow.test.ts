@@ -27,6 +27,7 @@ import {
   numberInputValue,
   optimizerLrParams,
   teLocked,
+  timesEachItemSeen,
   paramDeviations,
   paramHelpText,
   promptHasTrigger,
@@ -168,6 +169,22 @@ describe('extra parameter capabilities', () => {
       expect(size(r, 'concept')).toEqual(['16', '16']);
     }
     expect(size(run('zimage'), 'character')).toEqual(['32', '32']);
+  });
+});
+
+describe('timesEachItemSeen', () => {
+  // 5,000 steps at batch 4 over 206 images once showed ~24× (flagged low) instead of ~97×.
+  it("counts every item in each step's batch", () => {
+    const defaults = defaultRunParams(run('sdxl'));
+    expect(defaults.batchSize).toBe('4');
+    expect(timesEachItemSeen({ ...defaults, steps: 5000 }, defaults, 206)).toBe(97);
+    expect(timesEachItemSeen({ ...defaults, steps: 5000, batchSize: 1 }, defaults, 206)).toBe(24);
+  });
+
+  it("falls back to the model's batch size for a cleared field, and 0 for an empty dataset", () => {
+    const defaults = defaultRunParams(run('sdxl'));
+    expect(timesEachItemSeen({ ...defaults, steps: 4000, batchSize: '' }, defaults, 203)).toBe(79);
+    expect(timesEachItemSeen({ ...defaults, steps: 4000 }, defaults, 0)).toBe(0);
   });
 });
 
