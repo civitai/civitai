@@ -40,6 +40,8 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TYPE "TagSource" AS ENUM ('User', 'Rekognition', 'WD14');
+    CREATE TYPE "CollectionReadConfiguration" AS ENUM ('Private', 'Public', 'Unlisted');
+    CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TABLE "TagsOnImageDetails" (
       "imageId" int NOT NULL, "tagId" int NOT NULL, source "TagSource" NOT NULL,
       disabled boolean NOT NULL DEFAULT false
@@ -51,7 +53,11 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
     CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int, "bannerId" int);
     CREATE TABLE "Model3D" (id int PRIMARY KEY, "thumbnailImageId" int);
-    CREATE TABLE "Collection" (id int PRIMARY KEY, "imageId" int, "userId" int);
+    CREATE TABLE "Collection" (
+      id int PRIMARY KEY, "imageId" int, "userId" int,
+      read "CollectionReadConfiguration" NOT NULL DEFAULT 'Public',
+      availability "Availability" NOT NULL DEFAULT 'Public'
+    );
     CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId");
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "postId" int,
@@ -64,12 +70,15 @@ afterAll(() => db.close());
 let queries = 0;
 // Fails the candidate lookup (the collection-media-index query), which never throws on its own.
 let failCollectionLookup = false;
+// The documents read ignores its filter and returns the first page of the index.
+let ignoreFilter = false;
 // The cover-index probe: 'throws', 'missing' (the index is not valid), or undefined (as created).
 let coverProbe: 'throws' | 'missing' | undefined;
 beforeEach(async () => {
   vi.clearAllMocks();
   queries = 0;
   failCollectionLookup = false;
+  ignoreFilter = false;
   coverProbe = undefined;
   // Throws past a cap, so a loop that never ends fails by name.
   // Prisma.Sql from the service, or a tagged template from the collection lookup.
@@ -111,7 +120,9 @@ beforeEach(async () => {
       limit?: number;
       fields?: string[];
     }) => {
-      const ids = (filter.match(/\d+/g) ?? []).map(Number).sort((a, b) => a - b);
+      const ids = (
+        ignoreFilter ? [...storedDocs.keys()] : (filter.match(/\d+/g) ?? []).map(Number)
+      ).sort((a, b) => a - b);
       const docs = ids
         .filter((id) => storedDocs.has(id))
         .slice(0, limit)
@@ -149,7 +160,8 @@ beforeEach(async () => {
     INSERT INTO "Article" (id, "coverId", "bannerId") VALUES (500, 2, NULL), (501, NULL, 3), (502, 10, NULL);
     INSERT INTO "Model3D" (id, "thumbnailImageId") VALUES (600, 1), (601, 10);
     INSERT INTO "Collection" (id, "imageId", "userId") VALUES (70, 1, NULL), (71, 10, NULL),
-      (82, NULL, 7), (83, NULL, 8);
+      (72, NULL, 1), (73, NULL, 1), (74, NULL, 1), (75, NULL, 1), (76, NULL, 1), (77, NULL, 1),
+      (78, NULL, 1), (79, NULL, 1), (80, NULL, 1), (81, NULL, 1), (82, NULL, 7), (83, NULL, 8);
     INSERT INTO "CollectionItem" ("collectionId", "imageId", "postId", "modelId", "articleId", "model3dId") VALUES
       (72, 3, NULL, NULL, NULL, NULL),
       (73, NULL, 200, NULL, NULL, NULL),
@@ -281,7 +293,8 @@ describe('child-label reindex: reindex', () => {
       images: 3,
       collections: 7,
       collectionsUnread: 0,
-      collectionsMissing: 0,
+      collectionsMissingEligible: 0,
+      collectionsMissingIneligible: 0,
       collectionsQueued: 7,
     });
   });
@@ -309,14 +322,57 @@ describe('child-label reindex: reindex', () => {
     );
     const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
     expect(queuedCollections()).toEqual(expect.arrayContaining(extra));
-    expect(result).toMatchObject({ collections: 32, collectionsMissing: 0, collectionsUnread: 0 });
+    expect(result).toMatchObject({
+      collections: 32,
+      collectionsMissingEligible: 0,
+      collectionsMissingIneligible: 0,
+      collectionsUnread: 0,
+    });
   });
 
-  it('queues and counts a candidate collection with no stored document', async () => {
+  it('queues a candidate the index should hold but has no document for', async () => {
     storedDocs.delete(72);
     const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
     expect(queuedCollections()).toContain(72);
-    expect(result).toMatchObject({ collections: 7, collectionsMissing: 1, collectionsUnread: 0 });
+    expect(result).toMatchObject({
+      collections: 7,
+      collectionsMissingEligible: 1,
+      collectionsMissingIneligible: 0,
+    });
+  });
+
+  for (const [why, sql] of [
+    ['private', `UPDATE "Collection" SET read = 'Private' WHERE id = 72`],
+    ['unsearchable', `UPDATE "Collection" SET availability = 'Unsearchable' WHERE id = 72`],
+  ])
+    it(`counts and does not queue a ${why} candidate, which the index never holds`, async () => {
+      storedDocs.delete(72);
+      await db.exec(sql);
+      const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+      expect(queuedCollections()).not.toContain(72);
+      expect(result).toMatchObject({
+        collections: 6,
+        collectionsMissingEligible: 0,
+        collectionsMissingIneligible: 1,
+      });
+    });
+
+  it('counts a missing candidate once across chunks', async () => {
+    // With one image per chunk, 72 is reached from images 1 and 3, so it is missing twice.
+    for (const id of [72, 78]) storedDocs.delete(id);
+    await db.exec(`UPDATE "Collection" SET read = 'Private' WHERE id IN (72, 78)`);
+    await db.exec(`INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES (72, 1)`);
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 1 });
+    expect(result).toMatchObject({ collectionsMissingIneligible: 2 });
+  });
+
+  it('treats a read that ignores the id filter as unread and queues the batch whole', async () => {
+    ignoreFilter = true;
+    // Sorts first, so it lands in the page the batch asked for.
+    storedDocs.set(1, { images: [{ id: 500 }] });
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80, 82]);
+    expect(result).toMatchObject({ collectionsUnread: 8, collectionsMissingIneligible: 0 });
   });
 
   it('queues only the batch whose documents it cannot read', async () => {
