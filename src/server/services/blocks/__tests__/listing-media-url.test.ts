@@ -11,8 +11,8 @@ import { describe, expect, it, vi } from 'vitest';
  * With it the CDN serves WebP, which keeps alpha.
  *
  * 🔴 WHY `anim=false` IS PINNED: `optimized=true` alone makes the cacher emit ANIMATED WebP for an
- * animated source, so icons and covers would start playing (and a 1200 px animated cover can run
- * to several MB). Before `optimized` they were a still first-frame JPEG; `anim=false` keeps them a
+ * animated source, so icons and covers would start playing (one 1200 px animated cover probed at
+ * ~1 MB). Before `optimized` they were a still first-frame JPEG; `anim=false` keeps them a
  * still while keeping WebP's alpha.
  *
  * Every other blocks test mocks `getEdgeUrl` to a stub that drops its options, so none of them
@@ -126,8 +126,10 @@ describe('the gated public projections use the optimized variant', () => {
       screenshots: [{ caption: null, image: img('shot-key-h8') }],
     };
     const expected = {
-      iconUrl: 'https://image.test/icon-key-g7/anim=false,width=320,optimized=true/icon-key-g7.jpeg',
-      coverUrl: 'https://image.test/shot-key-h8/anim=false,width=1200,optimized=true/shot-key-h8.jpeg',
+      iconUrl:
+        'https://image.test/icon-key-g7/anim=false,width=320,optimized=true/icon-key-g7.jpeg',
+      coverUrl:
+        'https://image.test/shot-key-h8/anim=false,width=1200,optimized=true/shot-key-h8.jpeg',
       screenshots: [
         {
           url: 'https://image.test/shot-key-h8/anim=false,width=1200,optimized=true/shot-key-h8.jpeg',
