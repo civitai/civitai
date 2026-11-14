@@ -2821,7 +2821,8 @@ export async function applyModelFlagSideEffects({
   const minorChanged = after.minor !== before.minor || after.sfwOnly !== before.sfwOnly;
 
   // Update search index if listing changes
-  if (tagsChanged || poiChanged || minorChanged) {
+  const listingChanged = tagsChanged || poiChanged || minorChanged;
+  if (listingChanged) {
     await modelTagCache.refresh(id);
     if (tagsChanged) await modelVotableTagsCache.bust(id);
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -2869,6 +2870,9 @@ export async function applyModelFlagSideEffects({
   }
 
   const heldLevelChanged = galleryBrowsingLevelChanged && (after.minor || after.sfwOnly);
+  // The search document carries the held showcase, so it is rebuilt at the new level.
+  if (heldLevelChanged && !listingChanged)
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   if (minorChanged || heldLevelChanged) await purgeHeldShowcase(id, modelVersionIds);
 }
 

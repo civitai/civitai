@@ -2469,7 +2469,11 @@ export const updateGallerySettingsHandler = async ({
       },
     });
     await bustModelGallerySettings([id]);
-    if (heldLevelChanged) await purgeHeldShowcase(id);
+    if (heldLevelChanged) {
+      // The search document carries the held showcase, so it is rebuilt at the new level.
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+      await purgeHeldShowcase(id);
+    }
 
     // A moderator's pin on someone else's model is curation, not the creator's credit.
     if (gallerySettings && updatedModel.userId === sessionUser.id) {

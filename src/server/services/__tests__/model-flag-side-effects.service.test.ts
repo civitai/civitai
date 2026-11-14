@@ -370,6 +370,8 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledTimes(1);
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    // The search document carries the showcase, so it is rebuilt at the new level.
+    expect(mockModelsQueueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
   });
 
   it('does not purge when the gallery level of an unheld model changes', async () => {
