@@ -36,6 +36,11 @@ import {
   LEGEND,
   toLegendStatus,
 } from '~/server/services/creator-showcase.service';
+import type { MilestoneRarity } from '~/server/services/creator-milestone-rarity.service';
+import {
+  getMilestoneRarity,
+  milestoneRarityPercent,
+} from '~/server/services/creator-milestone-rarity.service';
 
 type MilestoneDefinition = {
   key: string;
@@ -194,7 +199,8 @@ async function getActivityValues(
 export function buildActivityProgress(
   definitions: DefinitionWithArt[],
   held: Map<string, Date | null>,
-  values: ActivityValues
+  values: ActivityValues,
+  rarity: MilestoneRarity | null = null
 ) {
   const milestones = definitions
     .flatMap((definition, index) => {
@@ -214,6 +220,7 @@ export function buildActivityProgress(
           current: values[measure],
           earned,
           achievedAt: held.get(definition.key) ?? null,
+          rarity: milestoneRarityPercent(rarity, definition),
         },
       ];
     })
@@ -270,6 +277,7 @@ export async function getCreatorJourney(userId: number) {
     activityDefinitions,
     activityValues,
     secretDefinitions,
+    rarity,
   ] = await Promise.all([
     dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } }),
     getCreatorScoreUnlocks(),
@@ -293,6 +301,15 @@ export async function getCreatorJourney(userId: number) {
       select: secretSelect,
       orderBy: [{ sortOrder: 'asc' }, { key: 'asc' }],
     }),
+    // Rarity is decoration: an unreadable count shows none rather than failing the page.
+    getMilestoneRarity().catch((e) => {
+      logToAxiom({
+        type: 'error',
+        name: 'creator-journey-rarity',
+        message: e instanceof Error ? e.message : String(e),
+      });
+      return null;
+    }),
   ]);
 
   const rawScores = (user?.meta as { scores?: Partial<UserScoreMeta> } | null)?.scores ?? null;
@@ -300,9 +317,12 @@ export async function getCreatorJourney(userId: number) {
     achievements.map((a) => [a.milestone.key, achievedAtIsObserved(a) ? a.achievedAt : null])
   );
   const earnedKeys = new Set(observedAt.keys());
-  const tiers = tierDefinitions.map((tier, index) => toTier(tier, earnedKeys.has(tier.key), index));
+  const tiers = tierDefinitions.map((tier, index) => ({
+    ...toTier(tier, earnedKeys.has(tier.key), index),
+    rarity: milestoneRarityPercent(rarity, tier),
+  }));
   const activity = {
-    ...buildActivityProgress(activityDefinitions, observedAt, activityValues.values),
+    ...buildActivityProgress(activityDefinitions, observedAt, activityValues.values, rarity),
     winBreakdown: activityValues.winBreakdown,
   };
   const secrets = buildSecretMilestones(secretDefinitions, observedAt);

@@ -191,6 +191,19 @@ describe('app_sandbox_hibernations SQL', () => {
     expect((await db.query(ADVISORY)).rows).toEqual([]);
   });
 
+  // Prisma's $queryRaw cannot deserialize a `void` column ("Failed to deserialize column of type
+  // 'void'"), and pg_advisory_xact_lock returns void: selecting the call itself failed every commit
+  // in production while PGlite, which returns '' for it, stayed green. Pin the column types.
+  it('lock(user) returns no void column (Prisma $queryRaw cannot read one)', async () => {
+    const VOID_OID = 2278;
+    const fields = await db.transaction(async (tx) => {
+      const sql = hibernationSql.lock(9101);
+      return (await tx.query(sql.text, sql.values as unknown[])).fields;
+    });
+    expect(fields.length).toBeGreaterThan(0);
+    expect(fields.map((f) => f.dataTypeID)).not.toContain(VOID_OID);
+  });
+
   // Each row sets exactly some of the four secrets columns. Every partial combination must fail:
   // a bare comparison against a NULL column is NULL, and a CHECK that is NULL passes.
   it.each([
@@ -379,5 +392,62 @@ describe('hibernationRepo.commit (the real transaction)', () => {
       apps: 1,
       bytes: 4_321,
     });
+  });
+});
+
+describe('hibernationRepo.list and remove (the user’s own sleeping apps)', () => {
+  it('list is the user’s rows only, most recently put to sleep first, ties by key', async () => {
+    const at = (iso: string) => new Date(iso);
+    const put = (userId: number, appKey: string, hibernatedAt: string) =>
+      run(
+        hibernationSql.upsert(
+          row({
+            userId,
+            appKey,
+            objectKey: `archives/${userId}/${appKey}/a.kept.zip`,
+            hibernatedAt: at(hibernatedAt),
+          })
+        )
+      );
+    await put(9101, 'old-app', '2026-09-01T00:00:00.000Z');
+    await put(9101, 'zed-app', '2026-11-01T00:00:00.000Z');
+    await put(9101, 'new-app', '2026-11-01T00:00:00.000Z');
+    await put(9202, 'not-mine', '2026-12-01T00:00:00.000Z');
+    const repo = createHibernationRepo(pgliteRunner());
+    expect((await repo.list(9101)).map((r) => r.appKey)).toEqual(['new-app', 'zed-app', 'old-app']);
+    expect((await repo.list(9303)).length).toBe(0);
+  });
+
+  it('remove deletes one row of that user under the user’s lock, and answers it', async () => {
+    await run(hibernationSql.upsert(row()));
+    await run(
+      hibernationSql.upsert(row({ userId: 9202, objectKey: 'archives/9202/tip-calculator/x.zip' }))
+    );
+    const lockedWhileDeleting: { objid: number }[][] = [];
+    const repo = createHibernationRepo(
+      pgliteRunner(async (text, tx) => {
+        if (/^\s*DELETE/.test(text))
+          lockedWhileDeleting.push(await tx<{ objid: number }>(rawSql(ADVISORY)));
+      })
+    );
+    expect(await repo.remove(9101, 'none-such')).toBeNull();
+    const removed = await repo.remove(9101, 'tip-calculator');
+    expect(removed?.objectKey).toBe(row().objectKey);
+    expect(await get(9101, 'tip-calculator')).toBeNull();
+    expect(await get(9202, 'tip-calculator')).not.toBeNull();
+    expect(lockedWhileDeleting).toHaveLength(2);
+    for (const held of lockedWhileDeleting)
+      expect(held).toEqual([{ classid: LOCK_NS, objid: 9101, granted: true }]);
+  });
+
+  it('remove with a sha256 removes only a row still recording that archive', async () => {
+    await run(hibernationSql.upsert(row()));
+    const repo = createHibernationRepo(pgliteRunner());
+    expect(await repo.remove(9101, 'tip-calculator', 'b'.repeat(64))).toBeNull();
+    expect(await get(9101, 'tip-calculator')).not.toBeNull();
+    expect((await repo.remove(9101, 'tip-calculator', 'a'.repeat(64)))?.sha256).toBe(
+      'a'.repeat(64)
+    );
+    expect(await get(9101, 'tip-calculator')).toBeNull();
   });
 });

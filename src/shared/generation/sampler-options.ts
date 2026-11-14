@@ -34,7 +34,8 @@ export type SamplerOption = { value: string; label: string };
 
 /**
  * One sampler control: the options in the generator's order, and the value the generator
- * preselects. Not the value a block gets by omitting `params.sampler` — see the route header.
+ * preselects. It is also what a block gets by omitting `params.sampler`
+ * (`resolveDefaultSampler`).
  */
 export type SamplerChoice = { options: SamplerOption[]; default: string };
 
@@ -94,9 +95,12 @@ export function samplerCatalogEcosystems(): string[] {
   });
 }
 
-/** The version ids the generator's model picker lists for `ecosystem`, or none. */
-function listedVersionIds(ecosystem: string): number[] {
-  const probe = probeField('model', { workflow: SAMPLER_PROBE_WORKFLOW, ecosystem }, PROBE_CTX);
+/** The version ids the generator's model picker lists for `ecosystem` on `workflow`, or none. */
+export function listedVersionIds(
+  ecosystem: string,
+  workflow: string = SAMPLER_PROBE_WORKFLOW
+): number[] {
+  const probe = probeField('model', { workflow, ecosystem }, PROBE_CTX);
   if (probe.kind !== 'present') return [];
   const versions = (probe.meta as { versions?: VersionGroup } | undefined)?.versions;
   if (!versions || !Array.isArray(versions.options)) return [];
@@ -147,4 +151,28 @@ export function getSamplerCatalog(): SamplerCatalog {
   }
   catalog = { ecosystems, baseModels };
   return catalog;
+}
+
+/**
+ * The sampler the generator preselects for `ecosystem`, as the catalog reports it: the
+ * version's own answer when `modelVersionId` is one of the family's `byModelVersion` overrides
+ * (HiDream Full), the family's otherwise.
+ *
+ * - a string: that default.
+ * - `null`: the family (or version) has no sampler control, so no sampler should be sent.
+ * - `undefined`: the catalog does not describe this family. The caller must not guess; leaving
+ *   the field out lets the graph apply the same default this would have reported.
+ */
+export function resolveDefaultSampler(
+  ecosystem: string,
+  modelVersionId?: number
+): string | null | undefined {
+  const family = getSamplerCatalog().ecosystems[ecosystem];
+  if (!family) return undefined;
+  const key = modelVersionId != null ? String(modelVersionId) : undefined;
+  const choice =
+    key !== undefined && Object.prototype.hasOwnProperty.call(family.byModelVersion, key)
+      ? family.byModelVersion[key]
+      : family.sampler;
+  return choice ? choice.default : null;
 }

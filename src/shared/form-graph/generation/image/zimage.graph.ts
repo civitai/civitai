@@ -1,14 +1,7 @@
 import { branch, defineGraph } from 'form-graph';
 import { zImageControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
-import {
-  SDXL_FULL_AR,
-  SDXL_FULL_AR_4MP,
-  SEED,
-  controlNetsDef,
-  defaultSamplerPresets,
-  selectDef,
-} from '../defs';
+import { SDXL_FULL_AR, SDXL_FULL_AR_4MP, SEED, controlNetsDef, selectDef } from '../defs';
 import {
   familyResources,
   familyScope,
@@ -28,6 +21,17 @@ const zImageModeVersionOptions = [
   { label: 'Base', value: zImageVersionIds.base },
 ];
 const zImageSamplers = ['euler', 'heun'] as const;
+/**
+ * Presets must name ComfyUI samplers from `zImageSamplers` (no-unoffered-sampler-preset.test.ts). The shared
+ * `defaultSamplerPresets` ('Euler a' / 'DPM++ 2M Karras') are SD names this family does not offer,
+ * and `selectDef` silently corrected both buttons to the default.
+ * - Fast: euler, one model evaluation per step; the family has no ancestral variant.
+ * - Quality: heun, second order, two evaluations per step: slower and more accurate per step.
+ */
+const zImageSamplerPresets = [
+  { label: 'Fast', value: 'euler' },
+  { label: 'Quality', value: 'heun' },
+];
 /** Must be valid comfy scheduler names — comfy has no 'discrete'. */
 const zImageSchedules = ['simple'] as const;
 
@@ -59,7 +63,7 @@ const base = defineGraph<FamilyExt>()
   .field('aspectRatio', AR_BASE)
   .field(
     'sampler',
-    selectDef({ options: zImageSamplers, default: 'euler', presets: defaultSamplerPresets })
+    selectDef({ options: zImageSamplers, default: 'euler', presets: zImageSamplerPresets })
   )
   .field('scheduler', selectDef({ options: zImageSchedules, default: 'simple' }))
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 4 }))

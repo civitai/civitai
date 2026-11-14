@@ -9,6 +9,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getModelVisibleToViewer } from '~/server/services/model-visibility.service';
+import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import { createNotification } from '~/server/services/notification.service';
 import { assertStorylineVisible } from '~/server/services/storyline.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
@@ -138,6 +139,15 @@ async function assertModelOpen(modelId: number, ctx: ProtectedContext) {
  * An unpublished article's comments are its owner's, moderators', and those of a viewer whose share
  * link for it still opens the draft (round 1's cookie, re-resolved on every call).
  */
+/** A post's thread is readable to whoever may open the post: the post detail rule. */
+async function assertPostCommentsVisible(postId: number, ctx: CommentReadContext) {
+  const post = await dbRead.post.findFirst({
+    where: { id: postId, ...getPostDetailVisibility(ctx.user) },
+    select: { id: true },
+  });
+  if (!post) throw throwNotFoundError('Post not found');
+}
+
 async function assertArticleCommentsVisible(articleId: number, ctx: CommentReadContext) {
   const article = await dbRead.article.findUnique({
     where: { id: articleId },
@@ -234,7 +244,7 @@ async function notifyComicOwner(comment: StoredCommentV3, ctx: ProtectedContext)
 /** Every entity type with a comment section, so a new one does not compile until it has an entry. */
 export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
   article: { assertVisible: assertArticleCommentsVisible, assertWritable: accessGated('Article') },
-  post: { assertWritable: accessGated('Post') },
+  post: { assertVisible: assertPostCommentsVisible, assertWritable: accessGated('Post') },
   image: {
     onCreated: (comment, ctx) => {
       if (comment.parentId) return;
@@ -286,6 +296,16 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     },
   },
   appListing: {},
+  // Storyline text items: no thread is readable or writable yet, moderators included.
+  postText: {
+    assertVisible: async () => {
+      throw throwNotFoundError('Text not found');
+    },
+    // Moderators skip assertVisible, and an edit asks only this.
+    assertWritable: async () => {
+      throw throwBadRequestError('Comments on storyline text are closed.');
+    },
+  },
 };
 
 export function commentSurface(entityType: string): CommentSurface {

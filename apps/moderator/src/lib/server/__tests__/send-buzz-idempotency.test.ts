@@ -14,9 +14,23 @@ const { recordModActivity } = vi.hoisted(() => ({ recordModActivity: vi.fn(async
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
 
 let endpoint = '';
+// A write failure the stub server cannot produce (a transport error raised inside the runtime),
+// thrown by the real client's write in place of sending it.
+let writeFailure: unknown;
 vi.mock('$lib/server/buzz', () => ({
   // A short write bound so the timeout case runs in well under a second.
-  getBuzz: () => createBuzzClient({ endpoint, transactionTimeoutMs: 300 }),
+  getBuzz: () => {
+    const client = createBuzzClient({ endpoint, transactionTimeoutMs: 300 });
+    if (writeFailure === undefined) return client;
+    const failure = writeFailure;
+    return {
+      ...client,
+      createTransaction: async () => {
+        attempts++;
+        throw failure;
+      },
+    };
+  },
 }));
 
 const { sendBuzz } = await import('$lib/server/user-actions.service');
@@ -71,8 +85,13 @@ async function ledger(behaviour: Behaviour = {}) {
 beforeEach(() => {
   writes = [];
   attempts = 0;
+  writeFailure = undefined;
   vi.clearAllMocks();
 });
+
+// How Node's fetch reports a transport failure: a TypeError whose cause carries the code.
+const fetchFailed = (code: string) =>
+  Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) });
 afterEach(async () => {
   const s = server;
   server = undefined;
@@ -108,13 +127,48 @@ describe('moderator sendBuzz', () => {
     expect(writes).toHaveLength(1);
   });
 
-  it('a write the ledger refused without committing is reported as not filed', async () => {
-    await ledger({ rejectWithout: { 1: 503 } });
+  it('a write the ledger refused (a 4xx) is reported as not filed', async () => {
+    await ledger({ rejectWithout: { 1: 400 } });
 
     const result = await sendBuzz(grant);
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/Nothing was filed/) });
     expect(writes).toHaveLength(0);
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  // A 5xx says nothing about whether the write committed, so a lookup that finds nothing yet is
+  // "not yet", not "never": "Nothing was filed" would invite a second grant.
+  it('a 5xx with nothing found yet is reported as "may still have gone through"', async () => {
+    await ledger({ rejectWithout: { 1: 503 } });
+
+    const result = await sendBuzz(grant);
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/may still have gone through/),
+    });
+  });
+
+  // With no client deadline a hung write ends in the runtime's own headers timeout, a TypeError
+  // with a cause, not a TimeoutError.
+  it('a write ended by the transport timeout is reported as "may still have gone through"', async () => {
+    await ledger();
+    writeFailure = fetchFailed('UND_ERR_HEADERS_TIMEOUT');
+
+    const result = await sendBuzz(grant);
+    expect(attempts).toBe(1);
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/may still have gone through/),
+    });
+  });
+
+  it('a write whose connection was never opened is reported as not filed', async () => {
+    await ledger();
+    writeFailure = fetchFailed('ECONNREFUSED');
+
+    const result = await sendBuzz(grant);
+    expect(attempts).toBe(1);
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/Nothing was filed/) });
   });
 
   it('a write that TIMED OUT is not reported as "nothing filed", even when the lookup finds nothing yet', async () => {

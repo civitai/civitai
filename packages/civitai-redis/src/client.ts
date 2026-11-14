@@ -2472,7 +2472,7 @@ export const REDIS_SYS_KEYS = {
      * APP HIBERNATE — one-time wake tickets, keyed `system:blocks:hibernation-wake-ticket:${sha256
      * of the ticket}` (the ticket itself is never stored). JSON: the user, the app and the archive
      * sha256 it releases secrets for. Written by `mintWakeTicket` on a wake the user started (TTL
-     * `WAKE_TICKET_TTL_SECONDS`) and consumed with GETDEL by the secrets restore, so it redeems once.
+     * `WAKE_TTL_SECONDS`) and consumed with GETDEL by the secrets restore, so it redeems once.
      */
     HIBERNATION_WAKE_TICKET: 'system:blocks:hibernation-wake-ticket',
     /**
@@ -3511,11 +3511,6 @@ const REDIS_KEYS_UNPREFIXED = {
     HTML: 'botcache:v1',
   },
   SEMANTIC_SEARCH: {
-    /*
-      Use: the embedding of a semantic image search query, so a repeated query makes no orchestrator call.
-      Structure: packed number[], key = `${QUERY_VECTOR}:${model}:${dimensions}:${modelRevision}:${profile}:${sha256(text)}`, TTL 7d.
-     */
-    QUERY_VECTOR: 'semantic-search:query-vector',
     /*
       Use: one aligned block of ranked candidate ids from the search service, shared by every viewer
       whose filter and viewer class match, so a repeated search makes no Qdrant call.

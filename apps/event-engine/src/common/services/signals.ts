@@ -25,7 +25,7 @@ export class SignalsService {
    * Send a signal to a specific topic.
    *
    * Best-effort telemetry: bounded by a short timeout and retried once on a
-   * transient connection-level error (see the undici keep-alive race above).
+   * transient connection-level error (see connection-errors).
    * On final failure it logs and rethrows so the caller
    * (`MetricSignals.sendDelta`) records the failure metric and swallows it —
    * the fire-and-forget contract is unchanged.

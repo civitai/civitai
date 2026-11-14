@@ -10,6 +10,7 @@ import {
 import { TrainingBatchValidationError } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 import { datasetRatingFor } from '$lib/server/dataset-rating';
+import { isKohyaAllowed } from '$lib/server/flipt';
 
 function parse(v: string | null): number | null {
   const n = Number(v);
@@ -31,7 +32,13 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   const token = await requireToken(locals, 'Pricing is unavailable right now.');
   try {
     return json(
-      await continueTrainingWhatIf(token, locals.user.id, opts, await datasetRatingFor(locals.user))
+      await continueTrainingWhatIf(
+        token,
+        locals.user.id,
+        opts,
+        await datasetRatingFor(locals.user),
+        await isKohyaAllowed(locals)
+      )
     );
   } catch (err) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);
@@ -68,7 +75,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
         locals.user.id,
         opts,
         textCheckCookie(locals, request),
-        await datasetRatingFor(locals.user)
+        await datasetRatingFor(locals.user),
+        await isKohyaAllowed(locals)
       ),
     });
   } catch (err) {

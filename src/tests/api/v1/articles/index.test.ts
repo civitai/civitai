@@ -222,6 +222,32 @@ describe('GET /api/v1/articles (list)', () => {
   });
 });
 
+describe('GET /api/v1/articles (list) author avatar', () => {
+  async function authorOf(profilePicture: { url: string; nsfwLevel: number } | null) {
+    mockGetArticles.mockResolvedValue({
+      items: [{ id: 1, user: { id: 3, username: 'a', image: 'unrated.png', profilePicture } }],
+      nextCursor: undefined,
+    });
+    const { req, res } = createMocks({});
+    await listHandler(req, res);
+    return res._getJSONData().items[0].user;
+  }
+
+  it('never serves the unrated image', async () => {
+    expect((await authorOf(null)).image).toBeNull();
+  });
+
+  it('drops a profile picture above the served level', async () => {
+    expect((await authorOf({ url: 'avatar.png', nsfwLevel: 2 })).profilePicture).toBeNull();
+  });
+
+  it('serves a PG profile picture (control)', async () => {
+    expect((await authorOf({ url: 'avatar.png', nsfwLevel: 1 })).profilePicture).toMatchObject({
+      url: 'avatar.png',
+    });
+  });
+});
+
 describe('GET /api/v1/articles/[id] (detail)', () => {
   it('strips moderatorNsfwLevel and evaluates as anonymous (NEVER passes session userId/isModerator)', async () => {
     mockGetArticleById.mockResolvedValue({

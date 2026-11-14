@@ -133,6 +133,7 @@ beforeEach(() => {
   db.image.findMany.mockResolvedValue([imageRow(100), imageRow(101)]);
   db.image.count.mockResolvedValue(3);
   db.image.aggregate.mockResolvedValue({ _max: { index: 4 } });
+  db.postText.aggregate.mockResolvedValue({ _max: { index: null } });
   db.post.create.mockResolvedValue({ id: 9 });
   db.image.updateMany.mockResolvedValue({ count: 1 });
 });
@@ -188,6 +189,18 @@ describe('moveImagesToPost', () => {
     expect(mocks.createImageResources.mock.calls.map((c) => c[0])).toEqual([
       { imageId: 101 },
       { imageId: 100 },
+    ]);
+  });
+
+  it("appends after the target's storyline text items when one sits after its last image", async () => {
+    mockPosts(postRow(), postRow({ id: 2, publishedAt: new Date('2025-06-01') }));
+    db.postText.aggregate.mockResolvedValue({ _max: { index: 8 } });
+
+    await moveImagesToPost({ imageIds: [101, 100], fromPostId: 1, toPostId: 2, userId: USER });
+
+    expect(db.image.updateMany.mock.calls.map((c: unknown[]) => c[0])).toEqual([
+      { where: expect.objectContaining({ id: 101 }), data: { postId: 2, index: 9 } },
+      { where: expect.objectContaining({ id: 100 }), data: { postId: 2, index: 10 } },
     ]);
   });
 

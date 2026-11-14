@@ -2,7 +2,7 @@ import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted
 import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ownerHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ScanResultCode } from '~/shared/utils/prisma/enums';
 import {
   trainingDataServableOnHost,
   trainingDataVisibility,
@@ -62,9 +62,9 @@ type ListedFile = { id: number; type: string; visibility: string };
 /**
  * Whether a file may be listed: a `Training Data` file is left out where its download would be
  * refused, so the listing never offers one. That is a shared dataset `trainingDataShareRestricted`
- * refuses, or one `trainingDataServableOnHost` refuses on this host. Neither applies to the
- * owner and moderators (`viewerManages`). Fails closed: every dataset is left out when the check
- * can't be read.
+ * refuses, one `trainingDataServableOnHost` refuses on this host, or one whose virus scan is not
+ * yet a Success. None applies to the owner and moderators (`viewerManages`). Fails closed: every
+ * dataset is left out when the check can't be read.
  */
 export async function trainingDataListing(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
@@ -79,9 +79,15 @@ export async function trainingDataListing(
     .map((v) => v.id);
   if (!candidates.length) return () => true;
   const rows = await db.$queryRaw<
-    { id: number; nsfwLevel: unknown; fullyRated: unknown; restricted: boolean | null }[]
+    {
+      id: number;
+      nsfwLevel: unknown;
+      fullyRated: unknown;
+      virusScanResult: string;
+      restricted: boolean | null;
+    }[]
   >`
-    SELECT mf.id, mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
+    SELECT mf.id, mf."virusScanResult", mf.metadata -> 'nsfwLevel' AS "nsfwLevel",
       mf.metadata -> 'fullyRated' AS "fullyRated", (${trainingDataOwnerRestrictedSql(
         Prisma.raw('m."userId"')
       )}
@@ -102,7 +108,12 @@ export async function trainingDataListing(
   if (!rows) return (file) => file.type !== 'Training Data';
   const refused = new Set(
     rows
-      .filter((r) => r.restricted !== false || !trainingDataServableOnHost(r, redCapable))
+      .filter(
+        (r) =>
+          r.restricted !== false ||
+          r.virusScanResult !== ScanResultCode.Success ||
+          !trainingDataServableOnHost(r, redCapable)
+      )
       .map((r) => r.id)
   );
   return (file) => !(file.type === 'Training Data' && refused.has(file.id));

@@ -44,6 +44,7 @@ export type AccountState = 'active' | 'deleted' | 'banned' | 'missing';
 export type CommitDecision<T> = { write?: HibernationRow; result: T };
 
 export interface HibernationRepo {
+  list(userId: number): Promise<HibernationRow[]>;
   get(userId: number, appKey: string): Promise<HibernationRow | null>;
   /**
    * The user's oldest sleeping app (earliest `hibernated_at`, ties by key), leaving out
@@ -67,6 +68,13 @@ export interface HibernationRepo {
   ): Promise<T>;
   /** The account's state, read from its `User` row on the primary. */
   accountState(userId: number): Promise<AccountState>;
+  /**
+   * Deletes the user's row for `appKey` and answers it (`null` when there was none). Under the
+   * same per-user lock as {@link commit}, so a delete and a commit of the user's apps never
+   * interleave. With `sha256`, only a row still recording that archive is removed (a record
+   * replaced since is left alone).
+   */
+  remove(userId: number, appKey: string, sha256?: string): Promise<HibernationRow | null>;
   removeAll(userId: number): Promise<HibernationRow[]>;
   /** Which of `keys` a row records (as its archive or its secrets object). */
   referencedKeys(keys: string[]): Promise<Set<string>>;
@@ -128,6 +136,15 @@ export function fromDb(r: DbRow): HibernationRow {
  * (`__tests__/hibernation.repo.sql.test.ts`).
  */
 export const hibernationSql = {
+  list: (userId: number) => Prisma.sql`
+    SELECT ${COLUMNS} FROM "app_sandbox_hibernations"
+    WHERE "user_id" = ${userId}
+    ORDER BY "hibernated_at" DESC, "app_key" ASC`,
+  remove: (userId: number, appKey: string, sha256?: string) => Prisma.sql`
+    DELETE FROM "app_sandbox_hibernations"
+    WHERE "user_id" = ${userId} AND "app_key" = ${appKey}
+    ${sha256 === undefined ? Prisma.empty : Prisma.sql`AND "sha256" = ${sha256}`}
+    RETURNING ${COLUMNS}`,
   oldest: (userId: number, excludeAppKey: string) => Prisma.sql`
     SELECT "app_key", "hibernated_at" FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId} AND "app_key" <> ${excludeAppKey}
@@ -140,8 +157,11 @@ export const hibernationSql = {
     SELECT count(*)::int AS "apps", COALESCE(sum("bytes"), 0)::bigint AS "bytes"
     FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId} AND "app_key" <> ${excludeAppKey}`,
+  // Selects a constant FROM the lock call, never the call itself: pg_advisory_xact_lock returns
+  // `void`, and Prisma's $queryRaw (the only path `query` has) cannot deserialize a void column, so
+  // `SELECT pg_advisory_xact_lock(...)` threw on every commit in production.
   lock: (userId: number) =>
-    Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NAMESPACE}::int, ${userId}::int)`,
+    Prisma.sql`SELECT 1 AS "locked" FROM pg_advisory_xact_lock(${LOCK_NAMESPACE}::int, ${userId}::int)`,
   upsert: (w: HibernationRow) => Prisma.sql`
     INSERT INTO "app_sandbox_hibernations" (
       "user_id", "app_key", "attempt_id", "object_key", "sha256", "bytes", "excluded",
@@ -229,6 +249,19 @@ export type SqlRunner = {
 
 export function createHibernationRepo(db: SqlRunner): HibernationRepo {
   return {
+    async list(userId) {
+      // The primary: a list read right after a commit or a delete must show it.
+      return (await db.query<DbRow>(hibernationSql.list(userId))).map(fromDb);
+    },
+
+    async remove(userId, appKey, sha256) {
+      return db.transaction(async (tx) => {
+        await tx(hibernationSql.lock(userId));
+        const rows = await tx<DbRow>(hibernationSql.remove(userId, appKey, sha256));
+        return rows[0] ? fromDb(rows[0]) : null;
+      });
+    },
+
     async oldest(userId, excludeAppKey) {
       const rows = await db.query<OldestDbRow>(hibernationSql.oldest(userId, excludeAppKey));
       return rows[0] ? fromOldestDb(rows[0]) : null;
