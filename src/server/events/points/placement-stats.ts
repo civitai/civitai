@@ -59,7 +59,8 @@ async function queryPlacementStats(
   const recomputeFrom = new Date(
     Math.max(window.start.getTime(), startOfUtcDay(new Date(earliest)).getTime())
   );
-  const weights = await sysRedis.hGetAll(eventPointKeys(event.name).weights).catch(() => undefined);
+  // As the referee reads them (queryReferee): a failed read hides the line, not config weights.
+  const weights = await sysRedis.hGetAll(eventPointKeys(event.name).weights);
   const result = await clickhouse.query({
     query: hatPlacementStatsSql,
     format: 'JSONEachRow',

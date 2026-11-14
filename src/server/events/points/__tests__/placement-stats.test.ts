@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
-import '~/__tests__/mocks/redis.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const query = vi.hoisted(() => vi.fn());
 vi.mock('~/server/clickhouse/client', () => ({
@@ -77,6 +77,29 @@ describe('getHatPlacementStats', () => {
     expect(await get(EVENT, 100, NOW)).toEqual([
       { cosmeticId: 1, claimKey: 'k1', points: 0, views: 0 },
     ]);
+  });
+
+  // The referee's config path: the event's scoring, with the live weights hash over its weights.
+  it('scores with the live weights and the event limit the referee uses', async () => {
+    const get = await load();
+    postgres([]);
+    ledger([]);
+    redisMock.sysRedis.hGetAll.mockResolvedValueOnce({ view: '3' });
+    await get({ ...EVENT, scoring: { ...EVENT.scoring, capPerActorPerOwnerPerDay: 4 } }, 100, NOW);
+    expect(query.mock.calls[0][0].query_params).toMatchObject({
+      types: ['view'],
+      weights: [3],
+      cap: 4,
+    });
+  });
+
+  it('shows nothing rather than scoring with the config weights when the live ones cannot be read', async () => {
+    const get = await load();
+    postgres([]);
+    ledger([row(6, 3)]);
+    redisMock.sysRedis.hGetAll.mockRejectedValueOnce(new Error('sysRedis down'));
+    expect(await get(EVENT, 100, NOW)).toBeNull();
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('returns null when ClickHouse fails, then leaves it alone for a while', async () => {
