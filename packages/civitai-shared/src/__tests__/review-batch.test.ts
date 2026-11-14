@@ -4,10 +4,12 @@ import {
   isReviewBatchId,
   matchesSuspectTerm,
   newReviewBatchId,
+  normalizeReviewText,
   parseBlockedForPatterns,
   parseReviewBatchRecord,
   parseSuspectTerms,
 } from '../review-batch';
+import vectors from './fixtures/review-terms-vectors.json';
 
 // Placeholder terms and patterns: the real lists are private and never in the repo.
 const TERMS = parseSuspectTerms('# comment\nalpha\nbeta gamma\n')!;
@@ -100,5 +102,17 @@ describe('review batch ids and records', () => {
     expect(parseReviewBatchRecord(JSON.stringify({ ...record, declared: 'no' }))).toBeNull();
     expect(parseReviewBatchRecord('{')).toBeNull();
     expect(parseReviewBatchRecord(null)).toBeNull();
+  });
+});
+
+// The hub matches card text with its own implementation; these vectors are shared with it
+// (crates/agent-server/tests/data/review-terms-vectors.json), so a drift fails here.
+
+describe('the vectors shared with the hub', () => {
+  it.each(vectors.normalize)('normalizes $note', ({ in: input, out }) => {
+    expect(normalizeReviewText(input)).toBe(out);
+  });
+  it.each(vectors.match)('matches $text against $terms', ({ terms, text, matched }) => {
+    expect(matchesSuspectTerm([text], parseSuspectTerms(terms.join('\n'))!)).toBe(matched);
   });
 });
