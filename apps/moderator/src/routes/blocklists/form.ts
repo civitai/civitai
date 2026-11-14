@@ -32,7 +32,8 @@ export function parseRowId(raw: FormDataEntryValue | null): number | undefined |
 export function inertEntries(type: string, items: string[]): string[] {
   if (type === 'ProfanityBenignWord') return items.filter((item) => /[\s\W]/.test(item));
   // The main app's POI matching keeps only ASCII word characters, spaces and a few separators of
-  // a query (`poiCheckOptions`), and drops a name it strips to nothing.
+  // a query (`poiCheckOptions` in src/utils/metadata/audit.ts), and drops a name it strips to
+  // nothing.
   if (type === 'SemanticSearchPoiRefuse')
     return items.filter((item) => !item.replace(/[^\w\s|:[\],]/g, '').trim());
   return [];
