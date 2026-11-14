@@ -3950,12 +3950,10 @@ export const SCAN_RATING_KEPT_MESSAGE =
   'This model was rated mature from its civitai.red title and description. While they stay the same, it stays marked mature, and a civitai.com version is what lists it on civitai.com. Edit them and save to have them checked again.';
 
 /**
- * The text scan's mature rating carries no lock, so the owner can add a .com face; this keeps the
- * owner from undoing it alone. Refused: a save that leaves a scan-rated model neither mature nor
- * with a .com face (unticking mature, or removing the face from a model the scan skipped for it)
- * while its title and description are unchanged, so nothing would rescan it. A save that edits
- * them is rescanned, and one that flags a minor, a real person or SFW-only hands the verdict to a
- * moderator as a lead (`applyRaisedRestrictions`). A moderator's nsfw ruling since the rating ends it.
+ * The text scan's mature rating carries no lock, so the owner can add a .com face; without this the
+ * owner could undo the rating alone (untick mature, or remove the face that listed the model), and
+ * with the text unchanged nothing would rescan it. A save that edits the text is exempt: it is
+ * rescanned.
  */
 async function assertScanRatingKept({
   modelId,

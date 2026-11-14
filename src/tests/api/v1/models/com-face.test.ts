@@ -231,7 +231,7 @@ describe('POST /api/v1/models/com-face', () => {
       expect(message).toMatch(shown);
       expect(message).toMatch(/civitai\.red/);
       // A refusal is marked so Creator Studio offers the dispute instead of a retry.
-      if (status === 422) expect(res.body.code).toBe('intent-refused');
+      expect(res.body.code).toBe(status === 422 ? 'intent-refused' : undefined);
     }
   );
 

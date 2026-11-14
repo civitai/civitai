@@ -95,6 +95,22 @@ describe('lockForComFaceIntent', () => {
     expect(meta.comFaceIntent.priorSystemNsfwLock).toEqual(scan);
   });
 
+  it('keeps the replaced marker when a later verdict for other text is recorded', async () => {
+    await seed();
+    const scan = { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' };
+    await db.query(
+      `UPDATE "Model" SET meta = meta || jsonb_build_object('systemNsfwLock', $2::jsonb) WHERE id = $1`,
+      [MODEL, JSON.stringify(scan)]
+    );
+    await lockForComFaceIntent(MODEL, 'h');
+
+    await recordComFaceIntent(MODEL, { detected: false, textHash: 'edited' });
+
+    const { meta } = await row();
+    expect(meta.comFaceIntent).toMatchObject({ detected: false, textHash: 'edited' });
+    expect(meta.comFaceIntent.priorSystemNsfwLock).toEqual(scan);
+  });
+
   it.each([
     ['not mature', { nsfw: false }],
     ['flagged a minor', { minor: true }],

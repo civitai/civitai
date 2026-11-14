@@ -73,7 +73,13 @@ export async function recordComFaceIntent(
   const value = JSON.stringify({ ...record, at: new Date().toISOString() });
   await dbWrite.$executeRaw`
     UPDATE "Model"
-    SET meta = ${asJsonbObjectSql('meta')} || jsonb_build_object('comFaceIntent', ${value}::jsonb)
+    -- A rating marker an intent lock replaced stays with the verdict until that lock is lifted.
+    SET meta = ${asJsonbObjectSql(
+      'meta'
+    )} || jsonb_build_object('comFaceIntent', ${value}::jsonb || CASE
+      WHEN jsonb_typeof(meta->'comFaceIntent'->'priorSystemNsfwLock') = 'object'
+      THEN jsonb_build_object('priorSystemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock')
+      ELSE '{}'::jsonb END)
     WHERE id = ${modelId}
   `.catch((error: Error) =>
     logToAxiom({
@@ -145,25 +151,32 @@ export async function storedListingTextHash(modelId: number) {
   });
 }
 
+/** After a ruling lifted the intent lock: puts back the rating marker the lock replaced, whatever
+ *  verdict is stored now. Runs after the caller cleared the lock's own marker. */
+export const restoreReplacedRatingMarkerSql = (modelId: number) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = meta || jsonb_build_object(
+    'systemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock',
+    'comFaceIntent', (meta->'comFaceIntent') - 'priorSystemNsfwLock'
+  )
+  WHERE id = ${modelId}
+    AND jsonb_typeof(meta->'comFaceIntent'->'priorSystemNsfwLock') = 'object'
+`;
+
 /**
- * After a ruling lifted the intent lock: puts back the rating marker the lock replaced, and marks
- * the stored detection overturned only when it was read from `ruledTextHash`, the listing the ruling
- * was made on. A detection of other text stands, so restoring that text is refused again. Runs after
- * the caller cleared the lock's own marker.
+ * After a ruling lifted the intent lock: marks the stored detection overturned only when it was
+ * read from `ruledTextHash`, the listing the ruling was made on. A detection of other text stands,
+ * so restoring that text is refused again.
  */
 export const overturnComFaceIntentSql = (
   modelId: number,
   ruledTextHash: string | null
 ) => Prisma.sql`
   UPDATE "Model"
-  SET meta = (CASE WHEN meta->'comFaceIntent'->>'textHash' = ${ruledTextHash}
-      THEN jsonb_set(meta, '{comFaceIntent,overturnedAt}', to_jsonb(now()::text))
-      ELSE meta END) || CASE
-    WHEN jsonb_typeof(meta->'comFaceIntent'->'priorSystemNsfwLock') = 'object'
-    THEN jsonb_build_object('systemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock')
-    ELSE '{}'::jsonb END
+  SET meta = jsonb_set(meta, '{comFaceIntent,overturnedAt}', to_jsonb(now()::text))
   WHERE id = ${modelId}
     AND jsonb_typeof(meta->'comFaceIntent') = 'object'
+    AND meta->'comFaceIntent'->>'textHash' = ${ruledTextHash}
     AND meta->'comFaceIntent'->>'detected' = 'true'
     AND NOT (meta->'comFaceIntent' ? 'overturnedAt')
 `;

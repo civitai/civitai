@@ -8,7 +8,12 @@ import {
   getOwnTriggerWords,
 } from '~/server/services/model-sfw-face.service';
 import type { ModelMeta } from '~/server/schema/model.schema';
-import { comFaceIntentTextHash } from '~/server/services/model-com-face-intent.service';
+import {
+  COM_FACE_INTENT_LOCK_SOURCE,
+  comFaceIntentTextHash,
+} from '~/server/services/model-com-face-intent.service';
+import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
+import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 
 const SYSTEM_USER_ID = constants.system.user.id;
 // Each slower pass may wait up to a minute: a batch must finish well inside the run's lock.
@@ -36,20 +41,23 @@ type PendingDispute = {
   description: string | null;
   ownerId: number;
   meta: unknown;
+  lockedProperties: string[];
 };
 
 /**
  * Re-judges owners' disputes of a listing intent lock with the slower pass (thinking on). A clear
  * allow approves the lock review as the system, which lifts the lock, overturns the stored verdict
  * and tells the owner. Anything else stays pending in the moderators' lock review queue, marked so
- * the job does not judge it again. Every outcome is logged with the prompt that made the first call,
- * as a sample for tuning that prompt.
+ * the job does not judge it again. Each verdict of the slower pass (overturned, upheld, or allowed on
+ * text changed since) is logged beside the first verdict and both prompt ids, as a sample for tuning
+ * the prompt; runs with no verdict and disputes handed over before a verdict are not samples.
  */
 export async function processComFaceIntentDisputes() {
   const rows = await dbWrite.$queryRaw<PendingDispute[]>`
     SELECT a.id, a."entityId" AS "modelId", a."userId",
       COALESCE((a.context->>'autoReviewAttempts')::int, 0) AS attempts,
-      m.name, m.description, m."userId" AS "ownerId", m.meta
+      m.name, m.description, m."userId" AS "ownerId", m.meta,
+      COALESCE(m."lockedProperties", ARRAY[]::text[]) AS "lockedProperties"
     FROM "Appeal" a
     JOIN "Model" m ON m.id = a."entityId"
     WHERE a."entityType" = 'Model' AND a.status = 'Pending' AND a.category IS NULL
@@ -130,6 +138,9 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
     return markJudged(row, 'upheld');
   }
 
+  // The tag was stamped at filing: a moderator's ruling on the lock since then makes it theirs.
+  if (!(await stillIntentLock(row))) return markJudged(row, 'needs-moderator');
+
   try {
     await resolveLockReviewAppeal({
       appealId: row.id,
@@ -152,6 +163,15 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
   }
   logSample(row, 'overturned', verdict.promptId);
   return 'overturned';
+}
+
+/** The nsfw lock is still the intent check's, with no moderator ruling (a rejection included) since. */
+async function stillIntentLock(row: PendingDispute) {
+  const marker = (row.meta as ModelMeta | null)?.systemNsfwLock;
+  const at = readSystemNsfwLockAt(row.meta);
+  if (!row.lockedProperties.includes('nsfw')) return false;
+  if (marker?.source !== COM_FACE_INTENT_LOCK_SOURCE || !at) return false;
+  return !(await moderatorRuledNsfwSince(row.modelId, at, { alsoRejections: true }));
 }
 
 async function markJudged(row: PendingDispute, outcome: ComFaceIntentDisputeOutcome) {

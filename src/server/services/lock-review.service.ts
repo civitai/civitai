@@ -20,6 +20,7 @@ import { hasPendingMinorHashMatch } from '~/server/services/minor-hash.service';
 import {
   COM_FACE_INTENT_LOCK_SOURCE,
   overturnComFaceIntentSql,
+  restoreReplacedRatingMarkerSql,
   storedListingTextHash,
 } from '~/server/services/model-com-face-intent.service';
 import type { ModelMeta } from '~/server/schema/model.schema';
@@ -308,6 +309,7 @@ export async function resolveLockReviewAppeal({
         `;
         // Lifting the nsfw lock rules the listing is not made for sexual content: the stored
         // intent detection stops refusing a civitai.com version for this text.
+        await tx.$executeRaw(restoreReplacedRatingMarkerSql(modelId));
         await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));
       }
     }

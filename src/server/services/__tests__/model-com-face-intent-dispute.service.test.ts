@@ -21,6 +21,7 @@ const { processComFaceIntentDisputes } = await import(
 const { comFaceIntentTextHash } = await import('~/server/services/model-com-face-intent.service');
 // The detection was recorded for the listing as it stands, with its trigger words.
 const recorded = {
+  systemNsfwLock: { source: 'com-face-intent', at: '2026-01-01T00:00:00.000Z' },
   comFaceIntent: {
     detected: true,
     textHash: comFaceIntentTextHash({ name: 'n', description: null, triggerWords: ['tw'] }),
@@ -37,6 +38,7 @@ const dispute = (fields: Record<string, unknown> = {}) => ({
   name: 'n',
   description: null,
   meta: recorded,
+  lockedProperties: ['nsfw'],
   ...fields,
 });
 
@@ -81,6 +83,15 @@ describe('processComFaceIntentDisputes', () => {
     expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
     expect(mocks.resolve).not.toHaveBeenCalled();
     expect(appealWrites()).toEqual([['needs-moderator', 1]]);
+  });
+
+  it('never approves once a moderator has ruled on the lock since it was set', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute()] as never);
+    mocks.verdict.mockResolvedValue({ status: 'allowed' });
+    dbMock.dbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+
+    expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
+    expect(mocks.resolve).not.toHaveBeenCalled();
   });
 
   it('hands an allowed dispute to a moderator when the approval is refused', async () => {

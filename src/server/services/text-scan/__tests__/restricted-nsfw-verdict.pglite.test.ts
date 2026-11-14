@@ -237,6 +237,34 @@ describe('the scan on a restricted model', () => {
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
   });
 
+  // Without the marker the owner could untick mature, or remove the face, and nothing would rescan it.
+  it.each([
+    ['already mature', { nsfw: true }, { nsfw: true }],
+    ['listed on .com by its face', {}, { sfwName: 'Safe', sfwCoverImageId: 5, nsfwLevel: 1 }],
+  ])(
+    'records the verdict as the origin marker on a model left as it is (%s)',
+    async (_, stored, read) => {
+      await seed(stored);
+      await applySystemModelNsfwFlag({ model: scanned(read), source: 'text-scan' });
+      const after = await row();
+      expect(after).toMatchObject({ nsfw: !!stored.nsfw, lockedProperties: [] });
+      expect(after.meta.systemNsfwLock).toEqual({ source: 'text-scan', at: expect.any(String) });
+    }
+  );
+
+  it("keeps an earlier marker's time, and marks nothing under a moderator's lock", async () => {
+    await seed({ nsfw: true, meta: { systemNsfwLock: SYSTEM_LOCK } });
+    await applySystemModelNsfwFlag({ model: scanned({ nsfw: true }), source: 'xguard' });
+    expect((await row()).meta.systemNsfwLock).toEqual(SYSTEM_LOCK);
+
+    await seed({ nsfw: true, locked: ['nsfw'] });
+    await applySystemModelNsfwFlag({
+      model: scanned({ nsfw: true, lockedProperties: ['nsfw'] }),
+      source: 'text-scan',
+    });
+    expect((await row()).meta).not.toHaveProperty('systemNsfwLock');
+  });
+
   it('keeps a waiting lead as it is on redelivery', async () => {
     await seed({ minor: true, meta: lead('minor') });
     await applySystemModelNsfwFlag({ model: scanned({ minor: true }), source: 'xguard' });
