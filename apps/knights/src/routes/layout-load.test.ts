@@ -155,7 +155,7 @@ describe('layout load', () => {
   });
   it('hands the header the Buzz rate, the rank badge images and the ladder rows from config', async () => {
     const data = await run();
-    expect(data).toMatchObject({ goldPerBuzz: 20, badges: BADGES });
+    expect(data).toMatchObject({ goldPerBuzz: 400, badges: BADGES });
     expect(data.ladder.map((row: { rank: string }) => row.rank)).toEqual([
       'Knight',
       'Templar',

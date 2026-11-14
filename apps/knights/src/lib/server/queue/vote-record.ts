@@ -51,7 +51,7 @@ export type VoteSubject = {
 
 export type InsertedVote = {
   status: 'inserted';
-  player: { rankType: string; startAt: Date };
+  player: { rankType: string; startAt: Date; level: number };
   gold: number;
   /** What the vote was stored with: 0 for a held player's. */
   weight: number;
@@ -159,14 +159,14 @@ export async function insertVote(
   metrics.vote(voteKind(subject));
   return {
     status: 'inserted',
-    player: { rankType: player.rankType, startAt: player.startAt },
+    player: { rankType: player.rankType, startAt: player.startAt, level: levelForExp(player.exp) },
     gold,
     weight,
   };
 }
 
 /**
- * Pays the immediate part of a vote: XP, then the day's tally and pending gold clamped to the rank's daily cap.
+ * Pays the immediate part of a vote: XP, then the day's tally and pending gold clamped to the level's daily cap.
  * Must run after the player row is locked (`recordVoteDay` relies on it).
  */
 export async function creditVote(
@@ -175,7 +175,7 @@ export async function creditVote(
     userId: number;
     itemId: number;
     now: Date;
-    player: { rankType: string; startAt: Date };
+    player: { rankType: string; startAt: Date; level: number };
     gold: number;
   }
 ): Promise<void> {
@@ -188,6 +188,7 @@ export async function creditVote(
   const day = await recordVoteDay(trx, {
     playerId: input.userId,
     rank: input.player.rankType,
+    level: input.player.level,
     gold: input.gold,
     now: input.now,
     startAt: input.player.startAt,

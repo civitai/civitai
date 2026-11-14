@@ -34,7 +34,7 @@ describe('codex load', () => {
     expect(page.ranks[1]).not.toHaveProperty('voteWeight');
     expect(page.ranks[1]).toMatchObject({
       goldMultiplier: 1.25,
-      dailyGoldCap: 7500,
+      dailyGoldCap: { from: 140_000, to: 180_000 },
     });
     expect(page.ranks[0]).toHaveProperty('levels');
     expect(page.ranks[0]).toHaveProperty('accuracyBar');

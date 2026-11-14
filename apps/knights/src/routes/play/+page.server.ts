@@ -69,11 +69,10 @@ const APPRENTICE_REJECTION_TEXT = {
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-type Perks = { goldMultiplier: number; dailyGoldCap: number };
+type Perks = { goldMultiplier: number };
 type RankPerks = {
   levels?: string;
   goldMultiplier?: number;
-  dailyGoldCap?: number;
   /** The perks of the rank the player held before, for the rank-up's "what changed". */
   previous?: Perks;
 };
@@ -81,12 +80,7 @@ type Notice = ProgressNotice &
   RankPerks & { milestone?: string; milestoneLevel?: number; levelGold?: number };
 
 const perksOf = (rank: string): Perks | undefined =>
-  isRank(rank)
-    ? {
-        goldMultiplier: RANK_RULES[rank].goldMultiplier,
-        dailyGoldCap: RANK_RULES[rank].dailyGoldCap,
-      }
-    : undefined;
+  isRank(rank) ? { goldMultiplier: RANK_RULES[rank].goldMultiplier } : undefined;
 
 // A rank-up notice says what the rank brings and what it replaces; a level-up carries nothing more.
 function withRankPerks(progress: ProgressNotice | null): Notice | null {
@@ -97,7 +91,6 @@ function withRankPerks(progress: ProgressNotice | null): Notice | null {
     ...progress,
     levels: perks.levels,
     goldMultiplier: perks.goldMultiplier,
-    dailyGoldCap: perks.dailyGoldCap,
     previous: perksOf(progress.fromRank),
   };
 }
@@ -169,7 +162,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   const mutedApprentice = muted && status.rank === 'Acolyte';
   const [picked, daily, rail, apprenticeMeter] = await Promise.all([
     lockedUntil || muted || resetPending ? null : pickItem(locals.user.id, status.rank, skipped),
-    getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
+    getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, level: status.level, now }),
     railFor(locals.user.id, now, status.fervor),
     mutedApprentice
       ? getApprenticeProgress(db, locals.user.id).then(progressPayload)

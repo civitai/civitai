@@ -1,6 +1,6 @@
 # Knights of New Order: the gold shop
 
-Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/shop` (shop) and `routes/shop/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembership` in `src/server/services/subscriptions.service.ts`. Prices live in data. Gold is anchored at 20 gold = 1 Buzz (`CONVERSION.goldPerBuzz`, which the header's Buzz value reads). Prices are entered from the moderator page; the launch catalog is kept in HQ, not here.
+Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/shop` (shop) and `routes/shop/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembership` in `src/server/services/subscriptions.service.ts`. Prices live in data. Gold is anchored at 400 gold = 1 Buzz (`CONVERSION.goldPerBuzz`, which the header's Buzz value reads). Prices are entered from the moderator page; the launch catalog is kept in HQ, not here.
 
 ## Data and deploy
 

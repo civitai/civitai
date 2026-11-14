@@ -76,7 +76,7 @@ describe('rankTable', () => {
         minDaysPlayed: 0,
         voteWeight: 1,
         goldMultiplier: 1,
-        dailyGoldCap: 5000,
+        dailyGoldCap: { from: 80_000, to: 120_000 },
       },
       {
         rank: 'Templar',
@@ -85,7 +85,7 @@ describe('rankTable', () => {
         minDaysPlayed: 0,
         voteWeight: 1.5,
         goldMultiplier: 1.25,
-        dailyGoldCap: 7500,
+        dailyGoldCap: { from: 140_000, to: 180_000 },
       },
       {
         rank: 'Paladin',
@@ -94,7 +94,7 @@ describe('rankTable', () => {
         minDaysPlayed: 60,
         voteWeight: 2,
         goldMultiplier: 1.5,
-        dailyGoldCap: 10000,
+        dailyGoldCap: { from: 200_000, to: 400_000 },
       },
     ]);
     expect(rankTable().map((r) => r.rank)).toEqual(RANK_LADDER.map((r) => r.rank));

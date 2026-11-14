@@ -36,7 +36,7 @@ export const load: PageServerLoad = async ({ locals }) => {
   // Only "What's new" is read here; /play shows the guide and progress notices, which stay unrecorded until it does.
   const [daily, recap, rail, seen] = status
     ? await Promise.all([
-        getDailyStatus(db, { playerId, rank: status.rank, now }),
+        getDailyStatus(db, { playerId, rank: status.rank, level: status.level, now }),
         optional('recap', () => findRecap(db, { playerId, now })),
         optional('rail', () => railFor(playerId, now, status.fervor)),
         readNotices(seenStore, playerId, status),

@@ -40,7 +40,12 @@ async function headerStats(playerId: number) {
   }
   if (!status) return { status: null, daily: null };
   try {
-    const daily = await getDailyStatus(db, { playerId, rank: status.rank, now: queueDeps.now() });
+    const daily = await getDailyStatus(db, {
+      playerId,
+      rank: status.rank,
+      level: status.level,
+      now: queueDeps.now(),
+    });
     return { status, daily };
   } catch (error) {
     console.error('knights: could not read the header streak', { error });

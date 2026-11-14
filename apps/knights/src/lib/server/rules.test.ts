@@ -35,7 +35,12 @@ describe('rulesFacts', () => {
 
   it('quotes the daily gold caps and the Vigil streaks from config', () => {
     const facts = rulesFacts();
-    expect(facts.gold.dailyCaps).toEqual({ Knight: 5000, Templar: 7500, Paladin: 10000 });
+    expect(facts.gold.dailyCap).toEqual({
+      firstLevel: 20,
+      first: 80_000,
+      topLevel: 130,
+      top: 400_000,
+    });
     expect(facts.watch.badgeStreaks).toEqual([7, 30, 100]);
   });
 

@@ -795,7 +795,6 @@
     level={data.progress.level}
     levels={data.progress.levels}
     goldMultiplier={data.progress.goldMultiplier}
-    dailyGoldCap={data.progress.dailyGoldCap}
     previous={data.progress.previous}
     badge={data.badges.large[data.progress.rank]}
     message={form?.progressFailed ? form.message : null}

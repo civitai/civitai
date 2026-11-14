@@ -244,9 +244,9 @@ describe('play load', () => {
       kind: 'rank',
       rank: 'Templar',
       goldMultiplier: 1.25,
-      dailyGoldCap: 7500,
-      previous: { goldMultiplier: 1, dailyGoldCap: 5000 },
+      previous: { goldMultiplier: 1 },
     });
+    expect(page.progress).not.toHaveProperty('dailyGoldCap');
     expect(page.progress).not.toHaveProperty('voteWeight');
     expect(page.progress.previous).not.toHaveProperty('voteWeight');
   });
@@ -258,7 +258,7 @@ describe('play load', () => {
     expect(page.progress).toMatchObject({
       kind: 'rank',
       rank: 'Paladin',
-      previous: { goldMultiplier: 1, dailyGoldCap: 5000 },
+      previous: { goldMultiplier: 1 },
     });
   });
 
@@ -279,6 +279,7 @@ describe('play load', () => {
     expect(getDailyStatus).toHaveBeenCalledWith(expect.anything(), {
       playerId: 7,
       rank: 'Knight',
+      level: 2,
       now: NOW,
     });
   });

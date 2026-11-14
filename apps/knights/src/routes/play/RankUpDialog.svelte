@@ -15,7 +15,6 @@
     level,
     levels,
     goldMultiplier,
-    dailyGoldCap,
     previous,
     badge = null,
     message,
@@ -26,9 +25,8 @@
     level: number;
     levels?: string;
     goldMultiplier?: number;
-    dailyGoldCap?: number;
     /** The rank below's perks, for the before and after. */
-    previous?: { goldMultiplier: number; dailyGoldCap: number };
+    previous?: { goldMultiplier: number };
     /** The rank's badge image; without one the crest shows. */
     badge?: string | null;
     message: string | null;
@@ -38,9 +36,7 @@
 
   let form = $state<HTMLFormElement>();
   const changes = $derived(
-    goldMultiplier === undefined || dailyGoldCap === undefined
-      ? []
-      : rankUpChanges(previous, { goldMultiplier, dailyGoldCap })
+    goldMultiplier === undefined ? [] : rankUpChanges(previous, { goldMultiplier })
   );
   onMount(() => sound.play(rank === 'Knight' ? 'knighting-ring' : 'rankup'));
   const close = () => {

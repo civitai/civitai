@@ -67,8 +67,8 @@ describe('a hidden check and a queue vote', () => {
     );
 
     expect(await getPlayerStatus(db, 2)).toEqual(await getPlayerStatus(db, 1));
-    expect(await getDailyStatus(db, { playerId: 2, rank: 'Knight', now: NOW })).toEqual(
-      await getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOW })
+    expect(await getDailyStatus(db, { playerId: 2, rank: 'Knight', level: 20, now: NOW })).toEqual(
+      await getDailyStatus(db, { playerId: 1, rank: 'Knight', level: 20, now: NOW })
     );
     expect(await ledgerOf(db, 2)).toEqual(await ledgerOf(db, 1));
 
