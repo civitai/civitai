@@ -1,4 +1,3 @@
-import '@mantine/tiptap/styles.layer.css';
 import type { ReactNode } from 'react';
 import { StoryTRPCProvider } from '../../../../.ladle/trpc';
 import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
