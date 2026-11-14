@@ -3,18 +3,13 @@ import {
   blockedForSignal,
   imageAuditContentHash,
   isReviewBatchId,
-  matchesSuspectTerm,
   newReviewBatchId,
-  normalizeReviewText,
   parseBlockedForPatterns,
   parseReviewBatchRecord,
-  parseSuspectTerms,
   scannerHeldIds,
 } from '../review-batch';
-import vectors from './fixtures/review-terms-vectors.json';
 
-// Placeholder terms and patterns: the real lists are private and never in the repo.
-const TERMS = parseSuspectTerms('# comment\nalpha\nbeta gamma\n')!;
+// Placeholder patterns: the real list is private and never in the repo.
 
 // Wire contract: ClickHouse already holds scan rows under these hashes. Changing the function
 // orphans every stored row, and each image then reads as unscanned.
@@ -39,27 +34,6 @@ describe('scannerHeldIds', () => {
 
   it('a label-presence reader counts only hits, never an image with no rows', () => {
     expect([...scannerHeldIds([1, 2, 3, 4], rows, false)].sort()).toEqual([1, 4]);
-  });
-});
-
-describe('matchesSuspectTerm', () => {
-  it('matches a term as a whole word, through case, width and punctuation', () => {
-    expect(matchesSuspectTerm(['see ALPHA here'], TERMS)).toBe(true);
-    expect(matchesSuspectTerm(['ａｌｐｈａ'], TERMS)).toBe(true);
-    expect(matchesSuspectTerm(['beta--gamma!'], TERMS)).toBe(true);
-    expect(matchesSuspectTerm(['x', 'Alpha.'], TERMS)).toBe(true);
-    expect(matchesSuspectTerm(['al​p­ha'], TERMS)).toBe(true);
-  });
-
-  it('does not match inside a word or a split phrase', () => {
-    expect(matchesSuspectTerm(['alphabet'], TERMS)).toBe(false);
-    expect(matchesSuspectTerm(['beta and gamma'], TERMS)).toBe(false);
-    expect(matchesSuspectTerm([], TERMS)).toBe(false);
-  });
-
-  it('an absent or comment-only list parses to null, never to an empty list', () => {
-    expect(parseSuspectTerms(undefined)).toBeNull();
-    expect(parseSuspectTerms('# only\n\n')).toBeNull();
   });
 });
 
@@ -130,17 +104,5 @@ describe('review batch ids and records', () => {
     expect(parseReviewBatchRecord(JSON.stringify({ ...record, declared: 'no' }))).toBeNull();
     expect(parseReviewBatchRecord('{')).toBeNull();
     expect(parseReviewBatchRecord(null)).toBeNull();
-  });
-});
-
-// The hub matches card text with its own implementation; these vectors are shared with it
-// (crates/agent-server/tests/data/review-terms-vectors.json), so a drift fails here.
-
-describe('the vectors shared with the hub', () => {
-  it.each(vectors.normalize)('normalizes $note', ({ in: input, out }) => {
-    expect(normalizeReviewText(input)).toBe(out);
-  });
-  it.each(vectors.match)('matches $text against $terms', ({ terms, text, matched }) => {
-    expect(matchesSuspectTerm([text], parseSuspectTerms(terms.join('\n'))!)).toBe(matched);
   });
 });

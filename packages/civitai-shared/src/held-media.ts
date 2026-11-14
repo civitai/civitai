@@ -121,6 +121,13 @@ export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (
   ) listed
   WHERE listed.id IS NOT NULL`;
 
+/** The review-batch routing's suspect leg: `suspectImageSql`, or the image listed on a CsamReport.
+ *  Never NULL, so a negated use cannot read an unknown as clean. */
+export function reviewSuspectImageSql(image: string): string {
+  const suspect = suspectImageSql(image);
+  return `COALESCE((${suspect} OR (${image}.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})), false)`;
+}
+
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
 /** Containers every current browser plays. The codec inside is the browser's call: one it cannot
  *  decode fires the element's `error`, which the grid renders as the placeholder. */

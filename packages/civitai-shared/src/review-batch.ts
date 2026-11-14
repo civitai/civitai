@@ -100,37 +100,6 @@ export function parseReviewBatchRecord(raw: string | null | undefined): ReviewBa
   }
 }
 
-/**
- * The form both the hub and this server match text in: NFKC, invisible characters (zero-width
- * spaces and joiners, soft hyphens) removed so they cannot split a word, lower-cased, every run of
- * characters that is not alphabetic or numeric collapsed to one space, trimmed. The hub implements
- * the same steps in this order; a difference lets a term through one side.
- */
-export const normalizeReviewText = (text: string) =>
-  text
-    .normalize('NFKC')
-    .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
-    .toLowerCase()
-    .replace(/[^\p{Alphabetic}\p{N}]+/gu, ' ')
-    .trim();
-
-/** The private suspect-term list, one term or phrase per line. Null when absent or empty, which the
- *  mint treats as every batch declared. */
-export function parseSuspectTerms(raw: string | null | undefined): string[] | null {
-  const terms = (raw ?? '')
-    .split(/\r?\n/)
-    .filter((line) => !line.trimStart().startsWith('#'))
-    .map(normalizeReviewText)
-    .filter(Boolean);
-  return terms.length ? [...new Set(terms)] : null;
-}
-
-/** Whether any text contains a term as a whole word or phrase. */
-export function matchesSuspectTerm(texts: readonly string[], terms: readonly string[]): boolean {
-  const padded = texts.map((text) => ` ${normalizeReviewText(text)} `);
-  return terms.some((term) => padded.some((text) => text.includes(` ${term} `)));
-}
-
 export type BlockedForPatterns = { signal: RegExp[]; nonMinor: RegExp[] };
 
 const ALWAYS_NON_MINOR = new Set(['moderated', 'tos', 'ainotverified']);
