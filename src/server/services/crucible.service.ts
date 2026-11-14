@@ -2272,81 +2272,12 @@ export const submitEntry = async ({
     }
 
     let buzzTransactionId: string | null = null;
+    // With a client key: the keyed fee's prefix, recorded under the key's lock below.
+    let keyedFee: { prefix: string; context: { userId: number; amount: number } } | null = null;
     const isFreeEntry = isFreeCrucibleEntry({
       entriesSoFar: userEntryCount,
       freeEntriesPerUser: crucible.freeEntriesPerUser,
     });
-
-    // Holding the crucible row makes a cancel's or finalize's claim wait for this insert, so
-    // they read the entry; once they've claimed, the status check here refuses it instead.
-    const writeEntry = async (tx: Prisma.TransactionClient, feeTransactionId: string | null) => {
-      // The last clause is the SQL twin of getCrucibleEntriesCloseAt: change one, change both.
-      const open = await tx.$executeRaw`
-        UPDATE "Crucible"
-        SET "prizePool" = "prizePool" + ${feeTransactionId ? crucible.entryFee : 0}
-        WHERE id = ${crucibleId}
-          AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
-          AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
-          AND (
-            "startAt" IS NULL OR "endAt" IS NULL
-            OR statement_timestamp() < "endAt" - ("endAt" - "startAt") * ("entryCutoffPercent" / 100.0)
-          )
-      `;
-      if (!open)
-        throw throwBadRequestError(
-          areCrucibleEntriesClosed(crucible)
-            ? CRUCIBLE_ENTRIES_CLOSED_MESSAGE
-            : 'This crucible is not accepting entries'
-        );
-      if (draftPostId) {
-        // Scheduled for the end so the entry stays off the entrant's profile, feeds and search while
-        // judging is blind. The UPDATE above refused an ended crucible, so endAt is still ahead.
-        const published = await tx.post.updateMany({
-          where: { id: draftPostId, userId, publishedAt: null },
-          data: { publishedAt: crucible.endAt ?? new Date() },
-        });
-        if (!published.count)
-          throw throwBadRequestError('This image changed while it was being entered. Try again.');
-      }
-      return tx.crucibleEntry.create({
-        data: {
-          crucibleId,
-          userId,
-          imageId,
-          score: 1500, // Default ELO score
-          buzzTransactionId: feeTransactionId,
-        },
-        select: submittedEntrySelect,
-      });
-    };
-
-    // After the entry is saved: never reaches a refund.
-    const afterEntrySaved = async (entry: { id: number; user: { username: string | null } }) => {
-      if (draftPostId)
-        await afterPostPublish({ postId: draftPostId, userId }).catch((error) =>
-          logToAxiom({
-            type: 'error',
-            name: 'crucible-entry-post-refresh-failed',
-            message: error instanceof Error ? error.message : String(error),
-            crucibleId,
-            postId: draftPostId,
-          })
-        );
-
-      if (crucible.userId !== userId) {
-        sendCrucibleNotification({
-          userId: crucible.userId,
-          type: 'crucible-entry-submitted',
-          category: NotificationCategory.Update,
-          key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
-          details: {
-            crucibleId,
-            crucibleName: getCruciblePublishableName(crucible),
-            entrantUsername: entry.user.username ?? 'Anonymous',
-          },
-        });
-      }
-    };
 
     if (crucible.entryFee > 0 && !isFreeEntry) {
       // Refunds reverse this transaction, so an entry is always returned in the currency it paid.
@@ -2382,70 +2313,145 @@ export const submitEntry = async ({
 
       if (idempotencyKey !== undefined) {
         // Charged once per entry across the user's retries (the balance is checked only when
-        // nothing is held yet), then recorded once under the key's lock; see chargeByPrefix and
-        // recordKeyedCharge. The charge runs outside any transaction.
+        // nothing is held yet), outside any transaction; see chargeByPrefix. Recorded once under
+        // the key's lock below (recordKeyedCharge).
         const prefix = getKeyedCrucibleEntryTransactionPrefix(
           crucibleId,
           userId,
           imageId,
           idempotencyKey
         );
-        const feeContext = { userId, amount: crucible.entryFee };
-        await chargeByPrefix(prefix, feeContext, {
+        const context = { userId, amount: crucible.entryFee };
+        await chargeByPrefix(prefix, context, {
           reusable: true,
           beforeCharging: assertCanPayFee,
           charge: () => chargeFee(prefix),
           declined: () =>
             new TRPCError({ code: 'BAD_REQUEST', message: 'Unable to charge the entry fee' }),
         });
-        const { entry, recordedHere } = await recordKeyedCharge(prefix, feeContext, {
-          findRecorded: async (tx) => {
-            const recorded = await tx.crucibleEntry.findFirst({
-              where: { crucibleId, userId, buzzTransactionId: prefix },
-              select: submittedEntrySelect,
-            });
-            return recorded ? { entry: recorded, recordedHere: false } : null;
-          },
-          isRefunded: () => prefixWasRefunded(prefix, feeContext, CHARGE_LOCKED_READ),
-          record: async (tx) => ({ entry: await writeEntry(tx, prefix), recordedHere: true }),
-          refund: () =>
-            refundMultiAccountTransaction(
-              {
-                externalTransactionIdPrefix: prefix,
-                description: getCrucibleTransactionDescription(
-                  'Crucible entry fee refund - entry not saved',
-                  crucible
-                ),
-                details: {
-                  entityId: crucibleId,
-                  entityType: 'Crucible',
-                  reason: 'entry-not-saved',
-                },
-              },
-              CHARGE_LOCKED_REFUND
-            ),
-        });
-        // An earlier request under this key saved it and already did what follows.
-        if (recordedHere) await afterEntrySaved(entry);
-        return entry;
+        keyedFee = { prefix, context };
+      } else {
+        await assertCanPayFee();
+
+        // Generate transaction prefix for potential refunds
+        const transactionPrefix = getCrucibleEntryTransactionPrefix(crucibleId, userId);
+
+        await chargeFee(transactionPrefix);
+
+        buzzTransactionId = transactionPrefix;
       }
-
-      await assertCanPayFee();
-
-      // Generate transaction prefix for potential refunds
-      const transactionPrefix = getCrucibleEntryTransactionPrefix(crucibleId, userId);
-
-      await chargeFee(transactionPrefix);
-
-      buzzTransactionId = transactionPrefix;
     }
 
-    // Create the entry with default ELO score (1500)
-    // Wrap in try/catch to refund entry fee if database write fails
-    try {
-      const entry = await dbWrite.$transaction((tx) => writeEntry(tx, buzzTransactionId));
+    const fee = keyedFee;
+    const feeTransactionId = fee?.prefix ?? buzzTransactionId;
+    type SavedEntry = Prisma.CrucibleEntryGetPayload<{ select: typeof submittedEntrySelect }>;
+    // Runs `write` in a transaction: with a keyed fee, under the key's lock, where an entry an
+    // earlier request saved on this fee answers instead (`recordedHere: false`), a refunded fee is
+    // refused, and a failed write refunds the fee once (recordKeyedCharge).
+    const save = (
+      write: (tx: Prisma.TransactionClient) => Promise<SavedEntry>
+    ): Promise<{ entry: SavedEntry; recordedHere: boolean }> => {
+      if (!fee)
+        return dbWrite.$transaction(async (tx) => ({ entry: await write(tx), recordedHere: true }));
+      return recordKeyedCharge(fee.prefix, fee.context, {
+        findRecorded: async (tx) => {
+          const recorded = await tx.crucibleEntry.findFirst({
+            where: { crucibleId, userId, buzzTransactionId: fee.prefix },
+            select: submittedEntrySelect,
+          });
+          return recorded ? { entry: recorded, recordedHere: false } : null;
+        },
+        isRefunded: () => prefixWasRefunded(fee.prefix, fee.context, CHARGE_LOCKED_READ),
+        record: async (tx) => ({ entry: await write(tx), recordedHere: true }),
+        refund: () =>
+          refundMultiAccountTransaction(
+            {
+              externalTransactionIdPrefix: fee.prefix,
+              description: getCrucibleTransactionDescription(
+                'Crucible entry fee refund - entry not saved',
+                crucible
+              ),
+              details: { entityId: crucibleId, entityType: 'Crucible', reason: 'entry-not-saved' },
+            },
+            CHARGE_LOCKED_REFUND
+          ),
+      });
+    };
 
-      await afterEntrySaved(entry);
+    // Create the entry with default ELO score (1500)
+    // Wrap in try/catch to refund entry fee if database write fails (a keyed fee is refunded by
+    // `save` itself, so `buzzTransactionId` stays null for it)
+    try {
+      const { entry, recordedHere } = await save(async (tx) => {
+        // Holding the crucible row makes a cancel's or finalize's claim wait for this insert, so
+        // they read the entry; once they've claimed, the status check here refuses it instead.
+        // The last clause is the SQL twin of getCrucibleEntriesCloseAt: change one, change both.
+        const open = await tx.$executeRaw`
+          UPDATE "Crucible"
+          SET "prizePool" = "prizePool" + ${feeTransactionId ? crucible.entryFee : 0}
+          WHERE id = ${crucibleId}
+            AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+            AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+            AND (
+              "startAt" IS NULL OR "endAt" IS NULL
+              OR statement_timestamp() < "endAt" - ("endAt" - "startAt") * ("entryCutoffPercent" / 100.0)
+            )
+        `;
+        if (!open)
+          throw throwBadRequestError(
+            areCrucibleEntriesClosed(crucible)
+              ? CRUCIBLE_ENTRIES_CLOSED_MESSAGE
+              : 'This crucible is not accepting entries'
+          );
+        if (draftPostId) {
+          // Scheduled for the end so the entry stays off the entrant's profile, feeds and search while
+          // judging is blind. The UPDATE above refused an ended crucible, so endAt is still ahead.
+          const published = await tx.post.updateMany({
+            where: { id: draftPostId, userId, publishedAt: null },
+            data: { publishedAt: crucible.endAt ?? new Date() },
+          });
+          if (!published.count)
+            throw throwBadRequestError('This image changed while it was being entered. Try again.');
+        }
+        return tx.crucibleEntry.create({
+          data: {
+            crucibleId,
+            userId,
+            imageId,
+            score: 1500, // Default ELO score
+            buzzTransactionId: feeTransactionId,
+          },
+          select: submittedEntrySelect,
+        });
+      });
+
+      // An earlier request under this entry's key saved it and already did what follows.
+      if (!recordedHere) return entry;
+
+      if (draftPostId)
+        await afterPostPublish({ postId: draftPostId, userId }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'crucible-entry-post-refresh-failed',
+            message: error instanceof Error ? error.message : String(error),
+            crucibleId,
+            postId: draftPostId,
+          })
+        );
+
+      if (crucible.userId !== userId) {
+        sendCrucibleNotification({
+          userId: crucible.userId,
+          type: 'crucible-entry-submitted',
+          category: NotificationCategory.Update,
+          key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
+          details: {
+            crucibleId,
+            crucibleName: getCruciblePublishableName(crucible),
+            entrantUsername: entry.user.username ?? 'Anonymous',
+          },
+        });
+      }
 
       return entry;
     } catch (error) {

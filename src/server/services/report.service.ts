@@ -65,12 +65,6 @@ import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
-import { chargeByPrefix, prefixWasRefunded } from '~/server/services/buzz-keyed-charge';
-import {
-  CHARGE_LOCKED_READ,
-  CHARGE_LOCKED_REFUND,
-  recordKeyedCharge,
-} from '~/server/services/buzz-charge-lock';
 import {
   APPEAL_ALREADY_PENDING,
   getAppealRefusal,
@@ -1060,7 +1054,14 @@ export async function createEntityAppeal({
 
       if (idempotencyKey !== undefined) {
         // Charged once per appeal across the user's retries, then recorded once under the key's
-        // lock; see chargeByPrefix and recordKeyedCharge.
+        // lock; see chargeByPrefix and recordKeyedCharge. Imported here, not at the top: this
+        // module is in the image.service import cycle, and a static import pulls them into it.
+        const { chargeByPrefix, prefixWasRefunded } = await import(
+          '~/server/services/buzz-keyed-charge'
+        );
+        const { CHARGE_LOCKED_READ, CHARGE_LOCKED_REFUND, recordKeyedCharge } = await import(
+          '~/server/services/buzz-charge-lock'
+        );
         const prefix = appealFeeTransactionPrefix(userId, entityType, entityId, idempotencyKey);
         const feeContext = { userId, amount: APPEAL_FEE };
         await chargeByPrefix(prefix, feeContext, {
