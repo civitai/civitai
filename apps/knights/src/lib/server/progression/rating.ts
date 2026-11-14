@@ -1,4 +1,5 @@
 import { RANK_RULES, type Rank } from '../ranks';
+import { DAILY_GOLD_CAP_BY_LEVEL, dailyGoldCapOf } from '../daily/config';
 import { RANK_LADDER, RATING } from './config';
 
 export type Ledger = { correct: number; graded: number };
@@ -65,6 +66,15 @@ const levelsLabel = (index: number) => {
   return next ? `${from}–${next.fromLevel - 1}` : `${from}+`;
 };
 
+/** The daily gold cap across a rank's levels: it rises every 10 levels, so a rank spans several caps. */
+const goldCapRange = (index: number) => {
+  const next = RANK_LADDER[index + 1];
+  return {
+    from: dailyGoldCapOf(RANK_LADDER[index].fromLevel),
+    to: next ? dailyGoldCapOf(next.fromLevel - 1) : DAILY_GOLD_CAP_BY_LEVEL.at(-1)!.gold,
+  };
+};
+
 export const rankTable = () =>
   RANK_LADDER.map((entry, index) => ({
     rank: entry.rank,
@@ -72,4 +82,5 @@ export const rankTable = () =>
     accuracyBar: entry.accuracyBar,
     minDaysPlayed: entry.minDaysPlayed,
     ...RANK_RULES[entry.rank],
+    dailyGoldCap: goldCapRange(index),
   }));

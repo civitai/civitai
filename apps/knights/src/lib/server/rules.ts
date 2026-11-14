@@ -1,10 +1,9 @@
 import { browsingLevelDescriptions, browsingLevelLabels, NsfwLevel } from '@civitai/shared';
-import { DAILY, streakBonusGold } from './daily/config';
+import { DAILY, DAILY_GOLD_CAP_BY_LEVEL, streakBonusGold } from './daily/config';
 import { goldForRank, PROGRESSION, RATING } from './progression/config';
 import { rankTable } from './progression/rating';
 import { SMITES } from './smites/config';
 import { APPRENTICE } from './apprenticeship/config';
-import { RANK_RULES } from './ranks';
 import { STREAK_BADGE_IDS } from './daily/streak-badges';
 
 const RATING_GUIDE_LEVELS = [
@@ -54,10 +53,11 @@ export function rulesFacts() {
     gold: {
       perCorrectVote: goldForRank('Knight'),
       belowBarFactor: RATING.belowBarFactor,
-      dailyCaps: {
-        Knight: RANK_RULES.Knight.dailyGoldCap,
-        Templar: RANK_RULES.Templar.dailyGoldCap,
-        Paladin: RANK_RULES.Paladin.dailyGoldCap,
+      dailyCap: {
+        firstLevel: DAILY_GOLD_CAP_BY_LEVEL[0].fromLevel,
+        first: DAILY_GOLD_CAP_BY_LEVEL[0].gold,
+        topLevel: DAILY_GOLD_CAP_BY_LEVEL.at(-1)!.fromLevel,
+        top: DAILY_GOLD_CAP_BY_LEVEL.at(-1)!.gold,
       },
     },
     watch: {

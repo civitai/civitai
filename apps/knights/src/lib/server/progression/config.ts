@@ -6,8 +6,8 @@ export const PROGRESSION = {
   /** voteXp + correctXp must stay 100, the original game's per-correct-vote XP. */
   correctXp: 90,
   baseGold: 100,
-  /** Per Acolyte level, once per player. Placeholder until the shop price sheet (HQ knights_v2_shop_design). */
-  acolyteLevelGold: 100,
+  /** Per Acolyte level, once per player. */
+  acolyteLevelGold: 2000,
   /** Accuracy (and so rank) is over this many graded votes; it never decays with time. */
   accuracyWindow: 500,
   /** Fervor counts votes cast in this many days (by createdAt), with no cap. */

@@ -8,7 +8,7 @@
     levels: string;
     accuracyBar: number;
     goldMultiplier: number;
-    dailyGoldCap: number;
+    dailyGoldCap: { from: number; to: number };
     minDaysPlayed?: number;
   };
   let {
@@ -62,7 +62,10 @@
         <dl>
           <div><dt>Accuracy bar</dt><dd>{percent(rank.accuracyBar)}</dd></div>
           <div><dt>Gold multiplier</dt><dd>{rank.goldMultiplier}×</dd></div>
-          <div><dt>Daily gold cap</dt><dd>{count(rank.dailyGoldCap)} a day</dd></div>
+          <div>
+            <dt>Daily gold cap</dt>
+            <dd>{count(rank.dailyGoldCap.from)} to {count(rank.dailyGoldCap.to)} a day</dd>
+          </div>
           {#if rank.minDaysPlayed}
             <div><dt>Days played</dt><dd>{rank.minDaysPlayed}+</dd></div>
           {/if}

@@ -1,5 +1,5 @@
 export const CONVERSION = {
-  goldPerBuzz: 20,
+  goldPerBuzz: 400,
   minBuzz: 5,
 } as const;
 

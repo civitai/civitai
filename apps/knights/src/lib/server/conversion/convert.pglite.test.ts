@@ -6,6 +6,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedPlayer, setGold } from '../../../test/seed';
+import { CONVERSION } from './config';
 import { getGoldBalance } from './balance';
 import type { BuzzGrant, BuzzPort } from './buzz';
 import { BuzzRejectedError } from './buzz';
@@ -105,7 +106,7 @@ describe('gold balance', () => {
       converted: 2_000,
       onItsWay: 0,
       held: false,
-      buzzOnConvert: 650,
+      buzzOnConvert: Math.floor(13_000 / CONVERSION.goldPerBuzz),
     });
   });
 

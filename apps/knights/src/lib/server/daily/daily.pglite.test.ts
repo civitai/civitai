@@ -12,8 +12,8 @@ import {
   ensureVotePartitions,
   type QueueDeps,
 } from '../queue/queue.service';
-import { RANK_RULES } from '../ranks';
-import { DAILY } from './config';
+import { expForLevel } from '../progression/levels';
+import { DAILY, dailyGoldCapOf } from './config';
 import {
   dismissRecap,
   findRecap,
@@ -111,7 +111,8 @@ const wallet = async (userId: number) =>
     )
   ).rows[0];
 
-const cap = RANK_RULES.Knight.dailyGoldCap;
+// Seeded players have 0 XP, so a Knight's cap is the level 20 row (the floor for its rank).
+const cap = dailyGoldCapOf(20);
 
 describe('the day row', () => {
   it('counts each vote and the gold recorded for it', async () => {
@@ -172,11 +173,13 @@ describe('the daily gold cap', () => {
     expect(await dayRow(1, D1)).toMatchObject({ votes: 11, goldRecorded: cap });
   });
 
-  it('caps by the player rank', async () => {
-    await seedPlayer(pg, 1, 'Paladin');
-    await seedDay(1, D1, { goldRecorded: RANK_RULES.Paladin.dailyGoldCap - 10 });
+  it('caps by the player level, not rank', async () => {
+    await seedPlayer(pg, 1);
+    await pg.query(`UPDATE "NewOrderPlayer" SET exp=$1 WHERE "userId"=1`, [expForLevel(60)]);
+    await seedDay(1, D1, { goldRecorded: dailyGoldCapOf(60) - 10 });
     await voteOnFreshItem(1, NOON(D1));
     expect((await wallet(1)).goldPending).toBe(10);
+    expect((await dayRow(1, D1)).goldRecorded).toBe(dailyGoldCapOf(60));
   });
 
   it('opens a fresh cap the next UTC day', async () => {
@@ -350,6 +353,7 @@ describe('a rank the cap does not know', () => {
       recordVoteDay(trx, {
         playerId: 1,
         rank: 'Squire',
+        level: 50,
         gold: 100,
         now: NOON(D1),
         startAt: new Date(0),
@@ -425,7 +429,9 @@ describe('a career reset (startAt)', () => {
     await setStart(1, `${D1} 12:00:00`);
     await voteOnFreshItem(1, new Date(`${D1}T13:00:00Z`));
 
-    expect(await getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOON(D1) })).toMatchObject({
+    expect(
+      await getDailyStatus(db, { playerId: 1, rank: 'Knight', level: 1, now: NOON(D1) })
+    ).toMatchObject({
       votes: 1,
       watchDone: false,
     });
@@ -436,7 +442,7 @@ describe('a career reset (startAt)', () => {
     await setKeeper(1, { streak: 7, lastWatchDay: D1, shields: 1 });
     await setStart(1, `${D2} 00:00:00`);
 
-    const at = () => getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOON(D2) });
+    const at = () => getDailyStatus(db, { playerId: 1, rank: 'Knight', level: 1, now: NOON(D2) });
     expect(await at()).toMatchObject({ streak: 0, shields: 1 });
 
     await completeWatchOn(1, D2);
@@ -482,7 +488,12 @@ describe('getDailyStatus', () => {
     await seedDay(1, D1, { votes: 12, goldRecorded: 1200 });
     await voteOnFreshItem(1, NOON(D1));
 
-    const status = await getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOON(D1) });
+    const status = await getDailyStatus(db, {
+      playerId: 1,
+      rank: 'Knight',
+      level: 1,
+      now: NOON(D1),
+    });
     expect(status).toMatchObject({
       votes: 13,
       watchSize: DAILY.watchSize,
@@ -498,7 +509,9 @@ describe('getDailyStatus', () => {
   it('flags the cap as reached', async () => {
     await seedPlayer(pg, 1);
     await seedDay(1, D1, { goldRecorded: cap });
-    expect(await getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOON(D1) })).toMatchObject({
+    expect(
+      await getDailyStatus(db, { playerId: 1, rank: 'Knight', level: 1, now: NOON(D1) })
+    ).toMatchObject({
       capReached: true,
     });
   });
@@ -507,7 +520,8 @@ describe('getDailyStatus', () => {
     await seedPlayer(pg, 1);
     await completeWatchOn(1, D1);
 
-    const at = (day: string) => getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOON(day) });
+    const at = (day: string) =>
+      getDailyStatus(db, { playerId: 1, rank: 'Knight', level: 1, now: NOON(day) });
     expect((await at(D2)).streak).toBe(1);
     expect((await at(D3)).streak).toBe(1); // D2 missed, the shield will cover it
     expect((await at(D4)).streak).toBe(0); // two missed days
@@ -517,7 +531,9 @@ describe('getDailyStatus', () => {
 
   it('works for a player who has not voted yet', async () => {
     await seedPlayer(pg, 1);
-    expect(await getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOON(D1) })).toMatchObject({
+    expect(
+      await getDailyStatus(db, { playerId: 1, rank: 'Knight', level: 1, now: NOON(D1) })
+    ).toMatchObject({
       votes: 0,
       streak: 0,
       shields: DAILY.maxShields,

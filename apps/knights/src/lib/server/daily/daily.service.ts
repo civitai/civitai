@@ -1,7 +1,7 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { DAILY, dailyGoldCapOf, goldWithinCap, streakBonusGold } from './config';
+import { DAILY, dailyGoldCapFor, goldWithinCap, streakBonusGold } from './config';
 import { dayLabel, dayStart, nextDayStart, utcDay, type Day } from './days';
 import {
   advanceStreak,
@@ -135,10 +135,11 @@ export async function recordVoteDay(
   {
     playerId,
     rank,
+    level,
     gold,
     now,
     startAt,
-  }: { playerId: number; rank: string; gold: number; now: Date; startAt: Date }
+  }: { playerId: number; rank: string; level: number; gold: number; now: Date; startAt: Date }
 ): Promise<DayRecord> {
   const today = utcDay(now);
   await ensureKeeper(trx, playerId, today);
@@ -155,7 +156,7 @@ export async function recordVoteDay(
     .forUpdate()
     .executeTakeFirstOrThrow();
 
-  const recorded = goldWithinCap(rank, row.goldRecorded, gold);
+  const recorded = goldWithinCap(dailyGoldCapFor(rank, level), row.goldRecorded, gold);
   const votes = (await votesSinceMidDayReset(trx, playerId, today, startAt)) ?? row.votes + 1;
   const watchCompleted = !watchStands(row.watchCompletedAt, startAt) && votes >= DAILY.watchSize;
   const bonus = watchCompleted ? await completeWatch(trx, playerId, today, startAt) : 0;
@@ -191,7 +192,7 @@ export type DailyStatus = {
 
 export async function getDailyStatus(
   db: Executor,
-  { playerId, rank, now }: { playerId: number; rank: string; now: Date }
+  { playerId, rank, level, now }: { playerId: number; rank: string; level: number; now: Date }
 ): Promise<DailyStatus> {
   const today = utcDay(now);
   const startAt = await startAtOf(db, playerId);
@@ -207,7 +208,7 @@ export async function getDailyStatus(
   ]);
   const state = stored ?? newPlayerState(today);
   const watchDone = watchStands(row?.watchCompletedAt ?? null, startAt);
-  const goldCap = dailyGoldCapOf(rank);
+  const goldCap = dailyGoldCapFor(rank, level);
   const goldRecorded = row?.goldRecorded ?? 0;
 
   return {

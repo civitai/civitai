@@ -232,9 +232,9 @@
             count against the daily cap.
           </li>
           <li>
-            Each rank has a daily gold cap: {count(facts.gold.dailyCaps.Knight)} for a Knight,
-            {count(facts.gold.dailyCaps.Templar)} for a Templar, {count(facts.gold.dailyCaps.Paladin)} for a
-            Paladin. The cap counts gold as you earn it, so gold from a judgment that turns out wrong still
+            The daily gold cap grows with your level: {count(facts.gold.dailyCap.first)} at level
+            {facts.gold.dailyCap.firstLevel}, rising every 10 levels to {count(facts.gold.dailyCap.top)} from level
+            {facts.gold.dailyCap.topLevel}. The cap counts gold as you earn it, so gold from a judgment that turns out wrong still
             uses up part of the day. Past the cap, judgments still earn XP and count toward the Watch.
           </li>
         </ul>
