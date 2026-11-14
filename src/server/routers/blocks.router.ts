@@ -102,7 +102,9 @@ import {
   checkBlockSubmitRateLimit,
   checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
+  checkBlockGenerationSourceUserRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
+import { withInFlightLimit } from '~/server/utils/in-flight-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
@@ -2262,6 +2264,19 @@ async function afterPromptedGrant(
     await syncOauthConsentFromGrant({ userId, appBlockId });
   }
 }
+
+/**
+ * `blocks.persistGenerationSource`'s concurrency cap: 2 calls in flight per token subject. The TTL
+ * outlasts the 30 s request deadline (`GENERATION_SOURCE_DEADLINE_MS`) with room for the fetch of
+ * the workflow before it starts, so a slot never lapses under a live call.
+ */
+const GENERATION_SOURCE_IN_FLIGHT = {
+  bucket: 'block-generation-source',
+  limit: 2,
+  ttlMs: 120_000,
+  acquireTimeoutMs: 500,
+  errorMessage: 'A generation source is already being saved — wait for it to finish.',
+};
 
 export const blocksRouter = router({
   /**
@@ -6190,14 +6205,23 @@ export const blocksRouter = router({
    * See `block-generation-source.service.ts`.
    *
    * No host dialog, because nothing is shared: the row is the viewer's, has no post, and carries
-   * `blockGenerationSourceAppId`, which no shared-grid, post or attribution read accepts. Gated
-   * exactly as `publishGenerationOutputs` (`ai:write:budgeted`, subject = session user, the
-   * runtime flag); ownership is `resolveOwnedWorkflowOutputs` (row + app tag + finished workflow).
+   * `blockGenerationSourceAppId`, which no shared-grid, post or attribution read accepts.
    *
-   * RATE LIMIT: the per-user 60/h `rateLimit` below, as `persistAppUploadImage`. NOT the
-   * per-install publish bucket: a page app's install id is shared by every viewer. The same
-   * moderator and dev/test/preview exemptions apply as noted there; a repeat call for an output
-   * already kept returns that row and writes nothing.
+   * GATES. The token checks match `publishGenerationOutputs`'s first three (`ai:write:budgeted`,
+   * subject = session user, the runtime flag). Two things differ from publish, on purpose:
+   *   - NO per-install publish bucket (below);
+   *   - NO dev-token stand-in for the `block_workflows` row. Ownership is
+   *     `resolveOwnedWorkflowOutputs` (row + app tag + finished workflow), which has no
+   *     ephemeral dev-tunnel branch, so an App Assistant preview with no row is refused.
+   *
+   * BOUNDS, in order, all keyed on the token subject:
+   *   1. the per-user 60/h `rateLimit` middleware. It skips moderators (the current flag
+   *      audience) and dev, test and preview, so it is not the binding bound for them;
+   *   2. `withInFlightLimit`: at most 2 calls in flight per user, so a burst cannot hold many
+   *      30 s scan waits. Checked before the bucket, so a call it refuses spends nothing;
+   *   3. `checkBlockGenerationSourceUserRateLimit`: 60 per hour with NO exemption.
+   * NOT the per-install publish bucket: a page app's install id is shared by every viewer. A
+   * repeat call for an output already kept returns that row and writes nothing.
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
@@ -6231,18 +6255,27 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
-      const { persistBlockGenerationSource } = await import(
-        '~/server/services/blocks/block-generation-source.service'
-      );
-      return persistBlockGenerationSource({
-        userId,
-        appId: claims.appId,
-        appBlockId: claims.appBlockId,
-        workflowId: input.workflowId,
-        imageIndex: input.imageIndex,
-        // Lazily, so the durable ownership row is checked before an orchestrator token is minted.
-        getWorkflow: async (workflowId) =>
-          getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
+      return withInFlightLimit({ ...GENERATION_SOURCE_IN_FLIGHT, userId }, async () => {
+        const rate = await checkBlockGenerationSourceUserRateLimit(userId);
+        if (!rate.allowed) {
+          throw new TRPCError({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Too many generation sources saved — slow down.',
+          });
+        }
+        const { persistBlockGenerationSource } = await import(
+          '~/server/services/blocks/block-generation-source.service'
+        );
+        return persistBlockGenerationSource({
+          userId,
+          appId: claims.appId,
+          appBlockId: claims.appBlockId,
+          workflowId: input.workflowId,
+          imageIndex: input.imageIndex,
+          // Lazily, so the durable ownership row is checked before an orchestrator token is minted.
+          getWorkflow: async (workflowId) =>
+            getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
+        });
       });
     }),
 

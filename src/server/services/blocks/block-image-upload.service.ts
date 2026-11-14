@@ -164,6 +164,18 @@ export const BLOCK_POSTABLE_APP_ID_META_KEYS = [
  */
 const MAX_OUTPUT_REDIRECTS = 3;
 
+/** Refusal for a generation-output fetch or store that ran past its caller's deadline. */
+export const GENERATION_OUTPUT_DEADLINE_MESSAGE =
+  'the generation output took too long to save — try again';
+
+const generationOutputDeadlineError = () =>
+  new TRPCError({ code: 'TIMEOUT', message: GENERATION_OUTPUT_DEADLINE_MESSAGE });
+
+/** Throws the deadline refusal when `signal` (the caller's deadline) has fired. */
+export function throwIfGenerationOutputDeadlinePassed(signal?: AbortSignal) {
+  if (signal?.aborted) throw generationOutputDeadlineError();
+}
+
 /**
  * Is this a supported still-image by MAGIC BYTES (not by the url/extension or a
  * spoofable content-type header)? JPEG / PNG / GIF / WEBP. Returns the canonical
@@ -195,7 +207,12 @@ const SUPPORTED_IMAGE_CONTENT_TYPE: Record<ImageMagicFormat, string> = {
  * client-correctable upstream problem — BAD_REQUEST.
  */
 export async function fetchGenerationOutputImage(
-  imageUrl: string
+  imageUrl: string,
+  /**
+   * The caller's deadline. Bounds every hop and the body read on top of the per-hop 60 s
+   * timeout; when it fires the fetch fails with the TIMEOUT refusal. Absent: per-hop only.
+   */
+  signal?: AbortSignal
 ): Promise<{ bytes: Buffer; contentType: string }> {
   // The real output blob url 301s to a SAME-host content url, so we FOLLOW
   // redirects manually (up to MAX_OUTPUT_REDIRECTS hops) instead of the browser
@@ -208,6 +225,7 @@ export async function fetchGenerationOutputImage(
   let currentUrl = imageUrl;
   let hops = 0;
   for (;;) {
+    throwIfGenerationOutputDeadlinePassed(signal);
     if (!isAllowedOutputHost(currentUrl)) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -218,9 +236,12 @@ export async function fetchGenerationOutputImage(
     try {
       hopResponse = await fetch(currentUrl, {
         redirect: 'manual', // follow manually so we can re-validate each hop's host
-        signal: AbortSignal.timeout(60_000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+          : AbortSignal.timeout(60_000),
       });
     } catch {
+      throwIfGenerationOutputDeadlinePassed(signal);
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: 'could not fetch the generation output to publish',
@@ -271,7 +292,13 @@ export async function fetchGenerationOutputImage(
   if (Number.isFinite(declaredLen) && declaredLen > BLOCK_IMAGE_MAX_BYTES) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output is too large' });
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    throwIfGenerationOutputDeadlinePassed(signal);
+    throw error;
+  }
   if (bytes.byteLength === 0 || bytes.byteLength > BLOCK_IMAGE_MAX_BYTES) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output is too large' });
   }
@@ -302,6 +329,7 @@ export async function stageGenerationOutputImage({
   height,
   source,
   transform,
+  signal,
 }: {
   imageUrl: string;
   width: number | null;
@@ -310,8 +338,13 @@ export async function stageGenerationOutputImage({
   source: string;
   /** Rewrites the bytes before they are stored; `width` / `height` are then measured from the result. */
   transform?: (bytes: Buffer) => Promise<Buffer>;
+  /**
+   * The caller's deadline, passed to the fetch and the store PUT. Past it nothing more is
+   * stored and the TIMEOUT refusal is thrown. Absent: unchanged behaviour.
+   */
+  signal?: AbortSignal;
 }) {
-  const fetched = await fetchGenerationOutputImage(imageUrl);
+  const fetched = await fetchGenerationOutputImage(imageUrl, signal);
   const bytes = transform ? await transform(fetched.bytes) : fetched.bytes;
   const contentType = transform ? sniffSupportedImage(bytes) : fetched.contentType;
   if (!contentType)
@@ -322,7 +355,17 @@ export async function stageGenerationOutputImage({
 
   // The store the browser-direct upload path uses, so the scanner can read it; `key` is a fresh
   // uuid (satisfies `imageSchema.url`).
-  const { key } = await uploadImageBufferToStore(bytes, { contentType });
+  throwIfGenerationOutputDeadlinePassed(signal);
+  let key: string;
+  try {
+    ({ key } = await uploadImageBufferToStore(
+      bytes,
+      signal ? { contentType, signal } : { contentType }
+    ));
+  } catch (error) {
+    throwIfGenerationOutputDeadlinePassed(signal);
+    throw error;
+  }
 
   // The placeholder an on-site upload gets from the browser preprocessor; without it `MediaHash`
   // draws nothing while the image loads. A failure only loses the placeholder.
@@ -429,14 +472,17 @@ export async function persistBlockGenerationSourceImage(opts: {
   appId: string;
   /** {@link BLOCK_GENERATION_SOURCE_REF_META_KEY}. */
   ref: string;
+  /** The request's deadline: bounds the fetch and the store; past it no row is written. */
+  signal?: AbortSignal;
 }): Promise<{ imageId: number; url: string; width: number; height: number }> {
-  const { imageUrl, width, height, userId, appId, ref } = opts;
+  const { imageUrl, width, height, userId, appId, ref, signal } = opts;
   let measured: { width: number; height: number } | undefined;
   const staged = await stageGenerationOutputImage({
     imageUrl,
     width,
     height,
     source: 'block-generation-source',
+    signal,
     transform: async (bytes) => {
       const fitted = await fitGenerationSourceBounds(bytes);
       measured = fitted.size;
@@ -447,6 +493,9 @@ export async function persistBlockGenerationSourceImage(opts: {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output has no dimensions' });
   }
 
+  // The last point the deadline can stop the write: past it the stored object is left
+  // unreferenced (as for any refused upload) and no row is created.
+  throwIfGenerationOutputDeadlinePassed(signal);
   const metadata = { ...staged.metadata, [BLOCK_GENERATION_SOURCE_REF_META_KEY]: ref };
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({

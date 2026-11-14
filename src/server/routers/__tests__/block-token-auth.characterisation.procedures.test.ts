@@ -621,8 +621,8 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
-      'Too many generation sources saved — slow down.',
-      ['checkBlockGenerationSourceUserRateLimit(42)'],
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     "session user is not the token subject (session user's run flag off)": E(
@@ -1510,9 +1510,9 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
-      'FORBIDDEN',
-      'workflow is not in this app subqueue',
-      [],
+      'TOO_MANY_REQUESTS',
+      'Too many generation sources saved — slow down.',
+      ['checkBlockGenerationSourceUserRateLimit(42)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     "session user is not the token subject (session user's run flag off)": E(

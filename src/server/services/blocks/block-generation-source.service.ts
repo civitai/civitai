@@ -26,7 +26,14 @@ import {
  * it, so a `ready: true` url is one a submit accepts.
  */
 
-/** The whole request's budget, the fetch and store included; the scan wait gets what is left. */
+/**
+ * The request's budget, started before the ownership check. The output fetch (every redirect hop
+ * and the body read) and the store PUT are aborted when it runs out, and no row is written after
+ * it; the scan wait gets what is left. NOT bounded by it: the ownership row and orchestrator reads
+ * (`resolveOwnedWorkflowOutputs`), the idempotency lookup, the `createImage` insert once started,
+ * and the one gate read that can straddle the deadline. So the reply comes at about this plus
+ * those reads, and a call whose budget was spent before the fetch is refused at once.
+ */
 export const GENERATION_SOURCE_DEADLINE_MS = 30_000;
 /** How often the scan state is re-read while waiting. */
 export const GENERATION_SOURCE_POLL_MS = 1_500;
@@ -136,8 +143,32 @@ export async function persistBlockGenerationSource(input: {
   workflowId: string;
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
+  /** The request budget; {@link GENERATION_SOURCE_DEADLINE_MS} unless a test shortens it. */
+  budgetMs?: number;
 }): Promise<PersistedGenerationSource> {
-  const deadline = Date.now() + GENERATION_SOURCE_DEADLINE_MS;
+  const budgetMs = input.budgetMs ?? GENERATION_SOURCE_DEADLINE_MS;
+  const deadline = Date.now() + budgetMs;
+  // A timer, not `AbortSignal.timeout`, so the deadline is one clock with the scan wait's.
+  const expiry = new AbortController();
+  const timer = setTimeout(() => expiry.abort(), budgetMs);
+  try {
+    return await persistWithin({ ...input, deadline, signal: expiry.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function persistWithin(input: {
+  userId: number;
+  appId: string;
+  appBlockId: string;
+  workflowId: string;
+  imageIndex: number;
+  getWorkflow: (workflowId: string) => Promise<unknown>;
+  deadline: number;
+  signal: AbortSignal;
+}): Promise<PersistedGenerationSource> {
+  const { deadline, signal } = input;
   // Ownership (the durable user + app + workflow row), the app tag, a FINISHED workflow, and the
   // host allowlist, in that order, before anything is fetched. Slots keep the indexes the app saw.
   const slots = await resolveOwnedWorkflowOutputs({
@@ -183,6 +214,7 @@ export async function persistBlockGenerationSource(input: {
       userId: input.userId,
       appId: input.appId,
       ref,
+      signal,
     });
     image = {
       imageId: written.imageId,
