@@ -40,8 +40,8 @@ const palm = song(2, 'Palm Static');
 const player = () => useMusicPlayerStore.getState();
 
 /** The composer's chip, and a Send that reports the time the comment would carry. */
-function Composer() {
-  const choice = useSongTimeChoice(midnight.id);
+function Composer({ durationSec = 178 }: { durationSec?: number }) {
+  const choice = useSongTimeChoice({ songId: midnight.id, durationSec });
   return (
     <>
       <SongTimeChip choice={choice} />
@@ -80,6 +80,23 @@ describe('the composer’s time chip on a song', () => {
     await userEvent.click(chip);
     await userEvent.click(page.getByRole('button', { name: 'Send' }));
     expect(sent).toHaveBeenLastCalledWith(84);
+  });
+
+  test('never sends a time past the song’s stored length', async () => {
+    player().playTrack(songTrack(midnight));
+    // The audio element can run a little past the length the server stored for the song.
+    useMusicPlayheadStore.setState({ currentTime: 178.9, duration: 179.4 });
+    await renderWithProviders(<Composer />);
+    await userEvent.click(page.getByRole('button', { name: 'Send' }));
+    expect(sent).toHaveBeenLastCalledWith(178);
+  });
+
+  test('is off for a song without a stored length, so its comments still post', async () => {
+    player().playTrack(songTrack(midnight));
+    await renderWithProviders(<Composer durationSec={0} />);
+    await expect.element(page.getByRole('button', { name: 'at a time' })).toBeDisabled();
+    await userEvent.click(page.getByRole('button', { name: 'Send' }));
+    expect(sent).toHaveBeenLastCalledWith(undefined);
   });
 
   test('is off and disabled while another song (or none) is playing', async () => {

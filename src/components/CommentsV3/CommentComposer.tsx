@@ -45,7 +45,7 @@ export function CommentEditor({
   // A new top-level comment on a song may sit at a time in it; replies and edits never do.
   const song = useSongComments();
   const timed = song && !parent && !editing ? song : null;
-  const timeChoice = useSongTimeChoice(timed?.songId);
+  const timeChoice = useSongTimeChoice(timed);
   const editorRef = useRef<EditorCommandsRef | null>(null);
   const [focused, setFocused] = useState(!!autoFocus);
   const form = useForm({
@@ -129,7 +129,7 @@ export function CommentEditor({
                 void form.trigger('content');
               }}
             />
-            {timed && <SongTimeChip choice={timeChoice} />}
+            {timed && timed.durationSec > 0 && <SongTimeChip choice={timeChoice} />}
           </div>
           <div className="flex items-center gap-2.5">
             <Button variant="default" size="xs" onClick={close}>

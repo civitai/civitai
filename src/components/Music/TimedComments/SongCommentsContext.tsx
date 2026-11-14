@@ -7,6 +7,8 @@ import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player
 
 type SongComments = {
   songId: number;
+  /** The song's stored length, the bound the server checks a time against; 0 when it has none. */
+  durationSec: number;
   /** Plays the song from `sec`: a seek when it is the current song, otherwise a start there. */
   playFrom: (sec: number) => void;
 };
@@ -30,6 +32,7 @@ export function SongCommentsProvider({
   const value = useMemo<SongComments>(
     () => ({
       songId: song.id,
+      durationSec: songTrack(song).durationSec,
       playFrom: (sec) => {
         const player = useMusicPlayerStore.getState();
         if (player.current?.id === song.id) {
@@ -52,11 +55,15 @@ export function SongCommentsProvider({
 
 /**
  * Whether a new top-level comment on the song takes the playhead's time. On by default; it applies
- * only while the song is the player's current song, and the time is read when the comment is sent.
+ * only while the song is the player's current song and has a stored length, and the time is read
+ * when the comment is sent, never past that length: the server refuses a time it cannot check.
  */
-export function useSongTimeChoice(songId: number | undefined) {
+export function useSongTimeChoice(song: Pick<SongComments, 'songId' | 'durationSec'> | null) {
   const [wanted, setWanted] = useState(true);
-  const available = useMusicPlayerStore((s) => songId !== undefined && s.current?.id === songId);
+  const durationSec = song?.durationSec ?? 0;
+  const available = useMusicPlayerStore(
+    (s) => !!song && durationSec > 0 && s.current?.id === song.songId
+  );
   return {
     available,
     on: available && wanted,
@@ -64,9 +71,8 @@ export function useSongTimeChoice(songId: number | undefined) {
     /** The whole second to send, or undefined for a comment without a time. */
     timestampSec: () => {
       if (!available || !wanted) return undefined;
-      const { currentTime, duration } = useMusicPlayheadStore.getState();
-      const sec = duration > 0 ? Math.min(currentTime, duration) : currentTime;
-      return Math.max(0, Math.floor(sec));
+      const { currentTime } = useMusicPlayheadStore.getState();
+      return Math.max(0, Math.floor(Math.min(currentTime, durationSec)));
     },
   };
 }
