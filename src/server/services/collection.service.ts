@@ -1886,8 +1886,7 @@ export const upsertCollection = async ({
           ],
         },
       },
-      // The edit modal creates with no item; an unconditional create wrote an entity-less row that
-      // counted toward itemCount and the per-user cap.
+      // Only with an entity: an item-less row would count toward itemCount and the per-user cap.
       ...(hasInitialItem && {
         items: { create: { ...collectionItem, imageId, addedById: userId } },
       }),
