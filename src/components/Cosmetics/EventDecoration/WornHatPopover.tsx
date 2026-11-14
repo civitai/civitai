@@ -212,7 +212,20 @@ function WornHatDetails({
           />
         </Group>
       ) : null}
-      {hat.topicId && <HatStats stats={hat} color={hat.team ? teamColor(hat.team) : undefined} />}
+      {hat.topicId && (
+        <>
+          <HatStats stats={hat} color={hat.team ? teamColor(hat.team) : undefined} />
+          {/* A post's reaction total counts every emoji, the owner's own included, so it runs
+              ahead of this one; without saying so, the gap reads as lost reactions. On a model
+              the hearts are thumbs-up reviews, not reactions. */}
+          {wornOn.entityType !== 'Model' && (
+            <Text size="xs" c="dimmed" data-testid="hat-stats-note">
+              Counts reactions that scored while this hat was worn: one per person, never the
+              creator&apos;s own.
+            </Text>
+          )}
+        </>
+      )}
     </>
   );
 }

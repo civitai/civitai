@@ -230,8 +230,8 @@ function pointTiles(rules: Rules): PointTileProps[] {
     value === undefined ? [] : [{ value, label, ...SCORE_WAYS[key] }];
   return [
     ...way('views', 1, 'per view in a feed'),
-    ...way('reactions', rules.reactionWeight, 'per reaction'),
-    ...way('comments', rules.commentWeight, 'per comment'),
+    ...way('reactions', rules.reactionWeight, 'per person who reacts'),
+    ...way('comments', rules.commentWeight, 'per person who comments'),
     ...way('stickers', rules.stickerWeight, 'per sticker'),
     ...way('remixes', rules.remixWeight, 'per remix'),
     { value: 0, label: 'for your own views and reactions', icon: IconBan, color: 'gray' },
