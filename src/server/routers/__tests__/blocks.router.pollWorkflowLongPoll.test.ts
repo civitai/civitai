@@ -518,6 +518,9 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
 });
 
 describe('blocks.pollWorkflow — queue position, ETA and progress reach the block', () => {
+  // The procedure's return type also covers the rate-limited placeholder, which has no `eta`.
+  const etaOf = (snapshot: object) => (snapshot as { eta?: unknown }).eta;
+
   // Pairwise-distinct values: 5 ahead, two different timestamps, and a rate that is neither
   // 0 nor 1, so a stub that returned a constant or swapped start/complete cannot pass.
   const QUEUED = {
@@ -565,7 +568,7 @@ describe('blocks.pollWorkflow — queue position, ETA and progress reach the blo
     });
 
     expect(queryArg()).toEqual({ wait: 10, until: 'change' });
-    expect(result.snapshot.eta).toEqual({
+    expect(etaOf(result.snapshot)).toEqual({
       stepName: 'gen',
       queuedAhead: 5,
       startsAt: '2026-11-14T09:30:05Z',
@@ -581,7 +584,7 @@ describe('blocks.pollWorkflow — queue position, ETA and progress reach the blo
     const result = await caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_generating' });
 
     expect(queryArg()).toBeUndefined();
-    expect(result.snapshot.eta).toEqual({
+    expect(etaOf(result.snapshot)).toEqual({
       stepName: 'clip',
       queuedAhead: null,
       startsAt: null,
@@ -601,6 +604,6 @@ describe('blocks.pollWorkflow — queue position, ETA and progress reach the blo
     });
 
     expect(result.snapshot.status).toBe('succeeded');
-    expect(result.snapshot.eta ?? null).toBeNull();
+    expect(etaOf(result.snapshot) ?? null).toBeNull();
   });
 });

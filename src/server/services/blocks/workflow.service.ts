@@ -41,6 +41,7 @@ import type {
   BlockPublishedModel,
   BlockSourceImage,
   BlockWorkflowBody,
+  BlockWorkflowEta,
   BlockWorkflowSnapshot,
   BlockWorkflowStepSnapshot,
 } from '~/server/schema/blocks/workflow.schema';
@@ -145,6 +146,7 @@ export function snapshotFromWorkflow(
   // workflow's own metadata. `null` for every other kind.
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   const steps: BlockWorkflowStepSnapshot[] = [];
+  const workflowTerminal = TERMINAL_SNAPSHOT_STATUSES.has(status);
   for (const step of workflow.steps ?? []) {
     const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
     if (member) {
@@ -162,6 +164,7 @@ export function snapshotFromWorkflow(
       }
       trainedEpochs.push(...extracted.trainedEpochs);
       const error = stepFailureReason(step);
+      const live = stepLiveState(step, workflowTerminal);
       steps.push({
         name: step.name,
         $type: step.$type,
@@ -171,6 +174,11 @@ export function snapshotFromWorkflow(
           : {}),
         ...(extracted.rest !== undefined ? { output: extracted.rest } : {}),
         ...(error ? { error } : {}),
+        // Each omitted when there is nothing to report — see the fields' docs.
+        ...(live.queue ? { queue: live.queue } : {}),
+        ...(live.progress !== null ? { progress: live.progress } : {}),
+        ...(live.startedAt !== null ? { startedAt: live.startedAt } : {}),
+        ...(live.completedAt !== null ? { completedAt: live.completedAt } : {}),
       });
       continue;
     }
@@ -220,6 +228,7 @@ export function snapshotFromWorkflow(
     ? extra.modelSubstitutions
     : readModelSubstitutionsFromMetadata(workflow.metadata);
   const publishedModel = readBlockPublishedModel(workflow);
+  const eta = selectWorkflowEta(workflow.steps ?? [], workflowTerminal);
   return {
     // The orchestrator stamps a server-minted id on EVERY workflow it returns,
     // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
@@ -256,6 +265,132 @@ export function snapshotFromWorkflow(
     ...(model3dOutputs.length > 0 ? { model3dOutputs } : {}),
     // See the field's own doc in `schema/blocks/workflow.schema`.
     ...(steps.length > 0 ? { steps } : {}),
+    // See the field's own doc in `schema/blocks/workflow.schema`. Omitted when null.
+    ...(eta ? { eta } : {}),
+  };
+}
+
+const TERMINAL_SNAPSHOT_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set<
+  BlockWorkflowSnapshot['status']
+>(['succeeded', 'failed', 'expired', 'canceled']);
+
+/**
+ * The step `$type`s whose orchestrator `estimatedProgressRate` is a fraction of the
+ * WHOLE step, so it can be shown as "x% done" as it stands. An ALLOWLIST: every
+ * other type — including one added to the orchestrator after this list — reports
+ * no progress, because the failure it prevents is a bar that fills and restarts.
+ *
+ *   - `textToImage` — image generation (the original step type).
+ *   - `imageGen`    — image generation (the engine-routed successor).
+ *   - `videoGen`    — video generation.
+ *
+ * Deliberately left out, from the orchestrator's step `$type` union:
+ *   - `training`, `imageResourceTraining` — the rate is PER EPOCH (0→1 inside each
+ *     epoch; see `overallProgressPct` in the training studio, which has to fold it
+ *     into a completed-epoch count to make it whole-run).
+ *   - `comfy`, `customComfy` — a graph of many nodes; nothing here shows what the
+ *     rate covers, so it is not claimed.
+ *   - everything else (upscalers, scans, captioning, chat, audio, …) — not
+ *     generation, and not checked.
+ * Adding a type is a claim about what its rate means; check it against a real run.
+ */
+export const WHOLE_STEP_PROGRESS_STEP_TYPES: ReadonlySet<string> = new Set([
+  'textToImage',
+  'imageGen',
+  'videoGen',
+]);
+
+type WorkflowStepLike = NonNullable<Workflow['steps']>[number];
+
+type StepLiveState = {
+  queue: NonNullable<BlockWorkflowStepSnapshot['queue']> | null;
+  progress: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
+const stringOrNull = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+
+/**
+ * A step's queue position, progress and timestamps, read defensively: the orchestrator
+ * declares these optional, an older one omits them, and anything of the wrong type is
+ * reported as null rather than passed to a block.
+ */
+function stepLiveState(step: WorkflowStepLike, workflowTerminal: boolean): StepLiveState {
+  const raw = step as {
+    queuePosition?: unknown;
+    estimatedProgressRate?: unknown;
+    startedAt?: unknown;
+    completedAt?: unknown;
+  };
+  // A finished step, or any step of a finished workflow, is not waiting and not running,
+  // whatever stale estimate it still carries.
+  const settled = workflowTerminal || TERMINAL_SNAPSHOT_STATUSES.has(ORCH_STATUS_MAP[step.status]);
+
+  let queue: StepLiveState['queue'] = null;
+  const qp = raw.queuePosition;
+  if (!settled && typeof qp === 'object' && qp !== null) {
+    const { support, precedingJobs, estimatedStartAt, estimatedCompleteAt } = qp as Record<
+      string,
+      unknown
+    >;
+    if (typeof support === 'string') {
+      queue = {
+        precedingJobs:
+          typeof precedingJobs === 'number' && Number.isInteger(precedingJobs) && precedingJobs >= 0
+            ? precedingJobs
+            : null,
+        estimatedStartAt: stringOrNull(estimatedStartAt),
+        estimatedCompleteAt: stringOrNull(estimatedCompleteAt),
+        support,
+      };
+    }
+  }
+
+  const rate = raw.estimatedProgressRate;
+  const progress =
+    !settled &&
+    WHOLE_STEP_PROGRESS_STEP_TYPES.has(step.$type) &&
+    typeof rate === 'number' &&
+    Number.isFinite(rate)
+      ? Math.min(1, Math.max(0, rate))
+      : null;
+
+  return {
+    queue,
+    progress,
+    startedAt: stringOrNull(raw.startedAt),
+    completedAt: stringOrNull(raw.completedAt),
+  };
+}
+
+/**
+ * The snapshot's `eta`: the first step (orchestrator order) with a queue, else the first
+ * `processing` step, else none — and none at all once the workflow is terminal. The
+ * queued-first order is the generator queue's own (`QueueItem`): a step waiting for a
+ * worker is what the viewer is waiting on.
+ *
+ * Read off EVERY orchestrator step, not off the `steps[]` members: those exist only for
+ * `kind:'workflow'`, and the single-step kinds are most of what blocks submit.
+ */
+function selectWorkflowEta(
+  workflowSteps: ReadonlyArray<WorkflowStepLike>,
+  workflowTerminal: boolean
+): BlockWorkflowEta | null {
+  if (workflowTerminal) return null;
+  const states = workflowSteps.map((step) => ({ step, live: stepLiveState(step, false) }));
+  const chosen =
+    states.find(({ live }) => live.queue !== null) ??
+    states.find(({ step }) => ORCH_STATUS_MAP[step.status] === 'processing');
+  if (!chosen) return null;
+  const { step, live } = chosen;
+  return {
+    stepName: step.name,
+    queuedAhead: live.queue?.precedingJobs ?? null,
+    startsAt: live.queue?.estimatedStartAt ?? null,
+    completesAt: live.queue?.estimatedCompleteAt ?? null,
+    progress: live.progress,
+    support: live.queue?.support ?? null,
   };
 }
 
@@ -1601,9 +1736,10 @@ export function createBlockCustomComfyStep(
 // LONG-POLL BOUNDS for `blocks.pollWorkflow`.
 //
 // The orchestrator's `GET /v2/consumer/workflows/{id}` accepts `?wait=<seconds>`
-// and holds the response until the workflow reaches a terminal status, replying
-// 202 with the current snapshot if the hold elapses first
-// (`GetWorkflowData.query.wait`, `@civitai/orchestration-client`). civitai already uses it on
+// and holds the response until the workflow reaches a terminal status — or, with
+// `?until=change` (which `blocks.pollWorkflow` sends), until the workflow or one of
+// its steps changes — replying 202 with the current snapshot if the hold elapses
+// first (`GetWorkflowData.query`, `@civitai/orchestration-client`). civitai already uses it on
 // four non-blocks paths (`orchestrator.service.ts`, `comics/orchestrator-chat`,
 // `product-badge.service`, `training.service`); the blocks poll did not.
 // ─────────────────────────────────────────────────────────────────────────────

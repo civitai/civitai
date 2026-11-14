@@ -1540,6 +1540,46 @@ export type BlockWorkflowSnapshot = {
    * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk` in its own repo.
    */
   steps?: BlockWorkflowStepSnapshot[];
+  /**
+   * Where the workflow is right now, for a "N ahead / starts at / x% done" display.
+   * Read off the orchestrator's steps in workflow order (every kind, not only
+   * `kind:'workflow'`): the first step with a {@link BlockWorkflowStepQueue}, else
+   * the first `processing` step. `stepName` is that step's name.
+   *
+   * While queued: `queuedAhead`, `startsAt`, `completesAt` and `support` come from
+   * that step's queue, and `progress` is null. While running the orchestrator clears
+   * the queue, so those four are null and `progress` is the step's progress (null
+   * for a step type whose estimate does not cover the whole step — see
+   * `BlockWorkflowStepSnapshot.progress`). Timestamps are ISO-8601, as the
+   * orchestrator gives them; every field is an estimate.
+   *
+   * OMITTED (read it as null) when the workflow is terminal or no step is queued or
+   * processing. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  eta?: BlockWorkflowEta | null;
+};
+
+export type BlockWorkflowEta = {
+  stepName: string;
+  queuedAhead: number | null;
+  startsAt: string | null;
+  completesAt: string | null;
+  progress: number | null;
+  support: string | null;
+};
+
+/**
+ * A step's place in the orchestrator queue. `precedingJobs` is a whole number ≥ 0,
+ * or null when the orchestrator gave none (or gave something else). The timestamps
+ * are ISO-8601 strings exactly as the orchestrator gave them. `support` is the
+ * orchestrator's `JobSupport`: `available`, `unavailable` (no worker can take it
+ * right now) or `unsupported`.
+ */
+export type BlockWorkflowStepQueue = {
+  precedingJobs: number | null;
+  estimatedStartAt: string | null;
+  estimatedCompleteAt: string | null;
+  support: string;
 };
 
 export type BlockWorkflowStepSnapshot = {
@@ -1549,6 +1589,23 @@ export type BlockWorkflowStepSnapshot = {
   imageUrls?: string[];
   output?: unknown;
   error?: string;
+  /**
+   * Present only while the orchestrator reports the step as queued; omitted once it
+   * starts, and on any step or workflow that is terminal.
+   */
+  queue?: BlockWorkflowStepQueue | null;
+  /**
+   * The orchestrator's estimate of how much of the step is done, 0..1. Omitted when
+   * it gave none, when the step or workflow is terminal, and for every step type
+   * outside `WHOLE_STEP_PROGRESS_STEP_TYPES` in `services/blocks/workflow.service`
+   * (image and video generation) — some types, training among them, report a
+   * fraction that restarts at each phase, which would read as done many times over.
+   */
+  progress?: number | null;
+  /** ISO-8601, as the orchestrator gave it. Omitted until the step starts. */
+  startedAt?: string | null;
+  /** ISO-8601, as the orchestrator gave it. Omitted until the step ends. */
+  completedAt?: string | null;
 };
 
 export type BlockStepQuote = {
