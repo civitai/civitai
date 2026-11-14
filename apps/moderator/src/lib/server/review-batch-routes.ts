@@ -85,7 +85,8 @@ export function batchItemHandler(tier: ReviewTier): RequestHandler {
       });
     }
 
-    if (media.held) {
+    // The mint read the scanner rows; a label written since then must still stop the bytes.
+    if (media.held || (await scannerHoldsImage(media.imageId))) {
       void logToAxiom({
         name: ROUTING_MISS_EVENT,
         type: 'warning',

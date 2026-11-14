@@ -379,6 +379,17 @@ describe('the batch item routes', () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ moved: true });
     expect(streamStoredMedia).not.toHaveBeenCalled();
+    scannerHoldsImage.mockResolvedValueOnce(true);
+    getBatchMedia.mockResolvedValue({
+      imageId: 101,
+      url: 'k',
+      type: 'image',
+      mimeType: null,
+      held: false,
+    });
+    const late = await item('review', GENERAL, '0', reviewLocals([GENERAL_HASH]));
+    expect(late.status).toBe(409);
+    expect(streamStoredMedia).not.toHaveBeenCalled();
   });
 
   it('a held batch serves a suspect image, and refuses a clean one unless the batch was declared', async () => {

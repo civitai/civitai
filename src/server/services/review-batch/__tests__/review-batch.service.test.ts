@@ -293,3 +293,15 @@ describe('the scanner leg', () => {
     expect((await mint()).tier).toBe('held');
   });
 });
+
+describe('the viewer', () => {
+  it.each([
+    ['does not exist', null],
+    ['is not a moderator', { ...VIEWER, isModerator: false }],
+    ['is banned', { ...VIEWER, bannedAt: new Date() }],
+  ])('a viewer who %s is refused, and nothing is stored', async (_case, viewer) => {
+    mockGetSessionUser.mockResolvedValueOnce(viewer);
+    await expect(mint()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(batchKeys()).toEqual([]);
+  });
+});
