@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import type * as TrpcModule from '~/utils/trpc';
@@ -19,7 +18,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
 
 import { MilestoneReveals } from '~/components/CreatorJourney/MilestoneReveal';
 
-const act = (React as unknown as { act: typeof actType }).act;
+const act = (React as unknown as { act: (callback: () => void) => void }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type Reveal = React.ComponentProps<typeof MilestoneReveals>['reveals'][number];
