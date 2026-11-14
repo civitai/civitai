@@ -111,11 +111,17 @@ let rowSeq = 0;
 const createRow = async ({
   data,
 }: {
-  data: Omit<Row, 'id' | 'metadata'> & { transactionId?: string };
+  // The unkeyed path creates its row without a transaction id and sets it after the burn.
+  data: Omit<Row, 'id' | 'metadata' | 'transactionId'> & { transactionId?: string };
 }) => {
   if (data.transactionId && rows.some((r) => r.transactionId === data.transactionId))
     throw new Error('Unique constraint failed on the fields: (`transactionId`)');
-  const row = { transactionId: null, metadata: {}, ...data, id: `cw-${++rowSeq}` } as Row;
+  const row: Row = {
+    ...data,
+    transactionId: data.transactionId ?? null,
+    metadata: {},
+    id: `cw-${++rowSeq}`,
+  };
   rows.push(row);
   return { id: row.id };
 };
