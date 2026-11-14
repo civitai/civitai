@@ -26,6 +26,7 @@ import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyou
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { FlagRaceHeader } from '~/components/HatTurf/FlagRace/FlagCountdown';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -150,6 +151,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
+          {flagRow && <FlagRaceHeader summary={flagRow.summary} />}
           {!metadata.descriptionAlwaysVisible && currentUser && hasInfo && (
             <Popover withArrow width={380}>
               <Popover.Target>

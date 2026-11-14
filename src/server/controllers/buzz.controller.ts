@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { notCommerciallyAvailableMessage, stopsCreatorEarnings } from '~/server/common/constants';
 import dayjs from '~/shared/utils/dayjs';
@@ -30,7 +31,10 @@ import {
   previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
+import { chargeWasDeclined, paymentOutcomeUnknown } from '~/server/services/buzz-keyed-charge';
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
+import { logToAxiom } from '~/server/logging/client';
+import { claimTipIdempotency } from '~/server/utils/block-tip-rate-limit';
 import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -141,6 +145,8 @@ export async function createBuzzTipTransactionHandler({
 }) {
   try {
     const { id: fromAccountId } = ctx.user;
+    // The on-site tip form's key travels in the input; the App Blocks endpoint passes its own.
+    const { idempotencyKey: inputKey, ...tipInput } = input;
     if (input.fromAccountType !== input.toAccountType) {
       throw throwBadRequestError('You cannot tip Buzz between different account types');
     }
@@ -239,28 +245,26 @@ export async function createBuzzTipTransactionHandler({
     if (amount <= 0) {
       throw throwBadRequestError('Could not split the amount between users');
     }
-    // Confirm user funds:
-    const userAccount = await getUserBuzzAccount({
-      accountId: fromAccountId,
-      accountType: input.fromAccountType ?? 'yellow',
-    });
-
-    if ((userAccount[0]?.balance ?? 0) < finalAmount) {
-      throw throwInsufficientFundsError();
-    }
-
     // The base of every transaction's `externalTransactionId` (`${sharedId}-${toAccountId}`).
     // With a client idempotency key, DERIVE it deterministically so a retry collides
     // on the ledger's unique constraint (money moves once — see the param doc). The
     // key is charset-restricted (`^[A-Za-z0-9_-]{1,64}$`) at the endpoint, and both
     // `fromUserId` and `toAccountId` are numeric, so `block-tip:${fromUserId}:${key}`
     // is delimiter-injective — no two distinct (user, key, target) triples collide.
-    // Absent key → the original per-call `crypto.randomUUID()` (no dedup), byte-identical to today.
+    // The on-site key (`inputKey`) is a uuid (schema-checked) under its own `tip:` namespace, after
+    // the numeric user id, so no user's id can name another's. The amount and entity that follow
+    // only separate one user's tips under one key. No key → a new `crypto.randomUUID()` per call
+    // (no dedup).
+    const keyed = !!(idempotencyKey ?? inputKey);
     const sharedId = idempotencyKey
       ? `block-tip:${ctx.user.id}:${idempotencyKey}`
+      : inputKey
+      ? // The tip's content is part of the id, so a key reused for a different tip (another
+        // amount or entity) is that tip, charged on its own, never an earlier one recovered.
+        `tip:${ctx.user.id}:${inputKey}:${input.amount}:${entityType ?? ''}:${entityId ?? ''}`
       : `tip-${crypto.randomUUID()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
     const transactions = targetUserIds.map((toAccountId) => ({
-      ...input,
+      ...tipInput,
       fromAccountId: ctx.user.id,
       type: TransactionType.Tip,
       amount,
@@ -278,10 +282,14 @@ export async function createBuzzTipTransactionHandler({
 
     // With a key, a leg already on the ledger moved on an earlier call. Buzz reports a replayed
     // leg in `transactions` (with the existing id) today and in `conflicts` once it stops
-    // pre-checking duplicates, so the batch response alone cannot say which legs are new. The
-    // endpoint's idempotency claim keeps a same-key call from running concurrently with this one.
+    // pre-checking duplicates, so the batch response alone cannot say which legs are new.
+    // Looked up BEFORE the balance check: a leg that already moved spent the balance this check
+    // reads, and refusing its retry as "insufficient funds" tells the client to start a new tip.
+    //
+    // Invariant: the tip record, notification and metric fire only for legs this call moved, and,
+    // with a key, only from the request that wins the tip-record claim below.
     const alreadyMoved = new Set<string>();
-    if (idempotencyKey) {
+    if (keyed) {
       const existing = await Promise.all(
         transactions.map((t) => getTransactionByExternalId(t.externalTransactionId))
       );
@@ -290,8 +298,24 @@ export async function createBuzzTipTransactionHandler({
       });
     }
 
-    // Now, create all transactions
-    const data = await createBuzzTransactionMany(transactions); // Now store these in the DB:
+    // Confirm user funds for the legs still to move:
+    const owed = finalAmount - alreadyMoved.size * amount;
+    if (owed > 0) {
+      const userAccount = await getUserBuzzAccount({
+        accountId: fromAccountId,
+        accountType: input.fromAccountType ?? 'yellow',
+      });
+      if ((userAccount[0]?.balance ?? 0) < owed) {
+        throw throwInsufficientFundsError();
+      }
+    }
+
+    // Now, create all transactions. With a key, a send whose outcome is unknown (timeout, reset,
+    // 5xx) is resolved by resending it rather than reported as a failure the user retries.
+    const data = await createBuzzTransactionMany(transactions).catch((error) => {
+      if (!keyed) throw error;
+      return resolveFailedTipBatch(transactions, alreadyMoved, error, ctx.user.id);
+    });
 
     // ── LEDGER CONFLICT = MONEY ALREADY MOVED (audit 🔴-2) ───────────────────────
     // `createBuzzTransactionMany` returns `{ transactions, conflicts }`, and a
@@ -307,7 +331,8 @@ export async function createBuzzTipTransactionHandler({
     // legacy per-call `crypto.randomUUID()` id `conflicts` was always empty here, which is why
     // ignoring it was previously (accidentally) safe. Concretely: tip N to X on
     // image A with key K → wait past the 10-min Redis sentinel → same K, same
-    // recipient, DIFFERENT entityId (the derivation deliberately ignores the entity)
+    // recipient, DIFFERENT entityId (the App Blocks `block-tip:` derivation ignores the entity;
+    // the on-site `tip:` id includes it, so this case is the App Blocks endpoint's)
     // → byte-identical ledger id → conflict, zero Buzz moves, yet image B would get
     // +N Buzz, a BuzzTip row, and a 200.
     //
@@ -327,7 +352,12 @@ export async function createBuzzTipTransactionHandler({
     const dedupedAmount = (transactions.length - settled.length) * amount;
     const deduped = settled.length === 0 && dedupedAmount > 0;
 
-    if (settled.length > 0) {
+    // One request per key writes the record (see the lookup above). The claim is the App Blocks
+    // tip endpoint's Redis claim (claimTipIdempotency), under its own scope so it never collides
+    // with the endpoint's claim for the same key.
+    const mayRecord =
+      settled.length > 0 && (!keyed || (await claimTipRecord(ctx.user.id, sharedId)));
+    if (mayRecord) {
       if (entityType && entityId) {
         // TODO: We might wanna notify contributors, but hardly a priority right now imho.
         await upsertBuzzTip({
@@ -381,6 +411,69 @@ export async function createBuzzTipTransactionHandler({
     return { ...data, deduped, dedupedAmount };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+/**
+ * A keyed tip batch that failed. A failure that provably moved nothing is rethrown. Otherwise the
+ * same batch is resent once: the ledger answers every leg it already holds as a conflict and moves
+ * only the rest. Every leg accounted for (moved or conflicting), the batch landed and is reported
+ * as this call's (its side effects then run once, here). A resend that fails, or that leaves a leg
+ * unaccounted for (the ledger drops an insufficient-funds leg from both lists, and the first send
+ * may still be committing it), is PAYMENT_OUTCOME_UNKNOWN_MESSAGE.
+ */
+export async function resolveFailedTipBatch(
+  transactions: Parameters<typeof createBuzzTransactionMany>[0],
+  alreadyMoved: Set<string>,
+  error: unknown,
+  userId: number
+): Promise<{ transactions: string[]; conflicts: string[] }> {
+  if (chargeWasDeclined(error)) throw error;
+  const sent = transactions.filter((t) => !alreadyMoved.has(t.externalTransactionId));
+  const context = { externalTransactionId: sent[0]?.externalTransactionId ?? '', userId };
+  let resent: { transactions: string[]; conflicts: string[] };
+  try {
+    resent = await createBuzzTransactionMany(transactions);
+  } catch (resendError) {
+    throw paymentOutcomeUnknown(context, 'tip resend failed after unknown outcome', {
+      error,
+      resendError,
+    });
+  }
+  if (
+    sent.length === 0 ||
+    resent.transactions.length + resent.conflicts.length < transactions.length
+  )
+    throw paymentOutcomeUnknown(context, 'tip legs unaccounted for after resend', { error });
+  return { transactions: sent.map((t) => t.externalTransactionId), conflicts: [] };
+}
+
+/** The record claim's scope: no `:`, as claimTipIdempotency's key requires. */
+const TIP_RECORD_CLAIM_SCOPE = 'tip-record';
+
+/**
+ * Whether this request writes the tip record for `sharedId`: the first claimant does; a claim held
+ * by another request (in progress, for its 10-minute TTL) means that request recorded it.
+ *
+ * FAIL OPEN on a Redis error: the record is written. The worst case is a duplicate tip record,
+ * notification and metric; the Buzz itself moved once either way (the ledger dedupes the legs).
+ */
+async function claimTipRecord(userId: number, sharedId: string) {
+  try {
+    // The key is a hash of the tip's id: hex, inside the claim's charset, and one per tip.
+    const key = createHash('sha256').update(sharedId).digest('hex');
+    const claim = await claimTipIdempotency(userId, TIP_RECORD_CLAIM_SCOPE, key, 'record');
+    return claim.state === 'acquired';
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'tip-record-claim',
+      message: 'tip record claim failed; recording anyway',
+      userId,
+      sharedId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+    return true;
   }
 }
 

@@ -524,6 +524,11 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) => mockResolveCanGenerateForVersions(...args),
   getResourceData: (...args: unknown[]) => mockGetResourceData(...args),
+  // The global generation kill switch, read on every generation submit: on, so it admits.
+  getGenerationStatusState: async () => ({
+    status: { mode: 'enabled', message: null },
+    known: true,
+  }),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
@@ -971,6 +976,10 @@ beforeEach(() => {
 // without this every call here would 404 on a condition none of these tests is about.
 beforeEach(() => {
   dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+  // Every Civitai version a customComfy step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => args.where.id.in.map((id) => ({ id, baseModel: 'ZImageTurbo' }))) as never);
 });
 
 describe('blocks.pollWorkflow', () => {
@@ -1508,8 +1517,8 @@ describe('blocks.submitWorkflow', () => {
     // NOTHING on real traffic: no shipped client sends one (the SDK has zero
     // occurrences; the live tipping block hand-rolls its POST). Meanwhile the actual
     // double-charge is server-side and unconditional — `submitWorkflow` calls
-    // `submitWorkflowWithRetry` with maxAttempts=3 and no per-attempt timeout on the
-    // real submit, and that wrapper's own doc says it adds NO idempotency key: "the
+    // `submitWorkflowWithRetry` with maxAttempts=3 (5xx, network and timed-out attempts
+    // retried) on the real submit, and that wrapper's own doc says it adds NO idempotency key: "the
     // CALLER must set `body.externalId`". So the server now MINTS one when the client
     // sends none.
     it('🔴 UNKEYED submit MINTS a server-side externalId (a client key is NOT the gate)', async () => {
@@ -6370,7 +6379,7 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
     return validClaims({
       ctx: { entityType: 'none', slotId: 'page' },
       appBlockId: 'apb_test',
-      // Comfortably above every per-engine ceiling (zimage 90 default … qwen 180 max).
+      // Comfortably above every per-engine ceiling.
       buzzBudget: 500,
       ...over,
     });
@@ -6430,16 +6439,6 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       });
       // No real orchestrator round-trip on a customComfy estimate.
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
-    });
-
-    it('reflects the selected engine in the estimate (qwen-image → 150)', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyUser();
-      const result = await caller().estimateWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      expect(result.snapshot.cost).toEqual({ total: 150 });
     });
 
     it('REJECTS a model token (customComfy is page-only)', async () => {
@@ -6539,13 +6538,33 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
-    it('refuses an engine whose pinned model no app may use, before any spend', async () => {
+    it('holds the output to PG-13 when a pinned file is on a base model that restricts mature generation', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ maxBrowsingLevel: 31 }));
+      happyCcResources();
+      happySubmit();
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL Turbo' }))) as never);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: ccBody(),
+        idempotencyKey: 'cc-key',
+      });
+      expect(mockSubmitWorkflow.mock.calls[0][0].body).toMatchObject({
+        nsfwLevel: 'pg13',
+        allowMatureContent: false,
+      });
+    });
+
+    it('refuses a pinned file on a base model no app may use, before any spend', async () => {
       mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
       happyCcResources();
       happySubmit();
-      const body = ccBody({ params: { prompt: 'a sunset over mountains', engine: 'flux2-klein' } });
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) => args.where.id.in.map((id) => ({ id, baseModel: 'Flux.2 Klein 9B' }))) as never);
       await expect(
-        caller().submitWorkflow({ blockToken: 'tok', body, idempotencyKey: 'cc-key' })
+        caller().submitWorkflow({ blockToken: 'tok', body: ccBody(), idempotencyKey: 'cc-key' })
       ).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(mockReserveAppSpend).not.toHaveBeenCalled();
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
@@ -6639,149 +6658,6 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
       // never persisted a settle record for a submit that threw.
       expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
-    });
-  });
-
-  // ── v1.1: PER-ENGINE budget ceilings. A cheaper engine reserves/settles LESS
-  // cap AND gets a proportionally tighter step timeout (the timeout is the
-  // physical Buzz cap, so the reservation and the timeout MUST move together).
-  describe('submitWorkflow — per-engine budget ceilings (v1.1)', () => {
-    it('qwen-image reserves 180 on both caps and stamps a 00:03:00 timeout', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      happySubmit();
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      expect(mockSysRedis.incrBy).toHaveBeenCalledWith(
-        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
-      );
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 180);
-      expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].timeout).toBe('00:03:00');
-      expect(mockPersistCustomComfySettle).toHaveBeenCalledWith(
-        expect.objectContaining({ ceiling: 180 })
-      );
-    });
-
-    // ── Per-engine reserve↔refund SYMMETRY. The refund/rollback tests in the
-    // budget-belt block above only exercise the DEFAULT engine (zimage 90); these
-    // prove a NON-default engine refunds ITS OWN ceiling (qwen 180),
-    // not the flat 90 — so a cheaper engine can never over-refund and a pricier
-    // one can never under-refund on a deny/throw.
-    it('SYMMETRY: a qwen-image daily-cap breach refunds ITS ceiling (180, not 90) on the pinned key', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      mockSysRedis.incrBy.mockResolvedValue(60000); // reservation pushes over 50k cap
-      const result = await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      // The reserved qwen ceiling (180) is refunded — NOT the default 90.
-      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
-        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
-      );
-      expect(mockSysRedis.decrBy).not.toHaveBeenCalledWith(expect.anything(), 90);
-      expect(mockReserveAppSpend).not.toHaveBeenCalled();
-      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
-    });
-
-    it('SYMMETRY: a qwen-image app-cap breach refunds ITS ceiling (180) on the per-user key', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      mockReserveAppSpend.mockResolvedValue({
-        allowed: false,
-        reason: 'daily',
-        dailyTotal: 9_999_999,
-        velocityCount: 1,
-      });
-      const result = await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      expect(result.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      // The per-user reservation rolled back at qwen's ceiling (180), not 90.
-      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
-        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
-      );
-      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
-    });
-
-    it('SYMMETRY: a qwen-image refund-on-throw refunds ITS ceiling (180) on BOTH caps', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      mockSubmitWorkflow.mockRejectedValue(new Error('orchestrator down'));
-      await expect(
-        caller().submitWorkflow({
-          blockToken: 'tok',
-          body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-        })
-      ).rejects.toThrow(/orchestrator down/);
-      // BOTH the per-user daily cap and the per-app aggregate cap refund 180.
-      expect(mockSysRedis.decrBy).toHaveBeenCalledWith(
-        expect.stringMatching(/^system:blocks:buzz-cap:42:/),
-        180
-      );
-      expect(mockRefundAppSpend).toHaveBeenCalledWith(
-        'system:blocks:app-spend-cap:apb_test:day',
-        180
-      );
-      expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
-    });
-
-    // ── Graph-engine ↔ stamped-timeout end-to-end. Within ONE submit, prove the
-    // engine that drove the BUILT customComfy graph is the SAME engine that drove
-    // the STAMPED step timeout — i.e. the reservation/timeout can't be stamped for
-    // one engine while the graph is another's (safe-by-construction, now asserted).
-    it('END-TO-END: a qwen submit stamps 00:03:00 AND the emitted step input is qwen’s graph + resources', async () => {
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims());
-      happyCcResources();
-      happySubmit();
-      await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      const step = mockSubmitWorkflow.mock.calls[0][0].body.steps[0];
-      // Stamped timeout = qwen's ceiling (180s).
-      expect(step.timeout).toBe('00:03:00');
-      // The SAME submit's built graph is qwen's — the GGUF loader is qwen-specific
-      // (zimage/flux2 use UNETLoader), and a qwen resource AIR is in the step input.
-      expect(step.input.workflow['1'].class_type).toBe('GGUFLoaderKJ');
-      expect((step.input.resources as string[]).some((r) => r.includes('Qwen-Image'))).toBe(true);
-      // And it is NOT zimage's graph/resources (guards against a mismatched pairing).
-      expect((step.input.resources as string[]).some((r) => r.includes('z_image_turbo'))).toBe(
-        false
-      );
-    });
-
-    it('the concrete new behavior: at buzzBudget 100, cheap zimage (90) RUNS but qwen (180) is REJECTED', async () => {
-      // Under the old single-180 ceiling this budget gated out EVERY engine; now a
-      // cheaper engine runs under a budget the priciest still can't afford.
-      happyCcResources();
-      happySubmit();
-      // zimage ceiling 90 ≤ 100 → passes the static gate, reserves 90, submits.
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 100 }));
-      const okZimage = await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'zimage-turbo' } }),
-      });
-      expect(okZimage.snapshot.workflowId).toBe('wf_cc_1');
-      expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 90);
-
-      // qwen ceiling 180 > 100 → rejected at the static gate, NO submit.
-      mockSubmitWorkflow.mockClear();
-      mockVerifyBlockToken.mockResolvedValue(ccPageClaims({ buzzBudget: 100 }));
-      const rejectedQwen = await caller().submitWorkflow({
-        blockToken: 'tok',
-        body: ccBody({ params: { prompt: 'x', engine: 'qwen-image' } }),
-      });
-      expect(rejectedQwen.snapshot).toMatchObject({ workflowId: 'failed', status: 'failed' });
-      expect(rejectedQwen.snapshot.error).toMatch(/ceiling 180 exceeds budget 100/);
-      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
   });
 
@@ -7429,9 +7305,9 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
 
     function happyInline() {
       happyUser();
-      mockGetResourceData.mockResolvedValue([
-        { id: 136251, name: 'a lora', canGenerate: true, availability: 'Public' },
-      ]);
+      mockGetResourceData.mockImplementation(async (ids: number[]) =>
+        ids.map((id) => ({ id, name: 'a resource', canGenerate: true, availability: 'Public' }))
+      );
       mockGetHighestTierSubscription.mockResolvedValue(null);
       happySubmit();
     }
@@ -12873,9 +12749,9 @@ describe('blocks workflow — author-fee price disclosure', () => {
  * `blocks.estimateWorkflowBatch` — the batch twin of `estimateWorkflow`.
  *
  * 🔴 EVERY EXPECTED NUMBER HERE IS A LITERAL, AND THE CELL PRICES ARE PAIRWISE
- * DISTINCT (12, 150, 31, 20). A fixture that priced every cell the same could not
+ * DISTINCT (12, 15, 31, 20). A fixture that priced every cell the same could not
  * see a reply in the wrong ORDER, and a total equal to `n × price` could not see a
- * sum that dropped or repeated a cell. 213 is not a multiple of any of them.
+ * sum that dropped or repeated a cell. 78 is not a multiple of any of them.
  *
  * Three body kinds are mixed on purpose. The `step` and `textToImage` cells are
  * priced by the mocked orchestrator `whatif`, keyed on a marker in the cell's own
@@ -12915,10 +12791,10 @@ describe('blocks.estimateWorkflowBatch', () => {
       output: { format: 'webp', quality: 90 },
     },
   });
-  const comfy = (engine: string) => ({
+  const comfy = (recipe: 'seamless-pano-360' | 'starter-comfy-txt2img') => ({
     kind: 'customComfy' as const,
-    recipe: 'seamless-pano-360',
-    params: { prompt: 'a sunset over mountains', engine },
+    recipe,
+    params: { prompt: 'a sunset over mountains' },
   });
   const caller = () => blocksRouter.createCaller(fakeCtx() as never);
 
@@ -12960,18 +12836,23 @@ describe('blocks.estimateWorkflowBatch', () => {
   it('returns one snapshot per body IN ORDER and a literal aggregate over distinct prices', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [step('cell-a'), comfy('qwen-image'), txt('cell-c'), comfy('zimage-turbo')],
+      bodies: [
+        step('cell-a'),
+        comfy('starter-comfy-txt2img'),
+        txt('cell-c'),
+        comfy('seamless-pano-360'),
+      ],
     });
     // cell-a is the slowest whatif, so a reply assembled in COMPLETION order would
     // not start with 12.
-    expect(result.snapshots.map((s) => s.cost?.total)).toEqual([12, 150, 31, 20]);
-    expect(result.aggregate).toEqual({ total: 213, pricedCells: 4, cellCount: 4 });
+    expect(result.snapshots.map((s) => s.cost?.total)).toEqual([12, 15, 31, 20]);
+    expect(result.aggregate).toEqual({ total: 78, pricedCells: 4, cellCount: 4 });
   });
 
   it('🔴 a registry step cell with no quote fails on its own, coded, and is not summed', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [step('cell-boom'), comfy('zimage-turbo')],
+      bodies: [step('cell-boom'), comfy('seamless-pano-360')],
     });
     expect(result.snapshots[0]).toEqual({
       workflowId: 'failed',
@@ -12984,7 +12865,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   });
 
   it('prices each cell exactly as the SINGLE estimate prices that body', async () => {
-    const bodies = [txt('cell-c'), comfy('qwen-image'), step('cell-e')];
+    const bodies = [txt('cell-c'), comfy('starter-comfy-txt2img'), step('cell-e')];
     const batch = await caller().estimateWorkflowBatch({ blockToken: 'tok', bodies });
     const singles = [];
     for (const body of bodies) {
@@ -12995,7 +12876,7 @@ describe('blocks.estimateWorkflowBatch', () => {
     // dark); comfy prices no fee, so its cost stays `{ total }` — as on the single estimate.
     expect(batch.snapshots.map((s) => s.cost)).toEqual([
       { total: 31, authorFee: 0 },
-      { total: 150 },
+      { total: 15 },
       { total: 7, authorFee: 0 },
     ]);
   });
@@ -13074,7 +12955,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   it('NEVER SUBMITS: every orchestrator call is a whatif, and nothing is reserved, recorded or persisted', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [step('cell-a'), txt('cell-c'), comfy('zimage-turbo'), step('cell-e')],
+      bodies: [step('cell-a'), txt('cell-c'), comfy('seamless-pano-360'), step('cell-e')],
     });
     // The control: all four cells really ran and priced.
     expect(result.aggregate).toEqual({ total: 70, pricedCells: 4, cellCount: 4 });
@@ -13142,7 +13023,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   it('a server fault inside ONE cell is withheld from the block and does not fail the call', async () => {
     const result = await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [txt('cell-boom'), comfy('zimage-turbo')],
+      bodies: [txt('cell-boom'), comfy('seamless-pano-360')],
     });
     expect(result.snapshots[0].status).toBe('failed');
     // The raw upstream text never reaches a third-party block; a reference does.
@@ -13165,7 +13046,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   it('charges ONE catalog token for the call and the CELL COUNT to the cells bucket', async () => {
     await caller().estimateWorkflowBatch({
       blockToken: 'tok',
-      bodies: [step('cell-a'), txt('cell-c'), comfy('zimage-turbo')],
+      bodies: [step('cell-a'), txt('cell-c'), comfy('seamless-pano-360')],
     });
     expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
     expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('page_apb_grid');
@@ -13184,7 +13065,7 @@ describe('blocks.estimateWorkflowBatch', () => {
   });
 
   it('16 cells are accepted and a 17th fails the whole call', async () => {
-    const sixteen = Array.from({ length: 16 }, () => comfy('zimage-turbo'));
+    const sixteen = Array.from({ length: 16 }, () => comfy('seamless-pano-360'));
     const ok = await caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: sixteen });
     expect(ok.aggregate).toEqual({ total: 320, pricedCells: 16, cellCount: 16 });
 
@@ -13192,7 +13073,7 @@ describe('blocks.estimateWorkflowBatch', () => {
     await expect(
       caller().estimateWorkflowBatch({
         blockToken: 'tok',
-        bodies: [...sixteen, comfy('zimage-turbo')],
+        bodies: [...sixteen, comfy('seamless-pano-360')],
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockCheckBlockCatalogRateLimit).not.toHaveBeenCalled();

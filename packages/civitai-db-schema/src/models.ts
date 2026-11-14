@@ -108,7 +108,7 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -199,8 +199,6 @@ export type TechniqueType = "Image" | "Video";
 export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AppealCategory = "Account" | "Article" | "Model" | "Other";
-
-export type ImageAxisSource = "rated" | "moderator";
 
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
@@ -798,6 +796,28 @@ export interface CustomerSubscription {
   createdAt: Date;
   endedAt: Date | null;
   updatedAt: Date | null;
+}
+
+export interface CustomerSubscriptionHistory {
+  id: number;
+  userId: number;
+  subscriptionId: string;
+  buzzType: string;
+  productId: string;
+  priceId: string;
+  status: string;
+  metadata: JsonValue;
+  cancelAtPeriodEnd: boolean;
+  cancelAt: Date | null;
+  canceledAt: Date | null;
+  startedAt: Date;
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+  endedAt: Date | null;
+  closedAt: Date | null;
+  closedReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface MembershipGift {
@@ -1653,6 +1673,7 @@ export interface Post {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   images?: Image[];
+  texts?: PostText[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
   helper?: PostHelper | null;
@@ -1777,7 +1798,6 @@ export interface Image {
   storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
-  axisRating?: ImageAxisRating | null;
 }
 
 export interface ImageTagForReview {
@@ -2241,6 +2261,7 @@ export interface OauthClient {
   connectListings?: AppListing[];
   workerClient?: WorkerClient | null;
   workerDevices?: WorkerDevice[];
+  invites?: OauthInvite[];
 }
 
 export interface WorkerClient {
@@ -2943,6 +2964,16 @@ export interface OauthConsent {
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface OauthInvite {
+  tokenHash: string;
+  clientId: string;
+  client?: OauthClient;
+  email: string;
+  returnUrl: string;
+  expiresAt: Date;
+  createdAt: Date;
 }
 
 export interface TrustedSpokeDomain {
@@ -4951,22 +4982,6 @@ export interface ImageAudioScan {
   completedAt: Date | null;
 }
 
-export interface ImageAxisRating {
-  imageId: number;
-  image?: Image;
-  source: ImageAxisSource;
-  sexualLevel: number | null;
-  sexualHighWater: number | null;
-  violenceLevel: number | null;
-  languageLevel: number | null;
-  rater: string | null;
-  raterVersion: string | null;
-  ratedAt: Date;
-  workflowId: string | null;
-  setBy: number | null;
-  updatedAt: Date;
-}
-
 export interface ScanLabelVote {
   itemId: number;
   userId: number;
@@ -5185,10 +5200,6 @@ export interface ReportAutomated {
   report?: Report;
   metadata: JsonValue;
   createdAt: Date;
-}
-
-export interface RestrictedBaseModels {
-  baseModel: string;
 }
 
 export interface Challenge {
@@ -6799,6 +6810,20 @@ export interface ImageCaption {
   content: string;
   refused: boolean;
   nsfwLevel: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PostText {
+  id: number;
+  postId: number;
+  post?: Post;
+  userId: number;
+  index: number;
+  content: string;
+  nsfwLevel: number;
+  refused: boolean;
+  csamHeld: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

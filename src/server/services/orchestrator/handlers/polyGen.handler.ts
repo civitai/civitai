@@ -32,6 +32,7 @@ import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { normalizeModel3DFormat } from '~/shared/orchestrator/model3d-output';
 import { getImageUploadBackend, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import type { Prisma } from '@prisma/client';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 // =============================================================================
 // Constants
@@ -298,7 +299,7 @@ async function copyModel3dBlobToS3(
     }
   }
 
-  const response = await fetch(url);
+  const response = await outboundFetch(url, { timeoutMs: 120_000 });
   if (!response.ok) {
     return null;
   }
@@ -356,7 +357,7 @@ async function ingestThumbnailImage(
 ): Promise<number | undefined> {
   if (!thumbnail.url) return undefined;
   try {
-    const response = await fetch(thumbnail.url);
+    const response = await outboundFetch(thumbnail.url, { timeoutMs: 60_000 });
     if (!response.ok) {
       logToAxiom({
         name: POLYGEN_LOG,

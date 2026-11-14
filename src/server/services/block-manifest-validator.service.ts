@@ -1035,7 +1035,6 @@ export class BlockManifestValidator {
     const base = this.validate(manifest, app, opts);
     const errors: string[] = base.valid ? [] : [...base.errors];
 
-    // A manifest with no surface passes `validate` but fails its build (see manifestSurfaceError).
     const surfaceError = manifestSurfaceError(manifest);
     if (surfaceError) errors.push(surfaceError);
 

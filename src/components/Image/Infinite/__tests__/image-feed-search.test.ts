@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ignoredWhileSearching,
   imageFeedUrlFromLegacySearch,
+  searchPeriodChange,
   toSemanticImageSearchInput,
 } from '~/components/Image/Infinite/image-feed-search';
 import { ImageSort } from '~/server/common/enums';
@@ -22,6 +23,8 @@ describe('toSemanticImageSearchInput', () => {
         username: 'someone',
         userId: 7,
         period: MetricTimeframe.Week,
+        fromPlatform: true,
+        withMeta: true,
         tools: [9],
         techniques: [3],
         remixesOnly: true,
@@ -38,6 +41,8 @@ describe('toSemanticImageSearchInput', () => {
       usernames: ['someone'],
       userIds: [7],
       postedAfter: new Date('2026-11-04T15:00:00Z'),
+      fromPlatform: true,
+      withMeta: true,
       limit: 50,
     });
   });
@@ -50,6 +55,44 @@ describe('toSemanticImageSearchInput', () => {
       filters: { period: MetricTimeframe.AllTime },
     });
     expect(input.postedAfter).toBeUndefined();
+  });
+});
+
+describe('searchPeriodChange', () => {
+  const { AllTime, Week, Month } = MetricTimeframe;
+  const start = { searching: true, wasSearching: false };
+  const idle = { searching: false, wasSearching: false };
+
+  it('starts a search over all time and keeps the feed period to give back', () => {
+    expect(searchPeriodChange({ ...start, period: Week, savedPeriod: undefined })).toEqual({
+      write: AllTime,
+      savedPeriod: Week,
+    });
+    expect(searchPeriodChange({ ...start, period: AllTime, savedPeriod: undefined })).toBeNull();
+  });
+
+  it('leaves a period picked during the search alone, across a reload too', () => {
+    expect(
+      searchPeriodChange({ searching: true, wasSearching: true, period: Month, savedPeriod: Week })
+    ).toBeNull();
+    expect(searchPeriodChange({ ...start, period: Month, savedPeriod: Week })).toBeNull();
+  });
+
+  it('gives the feed its period back without a search, unless one was picked meanwhile', () => {
+    const clear = { searching: false, wasSearching: true };
+    expect(searchPeriodChange({ ...clear, period: AllTime, savedPeriod: Week })).toEqual({
+      write: Week,
+      savedPeriod: undefined,
+    });
+    // A later visit after leaving the feed mid-search.
+    expect(searchPeriodChange({ ...idle, period: AllTime, savedPeriod: Week })).toEqual({
+      write: Week,
+      savedPeriod: undefined,
+    });
+    expect(searchPeriodChange({ ...clear, period: Month, savedPeriod: Week })).toEqual({
+      savedPeriod: undefined,
+    });
+    expect(searchPeriodChange({ ...idle, period: Week, savedPeriod: undefined })).toBeNull();
   });
 });
 

@@ -785,6 +785,18 @@ export const isArticleProcessing = async ({ id }: GetByIdInput) => {
 };
 
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
+/** A body image's row, with what `RenderRichText`'s `imageGuard` needs to guard it by level. */
+export const articleContentImageSelect = {
+  id: true,
+  url: true,
+  ingestion: true,
+  nsfwLevel: true,
+  userId: true,
+  hash: true,
+  width: true,
+  height: true,
+} satisfies Prisma.ImageSelect;
+
 export const getArticleById = async ({
   id,
   userId,
@@ -829,20 +841,7 @@ export const getArticleById = async ({
     // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({
       where: { entityId: id, entityType: ImageConnectionType.Article },
-      include: {
-        image: {
-          select: {
-            id: true,
-            url: true,
-            ingestion: true,
-            nsfwLevel: true,
-            userId: true,
-            hash: true,
-            width: true,
-            height: true,
-          },
-        },
-      },
+      include: { image: { select: articleContentImageSelect } },
     });
 
     const articleCategories = await getCategoryTags('article');

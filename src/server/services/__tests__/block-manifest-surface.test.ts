@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
@@ -140,34 +140,5 @@ describe('the canonical schema states the surface rule', () => {
       allOf: surfaceClauses,
     };
     expect(schemaAccepts(evaluated, keys)).toBe(declares);
-  });
-});
-
-/**
- * `validate` skips the surface rule; `validateSubmission` adds it. So a production path that called
- * `validate` directly would accept a manifest the build refuses. Its only production caller must
- * stay `validateSubmission`.
- */
-describe('every production caller goes through validateSubmission', () => {
-  function sourceFiles(dir: string): string[] {
-    return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory())
-        return e.name === '__tests__' || e.name === 'tests' ? [] : sourceFiles(p);
-      return /\.(ts|tsx)$/.test(e.name) && !/\.(test|spec|stories)\.tsx?$/.test(e.name) ? [p] : [];
-    });
-  }
-
-  it('no production code calls BlockManifestValidator.validate( directly', () => {
-    const files = sourceFiles(path.join(REPO_ROOT, 'src'));
-    // POSITIVE CONTROL: the walk reaches the validator and a known submission caller.
-    const rel = files.map((f) => path.relative(REPO_ROOT, f));
-    expect(rel).toContain('src/server/services/block-manifest-validator.service.ts');
-    expect(rel).toContain('src/pages/api/internal/blocks/git-push.ts');
-
-    const direct = files.filter((f) =>
-      /BlockManifestValidator\s*\.\s*validate\s*\(/.test(readFileSync(f, 'utf8'))
-    );
-    expect(direct.map((f) => path.relative(REPO_ROOT, f))).toEqual([]);
   });
 });

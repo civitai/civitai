@@ -595,7 +595,15 @@ describe('the advisory locks have exactly one call site', () => {
   // markClaimPaid's claim row lock, so a mystery box open's ownership read sees any shop grant;
   // never nested inside another advisory lock.
   // creator-mystery-pack takes one per creator (0x434d0001) around the live-pack count and the pack
-  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions.
+  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions, except
+  // a keyed submit, where it is taken inside buzz-charge-lock's lock (always that one first).
+  // buzz-charge-lock takes one per keyed charge (one-arg hashtextextended of the charge's external
+  // id or prefix: creator-shop-submit-…, donation-k-…, appeal-k-…, crucible-entry-k-…) around the
+  // record of a charge and any refund after a failed record; the Buzz charge itself runs outside.
+  // Taken first in its transaction; the only other advisory lock ever taken under it is the creator
+  // lock above, so there is no cycle. Row locks taken under it (the appealed Image, the entered
+  // Crucible) cannot close one either: only a charge-key transaction waits on this lock, and it
+  // takes it before any row. Its callers are pinned in CHARGE_KEY_LOCK_CALLERS below.
   // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
   // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
   // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
@@ -612,11 +620,19 @@ describe('the advisory locks have exactly one call site', () => {
   // approve gate's open-run check and the plan reservation. The only lock in its transaction.
   // blocks/review-autodeploy takes one platform-wide (0x72657631, 0) around the review build-slot
   // count and claim. The only lock in its transaction.
+  // app-hibernation/hibernation.repo takes one per user (0x48424e54) as the first statement of its
+  // commit transaction, around the record, usage and User FOR SHARE reads, the decision and the upsert.
+  // The only advisory lock in its transaction, never nested inside another lock.
+  // storyline takes one per (user, spark image) (0x53544c31, hashtext of both) as the first
+  // statement of createStoryline's spark start, around the unwritten-storyline lookup and the reuse
+  // or insert. The only advisory lock in its transaction.
   const ALLOWED = [
     'services/access-token.service.ts',
+    'services/app-hibernation/hibernation.repo.ts',
     'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
     'services/blocks/review-autodeploy.service.ts',
+    'services/buzz-charge-lock.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',
@@ -628,6 +644,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/platform-feedback.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
+    'services/storyline.service.ts',
     'services/support-membership-code.service.ts',
     'services/text-scan/actions/csam-hold.ts',
     'services/text-scan/actions/model-rules-hold.ts',
@@ -656,6 +673,39 @@ describe('the advisory locks have exactly one call site', () => {
       );
 
     expect(callers.sort()).toEqual(ALLOWED);
+  });
+
+  // Who takes buzz-charge-lock's lock (through withChargeKeyLock, recordKeyedCharge or
+  // refundUnlessRecorded) and on which charge: a new caller is a new transaction shape under that
+  // lock, so it has to be read against the ordering note above before it joins this list.
+  // creator-shop-fees: creator-shop-submit-… (item, pack and mystery pack submission fees).
+  // donation-goal: donation-k-…. report: appeal-k-… (the appeal fee). crucible: crucible-entry-k-….
+  // A call with or without type arguments: `recordKeyedCharge(` and `recordKeyedCharge<T>(`.
+  const CHARGE_KEY_LOCK = /\b(withChargeKeyLock|recordKeyedCharge|refundUnlessRecorded)\s*[<(]/;
+  const CHARGE_KEY_LOCK_CALLERS = [
+    'services/buzz-charge-lock.ts',
+    'services/creator-shop-fees.service.ts',
+    'services/crucible.service.ts',
+    'services/donation-goal.service.ts',
+    'services/report.service.ts',
+  ];
+
+  it('the charge-key lock is taken only by the keyed charges it was reviewed for', () => {
+    const root = path.resolve(__dirname, '../..');
+    const callers = fs
+      .readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .map((name) => name.split(path.sep).join('/'))
+      .filter((name) => name.endsWith('.ts') && !name.includes('__tests__/'))
+      .filter((name) =>
+        CHARGE_KEY_LOCK.test(
+          fs
+            .readFileSync(path.join(root, name), 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/\/\/[^\n]*/g, '')
+        )
+      );
+
+    expect(callers.sort()).toEqual(CHARGE_KEY_LOCK_CALLERS);
   });
 
   it('exports nothing but the three functions, so there is no lock to take', async () => {

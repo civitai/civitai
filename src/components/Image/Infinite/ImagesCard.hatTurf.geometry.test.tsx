@@ -143,10 +143,31 @@ const overlaps = (a: DOMRect, b: DOMRect) =>
   a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 const q = (selector: string) => document.body.querySelector(selector) as HTMLElement | null;
 
-describe('the +N hats chip on the /images card', () => {
-  test.each([171, 260, 320])(
-    'clears the left row and the menu and Remix column at %spx',
-    async (width) => {
+// The /images card draws up to 10 hats and no "+N" chip (3 on a narrow card). Hats can sit in
+// any corner, so none may take a tap meant for the left row or the menu and Remix column.
+// 4 columns x 3 rows across the picture, the top right hat first so a narrow card draws it.
+const scattered = Array.from({ length: 12 }, (_, i) => ({
+  id: i + 1,
+  userId: 10 + i,
+  team: 'blue',
+  cosmeticId: 11,
+  data: {
+    x: 0.08 + 0.84 * (1 - (i % 4) / 3),
+    y: 0.08 + 0.84 * (Math.floor(i / 4) / 2),
+    scale: 0.2,
+    rotation: 0,
+    flip: false,
+  },
+}));
+
+describe('hats on the /images card', () => {
+  test.each([
+    [171, 3],
+    [260, 10],
+    [320, 10],
+  ])(
+    'at %spx draws %s hats, no +N chip, and leaves the left row and the menu and Remix column tappable',
+    async (width, drawn) => {
       useHatTurfStore.setState({ cosmeticId: null, showHats: true });
       await renderAtViewport(
         <TurfSummaryContext.Provider
@@ -156,8 +177,8 @@ describe('the +N hats chip on the /images card', () => {
             team: 'blue',
             images: {
               77: {
-                shown: { blue: 6, pink: 4 },
-                counted: { blue: 6, pink: 4 },
+                shown: { blue: 14, pink: 4 },
+                counted: { blue: 14, pink: 4 },
                 leader: 'blue',
                 leaderCosmeticId: 11,
                 hatted: true,
@@ -165,15 +186,7 @@ describe('the +N hats chip on the /images card', () => {
               },
             },
             open: { 77: true },
-            stickers: {
-              77: [1, 2].map((id) => ({
-                id,
-                userId: 10 + id,
-                team: 'blue',
-                cosmeticId: 11,
-                data: { x: 0.3 * id, y: 0.6, scale: 0.2, rotation: 0, flip: false },
-              })),
-            },
+            stickers: { 77: scattered },
             joined: true,
             watch: () => () => undefined,
           }}
@@ -186,29 +199,56 @@ describe('the +N hats chip on the /images card', () => {
         </TurfSummaryContext.Provider>,
         { width: 1280, height: 800 }
       );
-      await vi.waitFor(() => expect(q('[data-testid="hat-turf-more"]')).not.toBeNull());
-      const chip = q('[data-testid="hat-turf-more"]')!.getBoundingClientRect();
-      expect(chip.width).toBeGreaterThan(0);
+      await vi.waitFor(() =>
+        expect(document.body.querySelectorAll('[data-testid="hat-turf-hat"]')).toHaveLength(drawn)
+      );
+      expect(q('[data-testid="hat-turf-more"]'), 'the card draws no +N chip').toBeNull();
+      const hats = [...document.body.querySelectorAll('[data-testid="hat-turf-hat"]')].map((el) =>
+        el.getBoundingClientRect()
+      );
+      const frame = q('[data-testid="card-frame"]')!.getBoundingClientRect();
+      for (const r of hats) {
+        expect(r.width).toBeGreaterThan(0);
+        expect(r.right).toBeGreaterThan(frame.left);
+        expect(r.left).toBeLessThan(frame.right);
+      }
 
       // The left row: every chip in it, whichever of them render.
       const row = [...q('[data-testid="hat-turf-badge"]')!.parentElement!.children];
       expect(row.some((el) => el.matches('[data-testid="rating-badge"]'))).toBe(true);
-      for (const el of row) {
-        const r = el.getBoundingClientRect();
-        expect(r.width).toBeGreaterThan(0);
-        const name = el.getAttribute('data-testid') ?? el.className;
-        expect(overlaps(chip, r), `the +N chip is under ${name}`).toBe(false);
-      }
-
       // The right column: the menu button with Remix under it.
       const remix = q('[data-activity="remix:image-card"]')!;
-      const column = remix.closest('.flex-col')!.getBoundingClientRect();
-      expect(column.height).toBeGreaterThan(remix.getBoundingClientRect().height);
-      expect(overlaps(chip, column), 'the +N chip is under the menu or Remix button').toBe(false);
+      const column = remix.closest('.flex-col')!;
+      const columnBox = column.getBoundingClientRect();
+      expect(columnBox.height).toBeGreaterThan(remix.getBoundingClientRect().height);
 
-      const frame = q('[data-testid="card-frame"]')!.getBoundingClientRect();
-      expect(chip.left).toBeGreaterThanOrEqual(frame.left);
-      expect(chip.right).toBeLessThanOrEqual(frame.right);
+      // The hats do reach the controls, so the tap test below has something to fail on.
+      expect(
+        hats.some((r) => overlaps(r, columnBox)),
+        'no drawn hat reaches the menu and Remix column'
+      ).toBe(true);
+      // Paint order: the layer and its hats set no z-index, so the card's chips stay above them.
+      const layer = q('[data-testid="hat-turf-layer"]')!;
+      for (const el of [layer, ...document.body.querySelectorAll('[data-testid="hat-turf-hat"]')]) {
+        expect(getComputedStyle(el).zIndex, 'a hat is lifted over the card chips').toBe('auto');
+      }
+      // Taps: the hat badge in the left row and the menu and Remix column answer under a hat. The
+      // row's other chips are not tapped here: at 171px a 26px icon from outside the row sits on the rating chip.
+      for (const control of [
+        q('[data-testid="hat-turf-badge"]')!,
+        ...column.querySelectorAll('button'),
+        remix,
+      ]) {
+        const r = control.getBoundingClientRect();
+        expect(r.width).toBeGreaterThan(0);
+        if (getComputedStyle(control).pointerEvents === 'none') continue;
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        const name = control.getAttribute('data-testid') ?? control.className;
+        expect(
+          control.contains(hit),
+          `a hat covers ${name}: ${(hit as HTMLElement | null)?.outerHTML.slice(0, 200)}`
+        ).toBe(true);
+      }
     }
   );
 });

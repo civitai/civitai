@@ -18,7 +18,7 @@ const SCAN_FLOOR_ENTITY_TYPES: readonly string[] = [
   'ServiceOffering',
 ];
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
-const INTERNAL_ALIASES = new Set(['i', 'ic', 'em', 'd', 'ar', 'r']);
+const INTERNAL_ALIASES = new Set(['i', 'ic', 'em', 'd', 'ar', 'r', 'pt', 'pi']);
 
 // Both apps inline these strings as raw SQL, so every input is checked against a closed set.
 function identifier(value: string) {
@@ -81,7 +81,11 @@ export function collectionTextFloorBucketText(alias: string, bucket: number) {
 }
 
 const imageLevelText: Record<DerivedNsfwEntityType, (alias: string) => string> = {
-  Post: (a) => `(SELECT bit_or(i."nsfwLevel") FROM "Image" i WHERE i."postId" = ${a}.id)`,
+  // A post's storyline text items rate it as its images do; a refused text is never shown, so it
+  // does not rate it. A post with no images stays unrated (NULL), text or not. Wholly Blocked
+  // images stay exactly Blocked: that level is a removal, which a text's bit must not undo.
+  Post: (a) =>
+    `(SELECT CASE WHEN pi.l IS NULL OR pi.l = ${NsfwLevel.Blocked} THEN pi.l ELSE pi.l | COALESCE((SELECT bit_or(pt."nsfwLevel") FROM "PostText" pt WHERE pt."postId" = ${a}.id AND pt.refused = FALSE), 0) END FROM (SELECT (SELECT bit_or(i."nsfwLevel") FROM "Image" i WHERE i."postId" = ${a}.id) AS l) pi)`,
   Bounty: (a) =>
     `(SELECT bit_or(i."nsfwLevel") FROM "ImageConnection" ic JOIN "Image" i ON i.id = ic."imageId" WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${a}.id)`,
   BountyEntry: (a) =>

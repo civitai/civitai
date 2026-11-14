@@ -118,6 +118,9 @@ const schema = z.object({
   AXIOM_EXTRA_DATASTREAMS: z.string().optional(),
   PODNAME: z.string().optional(),
   LOG_ERRORS_TO_STDOUT: booleanString.default(false),
+  // Off-switch for the non-blocking Axiom dual-write. `true` makes `logToAxiom` wait for the
+  // dual-write's outcome again, bounded by the 2 s budget, as it did before. Unset = do not wait.
+  AXIOM_AWAIT_UPLOADS: booleanString.default(false),
 });
 
 // Normalized, env-derived defaults. The factory accepts a Partial<AxiomConfig> to
@@ -141,6 +144,7 @@ function buildEnv() {
     ),
     podName: parsed.data.PODNAME,
     logErrorsToStdout: parsed.data.LOG_ERRORS_TO_STDOUT,
+    awaitUploads: parsed.data.AXIOM_AWAIT_UPLOADS,
     // NODE_ENV is a universal Node convention (not Next-specific), so it's fine for a package.
     isProd: process.env.NODE_ENV === 'production',
   };

@@ -85,11 +85,19 @@ export class OutboxPoller {
       leaderLost = err
     }
     leader.on('error', onLeaderError)
+    // Set when a lock or unlock query failed or timed out: the connection may still hold the advisory
+    // lock (or be mid-query, after pg's query_timeout), so it is destroyed rather than returned.
+    let leaderFailed: Error | undefined
     try {
-      const lock = await leader.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [
-        OUTBOX_POLLER_LOCK_CLASSID,
-        OUTBOX_POLLER_LOCK_OBJID,
-      ])
+      const lock = await leader
+        .query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [
+          OUTBOX_POLLER_LOCK_CLASSID,
+          OUTBOX_POLLER_LOCK_OBJID,
+        ])
+        .catch((err: Error) => {
+          leaderFailed = err
+          throw err
+        })
       if (!lock.rows[0]?.acquired) return // another pod is already sweeping
 
       try {
@@ -117,12 +125,15 @@ export class OutboxPoller {
             OUTBOX_POLLER_LOCK_CLASSID,
             OUTBOX_POLLER_LOCK_OBJID,
           ])
-          .catch((err) => logger.warn({ err }, 'Outbox poller: advisory unlock failed'))
+          .catch((err) => {
+            leaderFailed = err
+            logger.warn({ err }, 'Outbox poller: advisory unlock failed')
+          })
       }
     } finally {
       leader.removeListener('error', onLeaderError)
       // Passing the error makes the pool destroy the client rather than reuse it.
-      leader.release(leaderLost ?? undefined)
+      leader.release(leaderLost ?? leaderFailed)
       this.sweeping = false
     }
   }
@@ -142,6 +153,10 @@ export class OutboxPoller {
 
   private async sweepBatch(cursor: string): Promise<{ processed: number; nextCursor: string | null }> {
     const client = await this.pool.connect()
+    // Any failure destroys this connection instead of returning it: it may still hold the transaction and
+    // its FOR UPDATE locks (the ROLLBACK can fail or time out too), or be running a query pg's
+    // query_timeout abandoned client-side.
+    let failed: Error | undefined
     try {
       await client.query('BEGIN')
 
@@ -227,10 +242,11 @@ export class OutboxPoller {
       // this sweep.
       return { processed: rows.length, nextCursor: rows[rows.length - 1].id as string }
     } catch (err) {
+      failed = err as Error
       await client.query('ROLLBACK').catch(() => {})
       throw err
     } finally {
-      client.release()
+      client.release(failed)
     }
   }
 }

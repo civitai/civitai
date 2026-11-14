@@ -135,8 +135,6 @@ describe('submitVersion — deep manifest validation at submit', () => {
     expect(followUps.onNewPendingSubmission).not.toHaveBeenCalled();
   });
 
-  // The build refuses a manifest declaring neither a page nor a non-empty targets array, after a
-  // moderator approved it; submit refuses it first.
   it.each<[string, Record<string, unknown>]>([
     ['neither key', {}],
     ['an empty targets array', { targets: [] }],

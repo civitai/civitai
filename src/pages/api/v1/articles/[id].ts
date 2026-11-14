@@ -10,10 +10,13 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
 
 /**
- * GET /api/v1/articles/[id] — public, edge-cacheable article detail.
+ * GET /api/v1/articles/[id] — public article detail.
  *
  * Wraps the EXISTING `getArticleById` service (the same one `articleRouter.getById`
  * — a public procedure — uses for anonymous website visitors). This endpoint
@@ -22,19 +25,22 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
  * for EVERY caller: a draft / unpublished / not-yet-scanned article is a 404 for
  * everyone, authed or not. There is no owner self-view branch here, so the
  * response is a pure function of the id (+ region) — byte-identical for an
- * anonymous caller and any authenticated caller — which makes the
- * `MixedAuthEndpoint` wrapper's `public, s-maxage=300` edge caching safe. A
- * private article is INDISTINGUISHABLE from a non-existent one (both 404), so this
- * is not an existence oracle.
+ * anonymous caller and any authenticated caller. It is `private, no-store` for every
+ * caller: the body depends on the caller's region. Outside a restricted region the article
+ * body follows the article's own level, so it can be above SFW; the cover, banner and author
+ * avatar are clamped to PG, or PG|PG13 in a restricted region. A private article is
+ * INDISTINGUISHABLE from a non-existent one (both 404), so this is not an existence oracle.
  *
- * Maturity: the cover image is clamped to the region-narrowed PUBLIC browsing
- * ceiling (the SAME default the list endpoint uses, `publicBrowsingLevelsFlag`
+ * Maturity: in a restricted region, an article above SFW (its own level, or any connected image
+ * in its body) is the same 404 as a missing one, as on `/api/v1/posts/[id]`. The cover image is
+ * clamped to the region-narrowed PUBLIC browsing ceiling (the SAME default the list endpoint
+ * uses, `publicBrowsingLevelsFlag`
  * narrowed to `sfwBrowsingLevelsFlag` for restricted regions) — a cover above the
  * ceiling is dropped so an anonymous SFW caller never receives mature cover art.
  * `getArticleById` takes no browsing-level param, so the clamp is applied here as
  * a post-service filter. It is derived ONLY from the region (`cf-ipcountry`) — it
  * NEVER reads the caller's nsfw preference / browsingLevel cookie / session — so
- * the response stays a pure function of id + region and remains edge-cacheable.
+ * the response stays a pure function of id + region.
  */
 
 // Bound the coerced id to Postgres int4 (mirrors models/[id].ts): a huge numeric
@@ -48,8 +54,7 @@ export default MixedAuthEndpoint(async function handler(
   user: Session['user'] | undefined
 ) {
   // Conservative per-client rate limit (before the service call). Keys on
-  // CF-Connecting-IP / userId — guards only the cache-MISS path; the response
-  // body itself never varies by user.
+  // CF-Connecting-IP / userId; the response body itself never varies by user.
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'articles', userId: user?.id });
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
@@ -66,17 +71,21 @@ export default MixedAuthEndpoint(async function handler(
   // Maturity/region ceiling — the SAME fixed PUBLIC default the list endpoint
   // uses (articles/index.ts), narrowed to SFW for restricted regions. Region-
   // derived ONLY (from `cf-ipcountry`); it NEVER reads the caller's nsfw
-  // preference/cookie/session, so the response stays a pure function of id +
-  // region and the `public` edge cache is leak-free.
+  // preference/cookie/session, so the response stays a pure function of id + region.
   const region = getRegion(req);
-  let browsingLevel = publicBrowsingLevelsFlag;
-  if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
+  const restricted = isRegionRestricted(region);
+  const browsingLevel = restricted ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+  // The body depends on the caller's region, which the shared cache does not key on.
+  res.setHeader('Cache-Control', 'private, no-store');
 
   try {
     // Evaluate as anonymous — NEVER pass the session userId/isModerator. This
     // pins published-only visibility for every caller (no owner-draft branch), so
-    // the response is caller-independent and edge-cacheable.
+    // the response is caller-independent.
     const article = await getArticleById({ id });
+    // Answered as the same 404 as a missing article.
+    if (restricted && !isArticleServableWhenRestricted(article))
+      throw throwNotFoundError(`No article with id ${id}`);
 
     // moderatorNsfwLevel is a moderator-only override the service includes for the
     // edit form; strip it so it never leaks through the public REST payload.
@@ -110,7 +119,9 @@ export default MixedAuthEndpoint(async function handler(
       ingestion,
     }));
 
-    return res.status(200).json({ ...publicArticle, contentImages });
+    const user = publicArticle.user && withPublicAvatar(publicArticle.user, browsingLevel);
+
+    return res.status(200).json({ ...publicArticle, user, contentImages });
   } catch (e) {
     // getArticleById throws NOT_FOUND for a missing / non-visible article →
     // handleEndpointError maps it to a 404.

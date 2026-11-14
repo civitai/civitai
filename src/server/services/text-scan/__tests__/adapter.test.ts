@@ -121,6 +121,7 @@ describe('createTextScanAdapter', () => {
       'Storyline:shadow',
       'ImageCaption:shadow',
       'ServiceOffering:shadow',
+      'PostText:shadow',
       'ModelRules:shadow',
     ]) {
       expect(adapters[key]).toBeDefined();

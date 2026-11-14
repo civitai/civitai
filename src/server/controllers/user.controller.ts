@@ -179,6 +179,8 @@ import {
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { avatarAtLevel } from '~/server/utils/public-avatar';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -331,7 +333,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       ? countUnclaimedPrizes(id).catch(() => 0)
       : Promise.resolve(0);
     // Concurrent, not serial: these hit two different backends — the
-    // notifications service over HTTP (with its own retries) and the main
+    // notifications service over HTTP (1.5 s per attempt, one retry) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.
@@ -968,11 +970,15 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
         // model id per creator just to take `.length`. The only consumer
         // (src/pages/api/v1/creators.ts) reads modelCount, not the model rows.
         _count: { select: { models: { where: { status: 'Published' } } } },
-        image: true,
+        profilePicture: { select: { url: true, nsfwLevel: true, type: true } },
       },
     });
+    const items = results.items.map((item) => ({
+      ...item,
+      profilePicture: avatarAtLevel(item.profilePicture, publicBrowsingLevelsFlag),
+    }));
 
-    return getPagingData(results, take, page);
+    return getPagingData({ ...results, items }, take, page);
   } catch (error) {
     throw throwDbError(error);
   }

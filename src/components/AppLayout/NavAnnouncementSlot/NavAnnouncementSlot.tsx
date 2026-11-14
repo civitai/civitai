@@ -1,5 +1,6 @@
 import { IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { CSSProperties } from 'react';
 import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { dismissHint } from '~/components/Events/event-promos';
@@ -68,11 +69,22 @@ export function NavBannerStrip({
   onDismiss: () => void;
 }) {
   const background = banner.background ?? DEFAULT_BACKGROUND;
+  const { theme } = banner;
+  const themeVars = theme && {
+    '--nb-text': theme.text,
+    '--nb-muted': theme.mutedText,
+    '--nb-accent': theme.accent,
+    '--nb-cta-bg': theme.ctaBackground,
+    '--nb-cta-text': theme.ctaText,
+  };
 
   return (
     <div
-      className="relative isolate flex h-11 w-full items-center overflow-hidden text-white"
-      style={{ backgroundColor: background }}
+      className={clsx(
+        'relative isolate flex h-11 w-full items-center overflow-hidden',
+        theme ? 'text-[var(--nb-text)]' : 'text-white'
+      )}
+      style={{ backgroundColor: background, ...themeVars } as CSSProperties}
       data-testid="nav-banner"
     >
       {banner.image && (
@@ -92,21 +104,39 @@ export function NavBannerStrip({
       )}
       <Link
         href={banner.href}
-        className="flex h-full min-w-0 flex-1 items-center gap-3 pl-4 text-white no-underline focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white"
+        className={clsx(
+          'flex h-full min-w-0 flex-1 items-center gap-3 pl-4 no-underline focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white',
+          theme ? 'text-[var(--nb-text)]' : 'text-white'
+        )}
       >
         <span className="flex min-w-0 flex-1 items-baseline gap-2.5 overflow-hidden whitespace-nowrap [text-shadow:0_1px_3px_rgba(0,0,0,0.5)]">
           <span className="truncate text-sm font-extrabold sm:shrink-0">
             {banner.title}
-            {banner.accent && <span className="text-yellow-4"> {banner.accent}</span>}
+            {banner.accent && (
+              <span className={theme ? 'text-[var(--nb-accent)]' : 'text-yellow-4'}>
+                {' '}
+                {banner.accent}
+              </span>
+            )}
           </span>
           {banner.text && (
-            <span className="hidden truncate text-[13px] text-white/80 sm:inline">
+            <span
+              className={clsx(
+                'hidden truncate text-[13px] sm:inline',
+                theme ? 'text-[var(--nb-muted)]' : 'text-white/80'
+              )}
+            >
               {banner.text}
             </span>
           )}
         </span>
         {banner.cta && (
-          <span className="hidden shrink-0 rounded-full bg-white px-3 py-1 text-xs font-bold text-dark-9 sm:inline">
+          <span
+            className={clsx(
+              'hidden shrink-0 rounded-full px-3 py-1 text-xs font-bold sm:inline',
+              theme ? 'bg-[var(--nb-cta-bg)] text-[var(--nb-cta-text)]' : 'bg-white text-dark-9'
+            )}
+          >
             {banner.cta}
           </span>
         )}
@@ -116,7 +146,12 @@ export function NavBannerStrip({
           type="button"
           onClick={onDismiss}
           aria-label={`Dismiss ${banner.title}`}
-          className="flex h-full w-10 shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent text-white/70 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white"
+          className={clsx(
+            'flex h-full w-10 shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white',
+            theme
+              ? 'text-[var(--nb-muted)] hover:text-[var(--nb-text)]'
+              : 'text-white/70 hover:text-white'
+          )}
         >
           <IconX size={18} />
         </button>

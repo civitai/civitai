@@ -678,7 +678,8 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/storyline-caption.service.ts#setStorylineImageCaption': {
     writes: ['imageId'],
     decision: 'owner-checked',
-    guards: { imageId: 'if (image.post.userId !== userId)' },
+    // The author check is assertChapterPostAuthor's first line.
+    guards: { imageId: 'await assertChapterPostAuthor({' },
   },
   // The spark: someone else's image by design, refused unless it may be shown, is outside a block
   // with the starter and its creator's remix gallery is open. Written once, here.
@@ -698,10 +699,6 @@ const IMAGE_FK_WRITE_LEDGER: Record<
       coverImageId: 'await assertStorylinePicks(dbWrite, {',
       heroImageId: 'await assertStorylinePicks(dbWrite, {',
     },
-  },
-  'src/server/services/text-scan/actions/image-caption.ts#applyImageCaptionTextScan': {
-    writes: ['imageId: entityId'],
-    decision: 'server-derived',
   },
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],

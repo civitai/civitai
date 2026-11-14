@@ -17,10 +17,11 @@ import { getFileExtension } from '~/utils/string-helpers';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
-/** Training Studio catalog gate (`ModelCard.flagKey`) -> the feature flag that answers it in this
- *  app; the embedded element can't evaluate Flipt itself. A gate missing from this map is hidden
- *  in the embed for everyone. */
+/** Training Studio gate (a `ModelCard.flagKey`, or its Kohya engine's) -> the feature flag that
+ *  answers it in this app; the embedded element can't evaluate Flipt itself. A gate missing from
+ *  this map is hidden in the embed for everyone. */
 export const studioModelFlagFeatures = {
+  'training-studio-kohya': 'trainingStudioKohya',
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',
