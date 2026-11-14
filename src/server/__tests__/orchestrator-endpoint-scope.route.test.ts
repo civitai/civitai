@@ -15,7 +15,7 @@ const { getOrchestratorToken, getServerAuthSession, services } = vi.hoisted(() =
   getServerAuthSession: vi.fn(),
   services: {
     getWorkflowStatusUpdate: vi.fn(async () => ({})),
-    refreshBlobsService: vi.fn(async () => []),
+    refreshCallerBlobs: vi.fn(async () => []),
     getBlobRatingsService: vi.fn(async () => []),
     getConsumerBlobUploadUrlService: vi.fn(async () => ({})),
   },
@@ -34,7 +34,9 @@ vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
 }));
 vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
   MAX_BLOB_REFRESH_BATCH: 100,
-  refreshBlobsService: services.refreshBlobsService,
+}));
+vi.mock('~/server/services/orchestrator/owned-blob-refresh', () => ({
+  refreshCallerBlobs: services.refreshCallerBlobs,
 }));
 vi.mock('~/server/services/orchestrator/blobRatings', () => ({
   MAX_BLOB_RATING_BATCH: 100,

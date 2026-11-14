@@ -3385,6 +3385,9 @@ const REDIS_KEYS_UNPREFIXED = {
     // `<ownerId>:<blobId>` -> a freshly signed url for a published training epoch, re-signed with
     // the owner's orchestrator token. Short TTL, well under the signed lifetime; see mini/[id].ts.
     EPOCH_BLOB_RESIGNED_URL: 'packed:caches:epoch-blob-resigned-url',
+    // userId -> the output blob ids found so far in that user's recent workflows, plus where the
+    // scan stopped. See owned-blob-refresh.ts.
+    OWNED_OUTPUT_BLOBS: 'packed:caches:owned-output-blobs',
     // Per-user creator card (`user.getCreator` by id): the user row slice, links, stats, rank,
     // worn cosmetics and published-model count. Short TTL; busted on profile writes and on every
     // session refresh. See user-creator.service.

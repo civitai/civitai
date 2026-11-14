@@ -1,8 +1,6 @@
 import * as z from 'zod';
-import {
-  MAX_BLOB_REFRESH_BATCH,
-  refreshBlobsService,
-} from '~/server/services/orchestrator/refreshBlobs';
+import { refreshCallerBlobs } from '~/server/services/orchestrator/owned-blob-refresh';
+import { MAX_BLOB_REFRESH_BATCH } from '~/server/services/orchestrator/refreshBlobs';
 import { OrchestratorEndpoint } from '~/server/utils/endpoint-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -20,7 +18,7 @@ export default OrchestratorEndpoint(
     if (!parsed.success) return res.status(400).json({ error: 'Invalid blobIds' });
 
     try {
-      const results = await refreshBlobsService({ token, blobIds: parsed.data.blobIds });
+      const results = await refreshCallerBlobs({ user, token, blobIds: parsed.data.blobIds });
       return res.status(200).json({ results });
     } catch (e) {
       return res.status(500).json({ error: (e as Error).message });
