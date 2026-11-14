@@ -135,7 +135,13 @@ export const getKeyedBountyTransactionPrefix = (
  * come long after the key was minted; a time ahead of the server is a client clock running fast.
  * Outside the window the key is not used and the creation is charged as an unkeyed one (a new
  * prefix per call, as before keys): a client with a badly wrong clock keeps the old behaviour
- * rather than being refused, and a backdated time cannot reach the pricing.
+ * rather than being refused.
+ *
+ * The time inside the window IS what award pricing reads (`prefixChargedAt`): it groups the
+ * supporter's charges and is written to the award as `supporterChargedAt`, which bankable netting
+ * compares with its cutover (`BANKABLE_CUTOVER`). A client can therefore backdate it by up to 7
+ * days; the cutover already lies further back than that, so a backdated time still reads as after
+ * it. A cutover that ever moves to within 7 days of now would make this window matter.
  */
 export const KEYED_BOUNTY_CHARGED_AT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const KEYED_BOUNTY_CHARGED_AT_MAX_LEAD_MS = 24 * 60 * 60 * 1000;
@@ -323,12 +329,10 @@ export const createBounty = async ({
   let imagesToIngest: IngestImageInput[] = [];
   const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
-  // The bounty row with its files and images, on the caller's transaction. `id` is set only for a
-  // keyed creation, which picks the id before it charges (see createKeyedBuzzBounty).
-  const writeBountyRows = async (tx: Prisma.TransactionClient, id?: number) => {
+  // The bounty row with its files and images, on the caller's transaction.
+  const writeBountyRows = async (tx: Prisma.TransactionClient) => {
     const bounty = await tx.bounty.create({
       data: {
-        ...(id !== undefined ? { id } : {}),
         ...data,
         lockedProperties: lockedProperties.length ? lockedProperties : undefined,
         startsAt,
@@ -405,8 +409,8 @@ export const createBounty = async ({
       buzzType,
       ...keyed,
       assertCanAffordBounty,
-      write: async (tx, id, prefix) => {
-        const written = await writeBountyRows(tx, id);
+      write: async (tx, prefix) => {
+        const written = await writeBountyRows(tx);
         await writeBenefactor(tx, written.id, prefix);
         await writeBlurbReferences(tx, written.id);
         return written;
@@ -471,22 +475,6 @@ export const createBounty = async ({
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
 
-/**
- * A new bounty id, taken before the creation is charged so the charge can name the bounty it pays
- * for (`details.entityId`, which links the creator's transaction to it). Null when it cannot be
- * taken: the charge then names no bounty and the row takes its id on insert.
- */
-async function reserveBountyId(): Promise<number | null> {
-  try {
-    const [row] = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT nextval(pg_get_serial_sequence('"Bounty"', 'id'))::int AS id
-    `;
-    return typeof row?.id === 'number' ? row.id : null;
-  } catch {
-    return null;
-  }
-}
-
 type CreatedBounty = Prisma.BountyGetPayload<true>;
 
 /**
@@ -499,9 +487,9 @@ type CreatedBounty = Prisma.BountyGetPayload<true>;
  * (`recordKeyedCharge`): a benefactor row already holding the prefix answers the retry with its
  * bounty, a refunded charge is refused, and a failed write refunds the charge under the lock.
  *
- * The id is reserved before the charge, so the charge names the bounty. A retry reserves a new one
- * and creates the bounty under it, so a charge whose first request never recorded it names an id
- * no bounty took; the benefactor row (which award pricing and refunds read) always holds the prefix.
+ * The bounty does not exist yet when it is charged, so the charge carries no `entityId`: the
+ * benefactor row, which award pricing and refunds read, is what links the charge (its prefix) to
+ * the bounty.
  */
 async function createKeyedBuzzBounty({
   userId,
@@ -518,11 +506,7 @@ async function createKeyedBuzzBounty({
   idempotencyKey: string;
   chargedAt: number;
   assertCanAffordBounty: () => Promise<void>;
-  write: (
-    tx: Prisma.TransactionClient,
-    id: number | undefined,
-    prefix: string
-  ) => Promise<CreatedBounty>;
+  write: (tx: Prisma.TransactionClient, prefix: string) => Promise<CreatedBounty>;
 }): Promise<{ bounty: CreatedBounty; createdHere: boolean }> {
   // Imported here, not at the top, as report.service does: only a keyed creation needs them.
   const { chargeByPrefix, prefixWasRefunded } = await import('~/server/services/buzz-keyed-charge');
@@ -533,7 +517,6 @@ async function createKeyedBuzzBounty({
 
   const prefix = getKeyedBountyTransactionPrefix(userId, idempotencyKey, chargedAt);
   const context = { userId, amount: unitAmount };
-  const id = (await reserveBountyId()) ?? undefined;
 
   await chargeByPrefix(prefix, context, {
     reusable: true,
@@ -553,7 +536,7 @@ async function createKeyedBuzzBounty({
         toAccountId: 0,
         amount: unitAmount,
         type: TransactionType.Bounty,
-        details: { ...(id !== undefined ? { entityId: id } : {}), entityType: 'Bounty' },
+        details: { entityType: 'Bounty' },
       }),
     declined: () => new TRPCError({ code: 'BAD_REQUEST', message: 'Unable to charge the bounty' }),
   });
@@ -567,7 +550,7 @@ async function createKeyedBuzzBounty({
       return recorded ? { bounty: recorded.bounty, createdHere: false } : null;
     },
     isRefunded: () => prefixWasRefunded(prefix, context, CHARGE_LOCKED_READ),
-    record: async (tx) => ({ bounty: await write(tx, id, prefix), createdHere: true }),
+    record: async (tx) => ({ bounty: await write(tx, prefix), createdHere: true }),
     refund: () =>
       refundMultiAccountTransaction(
         {

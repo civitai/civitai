@@ -113,14 +113,11 @@ beforeEach(() => {
     return data;
   });
   getUserBuzzAccount.mockImplementation(async () => [{ balance: ledger.balanceOf(USER) }]);
-  // The id a keyed creation takes before it charges.
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-    strings.join('').includes('nextval') ? [{ id: nextId++ }] : []) as never);
 
   const tx = {
     bounty: {
-      create: async ({ data }: { data: Omit<BountyRow, 'id'> & { id?: number } }) => {
-        const row = { ...data, id: data.id ?? nextId++ } as BountyRow;
+      create: async ({ data }: { data: Omit<BountyRow, 'id'> }) => {
+        const row = { ...data, id: nextId++ } as BountyRow;
         bounties.push(row);
         return row;
       },
@@ -262,14 +259,18 @@ describe('a keyed bounty creation across an unknown outcome', () => {
     expect(Number(benefactors[0].buzzTransactionId[0].split('-').at(-1))).toBe(CHARGED_AT);
   });
 
-  it('names the bounty it pays for on the charge', async () => {
+  // The bounty does not exist when it is charged; the benefactor row links the two.
+  it('charges as a bounty with no entity id, and links the charge through the benefactor row', async () => {
     const created = await keyed();
 
     expect(created.id).toBe(FIRST_ID);
-    expect(buzz.createMultiAccountBuzzTransaction.mock.calls[0][0]).toMatchObject({
-      type: TransactionType.Bounty,
-      details: { entityId: FIRST_ID, entityType: 'Bounty' },
-    });
+    const [charge] = buzz.createMultiAccountBuzzTransaction.mock.calls[0];
+    expect(charge).toMatchObject({ type: TransactionType.Bounty });
+    expect(charge.details).toEqual({ entityType: 'Bounty' });
+    expect(benefactors).toEqual([
+      expect.objectContaining({ bountyId: FIRST_ID, buzzTransactionId: [PREFIX] }),
+    ]);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('a new bounty (a new key) charges again', async () => {

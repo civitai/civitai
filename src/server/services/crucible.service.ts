@@ -2,7 +2,11 @@ import { randomUUID } from 'crypto';
 import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { chargeByPrefix, prefixWasRefunded } from '~/server/services/buzz-keyed-charge';
+import {
+  chargeByPrefix,
+  PAYMENT_REFUNDED_MESSAGE,
+  prefixWasRefunded,
+} from '~/server/services/buzz-keyed-charge';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import {
   CHARGE_LOCKED_READ,
@@ -181,7 +185,7 @@ import {
   getCrucibleOwnerRemovalReasonText,
   getCrucibleOwnerRemovalsLeft,
 } from '~/utils/crucible-helpers';
-import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
+import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
 import { getEligibleModels } from '~/server/services/eligible-models.service';
@@ -445,31 +449,57 @@ const isChargeRefusal = (error: unknown) =>
   error instanceof TRPCError && getHTTPStatusCodeFromError(error) < 500;
 
 /**
- * Refunds each of `prefixes` not yet refunded, under the charge-key lock: per leg one bounded refund
- * check (`CHARGE_LOCKED_READ`, 2 x 3s) and one bounded refund (`CHARGE_LOCKED_REFUND`, 10s), the
- * legs in parallel. Its longest path under the lock (`refundUnlessRecorded` after a failed open):
- * lock wait 10s + record check 5s + refund check 6s + this 16s = 37s, inside the 45s transaction
- * deadline (`buzz-charge-lock.ts`).
+ * Waits for every one of `work` to settle, then rethrows the first failure. Under the charge-key
+ * lock nothing may outlive the lock's transaction (`buzz-charge-lock.ts`): with `Promise.all`, one
+ * leg's fast rejection would end the transaction while the other leg's refund is still in flight.
  */
-const refundKeyedCrucibleLegs = (
-  prefixes: string[],
-  context: { userId: number; amount: number },
-  reason: string,
-  details: MixedObject
-) =>
-  Promise.all(
+async function settleAll<T>(work: Promise<T>[]): Promise<T[]> {
+  const settled = await Promise.allSettled(work);
+  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+  if (failed) throw failed.reason;
+  return settled.map((s) => (s as PromiseFulfilledResult<T>).value);
+}
+
+/** Each leg's refund state, read once under the lock (`CHARGE_LOCKED_READ`, 2 x 3s per leg). */
+const readKeyedCrucibleLegs = (prefixes: string[]) =>
+  settleAll(
     prefixes.map(async (prefix) => {
-      if (await prefixWasRefunded(prefix, context, CHARGE_LOCKED_READ)) return;
-      await refundMultiAccountTransaction(
-        {
-          externalTransactionIdPrefix: prefix,
-          description: `Crucible refund - ${reason}`,
-          details: { entityType: 'Crucible', ...details },
-        },
-        CHARGE_LOCKED_REFUND
-      );
+      const { reversed, missing } = await getPrefixRefundState(prefix, CHARGE_LOCKED_READ);
+      return { prefix, refunded: reversed.length > 0, unrefunded: missing.length > 0 };
     })
   );
+
+/**
+ * Refunds every leg of `prefixes` the ledger holds unrefunded, under the charge-key lock, so a
+ * creation never ends with one leg refunded and another still charged. A leg that was never charged,
+ * or is already refunded, is left alone. Per leg one bounded read and one bounded refund
+ * (`CHARGE_LOCKED_REFUND`, 10s), the legs in parallel and all settled before it returns. Its longest
+ * path under the lock (`refundUnlessRecorded` after a failed open): lock wait 10s + record check 5s
+ * + refund check 6s + this 16s = 37s, inside the 45s transaction deadline. The open's own refund
+ * check, when it finds a leg refunded, runs this in place of the refund: 10s + 5s + 6s + 16s, the
+ * same 37s.
+ */
+const refundKeyedCrucibleLegs = async (
+  prefixes: string[],
+  reason: string,
+  details: MixedObject
+) => {
+  const states = await readKeyedCrucibleLegs(prefixes);
+  await settleAll(
+    states
+      .filter((leg) => leg.unrefunded)
+      .map((leg) =>
+        refundMultiAccountTransaction(
+          {
+            externalTransactionIdPrefix: leg.prefix,
+            description: `Crucible refund - ${reason}`,
+            details: { entityType: 'Crucible', ...details },
+          },
+          CHARGE_LOCKED_REFUND
+        )
+      )
+  );
+};
 
 /**
  * `chargeCrucibleCreator` for a keyed creation: each leg (the setup fee, then the seed) is charged
@@ -480,8 +510,11 @@ const refundKeyedCrucibleLegs = (
  *
  * A leg that fails:
  * - refused (a 4xx: the balance, the ledger declining, the leg refunded or held at other terms):
- *   it moved nothing, and the legs before it are refunded under the key's lock, unless a concurrent
- *   request under the key recorded the creation (refundUnlessRecorded). The client starts over.
+ *   it moved nothing. When a leg before it was charged, or the refusal is a leg an earlier request
+ *   refunded, every leg of the creation still held unrefunded is refunded under the key's lock,
+ *   unless a concurrent request under the key recorded the creation (refundUnlessRecorded). So a
+ *   retry after a refund that reached only some legs refunds the rest instead of leaving them
+ *   charged. The client starts over.
  * - anything else may have charged it: nothing is refunded, so a retry under the key resumes,
  *   reusing the legs already held and charging the rest ("may have gone through").
  */
@@ -507,7 +540,7 @@ async function chargeKeyedCrucibleCreator(
   ].filter((leg) => leg.amount > 0);
   const lockContext = { userId, amount: setupCost + seedAmount };
 
-  const charged: string[] = [];
+  let charged = false;
   for (const [index, leg] of legs.entries()) {
     const stillOwed = legs.slice(index).reduce((sum, l) => sum + l.amount, 0);
     try {
@@ -540,20 +573,23 @@ async function chargeKeyedCrucibleCreator(
         }
       );
     } catch (error) {
-      if (charged.length && isChargeRefusal(error))
+      const refundedEarlier =
+        error instanceof TRPCError && error.message === PAYMENT_REFUNDED_MESSAGE;
+      if (isChargeRefusal(error) && (charged || refundedEarlier))
         await refundUnlessRecorded(keyed.lock, lockContext, {
           isRecorded: async (tx) => (await findKeyedCrucible(tx, userId, keyed)) != null,
           // Each leg's own refund state is read in `refund`.
           isRefunded: async () => false,
           refund: () =>
-            refundKeyedCrucibleLegs(charged, lockContext, 'charge failed', {
-              ...details,
-              reason: 'crucible-not-created',
-            }),
+            refundKeyedCrucibleLegs(
+              legs.map((l) => l.prefix),
+              'charge failed',
+              { ...details, reason: 'crucible-not-created' }
+            ),
         });
       throw error;
     }
-    charged.push(leg.prefix);
+    charged = true;
   }
   return {
     buzzTransactionId: setupCost > 0 ? keyed.setup : null,
@@ -697,9 +733,10 @@ export const createCrucible = async ({
   let opened: Awaited<ReturnType<typeof dbWrite.crucible.update>>;
   if (keyedCharge) {
     // Opened once under the key's lock: a crucible an earlier or concurrent request under the key
-    // opened answers this one (whose own row is then deleted), a refunded leg is refused, and a
-    // failed write refunds both legs under the lock (recordKeyedCharge). Both legs are read and
-    // refunded in parallel, so the lock's budget holds (buzz-charge-lock.ts).
+    // opened answers this one (whose own row is then deleted), a refunded leg is refused after the
+    // legs still charged are refunded, and a failed write refunds both legs under the lock
+    // (recordKeyedCharge). Both legs are read and refunded in parallel, all settled before the
+    // transaction ends, so the lock's budget holds (buzz-charge-lock.ts).
     const legs = [charges.buzzTransactionId, charges.seedTransactionId].filter(isDefined);
     const lockContext = { userId, amount: setupCost + seedAmount };
     // Set once the open's UPDATE returned: past it, a failure may still have committed it, so the
@@ -714,12 +751,14 @@ export const createCrucible = async ({
             const crucible = await findKeyedCrucible(tx, userId, keyedCharge);
             return crucible ? { crucible, recordedHere: false } : null;
           },
-          isRefunded: async () =>
-            (
-              await Promise.all(
-                legs.map((leg) => prefixWasRefunded(leg, lockContext, CHARGE_LOCKED_READ))
-              )
-            ).some(Boolean),
+          // A leg refunded meanwhile refuses the open; the legs still charged are refunded first,
+          // under this same lock, so the refusal never leaves one leg refunded and another charged.
+          isRefunded: async () => {
+            const states = await readKeyedCrucibleLegs(legs);
+            if (!states.some((leg) => leg.refunded)) return false;
+            await refundKeyedCrucibleLegs(legs, 'refunded leg', chargeDetails);
+            return true;
+          },
           record: async (tx) => {
             const crucible = await tx.crucible.update({
               where: { id: created.id },
@@ -733,8 +772,7 @@ export const createCrucible = async ({
             wrote = true;
             return { crucible, recordedHere: true };
           },
-          refund: () =>
-            refundKeyedCrucibleLegs(legs, lockContext, 'database write failed', chargeDetails),
+          refund: () => refundKeyedCrucibleLegs(legs, 'database write failed', chargeDetails),
         }
       );
       if (!recorded.recordedHere) {

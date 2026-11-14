@@ -1,7 +1,6 @@
 import { Button, Group, NumberInput, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useBuyStickerUses } from '~/components/Sticker/sticker.util';
@@ -86,22 +85,16 @@ export function StickerTopUp({
         buzzAmount={total}
         label="Buy uses"
         loading={purchase.isPending}
-        onPerformTransaction={() => {
-          const input = {
+        onPerformTransaction={() =>
+          purchase.mutate({
             cosmeticId: sticker.id,
             quantity,
             // What the button above is charging for. The server refuses if the
             // creator has moved the price since this rendered.
             expectedPricePerUse: sticker.pricePerUse,
-            payWith: 'default' as const,
-          };
-          // One key per top-up (sticker, quantity, price), held across a failure that may
-          // have charged, so pressing again is the same top-up, charged and granted once.
-          // The hook's onError reports a failure.
-          withPaymentIntentKey(submissionIntent('sticker-topup', input), (idempotencyKey) =>
-            purchase.mutateAsync({ ...input, idempotencyKey })
-          ).catch(() => undefined);
-        }}
+            payWith: 'default',
+          })
+        }
       />
       <Button size="xs" variant="subtle" color="gray" onClick={onCancel}>
         Cancel

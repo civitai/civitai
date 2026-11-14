@@ -1,10 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'node:crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { delIfValue } from '~/server/redis/atomic';
-import { decodeRedisString } from '~/server/redis/buffer-decode';
-import { sysRedis, type RedisKeyTemplateSys } from '~/server/redis/client';
 import { isNonProductionDatabase, warnIfDatabaseEnvironmentUnset } from '~/env/database-target';
 import { isProd } from '~/env/other';
 import { isEventShopItemData } from '~/server/events/event-shop-item';
@@ -343,198 +339,6 @@ export async function getStickerOffers({
 }
 
 /**
- * The ledger prefix of one keyed top-up: the buyer, the sticker, then the client's key (a uuid,
- * minted once per top-up and resent on its retries), so a key can only ever name this buyer's
- * top-up of this sticker. `sticker-topup-k-` keeps it apart from the keyless form
- * (`sticker-topup-<user>-…`), which a prefix lookup or refund could otherwise match.
- */
-export const getKeyedStickerTopUpPrefix = (
-  userId: number,
-  cosmeticId: number,
-  idempotencyKey: string
-) => `sticker-topup-k-${userId}-${cosmeticId}-${idempotencyKey}`;
-
-/**
- * The base of a keyed top-up's creator payout ids (`<base>:sell:<creator>:<colour>`). NOT the
- * charge prefix: the ledger lists and refunds a prefix by `startsWith`, so payouts filed under it
- * would read back as legs of the buyer's charge (a retry would be refused as other terms) and be
- * reached by its refund.
- */
-export const getKeyedStickerTopUpPayoutBase = (
-  userId: number,
-  cosmeticId: number,
-  idempotencyKey: string
-) => `sticker-topup-payout-k-${userId}-${cosmeticId}-${idempotencyKey}`;
-
-/** The Redis claim on the grant of a keyed top-up's charge, named by the charge's prefix. */
-export const stickerTopUpGrantClaimKey = (prefix: string) =>
-  `sticker-topup-grant:${prefix}` as RedisKeyTemplateSys;
-
-/**
- * Far longer than a client holds a key (a browser session): once the claim lapses, a request under
- * the same key would find the charge held and grant again.
- */
-export const STICKER_TOPUP_GRANT_CLAIM_TTL_SECONDS = 7 * 24 * 60 * 60;
-
-/** The claim's value once the grant committed. Any other value is a grant not known to have. */
-export const STICKER_TOPUP_GRANTED = 'granted';
-
-/**
- * A keyed top-up: charged once and granted once across the client's retries.
- *
- * The charge is `chargeByPrefix` under the keyed prefix: looked up first, an unknown outcome
- * resent once and otherwise "may have gone through", a held charge reused only for the same terms.
- *
- * The grant is one upsert onto the buyer's single top-up row (`remaining += quantity`), which
- * cannot say which charges it was already credited for. A Redis claim per charge says it instead.
- * The order, and what a failure at each step leaves:
- *  1. Claim: SET NX of a token. Redis unreachable: "may have gone through" and nothing granted
- *     (fail closed: the client keeps its key and retries later; a double grant is never risked).
- *     Already claimed: `granted` answers success without granting again; anything else (another
- *     request granting now, or one that stopped before marking) may or may not have granted, so it
- *     is "may have gone through" too.
- *  2. Grant. Fails: the charge is refunded while the claim is still held (so nothing else grants on
- *     it meanwhile), then the claim is released. Refunded: the keyless path's 400, and a retry under
- *     the key is refused as refunded. Not refunded: "may have gone through", and with the claim
- *     released a retry grants on the held charge.
- *  3. Mark the claim `granted`. Fails: the uses were granted and this request answers success. The
- *     claim keeps its token until it lapses, so a retry meanwhile is "may have gone through" rather
- *     than a second grant.
- * Only the request that granted pays the creator (under ids derived from the prefix).
- */
-async function chargeAndGrantKeyedTopUp({
-  userId,
-  cosmeticId,
-  amount,
-  fromAccountTypes,
-  idempotencyKey,
-  charge,
-  grant,
-  refundAfterFailedGrant,
-}: {
-  userId: number;
-  cosmeticId: number;
-  amount: number;
-  fromAccountTypes: BuzzSpendType[];
-  idempotencyKey: string;
-  charge: (prefix: string) => ReturnType<typeof createMultiAccountBuzzTransaction>;
-  grant: () => Promise<number>;
-  refundAfterFailedGrant: (prefix: string, error: unknown) => Promise<boolean>;
-}): Promise<
-  | { alreadyGranted: true }
-  | {
-      alreadyGranted: false;
-      transactionId: string;
-      payoutBase: string;
-      topUpRowRemaining: number;
-      bluePaid: () => Promise<number>;
-    }
-> {
-  // Imported here, as report.service does: only a keyed top-up needs them.
-  const { chargeByPrefix, paymentOutcomeUnknown } = await import(
-    '~/server/services/buzz-keyed-charge'
-  );
-  const { getMultiAccountTransactionsByPrefix } = await import('~/server/services/buzz.service');
-  const prefix = getKeyedStickerTopUpPrefix(userId, cosmeticId, idempotencyKey);
-  const context = { userId, amount };
-  const outcomeContext = { externalTransactionId: prefix, ...context };
-
-  let sent: Awaited<ReturnType<typeof charge>> | undefined;
-  const { replayed } = await chargeByPrefix(prefix, context, {
-    reusable: true,
-    expected: {
-      amount,
-      fromAccountId: userId,
-      fromAccountTypes,
-      toAccountId: 0,
-      type: TransactionType.Purchase,
-    },
-    charge: async () => (sent = await charge(prefix)),
-    declined: () =>
-      new TRPCError({
-        code: 'BAD_REQUEST',
-        message: 'There was an error creating the transaction',
-      }),
-  });
-
-  const claimKey = stickerTopUpGrantClaimKey(prefix);
-  // Widened to string, as acquireEntryLock does: the typed client answers SET with the value's type.
-  const token: string = randomUUID();
-  let claimed: boolean;
-  try {
-    claimed =
-      (await sysRedis.set(claimKey, token, {
-        EX: STICKER_TOPUP_GRANT_CLAIM_TTL_SECONDS,
-        NX: true,
-      })) === 'OK';
-  } catch (error) {
-    throw paymentOutcomeUnknown(outcomeContext, 'sticker top-up grant claim failed', { error });
-  }
-  if (!claimed) {
-    let held: string | null;
-    try {
-      held = decodeRedisString(await sysRedis.get(claimKey));
-    } catch (error) {
-      throw paymentOutcomeUnknown(outcomeContext, 'sticker top-up grant claim read failed', {
-        error,
-      });
-    }
-    if (held === STICKER_TOPUP_GRANTED) return { alreadyGranted: true };
-    throw paymentOutcomeUnknown(outcomeContext, 'sticker top-up grant claimed and not marked');
-  }
-
-  let topUpRowRemaining: number;
-  try {
-    topUpRowRemaining = await grant();
-  } catch (error) {
-    const refunded = await refundAfterFailedGrant(prefix, error);
-    try {
-      await delIfValue(sysRedis, claimKey, token);
-    } catch (releaseError) {
-      void logToAxiom({
-        level: 'error',
-        message: 'Sticker top-up grant claim not released after a failed grant',
-        data: { cosmeticId, userId, transactionId: prefix, refunded, releaseError },
-      }).catch(() => undefined);
-    }
-    if (refunded) throw throwBadRequestError('Failed to buy sticker uses');
-    throw paymentOutcomeUnknown(outcomeContext, 'sticker top-up grant failed, refund failed', {
-      error,
-    });
-  }
-
-  try {
-    await withRetries(
-      () =>
-        sysRedis.set(claimKey, STICKER_TOPUP_GRANTED, {
-          EX: STICKER_TOPUP_GRANT_CLAIM_TTL_SECONDS,
-        }),
-      2
-    );
-  } catch (error) {
-    void logToAxiom({
-      level: 'error',
-      message: 'Sticker top-up granted but its claim was not marked granted',
-      data: { cosmeticId, userId, transactionId: prefix, error },
-    }).catch(() => undefined);
-  }
-
-  const bluePaid = async () => {
-    // A charge this request made answered with its legs; an earlier request's is listed.
-    const legs: { accountType: string; amount: number }[] =
-      !replayed && sent ? sent.transactionIds : await getMultiAccountTransactionsByPrefix(prefix);
-    return legs.filter((t) => t.accountType === 'blue').reduce((sum, t) => sum + t.amount, 0);
-  };
-  return {
-    alreadyGranted: false,
-    transactionId: prefix,
-    payoutBase: getKeyedStickerTopUpPayoutBase(userId, cosmeticId, idempotencyKey),
-    topUpRowRemaining,
-    bluePaid,
-  };
-}
-
-/**
  * Buys N additional uses of a sticker the way the picker offers them: at the
  * price the creator set on the cosmetic, credited to the existing balance.
  *
@@ -552,7 +356,6 @@ export async function purchaseStickerUses({
   payWith = 'default',
   buzzType = 'yellow',
   stickersEnabled,
-  idempotencyKey,
 }: {
   userId: number;
   cosmeticId: number;
@@ -562,11 +365,6 @@ export async function purchaseStickerUses({
   payWith?: 'default' | 'blue-first';
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
-  /**
-   * The client's key for this top-up, resent on its retries: the charge and the grant happen
-   * once across them (`chargeAndGrantKeyedTopUp`). Absent, every call is its own top-up.
-   */
-  idempotencyKey?: string;
 }) {
   // Refused here, not merely hidden: the picker and every listing filter
   // stickers when the flag is off, but a filtered list is not a refusal and this
@@ -665,20 +463,30 @@ export async function purchaseStickerUses({
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
 
   const amount = pricePerUse * quantity;
-  const description = `Sticker uses - ${cosmetic.name}`;
-  const charge = (externalTransactionIdPrefix: string) =>
-    createMultiAccountBuzzTransaction({
-      fromAccountId: userId,
-      fromAccountTypes,
-      toAccountId: 0,
-      amount,
-      type: TransactionType.Purchase,
-      description,
-      externalTransactionIdPrefix,
-    });
-  // COALESCE rather than a Prisma `increment`: adding to a NULL balance yields
-  // NULL in Postgres, which reads as unlimited.
-  const grant = async () => {
+  // Random, not a timestamp: unlike a shop purchase, a top-up is repeatable, so
+  // two calls in the same millisecond (two tabs, a retry, a double-click) would
+  // share an external id — and a duplicate is treated as "the money already
+  // moved", which would grant uses for a charge that never happened.
+  const transactionId = `sticker-topup-${userId}-${cosmeticId}-${randomUUID()}`;
+  const transaction = await createMultiAccountBuzzTransaction({
+    fromAccountId: userId,
+    fromAccountTypes,
+    toAccountId: 0,
+    amount,
+    type: TransactionType.Purchase,
+    description: `Sticker uses - ${cosmetic.name}`,
+    externalTransactionIdPrefix: transactionId,
+  });
+  if (!transaction.transactionCount)
+    throw throwBadRequestError('There was an error creating the transaction');
+  const bluePaid = transaction.transactionIds
+    .filter((t) => t.accountType === 'blue')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  let topUpRowRemaining: number;
+  try {
+    // COALESCE rather than a Prisma `increment`: adding to a NULL balance yields
+    // NULL in Postgres, which reads as unlimited.
     const [row] = await dbWrite.$queryRaw<{ remaining: number }[]>`
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "remaining")
       VALUES (${userId}, ${cosmeticId}, ${STICKER_TOPUP_CLAIM_KEY}, ${quantity})
@@ -686,11 +494,13 @@ export async function purchaseStickerUses({
       DO UPDATE SET "remaining" = COALESCE("UserCosmetic"."remaining", 0) + ${quantity}
       RETURNING "remaining"
     `;
-    return row?.remaining ?? quantity;
-  };
-  // Retried like the payout — a refund is at least as important as one — and
-  // logged with the transaction id, which is what makes it reconcilable by hand.
-  const refundAfterFailedGrant = async (transactionId: string, error: unknown) => {
+    topUpRowRemaining = row?.remaining ?? quantity;
+  } catch (error) {
+    // The only path where the buyer is actually out of pocket, and so the one
+    // that must leave a trace: a failing refund used to discard the grant error,
+    // surface the refund's error instead, and record nothing. Retried like the
+    // payout — a refund is at least as important as one — and logged with the
+    // transaction id, which is what makes it reconcilable by hand.
     try {
       await withRetries(
         () =>
@@ -700,73 +510,14 @@ export async function purchaseStickerUses({
           }),
         3
       );
-      return true;
     } catch (refundError) {
       void logToAxiom({
         level: 'error',
         message: 'Sticker top-up refund failed — buyer charged with no uses',
         data: { cosmeticId, userId, transactionId, amount, error, refundError },
       }).catch(() => undefined);
-      return false;
     }
-  };
-
-  let transactionId: string;
-  // The creator payout ids' base: the charge's id keyless, its own family keyed.
-  let payoutBase: string;
-  let topUpRowRemaining: number;
-  // What the buyer paid in Blue, for the creator's payout split. With a key the
-  // charge may be an earlier request's, so it is read from the ledger instead.
-  let bluePaid: () => Promise<number>;
-  if (idempotencyKey !== undefined) {
-    const keyed = await chargeAndGrantKeyedTopUp({
-      userId,
-      cosmeticId,
-      amount,
-      fromAccountTypes,
-      idempotencyKey,
-      charge,
-      grant,
-      refundAfterFailedGrant,
-    });
-    // An earlier request under this key granted the uses (and paid the creator).
-    if (keyed.alreadyGranted) {
-      const holdingsAfter = await dbWrite.userCosmetic
-        .findMany({ where: { userId, cosmeticId }, select: { remaining: true } })
-        .catch(() => null);
-      const remaining = holdingsAfter
-        ? holdingsAfter.reduce((sum, h) => sum + (h.remaining ?? 0), 0)
-        : null;
-      return { cosmeticId, quantity, pricePerUse, amount, remaining };
-    }
-    transactionId = keyed.transactionId;
-    payoutBase = keyed.payoutBase;
-    topUpRowRemaining = keyed.topUpRowRemaining;
-    bluePaid = keyed.bluePaid;
-  } else {
-    // Random, not a timestamp: unlike a shop purchase, a top-up is repeatable, so
-    // two calls in the same millisecond (two tabs, a retry, a double-click) would
-    // share an external id — and a duplicate is treated as "the money already
-    // moved", which would grant uses for a charge that never happened.
-    transactionId = `sticker-topup-${userId}-${cosmeticId}-${randomUUID()}`;
-    payoutBase = transactionId;
-    const transaction = await charge(transactionId);
-    if (!transaction.transactionCount)
-      throw throwBadRequestError('There was an error creating the transaction');
-    const paidInBlue = transaction.transactionIds
-      .filter((t) => t.accountType === 'blue')
-      .reduce((sum, t) => sum + t.amount, 0);
-    bluePaid = async () => paidInBlue;
-
-    try {
-      topUpRowRemaining = await grant();
-    } catch (error) {
-      // The only path where the buyer is actually out of pocket, and so the one
-      // that must leave a trace: a failing refund used to discard the grant error,
-      // surface the refund's error instead, and record nothing.
-      await refundAfterFailedGrant(transactionId, error);
-      throw throwBadRequestError('Failed to buy sticker uses');
-    }
+    throw throwBadRequestError('Failed to buy sticker uses');
   }
 
   // Everything from here to the payout is bookkeeping on a purchase that has
@@ -802,12 +553,11 @@ export async function purchaseStickerUses({
   const creatorId = cosmetic.createdById;
   if (creatorId && creatorId !== userId) {
     try {
-      const paidInBlue = await bluePaid();
       await withRetries(async () => {
         // A top-up is the buyer returning to the maker directly, so it pays the
         // creator's full pool — no seller share, since no reseller drove it.
         const { creatorPool } = computeCreatorShopSplit(amount, 0);
-        const blueAmount = amount > 0 ? Math.floor((creatorPool * paidInBlue) / amount) : 0;
+        const blueAmount = amount > 0 ? Math.floor((creatorPool * bluePaid) / amount) : 0;
         const payouts = [
           { amount: blueAmount, color: 'blue' as BuzzSpendType },
           { amount: creatorPool - blueAmount, color: buzzType },
@@ -822,7 +572,7 @@ export async function purchaseStickerUses({
               amount: p.amount,
               type: TransactionType.Sell,
               description: `A user has bought more uses of your sticker - ${cosmetic.name}`,
-              externalTransactionId: `${payoutBase}:sell:${creatorId}:${p.color}`,
+              externalTransactionId: `${transactionId}:sell:${creatorId}:${p.color}`,
               details: { purchasedBy: userId, originalAmount: amount, quantity },
             })
           )

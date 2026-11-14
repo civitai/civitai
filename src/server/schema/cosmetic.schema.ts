@@ -44,10 +44,6 @@ export const purchaseStickerUsesSchema = z.object({
   // Same option the shop purchase takes; rejected server-side when the listing
   // doesn't accept Blue Buzz.
   payWith: z.enum(['default', 'blue-first']).optional(),
-  // Minted by the client once per top-up and resent on its retries: the charge's ledger ids derive
-  // from it, so a retry after an unanswered request charges and grants once. Optional for clients
-  // from before keys, which get a new id per call as before.
-  idempotencyKey: z.string().uuid().optional(),
 });
 
 export type EquipCosmeticInput = z.infer<typeof equipCosmeticSchema>;

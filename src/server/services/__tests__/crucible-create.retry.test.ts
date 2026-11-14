@@ -394,6 +394,75 @@ describe('a keyed crucible creation whose open fails', () => {
     });
   });
 
+  // The lock's transaction must outlive every refund it started: a refund still in flight after the
+  // lock is released can land on a charge a same-key request records meanwhile.
+  it('one leg refund failing fast keeps the lock held until the other leg refund settles', async () => {
+    crucibleUpdate.mockRejectedValueOnce(new Error('write failed'));
+    let releaseSeed: () => void = () => undefined;
+    let seedPending = false;
+    buzz.refundMultiAccountTransaction.mockImplementation(
+      async (input: { externalTransactionIdPrefix: string }) => {
+        if (input.externalTransactionIdPrefix === SETUP_PREFIX) throw new Error('buzz down');
+        seedPending = true;
+        await new Promise<void>((resolve) => (releaseSeed = resolve));
+        return ledger.refundMultiAccountTransaction(input);
+      }
+    );
+
+    const outcome = create(KEY).catch((e: unknown) => e);
+    while (!seedPending) await settle();
+    await settle();
+    await settle();
+
+    expect(locks.open()).toBe(1);
+    releaseSeed();
+    expect(await outcome).toMatchObject({ message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE });
+    expect(locks.open()).toBe(0);
+  });
+
+  // The open failed and only the setup refund landed. The retry finds the setup fee refunded: before
+  // it is refused, the seed still charged is refunded too, rather than left charged for good.
+  it('a retry after a refund that reached one leg refunds the leg still charged', async () => {
+    crucibleUpdate.mockRejectedValueOnce(new Error('write failed'));
+    let seedRefundFailed = false;
+    buzz.refundMultiAccountTransaction.mockImplementation(
+      async (input: { externalTransactionIdPrefix: string }) => {
+        if (input.externalTransactionIdPrefix === SEED_PREFIX && !seedRefundFailed) {
+          seedRefundFailed = true;
+          throw new Error('buzz down');
+        }
+        return ledger.refundMultiAccountTransaction(input);
+      }
+    );
+
+    await expect(create(KEY)).rejects.toMatchObject({ message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE });
+    expect(ledger.refunds()).toHaveLength(1);
+
+    await expect(create(KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: PAYMENT_REFUNDED_MESSAGE,
+    });
+    expect(ledger.refunds()).toHaveLength(2);
+    const legsLeft = await ledger.getPrefixRefundState(SEED_PREFIX);
+    expect(legsLeft.missing).toHaveLength(0);
+    expect(rows).toHaveLength(0);
+  });
+
+  // A leg refunded while the open waited for the lock refuses the open; the leg still charged is
+  // refunded under the same lock first.
+  it('an open refused for a leg refunded meanwhile refunds the other leg too', async () => {
+    locks.onNextLock(async () => {
+      await ledger.refundMultiAccountTransaction({ externalTransactionIdPrefix: SETUP_PREFIX });
+    });
+
+    await expect(create(KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: PAYMENT_REFUNDED_MESSAGE,
+    });
+    expect(ledger.refunds()).toHaveLength(2);
+    expect(opened()).toHaveLength(0);
+  });
+
   it('no pooled connection for the open is "may have gone through", with no refund', async () => {
     dbMock.dbWrite.$transaction.mockImplementationOnce((() =>
       Promise.reject(

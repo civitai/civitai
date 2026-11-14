@@ -686,7 +686,6 @@ describe('the advisory locks have exactly one call site', () => {
   // and crucible-create-k-… (a keyed creation's setup fee and seed, recorded or refunded together).
   // creator-program: creator-cash-withdrawal-… (a keyed Creator Program cash withdrawal's row).
   // bounty: bounty-k-… (a keyed bounty's creation charge; the bounty's rows are written under it).
-  // The keyed sticker top-up is NOT a caller: its grant is claimed in Redis instead.
   // A call with or without type arguments: `recordKeyedCharge(` and `recordKeyedCharge<T>(`.
   const CHARGE_KEY_LOCK = /\b(withChargeKeyLock|recordKeyedCharge|refundUnlessRecorded)\s*[<(]/;
   const CHARGE_KEY_LOCK_CALLERS = [
