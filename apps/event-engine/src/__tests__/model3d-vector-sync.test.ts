@@ -116,6 +116,25 @@ describe('3D model payload, against the real query', () => {
   }, 60_000);
 });
 
+describe('3D model thumbnail level', () => {
+  test('a thumbnail re-rated above its model is carried on the next sync', async () => {
+    const pg = await pglite();
+    try {
+      await pg.exec(eligibleModel(1));
+      const { points, deps } = fakes(pg);
+      await syncIds(getModel3DDocs, [1], deps);
+      expect(points.get(1)).toMatchObject({ nsfwLevel: [1], thumbnailNsfwLevel: [1] });
+
+      // A re-rate touches only the Image row; the refresh walk re-syncs the model.
+      await pg.exec(`UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 10`);
+      await syncIds(getModel3DDocs, [1], deps);
+      expect(points.get(1)).toMatchObject({ nsfwLevel: [1], thumbnailNsfwLevel: [4] });
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+});
+
 describe('3D model removal', () => {
   // Each change takes indexed model 1 out of eligibility; the next sync of its id deletes the point.
   // Model 2 (another owner) is the control: it must keep its point.
