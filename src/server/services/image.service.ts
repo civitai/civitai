@@ -237,6 +237,7 @@ import {
   type RetractionGate,
 } from '~/server/services/image-cacher-retraction';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -3635,6 +3636,11 @@ export function redactSearchInputForLog<T extends Record<string, unknown>>(input
 }
 
 import { hubBrowsingLevel, resolveHubSources } from '~/server/services/user-hub.service';
+import {
+  flagImagesOnRestrictedVersions,
+  flagRestrictedImages,
+  getRestrictedModelVersionIds,
+} from '~/server/services/restricted-images.service';
 import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
 
 /**
@@ -7071,6 +7077,19 @@ export async function createImageResources({
         detected = excluded.detected,
         strength = excluded.strength;
     `;
+    const modelVersionIds = resourcesWithModelVersions.map((r) => r.modelversionid!);
+    if (tx) {
+      // Thrown, not logged: a failed statement has already aborted the caller's transaction.
+      // Its images were just inserted without a post, so there is no cache to refresh.
+      const restricted = await getRestrictedModelVersionIds(tx, modelVersionIds);
+      await flagRestrictedImages(tx, { modelVersionIds: restricted, imageIds: [imageId] });
+    } else {
+      const { postIds } = await flagImagesOnRestrictedVersions({
+        modelVersionIds,
+        imageIds: [imageId],
+      });
+      if (postIds.length) await bustCachesForPosts(postIds).catch(handleLogError);
+    }
   }
 
   const unmatchedHashes = new Set(
