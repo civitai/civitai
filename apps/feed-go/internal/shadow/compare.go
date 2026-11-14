@@ -1,8 +1,10 @@
 // Package shadow compares this service's answer with the Node app's for the same request.
 //
 // Both sides are superjson envelopes `{json, meta}`. The comparison is on DECODED values, which is what
-// the client renders: `json` trees compared structurally (object key order ignored, array order kept),
-// and the `meta.values` annotation sets compared as sets (a Date annotated on one side only is a type
+// the client renders: `json` trees compared structurally (object key order ignored, array order kept)
+// after the ["undefined"] annotations are applied as superjson.deserialize applies them (Node writes
+// an undefined member as `null` + annotation, this service omits it; both decode to undefined), and the
+// `meta.values` annotation sets compared as sets (a Date annotated on one side only is a type
 // difference the client would see). `meta.referentialEqualities` is ignored: it changes object identity
 // after decode, never a value.
 package shadow
@@ -63,8 +65,6 @@ func Compare(goEnv, nodeEnv []byte) (*Report, error) {
 	if err != nil {
 		return nil, fmt.Errorf("node json: %w", err)
 	}
-	r := &Report{}
-	walk(r, gv, nv, nil)
 	ga, err := annotations(g.Meta)
 	if err != nil {
 		return nil, err
@@ -73,9 +73,66 @@ func Compare(goEnv, nodeEnv []byte) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	gv = applyUndefined(gv, ga)
+	nv = applyUndefined(nv, na)
+	r := &Report{}
+	walk(r, gv, nv, nil)
 	compareAnnotations(r, ga, na)
 	r.Match = len(r.Diffs) == 0 && !r.Truncated
 	return r, nil
+}
+
+// undefinedValue is a decoded `undefined`: what superjson.deserialize leaves at a path annotated
+// ["undefined"].
+type undefinedValue struct{}
+
+// applyUndefined does what superjson's applyValueAnnotations does for the ["undefined"] annotations:
+// it sets each annotated path to undefined (setDeep assigns `parent[lastKey]` unconditionally, so the
+// key exists after decode whether or not the json carried it). superjson.serialize writes an
+// undefined object member as `null` plus the annotation; this service's writer omits the member and
+// writes the same annotation. Both decode to the same object, so the raw json alone must not be
+// compared at those paths. Every other annotation (Date) leaves the json value as is; the annotation
+// sets are compared separately.
+func applyUndefined(v any, ann map[string]string) any {
+	paths := make([]string, 0, len(ann))
+	for p, typ := range ann {
+		if typ == "undefined" {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if p == "" {
+			return undefinedValue{}
+		}
+		segs := splitPath(p)
+		parent := v
+		for _, seg := range segs[:len(segs)-1] {
+			parent = child(parent, seg)
+		}
+		last := segs[len(segs)-1]
+		switch t := parent.(type) {
+		case map[string]any:
+			t[last] = undefinedValue{}
+		case []any:
+			if i, err := strconv.Atoi(last); err == nil && i >= 0 && i < len(t) {
+				t[i] = undefinedValue{}
+			}
+		}
+	}
+	return v
+}
+
+func child(v any, seg string) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return t[seg]
+	case []any:
+		if i, err := strconv.Atoi(seg); err == nil && i >= 0 && i < len(t) {
+			return t[i]
+		}
+	}
+	return nil
 }
 
 func decode(raw json.RawMessage) (any, error) {
@@ -204,7 +261,12 @@ func walk(r *Report, g, n any, path []string) {
 			child := append(append([]string(nil), path...), k)
 			gv, gok := gt[k]
 			nv, nok := nt[k]
+			_, gUndef := gv.(undefinedValue)
+			_, nUndef := nv.(undefinedValue)
 			switch {
+			case (!gok && nUndef) || (!nok && gUndef):
+				// Absent on one side, undefined on the other: the same value after decode, and the
+				// one-sided ["undefined"] annotation is already reported by compareAnnotations.
 			case !gok:
 				add(r, child, "missing-in-go")
 			case !nok:

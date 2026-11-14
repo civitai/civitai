@@ -6,6 +6,7 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -102,6 +103,53 @@ func TestParseMetricHashAndStats(t *testing.T) {
 	got, _ = superjson.Serialize(Stats(nil, false))
 	if want := `"statsUnknown":true}}`; string(got[len(got)-len(want):]) != want {
 		t.Fatalf("unknown stats = %s", got)
+	}
+}
+
+// getImageMetricsObject gives every image whose hash exists an entry, so toImageV2Stats reports a
+// `notFound` marker as zero counts with statsUnknown FALSE (shapeImageMetrics(id, undefined) on the
+// direct read; shapeCachedMetricHash on the image-metrics-swr read). Before this, the marker was left
+// out of the result and served statsUnknown true.
+func TestMetricsFromHashesNotFoundIsKnownZero(t *testing.T) {
+	ids := []int{11, 12, 13}
+	got, err := MetricsFromHashes(ids, []map[string]string{
+		{"notFound": "1", "_populatedAt": "1700000000"},
+		{"Like": "7", "_populatedAt": "1700000000"},
+		{"notFound": "1", "Heart": "2"}, // the watcher incremented a marker hash: counts win
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want an entry per id, got %v", got)
+	}
+	cases := []struct {
+		id   int
+		want string
+	}{
+		{11, `{"json":{"likeCountAllTime":0,"laughCountAllTime":0,"heartCountAllTime":0,"cryCountAllTime":0,` +
+			`"commentCountAllTime":0,"collectedCountAllTime":0,"tippedAmountCountAllTime":0,"dislikeCountAllTime":0,` +
+			`"viewCountAllTime":0,"statsUnknown":false}}`},
+		{12, `{"json":{"likeCountAllTime":7,"laughCountAllTime":0,"heartCountAllTime":0,"cryCountAllTime":0,` +
+			`"commentCountAllTime":0,"collectedCountAllTime":0,"tippedAmountCountAllTime":0,"dislikeCountAllTime":0,` +
+			`"viewCountAllTime":0,"statsUnknown":false}}`},
+		{13, `{"json":{"likeCountAllTime":0,"laughCountAllTime":0,"heartCountAllTime":2,"cryCountAllTime":0,` +
+			`"commentCountAllTime":0,"collectedCountAllTime":0,"tippedAmountCountAllTime":0,"dislikeCountAllTime":0,` +
+			`"viewCountAllTime":0,"statsUnknown":false}}`},
+	}
+	for _, c := range cases {
+		m, ok := got[c.id]
+		out, _ := superjson.Serialize(Stats(m, ok))
+		if string(out) != c.want {
+			t.Errorf("id %d:\ngot  %s\nwant %s", c.id, out, c.want)
+		}
+	}
+}
+
+func TestMetricsFromHashesEmptyHashFallsBack(t *testing.T) {
+	_, err := MetricsFromHashes([]int{1, 2}, []map[string]string{{"Like": "1"}, {}})
+	if r := fallback.Reason(err); r != "metrics-miss" {
+		t.Fatalf("reason = %q (%v), want metrics-miss", r, err)
 	}
 }
 

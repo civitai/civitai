@@ -1,3 +1,4 @@
+import { withoutCallbacks } from '~/server/services/orchestrator/workflow-redaction';
 import type {
   GetWorkflowData,
   Options,
@@ -263,7 +264,7 @@ export async function queryWorkflows({
   }
   const { next, items = [] } = data;
 
-  return { nextCursor: next, items };
+  return { nextCursor: next, items: items.map(withoutCallbacks) };
 }
 
 export async function getWorkflow({
@@ -343,7 +344,7 @@ export async function getWorkflow({
     }
   }
 
-  return data;
+  return withoutCallbacks(data);
 }
 
 export async function submitWorkflow({
@@ -489,7 +490,7 @@ export async function submitWorkflow({
     }
   }
 
-  return result.data;
+  return withoutCallbacks(result.data);
 }
 
 type SubmitOptions = Options<SubmitWorkflowData, false>;
@@ -896,7 +897,9 @@ export async function setWorkflowDownloadPriority({
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
 
   // The 200 body is the updated workflow — with `whatif`, the priced one it would become.
-  return data as (Workflow & { cost?: { fixed?: Record<string, number> | null } }) | undefined;
+  return withoutCallbacks(data) as
+    | (Workflow & { cost?: { fixed?: Record<string, number> | null } })
+    | undefined;
 }
 
 function orchestratorErrorMessage(error: unknown) {
