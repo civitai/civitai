@@ -274,7 +274,7 @@ func TestBuildPostLazySlice(t *testing.T) {
 		}
 		images = append(images, wimg(i+1, 10, idx, nsfw))
 	}
-	p := buildPost(10, images, SortNewest, nil, true)
+	p := buildPost(10, images, SortNewest, nil, true, false)
 	want := []string{"postId", "pinned", "sponsored", "nsfwLevel", "modelVersionId", "publishedAt", "sortAt", "createdAt", "user", "imageCount", "images", "review"}
 	if got := wireKeys(p.wire); !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys = %v, want %v", got, want)
@@ -298,7 +298,7 @@ func TestBuildPostLazySlice(t *testing.T) {
 	}
 
 	// Lazy off: every image, no imageCount key at all.
-	p = buildPost(10, images, SortNewest, nil, false)
+	p = buildPost(10, images, SortNewest, nil, false, false)
 	if got := wireKeys(p.wire); hasKey(got, "imageCount") {
 		t.Fatalf("lazy off must not carry imageCount: %v", got)
 	}
@@ -307,7 +307,7 @@ func TestBuildPostLazySlice(t *testing.T) {
 		t.Fatalf("lazy off images = %d, want 8", len(all.([]any)))
 	}
 	// A post within the slice keeps all its images and its count.
-	p = buildPost(10, images[:3], SortMostReactions, nil, true)
+	p = buildPost(10, images[:3], SortMostReactions, nil, true, false)
 	few, _ := p.wire.Get("images")
 	if n, _ := p.wire.Get("imageCount"); n != int64(3) || len(few.([]any)) != 3 {
 		t.Fatalf("small post: imageCount %v, %d images", n, len(few.([]any)))

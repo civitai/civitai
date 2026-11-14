@@ -73,10 +73,28 @@ Supported today:
 |---|---|---|
 | Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`; cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / tags / tools / techniques / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
 | Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
-| Gallery gates | settings from cache, held level, taken-down models | a settings key Node would rebuild; pinned posts on page 1; sponsored posts while creator promotions are on |
+| Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
 | Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
 | Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails | misses on user cosmetics, image frames, event decorations, tag ids, metric hashes |
 | Flags | see §8 | the index path without `FEED_SERVICE_URL` (`index-feed-unconfigured`) |
+
+**First page of a version gallery** (`internal/feed/firstpage.go`, `promotion.go`), in the handler's
+order and always on the Postgres path whatever `image-index-feed` says:
+
+- *Pinned posts:* the version's `pinnedPosts` are fetched whole (no model scope, no cursor, the
+  request's own sort, period, level and filters, 20 × 20 rows), narrowed to media the version made or
+  that has no resource rows (`filterPinnedImagesToVersion`), and kept off every page by the page loop.
+  They are merged with the page by ascending post id, marked `pinned`, not completed (fetched whole
+  already), and sorted first under every ported sort.
+- *Sponsored post* (`getSponsoredGalleryPost`): approved `galleryPromotion` placements on the model
+  resolved within the last 7 days, parsed as `parseGalleryPromotionData` does, live by
+  `isPromotionLive`, made for this version; served at the accept-frozen level held to the model's
+  platform lock today (else the host's gallery level); fetched at `(preCap ?? level) & serving`
+  (20 rows) unless it is a pinned post, with the browsing-settings addons resolved at that level
+  (getAllImages resolves them per call, so they can differ from the page's), and only the
+  host-approved images kept. It goes after the
+  pinned posts, or second (`sponsoredSlotIndex`), with no review and no per-post index sort, and its
+  post is kept off the page.
 
 Layout:
 
@@ -103,6 +121,18 @@ internal/fallback    the fallback error and its reasons
   sized for the shadow workers and their hydration fan-out; see the package comment), none kept open
   when idle, a 30-minute connection lifetime and a 5-minute idle timeout. A `pool_max_conns`,
   `pool_min_conns`, `pool_max_conn_lifetime` or `pool_max_conn_idle_time` in the database URL wins.
+
+  *Worst-case fan-out, as of 2026-11-14:* shadow concurrency is `FEED_GO_SHADOW_WORKERS` (4 in the
+  deployment) comparisons; each runs its page queries one at a time, each followed by a parallel
+  hydration of nine lookups of which at most five can reach Postgres at once (basic users, cosmetics
+  and profile pictures on a cache miss; video thumbnails; a signed-in viewer's reactions), then a
+  3D-model read when the page has any. With lazy post images on, a comparison then runs one post-count
+  query and up to `completionConcurrency` (4, `internal/feed/pager.go`) completion fetches at once,
+  each a page query plus its hydration. So the worst case is ~4 × 4 × 5 = 80 concurrent reads, and the
+  common case is far fewer (page queries plus the reads that always go to Postgres). 8 covers the
+  common case with headroom and makes a burst wait instead of opening 80 pooler connections per pod.
+  Page 1 of a gallery with pinned posts or a sponsored post adds one sequential fetch (plus its
+  hydration) for each before the page loop, which does not raise that worst case.
 - **Redis (cache cluster):** the same per-id caches, read-compatibly: plain msgpack maps
   (msgpackr's module-level `pack`, `useRecords: false`), Dates as the timestamp extension, `undefined`
   as fixext type 0, `notFound` / `debounce` markers honoured, stale entries served. **This service
@@ -161,7 +191,8 @@ the authenticated viewer or for nobody.
   is never a session, as in `refuseModerationAccountSession`: refused by the token's `sub` before any
   lookup, and again by the resolved user's id or username. Signed out.
 - A banned user is served as signed out, but the response stays private (not edge-cacheable), as in
-  `createContext`.
+  `createContext`. Feature flags are the exception: Node evaluates them with the banned session's
+  user, so the `creator-promotions` mirror treats that session as its own case (§8).
 - Only a response computed with **no** session user gets the public cache headers. Every per-viewer
   clause binds the verified id; signed out binds `NULL`, which makes each carve-out false.
 - API keys / OAuth tokens fall back: they carry scopes and change the moderator rule (`moderatorView`).
@@ -275,7 +306,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | `gallery-lazy-post-images` | post completion, then first 6 images per post + `imageCount`; on in production (enabled, 0% rollout: the no-match default is on) | `FEED_GO_LAZY_POST_IMAGES` (default on); ported on both page paths |
 | `feed-service-degrade` | circuit breaker + last-good page when the feed fails | not mirrored: every failed feed call falls back here |
 | `datapacket-read` | which replica the pages and the post counts read | not mirrored: this service reads its one replica (§3) |
-| `creator-promotions` | sponsored post on page 1 | `FEED_GO_CREATOR_PROMOTIONS`; on → page-1 model galleries fall back |
+| `creator-promotions` | sponsored post on page 1 of a model-version gallery | `FEED_GO_CREATOR_PROMOTIONS` names the flag's audience: `false` (off for everyone), `mods-testers` (the flag's rule as of 2026-11-14: off signed out, on for moderators, unknown for other signed-in users, who may be on a user-id list feed-go does not hold, and for a banned user's session, which Node still evaluates the flag for), `everyone`, or `true` / unset (fail-safe: unknown for everyone). Where the value is known the sponsored post is ported; where it is unknown, a page that would carry one falls back (`sponsored-post`) and a page that would not is served (the flag cannot change it) |
 | `image-resource-use-write` | model-gallery queries read the primary | not mirrored: off in production; the replica is used |
 | `image-feed-shared-users` | one `user` object per creator on the wire | decoded value unchanged; nothing to do |
 | event decoration flags | which event hats are visible to which viewer | `FEED_GO_DECORATION_EVENTS`: the events visible to **every** viewer; tester-only previews are a parity gap |
@@ -288,7 +319,9 @@ will show.
 
 **Fallbacks (correct, not served):**
 - every input shape in the right-hand column of the §2 table;
-- pinned posts (page 1 of a gallery with pins) and sponsored posts;
+- a sponsored post for a viewer whose `creator-promotions` value is unknown (§8), a version with two or
+  more live runs at once (Node rotates them at random per request), a failed promotion lookup, and a
+  run payload whose `endsAt` is not an ISO timestamp or a host gallery level that is not a number;
 - feed-service failures and non-200 answers, a hydrate that empties a page, and the cursors Node
   answers with a 400 (§3);
 - cache misses on user cosmetics, image frames, event decorations, tag ids (their lookups filter
@@ -320,6 +353,12 @@ on Node).
 - a model gallery with a `modelId` and no `modelVersionId` on the feed-service path is an empty page,
   as in Node (the mapper cannot express it); so are `generation`, `remixOfId`, `requiringMeta`,
   browsing level 0 and more than 100 excluded tags.
+- `creator-promotions` is read from the `FEED_GO_CREATOR_PROMOTIONS` mirror, not Flipt: if the flag's
+  rule changes (a widened segment, a new rollout) or a Node pod carries a `FEATURE_FLAG_*` override,
+  the mirror must follow or sponsored posts diverge (`membership` diffs on page 1 of a promoted
+  version). With Flipt down, Node's static fallback for this flag (`availability: ['mod']`) also
+  answers on for moderators and off when signed out, so `mods-testers` still agrees.
+- a run that ends, or a placement approved, between Node's lookup and this one (milliseconds apart).
 
 ## 10. Measurement plan — CPU per call, Go vs Node, same traffic
 
@@ -399,8 +438,8 @@ Honest estimate, in order:
 2. **Burn down parity** — read the comparator for a week, fix the categories it surfaces. Unknown size
    by nature; expect several rounds. The SQL and hydration are ported line by line, but nothing has
    run against production data yet.
-3. **Cut fallbacks that matter by volume** — likely pinned posts (page 1 of popular galleries), the
-   metric-hash ClickHouse populate, and the cache miss paths, in fallback-rate order. Each is a
+3. **Cut fallbacks that matter by volume** — the metric-hash ClickHouse populate and the cache miss
+   paths, in fallback-rate order (pinned and sponsored posts were ported on 2026-11-14). Each is a
    contained port; together roughly one to two weeks.
 4. **Flags** — a Flipt evaluation client so the env mirrors go away (a few days).
 5. **Serving** — the client transport flag PR, a small cohort, then ramp while watching error rate,
