@@ -599,10 +599,12 @@ describe('the advisory locks have exactly one call site', () => {
   // a keyed submit, where it is taken inside buzz-charge-lock's lock (always that one first).
   // buzz-charge-lock takes one per keyed charge (one-arg hashtextextended of the charge's external
   // id or prefix: creator-shop-submit-…, donation-k-…, appeal-k-…, crucible-entry-k-…,
-  // creator-cash-withdrawal-…) around the record of a charge and any refund after a failed record;
+  // creator-cash-withdrawal-…, bounty-k-…; or of a key naming a charge's legs together:
+  // crucible-create-k-…) around the record of a charge and any refund after a failed record;
   // the Buzz charge itself runs outside. Taken first in its transaction; the only other advisory
   // lock ever taken under it is the creator lock above, so there is no cycle. Row locks taken under
-  // it (the appealed Image, the entered Crucible) cannot close one either: only a charge-key
+  // it (the appealed Image, the entered Crucible, a new crucible's own unpaid row, a new bounty's
+  // rows and the Tag rows it connects or creates) cannot close one either: only a charge-key
   // transaction waits on this lock, and it takes it before any row. A keyed cash withdrawal only
   // inserts its CashWithdrawal row under it. Its callers are pinned in CHARGE_KEY_LOCK_CALLERS below.
   // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
@@ -680,11 +682,14 @@ describe('the advisory locks have exactly one call site', () => {
   // refundUnlessRecorded) and on which charge: a new caller is a new transaction shape under that
   // lock, so it has to be read against the ordering note above before it joins this list.
   // creator-shop-fees: creator-shop-submit-… (item, pack and mystery pack submission fees).
-  // donation-goal: donation-k-…. report: appeal-k-… (the appeal fee). crucible: crucible-entry-k-….
+  // donation-goal: donation-k-…. report: appeal-k-… (the appeal fee). crucible: crucible-entry-k-…,
+  // and crucible-create-k-… (a keyed creation's setup fee and seed, recorded or refunded together).
   // creator-program: creator-cash-withdrawal-… (a keyed Creator Program cash withdrawal's row).
+  // bounty: bounty-k-… (a keyed bounty's creation charge; the bounty's rows are written under it).
   // A call with or without type arguments: `recordKeyedCharge(` and `recordKeyedCharge<T>(`.
   const CHARGE_KEY_LOCK = /\b(withChargeKeyLock|recordKeyedCharge|refundUnlessRecorded)\s*[<(]/;
   const CHARGE_KEY_LOCK_CALLERS = [
+    'services/bounty.service.ts',
     'services/buzz-charge-lock.ts',
     'services/creator-program.service.ts',
     'services/creator-shop-fees.service.ts',

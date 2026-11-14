@@ -30,6 +30,7 @@ type Write = {
   toAccountId?: number;
   fromAccountType?: string;
   type?: number;
+  details?: Record<string, unknown>;
 };
 
 export const timeoutError = () =>
@@ -203,8 +204,8 @@ export function createFakeBuzzLedger() {
       const reversed = legs.filter((t) => held.has(`refund-${t.transactionId}`));
       return { reversed, missing: legs.filter((t) => !reversed.includes(t)) };
     },
-    // The account types and the transaction type are what the write was sent with; a multi-account
-    // leg reports its own source type (the first, as each fake leg has one source).
+    // The account types, the transaction type and the details are what the write was sent with; a
+    // multi-account leg reports its own source type (the first, as each fake leg has one source).
     getTransactionByExternalId: async (externalId: string) => {
       if (lookupError) throw lookupError;
       const t = held.get(externalId) as
@@ -213,6 +214,7 @@ export function createFakeBuzzLedger() {
             fromAccountTypes?: string[];
             toAccountType?: string;
             type?: unknown;
+            details?: Record<string, unknown>;
           })
         | undefined;
       return t
@@ -223,6 +225,8 @@ export function createFakeBuzzLedger() {
             fromAccountType: t.fromAccountType ?? t.fromAccountTypes?.[0],
             toAccountType: t.toAccountType,
             type: t.type,
+            // What the write was sent with, as GET /transactions/{externalId} returns it.
+            ...(t.details ? { details: t.details } : {}),
           }
         : null;
     },
