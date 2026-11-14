@@ -1,13 +1,8 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { SITE_REPLICATION, VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, qdrantClient, type CollectionSpec } from '../qdrant';
 import type { StorylinePayload } from './source';
 
-/**
- * The fields the site filters on, the two the search service needs for exact-title and
- * quoted-phrase search, and rootChapterId for chapter deletes. title, username, coverImageId and
- * docHash are stored, never filtered.
- */
+/** rootChapterId is indexed for chapter deletes, not for search. */
 export const STORYLINE_COLLECTION: CollectionSpec<StorylinePayload> = {
   ...SITE_REPLICATION,
   quantile: 0.99,
@@ -39,10 +34,9 @@ export const STORYLINE_COLLECTION: CollectionSpec<StorylinePayload> = {
 };
 
 export function storylineVectorStore() {
-  const { qdrantUrl, qdrantApiKey, storylineCollection } = config.vectorSync;
   return new VectorStore<StorylinePayload>(
-    new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey }),
-    storylineCollection,
+    qdrantClient(),
+    config.vectorSync.storylineCollection,
     STORYLINE_COLLECTION
   );
 }

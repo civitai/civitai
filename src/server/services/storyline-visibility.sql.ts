@@ -23,13 +23,10 @@ export const storylineRootVisibleText = ({ rc = 'rc', rp = 'rp', ru = 'ru' } = {
   storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" < now()`);
 
 /**
- * Which storylines the semantic search may return: the public feed's gates for a reader who is
- * neither owner, participant nor moderator, over storyline `st`, its owner `u`, chapter 1 `rc`
- * (LEFT JOINed at depth 0), its post `rp` and that post's author `ru`, with chapter 1's post
- * Public (its text is in the index), and nothing held: neither the owner nor chapter 1's author,
- * nor any of chapter 1's images. Publication time is left to the query (the payload's
- * rootPublishedAt), so a scheduled chapter 1 needs no event when it goes live. The event-engine's
- * STORYLINE_ELIGIBLE_SQL is its copy, held to it by storyline-eligibility.parity.test.ts.
+ * Which storylines the semantic search may return: the feed's gates for an outside reader, plus
+ * chapter 1's post Public, because its text is indexed. Publication time is left to the query
+ * (rootPublishedAt), so a scheduled chapter 1 needs no event. The event-engine's
+ * STORYLINE_ELIGIBLE_SQL copy is held to this by storyline-eligibility.parity.test.ts.
  */
 export const storylineSemanticEligibleText = ({
   st = 'st',
