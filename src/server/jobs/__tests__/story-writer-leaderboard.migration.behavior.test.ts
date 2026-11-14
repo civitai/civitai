@@ -137,6 +137,7 @@ const ELIGIBILITY: ArticleFixture[] = [
   { id: 13, userId: 21, tag: STORY, unlisted: true, ...HUGE },
   { id: 14, userId: 22, tag: STORY, availability: 'Private', ...HUGE },
   { id: 15, userId: 23, tag: STORY, nsfwLevel: 32, ...HUGE },
+  { id: 20, userId: 28, tag: STORY, daysAgo: -1, ...HUGE },
 ];
 
 /** The board's query as prepare-leaderboard's defaultLeadboardPopulation wraps it. */
@@ -282,7 +283,15 @@ describe('story-writer system-category switch', () => {
   });
 
   it('after it, only the category call decides, and every other filter and weight still holds', async () => {
+    const active = async () =>
+      (
+        await db.pg.query<{ active: boolean }>(
+          `SELECT active FROM "Leaderboard" WHERE id = 'story-writer'`
+        )
+      ).rows[0].active;
+    await db.pg.exec(`UPDATE "Leaderboard" SET active = false WHERE id = 'story-writer'`);
     await db.pg.exec(SWITCH);
+    expect(await active()).toBe(false);
     const rows = await standings(db.pg);
     expect(rows.map((r) => [r.userId, r.score])).toEqual([
       [10, 6300],
@@ -371,5 +380,18 @@ describe('article category backfill selection', () => {
       await select(0, 100),
     ]);
     expect(await select(0, 100)).toEqual([]);
+  });
+
+  it("filters on exactly the board's conditions other than the category", () => {
+    const conditions = (where: string) =>
+      where
+        .split('\n')
+        .map((line) => line.trim().replace(/^AND /, ''))
+        .filter(Boolean);
+    const board = MIGRATION.split(/^WHERE$/m)[1].split('  AND EXISTS (')[0];
+    const backfill = ARTICLE_CATEGORY_BACKFILL_SQL.split(/^WHERE$/m)[1].split('ORDER BY')[0];
+    expect(
+      conditions(backfill).filter((c) => !c.includes('systemCategoryId') && c !== 'a.id > $1')
+    ).toEqual(conditions(board).filter((c) => !c.startsWith('am.'))); // the metric join, not eligibility
   });
 });

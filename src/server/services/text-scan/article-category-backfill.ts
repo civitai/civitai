@@ -2,6 +2,7 @@ import pLimit from 'p-limit';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ARTICLE_CATEGORY_BACKFILL_SQL } from '~/server/services/text-scan/article-category-backfill-query';
+import type { TextCategorySubmitOutcome } from '~/server/services/text-scan/category';
 import { submitTextCategoryScan } from '~/server/services/text-scan/category';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import { getTextScanConfig } from '~/server/services/text-scan/prompt';
@@ -9,10 +10,9 @@ import { textScanCallbackUrl } from '~/server/services/text-scan/submit';
 
 export type ArticleCategoryBackfillStatus =
   | 'dry-run'
-  | 'submitted'
   | 'gone'
   | 'not-public'
-  | 'failed';
+  | TextCategorySubmitOutcome;
 
 export async function runArticleCategoryBackfill({
   afterId,
@@ -58,7 +58,7 @@ export async function runArticleCategoryBackfill({
         if (!subject) return { entityId, status: 'gone' as const };
         if (subject.notPublic) return { entityId, status: 'not-public' as const };
         try {
-          await submitTextCategoryScan({
+          const status = await submitTextCategoryScan({
             entityType: 'Article',
             entityId,
             subject,
@@ -67,7 +67,7 @@ export async function runArticleCategoryBackfill({
             maxInputChars: config.maxInputChars,
             scanCallbackUrl,
           });
-          return { entityId, status: 'submitted' as const };
+          return { entityId, status };
         } catch (e) {
           await logToAxiom({
             name: 'text-category',

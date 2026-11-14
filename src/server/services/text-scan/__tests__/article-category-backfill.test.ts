@@ -37,6 +37,17 @@ beforeEach(() => {
 });
 
 describe('runArticleCategoryBackfill', () => {
+  it('counts a submit that throws as failed and carries on', async () => {
+    submit.mockRejectedValueOnce(new Error('orchestrator down')).mockResolvedValue('submitted');
+    const result = await runArticleCategoryBackfill({
+      afterId: 4,
+      limit: 4,
+      concurrency: 1,
+      dryRun: false,
+    });
+    expect(result.byStatus).toEqual({ failed: 1, 'not-public': 1, gone: 1, submitted: 1 });
+  });
+
   it('a dry run lists the selection and sends no category call', async () => {
     const result = await runArticleCategoryBackfill({
       afterId: 0,
@@ -49,10 +60,10 @@ describe('runArticleCategoryBackfill', () => {
     expect(queryRaw).toHaveBeenCalledWith(expect.any(String), 0, 4);
   });
 
-  it('sends one call per public article and counts the rest, a failed submit included', async () => {
-    submit.mockImplementation(async ({ entityId }: { entityId: number }) => {
-      if (entityId === 8) throw new Error('orchestrator down');
-    });
+  it('sends one call per public article and counts each outcome, a failed submit included', async () => {
+    submit.mockImplementation(async ({ entityId }: { entityId: number }) =>
+      entityId === 8 ? 'failed' : 'submitted'
+    );
     const result = await runArticleCategoryBackfill({
       afterId: 4,
       limit: 4,
