@@ -76,7 +76,8 @@ func (s *Server) startPhase() phaseClock {
 // was solo throughout: no other sample in flight at its start, none admitted before its end. Process
 // CPU is then this sample's own (plus background runtime/GC work and any scrape, DESIGN.md §10).
 func (s *Server) endPhase(p phaseClock, phase, outcome string) {
-	s.Metrics.ShadowPhase.WithLabelValues(phase, outcome).Observe(time.Since(p.wall).Seconds())
+	wall := time.Since(p.wall).Seconds()
+	s.Metrics.ShadowPhase.WithLabelValues(phase, outcome).Observe(wall)
 	if !p.solo || !p.cpuOK {
 		return
 	}
@@ -86,6 +87,7 @@ func (s *Server) endPhase(p phaseClock, phase, outcome string) {
 	}
 	s.Metrics.ShadowPhaseCPU.WithLabelValues(phase, outcome).Add((cpu - p.cpu).Seconds())
 	s.Metrics.ShadowPhaseSolo.WithLabelValues(phase, outcome).Inc()
+	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(phase, outcome).Add(wall)
 }
 
 // computed is one answer.

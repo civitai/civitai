@@ -399,6 +399,8 @@ Series:
   consumed between the phase's start and end, added only when the phase was **solo**: it was the only
   shadow sample holding a queue slot when it started, and no sample was admitted before it ended.
 - `feed_go_shadow_phase_solo_total` — how many phases were counted in the CPU series (its denominator).
+- `feed_go_shadow_phase_solo_wall_seconds_total` — the wall time of those same solo phases, to compare
+  with the mean over every phase (the length-bias check below).
 
 **Method, and why.** Go has no faithful per-request CPU clock: a request's work runs on several
 goroutines (the hydration lookups run in parallel) that migrate across OS threads, so a thread CPU
@@ -418,6 +420,13 @@ sum(rate(feed_go_shadow_phase_cpu_seconds_total{phase="compute",outcome="served"
 sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
   / sum(rate(feed_go_shadow_phase_seconds_count{phase="compute",outcome="served"}[1h]))
 
+# Length bias: mean wall of the solo computes over the mean wall of all of them. Near 1 = the solo
+# phases are representative; below 1 = long computes are being excluded (see Limits).
+(sum(rate(feed_go_shadow_phase_solo_wall_seconds_total{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h])))
+/ (sum(rate(feed_go_shadow_phase_seconds_sum{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_seconds_count{phase="compute",outcome="served"}[1h])))
+
 # Shadow overhead per sample (what the whole-process ratio above over-counts).
 sum by (phase) (rate(feed_go_shadow_phase_cpu_seconds_total{phase=~"decode|compare"}[1h]))
   / sum by (phase) (rate(feed_go_shadow_phase_solo_total{phase=~"decode|compare"}[1h]))
@@ -432,13 +441,23 @@ sum(rate(process_cpu_seconds_total{job="feed-go"}[1h]))
 
 - *Background runtime work is attributed to whichever phase it lands in.* The GC runs concurrently:
   the collection of `compute`'s garbage may run during `compare` (which allocates heavily and so tends
-  to trigger it), or after the sample. `compute` can therefore read slightly LOW against serving, where
-  that GC is paid between requests. Bound it with the unaccounted-CPU cross-check, and with the Go GC
+  to trigger it) or after the sample, and a collection of an EARLIER sample's garbage (its decode and
+  compare included) may run during this sample's `compute`. The direction of the net error is therefore
+  not known from these series: a profile decides it. Bound it with the unaccounted-CPU cross-check, and with the Go GC
   series (`go_gc_*`) from the runtime collector; under real serving load the GC share is better read
   from a profile (below) than from these series.
 - *Solo only.* Overlapping samples are excluded, not apportioned; if coverage is low (raised sample
   rate, a burst), the figure is a sample of the quiet periods, which can differ from loaded behaviour
   (less cache contention, no scheduler pressure).
+- *Length bias.* A phase is excluded when another sample is admitted before it ends, and a longer
+  phase is more likely to have that happen, so the solo phases lean short. Where a compute's CPU grows
+  with its wall time (cache misses, large hydrations), the compute-only figure then reads LOW, which
+  favours Go. The bias shrinks as coverage approaches 1; the length-bias query above measures it
+  directly, and coverage alone does not.
+- *Shadow-only process.* The method assumes the process runs nothing but shadow samples. The solo
+  check sees only shadow samples, so in a deployment that also serves the public route (or proxies
+  fallbacks) on the same process, that traffic's CPU lands in whichever phase it overlaps and the
+  figure reads HIGH. Read it only from a shadow-only deployment.
 - *Not covered:* building the synthetic request, the goroutine hand-off, and on the serving path the
   response write (`trpc.WriteResult`) and the reverse-proxy cost of a fallback. All are small next to
   `compute`; a fallback's proxy cost is Node's request, read on Node's side.
@@ -449,7 +468,10 @@ sum(rate(process_cpu_seconds_total{job="feed-go"}[1h]))
 
 With `FEED_GO_PPROF=true` the internal listener (the `FEED_GO_INTERNAL_ADDR` port, never the public
 one) serves `net/http/pprof` under `/debug/pprof/`. Off by default; turning it on is an env change
-and a restart. Pull a profile through a port-forward to the pod's internal port:
+and a restart. Anything the network allows to reach the internal port can then pull profiles, and a
+`profile`/`trace` request holds its connection for the `seconds` it asks for (the internal server sets
+no write timeout), so enable it for a profiling session and turn it off after. Pull a profile through
+a port-forward to the pod's internal port:
 
 ```bash
 go tool pprof -http=: 'http://localhost:9090/debug/pprof/profile?seconds=60'

@@ -20,6 +20,9 @@ type Metrics struct {
 	ShadowPhase     *prometheus.HistogramVec // wall time, every sample
 	ShadowPhaseCPU  *prometheus.CounterVec   // process CPU over the phase, solo phases only
 	ShadowPhaseSolo *prometheus.CounterVec   // phases counted in ShadowPhaseCPU
+	// Wall time of the phases counted in ShadowPhaseCPU: against ShadowPhase's mean it shows whether
+	// the solo phases are shorter than the rest (the length bias, DESIGN.md §10.1).
+	ShadowPhaseSoloWall *prometheus.CounterVec
 }
 
 // NewMetrics registers the series on reg.
@@ -63,8 +66,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_shadow_phase_solo_total",
 			Help: "Shadow-sample phases counted in feed_go_shadow_phase_cpu_seconds_total (the denominator for CPU per phase).",
 		}, []string{"phase", "outcome"}),
+		ShadowPhaseSoloWall: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_shadow_phase_solo_wall_seconds_total",
+			Help: "Wall seconds of the shadow-sample phases counted in feed_go_shadow_phase_cpu_seconds_total.",
+		}, []string{"phase", "outcome"}),
 	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
-		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo)
+		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall)
 	return m
 }
