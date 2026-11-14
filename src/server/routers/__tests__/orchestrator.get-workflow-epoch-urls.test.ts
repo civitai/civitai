@@ -283,6 +283,26 @@ describe('orchestrator.getWorkflow — steps that read a training run', () => {
     expect(result.steps.slice(1)).toEqual([fromArguments, repeat, merge]);
   });
 
+  it('drops the output of a repeat iterating a training step, whatever its template reads', async () => {
+    const repeat = {
+      $type: 'repeat',
+      name: 'r',
+      input: {
+        for: { $ref: 'train', path: 'output.epochs', as: 'item' },
+        template: {
+          $type: 'merge',
+          input: { fields: { id: { $ref: 'item', path: 'model.id', reduce: 'concat' } } },
+        },
+      },
+      output: { items: [{ fields: { id: ['EPOCH1'] } }] },
+    };
+    const steps = [trainingStep, repeat];
+    const result = await read(steps);
+    expect(result.steps[1]).not.toHaveProperty('output');
+    expect(JSON.stringify(result)).not.toMatch(/EPOCH1/);
+    expect(await read(steps, true)).toEqual(workflow(steps));
+  });
+
   it('keeps a step that reads no training step', async () => {
     const result = await read([trainingStep, generationStep, reader('m', 'merge', 'gen')]);
     expect(result.steps[2]).toEqual(reader('m', 'merge', 'gen'));
