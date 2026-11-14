@@ -9,6 +9,7 @@ import {
   parseBlockedForPatterns,
   parseReviewBatchRecord,
   parseSuspectTerms,
+  scannerHeldIds,
 } from '../review-batch';
 import vectors from './fixtures/review-terms-vectors.json';
 
@@ -22,6 +23,22 @@ describe('imageAuditContentHash', () => {
     expect(imageAuditContentHash(1)).toBe('d958978c84fa167c');
     expect(imageAuditContentHash(123)).toBe('5eaacd96ca0060b2');
     expect(imageAuditContentHash(2147483647)).toBe('984ec8d802c32865');
+  });
+});
+
+describe('scannerHeldIds', () => {
+  const rows = [
+    { contentHash: imageAuditContentHash(1), hit: 1 },
+    { contentHash: imageAuditContentHash(2), hit: 0 },
+    { contentHash: imageAuditContentHash(4), hit: '1' },
+  ];
+
+  it('routing holds a hit and an image with no rows, and passes only a clean row', () => {
+    expect([...scannerHeldIds([1, 2, 3, 4], rows)].sort()).toEqual([1, 3, 4]);
+  });
+
+  it('a label-presence reader counts only hits, never an image with no rows', () => {
+    expect([...scannerHeldIds([1, 2, 3, 4], rows, false)].sort()).toEqual([1, 4]);
   });
 });
 

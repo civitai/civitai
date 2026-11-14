@@ -25,16 +25,26 @@ const { checkReviewBatchRoutingMisses, ROUTING_MISS_ACTIVITY, MISS_CHECK_ACTIVIT
 
 type Sql = { strings: readonly string[]; values: unknown[] };
 const sqlText = ({ strings }: Sql) => strings.join('?');
-/** A nested `Prisma.sql` fragment arrives as one value; its own values are what the row holds. */
-const flat = (values: unknown[]): unknown[] =>
-  values.flatMap((v) =>
-    v && typeof v === 'object' && 'values' in v ? flat((v as { values: unknown[] }).values) : [v]
+const isSql = (v: unknown): v is Sql => !!v && typeof v === 'object' && 'strings' in v;
+/** The statement as sent, nested `Prisma.sql` fragments included, each bound value inlined. */
+const render = ({ strings, values }: Sql): string =>
+  strings.reduce((out, part, i) => {
+    if (i === 0) return part;
+    const v = values[i - 1];
+    return out + (isSql(v) ? render(v) : JSON.stringify(v)) + part;
+  }, '');
+/** Each VALUES tuple of an insert, literals and bound values alike. */
+const tuples = (text: string) =>
+  [...text.slice(text.indexOf('VALUES')).matchAll(/\(([^()]*)\)/g)].map(([, inner]) =>
+    [...inner.matchAll(/'([^']*)'|"([^"]*)"|(-?\d+)/g)].map(([, lit, str, num]) =>
+      num !== undefined ? Number(num) : lit ?? str
+    )
   );
 
 let served: { imageId: number; batchHash: string }[] = [];
 let recorded: { imageId: number; batchHash: string }[] = [];
 let reports: { id: number }[] = [];
-let inserts: Sql[] = [];
+let inserts: string[] = [];
 
 const row = (id: number, over: Record<string, unknown> = {}) => ({
   id,
@@ -63,14 +73,22 @@ beforeEach(() => {
   );
   dbMock.dbWrite.$executeRaw.mockImplementation(
     async (strings: readonly string[], ...values: unknown[]) => {
-      inserts.push({ strings, values: flat(values) });
+      inserts.push(render({ strings, values }));
       return 1;
     }
   );
 });
 
-const missRows = () => inserts.filter((i) => i.values.includes(ROUTING_MISS_ACTIVITY));
-const heartbeats = () => inserts.filter((i) => i.values.includes(MISS_CHECK_ACTIVITY));
+const missRows = () => inserts.flatMap(tuples).filter((t) => t.includes(ROUTING_MISS_ACTIVITY));
+const heartbeats = () => inserts.flatMap(tuples).filter((t) => t.includes(MISS_CHECK_ACTIVITY));
+const imageMiss = (id: number, hash: string) => [
+  -1,
+  'image',
+  id,
+  ROUTING_MISS_ACTIVITY,
+  hash,
+  'general',
+];
 
 describe('the routing-miss check', () => {
   it('records a served general image that now carries a signal, once, and writes the heartbeat', async () => {
@@ -86,10 +104,8 @@ describe('the routing-miss check', () => {
     );
     const result = await checkReviewBatchRoutingMisses(new Date('2026-11-14T07:23:00Z'));
     expect(result).toMatchObject({ served: 2, misses: 1 });
-    expect(missRows()).toHaveLength(1);
-    expect(missRows()[0].values).toEqual(expect.arrayContaining([1, 'h1']));
-    expect(heartbeats()).toHaveLength(1);
-    expect(heartbeats()[0].values).toContain(20261114);
+    expect(missRows()).toEqual([imageMiss(1, 'h1')]);
+    expect(heartbeats()).toEqual([[-1, 'reviewBatchMissCheck', 20261114, MISS_CHECK_ACTIVITY]]);
   });
 
   it('a miss already recorded for that image and batch is not recorded again', async () => {
@@ -101,14 +117,16 @@ describe('the routing-miss check', () => {
     expect(heartbeats()).toHaveLength(1);
   });
 
-  it('a scanner-only label counts, and the image report id goes on its own row', async () => {
+  it('a scanner-only label counts, and the image report goes on its own csamReport row', async () => {
     served = [{ imageId: 3, batchHash: 'h3' }];
     reports = [{ id: 77 }];
     mockReadSignals.mockResolvedValue(new Map([[3, row(3)]]));
     mockReadScanner.mockResolvedValue(new Set([3]));
     expect((await checkReviewBatchRoutingMisses()).misses).toBe(1);
-    const [insert] = missRows();
-    expect(insert.values).toEqual(expect.arrayContaining([3, 77, 'h3']));
+    expect(missRows()).toEqual([
+      imageMiss(3, 'h3'),
+      [-1, 'csamReport', 77, ROUTING_MISS_ACTIVITY, 'h3', 'general'],
+    ]);
   });
 
   it('nothing served still writes the heartbeat, with count 0', async () => {
@@ -117,14 +135,17 @@ describe('the routing-miss check', () => {
     expect(mockReadSignals).not.toHaveBeenCalled();
   });
 
-  it('writes no signal name and never touches CsamReport', async () => {
+  it('writes only ModActivity rows of fixed columns, never the signal behind the miss', async () => {
     served = [{ imageId: 1, batchHash: 'h1' }];
     reports = [{ id: 5 }];
     mockReadSignals.mockResolvedValue(new Map([[1, row(1, { blockedFor: 'sig' })]]));
     await checkReviewBatchRoutingMisses();
-    const written = inserts.map((i) => sqlText(i) + JSON.stringify(i.values)).join('\n');
-    expect(written).not.toMatch(/"CsamReport"/);
-    expect(written).not.toMatch(/\bsig\b|minor|csam/i);
+    for (const text of inserts) expect(text.trimStart()).toMatch(/^INSERT INTO "ModActivity" /);
+    expect(missRows()).toEqual([
+      imageMiss(1, 'h1'),
+      [-1, 'csamReport', 5, ROUTING_MISS_ACTIVITY, 'h1', 'general'],
+    ]);
+    expect(inserts.join('\n')).not.toMatch(/\bsig\b/);
   });
 });
 
