@@ -10,6 +10,7 @@ import {
 } from '~/server/services/buzz.service';
 import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import type { TransactionType } from '~/shared/constants/buzz.constants';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
@@ -183,6 +184,75 @@ export async function prefixWasRefunded(
   }
 }
 
+/** Told to the user when the action's key already holds a charge for a different payment. */
+export const PAYMENT_KEY_REUSED_MESSAGE =
+  'This payment was already started with different details. Please start it again.';
+
+/** What a keyed prefix charge must have moved: checked against held legs before reusing them. */
+export type ExpectedPrefixCharge = {
+  amount: number;
+  fromAccountId: number;
+  fromAccountTypes: readonly string[];
+  toAccountId: number;
+  /** Compared only when the charge names one. */
+  toAccountType?: string;
+  type: TransactionType;
+};
+
+type HeldLeg = { externalTransactionId: string; amount: number };
+
+/**
+ * Legs the ledger already held under `prefix` are reused only when they are this request's charge.
+ * The ledger answers a held id with what it holds and moves nothing, whatever was sent, so a key
+ * resent with other content (another amount, currency or recipient) would otherwise be recorded at
+ * the new request's terms on the old request's money. Each leg is read in full; together they must
+ * total the amount, from and to the same accounts, of the same type. A mismatch is a 400 (nothing
+ * was charged for THIS request, and the client starts over with a new key); a read that fails is
+ * "may have gone through".
+ */
+async function assertHeldChargeMatches(
+  prefix: string,
+  context: PrefixChargeContext,
+  expected: ExpectedPrefixCharge,
+  listed?: HeldLeg[]
+) {
+  const outcomeContext = { externalTransactionId: prefix, ...context };
+  let legs: HeldLeg[];
+  let held: Awaited<ReturnType<typeof getTransactionByExternalId>>[];
+  try {
+    legs = listed ?? (await getMultiAccountTransactionsByPrefix(prefix));
+    held = await Promise.all(
+      legs.map((leg) => getTransactionByExternalId(leg.externalTransactionId))
+    );
+  } catch (lookupError) {
+    throw paymentOutcomeUnknown(outcomeContext, 'held charge lookup failed', { lookupError });
+  }
+  if (!legs.length || held.some((leg) => !leg))
+    throw paymentOutcomeUnknown(outcomeContext, 'held charge legs could not be read');
+
+  const total = held.reduce((sum, leg) => sum + (leg?.amount ?? 0), 0);
+  const matches =
+    total === expected.amount &&
+    held.every(
+      (leg) =>
+        !!leg &&
+        leg.fromAccountId === expected.fromAccountId &&
+        expected.fromAccountTypes.includes(leg.fromAccountType) &&
+        leg.toAccountId === expected.toAccountId &&
+        (expected.toAccountType === undefined || leg.toAccountType === expected.toAccountType) &&
+        leg.type === expected.type
+    );
+  if (!matches) {
+    logToAxiom({
+      name: 'buzz-payment-key-reused',
+      type: 'error',
+      message: 'a keyed charge was resent with different details',
+      ...outcomeContext,
+    }).catch(() => undefined);
+    throw new TRPCError({ code: 'BAD_REQUEST', message: PAYMENT_KEY_REUSED_MESSAGE });
+  }
+}
+
 /**
  * The prefix twin of `chargeByExternalId`, for a charge made through the multi-account endpoint
  * (`charge`, which files its legs under `prefix`). Charges once per action when the prefix derives
@@ -198,6 +268,9 @@ export async function prefixWasRefunded(
  *   looks at ids, so a resend after a first charge that spent the balance is refused; held legs
  *   are this action's charge and the flow continues from them. `beforeCharging` (the app's own
  *   balance or eligibility checks) runs only when nothing is held, for the same reason.
+ * - Held legs (found by the lookup, or answered `duplicate` by a send) are this request's charge
+ *   only when they match `expected`: amount, accounts, account types and transaction type.
+ *   Otherwise a 400 (`PAYMENT_KEY_REUSED_MESSAGE`), before anything is recorded.
  * - Held legs may have been refunded by an earlier request that failed to record them: refunded
  *   money is not a charge, so that is refused with a 400 and the client starts a new action.
  *
@@ -210,11 +283,14 @@ export async function chargeByPrefix(
   {
     charge,
     reusable,
+    expected,
     beforeCharging,
     declined,
   }: {
     charge: () => Promise<{ transactionIds?: { duplicate?: boolean | null }[] | null }>;
     reusable: boolean;
+    /** What `charge` moves; held legs are reused only when they match it. */
+    expected: ExpectedPrefixCharge;
     beforeCharging?: () => Promise<unknown>;
     declined: (error?: unknown) => Error;
   }
@@ -222,9 +298,11 @@ export async function chargeByPrefix(
   const outcomeContext = { externalTransactionId: prefix, ...context };
 
   let replayed = false;
+  let listed: HeldLeg[] | undefined;
   if (reusable) {
     try {
-      replayed = (await getMultiAccountTransactionsByPrefix(prefix)).length > 0;
+      listed = await getMultiAccountTransactionsByPrefix(prefix);
+      replayed = listed.length > 0;
     } catch (lookupError) {
       throw paymentOutcomeUnknown(outcomeContext, 'lookup before charging failed', { lookupError });
     }
@@ -248,8 +326,11 @@ export async function chargeByPrefix(
     }
     if (!sent.transactionIds?.length) throw declined();
     replayed = sent.transactionIds.some((leg) => leg.duplicate === true);
+    // A send answered `duplicate` reused legs this lookup did not see: list them again.
+    listed = undefined;
   }
 
+  if (reusable && replayed) await assertHeldChargeMatches(prefix, context, expected, listed);
   if (reusable && replayed && (await prefixWasRefunded(prefix, context)))
     throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
   return { replayed };

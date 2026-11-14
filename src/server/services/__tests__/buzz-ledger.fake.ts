@@ -189,11 +189,27 @@ export function createFakeBuzzLedger() {
       const reversed = legs.filter((t) => held.has(`refund-${t.transactionId}`));
       return { reversed, missing: legs.filter((t) => !reversed.includes(t)) };
     },
+    // The account types and the transaction type are what the write was sent with; a multi-account
+    // leg reports its own source type (the first, as each fake leg has one source).
     getTransactionByExternalId: async (externalId: string) => {
       if (lookupError) throw lookupError;
-      const t = held.get(externalId);
+      const t = held.get(externalId) as
+        | (Write & {
+            fromAccountType?: string;
+            fromAccountTypes?: string[];
+            toAccountType?: string;
+            type?: unknown;
+          })
+        | undefined;
       return t
-        ? { amount: t.amount, fromAccountId: t.fromAccountId, toAccountId: t.toAccountId }
+        ? {
+            amount: t.amount,
+            fromAccountId: t.fromAccountId,
+            toAccountId: t.toAccountId,
+            fromAccountType: t.fromAccountType ?? t.fromAccountTypes?.[0],
+            toAccountType: t.toAccountType,
+            type: t.type,
+          }
         : null;
     },
     /**

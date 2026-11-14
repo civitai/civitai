@@ -19,6 +19,7 @@ const { buzz, prefixRefund, getUserBuzzAccount, createNotification } = vi.hoiste
     createMultiAccountBuzzTransaction: vi.fn(),
     refundMultiAccountTransaction: vi.fn(),
     getMultiAccountTransactionsByPrefix: vi.fn(),
+    getTransactionByExternalId: vi.fn(),
   },
   prefixRefund: { getPrefixRefundState: vi.fn() },
   getUserBuzzAccount: vi.fn(),
@@ -173,6 +174,7 @@ beforeEach(() => {
   buzz.getMultiAccountTransactionsByPrefix.mockImplementation(
     ledger.getMultiAccountTransactionsByPrefix
   );
+  buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
   prefixRefund.getPrefixRefundState.mockImplementation(ledger.getPrefixRefundState);
 });
 
@@ -340,6 +342,31 @@ describe('a crucible entry fee across an unknown outcome', () => {
   it('files the fee under the user, the crucible and the image, then the key', async () => {
     await enter(KEY);
     expect(ledger.charges().map((c) => c.externalTransactionId)).toEqual([`${PREFIX}-0`]);
+  });
+
+  // The ledger answers a held prefix with what it holds, whatever amount was sent. The creator
+  // changed the fee after the first attempt charged it: the retry must not save an entry priced
+  // at the new fee on the old fee's money.
+  it('a retry under the same key for a different fee is refused, and saves nothing', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await expect(enter(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+    const crucible = await dbMock.dbRead.crucible.findUnique({
+      where: { id: CRUCIBLE_ID },
+    } as never);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucible,
+      entryFee: FEE + 30,
+    } as never);
+
+    await expect(enter(KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This payment was already started with different details. Please start it again.',
+    });
+    expect(ledger.charges().map((c) => c.amount)).toEqual([FEE]);
+    expect(entries).toHaveLength(0);
+    expect(pool).toBe(0);
   });
 
   it('takes the lock on the fee prefix', async () => {

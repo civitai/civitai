@@ -320,6 +320,14 @@ export const donateToGoal = async ({
   // refused. A failure that may have committed is resent once under the same prefix.
   await chargeByPrefix(externalTransactionIdPrefix, context, {
     reusable: keyed,
+    expected: {
+      amount,
+      fromAccountId: userId,
+      fromAccountTypes: [buzzType],
+      toAccountId: goal.userId,
+      toAccountType: buzzType,
+      type: TransactionType.Donation,
+    },
     charge: () =>
       createMultiAccountBuzzTransaction({
         amount,

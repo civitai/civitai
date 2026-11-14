@@ -1066,6 +1066,13 @@ export async function createEntityAppeal({
         const feeContext = { userId, amount: APPEAL_FEE };
         await chargeByPrefix(prefix, feeContext, {
           reusable: true,
+          expected: {
+            amount: APPEAL_FEE,
+            fromAccountId: userId,
+            fromAccountTypes: [buzzType],
+            toAccountId: 0,
+            type: TransactionType.Appeal,
+          },
           charge: () => charge(prefix),
           declined: () =>
             new TRPCError({

@@ -17,6 +17,7 @@ const { buzz, prefixRefund } = vi.hoisted(() => ({
     createMultiAccountBuzzTransaction: vi.fn(),
     refundMultiAccountTransaction: vi.fn(),
     getMultiAccountTransactionsByPrefix: vi.fn(),
+    getTransactionByExternalId: vi.fn(),
   },
   prefixRefund: { getPrefixRefundState: vi.fn() },
 }));
@@ -110,6 +111,7 @@ beforeEach(() => {
   buzz.getMultiAccountTransactionsByPrefix.mockImplementation(
     ledger.getMultiAccountTransactionsByPrefix
   );
+  buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
   prefixRefund.getPrefixRefundState.mockImplementation(ledger.getPrefixRefundState);
 });
 
@@ -287,6 +289,30 @@ describe('an appeal fee across an unknown outcome', () => {
 
     expect(ledger.charges()).toHaveLength(2);
     expect(appeals).toEqual([expect.objectContaining({ entityId: OTHER_IMAGE_ID })]);
+  });
+
+  // The ledger answers a held prefix with what it holds, whatever was sent: a retry under the same
+  // key paying in another currency is not the charge it would reuse.
+  it('a retry under the same key paying in another currency is refused, and records nothing', async () => {
+    loseEveryAnswer();
+    await expect(appeal(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+
+    await expect(
+      createEntityAppeal({
+        entityId: IMAGE_ID,
+        entityType: 'Image',
+        message: 'This was removed by mistake',
+        userId: USER,
+        buzzType: 'green',
+        idempotencyKey: KEY,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This payment was already started with different details. Please start it again.',
+    });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(appeals).toHaveLength(0);
   });
 
   it('files the fee under the user, the entity, then the key', async () => {

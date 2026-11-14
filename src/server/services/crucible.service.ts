@@ -2325,6 +2325,13 @@ export const submitEntry = async ({
         const context = { userId, amount: crucible.entryFee };
         await chargeByPrefix(prefix, context, {
           reusable: true,
+          expected: {
+            amount: crucible.entryFee,
+            fromAccountId: userId,
+            fromAccountTypes: [entryBuzzType],
+            toAccountId: 0,
+            type: TransactionType.Fee,
+          },
           beforeCharging: assertCanPayFee,
           charge: () => chargeFee(prefix),
           declined: () =>
