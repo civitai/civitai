@@ -53,6 +53,7 @@ const face = (over: Partial<Face> = {}): Face => ({
   sfwOnly: false,
   lockedProperties: [],
   meta: {},
+  touchedBeforeLogging: false,
   ...over,
 });
 const verdict = (detected: boolean) => ({
@@ -105,6 +106,26 @@ describe('sweep-com-faces', () => {
       { record: mocks.record, lock: expect.any(Function) }
     );
   });
+
+  // Decision (Mod Lead ruling): a model a moderator acted on before rulings were logged keeps its
+  // stored verdict but is listed for moderators instead of locked. Don't fold it into `locked`.
+  it.each([true, false])(
+    'lists, never locks, a model touched before logging (apply %s)',
+    async (apply) => {
+      const touched = face({ touchedBeforeLogging: true });
+      mocks.read.mockResolvedValue(touched);
+      mocks.preview.mockResolvedValue(verdict(true));
+      const listed: number[] = [];
+      await expect(sweep([touched], apply, 1, (id) => listed.push(id))).resolves.toMatchObject({
+        outcomes: { 'moderator-list': 1 },
+        ownersLocked: 0,
+      });
+      expect(listed).toEqual([7]);
+      expect(mocks.lock).not.toHaveBeenCalled();
+      if (apply)
+        expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ detected: true }));
+    }
+  );
 
   it('apply: stores the detection and locks an eligible mature model', async () => {
     mocks.read.mockResolvedValue(face());

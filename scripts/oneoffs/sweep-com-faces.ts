@@ -8,15 +8,18 @@
  *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --limit 200
  *     Dry run on a random sample of that many candidates. Asks the classifier once per model and
  *     writes nothing to the database.
- *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --apply --limit <n>
+ *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --apply --limit <n> --list-out <new file>
  *     The next n candidates by id. Re-run it to continue: a model with a stored verdict is no
  *     longer a candidate.
  *   Both take --concurrency (default 4).
  *
  * Prints counts only, never model ids, text or reasons; it refuses to start with a `prisma*` entry in
  * LOGGING, which prints each query's parameters. A model with a logged moderator nsfw ruling is not
- * locked; rulings from the model form before 2026-10-20 were never logged, so those are not seen.
+ * locked. Rulings from the model form before 2026-10-20 were never logged, so a would-lock model a
+ * moderator acted on before then is not locked either: its id goes to the --list-out file, private,
+ * for moderators (`moderator-list`).
  */
+import { appendFileSync, existsSync, writeFileSync } from 'fs';
 import path from 'path';
 import type { ComFaceIntentWrites } from '~/server/services/model-sfw-face.service';
 
@@ -33,6 +36,8 @@ export type Face = {
   sfwOnly: boolean;
   lockedProperties: string[];
   meta: unknown;
+  /** A moderator acted on the model or a version before nsfw rulings were logged (2026-10-20). */
+  touchedBeforeLogging: boolean;
 };
 
 export type NotLockedReason =
@@ -43,6 +48,7 @@ export type NotLockedReason =
   | 'already-locked'
   | 'relock-suppressed'
   | 'moderator-ruled'
+  | 'moderator-list'
   | 'lock-refused';
 export type Outcome = 'allowed' | 'unavailable' | 'locked' | NotLockedReason;
 
@@ -79,12 +85,12 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   // A face save checks for a moderator's nsfw ruling only since a stored verdict, and no candidate
   // has one: a ruling made before `comFaceIntentRelockSuppressed` existed would go unseen, and a
   // bulk lock would override it. So any logged moderator nsfw ruling keeps the sweep's lock off.
-  let ruled = false;
+  // An unlogged ruling may sit behind an early moderator action: those go to a moderator list.
+  let ruled: 'moderator-ruled' | 'moderator-list' | null = null;
   const lock: ComFaceIntentWrites['lock'] = async (modelId, hash) => {
-    if (await moderatorRuledNsfwSince(modelId, new Date(0))) {
-      ruled = true;
-      return false;
-    }
+    if (await moderatorRuledNsfwSince(modelId, new Date(0))) ruled = 'moderator-ruled';
+    else if (face.touchedBeforeLogging) ruled = 'moderator-list';
+    if (ruled) return false;
     return apply ? lockForComFaceIntent(modelId, hash) : notLockedReason(face, hash) === null;
   };
   const writes: ComFaceIntentWrites = {
@@ -97,7 +103,7 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   );
   if (verdict.status !== 'detected') return verdict.status;
   if (verdict.disputable) return 'locked';
-  if (ruled) return 'moderator-ruled';
+  if (ruled) return ruled;
   return notLockedReason(face, textHash) ?? 'lock-refused';
 }
 
@@ -110,7 +116,12 @@ export async function pool<T>(items: T[], concurrency: number, fn: (item: T) => 
   );
 }
 
-export async function sweep(faces: Face[], apply: boolean, concurrency: number) {
+export async function sweep(
+  faces: Face[],
+  apply: boolean,
+  concurrency: number,
+  onListed: (modelId: number) => void = () => undefined
+) {
   const outcomes: Partial<Record<Outcome, number>> = {};
   const owners = new Set<number>();
   // By error class only: a message can carry a model's text.
@@ -124,6 +135,7 @@ export async function sweep(faces: Face[], apply: boolean, concurrency: number) 
     if (!outcome) return;
     outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
     if (outcome === 'locked') owners.add(face.userId);
+    if (outcome === 'moderator-list') onListed(face.id);
   });
   return { outcomes, ownersLocked: owners.size, failed };
 }
@@ -137,6 +149,8 @@ function arg(name: string) {
 export async function readCandidates(limit: number, apply: boolean) {
   const { Prisma } = await import('@prisma/client');
   const { dbRead } = await import('~/server/db/client');
+  const { constants } = await import('~/server/common/constants');
+  const SYSTEM_USER_ID = constants.system.user.id;
   // A candidate is a .com face (cover and .com title, as the edit re-check reads one) with no
   // stored verdict. A cover with no Image row is counted, never checked.
   const candidate = Prisma.sql`
@@ -151,7 +165,14 @@ export async function readCandidates(limit: number, apply: boolean) {
     FROM "Model" m WHERE ${candidate}`;
   const faces = await dbRead.$queryRaw<Face[]>`
     SELECT m.id, m."userId", m.name, m.description, m.nsfw, m.minor, m.poi, m."sfwOnly",
-           COALESCE(m."lockedProperties", ARRAY[]::text[]) AS "lockedProperties", m.meta
+           COALESCE(m."lockedProperties", ARRAY[]::text[]) AS "lockedProperties", m.meta,
+           EXISTS (
+             SELECT 1 FROM "ModActivity" a JOIN "User" u ON u.id = a."userId" AND u."isModerator"
+             WHERE a."createdAt" < '2026-10-20' AND a."userId" <> ${SYSTEM_USER_ID}
+               AND ((a."entityType" IN ('model', 'Model') AND a."entityId" = m.id)
+                 OR (a."entityType" IN ('modelVersion', 'ModelVersion') AND a."entityId" IN
+                   (SELECT v.id FROM "ModelVersion" v WHERE v."modelId" = m.id)))
+           ) AS "touchedBeforeLogging"
     FROM "Model" m WHERE ${candidate} AND ${coverExists}
     ORDER BY ${apply ? Prisma.sql`m.id` : Prisma.sql`random()`}
     LIMIT ${limit}`;
@@ -188,9 +209,18 @@ async function main() {
   if (!Number.isInteger(concurrency) || concurrency < 1)
     throw new UsageError('--concurrency must be a whole number from 1');
 
+  // The apply's moderator list holds model ids: a private file, never an existing one.
+  const listOut = arg('--list-out');
+  if (apply && !listOut) throw new UsageError('--apply needs --list-out <new path>');
+  if (listOut && existsSync(listOut)) throw new UsageError('--list-out exists; pass a new path');
+  // Appended as each model is listed, since its verdict is already stored and a re-run skips it.
+  // shortcut: a crash between that store and the append drops the id; re-read verdicts if one does.
+  if (apply && listOut) writeFileSync(listOut, '', { mode: 0o600, flag: 'wx' });
+  const onListed = (id: number) => listOut && apply && appendFileSync(listOut, `${id}\n`);
+
   const { candidates, dangling, faces } = await readCandidates(limit, apply);
   const started = Date.now();
-  const { outcomes, ownersLocked, failed } = await sweep(faces, apply, concurrency);
+  const { outcomes, ownersLocked, failed } = await sweep(faces, apply, concurrency, onListed);
   console.log({
     mode: apply ? 'apply' : 'dry run (no writes; locked = would lock)',
     candidates,

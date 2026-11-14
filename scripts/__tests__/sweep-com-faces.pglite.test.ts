@@ -15,6 +15,12 @@ describe('sweep-com-faces candidates', () => {
   beforeAll(async () => {
     await db.exec(`
       CREATE TABLE "Image" (id int PRIMARY KEY);
+      CREATE TABLE "User" (id int PRIMARY KEY, "isModerator" boolean DEFAULT false);
+      CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+      CREATE TABLE "ModActivity" (
+        id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text,
+        "entityId" int, "createdAt" timestamp NOT NULL DEFAULT now()
+      );
       CREATE TABLE "Model" (
         id int PRIMARY KEY, "userId" int NOT NULL, name text NOT NULL, description text,
         nsfw boolean NOT NULL DEFAULT true, minor boolean NOT NULL DEFAULT false,
@@ -30,18 +36,41 @@ describe('sweep-com-faces candidates', () => {
         (4, 1, 'no com title', 13, NULL, NULL, '{}'),
         (5, 1, 'no face', NULL, 'com', NULL, '{}'),
         (6, 1, 'dangling cover', 99, 'com', NULL, '{}'),
-        (7, 2, 'second candidate', 14, 'com', NULL, '{"other": 1}');
+        (7, 2, 'second candidate', 14, 'com', NULL, '{"other": 1}'),
+        (8, 1, 'mod touched a version early', 10, 'com', NULL, '{}'),
+        (9, 1, 'mod touched the model early', 10, 'com', NULL, '{}'),
+        (10, 1, 'touched late, by a non-mod, by the system', 10, 'com', NULL, '{}');
+      INSERT INTO "User" VALUES (50, true), (51, false), (-1, true);
+      INSERT INTO "ModelVersion" VALUES (80, 8), (100, 10);
+      INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt") VALUES
+        (50, 'x', 'modelVersion', 80, '2026-09-01'),
+        (50, 'x', 'Model', 9, '2026-10-19 23:59'),
+        (50, 'x', 'model', 10, '2026-10-20 00:00'),
+        (51, 'x', 'model', 10, '2026-09-01'),
+        (-1, 'x', 'ModelVersion', 100, '2026-09-01'),
+        (50, 'x', 'model', 1, '2026-11-01');
     `);
   });
 
   it('takes .com faces with no stored verdict, skipping deleted models and missing covers', async () => {
     const { candidates, dangling, faces } = await readCandidates(10, true);
     expect({ candidates, dangling, ids: faces.map((f) => f.id) }).toEqual({
-      candidates: 2,
+      candidates: 5,
       dangling: 1,
-      ids: [1, 7],
+      ids: [1, 7, 8, 9, 10],
     });
     expect(faces[0].lockedProperties).toEqual([]);
+  });
+
+  it('flags a moderator action on the model or a version before 2026-10-20 only', async () => {
+    const { faces } = await readCandidates(10, true);
+    expect(Object.fromEntries(faces.map((f) => [f.id, f.touchedBeforeLogging]))).toEqual({
+      1: false,
+      7: false,
+      8: true,
+      9: true,
+      10: false,
+    });
   });
 
   it('caps the batch at --limit', async () => {
