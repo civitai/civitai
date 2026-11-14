@@ -1344,7 +1344,7 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
-  /** A base model in the submit restricts mature generation. */
+  /** The submit's ecosystem, or a resource's base model, restricts mature generation. */
   capOutput: boolean;
 }> {
   data = expandAvatarData(data);
@@ -1418,6 +1418,17 @@ export async function createWorkflowStepsFromGraph({
     // as Nullable<Int32>, so a generated seed above 2^31-1 fails orchestrator
     // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
+    // Handlers branch on the checkpoint's base model, so prefer the stored one over the client's.
+    ...('model' in data && data.model
+      ? {
+          model: {
+            ...data.model,
+            baseModel:
+              enrichedResources.find((r) => r.id === data.model?.id)?.baseModel ??
+              data.model.baseModel,
+          },
+        }
+      : {}),
   };
 
   // Convert graph output to legacy {resources, params} format for storage.
@@ -1620,6 +1631,7 @@ export async function createWorkflowStepsFromGraph({
  * with its token-derived `isGreen`/`isModerator` in the router). Resource
  * enrichment, canGenerate/availability gating, and POI detection still run
  * (inside `createWorkflowStepsFromGraph`), so the resource belt is intact.
+ * Callers must apply `capOutput` to the submit body.
  */
 export async function createWorkflowStepsFromGraphInput({
   input,

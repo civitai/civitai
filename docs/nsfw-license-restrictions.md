@@ -32,7 +32,7 @@ usually restricts `generation` alone: users can still post mature content they m
 
 All readers go through these, never a copied list:
 
-- `isMatureRestricted(baseModel, surface)`
+- `isMatureRestricted(baseModel, surface)`: the name match is case-insensitive
 - `matureRestrictedBaseModels(surface)`
 - `MATURE_RESTRICTED_LEVELS`: the levels a restriction covers (R, X, XXX)
 
@@ -45,6 +45,8 @@ mature images on the next hourly run: count them before shipping that change.
 
 ## Generation
 
-A submit is capped when any of its resources (checkpoint or add-on) is on a base model restricting
-`generation`. A submit with no resources is decided by its ecosystem, and only when every base model
-in the ecosystem restricts generation: SDXL holds SDXL Turbo but is not restricted.
+A submit is capped when its ecosystem restricts `generation`, or when any of its resources
+(checkpoint or add-on) is on a base model that does. An ecosystem restricts only when every base
+model in it does: SDXL holds SDXL Turbo but is not restricted. The ecosystem counts even when
+resources are present, so a request on a restricted ecosystem stays capped whatever its resources
+are labelled, raw-AIR epochs included.

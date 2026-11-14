@@ -139,16 +139,17 @@ describe('generator base model picker', () => {
 
   // Today Ideogram is the only offered ecosystem whose every base is restricted; SDXL holds SDXL
   // Turbo but is not. If a new one appears, add it here after checking the badge belongs.
-  test('marks Ideogram and nothing else on red', async () => {
+  test('marks Ideogram and Fibo 2.0 and nothing else on red', async () => {
     renderPicker();
     await expect.element(page.getByText('Ideogram', { exact: true })).toBeInTheDocument();
-    expect(row('Ideogram')?.querySelector('[data-testid="sfw-only-badge"]')).toBeTruthy();
+    for (const name of ['Ideogram', 'Fibo 2.0'])
+      expect(row(name)?.querySelector('[data-testid="sfw-only-badge"]'), name).toBeTruthy();
     for (const name of ['Stable Diffusion XL', 'Illustrious']) {
       const r = row(name);
       expect(r, `${name} row rendered`).toBeTruthy();
       expect(r?.querySelector('[data-testid="sfw-only-badge"]'), name).toBeNull();
     }
-    expect(badges()).toHaveLength(1);
+    expect(badges()).toHaveLength(2);
   });
 
   test('marks nothing on .com', async () => {
