@@ -118,3 +118,47 @@ describe('GET /api/v1/articles/[id] by region', () => {
     expect(aboveSfw.body).toEqual(missing.body);
   });
 });
+
+describe('GET /api/v1/articles/[id] author avatar', () => {
+  beforeEach(() => {
+    mockGetArticleById.mockReset();
+    mockIsRegionRestricted.mockReset();
+  });
+
+  function withAuthor(profilePicture: { url: string; nsfwLevel: number } | null) {
+    mockGetArticleById.mockResolvedValue({
+      ...article(PG),
+      user: { id: 3, username: 'author', image: 'unrated.png', profilePicture },
+    });
+  }
+  const author = (answer: { body?: Record<string, unknown> }) =>
+    answer.body?.user as { image: unknown; profilePicture: unknown };
+
+  it('never serves the unrated image', async () => {
+    withAuthor(null);
+    const { elsewhere, restricted } = await bothRegions();
+    expect(author(elsewhere).image).toBeNull();
+    expect(author(restricted).image).toBeNull();
+  });
+
+  it('drops a profile picture above the served level', async () => {
+    withAuthor({ url: 'avatar.png', nsfwLevel: R });
+    const { elsewhere, restricted } = await bothRegions();
+    expect(author(elsewhere).profilePicture).toBeNull();
+    expect(author(restricted).profilePicture).toBeNull();
+  });
+
+  it('serves a PG13 profile picture only where the level is PG|PG13', async () => {
+    withAuthor({ url: 'avatar.png', nsfwLevel: PG13 });
+    const { elsewhere, restricted } = await bothRegions();
+    expect(author(elsewhere).profilePicture).toBeNull();
+    expect(author(restricted).profilePicture).toMatchObject({ url: 'avatar.png' });
+  });
+
+  it('serves a PG profile picture everywhere (control)', async () => {
+    withAuthor({ url: 'avatar.png', nsfwLevel: PG });
+    const { elsewhere, restricted } = await bothRegions();
+    expect(author(elsewhere).profilePicture).toMatchObject({ url: 'avatar.png' });
+    expect(author(restricted).profilePicture).toMatchObject({ url: 'avatar.png' });
+  });
+});

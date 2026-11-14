@@ -115,6 +115,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { heldPostTextPostIds, heldTextError } from '~/server/services/post-text-hold';
 import {
   Availability,
   CollectionMode,
@@ -1341,7 +1342,11 @@ export const deletePost = async ({
   id,
   isModerator,
   deletedById,
-}: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
+  viewerIsModerator = isModerator,
+}: GetByIdInput & { isModerator?: boolean; deletedById?: number; viewerIsModerator?: boolean }) => {
+  // The delete trigger on "PostText" refuses it too; this refuses it with a message.
+  if ((await heldPostTextPostIds({ postIds: [id] })).length)
+    throw heldTextError(viewerIsModerator, 'Text in this post');
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
@@ -1713,6 +1718,20 @@ export const addPostImage = async ({
   }
 
   const { generationWorkflowId, ...imageProps } = props;
+  // On a post with storyline text items, a new image goes after the last item whatever index the
+  // client sent: an editor without text items counts only images.
+  const lastText = await dbWrite.postText.findFirst({
+    where: { postId: props.postId },
+    orderBy: { index: 'desc' },
+    select: { index: true },
+  });
+  if (lastText) {
+    const imageEnd = await dbWrite.image.aggregate({
+      where: { postId: props.postId },
+      _max: { index: true },
+    });
+    imageProps.index = Math.max(lastText.index, imageEnd._max.index ?? -1) + 1;
+  }
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
@@ -2098,10 +2117,36 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {
-  const transaction = await dbWrite.$transaction(
-    imageIds.map((id, index) => dbWrite.image.update({ where: { id, postId }, data: { index } }))
-  );
+/**
+ * Without `items` (an editor from before text items, or with them off), a post that has text keeps
+ * every text row where it is: the listed images take, in order, the indexes those images already hold.
+ */
+async function imageOnlyReorder(postId: number, imageIds: number[]) {
+  const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
+  if (!hasText) return imageIds.map((id, index) => ({ id, index }));
+  const held = await dbWrite.image.findMany({
+    where: { postId, id: { in: imageIds } },
+    select: { index: true },
+  });
+  const indexes = held.map((image) => image.index ?? 0).sort((a, b) => a - b);
+  return imageIds.slice(0, indexes.length).map((id, i) => ({ id, index: indexes[i] }));
+}
+
+export const reorderPostImages = async ({
+  id: postId,
+  imageIds,
+  items,
+}: ReorderPostImagesInput) => {
+  const writes = items
+    ? items.map(({ type, id }, index) =>
+        type === 'image'
+          ? dbWrite.image.update({ where: { id, postId }, data: { index } })
+          : dbWrite.postText.update({ where: { id, postId }, data: { index } })
+      )
+    : (await imageOnlyReorder(postId, imageIds)).map(({ id, index }) =>
+        dbWrite.image.update({ where: { id, postId }, data: { index } })
+      );
+  const transaction = await dbWrite.$transaction(writes);
 
   await updatePostNsfwLevel(postId);
   await bustCachesForPosts(postId);

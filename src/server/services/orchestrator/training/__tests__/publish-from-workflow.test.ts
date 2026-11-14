@@ -1048,3 +1048,82 @@ describe('stampWorkflowPublished', () => {
     consoleSpy.mockRestore();
   });
 });
+
+describe('publishing Kohya Studio runs', () => {
+  const input = {
+    engine: 'kohya',
+    model: trainingModelInfo.illustrious.air,
+    steps: 2000,
+    maxTrainEpochs: 10,
+    numRepeats: 20,
+    trainBatchSize: 2,
+    resolution: 1024,
+    unetLR: 0.0005,
+    textEncoderLR: 0,
+    trainTextEncoder: false,
+    networkDim: 32,
+    networkAlpha: 16,
+    optimizerType: 'Lion8bit',
+    lrScheduler: 'polynomial',
+    lrSchedulerNumCycles: 3,
+    enableBucket: true,
+    keepTokens: 1,
+    clipSkip: 1,
+    flipAugmentation: false,
+    noiseOffset: 0,
+    minSnrGamma: 5,
+    shuffleCaption: true,
+    seed: 42,
+    vParameterization: true,
+    zeroTerminalSnr: true,
+    samples: { prompts: ['mychar, portrait'], negativePrompt: 'blurry' },
+  };
+  const kohyaWorkflow = (model = input.model) => {
+    const wf = studioWorkflow();
+    (wf.steps![0] as unknown as { input: object }).input = { ...input, model };
+    return wf;
+  };
+
+  it('stores the actual engine and all supported Kohya controls', async () => {
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: kohyaWorkflow(),
+      selectedEpochNumber: 1,
+    });
+    const version = mockUpsertModelVersion.mock.calls[0]![0];
+    expect(version.baseModel).toBe('Illustrious');
+    expect(version.trainingDetails.negativePrompt).toBe('blurry');
+    expect(version.trainingDetails.params).toMatchObject({
+      engine: 'kohya',
+      optimizerType: 'Lion8bit',
+      lrScheduler: 'polynomial',
+      targetSteps: 2000,
+      maxTrainEpochs: 10,
+      numRepeats: 20,
+      trainBatchSize: 2,
+      vParameterization: true,
+      zeroTerminalSnr: true,
+    });
+    expect(trainingDetailsObj.safeParse(version.trainingDetails).success).toBe(true);
+  });
+
+  it.each(['Pony', 'Illustrious', 'NoobAI', 'SDXL 1.0', 'SDXL Lightning'])(
+    'preserves custom checkpoint classification %s when its AIR uses sdxl',
+    async (baseModel) => {
+      dbMock.dbWrite.modelVersion.findFirst.mockResolvedValueOnce({ baseModel } as never);
+      const model = 'urn:air:sdxl:checkpoint:civitai:123@456';
+      await createDraftModelFromWorkflow({
+        user: USER,
+        workflow: kohyaWorkflow(model),
+        selectedEpochNumber: 1,
+      });
+      const version = mockUpsertModelVersion.mock.calls[0]![0];
+      expect(version.baseModel).toBe(baseModel);
+      expect(version.trainingDetails.baseModel).toBe(model);
+      expect(dbMock.dbWrite.modelVersion.findFirst).toHaveBeenCalledWith({
+        where: { id: 456, modelId: 123 },
+        select: { baseModel: true },
+      });
+    }
+  );
+});

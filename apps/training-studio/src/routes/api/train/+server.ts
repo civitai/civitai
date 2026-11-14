@@ -10,6 +10,7 @@ import {
 } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 import { datasetRatingFor } from '$lib/server/dataset-rating';
+import { isKohyaAllowed } from '$lib/server/flipt';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 
 // Submit the real training workflow(s) — one per run — and return their ids. This spends Buzz, so it's
@@ -34,7 +35,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       runs,
       locals.user.id,
       textCheckCookie(locals, request),
-      await datasetRatingFor(locals.user)
+      await datasetRatingFor(locals.user),
+      await isKohyaAllowed(locals)
     );
   } catch (err) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);

@@ -34,6 +34,7 @@ import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSimilarImage } from '~/components/Search/useSimilarImage';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
@@ -102,6 +103,14 @@ function ImagesHitList() {
   useEffect(() => {
     if (query && similar.imageId) clearSimilar(undefined);
   }, [query, similar.imageId, clearSimilar]);
+  useScrollToTopOnChange(
+    JSON.stringify({
+      query,
+      similarTo,
+      refinementList: indexUiState.refinementList,
+      range: indexUiState.range,
+    })
+  );
 
   // Image search ranks by meaning, so it needs words (or an image) to rank by; filters alone list
   // nothing.

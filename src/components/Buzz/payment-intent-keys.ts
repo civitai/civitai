@@ -11,6 +11,9 @@ import { mintPurchaseKey } from '~/utils/purchase-key';
  * A key is released when the action ends: on success, or when the server declined (a 4xx other
  * than 408 and 429: nothing was charged). Any other failure may have charged, so the key is held
  * and the next attempt at the same action reuses it.
+ *
+ * The one hold/release rule for every keyed payment on the client, cosmetic shop purchases
+ * included (`withPurchaseIntentKey`, intent `cosmetic:<shopItemId>`).
  */
 const held = new Map<string, string>();
 

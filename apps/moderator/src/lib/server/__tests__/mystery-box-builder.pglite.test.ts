@@ -432,6 +432,86 @@ describe('editing a published box', () => {
   });
 });
 
+describe('a taken-down cosmetic', () => {
+  const takeDown = (cosmeticId: number) =>
+    db.query(
+      `INSERT INTO "CosmeticShopItem" ("cosmeticId", "unitAmount", title, status, meta)
+       VALUES ($1, 500, 'Listing', 'Archived', '{"takedown":{"reason":"x","moderatorId":1,"at":"t"}}')`,
+      [cosmeticId]
+    );
+
+  // As the takedown pulls it: disabled in place, under the box's current version.
+  it('cannot be turned back on in a box, and the save writes nothing', async () => {
+    const { boxId, draft } = await publishedBox();
+    await db.query(
+      `UPDATE "BoxContent" SET enabled = false WHERE "boxDefinitionId" = $1 AND "rewardDefinitionId" = $2`,
+      [boxId, await defOf(2)]
+    );
+    await takeDown(2);
+
+    await expect(
+      saveAt({ boxId, expectedVersion: 2, draft, publish: false, userId: MOD })
+    ).rejects.toThrow('Taken down from the shop');
+    const [{ enabled }] = await rows<{ enabled: boolean }>(
+      `SELECT enabled FROM "BoxContent" WHERE "boxDefinitionId" = $1 AND "rewardDefinitionId" = $2`,
+      [boxId, await defOf(2)]
+    );
+    expect(enabled).toBe(false);
+  });
+
+  it('cannot be added to a box', async () => {
+    const { boxId, draft } = await publishedBox();
+    await takeDown(5);
+
+    await expect(
+      saveAt({
+        boxId,
+        expectedVersion: 2,
+        draft: {
+          ...draft,
+          contents: [
+            ...draft.contents,
+            { id: null, rewardDefinitionId: await defOf(5), tierKey: 'common', enabled: true },
+          ],
+        },
+        publish: false,
+        userId: MOD,
+      })
+    ).rejects.toThrow('Taken down from the shop');
+  });
+
+  // Already enabled before the takedown pulled it elsewhere: moving it is not turning it on.
+  it('does not block a save that moves it without turning it on', async () => {
+    const { boxId, draft } = await publishedBox();
+    const confetti = await defOf(5);
+    const withConfetti: BoxDraft = {
+      ...draft,
+      contents: [
+        ...draft.contents,
+        { id: null, rewardDefinitionId: confetti, tierKey: 'common', enabled: true },
+      ],
+    };
+    await saveAt({ boxId, expectedVersion: 2, draft: withConfetti, publish: false, userId: MOD });
+    await takeDown(5);
+    const saved = await savedDraft(boxId, withConfetti);
+
+    await expect(
+      saveAt({
+        boxId,
+        expectedVersion: 3,
+        draft: {
+          ...saved,
+          contents: saved.contents.map((c) =>
+            c.rewardDefinitionId === confetti ? { ...c, tierKey: 'rare' } : c
+          ),
+        },
+        publish: false,
+        userId: MOD,
+      })
+    ).resolves.toMatchObject({ version: 4 });
+  });
+});
+
 // A save holds the lock every open waits on, so a large box must not have every row rewritten.
 describe('a save writes only the tier and content rows it changes', () => {
   const countWrites = async () => {
