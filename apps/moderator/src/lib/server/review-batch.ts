@@ -27,9 +27,6 @@ export const TIER_PAGE: Record<ReviewTier, string> = {
   general: REVIEW_MEDIA_PAGE,
 };
 
-/** The batch routes and their sign-in answer 404 unless this is exactly 'true'. */
-export const reviewBatchesEnabled = () => env.REVIEW_BATCHES_ENABLED === 'true';
-
 export type LoadedBatch = ReviewBatchRecord & { hash: string };
 
 const batchKey = (hash: string) =>

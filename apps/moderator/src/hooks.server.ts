@@ -14,6 +14,7 @@ import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/w
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
 import {
   batchPathTier,
+  reviewBatchesEnabled,
   clearedReviewCookie,
   clearedSheetCookie,
   isSheetImagePath,
@@ -23,7 +24,6 @@ import {
   REVIEW_SHEET_COOKIE,
   SHEET_COOKIE,
 } from '$lib/server/held-sheet';
-import { reviewBatchesEnabled } from '$lib/server/review-batch';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.

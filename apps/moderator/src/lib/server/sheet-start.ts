@@ -5,10 +5,11 @@ import {
   type BatchBinding,
   issueCode,
   parseStartParams,
+  reviewBatchesEnabled,
   type StartParams,
   webSessionClaims,
 } from './held-sheet';
-import { getReviewBatch, reviewBatchesEnabled, TIER_PAGE } from './review-batch';
+import { getReviewBatch, TIER_PAGE } from './review-batch';
 
 // The page and its redirect must not be framed, cached or sent on as a referrer.
 // `form-action` names the callback's origin too: the confirmed form ends in a redirect to it.

@@ -1,6 +1,10 @@
 import type { RequestHandler } from './$types';
-import { exchangeReviewCode, REVIEW_SHEET_COOKIE, reviewCookie } from '$lib/server/held-sheet';
-import { reviewBatchesEnabled } from '$lib/server/review-batch';
+import {
+  exchangeReviewCode,
+  REVIEW_SHEET_COOKIE,
+  reviewBatchesEnabled,
+  reviewCookie,
+} from '$lib/server/held-sheet';
 
 // Reached without a web session: hooks.server.ts lets this one path through, and `locals.user` is unset.
 export const POST: RequestHandler = async ({ request, cookies }) => {

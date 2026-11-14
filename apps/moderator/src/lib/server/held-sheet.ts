@@ -286,3 +286,6 @@ export const clearedSheetCookie = () => sheetCookie('', 0);
 export function sheetCookie(token: string, maxAge = SHEET_IDLE_SECONDS): string {
   return `${SHEET_COOKIE}=${token}; Path=${SHEET_COOKIE_PATH}; Max-Age=${maxAge}; Secure; HttpOnly; SameSite=Strict`;
 }
+
+/** The review batch routes and their sign-in answer 404 unless this is exactly 'true'. */
+export const reviewBatchesEnabled = () => env.REVIEW_BATCHES_ENABLED === 'true';

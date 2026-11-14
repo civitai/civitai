@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as FullUserCredential from '~/server/auth/full-user-credential';
 
 /**
  * The mint endpoint's audit row. The source card text is read to route the batch and must never be
@@ -15,7 +16,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   })),
 }));
 vi.mock('~/server/auth/full-user-credential', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/auth/full-user-credential')>()),
+  ...(await importOriginal<typeof FullUserCredential>()),
   isFullScopeSession: () => true,
 }));
 vi.mock('~/server/clickhouse/client', () => ({
