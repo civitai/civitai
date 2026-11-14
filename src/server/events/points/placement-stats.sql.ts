@@ -1,46 +1,38 @@
-import { refereeCreditCtes, seasonRowsCte } from '~/server/events/points/referee.sql';
-
-// What one person's placed hats have earned since each went on what it is on now, by the referee's
-// own CTEs, so it matches scoring. Read only the rows that can credit this owner: their hats' rows
-// and the turf rows that name them, which share their daily limit with their hats.
+// How many signed-in views each of one person's placed hats has had on what it is on now, since it
+// went on. A view row is written once per viewer, entity and UTC day, so this counts viewer-days.
+// One scan from the earliest placement on, narrowed by ownerId (the sort key's third column) on
+// every day; no season-wide read, so it is safe on the hats page. Counts views, not points: points
+// depend on the owner's other content and turf through the daily limit, which this does not read.
 //
-// A day's limit is filled per (owner, person) in the referee's order (first time, type, entity), and
-// every credit keeps the points it was granted, so the points of one hat on one entity are the sum of
-// its own credits: deterministic, and never more than the hat earned over the same span.
-//
-// Restricted people are left out by the caller, per actor: the referee's limit is per (day, owner,
-// actor), so dropping an actor afterwards is the same as never reading them. The query runs with no
-// one restricted and returns one row per (hat, actor).
-//
-// Params: the referee's (recomputeFrom = the UTC day of the earliest placement), plus userId and
+// Params: event, userId, from (the earliest placement's startedAt), to (now), and
 // placements: Array(Tuple(cosmeticId, claimKey, entityType, entityId, startedAt)).
-export const hatPlacementStatsSql = /* sql */ `
-WITH
-${seasonRowsCte(`
-      AND (ownerId = {userId:Int32} OR (ownerId = 0 AND has(players, {userId:Int32})))`)}${refereeCreditCtes},
-  placements AS (
-    SELECT p.1 AS pCosmeticId, p.2 AS pClaimKey, p.3 AS pEntityType, p.4 AS pEntityId, p.5 AS pStartedAt
-    FROM (
-      SELECT arrayJoin({placements:Array(Tuple(Int32, String, String, Int32, DateTime64(3)))}) AS p
-    )
-  ),
-  mine AS (
-    SELECT type, actorId, entityType, entityId, firstTime, granted,
-      hat.2 AS hatCosmeticId, hat.3 AS hatClaimKey
-    FROM credited
-    WHERE hat.1 = {userId:Int32}
-  )
-SELECT
-  hatCosmeticId AS cosmeticId, hatClaimKey AS claimKey, actorId,
-  toUInt64(sum(granted)) AS hatPoints,
-  toUInt64(sumIf(granted, onEntity)) AS points,
-  toUInt64(countIf(type = 'view' AND granted > 0 AND onEntity)) AS views
+export const hatPlacementViewsSql = /* sql */ `
+SELECT v.cosmeticId AS cosmeticId, v.claimKey AS claimKey, count() AS views
 FROM (
-  SELECT *, entityType = pEntityType AND entityId = pEntityId AS onEntity
-  FROM mine
-  INNER JOIN placements ON hatCosmeticId = pCosmeticId AND hatClaimKey = pClaimKey
-  WHERE firstTime >= pStartedAt
-)
-GROUP BY cosmeticId, claimKey, actorId
-HAVING hatPoints > 0
+  SELECT cosmeticId, claimKey, entityType, entityId, time
+  FROM event_point_events
+  WHERE event = {event:String}
+    AND ownerId = {userId:Int32}
+    AND time >= {from:DateTime64(3)} AND time < {to:DateTime64(3)}
+    AND type = 'view' AND op = 'add'
+    AND actorId != ownerId
+    -- Set lookups, built once: a per-row scan of every placement timed out on a big owner.
+    AND entityId IN (SELECT arrayJoin(arrayMap(p -> p.4, {placements:Array(Tuple(Int32, String, String, Int32, DateTime64(3)))})))
+    AND (cosmeticId, claimKey, entityType, entityId) IN (
+      SELECT arrayJoin(arrayMap(p -> (p.1, p.2, p.3, p.4), {placements:Array(Tuple(Int32, String, String, Int32, DateTime64(3)))}))
+    )
+) AS v
+-- A hat's latest placement only, joined on its entity too: if a move left two open rows for one hat,
+-- a view of the old entity neither counts nor counts twice.
+INNER JOIN (
+  SELECT cosmeticId, claimKey, current.1 AS entityType, current.2 AS entityId, current.3 AS startedAt
+  FROM (
+    SELECT p.1 AS cosmeticId, p.2 AS claimKey, argMax((p.3, p.4, p.5), p.5) AS current
+    FROM (SELECT arrayJoin({placements:Array(Tuple(Int32, String, String, Int32, DateTime64(3)))}) AS p)
+    GROUP BY cosmeticId, claimKey
+  )
+) AS s ON v.cosmeticId = s.cosmeticId AND v.claimKey = s.claimKey
+  AND v.entityType = s.entityType AND v.entityId = s.entityId
+WHERE v.time >= s.startedAt
+GROUP BY v.cosmeticId, v.claimKey
 `;

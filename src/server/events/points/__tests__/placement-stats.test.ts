@@ -1,114 +1,69 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
+import '~/__tests__/mocks/redis.mock';
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
 
 const query = vi.hoisted(() => vi.fn());
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { query },
   clickhouseLongQueries: { query },
 }));
-vi.mock('~/server/utils/cache-helpers', () => ({
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
   fetchThroughCache: (_key: string, fn: () => Promise<unknown>) => fn(),
 }));
 
-const EVENT = {
-  name: 'e',
-  startDate: new Date('2026-11-01T00:00:00.000Z'),
-  endDate: new Date('2026-12-01T00:00:00.000Z'),
-  teams: [],
-  scoring: {
-    capPerActorPerOwnerPerDay: 10,
-    types: { view: { weight: 1, once: 'day' as const, entities: ['Image' as const] } },
-    newAccountDays: 7,
-    finalizeAfterMs: 0,
-  },
-};
 const NOW = new Date('2026-11-10T12:00:00.000Z');
-const PLACED = {
-  cosmeticId: 1,
-  claimKey: 'k1',
+const placed = (cosmeticId: number, startedAt: string) => ({
+  cosmeticId,
+  claimKey: `k${cosmeticId}`,
   entityType: 'Image',
-  entityId: 10,
-  startedAt: new Date('2026-11-09T00:00:00.000Z'),
-};
-
-// $queryRaw in call order: the open placements, the hidden people, the first new account.
-function postgres(hidden: number[]) {
-  dbMock.dbRead.$queryRaw
-    .mockResolvedValueOnce([PLACED] as never)
-    .mockResolvedValueOnce(hidden.map((id) => ({ id })) as never)
-    .mockResolvedValueOnce([] as never);
-}
-const ledger = (rows: object[]) => query.mockResolvedValue({ json: async () => rows });
-const row = (actorId: number, points: number) => ({
-  cosmeticId: 1,
-  claimKey: 'k1',
-  actorId,
-  hatPoints: points,
-  points,
-  views: 1,
+  entityId: 10 + cosmeticId,
+  startedAt: new Date(startedAt),
 });
+const PLACED = [placed(1, '2026-11-09T06:00:00.000Z'), placed(2, '2026-11-05T00:00:00.000Z')];
+const ledger = (rows: object[]) => query.mockResolvedValue({ json: async () => rows });
 
 async function load() {
   vi.resetModules();
-  return (await import('~/server/events/points/placement-stats')).getHatPlacementStats;
+  return (await import('~/server/events/points/placement-stats')).getHatPlacementViews;
 }
 
 beforeEach(() => {
   query.mockReset();
   dbMock.dbRead.$queryRaw.mockReset();
+  dbMock.dbRead.$queryRaw.mockResolvedValue(PLACED as never);
 });
 
-describe('getHatPlacementStats', () => {
-  it('leaves out what hidden people gave, as the referee does', async () => {
+describe('getHatPlacementViews', () => {
+  it('reads each hat from its own placement on, and reports a hat with no views as 0', async () => {
     const get = await load();
-    postgres([5]);
-    ledger([row(5, 4), row(6, 3)]);
-    expect(await get(EVENT, 100, NOW)).toEqual([
-      { cosmeticId: 1, claimKey: 'k1', points: 3, views: 1 },
+    ledger([{ cosmeticId: 1, claimKey: 'k1', views: '7' }]);
+    expect(await get('e', 100, NOW)).toEqual([
+      { cosmeticId: 1, claimKey: 'k1', views: 7 },
+      { cosmeticId: 2, claimKey: 'k2', views: 0 },
+    ]);
+    const params = query.mock.calls[0][0].query_params;
+    expect(params.from).toBe('2026-11-05 00:00:00.000');
+    expect(params.placements).toEqual([
+      [1, 'k1', 'Image', 11, '2026-11-09 06:00:00.000'],
+      [2, 'k2', 'Image', 12, '2026-11-05 00:00:00.000'],
     ]);
   });
 
-  it('shows nothing for an owner the referee hides', async () => {
+  it('asks ClickHouse once for a user reloading while a read is in flight', async () => {
     const get = await load();
-    postgres([100]);
-    ledger([row(6, 3)]);
-    expect(await get(EVENT, 100, NOW)).toEqual([
-      { cosmeticId: 1, claimKey: 'k1', points: 0, views: 0 },
-    ]);
-  });
-
-  // The referee's config path: the event's scoring, with the live weights hash over its weights.
-  it('scores with the live weights and the event limit the referee uses', async () => {
-    const get = await load();
-    postgres([]);
     ledger([]);
-    redisMock.sysRedis.hGetAll.mockResolvedValueOnce({ view: '3' });
-    await get({ ...EVENT, scoring: { ...EVENT.scoring, capPerActorPerOwnerPerDay: 4 } }, 100, NOW);
-    expect(query.mock.calls[0][0].query_params).toMatchObject({
-      types: ['view'],
-      weights: [3],
-      cap: 4,
-    });
-  });
-
-  it('shows nothing rather than scoring with the config weights when the live ones cannot be read', async () => {
-    const get = await load();
-    postgres([]);
-    ledger([row(6, 3)]);
-    redisMock.sysRedis.hGetAll.mockRejectedValueOnce(new Error('sysRedis down'));
-    expect(await get(EVENT, 100, NOW)).toBeNull();
-    expect(query).not.toHaveBeenCalled();
+    await Promise.all([get('e', 100, NOW), get('e', 100, NOW), get('e', 100, NOW)]);
+    expect(query).toHaveBeenCalledOnce();
   });
 
   it('returns null when ClickHouse fails, then leaves it alone for a while', async () => {
     const get = await load();
-    postgres([]);
     query.mockRejectedValue(new Error('Timeout exceeded'));
-    expect(await get(EVENT, 100, NOW)).toBeNull();
-    dbMock.dbRead.$queryRaw.mockResolvedValue([PLACED] as never);
-    expect(await get(EVENT, 100, NOW)).toBeNull();
+    expect(await get('e', 100, NOW)).toBeNull();
+    expect(await get('e', 101, NOW)).toBeNull();
     expect(query).toHaveBeenCalledOnce();
   });
 });

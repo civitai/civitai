@@ -46,11 +46,16 @@ const media = (id: number, type: 'image' | 'video', nsfwLevel: number) =>
 describe('EventContentThumb play button', () => {
   test('a video the viewer may see plays on tap', async () => {
     const onPlay = vi.fn();
+    // Stands in for the hat wrapper, whose click bursts the hat.
+    const onCard = vi.fn();
     renderWithProviders(
-      <EventContentThumb entityType="Image" image={media(1, 'video', 1)} onPlay={onPlay} />
+      <div onClick={onCard}>
+        <EventContentThumb entityType="Image" image={media(1, 'video', 1)} onPlay={onPlay} />
+      </div>
     );
     await page.getByRole('button', { name: 'Play video' }).click();
     expect(onPlay).toHaveBeenCalledOnce();
+    expect(onCard).not.toHaveBeenCalled();
   });
 
   // Each beside a video that does get one, so the count is read once the guard has settled.

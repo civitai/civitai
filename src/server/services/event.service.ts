@@ -1,4 +1,4 @@
-import { getHatPlacementStats } from '~/server/events/points/placement-stats';
+import { getHatPlacementViews } from '~/server/events/points/placement-stats';
 import { getTurfEvent } from '~/server/events/turf/turf.service';
 import { Prisma } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
@@ -651,15 +651,13 @@ export async function getMyEventHats({
   }
 }
 
-// What each of the caller's placed hats has earned on what it is on now. Null when ClickHouse could
-// not be read: the hats page then leaves the line out.
 export async function getMyEventHatPlacementStats({
   event,
   user,
 }: EventInput & { user: { id: number; isModerator?: boolean } }) {
   try {
-    const scored = await eventEngine.getReadableScoredEvent(event, user);
-    return await getHatPlacementStats(scored, user.id);
+    await eventEngine.getReadableScoredEvent(event, user);
+    return await getHatPlacementViews(event, user.id);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

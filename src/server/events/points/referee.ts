@@ -218,7 +218,7 @@ export function refereeQueryParams(
   };
 }
 
-export const MAX_INT32 = 2147483647;
+const MAX_INT32 = 2147483647;
 
 // Who must not earn or give points. Hidden (banned, deleted, excluded from event points): looked up
 // in Postgres among the people the recomputed rows involve. New accounts: every id from the first
@@ -249,14 +249,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window, deadline: nu
     result.json<{ actors: number[]; owners: number[] }>()
   );
   const ids = [...new Set([...(users?.actors ?? []), ...(users?.owners ?? [])].map(Number))];
-  return restrictedAmong(event, ids);
-}
 
-// Which of these people are hidden, and the first new account's id (the rules: restrictedUsers).
-export async function restrictedAmong(
-  event: Pick<RefereeEvent, 'startDate' | 'scoring'>,
-  ids: number[]
-) {
   const hidden: number[] = [];
   for (const part of chunk(ids, 10_000)) {
     const rows = await dbRead.$queryRaw<{ id: number }[]>`

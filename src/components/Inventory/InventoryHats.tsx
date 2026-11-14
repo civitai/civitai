@@ -58,10 +58,10 @@ function EventHats({ event, owned }: { event: string; owned: OwnedHat[] }) {
     isError,
     dataUpdatedAt,
   } = trpc.event.getMyHats.useQuery({ event });
-  // Its own read, so a slow or failed one never holds up the hats: their cards just leave the line out.
+  // Not part of getMyHats: a slow ClickHouse must never hold up the hats.
   const { data: placementStats } = trpc.event.getMyHatPlacementStats.useQuery(
     { event },
-    { enabled: !!hats?.some((h) => h.placedOn), staleTime: 3 * 60_000, retry: false }
+    { enabled: !!hats?.some((h) => h.placedOn), staleTime: 5 * 60_000, retry: false }
   );
   const teamColor = useTeamColor();
   const definition = getEventDecorationDefinition(event);

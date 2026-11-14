@@ -35,7 +35,7 @@ export function MyHatCard({
   /** Minutes until the move cooldown ends. */
   minutesLeft: number;
   onPlace?: () => void;
-  /** What the hat has earned where it is now, since it went on. */
+  /** Views of what the hat is on now, since it went on. */
   placement?: PlacementStats;
 }) {
   const image = hat.placedOn?.image;
@@ -98,15 +98,14 @@ export function MyHatCard({
         </div>
         {hat.placedOn && placement && (
           <Tooltip
-            label="Updates every few minutes and runs up to about 20 minutes behind. Counts views from signed-in people."
+            label="Views from signed-in people. Updates every few minutes."
             multiline
             w={240}
             withArrow
           >
             <Text size="xs" c="dimmed" data-testid="my-hat-placement-stats">
               On this {ENTITY_NOUN[hat.placedOn.entityType] ?? 'post'}:{' '}
-              {plural(placement.views, 'view')} · {abbreviateNumber(placement.points)} pts since you
-              placed it
+              {plural(placement.views, 'view')} since you placed it
             </Text>
           </Tooltip>
         )}

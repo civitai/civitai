@@ -28,27 +28,24 @@
 //
 // Params: event, seasonStart, recomputeFrom, cut, removeCut, cap, types (Array(String)), weights (Array(UInt32),
 // aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), newAccountMinId.
-
-// The season's ledger rows, in two scans (why: eventPointsRefereeSql). `scope` adds AND lines to
-// both; the referee passes none.
-export const seasonRowsCte = (scope = '') => /* sql */ `  seasonRows AS (
+export const eventPointsRefereeSql = /* sql */ `
+WITH
+  -- Two scans, each with its own time range: the primary key (event, toDate(time), ...) can prune
+  -- daily rows to the recomputed days only this way. One OR across both ranges reads the whole season.
+  seasonRows AS (
     SELECT * FROM event_point_events
     WHERE event = {event:String}
       AND time >= {seasonStart:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND has({types:Array(String)}, type)
-      AND NOT has({dailyTypes:Array(String)}, type)${scope}
+      AND NOT has({dailyTypes:Array(String)}, type)
     UNION ALL
     SELECT * FROM event_point_events
     WHERE event = {event:String}
       AND time >= {recomputeFrom:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND has({types:Array(String)}, type)
-      AND has({dailyTypes:Array(String)}, type)${scope}
+      AND has({dailyTypes:Array(String)}, type)
   ),
-`;
-
-// From seasonRows to `credited`: one row per credit with the points it was granted. The referee and
-// the per-placement read (placement-stats.sql.ts) share it, so both apply the same rules.
-export const refereeCreditCtes = /* sql */ `  firsts AS (
+  firsts AS (
     SELECT
       type, actorId, entityType, entityId,
       if(has({dailyTypes:Array(String)}, type), toDate(time), toDate(0)) AS onceKey,
@@ -102,13 +99,7 @@ export const refereeCreditCtes = /* sql */ `  firsts AS (
         ) AS running
       FROM weighted
     )
-  )`;
-
-export const eventPointsRefereeSql = /* sql */ `
-WITH
-  -- Two scans, each with its own time range: the primary key (event, toDate(time), ...) can prune
-  -- daily rows to the recomputed days only this way. One OR across both ranges reads the whole season.
-${seasonRowsCte()}${refereeCreditCtes}
+  )
 SELECT
   day,
   hat.1 AS userId, hat.2 AS cosmeticId, hat.3 AS claimKey,
