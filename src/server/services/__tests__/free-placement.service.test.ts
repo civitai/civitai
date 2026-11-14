@@ -676,7 +676,8 @@ describe('the advisory locks have exactly one call site', () => {
   // lock, so it has to be read against the ordering note above before it joins this list.
   // creator-shop-fees: creator-shop-submit-… (item, pack and mystery pack submission fees).
   // donation-goal: donation-k-…. report: appeal-k-… (the appeal fee). crucible: crucible-entry-k-….
-  const CHARGE_KEY_LOCK = /\b(withChargeKeyLock|recordKeyedCharge|refundUnlessRecorded)\(/;
+  // A call with or without type arguments: `recordKeyedCharge(` and `recordKeyedCharge<T>(`.
+  const CHARGE_KEY_LOCK = /\b(withChargeKeyLock|recordKeyedCharge|refundUnlessRecorded)\s*[<(]/;
   const CHARGE_KEY_LOCK_CALLERS = [
     'services/buzz-charge-lock.ts',
     'services/creator-shop-fees.service.ts',
