@@ -118,9 +118,9 @@ describe('orchestrator.getWorkflow — a training run’s weights', () => {
   });
 
   it('names no epoch weights to a non-moderator, keeping the rest of each epoch', async () => {
-    const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as ReturnType<
-      typeof workflow
-    > & { steps: [typeof trainingStep, typeof legacyStep] };
+    const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as unknown as {
+      steps: [typeof trainingStep, typeof legacyStep];
+    };
 
     expect(result.steps[0].output.epochs[0]).toEqual({
       epochNumber: 1,
@@ -132,7 +132,7 @@ describe('orchestrator.getWorkflow — a training run’s weights', () => {
   });
 
   it("leaves out a continued run's source epoch, keeping the rest of its input", async () => {
-    const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as {
+    const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as unknown as {
       steps: [typeof trainingStep, typeof legacyStep];
     };
 
