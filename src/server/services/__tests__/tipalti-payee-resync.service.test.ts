@@ -137,6 +137,11 @@ describe('resyncTipaltiPayees', () => {
     const [row] = await run(false);
 
     expect(row).toMatchObject({ applied: true, direction: 'disable' });
+    expect(trackModActivity).toHaveBeenCalledWith(1, {
+      entityType: 'user',
+      entityId: USER_ID,
+      activity: 'tipaltiResync:disable',
+    });
     expect(row.tipalti?.unpayableReasons).toEqual(['Tax']);
     expect(writtenData()).toMatchObject({ tipaltiPaymentsEnabled: false });
     expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
@@ -148,6 +153,11 @@ describe('resyncTipaltiPayees', () => {
     const [row] = await run(false);
 
     expect(row).toMatchObject({ wouldChange: true, direction: null, applied: true });
+    expect(trackModActivity).toHaveBeenCalledWith(1, {
+      entityType: 'user',
+      entityId: USER_ID,
+      activity: 'tipaltiResync:status',
+    });
     expect(writtenData()).toMatchObject({ tipaltiAccountStatus: 'Suspended' });
   });
 
