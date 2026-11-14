@@ -6071,11 +6071,22 @@ export const blocksRouter = router({
    * are the viewer's files, uploaded and checked as theirs.
    *
    * RATE LIMIT: none of the bridge buckets. Bounded by the batch instead: only for an open batch of
-   * this viewer and app, and at most two URLs per file the quota was charged for.
+   * this viewer and app, and at most two URLs per declared file, counted by its position.
    */
   presignMediaUploadBatchItem: protectedProcedure
     .meta({ blockApiKeys: true })
-    .input(z.object({ blockToken: z.string().min(1), batchId: z.number().int().positive() }))
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        batchId: z.number().int().positive(),
+        // The file's position among the files `startMediaUploadBatch` was told about.
+        index: z
+          .number()
+          .int()
+          .min(0)
+          .max(MEDIA_UPLOAD_BATCH_MAX_ITEMS - 1),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       const { claims, userId } = await authorizeMediaUploadBatchRequest(
         input.blockToken,
@@ -6088,6 +6099,7 @@ export const blocksRouter = router({
       const { uploadUrl, expiresAt } = await presignMediaUploadBatchItem({
         actor: { userId, appBlockId: claims.appBlockId },
         batchId: input.batchId,
+        index: input.index,
         token,
       });
       return { uploadUrl, expiresAt };

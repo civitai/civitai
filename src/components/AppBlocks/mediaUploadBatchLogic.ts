@@ -212,3 +212,61 @@ export function mediaUploadBatchStartError(err: unknown): string {
   }
   return MEDIA_UPLOAD_FAILED_ERROR;
 }
+
+function httpStatusOf(err: unknown): number | undefined {
+  const status = (err as { data?: { httpStatus?: unknown } } | null)?.data?.httpStatus;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function isUnauthorized(err: unknown): boolean {
+  const code = (err as { data?: { code?: unknown } } | null)?.data?.code;
+  return httpStatusOf(err) === 401 || code === 'UNAUTHORIZED';
+}
+
+/**
+ * Runs `call` with the host's CURRENT block token, read through `readToken` at the moment of the
+ * call: a batch can outlive the token it started with (the host refreshes a page token before it
+ * expires). A refusal as UNAUTHORIZED is retried once with the token read again, for a refresh that
+ * landed between the read and the call.
+ */
+export async function callWithCurrentToken<T>(
+  readToken: () => string | null | undefined,
+  call: (blockToken: string) => Promise<T>
+): Promise<T> {
+  const first = readToken();
+  if (!first) throw new Error('no block token');
+  try {
+    return await call(first);
+  } catch (err) {
+    if (!isUnauthorized(err)) throw err;
+    const again = readToken();
+    if (!again) throw err;
+    return call(again);
+  }
+}
+
+/** Waits before the 2nd and 3rd attempt at recording an uploaded file. */
+export const MEDIA_UPLOAD_BATCH_RECORD_RETRY_DELAYS_MS = [500, 1500] as const;
+
+/**
+ * Records an uploaded file, retrying a server error (5xx), a 429 or a network failure (no HTTP
+ * status) up to 3 attempts in all. A refusal (any other 4xx) is final at once. The last failure is
+ * thrown: the caller answers that item with an error, and the uploaded file is then missing from
+ * the batch's audit row.
+ */
+export async function retryMediaUploadBatchRecord<T>(
+  call: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (err) {
+      const status = httpStatusOf(err);
+      const retryable = status === undefined || status === 429 || status >= 500;
+      const delay = MEDIA_UPLOAD_BATCH_RECORD_RETRY_DELAYS_MS[attempt];
+      if (!retryable || delay === undefined) throw err;
+      await sleep(delay);
+    }
+  }
+}

@@ -19,13 +19,20 @@ import {
  *      every file, then writes the audit row (`app_block_upload_batches`).
  *   2. `presignMediaUploadBatchItem` — one per upload attempt: mints the upload URL with the
  *      VIEWER's orchestrator token, so every file is the viewer's own upload. Only for a
- *      batch of this viewer and app, while it is open, and at most twice per file.
+ *      batch of this viewer and app, while it is open, and at most twice per declared file,
+ *      counted by the file's position (`presign_counts`).
  *   3. `recordMediaUploadBatchItem` — one per uploaded file: appends its blob key to the row, at
  *      most one key per file.
  *
  * The quota is charged in full by `startMediaUploadBatch`, before any URL exists, and the presign
  * in step 2 is bounded per file the batch declared, so a batch cannot upload more files than it
- * was charged for.
+ * was charged for. The byte half of the quota is charged on the sizes the host DECLARES (the bytes
+ * go straight to the orchestrator, whose own per-file limits apply); the server does not measure
+ * them.
+ *
+ * The record step checks a key's shape and the batch's count, not that the key came from one of
+ * this batch's URLs: an upload URL carries no blob key (the upload assigns it), so there is nothing
+ * to match it against when the URL is minted.
  *
  * EXPIRY: nothing here pins a file's expiry (the orchestrator exposes no endpoint for it), so each
  * file keeps the orchestrator's default consumer-blob retention, at least 30 days. The row records
@@ -61,10 +68,30 @@ function unavailable(): TRPCError {
   });
 }
 
-/** Rethrows a missing audit table as the not-available refusal, never as a 500. */
+/**
+ * A permission error naming the audit table or its id sequence: the table is applied but this
+ * environment has not granted it yet. Matched on the message, which names the object, so a
+ * permission error on any OTHER table is not mistaken for it.
+ */
+function isUngrantedBatchTable(err: unknown): boolean {
+  const e = err as {
+    code?: unknown;
+    meta?: { code?: unknown; message?: unknown };
+    message?: unknown;
+  };
+  const text = [e?.message, e?.meta?.message].filter((m) => typeof m === 'string').join(' ');
+  return /permission denied for (?:table|relation|sequence) "?app_block_upload_batches(?:_id_seq)?"?/i.test(
+    text
+  );
+}
+
+/**
+ * Rethrows an audit table this environment cannot use yet — absent, or applied but not granted —
+ * as the not-available refusal, never as a 500.
+ */
 async function rethrowMissingTable(err: unknown): Promise<never> {
   const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
-  if (isMissingTableError(err)) throw unavailable();
+  if (isMissingTableError(err) || isUngrantedBatchTable(err)) throw unavailable();
   throw err;
 }
 
@@ -143,6 +170,7 @@ export async function startMediaUploadBatch({
         blockId: actor.blockId,
         version: app?.version ?? null,
         itemCount: items.length,
+        presignCounts: items.map(() => 0),
         totalBytes: BigInt(totalBytes),
         createdAt: now,
         expiresAt,
@@ -157,30 +185,38 @@ export async function startMediaUploadBatch({
 }
 
 /**
- * One upload URL for a file of an open batch of this viewer and app, minted with `token` — the
- * VIEWER's orchestrator token, never a system client: the files are the viewer's, uploaded as
- * theirs and checked as any upload of theirs is.
+ * One upload URL for the file at `index` (its position among the files the batch declared) of an
+ * open batch of this viewer and app, minted with `token` — the VIEWER's orchestrator token, never a
+ * system client: the files are the viewer's, uploaded as theirs and checked as any upload of theirs
+ * is. At most `MEDIA_UPLOAD_BATCH_PRESIGNS_PER_ITEM` per file.
  */
 export async function presignMediaUploadBatchItem({
   actor,
   batchId,
+  index,
   token,
   now = new Date(),
 }: {
   actor: Pick<MediaUploadBatchActor, 'userId' | 'appBlockId'>;
   batchId: number;
+  index: number;
   token: string;
   now?: Date;
 }): Promise<ConsumerBlobPresignResponse> {
   const openSince = new Date(now.getTime() - MEDIA_UPLOAD_BATCH_OPEN_MS);
+  // Postgres arrays are 1-based; `presign_counts` holds one counter per declared file.
+  const slot = index + 1;
   const claimed = await dbWrite.$queryRaw<{ id: number }[]>`
       UPDATE "app_block_upload_batches"
-      SET "presign_count" = "presign_count" + 1
+      SET "presign_count" = "presign_count" + 1,
+          "presign_counts"[${slot}::int] = COALESCE("presign_counts"[${slot}::int], 0) + 1
       WHERE "id" = ${batchId}
         AND "user_id" = ${actor.userId}
         AND "app_block_id" = ${actor.appBlockId}
         AND "created_at" > ${openSince}
-        AND "presign_count" < "item_count" * ${MEDIA_UPLOAD_BATCH_PRESIGNS_PER_ITEM}
+        AND ${index}::int >= 0
+        AND ${index}::int < "item_count"
+        AND COALESCE("presign_counts"[${slot}::int], 0) < ${MEDIA_UPLOAD_BATCH_PRESIGNS_PER_ITEM}::int
       RETURNING "id"`.catch(rethrowMissingTable);
   if (claimed.length === 0) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'this batch cannot take more uploads' });
@@ -188,11 +224,13 @@ export async function presignMediaUploadBatchItem({
   try {
     return await getConsumerBlobUploadUrlService({ token });
   } catch (err) {
-    // No URL was minted, so the attempt is handed back: an upstream outage the client retries
-    // through must not use up the file's budget.
+    // No URL was minted, so the file's attempt is handed back: an upstream outage the client
+    // retries through must not use up the file's budget.
     await dbWrite.$executeRaw`
-      UPDATE "app_block_upload_batches" SET "presign_count" = "presign_count" - 1
-      WHERE "id" = ${batchId} AND "presign_count" > 0`.catch(() => undefined);
+      UPDATE "app_block_upload_batches"
+      SET "presign_count" = "presign_count" - 1,
+          "presign_counts"[${slot}::int] = "presign_counts"[${slot}::int] - 1
+      WHERE "id" = ${batchId} AND "presign_counts"[${slot}::int] > 0`.catch(() => undefined);
     throw err;
   }
 }

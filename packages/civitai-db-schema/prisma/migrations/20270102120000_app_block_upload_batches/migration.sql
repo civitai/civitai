@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS "app_block_upload_batches" (
   "item_count" INTEGER NOT NULL CHECK ("item_count" > 0),
   "total_bytes" BIGINT NOT NULL CHECK ("total_bytes" >= 0),
   "presign_count" INTEGER NOT NULL DEFAULT 0,
+  "presign_counts" INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
   "blob_keys" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
   "expires_at" TIMESTAMPTZ(6) NOT NULL

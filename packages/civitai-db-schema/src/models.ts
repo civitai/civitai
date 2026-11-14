@@ -2926,6 +2926,7 @@ export interface AppBlockUploadBatch {
   itemCount: number;
   totalBytes: bigint;
   presignCount: number;
+  presignCounts: number[];
   blobKeys: string[];
   createdAt: Date;
   expiresAt: Date;

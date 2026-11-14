@@ -544,11 +544,17 @@ read that file. As of this writing the families are:
   answered for that item only; nothing uploads until the viewer confirms. There is
   no per-minute window: the host uploads at most 3 files at a time, and the
   server charges a per-viewer daily quota across all apps (1,200 files and 10 GB
-  per UTC day) when the batch starts. Every upload URL is minted with the
+  per UTC day) when the batch starts. The byte half is charged on the sizes the
+  host declares (the bytes go straight to the orchestrator, whose own per-file
+  limits apply); the file count is enforced by the server, which mints at most
+  two upload URLs per declared file. The host reads its current block token for
+  every call, so a batch can outlive the token it started with. Every upload URL is minted with the
   viewer's own orchestrator token, so every file gets the orchestrator's content
   scan, and a blocked file is answered as an error for that item. Each batch is
   recorded for moderators (`app_block_upload_batches`: viewer, app, file count,
-  size, the blob keys, and an `expires_at` 30 days after it started), viewable in
+  size, the blob keys, and an `expires_at` 30 days after it started; a file whose
+  record still fails after 3 attempts is answered as an error and can be missing
+  from the row), viewable in
   the moderator app under Audit → App Upload Batches. The answer is
   `{ requestId, results, expiresAt }` with one `{ index, selected }` or
   `{ index, error }` per item, `{ requestId }` when the viewer declined (or in

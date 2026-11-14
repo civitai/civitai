@@ -35,7 +35,7 @@ const UPSTREAM: [file: string, source: string][] = [
   // The App Blocks batch presign procedure: the token subject's own token.
   [
     'src/server/routers/blocks.router.ts',
-    'const token = await getOrchestratorToken(userId, ctx); const { uploadUrl, expiresAt } = await presignMediaUploadBatchItem({ actor: { userId, appBlockId: claims.appBlockId }, batchId: input.batchId, token, });',
+    'const token = await getOrchestratorToken(userId, ctx); const { uploadUrl, expiresAt } = await presignMediaUploadBatchItem({ actor: { userId, appBlockId: claims.appBlockId }, batchId: input.batchId, index: input.index, token, });',
   ],
   // The training wizard's auto-label upload.
   [

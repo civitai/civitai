@@ -4978,6 +4978,8 @@ model AppBlockUploadBatch {
   totalBytes   BigInt   @map("total_bytes")
   /// Upload URLs minted for this batch so far (a retried file takes a second one).
   presignCount Int      @default(0) @map("presign_count")
+  /// Upload URLs minted per declared file, by position: at most two each.
+  presignCounts Int[]   @default([]) @map("presign_counts")
   /// The consumer blob keys of the files uploaded, in upload-completion order.
   blobKeys     String[] @default([]) @map("blob_keys")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)

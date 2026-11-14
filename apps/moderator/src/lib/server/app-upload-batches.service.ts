@@ -12,9 +12,14 @@ import { dbRead } from './db';
 export const UPLOAD_BATCH_PAGE_PATH = '/audit/app-upload-batches';
 const PAGE_SIZE = 50;
 
-/** Postgres `undefined_table`, as Kysely's driver reports it. A column error is NOT this. */
+/**
+ * The table is not usable here yet: absent (`undefined_table`, 42P01) or present without this app's
+ * grant (`insufficient_privilege`, 42501) — both are the hand-applied migration not finished in this
+ * environment. A column error is NOT this.
+ */
 function isMissingTable(err: unknown): boolean {
-  return (err as { code?: unknown } | null)?.code === '42P01';
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === '42P01' || code === '42501';
 }
 
 export type UploadBatchRow = {

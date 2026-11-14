@@ -136,8 +136,10 @@ import {
 import {
   buildMediaUploadBatchConfirmCopy,
   buildMediaUploadBatchResults,
+  callWithCurrentToken,
   mediaUploadBatchStartError,
   resolveMediaUploadBatchRequest,
+  retryMediaUploadBatchRecord,
   runWithConcurrency,
   type MediaUploadBatchItemResult,
 } from './mediaUploadBatchLogic';
@@ -4009,6 +4011,12 @@ export function PageBlockHost({
   // null. One at a time per page: a second is refused `busy`, and its id gets no reply while the
   // first is unanswered, as a reused single-upload id does.
   const mediaUploadBatchRef = useRef<string | null>(null);
+  // The CURRENT block token, for a batch that outlives the one it started with: the host refreshes
+  // a page token before it expires, and every batch call reads this at the moment it is made.
+  const blockTokenRef = useRef(token);
+  useEffect(() => {
+    blockTokenRef.current = token;
+  }, [token]);
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
@@ -4824,14 +4832,16 @@ export function PageBlockHost({
       const release = () => {
         if (mediaUploadBatchRef.current === requestId) mediaUploadBatchRef.current = null;
       };
-      const blockToken = token;
+      const readToken = () => blockTokenRef.current;
       const run = async () => {
         let started: { batchId: number; expiresAt: string };
         try {
-          started = await trpcUtils.client.blocks.startMediaUploadBatch.mutate({
-            blockToken,
-            items: plan.files.map((f) => ({ kind: f.kind, sizeBytes: f.bytes.byteLength })),
-          });
+          started = await callWithCurrentToken(readToken, (blockToken) =>
+            trpcUtils.client.blocks.startMediaUploadBatch.mutate({
+              blockToken,
+              items: plan.files.map((f) => ({ kind: f.kind, sizeBytes: f.bytes.byteLength })),
+            })
+          );
         } catch (err) {
           release();
           reply({ error: mediaUploadBatchStartError(err) });
@@ -4842,11 +4852,21 @@ export function PageBlockHost({
         try {
           // Loaded on use: the image path reaches the workflow schema, too heavy for every page load.
           const media = await import('./mediaUploadRun');
-          const presign = media.batchPresigner(() =>
-            trpcUtils.client.blocks.presignMediaUploadBatchItem.mutate({ blockToken, batchId })
-          );
+          // Each file's position among the files the server was told about (`plan.files` order),
+          // which the server bounds its upload URLs by.
+          const positions = new Map(plan.files.map((f, position) => [f.index, position]));
           await runWithConcurrency(plan.files, MEDIA_UPLOAD_BATCH_CONCURRENCY, async (file) => {
             try {
+              const index = positions.get(file.index)!;
+              const presign = media.batchPresigner(() =>
+                callWithCurrentToken(readToken, (blockToken) =>
+                  trpcUtils.client.blocks.presignMediaUploadBatchItem.mutate({
+                    blockToken,
+                    batchId,
+                    index,
+                  })
+                )
+              );
               const blob = new Blob([file.bytes], { type: file.contentType });
               const item = await media.uploadBatchMediaItem(
                 file.kind,
@@ -4855,12 +4875,22 @@ export function PageBlockHost({
                 presign
               );
               // Recorded before the app is told: a file the audit row does not name is never
-              // handed over.
-              await trpcUtils.client.blocks.recordMediaUploadBatchItem.mutate({
-                blockToken,
-                batchId,
-                blobKey: item.blobKey,
-              });
+              // handed over. A record that still fails after its retries is an error for that
+              // item (and the file is then missing from the audit row).
+              try {
+                await retryMediaUploadBatchRecord(() =>
+                  callWithCurrentToken(readToken, (blockToken) =>
+                    trpcUtils.client.blocks.recordMediaUploadBatchItem.mutate({
+                      blockToken,
+                      batchId,
+                      blobKey: item.blobKey,
+                    })
+                  )
+                );
+              } catch {
+                uploaded.set(file.index, { index: file.index, error: MEDIA_UPLOAD_FAILED_ERROR });
+                return;
+              }
               uploaded.set(file.index, { index: file.index, selected: item.selected });
             } catch (err) {
               uploaded.set(file.index, {

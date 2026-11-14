@@ -429,6 +429,10 @@ export type AppBlockUploadBatch = {
    */
   presign_count: Generated<number>;
   /**
+   * Upload URLs minted per declared file, by position: at most two each.
+   */
+  presign_counts: Generated<number[]>;
+  /**
    * The consumer blob keys of the files uploaded, in upload-completion order.
    */
   blob_keys: Generated<string[]>;
