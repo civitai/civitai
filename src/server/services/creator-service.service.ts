@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
@@ -303,7 +303,7 @@ export async function getServiceOfferingFeed({
       },
       ...(excludedSellerIds.length ? { sellerId: { notIn: excludedSellerIds } } : {}),
     },
-    select: { ...serviceOfferingSelect, seller: { select: simpleUserSelect } },
+    select: { ...serviceOfferingSelect, seller: { select: userWithCosmeticsSelect } },
     orderBy: feedOrderBy[sort],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),

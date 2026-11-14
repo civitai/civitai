@@ -149,6 +149,15 @@ beforeEach(() => {
 });
 
 describe('services feed', () => {
+  it("selects the seller with their equipped cosmetics, so the card's avatar shows frame and nameplate", async () => {
+    table = [row()];
+    await feedIds({});
+    const [args] = dbMock.dbRead.serviceOffering.findMany.mock.calls.at(-1) as [
+      { select: { seller: { select: { cosmetics?: unknown } } } }
+    ];
+    expect(args.select.seller.select.cosmetics).toBeDefined();
+  });
+
   it('hides an X-rated offering from an SFW viewer and shows it to one who browses X', async () => {
     const pg13 = row();
     const x = row({ maxNsfwLevel: NsfwLevel.X });
