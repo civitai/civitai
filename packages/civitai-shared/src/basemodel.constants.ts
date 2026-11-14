@@ -1110,6 +1110,8 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'MossImage',
   // ComfyMiniMaxH3{Create,Edit}ImageInput
   'MiniMaxH3Image',
+  // ComfyFibo2DevCreateImageInput, ComfyFibo2EditTurboEditImageInput
+  'Fibo2',
   // Flux2KleinImageGenInput
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
@@ -1334,6 +1336,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
   // MiniMax H3 Image - checkpoint only, no training row: LoRAs and training are not wired yet.
   { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointOnly },
+  // Fibo 2.0 - fine-tunes and LoRAs of `dev` apply to create only; edit runs the official weights.
+  { ecosystemId: ECO.Fibo2, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // Kling - checkpoint only
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1847,6 +1851,14 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 3463368 },
       modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Fibo2,
+    defaults: {
+      model: { id: 3469179 },
+      // No published settings for Fibo's turbo LoRA; borrows the MOSS few-step, CFG-free band.
+      turbo: { settings: TURBO_PRESETS.mossDmd },
     },
   },
   {
@@ -4783,11 +4795,17 @@ export const MATURE_RESTRICTED_LEVELS: readonly number[] = [
   NsfwLevel.XXX,
 ];
 
+// Lowercased: a stored base-model string differing only in case must still be restricted.
+const baseModelByLowerName = new Map(baseModelRecords.map((m) => [m.name.toLowerCase(), m]));
+
 export function isMatureRestricted(
   baseModel: string | null | undefined,
   surface: MatureRestrictedSurface
 ): boolean {
-  return !!baseModel && !!baseModelByName.get(baseModel)?.matureRestricted?.includes(surface);
+  return (
+    !!baseModel &&
+    !!baseModelByLowerName.get(baseModel.toLowerCase())?.matureRestricted?.includes(surface)
+  );
 }
 
 export function matureRestrictedBaseModels(surface: MatureRestrictedSurface): string[] {
