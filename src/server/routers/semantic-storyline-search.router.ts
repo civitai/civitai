@@ -21,7 +21,6 @@ export const semanticStorylineSearchRouter = router({
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const result = await searchSemanticStorylines({
-        // The storyline feed's own reading of the request's level, then the search's clamp.
         input: { ...input, browsingLevel: storylineReaderLevel(ctx, input.browsingLevel) },
         user: ctx.user,
         track: ctx.track,

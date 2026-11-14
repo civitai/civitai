@@ -217,6 +217,51 @@ export function searchServiceSource(
   };
 }
 
+/** The viewer's hidden users, those they blocked and those who blocked them: never candidates. */
+export function viewerExcludedUserIds(hidden: {
+  hiddenUsers: { id: number }[];
+  blockedUsers: { id: number }[];
+  blockedByUsers: { id: number }[];
+}) {
+  return [
+    ...new Set(
+      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
+    ),
+  ];
+}
+
+/**
+ * Candidates for a text query, with the service's spelling correction audited as well: the service
+ * embeds its correction, not the text the caller audited. `audit` returns a truthy refusal; a
+ * refused correction ends the search, and `state.refused` tells the caller to return nothing.
+ */
+export function auditedTextCandidates({
+  source,
+  text,
+  filter,
+  audit,
+}: {
+  source: CandidateSource;
+  text: string;
+  filter: CandidateFilter;
+  audit: (correction: string) => Promise<unknown>;
+}) {
+  const state = { correctedQuery: undefined as string | undefined, refused: false, returned: 0 };
+  let audited = false;
+  const candidates = async (offset: number, limit: number) => {
+    const result = await source({ query: { text }, filter, offset, limit });
+    if (!audited && result.correctedQuery !== undefined) {
+      audited = true;
+      state.refused = result.correctedQuery !== text && !!(await audit(result.correctedQuery));
+    }
+    if (state.refused) return [];
+    state.correctedQuery ??= result.correctedQuery;
+    state.returned += result.ids.length;
+    return result.ids;
+  };
+  return { candidates, state };
+}
+
 export type Hydrate<T extends { id: number }> = (ids: number[]) => Promise<T[]>;
 
 /**
