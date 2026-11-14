@@ -75,10 +75,8 @@ jobs:
           failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' test.json | wc -l)
           pkgs=$(jq -r 'select(.Action=="pass" and .Test==null) | .Package' test.json | sort -u | wc -l)
           echo "passed tests: $passed, failed tests: $failed, passing packages: $pkgs"
-          # Positive control: the module has 12 packages with tests (auth, browsing, config, dbpool,
-          # feed, feedsvc, hydrate, server, shadow, superjson, sysredis, trpc) and well over 95 passing
-          # tests and subtests. A count below these floors means tests stopped being discovered, not
-          # that they passed. Raise the package floor when a package gains its first test.
+          # Positive control: a count below these floors means tests stopped being discovered, not that
+          # they passed. Raise the package floor when a package gains its first test.
           [ "$failed" -eq 0 ]
           [ "$pkgs" -ge 12 ]
           [ "$passed" -ge 95 ]

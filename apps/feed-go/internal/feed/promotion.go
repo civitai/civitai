@@ -26,12 +26,9 @@ const (
 	PromotionsUnknown PromotionAudience = iota
 	// PromotionsOff (`false`): off for every viewer.
 	PromotionsOff
-	// PromotionsModsTesters (`mods-testers`): the flag's rule as of 2026-11-14 in flipt-state (base
-	// off, rollout true for the `testers` OR `moderators` segment). Both segments match
-	// `isModerator = "true"` or a listed user id. A signed-out viewer has no isModerator/userId in its
-	// Flipt context, so it matches neither: off. A moderator: on. Any other signed-in viewer may be on
-	// a user-id list this service does not hold: unknown. So is a banned session: Node evaluates the
-	// flag with its user (moderator or listed) although the procedures see no user.
+	// PromotionsModsTesters (`mods-testers`): off signed out, on for moderators, unknown for other
+	// signed-in viewers (they may be on a user-id list this service does not hold) and for a banned
+	// session (Node evaluates the flag with its user).
 	PromotionsModsTesters
 	// PromotionsEveryone (`everyone`): on for every viewer.
 	PromotionsEveryone
