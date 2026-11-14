@@ -54,6 +54,8 @@ const SCHEMA = `
     "removedAt" timestamp(3)
   );
   CREATE TABLE "PostText" (id serial PRIMARY KEY, "postId" int NOT NULL, "csamHeld" boolean NOT NULL);
+  CREATE TABLE "TextScanHold" (id serial PRIMARY KEY, "entityType" text NOT NULL,
+    "entityId" int NOT NULL, label text NOT NULL, status text NOT NULL);
 `;
 
 const eligible = {
@@ -74,8 +76,9 @@ const eligible = {
   image: `1, NULL, NULL` as string | false,
   /** A second image on chapter 1's post, the same shape, or false. */
   secondImage: false as string | false,
-  /** A text item on chapter 1's post, held or clean, or none. */
+  /** A text item on chapter 1's post: csamHeld, clean, or clean with a csam hold in that status. */
   text: 'none' as 'none' | 'held' | 'clean',
+  textHold: null as string | null,
 };
 
 const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}): ParityRow => {
@@ -107,9 +110,14 @@ const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}
             ...(c.text === 'none'
               ? []
               : [
-                  `INSERT INTO "PostText" ("postId", "csamHeld") VALUES (${postId}, ${
+                  `INSERT INTO "PostText" (id, "postId", "csamHeld") VALUES (${postId}, ${postId}, ${
                     c.text === 'held'
                   })`,
+                  ...(c.textHold
+                    ? [
+                        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('PostText', ${postId}, 'csam', '${c.textHold}')`,
+                      ]
+                    : []),
                 ]),
           ]
         : []),
@@ -174,6 +182,9 @@ const spec: ParitySpec = {
     storyline(31, 'anyImageHeld', { secondImage: `1, 'csam', NULL` }),
     storyline(32, 'textHeld', { text: 'held' }),
     storyline(33, 'eligible:cleanText', { text: 'clean' }),
+    // A hold written before csamHeld, with the apply that sets it failed.
+    storyline(34, 'textPendingHold', { text: 'clean', textHold: 'Pending' }),
+    storyline(35, 'eligible:textHoldDismissed', { text: 'clean', textHold: 'Dismissed' }),
   ],
   clauses: [
     'tosViolation',
@@ -202,6 +213,7 @@ const spec: ParitySpec = {
     'imageOwnerEvidenceHold',
     'anyImageHeld',
     'textHeld',
+    'textPendingHold',
   ],
   site: async (prisma) =>
     (await prisma.$queryRawUnsafe<{ id: number }[]>(SITE)).map((r) => Number(r.id)),

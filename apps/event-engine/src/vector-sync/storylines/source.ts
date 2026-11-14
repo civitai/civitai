@@ -30,7 +30,9 @@ export const STORYLINE_ELIGIBLE_SQL = `(st."tosViolation" = false AND u."bannedA
   AND rp.availability = 'Public'
   AND NOT ${heldUserSql('st."userId"')} AND NOT ${heldUserSql('rp."userId"')}
   AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = rp.id AND ${heldImageSql('ri')})
-  AND NOT EXISTS (SELECT 1 FROM "PostText" rt WHERE rt."postId" = rp.id AND rt."csamHeld"))`;
+  AND NOT EXISTS (SELECT 1 FROM "PostText" rt WHERE rt."postId" = rp.id AND (rt."csamHeld"
+    OR EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+      AND th."entityId" = rt.id AND th.label = 'csam' AND th.status = 'Pending'))))`;
 
 /**
  * The story level the feed filters on, the site's `storyLevelText`: chapter 1's post level (the

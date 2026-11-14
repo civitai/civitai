@@ -23,6 +23,14 @@ const storylineRootText = ({ rc = 'rc', rp = 'rp', ru = 'ru' }, published: strin
 export const storylineRootVisibleText = ({ rc = 'rc', rp = 'rp', ru = 'ru' } = {}) =>
   storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" < now()`);
 
+/**
+ * A Pending csam hold on text item `rt`. The hold is written before `csamHeld` is set, and not in
+ * one transaction, so a failed apply leaves the item pending with the flag still false.
+ */
+const postTextPendingCsamHoldText = (rt: string) =>
+  `EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+    AND th."entityId" = ${rt}.id AND th.label = 'csam' AND th.status = 'Pending')`;
+
 /** `storylineCeiling` for storyline `st`, as text; `storylineCeilingSql` is the service's Prisma form. */
 export const storylineCeilingText = (st = 'st') =>
   `(CASE WHEN ${st}."minorByScan" THEN LEAST(${st}."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE ${st}."maxNsfwLevel" END)`;
@@ -54,7 +62,8 @@ export const storylineSemanticEligibleText = ({
   AND NOT ${heldUserSql(`${st}."userId"`)} AND NOT ${heldUserSql(`${rp}."userId"`)}
   AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = ${rp}.id
     AND ${semanticImageHeldText('ri')})
-  AND NOT EXISTS (SELECT 1 FROM "PostText" rt WHERE rt."postId" = ${rp}.id AND rt."csamHeld"))`;
+  AND NOT EXISTS (SELECT 1 FROM "PostText" rt WHERE rt."postId" = ${rp}.id
+    AND (rt."csamHeld" OR ${postTextPendingCsamHoldText('rt')})))`;
 
 /**
  * The level `isStorylineOutsideLevel` judges a storyline `st` by: chapter 1's post `rp` (the

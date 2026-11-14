@@ -22,6 +22,8 @@ const SCHEMA = `
     images jsonb NOT NULL DEFAULT '[]');
   CREATE TABLE "EvidenceHeldUser" ("userId" int);
   CREATE TABLE "PostText" (id serial PRIMARY KEY, "postId" int, "csamHeld" boolean NOT NULL);
+  CREATE TABLE "TextScanHold" (id serial PRIMARY KEY, "entityType" text, "entityId" int,
+    label text, status text);
 `;
 
 /** Storyline `id` owned by `owner`, chapter 1 = post `id * 10` with image `id * 100`. */
@@ -156,6 +158,12 @@ describe('storyline removal', () => {
     ['chapter 1 image blocked for CSAM', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 100`],
     ['chapter 1 image listed on a report', `INSERT INTO "CsamReport" (images) VALUES ('[100]')`],
     ['chapter 1 text item held', `INSERT INTO "PostText" ("postId", "csamHeld") VALUES (10, true)`],
+    [
+      'chapter 1 text item pending a hold',
+      `INSERT INTO "PostText" (id, "postId", "csamHeld") VALUES (500, 10, false);
+       INSERT INTO "TextScanHold" ("entityType", "entityId", label, status)
+       VALUES ('PostText', 500, 'csam', 'Pending')`,
+    ],
   ];
   test.each(leaves)(
     'a storyline whose %s loses its point on the next sync',
