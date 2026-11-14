@@ -26,7 +26,7 @@ import {
 } from '~/server/services/model-com-face-intent.service';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
-import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
+import { hasLaterVerdictUnderLock, readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { POI_HASH_MATCH_KEY } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
@@ -55,6 +55,9 @@ export const LOCK_REVIEW_HELD =
 /** Moderators only. */
 export const LOCK_REVIEW_DETECTION_HELD =
   'A real person or minor detection on this model is waiting for a moderator. Rule on it first, or reject this review.';
+/** The re-judging job only: a system rating verdict landed under the lock, so a moderator decides. */
+export const LOCK_REVIEW_LATER_VERDICT =
+  'A system rating verdict landed under this lock; a moderator must rule on it.';
 /** Moderators only. */
 export const LOCK_REVIEW_MATCH_CHECK_FAILED =
   "Couldn't check this model for a file match waiting for a moderator, so it can't be approved now. Try again.";
@@ -219,6 +222,7 @@ export async function resolveLockReviewAppeal({
   userId,
   resolvedReason,
   internalNotes,
+  refuseLaterVerdict = false,
 }: {
   /** The request the moderator was shown; a model can carry another, after a transfer. */
   appealId: number;
@@ -227,6 +231,8 @@ export async function resolveLockReviewAppeal({
   userId: number;
   resolvedReason?: string;
   internalNotes?: string;
+  /** Refuse an approval when a system rating verdict was recorded under the lock (the job's). */
+  refuseLaterVerdict?: boolean;
 }) {
   const status = approve ? AppealStatus.Approved : AppealStatus.Rejected;
   if (resolvedReason) {
@@ -263,10 +269,14 @@ export async function resolveLockReviewAppeal({
         ownerFiled: boolean;
         detectionHeld: boolean;
         lockSource: string | null;
+        verdictMeta: unknown;
       }[]
     >`
       SELECT a.id, a.context, m."lockedProperties", m.poi, m.minor,
         m.meta->'systemNsfwLock'->>'source' AS "lockSource",
+        jsonb_build_object('systemNsfwLock', m.meta->'systemNsfwLock',
+          'comFaceIntent', jsonb_build_object('laterVerdict', m.meta->'comFaceIntent'->'laterVerdict')
+        ) AS "verdictMeta",
         a."userId" = m."userId" AS "ownerFiled",
         COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
           OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
@@ -299,6 +309,8 @@ export async function resolveLockReviewAppeal({
         );
       if (row.detectionHeld || minorMatchPending)
         throw throwBadRequestError(LOCK_REVIEW_DETECTION_HELD);
+      if (refuseLaterVerdict && hasLaterVerdictUnderLock(row.verdictMeta))
+        throw throwBadRequestError(LOCK_REVIEW_LATER_VERDICT);
       lift = locksToLift(asked.locks, locked);
       if (lift.length)
         await tx.model.update({

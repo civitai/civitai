@@ -68,6 +68,7 @@ const {
   getLockReviewState,
   latestModelAppealOfKind,
   LOCK_REVIEW_DETECTION_HELD,
+  LOCK_REVIEW_LATER_VERDICT,
   LOCK_REVIEW_MATCH_CHECK_FAILED,
   LOCK_REVIEW_HELD,
   LOCK_REVIEW_UNAVAILABLE,
@@ -402,6 +403,60 @@ describe('approving a lock review', () => {
     await reject();
 
     expect((await modelMeta()).comFaceIntent).toEqual(intent);
+  });
+
+  describe('as the re-judging job, with a verdict recorded under the lock', () => {
+    const lockedAt = '2026-02-01T00:00:00.000Z';
+    const seedVerdict = (at: string) =>
+      seed({
+        locked: ['nsfw'],
+        meta: {
+          [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: lockedAt },
+          comFaceIntent: {
+            detected: true,
+            textHash: 'h',
+            at: 'x',
+            laterVerdict: { source: 'xguard-text-moderation', at },
+          },
+        },
+      });
+    const approveAsJob = () =>
+      resolveLockReviewAppeal({
+        appealId: 1,
+        modelId: MODEL,
+        approve: true,
+        userId: MODERATOR,
+        refuseLaterVerdict: true,
+      });
+
+    // The job read the model before its slow re-check; the verdict landed after that read.
+    it('refuses, leaving the appeal pending and the lock and verdict in place', async () => {
+      await seedVerdict('2026-03-01T00:00:00.000Z');
+
+      await expect(approveAsJob()).rejects.toThrow(LOCK_REVIEW_LATER_VERDICT);
+
+      expect(await appealRow()).toMatchObject({ status: 'Pending', resolvedBy: null });
+      expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
+      expect(await modelMeta()).toMatchObject({
+        comFaceIntent: { laterVerdict: { source: 'xguard-text-moderation' } },
+      });
+    });
+
+    it('approves when the verdict is older than the lock', async () => {
+      await seedVerdict('2026-01-01T00:00:00.000Z');
+
+      await approveAsJob();
+
+      expect(await appealRow()).toMatchObject({ status: 'Approved' });
+    });
+
+    it('still lets a moderator approve, who rules on the verdict', async () => {
+      await seedVerdict('2026-03-01T00:00:00.000Z');
+
+      await approve();
+
+      expect(await appealRow()).toMatchObject({ status: 'Approved' });
+    });
   });
 
   it('keeps the marker when the nsfw lock is not among those lifted', async () => {

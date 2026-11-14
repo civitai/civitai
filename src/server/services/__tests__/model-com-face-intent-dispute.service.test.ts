@@ -12,6 +12,7 @@ vi.mock('~/server/services/model-sfw-face.service', () => ({
 }));
 vi.mock('~/server/services/lock-review.service', () => ({
   resolveLockReviewAppeal: mocks.resolve,
+  LOCK_REVIEW_LATER_VERDICT: 'later verdict',
 }));
 
 const { processComFaceIntentDisputes } = await import(
@@ -60,7 +61,13 @@ describe('processComFaceIntentDisputes', () => {
     expect(await processComFaceIntentDisputes()).toMatchObject({ overturned: 1 });
     expect(mocks.verdict).toHaveBeenCalledWith(expect.objectContaining({ thinking: true }));
     expect(mocks.resolve).toHaveBeenCalledWith(
-      expect.objectContaining({ appealId: 1, modelId: 7, approve: true, userId: -1 })
+      expect.objectContaining({
+        appealId: 1,
+        modelId: 7,
+        approve: true,
+        userId: -1,
+        refuseLaterVerdict: true,
+      })
     );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
@@ -128,6 +135,15 @@ describe('processComFaceIntentDisputes', () => {
 
     expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
     expect(mocks.resolve).not.toHaveBeenCalled();
+  });
+
+  it('marks it later-verdict when the approval finds a verdict that landed during the re-check', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute()] as never);
+    mocks.verdict.mockResolvedValue({ status: 'allowed' });
+    mocks.resolve.mockRejectedValue(new Error('later verdict'));
+
+    expect(await processComFaceIntentDisputes()).toMatchObject({ 'later-verdict': 1 });
+    expect(appealWrites()).toEqual([['later-verdict', 1]]);
   });
 
   it('hands an allowed dispute to a moderator when the approval is refused', async () => {

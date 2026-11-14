@@ -212,6 +212,13 @@ export function readSystemNsfwLockAt(meta: unknown): Date | null {
   return Number.isNaN(at.getTime()) ? null : at;
 }
 
+/** A system rating verdict was recorded after the current nsfw-lock marker was set. */
+export function hasLaterVerdictUnderLock(meta: unknown): boolean {
+  const lockedAt = readSystemNsfwLockAt(meta);
+  const later = (meta as ModelMeta | null)?.comFaceIntent?.laterVerdict?.at;
+  return !!lockedAt && !!later && new Date(later) > lockedAt;
+}
+
 // A content wipe's removal record is written and cleared by server code only: a moderator's edit
 // form sends stored meta back, and must not put a stale record onto a live model.
 const SERVER_ONLY_META_KEYS: readonly string[] = [

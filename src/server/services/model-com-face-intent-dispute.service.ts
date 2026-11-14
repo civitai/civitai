@@ -2,7 +2,10 @@ import { COM_FACE_INTENT_DISPUTE, LOCK_REVIEW_KIND } from '@civitai/shared/lock-
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { resolveLockReviewAppeal } from '~/server/services/lock-review.service';
+import {
+  LOCK_REVIEW_LATER_VERDICT,
+  resolveLockReviewAppeal,
+} from '~/server/services/lock-review.service';
 import {
   checkComFaceIntentVerdict,
   getOwnTriggerWords,
@@ -13,7 +16,7 @@ import {
   comFaceIntentTextHash,
 } from '~/server/services/model-com-face-intent.service';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
-import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
+import { hasLaterVerdictUnderLock, readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 
 const SYSTEM_USER_ID = constants.system.user.id;
 // Each slower pass may wait up to a minute: a batch must finish well inside the run's lock.
@@ -144,7 +147,7 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
   // The tag was stamped at filing: a moderator's ruling on the lock since then makes it theirs.
   if (!(await stillIntentLock(row))) return markJudged(row, 'needs-moderator');
   // A system rating verdict the lock kept from applying would be lost with it: a moderator decides.
-  if (laterVerdictUnderLock(row)) return markJudged(row, 'later-verdict');
+  if (hasLaterVerdictUnderLock(row.meta)) return markJudged(row, 'later-verdict');
 
   try {
     await resolveLockReviewAppeal({
@@ -152,10 +155,14 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
       modelId: row.modelId,
       approve: true,
       userId: SYSTEM_USER_ID,
+      // Re-read under the row lock: a verdict can land during the re-check above.
+      refuseLaterVerdict: true,
       internalNotes:
         'Approved automatically: the listing intent check allowed it on a second pass.',
     });
   } catch (error) {
+    if (error instanceof Error && error.message === LOCK_REVIEW_LATER_VERDICT)
+      return markJudged(row, 'later-verdict');
     logToAxiom({
       type: 'info',
       name: 'model-com-face-intent-dispute',
@@ -177,13 +184,6 @@ async function stillIntentLock(row: PendingDispute) {
   if (!row.lockedProperties.includes('nsfw')) return false;
   if (marker?.source !== COM_FACE_INTENT_LOCK_SOURCE || !at) return false;
   return !(await moderatorRuledNsfwSince(row.modelId, at, { alsoRejections: true }));
-}
-
-function laterVerdictUnderLock(row: PendingDispute) {
-  const meta = row.meta as ModelMeta | null;
-  const lockedAt = readSystemNsfwLockAt(meta);
-  const later = meta?.comFaceIntent?.laterVerdict?.at;
-  return !!lockedAt && !!later && new Date(later) > lockedAt;
 }
 
 async function markJudged(row: PendingDispute, outcome: ComFaceIntentDisputeOutcome) {
