@@ -317,7 +317,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | `creator-promotions` | sponsored post on page 1 of a model-version gallery | `FEED_GO_CREATOR_PROMOTIONS` names the flag's audience: `false` (off for everyone), `mods-testers` (the flag's rule as of 2026-11-14: off signed out, on for moderators, unknown for other signed-in users, who may be on a user-id list feed-go does not hold, and for a banned user's session, which Node still evaluates the flag for), `everyone`, or `true` / unset (fail-safe: unknown for everyone). Where the value is known the sponsored post is ported; where it is unknown, a page that would carry one falls back (`sponsored-post`) and a page that would not is served (the flag cannot change it) |
 | `image-resource-use-write` | model-gallery queries read the primary | not mirrored: off in production; the replica is used |
 | `image-feed-shared-users` | one `user` object per creator on the wire | decoded value unchanged; nothing to do |
-| event decoration flags (`birthday-2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated events whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
+| event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
 ## 9. Not at parity (yet)
@@ -351,8 +351,9 @@ no hash was cached — a case this service falls back on (`metrics-miss`) instea
 - per-viewer event-decoration visibility: only while an event's flag base is OFF (a preview before
   launch, or the kill switch), when Node shows its hats to moderators and testers alone and this
   service, which does not evaluate Flipt, shows them to nobody. With the base on every viewer sees
-  them in Node and the mirror (§8) matches. If Flipt is unreachable Node fails closed (no hats) and
-  the mirror does not;
+  them in Node and the mirror (§8) matches. A Node pod whose Flipt client has not yet initialised
+  evaluates every flag as off, so it shows hats to moderators only, while the mirror shows them to
+  all; once initialised the client keeps evaluating from its last config if Flipt goes away;
 - the session cookie roll: Node re-issues a session cookie older than a day; this service never sets
   cookies, so the next Node request rolls it instead;
 - web-client response headers Node adds (`x-update-required`, site alerts, rate-limit headers) are not
