@@ -47,6 +47,8 @@ const ACTOR = {
   appId: APP_ID,
   appBlockId: 'apb_alpha',
   browsingLevel: BROWSING,
+  // Every browsing level, so no fixture output is restricted.
+  outputCeiling: { maxBrowsingLevel: 31 },
 };
 
 /** A row shaped like the raw `Image` SELECT, scanned-clean and within the ceiling. */
@@ -387,6 +389,7 @@ describe('resolveOwnedWorkflowOutputs', () => {
       appBlockId: ACTOR.appBlockId,
       workflowId: WORKFLOW_ID,
       getWorkflow,
+      ceiling: ACTOR.outputCeiling,
     });
   }
 

@@ -1188,6 +1188,59 @@ describe('blocks.cancelWorkflow', () => {
   });
 });
 
+// 🔴 RESTRICTED OUTPUTS ON THE SUBMIT REPLY. The poll / cancel / listing / publish
+// procedures are run end to end with a restricted fixture in
+// `blocks.router.restrictedOutputs.seam.test.ts`; the submit lives here because this
+// suite carries its mocks. A submit reply normally has no output yet, but an
+// orchestrator answering with a finished workflow must not hand the block a restricted
+// url either.
+describe('blocks.submitWorkflow — a restricted output on the reply', () => {
+  const OK = 'https://cdn/submit-ok.png';
+  const SECRET = 'https://cdn/submit-restricted.png';
+
+  it.each([
+    ['an SFW app', undefined, 'ceiling'],
+    ['a mature app', 1 | 2 | 4 | 8 | 16, 'pool'],
+  ] as const)('%s is never handed the restricted url', async (_label, maxBrowsingLevel, reason) => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({ buzzBudget: 100, ...(maxBrowsingLevel ? { maxBrowsingLevel } : {}) })
+    );
+    happyVersionLookup();
+    happyUser();
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'succeeded',
+        cost: { total: 25 },
+        allowMatureContent: false,
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 's',
+            status: 'succeeded',
+            metadata: {},
+            output: {
+              images: [
+                { id: 'r', url: SECRET, available: true, nsfwLevel: 'r' },
+                { id: 'p', url: OK, available: true, nsfwLevel: 'pg' },
+              ],
+            },
+          },
+        ],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    expect(result.snapshot.outputs).toStrictEqual([
+      { restricted: true, reason },
+      { url: OK, nsfwLevel: 'pg' },
+    ]);
+    expect(result.snapshot.imageUrls).toStrictEqual([OK]);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+  });
+});
+
 // 🔴 THE GUARD THAT DID NOT EXIST, AND ITS ABSENCE WAS MUTATION-PROVEN.
 //
 // `blockAuthorFeeQuotedCounter`'s `surface` label is derived from the

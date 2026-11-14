@@ -24,6 +24,9 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
 
 import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
 
+/** Every browsing level, so no fixture output is above the ceiling. */
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31 };
+
 const CKPT_1 = 'https://blobs.example/ckpt-epoch-1.safetensors';
 const CKPT_2 = 'https://blobs.example/ckpt-epoch-2.safetensors';
 const CKPT_3_PENDING = 'https://blobs.example/ckpt-epoch-3-pending.safetensors';
@@ -108,17 +111,19 @@ function workflow(
 
 describe('pass-through `training` step — the checkpoint never rides out', () => {
   it('puts ONLY the epoch samples on imageUrls', () => {
-    const snap = snapshotFromWorkflow(workflow('training', trainingOutput()));
+    const snap = snapshotFromWorkflow(workflow('training', trainingOutput()), TEST_OUTPUT_CEILING);
     expect(snap.imageUrls).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
   });
 
   it('carries no checkpoint url anywhere in the snapshot, the pending one included', () => {
-    const wire = JSON.stringify(snapshotFromWorkflow(workflow('training', trainingOutput())));
+    const wire = JSON.stringify(
+      snapshotFromWorkflow(workflow('training', trainingOutput()), TEST_OUTPUT_CEILING)
+    );
     for (const url of [CKPT_1, CKPT_2, CKPT_3_PENDING]) expect(wire).not.toContain(url);
   });
 
   it('keeps the rest of the epoch in stepOutputs, minus `model`', () => {
-    const snap = snapshotFromWorkflow(workflow('training', trainingOutput()));
+    const snap = snapshotFromWorkflow(workflow('training', trainingOutput()), TEST_OUTPUT_CEILING);
     expect(snap.stepOutputs).toEqual([
       {
         $type: 'training',
@@ -135,7 +140,10 @@ describe('pass-through `training` step — the checkpoint never rides out', () =
   });
 
   it('keeps the checkpoint out of AppWorkflow.images (the publish path)', () => {
-    const projected = projectAppWorkflow(workflow('training', trainingOutput()));
+    const projected = projectAppWorkflow(
+      workflow('training', trainingOutput()),
+      TEST_OUTPUT_CEILING
+    );
     expect(projected.images.map((i) => i.url)).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
     expect(JSON.stringify(projected)).not.toContain('.safetensors');
   });
@@ -144,7 +152,8 @@ describe('pass-through `training` step — the checkpoint never rides out', () =
 describe('pass-through `imageResourceTraining` step — the plain-string checkpoint', () => {
   it('drops the checkpoint, lifts the sample urls to imageUrls, and forwards the rest', () => {
     const snap = snapshotFromWorkflow(
-      workflow('imageResourceTraining', imageResourceTrainingOutput())
+      workflow('imageResourceTraining', imageResourceTrainingOutput()),
+      TEST_OUTPUT_CEILING
     );
     const wire = JSON.stringify(snap);
     expect(wire).not.toContain(LEGACY_CKPT_URL);
@@ -166,7 +175,8 @@ describe('pass-through `imageResourceTraining` step — the plain-string checkpo
 
   it('surfaces the sample urls on AppWorkflow.images (the publish path), never the checkpoint', () => {
     const projected = projectAppWorkflow(
-      workflow('imageResourceTraining', imageResourceTrainingOutput())
+      workflow('imageResourceTraining', imageResourceTrainingOutput()),
+      TEST_OUTPUT_CEILING
     );
     expect(projected.images).toEqual([
       { url: LEGACY_SAMPLE_URL, width: null, height: null, nsfwLevel: null },
@@ -176,7 +186,7 @@ describe('pass-through `imageResourceTraining` step — the plain-string checkpo
 
 describe('trainedEpochs', () => {
   it('lists the training epochs whose checkpoint is available, skipping the pending one', () => {
-    const snap = snapshotFromWorkflow(workflow('training', trainingOutput()));
+    const snap = snapshotFromWorkflow(workflow('training', trainingOutput()), TEST_OUTPUT_CEILING);
     expect(snap.trainedEpochs).toEqual([
       { $type: 'training', epochNumber: 1 },
       { $type: 'training', epochNumber: 2 },
@@ -185,7 +195,8 @@ describe('trainedEpochs', () => {
 
   it('lists the imageResourceTraining epochs that have a checkpoint url', () => {
     const snap = snapshotFromWorkflow(
-      workflow('imageResourceTraining', imageResourceTrainingOutput())
+      workflow('imageResourceTraining', imageResourceTrainingOutput()),
+      TEST_OUTPUT_CEILING
     );
     expect(snap.trainedEpochs).toEqual([{ $type: 'imageResourceTraining', epochNumber: 5 }]);
   });
@@ -195,7 +206,8 @@ describe('trainedEpochs', () => {
       workflow('training', {
         moderationStatus: 'approved',
         epochs: [{ epochNumber: 1, model: blob(CKPT_3_PENDING, false, 'model'), samples: [] }],
-      })
+      }),
+      TEST_OUTPUT_CEILING
     );
     expect(snap).not.toHaveProperty('trainedEpochs');
   });
@@ -204,13 +216,19 @@ describe('trainedEpochs', () => {
   // `$type`, so its `model` blob still takes the generic route — the control
   // that shows the training rule is not a general strip.
   it('is OMITTED, and nothing is dropped, for a non-training $type with the same shape', () => {
-    const snap = snapshotFromWorkflow(workflow('imageBackgroundRemoval', trainingOutput()));
+    const snap = snapshotFromWorkflow(
+      workflow('imageBackgroundRemoval', trainingOutput()),
+      TEST_OUTPUT_CEILING
+    );
     expect(snap).not.toHaveProperty('trainedEpochs');
     expect(snap.imageUrls).toEqual([CKPT_1, SAMPLE_1A, SAMPLE_1B, CKPT_2, SAMPLE_2A]);
   });
 
   it('is OMITTED for a training step this bridge did not submit', () => {
-    const snap = snapshotFromWorkflow(workflow('training', trainingOutput(), { name: 'other' }));
+    const snap = snapshotFromWorkflow(
+      workflow('training', trainingOutput(), { name: 'other' }),
+      TEST_OUTPUT_CEILING
+    );
     expect(snap).not.toHaveProperty('trainedEpochs');
     expect(snap.imageUrls).toBeUndefined();
   });
@@ -219,7 +237,8 @@ describe('trainedEpochs', () => {
     'is OMITTED when the run moderationStatus is %s, while samples still surface',
     (moderationStatus) => {
       const snap = snapshotFromWorkflow(
-        workflow('training', { ...trainingOutput(), moderationStatus })
+        workflow('training', { ...trainingOutput(), moderationStatus }),
+        TEST_OUTPUT_CEILING
       );
       expect(snap).not.toHaveProperty('trainedEpochs');
       expect(snap.imageUrls).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
@@ -234,7 +253,7 @@ describe('trainedEpochs', () => {
       name: BLOCK_STEP_NAME,
       output: imageResourceTrainingOutput(),
     });
-    expect(snapshotFromWorkflow(wf).trainedEpochs).toEqual([
+    expect(snapshotFromWorkflow(wf, TEST_OUTPUT_CEILING).trainedEpochs).toEqual([
       { $type: 'training', epochNumber: 1 },
       { $type: 'training', epochNumber: 2 },
       { $type: 'imageResourceTraining', epochNumber: 5 },
@@ -247,7 +266,9 @@ describe('trainedEpochs', () => {
 // polling each workflow.
 describe('trainedEpochs on AppWorkflow rows', () => {
   it('lists the ready epochs of an approved `training` run', () => {
-    expect(projectAppWorkflow(workflow('training', trainingOutput())).trainedEpochs).toEqual([
+    expect(
+      projectAppWorkflow(workflow('training', trainingOutput()), TEST_OUTPUT_CEILING).trainedEpochs
+    ).toEqual([
       { $type: 'training', epochNumber: 1 },
       { $type: 'training', epochNumber: 2 },
     ]);
@@ -255,8 +276,10 @@ describe('trainedEpochs on AppWorkflow rows', () => {
 
   it('lists the ready epochs of an approved `imageResourceTraining` run', () => {
     expect(
-      projectAppWorkflow(workflow('imageResourceTraining', imageResourceTrainingOutput()))
-        .trainedEpochs
+      projectAppWorkflow(
+        workflow('imageResourceTraining', imageResourceTrainingOutput()),
+        TEST_OUTPUT_CEILING
+      ).trainedEpochs
     ).toEqual([{ $type: 'imageResourceTraining', epochNumber: 5 }]);
   });
 
@@ -267,7 +290,7 @@ describe('trainedEpochs on AppWorkflow rows', () => {
       name: BLOCK_STEP_NAME,
       output: imageResourceTrainingOutput(),
     });
-    expect(projectAppWorkflow(wf).trainedEpochs).toEqual([
+    expect(projectAppWorkflow(wf, TEST_OUTPUT_CEILING).trainedEpochs).toEqual([
       { $type: 'training', epochNumber: 1 },
       { $type: 'training', epochNumber: 2 },
       { $type: 'imageResourceTraining', epochNumber: 5 },
@@ -278,7 +301,8 @@ describe('trainedEpochs on AppWorkflow rows', () => {
     'is OMITTED when the run moderationStatus is %s',
     (moderationStatus) => {
       const projected = projectAppWorkflow(
-        workflow('training', { ...trainingOutput(), moderationStatus })
+        workflow('training', { ...trainingOutput(), moderationStatus }),
+        TEST_OUTPUT_CEILING
       );
       expect(projected).not.toHaveProperty('trainedEpochs');
       expect(projected.images.map((i) => i.url)).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
@@ -287,13 +311,19 @@ describe('trainedEpochs on AppWorkflow rows', () => {
 
   it('is OMITTED for a training step this bridge did not submit', () => {
     expect(
-      projectAppWorkflow(workflow('training', trainingOutput(), { name: 'other' }))
+      projectAppWorkflow(
+        workflow('training', trainingOutput(), { name: 'other' }),
+        TEST_OUTPUT_CEILING
+      )
     ).not.toHaveProperty('trainedEpochs');
   });
 
   // Same output shape, non-training `$type`: the row keeps exactly its prior keys.
   it('is OMITTED for a non-training row, which keeps exactly its prior keys', () => {
-    const projected = projectAppWorkflow(workflow('imageBackgroundRemoval', trainingOutput()));
+    const projected = projectAppWorkflow(
+      workflow('imageBackgroundRemoval', trainingOutput()),
+      TEST_OUTPUT_CEILING
+    );
     expect(Object.keys(projected).sort()).toEqual(
       ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
     );
@@ -308,8 +338,8 @@ describe('publishedModel', () => {
       metadata: { ...stamped, published: true },
     });
     const expected = { modelId: 501, modelVersionId: 9001, published: true };
-    expect(snapshotFromWorkflow(wf).publishedModel).toEqual(expected);
-    expect(projectAppWorkflow(wf).publishedModel).toEqual(expected);
+    expect(snapshotFromWorkflow(wf, TEST_OUTPUT_CEILING).publishedModel).toEqual(expected);
+    expect(projectAppWorkflow(wf, TEST_OUTPUT_CEILING).publishedModel).toEqual(expected);
   });
 
   it('reports a still-draft model (ids stamped, `published` absent) as published: false', () => {
@@ -317,8 +347,8 @@ describe('publishedModel', () => {
       metadata: stamped,
     });
     const expected = { modelId: 501, modelVersionId: 9001, published: false };
-    expect(snapshotFromWorkflow(wf).publishedModel).toEqual(expected);
-    expect(projectAppWorkflow(wf).publishedModel).toEqual(expected);
+    expect(snapshotFromWorkflow(wf, TEST_OUTPUT_CEILING).publishedModel).toEqual(expected);
+    expect(projectAppWorkflow(wf, TEST_OUTPUT_CEILING).publishedModel).toEqual(expected);
   });
 
   it.each([
@@ -329,20 +359,20 @@ describe('publishedModel', () => {
     ['a missing version id', { modelId: 501, published: true }],
   ])('is OMITTED for %s', (_label, metadata) => {
     const wf = workflow('training', trainingOutput(), { metadata });
-    expect(snapshotFromWorkflow(wf)).not.toHaveProperty('publishedModel');
-    expect(projectAppWorkflow(wf)).not.toHaveProperty('publishedModel');
+    expect(snapshotFromWorkflow(wf, TEST_OUTPUT_CEILING)).not.toHaveProperty('publishedModel');
+    expect(projectAppWorkflow(wf, TEST_OUTPUT_CEILING)).not.toHaveProperty('publishedModel');
   });
 
   it('is OMITTED for a training step this bridge did not submit, ids stamped or not', () => {
     const wf = workflow('training', trainingOutput(), { name: 'other', metadata: stamped });
-    expect(snapshotFromWorkflow(wf)).not.toHaveProperty('publishedModel');
-    expect(projectAppWorkflow(wf)).not.toHaveProperty('publishedModel');
+    expect(snapshotFromWorkflow(wf, TEST_OUTPUT_CEILING)).not.toHaveProperty('publishedModel');
+    expect(projectAppWorkflow(wf, TEST_OUTPUT_CEILING)).not.toHaveProperty('publishedModel');
   });
 
   it('is OMITTED for a non-training workflow whose metadata happens to carry the ids', () => {
     const wf = workflow('imageBackgroundRemoval', { blobs: [] }, { metadata: stamped });
-    expect(snapshotFromWorkflow(wf)).not.toHaveProperty('publishedModel');
-    expect(Object.keys(projectAppWorkflow(wf)).sort()).toEqual(
+    expect(snapshotFromWorkflow(wf, TEST_OUTPUT_CEILING)).not.toHaveProperty('publishedModel');
+    expect(Object.keys(projectAppWorkflow(wf, TEST_OUTPUT_CEILING)).sort()).toEqual(
       ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
     );
   });

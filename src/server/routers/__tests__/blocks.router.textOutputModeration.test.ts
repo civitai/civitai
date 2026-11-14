@@ -472,6 +472,7 @@ describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
     expect(Object.keys(result.snapshot).sort()).toEqual([
       'cost',
       'imageUrls',
+      'outputs',
       'status',
       'workflowId',
     ]);

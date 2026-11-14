@@ -1906,7 +1906,13 @@ describe("kind:'workflow' POLL / CANCEL", () => {
     // The suppressed step's image is in neither place.
     expect(snapshot.imageUrls).toEqual(['https://img/gen.png']);
     expect(snapshot.steps).toEqual([
-      { name: 'gen', $type: 'imageGen', status: 'succeeded', imageUrls: ['https://img/gen.png'] },
+      {
+        name: 'gen',
+        $type: 'imageGen',
+        status: 'succeeded',
+        imageUrls: ['https://img/gen.png'],
+        outputs: [{ url: 'https://img/gen.png' }],
+      },
       { name: '$1', $type: 'imageUpscaler', status: 'succeeded', output: { scale: 2 } },
       {
         name: '$2',
