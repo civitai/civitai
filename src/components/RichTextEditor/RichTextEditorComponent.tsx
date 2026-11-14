@@ -145,6 +145,7 @@ export function RichTextEditor({
   toolbarOffset = 0,
   inputClasses,
   toolbarEnd,
+  headingLevels = [1, 2, 3],
   ...props
 }: Props) {
   const addHeading = includeControls.includes('heading');
@@ -207,6 +208,8 @@ export function RichTextEditor({
     return accepts;
   }, [addImages, addVideo]);
 
+  // A key, not the array: callers pass a fresh array each render, and the editor rebuilds on change.
+  const headingLevelsKey = headingLevels.join(',');
   const extensions = useMemo(() => {
     const arr: Extensions = [
       Placeholder.configure({ placeholder }),
@@ -232,7 +235,7 @@ export function RichTextEditor({
       const linkExtension = withLinkValidation ? LinkWithValidation : Link;
       arr.push(linkExtension);
     }
-    if (addHeading) arr.push(CustomHeading);
+    if (addHeading) arr.push(CustomHeading.configure({ levels: headingLevels }));
     if (onSuperEnter)
       arr.push(
         Extension.create({
@@ -303,6 +306,7 @@ export function RichTextEditor({
     addLink,
     withLinkValidation,
     addHeading,
+    headingLevelsKey,
     onSuperEnter,
     addMedia,
     addMentions,
@@ -471,9 +475,9 @@ export function RichTextEditor({
             <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
               {addHeading && (
                 <RTE.ControlsGroup>
-                  <RTE.H1 />
-                  <RTE.H2 />
-                  <RTE.H3 />
+                  {headingLevels.includes(1) && <RTE.H1 />}
+                  {headingLevels.includes(2) && <RTE.H2 />}
+                  {headingLevels.includes(3) && <RTE.H3 />}
                 </RTE.ControlsGroup>
               )}
 
@@ -576,9 +580,9 @@ export function RichTextEditor({
               <RTE.ControlsGroup>
                 {addHeading ? (
                   <>
-                    <RTE.H1 />
-                    <RTE.H2 />
-                    <RTE.H3 />
+                    {headingLevels.includes(1) && <RTE.H1 />}
+                    {headingLevels.includes(2) && <RTE.H2 />}
+                    {headingLevels.includes(3) && <RTE.H3 />}
                   </>
                 ) : null}
                 {addFormatting ? (
@@ -660,4 +664,6 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     inputClasses?: string;
     /** The surface's own actions (save state, delete), at the toolbar's right end. */
     toolbarEnd?: React.ReactNode;
+    /** The heading levels `heading` offers, for a surface whose stored allowlist omits some. */
+    headingLevels?: Array<1 | 2 | 3>;
   };

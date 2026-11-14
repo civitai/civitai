@@ -71,7 +71,13 @@ describe('StorylineTextCard', () => {
     await page.getByLabelText('Text', { exact: true }).fill('<p>Once upon</p>');
     await expect.poll(() => setText.mock.calls.length, { timeout: 3000 }).toBe(1);
     expect(setText).toHaveBeenCalledWith({ id: 7, content: '<p>Once upon</p>' });
-    expect(setTexts).toHaveBeenCalled();
+    // Past a second debounce window: still one save.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(setText).toHaveBeenCalledTimes(1);
+    // The saved words go into this text, and only this one.
+    const update = setTexts.mock.calls[0][0] as (t: (typeof text)[]) => (typeof text)[];
+    const other = { id: 8, index: 2, content: '<p>Other</p>' };
+    expect(update([text, other])).toEqual([{ ...text, content: '<p>Once upon</p>' }, other]);
   });
 
   test('a held text goes read-only with the server message, and offers no more edits', async () => {

@@ -15,13 +15,16 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { mergeEditorItems, reorderPayload } from '~/components/Post/EditV2/post-edit-items';
+import {
+  imageOnlyReorderIndexes,
+  mergeEditorItems,
+  reorderPayload,
+} from '~/components/Post/EditV2/post-edit-items';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { PostEditTextDetail } from '~/server/services/post.service';
 
 export function PostReorderImages() {
-  // With text items on, they move in the same list; without, the original image-only reorder.
   const textOn = !!useFeatureFlags().storylineText;
   const texts = usePostEditStore((state) => state.texts);
   if (textOn && texts.length) return <PostReorderItems />;
@@ -137,6 +140,8 @@ function PostReorderImagesOnly() {
       .sort((a, b) => (a.index ?? 0) - (b.index ?? 0)),
     state.setImages,
   ]);
+  // Text items the editor does not show (their flag is off) still hold slots on the server.
+  const hasText = usePostEditStore((state) => state.texts.length > 0);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -161,12 +166,16 @@ function PostReorderImagesOnly() {
         // Reorder the added images
         const reordered = arrayMove(addedImages, oldIndex, newIndex);
 
-        // Update indices for the reordered images
+        // The indexes the server will write, so text items keep their places.
+        const indexes = imageOnlyReorderIndexes(
+          reordered.map((image) => image.data),
+          hasText
+        );
         const updatedImages = reordered.map(
-          (image, index) =>
+          (image, i) =>
             ({
               type: image.type,
-              data: { ...image.data, index: index + 1 },
+              data: { ...image.data, index: indexes[i] },
             } as ControlledImage)
         );
 

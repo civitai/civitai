@@ -12,14 +12,21 @@ import { StorylineTextCard } from '~/components/Storyline/editor/StorylineTextCa
 import { usePostStorylineMode } from '~/components/Storyline/editor/usePostStorylineMode';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { PostEditTextDetail } from '~/server/services/post.service';
 import { mergeEditorItems } from '~/components/Post/EditV2/post-edit-items';
 import { textIndexAfter } from '~/shared/utils/post-items';
 import { STORYLINE_TEXT_MAX_PER_POST } from '~/shared/utils/storyline';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+const NO_TEXTS: PostEditTextDetail[] = [];
+
 export function PostImageCards() {
-  const [images, texts] = usePostEditStore((state) => [state.images, state.texts]);
+  const [images, storeTexts] = usePostEditStore((state) => [state.images, state.texts]);
+  // Without the flag the text routes refuse every change, so the editor shows images only; the
+  // server keeps each text where it is.
+  const textOn = !!useFeatureFlags().storylineText;
+  const texts = textOn ? storeTexts : NO_TEXTS;
   const { maxItems } = useMediaUploadSettingsContext();
   const { showPreview, toggleShowPreview } = usePostPreviewContext();
   const tab = showPreview ? 'preview' : 'edit';
