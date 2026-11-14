@@ -1,3 +1,6 @@
+import { childBrowsingTagIds } from './browsing-addon-tags';
+import { NsfwLevel } from './browsing-levels';
+
 /**
  * Serving review-queue media to moderators from storage rather than the public image CDN. Shared by
  * the moderator app's `/api/held-media` and the main app's `/api/mod/held-media`, so the two routes
@@ -51,6 +54,58 @@ export function heldImageSql(image: string): string {
     OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
       AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
   )`;
+}
+
+const SUSPECT_VOTE_REASONS = ['csam-realistic', 'school-nsfw'];
+
+/**
+ * Whether the "Image" row aliased `image` carries a CSAM or minor signal: everything `heldImageSql`
+ * holds, plus the minor flags and the minor review queue, a child-type tag on an image rated R or above (the same tags and
+ * levels the default browsing add-on hides from mature browsing), a CSAM hash block, a scan flag
+ * reporting CSAM or a minor, a moderator vote naming one, or a CSAM hold on its label item.
+ *
+ * `Image.blockedFor` beyond 'CSAM' and the scanner's ClickHouse labels are not here: the first is
+ * matched against private patterns (`blockedForSignal`), the second lives in another store.
+ */
+export function suspectImageSql(image: string): string {
+  const held = heldImageSql(image);
+  const id = `${image}.id`;
+  return `(
+    ${held}
+    OR ${image}."minor" = TRUE OR ${image}."acceptableMinor" = TRUE OR ${image}."needsReview" = 'minor'
+    OR ((${image}."nsfwLevel" = 0 OR ${image}."nsfwLevel" >= ${NsfwLevel.R}) AND EXISTS (
+      SELECT 1 FROM "TagsOnImageDetails" st
+      WHERE st."imageId" = ${id} AND st."tagId" IN (${childBrowsingTagIds.join(', ')})
+        AND st."disabled" = FALSE
+    ))
+    OR EXISTS (
+      SELECT 1 FROM "BlockedImage" sb WHERE sb.hash = ${image}."pHash" AND sb.reason = 'CSAM'
+    )
+    OR EXISTS (
+      SELECT 1 FROM "ScanLabelItem" si
+      WHERE si."imageId" = ${id} AND (
+        si."voidReason" = 'csam-hold'
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelFlag" sf
+          WHERE sf."itemId" = si.id
+            AND (sf.snapshot ->> 'csam' = 'true' OR sf.snapshot ->> 'minorDetected' = 'true')
+        )
+        OR EXISTS (
+          SELECT 1 FROM "ScanLabelVote" sv
+          WHERE sv."itemId" = si.id
+            AND (sv.reason IN (${SUSPECT_VOTE_REASONS.map((r) => `'${r}'`).join(', ')})
+              OR sv.reason LIKE 'minor-%')
+        )
+      )
+    )
+  )`;
+}
+
+/** Whether the scan of the "Image" row aliased `image` has not finished, so its signals cannot be
+ *  read. A Blocked image finished its scan. */
+export function unreadableImageSql(image: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
+  return `(${image}."ingestion"::text NOT IN ('Scanned', 'Blocked'))`;
 }
 
 /** Every image id listed on any CsamReport, whatever its state, as text. */
