@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -83,12 +84,13 @@ export async function applySystemModelNsfwFlag({
     if (held) return 'held_restricted';
   }
 
-  // Already mature, or listed on .com by its face: nothing to flip. The verdict is still recorded
-  // as the origin marker, so the owner cannot undo it alone (unticking mature, or removing the face)
-  // while the text it was read from stands (`assertScanRatingKept`).
-  if (!heldLead && (model.nsfw || hasCompleteSfwFace(model))) {
+  // Already mature: nothing to flip. The verdict is still recorded as the origin marker, so the
+  // owner cannot undo it alone while the text it was read from stands (`assertScanRatingKept`).
+  // A model with a complete .com face is rated too: the face keeps it on .com, and a face that goes
+  // away by any path (re-check, cover, owner) leaves the rating standing.
+  if (!heldLead && model.nsfw) {
     await markScanRating(dbWrite, model.id, source);
-    return model.nsfw ? 'skipped_nsfw' : 'skipped_com_face';
+    return 'skipped_nsfw';
   }
 
   const flipped = await flipRow(dbWrite, model.id, source, heldLead);
@@ -124,6 +126,18 @@ export async function applySystemModelNsfwFlag({
     .catch(() => null);
 
   return 'applied';
+}
+
+/** Drops the text scan's own origin marker; not under a lock, nor another check's marker. */
+async function dropScanRatingMarker(db: RawDb, modelId: number) {
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = m.meta - 'systemNsfwLock'
+    WHERE m.id = ${modelId}
+      AND jsonb_typeof(m.meta) = 'object'
+      AND m.meta->'systemNsfwLock'->>'source' = 'text-scan'
+      AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+  `;
 }
 
 /** Stamps the origin marker on a model the scan rated mature but left as it was; an earlier
@@ -348,6 +362,12 @@ export async function applyModelNsfwTextScan({
   outcome,
 }: ApplyTextScanArgs): Promise<RatingFloorResult> {
   const nothing: RatingFloorResult = { deferredRatingNotice: null };
+  // Read as not mature (an edit since the rating): the scan's own marker goes, so the owner can
+  // change the rating again. The rating itself stays as it is.
+  if (outcome.nsfw && outcome.nsfw.detectedLevel <= NsfwLevel.PG13) {
+    await dropScanRatingMarker(dbWrite, entityId);
+    return nothing;
+  }
   if (!outcome.nsfw?.raised) return nothing;
   const model = await dbWrite.model.findUnique({
     where: { id: entityId },
@@ -377,7 +397,8 @@ export async function applyModelNsfwTextScan({
     result,
     level: outcome.nsfw.detectedLevel,
   }).catch(() => null);
-  if (result !== 'applied') return nothing;
+  // A complete .com face already lists it on .com: the notice's advice to add one does not apply.
+  if (result !== 'applied' || hasCompleteSfwFace(model)) return nothing;
 
   const notice: NotifyTextScanRatingRaisedArgs = {
     entityType: 'Model',

@@ -108,12 +108,13 @@ describe('applyModelNsfwTextScan', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 
-  it('leaves the rating alone when the model has a complete .com face', async () => {
+  // The face keeps it on .com; rated, the model stays mature whatever later removes the face.
+  it('rates a model with a complete .com face too, without the notice to add one', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       model({ sfwName: 'Safe title', sfwCoverImageId: 5, nsfwLevel: NsfwLevel.PG })
     );
     await applyModelNsfwTextScan(args(true));
-    expect(flipSql()).toBeUndefined();
+    expect(flipSql()).toBeDefined();
     expect(createNotification).not.toHaveBeenCalled();
   });
 
