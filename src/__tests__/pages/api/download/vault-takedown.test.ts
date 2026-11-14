@@ -76,6 +76,7 @@ describe('/api/download/vault/[vaultItemId] — a taken-down model', () => {
     });
     mockVaultItemFindUnique.mockResolvedValue({
       id: 31,
+      modelId: 5,
       modelVersionId: 9,
       modelName: 'model',
       versionName: 'v1',
@@ -155,13 +156,49 @@ describe('/api/download/vault/[vaultItemId] — a taken-down model', () => {
 
       expect(res.redirect).toHaveBeenCalledWith(signedUrl);
     });
+  });
 
-    it('keeps serving a version that no longer exists on the site', async () => {
+  describe.each([
+    ['model', 'https://example.invalid/model.safetensors'],
+    ['images', 'https://example.invalid/9/4242/images.zip'],
+    ['details', 'https://example.invalid/9/4242/details.pdf'],
+  ] as const)('the %s download of a version no longer on the site', (type, servedUrl) => {
+    // The version row is gone; its model's state comes back only when the read selects it.
+    const givenModelOfDeletedVersion = (model: { mode: string | null } | null) => {
       mockModelVersionFindUnique.mockResolvedValue(null);
+      dbMock.dbRead.model.findUnique.mockImplementation((async (args: {
+        where: { id: number };
+        select?: { mode?: boolean };
+      }) => (model && args.where.id === 5 ? (args.select?.mode ? model : {}) : null)) as never);
+    };
+
+    it('refuses it when its model is taken down', async () => {
+      givenModelOfDeletedVersion({ mode: 'TakenDown' });
       const { promise, res } = run(undefined, type);
       await promise;
 
-      expect(res.redirect).toHaveBeenCalledWith(signedUrl);
+      expect(vi.mocked(res.json).mock.calls).toEqual([[{ error: 'File not found' }]]);
+      expect(res.redirect).not.toHaveBeenCalled();
+    });
+
+    it('still serves it to a moderator', async () => {
+      TEST_USER.isModerator = true;
+      givenModelOfDeletedVersion({ mode: 'TakenDown' });
+      const { promise, res } = run(undefined, type);
+      await promise;
+
+      expect(res.redirect).toHaveBeenCalledWith(servedUrl);
+    });
+
+    it.each([
+      ['a model that is not taken down', { mode: null }],
+      ['a model that is gone too', null],
+    ])('keeps serving it for %s', async (_state, model) => {
+      givenModelOfDeletedVersion(model);
+      const { promise, res } = run(undefined, type);
+      await promise;
+
+      expect(res.redirect).toHaveBeenCalledWith(servedUrl);
     });
   });
 });

@@ -9,7 +9,11 @@ export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
     try {
       const input = getPaginatedVaultItemsSchema.parse(req.query);
-      const vaultItems = await getPaginatedVaultItems({ ...input, userId: user.id });
+      const vaultItems = await getPaginatedVaultItems({
+        ...input,
+        userId: user.id,
+        isModerator: user.isModerator,
+      });
       res.json({
         ...vaultItems,
       });
