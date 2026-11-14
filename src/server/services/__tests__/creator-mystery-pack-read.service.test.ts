@@ -346,6 +346,19 @@ describe('getMysteryPackCandidates', () => {
     expect(limited.problem).toMatch(/limited stock/);
   });
 
+  it("only reads the viewer's own cosmetics, so one creator never sees another's in the composer", async () => {
+    dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([]);
+    await getMysteryPackCandidates({ creatorId: 77, stickersEnabled: false });
+    // Tagged template: [strings, creatorId for the listing join, the `where` Prisma.Sql].
+    const [, , where] = dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown as [
+      unknown,
+      number,
+      { strings: string[]; values: unknown[] }
+    ];
+    expect(where.strings.join('?')).toContain('"createdById" =');
+    expect(where.values).toContain(77);
+  });
+
   it('counts a box-only item at the floor, not at the price its creator typed', async () => {
     dbMock.dbWrite.$queryRaw
       .mockReset()
