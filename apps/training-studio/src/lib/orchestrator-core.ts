@@ -67,6 +67,9 @@ function describeHtmlPage(body: string): string {
   } — try again in a minute`;
 }
 
+// Callback configuration is the server's own and never the user's to fix.
+const CALLBACK_ERROR_KEY = /(^|[.$[])callbacks\b/i;
+
 /** A rejected step comes back as RFC-9110 ProblemDetails (`.title` + a `.errors` field→messages map), a
  *  plain error as `.detail`; surface whichever is present, including the per-field validation errors so a
  *  bad body says which field, not just "One or more validation errors occurred". `status` (the response's,
@@ -79,6 +82,7 @@ export function describeSubmitError(error: unknown, status?: number): string {
     | undefined;
   if (e?.errors && typeof e.errors === 'object') {
     const fields = Object.entries(e.errors)
+      .filter(([key]) => !CALLBACK_ERROR_KEY.test(key))
       .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join('; ') : val}`)
       .join(' | ');
     if (fields) return `${e.title ?? 'validation failed'} — ${fields}`;
@@ -172,10 +176,10 @@ export async function queryRecentWorkflows(
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
-  return (data.items ?? []).map(withoutCallbacks);
+  return (data.items ?? []).map((w) => withoutCallbacks(w));
 }
 
-/** Every single-workflow read goes through here, so no caller holds a workflow's `callbacks`. */
+/** Server-side single-workflow reads, returned without the workflow's `callbacks`. */
 export async function readWorkflow(client: OrchestratorClient, workflowId: string) {
   const result = await getWorkflow({ client, path: { workflowId } });
   return { ...result, data: result.data && withoutCallbacks(result.data) };

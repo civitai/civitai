@@ -40,6 +40,25 @@ const ORCHESTRATOR_BLOB_PATH = '/v2/consumer/blobs/';
 // The generator tags every workflow with its workflow key; an image edit is this one.
 const EDIT_WORKFLOW_TAG = 'img2img:edit';
 
+// A starting image is an image blob; anything else named there (weights) is never served as one.
+const IMAGE_BLOB = /\/v2\/consumer\/blobs\/[^/?#]+\.(png|jpe?g|webp)(\?|#|$)/i;
+
+/** The starting images of an image-edit workflow: what the edit-pair picker previews from it. */
+export function editSourceAirs(workflow: {
+  tags?: string[] | null;
+  steps?: unknown[] | null;
+}): string[] {
+  if (!workflow.tags?.includes(EDIT_WORKFLOW_TAG)) return [];
+  return ((workflow.steps ?? []) as RawImageGenStep[]).flatMap((step) =>
+    step.$type === 'imageGen' && Array.isArray(step.input?.images)
+      ? step.input.images.filter(
+          (i): i is string =>
+            typeof i === 'string' && i.includes(ORCHESTRATOR_BLOB_PATH) && IMAGE_BLOB.test(i)
+        )
+      : []
+  );
+}
+
 /** The caller's recent single-image edits, one item per result. Edits from several input images
  *  are left out — a pair has one starting image — and so are inputs that aren't the caller's
  *  orchestrator blobs (a site image remixed in), whose bytes the Studio can't read. */
@@ -63,7 +82,7 @@ export async function listEditGenerations(
       const inputs = step.input?.images;
       if (!Array.isArray(inputs) || inputs.length !== 1 || typeof inputs[0] !== 'string') continue;
       const sourceUrl = inputs[0];
-      if (!sourceUrl.includes(ORCHESTRATOR_BLOB_PATH)) continue;
+      if (!IMAGE_BLOB.test(sourceUrl)) continue;
       const prompt = [step.input?.prompt, params?.prompt].find(
         (p): p is string => typeof p === 'string' && p.trim().length > 0
       );

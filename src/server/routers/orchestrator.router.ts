@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { withholdTrainingOutputs } from '~/server/services/orchestrator/training/studio-withheld-outputs';
 import { acceptGenerationLicense } from '~/server/services/generation-license.service';
 import { generatorAcceptsBoostRequired } from '~/server/services/generation/coverage-source';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
@@ -274,9 +275,10 @@ export const orchestratorRouter = router({
         token: ctx.token,
         hideMatureContent: ctx.hideMatureContent,
       });
+      const items = await withholdTrainingOutputs(ctx.user, result.items);
       return {
         ...result,
-        items: result.items.map((workflow) =>
+        items: items.map((workflow) =>
           withoutTrainingWeightHandles(workflow, { isModerator: ctx.user.isModerator })
         ),
       };
@@ -284,12 +286,14 @@ export const orchestratorRouter = router({
   getWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
-    .query(async ({ ctx, input }) =>
-      withoutTrainingWeightHandles(
-        await getWorkflow({ token: ctx.token, path: { workflowId: input.workflowId } }),
-        { isModerator: ctx.user.isModerator }
-      )
-    ),
+    .query(async ({ ctx, input }) => {
+      const workflow = await getWorkflow({
+        token: ctx.token,
+        path: { workflowId: input.workflowId },
+      });
+      const [gated] = await withholdTrainingOutputs(ctx.user, [workflow]);
+      return withoutTrainingWeightHandles(gated, { isModerator: ctx.user.isModerator });
+    }),
   // #endregion
 
   // #region [requests]
