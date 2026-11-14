@@ -3585,3 +3585,104 @@ describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
     });
   });
 });
+
+/**
+ * WHOLE-SNAPSHOT contract fixtures for the SDK's own contract test: these two objects are
+ * what the SDK repo copies, so they are asserted whole here (`toStrictEqual`, so an extra
+ * key or an explicit `undefined` fails too) rather than field by field.
+ */
+describe('snapshotFromWorkflow — queue/ETA/progress contract fixtures', () => {
+  const recorded = (names: string[]) => ({
+    [WORKFLOW_METADATA_BLOCK_STEPS_KEY]: names.map((name) => ({ name })),
+  });
+
+  it('queued', () => {
+    const snap = snapshotFromWorkflow({
+      id: 'wf_contract_queued',
+      status: 'scheduled',
+      createdAt: '2026-11-14T12:00:00Z',
+      cost: { total: 24 },
+      metadata: recorded(['gen']),
+      steps: [
+        {
+          $type: 'imageGen',
+          name: 'gen',
+          status: 'scheduled',
+          queuePosition: {
+            support: 'available',
+            precedingJobs: 7,
+            estimatedStartAt: '2026-11-14T12:00:07Z',
+            estimatedCompleteAt: '2026-11-14T12:01:13Z',
+          },
+        },
+      ],
+    } as never);
+    expect(snap).toStrictEqual({
+      workflowId: 'wf_contract_queued',
+      status: 'pending',
+      cost: { total: 24 },
+      steps: [
+        {
+          name: 'gen',
+          $type: 'imageGen',
+          status: 'pending',
+          queue: {
+            precedingJobs: 7,
+            estimatedStartAt: '2026-11-14T12:00:07Z',
+            estimatedCompleteAt: '2026-11-14T12:01:13Z',
+            support: 'available',
+          },
+        },
+      ],
+      eta: {
+        stepName: 'gen',
+        queuedAhead: 7,
+        startsAt: '2026-11-14T12:00:07Z',
+        completesAt: '2026-11-14T12:01:13Z',
+        progress: null,
+        support: 'available',
+      },
+    });
+  });
+
+  it('processing', () => {
+    const snap = snapshotFromWorkflow({
+      id: 'wf_contract_processing',
+      status: 'processing',
+      createdAt: '2026-11-14T12:00:00Z',
+      cost: { total: 31 },
+      metadata: recorded(['clip']),
+      steps: [
+        {
+          $type: 'videoGen',
+          name: 'clip',
+          status: 'processing',
+          startedAt: '2026-11-14T12:00:21Z',
+          estimatedProgressRate: 0.42,
+        },
+      ],
+    } as never);
+    expect(snap).toStrictEqual({
+      workflowId: 'wf_contract_processing',
+      status: 'processing',
+      cost: { total: 31 },
+      steps: [
+        {
+          name: 'clip',
+          $type: 'videoGen',
+          status: 'processing',
+          progress: 0.42,
+          startedAt: '2026-11-14T12:00:21Z',
+        },
+      ],
+      eta: {
+        stepName: 'clip',
+        queuedAhead: null,
+        startsAt: null,
+        completesAt: null,
+        progress: 0.42,
+        support: null,
+      },
+    });
+  });
+});
