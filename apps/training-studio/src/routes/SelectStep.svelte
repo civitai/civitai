@@ -20,6 +20,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
+    KOHYA_FLAG_KEY,
     MEDIA_OPTIONS,
     cardsForMedia,
     visibleVersions,
@@ -46,6 +47,7 @@
     runCard,
     runEngine,
     runSupportsKohya,
+    withEngine,
     runFromPrice,
     runVersion,
     runVersionLabel,
@@ -77,6 +79,7 @@
 
   // Derived so the seed and lists reflect the prop rather than a captured snapshot.
   const enabledFlags = $derived(new Set(enabledModelFlags));
+  const kohyaEnabled = $derived(enabledFlags.has(KOHYA_FLAG_KEY));
 
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
   // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
@@ -90,7 +93,12 @@
   let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
   let runs = $state<Run[]>(
     untrack(() =>
-      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
+      initial
+        // A restored Kohya run (Back, Train again) falls back to AI Toolkit for a viewer without the gate.
+        ? initial.runs.map((run) =>
+            kohyaEnabled || runEngine(run) !== 'kohya' ? run : withEngine(run, 'ai-toolkit', enabledFlags)
+          )
+        : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
     )
   );
   let focus = $state(0);
@@ -263,13 +271,9 @@
   }
 
   function pickEngine(index: number, engine: string) {
-    runs = runs.map((run, i) => {
-      if (i !== index || !runSupportsKohya(run)) return run;
-      const options = versionOptions(runCard(run), enabledFlags, engine);
-      return options.some((v) => v.key === run.versionKey)
-        ? { ...run, engine }
-        : { ...run, engine, versionKey: options[0]!.key, customAir: undefined, customName: undefined };
-    });
+    runs = runs.map((run, i) =>
+      i !== index || !runSupportsKohya(run) ? run : withEngine(run, engine, enabledFlags)
+    );
   }
 
   function pickVersion(runIndex: number, versionKey: string) {
@@ -354,7 +358,7 @@
 </script>
 
 {#snippet enginePicker(run: Run, index: number)}
-  {#if runSupportsKohya(run)}
+  {#if kohyaEnabled && runSupportsKohya(run)}
     <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Training engine</div>
     <div
       class="mt-1.5 flex gap-2"

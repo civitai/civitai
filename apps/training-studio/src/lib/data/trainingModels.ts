@@ -919,6 +919,13 @@ export const catalogFlagKeys = (): string[] => [
   ),
 ];
 
+/** The Kohya engine's gate. Same fail-closed semantics as a catalog gate: moderators only until the
+ *  Flipt flag exists, then its segments decide. */
+export const KOHYA_FLAG_KEY = 'training-studio-kohya';
+
+/** Every gate a host evaluates for the flow: the catalog's, then the Kohya engine's. */
+export const hostFlagKeys = (): string[] => [...catalogFlagKeys(), KOHYA_FLAG_KEY];
+
 /** The gates of the cards that train pairs — the edit helpers are offered only to a viewer who can see
  *  one. Null when a pair card is ungated, so nothing gates them. */
 export const pairCardFlagKeys = (): string[] | null => {
