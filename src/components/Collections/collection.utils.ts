@@ -441,7 +441,7 @@ export const useMutateCollection = () => {
       }
 
       await queryUtils.collection.getById.invalidate({ id: req.collectionId as number });
-      await queryUtils.collection.getEntryCount.invalidate({ id: req.collectionId });
+      await queryUtils.collection.getEntryCount.invalidate({ id: Number(req.collectionId) });
     },
     onError(error) {
       showErrorNotification({
