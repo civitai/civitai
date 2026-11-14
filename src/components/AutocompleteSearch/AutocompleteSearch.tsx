@@ -89,7 +89,7 @@ import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
-import { imageIdFromDrop } from '~/components/AutocompleteSearch/image-drop';
+import { imageIdFromDrop, mayCarryImage } from '~/components/AutocompleteSearch/image-drop';
 import { moreLikeThisHref } from '~/components/Image/MoreLikeThisButton';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
@@ -555,16 +555,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onClear?.();
   };
 
-  // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed
-  // it commits the text, which stays as the active filter. Reaching
-  // the category selector REQUIRES blurring this input, so a blur that wrote through `setSearch`
-  // emptied the carrier immediately before every selector-driven index switch — the one path the
-  // carry exists for. `onClear?.()` still fires, unchanged: on mobile it is what closes the search
-  // overlay (`AppHeader` passes `onSearchDone`), and that is not ours to change here.
-  // Search → Images: dropping an image card from the site opens "More like this" for it.
   const dropsImages = !!features.imageSearch && isImageSearchIndex(searchIndexMap[indexNameProp]);
   const handleDragOver = (event: React.DragEvent) => {
-    if (dropsImages && event.dataTransfer.types.includes('text/uri-list')) event.preventDefault();
+    if (dropsImages && mayCarryImage(event.dataTransfer.types)) event.preventDefault();
   };
   const handleDrop = (event: React.DragEvent) => {
     if (!dropsImages) return;
@@ -574,6 +567,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     void router.push(moreLikeThisHref(imageId));
   };
 
+  // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed
+  // it commits the text, which stays as the active filter. Reaching
+  // the category selector REQUIRES blurring this input, so a blur that wrote through `setSearch`
+  // emptied the carrier immediately before every selector-driven index switch — the one path the
+  // carry exists for. `onClear?.()` still fires, unchanged: on mobile it is what closes the search
+  // overlay (`AppHeader` passes `onSearchDone`), and that is not ours to change here.
   const handleBlur = () => {
     if (filtersFeedInPlace) feedSearch.commit(search);
     else clearDisplayedText();
