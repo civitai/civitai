@@ -1113,7 +1113,33 @@ export type BlockWorkflowSnapshot = {
      */
     authorFee?: number;
   };
+  /**
+   * The available media, as urls, in production order — with every RESTRICTED output
+   * removed (see {@link outputs}). Kept for back-compat; `outputs` is the full list.
+   */
   imageUrls?: string[];
+  /**
+   * One entry per available output, in the same order `imageUrls` was built in, with
+   * RESTRICTED outputs kept IN POSITION. An entry is either
+   *   - `{ url, nsfwLevel? }` — within the app's ceiling. `nsfwLevel` is the
+   *     orchestrator rating (`pg`, `pg13`, `r`, `x`, `xxx`), absent while unrated; or
+   *   - `{ restricted: true, reason }` — NO url and NO rating. `'pool'`: the Buzz that
+   *     paid does not allow mature content for this viewer (the workflow's
+   *     `allowMatureContent` was set false at charge time) and the output is above
+   *     PG-13. `'ceiling'`: the output is above the app token's maturity ceiling, or
+   *     above a cap the site itself put on the workflow.
+   * Restricted urls are withheld; an app shows a locked state for such an entry and
+   * must not try to fetch it. Blocked and not-yet-available outputs are dropped, as
+   * from `imageUrls`.
+   *
+   * 🔴 INDEXES. `imageIndexes` on publish and post index `AppWorkflow.images` — the
+   * same list as `imageUrls`, restricted outputs excluded — NOT this list. Decided by
+   * `classifyBlockOutput` (`services/blocks/block-output-restriction`).
+   *
+   * OMITTED when `imageUrls` would hold nothing and no output is restricted.
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  outputs?: BlockWorkflowOutput[];
   error?: string;
   /**
    * A stable, machine-readable companion to `error`, for a block to branch on.
@@ -1568,6 +1594,14 @@ export type BlockWorkflowSnapshot = {
   throttled?: true;
 };
 
+/** The orchestrator content rating of an output the app may load. */
+export type BlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
+
+/** One entry of `BlockWorkflowSnapshot.outputs` / `AppWorkflow.outputs`. */
+export type BlockWorkflowOutput =
+  | { url: string; nsfwLevel?: BlockWorkflowOutputRating }
+  | { restricted: true; reason: 'pool' | 'ceiling' };
+
 export type BlockWorkflowEta = {
   stepName: string;
   queuedAhead: number | null;
@@ -1595,7 +1629,14 @@ export type BlockWorkflowStepSnapshot = {
   name: string;
   $type: string;
   status: BlockWorkflowSnapshot['status'];
+  /** This step's unrestricted media urls — see `BlockWorkflowSnapshot.imageUrls`. */
   imageUrls?: string[];
+  /**
+   * This step's outputs, restricted ones in position — the same rules as
+   * `BlockWorkflowSnapshot.outputs`, and present exactly when `imageUrls` would be or
+   * an output is restricted. Omitted for a step submitted with `suppressOutput`.
+   */
+  outputs?: BlockWorkflowOutput[];
   output?: unknown;
   error?: string;
   /**

@@ -15,6 +15,7 @@ import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gate
 import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
 import { projectAppWorkflow } from '~/server/services/blocks/workflow.service';
+import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
 import {
   BLOCK_POST_APP_ID_META_KEY,
   BLOCK_POST_MAX_IMAGES,
@@ -100,6 +101,12 @@ export type BlockPostActor = {
   appBlockId: string;
   /** The viewer's resolved browsing ceiling, for the published-image clamp. */
   browsingLevel: number;
+  /**
+   * The TOKEN's output ceiling (`blockOutputCeilingFromClaims(claims)`) — the one
+   * `queryAppWorkflows` projects with, so a workflow source's `imageIndexes` resolve
+   * against the same `images` (restricted outputs excluded) the block was shown.
+   */
+  outputCeiling: BlockOutputCeiling;
 };
 
 /** One resolved image, ready to be adopted or materialised. */
@@ -454,6 +461,8 @@ export async function resolveOwnedWorkflowOutputs(input: {
   appBlockId: string;
   workflowId: string;
   getWorkflow: (workflowId: string) => Promise<unknown>;
+  /** The token's output ceiling — see `BlockPostActor.outputCeiling`. */
+  ceiling: BlockOutputCeiling;
 }): Promise<Array<{ url: string; width: number | null; height: number | null } | null>> {
   const owned = await blockWorkflowOwnedByAppUser({
     userId: input.userId,
@@ -467,7 +476,7 @@ export async function resolveOwnedWorkflowOutputs(input: {
   >[0];
   assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: input.appId });
 
-  const projected = projectAppWorkflow(workflow);
+  const projected = projectAppWorkflow(workflow, input.ceiling);
 
   // 🔴 TERMINALITY GATE — the invariant that makes the preview and the write
   // agree on WHICH IMAGES. A still-running workflow can gain an output between
@@ -688,6 +697,7 @@ export async function resolveBlockPostSources(input: {
         appBlockId: input.actor.appBlockId,
         workflowId: source.workflowId,
         getWorkflow: input.getWorkflow,
+        ceiling: input.actor.outputCeiling,
       });
       // 🔴 DID THE BLOCK NAME INDEXES, OR ASK FOR "EVERYTHING"? The two cases get
       // DIFFERENT treatment of a blanked slot below, and this is the only place

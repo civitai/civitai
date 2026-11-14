@@ -18,6 +18,8 @@ import {
   withEveryBlobSurfaceable,
 } from './steps';
 import type { OrchestratorBlobLike, StepOutputMedia, TrainedEpoch } from './steps';
+import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restriction';
+import type { BlockOutputCeiling, BlockOutputWorkflowFacts } from './block-output-restriction';
 import { isRepeatStepType } from './workflow-graph';
 import { safeQuoteReason } from './pass-through-quote-failure';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -42,6 +44,7 @@ import type {
   BlockSourceImage,
   BlockWorkflowBody,
   BlockWorkflowEta,
+  BlockWorkflowOutput,
   BlockWorkflowSnapshot,
   BlockWorkflowStepSnapshot,
 } from '~/server/schema/blocks/workflow.schema';
@@ -96,9 +99,17 @@ export { WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY, readModelSubstitutionsFromMe
  * receives. Only image URLs that are `available` and have a non-null url are
  * surfaced — pending/blocked blobs are dropped rather than sending dead links
  * the block would render as broken images.
+ *
+ * 🔴 `ceiling` IS REQUIRED, and that is the guard: it is the calling token's maturity
+ * ceiling (`blockOutputCeilingFromClaims(claims)`), and every available output is
+ * passed through `classifyBlockOutput` with it. A RESTRICTED output is reported on
+ * `outputs` (and `steps[].outputs`) in position, with no url, and is left out of
+ * `imageUrls`, `steps[].imageUrls` and `model3dOutputs`. See `outputs` in
+ * `schema/blocks/workflow.schema`.
  */
 export function snapshotFromWorkflow(
   workflow: Workflow,
+  ceiling: BlockOutputCeiling,
   /**
    * Facts known to the SUBMITTING request that the orchestrator Workflow object
    * does not itself model — currently only the silent checkpoint substitutions
@@ -139,6 +150,7 @@ export function snapshotFromWorkflow(
 ): BlockWorkflowSnapshot {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
+  const outputs: BlockWorkflowOutput[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
   const trainedEpochs: TrainedEpoch[] = [];
   const model3dOutputs: BlockModel3dOutput[] = [];
@@ -157,10 +169,13 @@ export function snapshotFromWorkflow(
       const extracted = isRepeatStepType(step.$type)
         ? EMPTY_STEP_EXTRACT
         : extractSnapshotStep(step, true);
+      const stepOutputList = classifyOutputs(extracted.media, workflow, ceiling);
+      const stepUrls = unrestrictedUrls(stepOutputList);
       if (!member.suppressOutput) {
-        imageUrls.push(...extracted.media);
+        imageUrls.push(...stepUrls);
+        outputs.push(...stepOutputList);
         // Labels only for urls that are in `imageUrls` — see the field's own doc.
-        model3dOutputs.push(...extracted.model3d);
+        model3dOutputs.push(...labelsFor(extracted.model3d, stepUrls));
       }
       trainedEpochs.push(...extracted.trainedEpochs);
       const error = stepFailureReason(step);
@@ -169,9 +184,8 @@ export function snapshotFromWorkflow(
         name: step.name,
         $type: step.$type,
         status: ORCH_STATUS_MAP[step.status] ?? 'pending',
-        ...(!member.suppressOutput && extracted.media.length > 0
-          ? { imageUrls: extracted.media }
-          : {}),
+        ...(!member.suppressOutput && stepUrls.length > 0 ? { imageUrls: stepUrls } : {}),
+        ...(!member.suppressOutput && stepOutputList.length > 0 ? { outputs: stepOutputList } : {}),
         ...(extracted.rest !== undefined ? { output: extracted.rest } : {}),
         ...(error ? { error } : {}),
         // Each omitted when there is nothing to report — see the fields' docs.
@@ -183,10 +197,13 @@ export function snapshotFromWorkflow(
       continue;
     }
     const extracted = extractSnapshotStep(step, step.name === BLOCK_STEP_NAME);
-    imageUrls.push(...extracted.media);
+    const stepOutputList = classifyOutputs(extracted.media, workflow, ceiling);
+    const stepUrls = unrestrictedUrls(stepOutputList);
+    imageUrls.push(...stepUrls);
+    outputs.push(...stepOutputList);
     trainedEpochs.push(...extracted.trainedEpochs);
     // ADDITIVE: the 3D models among those urls, labelled — `imageUrls` is unchanged.
-    model3dOutputs.push(...extracted.model3d);
+    model3dOutputs.push(...labelsFor(extracted.model3d, stepUrls));
     // A step with no output yet — the submit reply — would otherwise get an
     // entry saying nothing.
     if (extracted.rest !== undefined) {
@@ -250,6 +267,8 @@ export function snapshotFromWorkflow(
       ? { cost: { total, ...(addedAuthorFee !== undefined ? { authorFee: addedAuthorFee } : {}) } }
       : {}),
     ...(imageUrls.length > 0 ? { imageUrls } : {}),
+    // See the field's own doc in `schema/blocks/workflow.schema`. Omitted when empty.
+    ...(outputs.length > 0 ? { outputs } : {}),
     // See the field's own doc in `schema/blocks/workflow.schema`.
     ...(stepOutputs.length > 0 ? { stepOutputs } : {}),
     // Surface the realized spent account (money page blocks). Additive +
@@ -268,6 +287,29 @@ export function snapshotFromWorkflow(
     // See the field's own doc in `schema/blocks/workflow.schema`. Omitted when null.
     ...(eta ? { eta } : {}),
   };
+}
+
+/** Each available output of one step, through the restriction rule, in order. */
+function classifyOutputs(
+  media: readonly StepOutputMedia[],
+  workflow: BlockOutputWorkflowFacts,
+  ceiling: BlockOutputCeiling
+): BlockWorkflowOutput[] {
+  return media.map((m) => classifyBlockOutput(m, workflow, ceiling));
+}
+
+/** The urls of the unrestricted entries, in order — what `imageUrls` carries. */
+function unrestrictedUrls(outputs: readonly BlockWorkflowOutput[]): string[] {
+  const urls: string[] = [];
+  for (const o of outputs) if (isUnrestrictedOutput(o)) urls.push(o.url);
+  return urls;
+}
+
+/** 3D labels only for urls the app is given: a restricted model's url is withheld. */
+function labelsFor(labels: readonly BlockModel3dOutput[], urls: readonly string[]) {
+  if (labels.length === 0) return [];
+  const given = new Set(urls);
+  return labels.filter((l) => given.has(l.url));
 }
 
 const TERMINAL_SNAPSHOT_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set<
@@ -479,8 +521,8 @@ function stepFailureReason(step: NonNullable<Workflow['steps']>[number]): string
 }
 
 type SnapshotStepExtract = {
-  /** Available media urls, in the order the step produced them. */
-  media: string[];
+  /** Available media, in the order the step produced them. */
+  media: StepOutputMedia[];
   /** A pass-through step's non-blob output; `undefined` for every other step. */
   rest?: unknown;
   trainedEpochs: TrainedEpoch[];
@@ -499,7 +541,7 @@ function extractSnapshotStep(
   step: NonNullable<Workflow['steps']>[number],
   bridgeSubmitted: boolean
 ): SnapshotStepExtract {
-  const media: string[] = [];
+  const media: StepOutputMedia[] = [];
   const trainedEpochs: TrainedEpoch[] = [];
   // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
   // in its registry entry, because the output key is step-type-specific —
@@ -526,7 +568,7 @@ function extractSnapshotStep(
     // means this holds even if a future cast puts one there.
     if (postureProducesMedia(registeredStep.moderationPosture)) {
       for (const entry of registeredStep.extractOutput?.(step) ?? []) {
-        media.push(entry.url);
+        media.push(entry);
       }
     }
     return { media, trainedEpochs, model3d: [] };
@@ -564,7 +606,7 @@ function extractSnapshotStep(
       step.$type,
       (step as unknown as { output?: unknown }).output
     );
-    for (const m of split.media) media.push(m.url);
+    for (const m of split.media) media.push(m);
     return {
       media,
       rest: split.rest,
@@ -572,7 +614,7 @@ function extractSnapshotStep(
       model3d: split.model3d,
     };
   }
-  for (const entry of nativeStepOutputMedia(step)) media.push(entry.url);
+  for (const entry of nativeStepOutputMedia(step)) media.push(entry);
   return { media, trainedEpochs, model3d: [] };
 }
 
@@ -779,6 +821,10 @@ export function appBlockInstanceTag(blockInstanceId: string): string {
  *           `BlockWorkflowSnapshot.publishedModel`. Absent on every other item.
  *   model3dOutputs: OPTIONAL, same value and rule as the snapshot field — see
  *           `BlockWorkflowSnapshot.model3dOutputs`. Every url is also in `images`.
+ *   outputs: OPTIONAL, same value and rule as `BlockWorkflowSnapshot.outputs`: every
+ *           available output in order, RESTRICTED ones in position with no url.
+ *           A restricted output is NOT in `images` — so `images` is the list
+ *           `imageIndexes` index (publish and post), and `outputs` is not.
  */
 export type AppWorkflowImage = {
   url: string;
@@ -795,15 +841,24 @@ export type AppWorkflow = {
   trainedEpochs?: TrainedEpoch[];
   publishedModel?: BlockPublishedModel;
   model3dOutputs?: BlockModel3dOutput[];
+  outputs?: BlockWorkflowOutput[];
 };
 
 /**
  * Pure projection Workflow → AppWorkflow. No IO, no throws — safe to map over a
  * whole page of LIST results. See `AppWorkflow` for the field-by-field contract.
+ *
+ * 🔴 `ceiling` IS REQUIRED for the same reason as on `snapshotFromWorkflow`: the
+ * calling token's maturity ceiling decides which outputs are RESTRICTED, and a
+ * restricted output's url is in neither `images` nor `model3dOutputs`. Every
+ * consumer — the listing, the cancel reply, publish and post — must pass the
+ * calling token's ceiling, so the `images` a block indexed is the `images` the
+ * server resolves its `imageIndexes` against.
  */
-export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
+export function projectAppWorkflow(workflow: Workflow, ceiling: BlockOutputCeiling): AppWorkflow {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
-  const images: AppWorkflowImage[] = [];
+  // Every available output, in order, before the restriction rule.
+  const available: StepOutputMedia[] = [];
   const trainedEpochs: TrainedEpoch[] = [];
   const model3dOutputs: BlockModel3dOutput[] = [];
   // Mirrors `snapshotFromWorkflow`'s member-step handling.
@@ -835,20 +890,9 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       // `images[].url` would be the only channel a text step could reach it
       // through.
       if (!postureProducesMedia(registeredStep.moderationPosture)) continue;
-      for (const media of registeredStep.extractOutput?.(step) ?? []) {
-        images.push({
-          url: media.url,
-          width: media.width,
-          height: media.height,
-          // The RAW orchestrator rating string is mapped by the SAME canonical
-          // helper the native branches use — the registry hands over the string,
-          // never a bitflag, so the mapping stays in one place.
-          nsfwLevel:
-            media.nsfwLevel && media.nsfwLevel !== 'na'
-              ? nsfwLevelFromContentRating(media.nsfwLevel)
-              : null,
-        });
-      }
+      // The registry hands over the RAW rating string, never a bitflag, so the
+      // mapping stays in one place (`toAppWorkflowImage`).
+      available.push(...(registeredStep.extractOutput?.(step) ?? []));
       continue;
     }
     if (!NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
@@ -873,49 +917,52 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       );
       trainedEpochs.push(...split.trainedEpochs);
       model3dOutputs.push(...split.model3d);
-      for (const m of split.media) {
-        images.push({
-          url: m.url,
-          width: m.width,
-          height: m.height,
-          nsfwLevel:
-            m.nsfwLevel && m.nsfwLevel !== 'na' ? nsfwLevelFromContentRating(m.nsfwLevel) : null,
-        });
-      }
+      available.push(...split.media);
       continue;
     }
     // A NATIVE `$type` — `output.images` or `output.blobs` per `$type`; see
     // `nativeStepOutputMedia`.
-    for (const img of nativeStepOutputMedia(step)) {
-      images.push({
-        url: img.url,
-        width: img.width,
-        height: img.height,
-        // Map the orchestrator's string rating to the numeric civitai browsing-
-        // level bitflag via the CANONICAL helper (handles the SFW 'g' the raw map
-        // lacks + all of pg/pg13/r/x/xxx, fail-closed to PG for an unexpected
-        // string — so it can't drift from the platform mapping). null ONLY for the
-        // genuinely-unrated sentinel ('na') / unset.
-        nsfwLevel:
-          img.nsfwLevel && img.nsfwLevel !== 'na'
-            ? nsfwLevelFromContentRating(img.nsfwLevel)
-            : null,
-      });
-    }
+    available.push(...nativeStepOutputMedia(step));
   }
+  // One verdict per output, in order: `outputs` keeps every position, `images` only
+  // the unrestricted ones.
+  const outputs = classifyOutputs(available, workflow, ceiling);
+  const unrestricted = available.filter((_, i) => isUnrestrictedOutput(outputs[i]));
   const total = workflow.cost?.total;
   const publishedModel = readBlockPublishedModel(workflow);
+  const labels = labelsFor(
+    model3dOutputs,
+    unrestricted.map((m) => m.url)
+  );
   return {
     // A real LIST/GET item always carries an id; empty-string only if the
     // orchestrator ever omits it (never for a persisted workflow).
     workflowId: workflow.id ?? '',
     status,
-    images,
+    images: unrestricted.map(toAppWorkflowImage),
     cost: typeof total === 'number' ? total : null,
     createdAt: workflow.createdAt,
     ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
     ...(publishedModel ? { publishedModel } : {}),
-    ...(model3dOutputs.length > 0 ? { model3dOutputs } : {}),
+    ...(labels.length > 0 ? { model3dOutputs: labels } : {}),
+    ...(outputs.length > 0 ? { outputs } : {}),
+  };
+}
+
+function toAppWorkflowImage(media: StepOutputMedia): AppWorkflowImage {
+  return {
+    url: media.url,
+    width: media.width,
+    height: media.height,
+    // Map the orchestrator's string rating to the numeric civitai browsing-
+    // level bitflag via the CANONICAL helper (handles the SFW 'g' the raw map
+    // lacks + all of pg/pg13/r/x/xxx, fail-closed to PG for an unexpected
+    // string — so it can't drift from the platform mapping). null ONLY for the
+    // genuinely-unrated sentinel ('na') / unset.
+    nsfwLevel:
+      media.nsfwLevel && media.nsfwLevel !== 'na'
+        ? nsfwLevelFromContentRating(media.nsfwLevel)
+        : null,
   };
 }
 
