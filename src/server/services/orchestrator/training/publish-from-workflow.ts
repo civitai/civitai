@@ -1,3 +1,4 @@
+import { Air } from '@civitai/orchestration-client';
 import type {
   ImageResourceTrainingOutput,
   ImageResouceTrainingModerationStatus,
@@ -25,6 +26,7 @@ import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/train
 import type * as z from 'zod';
 import {
   aiToolkitTrainingDetailsParams,
+  studioKohyaTrainingDetailsParams,
   type TrainingDetailsBaseModelList,
   type TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
@@ -72,7 +74,7 @@ type TrainingStepInputLike = {
   epochs?: number;
   steps?: number;
   triggerWord?: string;
-  samples?: { prompts?: string[] };
+  samples?: { prompts?: string[]; negativePrompt?: string | null };
 } & Record<string, unknown>;
 
 type AiToolkitParams = z.infer<typeof aiToolkitTrainingDetailsParams>;
@@ -227,6 +229,17 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
   ][];
 
   let match = input.model ? entries.find(([, info]) => info.air === input.model) : undefined;
+  if (!match && input.engine === 'kohya' && input.model) {
+    const family = Air.parseSafe(input.model)?.ecosystem;
+    const key =
+      family === 'pony'
+        ? 'pony'
+        : family === 'illustrious' || family === 'noobai'
+        ? 'illustrious'
+        : undefined;
+    match = entries.find(([name]) => name === key);
+    if (!match) match = entries.find(([, info]) => info.aiToolkit?.ecosystem === family);
+  }
   if (!match && input.ecosystem) {
     match = entries.find(
       ([, info]) =>
@@ -250,6 +263,28 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
     trainingKey,
     info,
   };
+}
+
+async function customKohyaBaseModel(input: TrainingStepInputLike): Promise<BaseModel | undefined> {
+  if (input.engine !== 'kohya' || !input.model) return;
+  if (Object.values(trainingModelInfo).some((info) => info.air === input.model)) return;
+  const air = Air.parseSafe(input.model);
+  if (air?.source !== 'civitai') return;
+  const versionId = Number(air.version);
+  const modelId = Number(air.id);
+  if (
+    !Number.isSafeInteger(versionId) ||
+    versionId <= 0 ||
+    !Number.isSafeInteger(modelId) ||
+    modelId <= 0
+  )
+    throw throwBadRequestError('The custom training checkpoint has an invalid model version.');
+  const checkpoint = await dbWrite.modelVersion.findFirst({
+    where: { id: versionId, modelId },
+    select: { baseModel: true },
+  });
+  if (!checkpoint) throw throwBadRequestError('The custom training checkpoint could not be found.');
+  return checkpoint.baseModel as BaseModel;
 }
 
 function toIso(value?: string | null): string | undefined {
@@ -415,6 +450,7 @@ export async function createDraftModelFromWorkflow({
   const input = ((step as { input?: TrainingStepInputLike }).input ?? {}) as TrainingStepInputLike;
   const meta = (workflow.metadata ?? {}) as TrainingStudioMeta;
 
+  const customBaseModel = await customKohyaBaseModel(input);
   const trigger = meta.trigger || input.triggerWord || undefined;
   const modelName = truncateModelName(
     name?.trim() ||
@@ -435,8 +471,17 @@ export async function createDraftModelFromWorkflow({
   const trainingModelType = mapLoraTypeToTrainingModelType(meta.loraType);
 
   const hyperparameters = readStepHyperparameters(input);
+  const kohyaParams =
+    input.engine === 'kohya'
+      ? studioKohyaTrainingDetailsParams.parse({
+          ...input,
+          engine: 'kohya',
+          loraType: 'lora',
+          targetSteps: input.steps,
+        })
+      : undefined;
   // A rejected value is stored as its default or dropped, which reads like a real value.
-  if (hyperparameters.rejected.length)
+  if (!kohyaParams && hyperparameters.rejected.length)
     logToAxiom({
       name: 'training-studio-publish-param-rejected',
       type: 'warning',
@@ -447,15 +492,18 @@ export async function createDraftModelFromWorkflow({
   const trainingDetails: TrainingDetailsObj = {
     type: trainingModelType ?? 'Character',
     mediaType,
-    baseModel: trainingKey,
+    baseModel: customBaseModel ? input.model : trainingKey,
     baseModelType: trainingBaseModelType,
-    params: {
+    params: kohyaParams ?? {
       engine: 'ai-toolkit',
       ecosystem: input.ecosystem ?? trainingInfo.aiToolkit?.ecosystem ?? '',
       ...(input.modelVariant && { modelVariant: input.modelVariant }),
       ...hyperparameters.params,
     },
     samplePrompts: input.samples?.prompts ?? [],
+    ...(input.engine === 'kohya' && input.samples?.negativePrompt
+      ? { negativePrompt: input.samples.negativePrompt }
+      : {}),
   };
 
   const model = await upsertModel({
@@ -481,7 +529,7 @@ export async function createDraftModelFromWorkflow({
   const modelVersion = await upsertModelVersion({
     modelId: model.id,
     name: 'v1',
-    baseModel,
+    baseModel: customBaseModel ?? baseModel,
     uploadType: ModelUploadType.Trained,
     status: ModelStatus.Draft,
     trainedWords: trigger ? [trigger] : [],

@@ -499,3 +499,43 @@ describe('a run held for review', () => {
     expect(canDeleteRun({ state: 'unreviewed', hasModel: false })).toBe(true);
   });
 });
+
+it('reads checkpoint count, ecosystem and effective settings from Kohya runs', () => {
+  const detail = workflowToDetail(
+    workflow({
+      steps: [
+        {
+          $type: 'training',
+          input: {
+            engine: 'kohya',
+            model: 'urn:air:sdxl:checkpoint:civitai:123@456',
+            maxTrainEpochs: 5,
+            steps: 1000,
+            trainBatchSize: 2,
+            unetLR: 0.0005,
+            textEncoderLR: 0,
+            numRepeats: 20,
+            clipSkip: 1,
+            lrSchedulerNumCycles: 3,
+            vParameterization: true,
+            samples: { prompts: ['ohwx, portrait'], negativePrompt: 'blurry' },
+            trainingData: { type: 'blobs', items: [{ air: 'image-1', caption: 'ohwx, portrait' }] },
+          },
+          output: { epochs: [{ epochNumber: 1, model: { id: 'weights-1', available: true } }] },
+        },
+      ],
+    })
+  );
+  expect(detail).toMatchObject({ ecosystem: 'sdxl', plannedEpochs: 5 });
+  expect(detail!.settings.training).toMatchObject({
+    engine: 'kohya',
+    epochs: 5,
+    batchSize: 2,
+    lr: 0.0005,
+    textEncoderLr: 0,
+    numRepeats: 20,
+    vParameterization: true,
+  });
+  expect(detail!.dataset).toEqual([{ air: 'image-1', caption: 'ohwx, portrait' }]);
+  expect(detail!.settings.negativePrompt).toBe('blurry');
+});

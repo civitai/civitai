@@ -452,6 +452,7 @@ export const CommentEntityType = {
   appListing: 'appListing',
   crucible: 'crucible',
   storyline: 'storyline',
+  postText: 'postText',
 } as const;
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
 export const TagEngagementType = {
@@ -773,6 +774,7 @@ export const JobQueueType = {
   ImageStorageDelete: 'ImageStorageDelete',
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
+  CsamArchive: 'CsamArchive',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {
@@ -1066,6 +1068,14 @@ export const ServiceOfferingStatus = {
 } as const;
 export type ServiceOfferingStatus =
   (typeof ServiceOfferingStatus)[keyof typeof ServiceOfferingStatus];
+export const ServiceOfferingIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+export type ServiceOfferingIngestionStatus =
+  (typeof ServiceOfferingIngestionStatus)[keyof typeof ServiceOfferingIngestionStatus];
 export const ServicePreviewKind = {
   Image: 'Image',
   Video: 'Video',

@@ -29,10 +29,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
   // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
   FEED_SERVICE_DEGRADE = 'feed-service-degrade',
-  // Off-switch for the image feed's shorter feed-service budget: on puts it back from 2.5s to 5s
-  // (`FEED_PRIMARY_TIMEOUT_MS`). Off, unknown or an uninitialised client keep 2.5s. Global boolean,
-  // read at most once per 5s per process (`createCachedFlagGate`).
-  FEED_SERVICE_TIMEOUT_WIDEN = 'feed-service-timeout-widen',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -245,6 +241,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // boolean, read at most once per 5s per process. A no-op unless TRPC_FAST_SUPERJSON_SHARED_REFS
   // is on too (the fast walk would bail on the shared users). See `feed-shared-users.ts`.
   IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
+  // Mirrors a sampled fraction of image.getImagesAsPostsInfinite requests (input, the headers the
+  // answer depends on, Node's response) to the feed-go shadow comparator, after the response is
+  // written. DEFAULT-OFF. Global boolean, read at most once per 5s per process; also needs
+  // FEED_GO_SHADOW_URL and FEED_GO_SHADOW_SAMPLE_RATE > 0. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW = 'feed-go-shadow',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the

@@ -420,3 +420,35 @@ describe('mini/[id], the system account', () => {
     expect(allowed.body).toHaveProperty('moderation');
   });
 });
+
+describe('mini/[id] ?epoch=, a credential the scope gate refuses', () => {
+  const EARLY =
+    'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000005.safetensors';
+  const twoEpochs = {
+    ...TRAINING_FILE,
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: {
+        epochs: [
+          { epoch_number: 5, model_url: EARLY },
+          { epoch_number: 10, model_url: STORED },
+        ],
+      },
+    },
+  };
+
+  it.each([null, 'log'])('caller gate %s: the owner does not pick the epoch', async (epochMode) => {
+    h.variants = { 'mini-epoch-caller-gate': epochMode, 'download-scope-gate': 'enforce' };
+    const refused: Caller = { user: { id: OWNER_ID }, context: bearer(TokenScope.UserRead) };
+    const unnamed = await request(refused, [twoEpochs]);
+    expect(unnamed.body.downloadUrls).toEqual([STORED]);
+    expect(await request(refused, [twoEpochs], { epoch: '5' })).toEqual(unnamed);
+    // Control: a key with a download scope picks it.
+    const { body } = await request(
+      { user: { id: OWNER_ID }, context: bearer(TokenScope.ModelsRead, 'apiKey') },
+      [twoEpochs],
+      { epoch: '5' }
+    );
+    expect(body.downloadUrls).toEqual([EARLY]);
+  });
+});

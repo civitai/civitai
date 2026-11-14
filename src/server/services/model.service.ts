@@ -39,9 +39,13 @@ import {
   FEATURED_MODEL_COLLECTION_ID,
   MODELS_SEARCH_INDEX,
   normalizeMergePermissions,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  DEPRECATED_BASE_MODELS,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
+} from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
@@ -1456,17 +1460,13 @@ export const getModelsRaw = async ({
             modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
           }
 
-          // Filter out NSFW versions for license-restricted base models
-          // Models with nsfwLevel > R cannot use base models with restricted licenses
-          if (nsfwRestrictedBaseModels.length > 0) {
-            modelVersions = modelVersions.filter(
-              (mv) =>
-                !(
-                  (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
-                  nsfwRestrictedBaseModels.includes(mv.baseModel)
-                )
-            );
-          }
+          modelVersions = modelVersions.filter(
+            (mv) =>
+              !(
+                (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
+                isMatureRestricted(mv.baseModel, 'models')
+              )
+          );
 
           if (hidePrivateModels || publicVersionsOnly) {
             modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
@@ -1820,6 +1820,60 @@ export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
   typeof getModelsWithImagesAndModelVersions
 >['items'][0];
 
+/**
+ * The showcase of a minor or SFW-only model, capped at its gallery level for every viewer but the
+ * model's owner, who sees it whole. Moderators are the caller's to exempt.
+ */
+async function holdForViewer<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: {
+    id: number;
+    minor?: boolean;
+    sfwOnly?: boolean;
+    user: { id: number };
+    modelVersions: { id: number }[];
+  }[],
+  viewer?: { id: number }
+) {
+  const held = await holdShowcaseImages(
+    byVersion,
+    new Map(
+      models.flatMap((model) =>
+        model.modelVersions.map(
+          (version) =>
+            [version.id, { modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly }] as const
+        )
+      )
+    )
+  );
+  if (!viewer) return held;
+  for (const model of models)
+    if (model.user.id === viewer.id)
+      for (const version of model.modelVersions)
+        if (byVersion[version.id]) held[version.id] = byVersion[version.id];
+  return held;
+}
+
+async function holdCovers<I extends { nsfwLevel: number }>(
+  covers: Map<number, I>,
+  models: Parameters<typeof holdForViewer>[1],
+  viewer?: { id: number }
+) {
+  const byVersion: Record<number, { images: I[] }> = {};
+  for (const model of models) {
+    const cover = covers.get(model.id);
+    const shown = model.modelVersions[0]?.id;
+    if (cover && shown) byVersion[shown] = { images: [cover] };
+  }
+  const held = await holdForViewer(byVersion, models, viewer);
+  const result = new Map<number, I>();
+  for (const model of models) {
+    const cover = held[model.modelVersions[0]?.id]?.images[0];
+    if (cover) result.set(model.id, cover);
+  }
+  return result;
+}
+
 export const getModelsWithImagesAndModelVersions = async ({
   input,
   user,
@@ -1843,9 +1897,15 @@ export const getModelsWithImagesAndModelVersions = async ({
   onlyModelIds,
   excludeModelIds,
   coverage,
+  heldViewer,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  /**
+   * Set when `user` signed in with a session or a full-access key: only then do a held model's
+   * owner and moderators see its showcase whole, as in the gallery (`withoutHeldFromViewer`).
+   */
+  heldViewer?: boolean;
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
   // routes whose response is never cached for another viewer.
   eventDecorationViewer?: EventViewer;
@@ -1896,11 +1956,14 @@ export const getModelsWithImagesAndModelVersions = async ({
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
+  const holdExempt = heldViewer ? user : undefined;
   let modelVersionImages: Record<
     number,
     { modelVersionId: number; images: ImagesForModelVersions[] }
   > = {};
-  const { excludedTagIds, status } = input;
+  const { status } = input;
+  // As getModelsRaw resolved them: the viewer's own plus the browsing-settings tags.
+  const { excludedTagIds } = rawInput;
   if (!!modelVersionIds.length) {
     if (input.pending) {
       const images = await getImagesForModelVersion({
@@ -1922,10 +1985,12 @@ export const getModelsWithImagesAndModelVersions = async ({
     } else {
       modelVersionImages = await getImagesForModelVersionCache(modelVersionIds);
     }
+    if (!holdExempt?.isModerator)
+      modelVersionImages = await holdForViewer(modelVersionImages, items, holdExempt);
   }
 
   const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
-  const coverImages = await getCoverImages({
+  const unheldCovers = await getCoverImages({
     covers: items.map((model) => ({
       modelId: model.id,
       ownerId: model.user.id,
@@ -1936,6 +2001,10 @@ export const getModelsWithImagesAndModelVersions = async ({
     // Under a base-model filter the card shows that version, so a cover from another stays put.
     sameVersionOnly: !!input.baseModels?.length,
   });
+  // A cover found outside the held images is read unheld, so it is held here too.
+  const coverImages = holdExempt?.isModerator
+    ? unheldCovers
+    : await holdCovers(unheldCovers, items, holdExempt);
 
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
@@ -4128,14 +4197,14 @@ export const upsertModel = async (
   if (data.nsfw && 'modelVersions' in input && input.modelVersions) {
     const modelVersions = input.modelVersions as Array<{ baseModel: string }>;
     const hasRestrictedBaseModel = modelVersions.some((version) =>
-      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+      isMatureRestricted(version.baseModel, 'models')
     );
 
     if (hasRestrictedBaseModel) {
       throw throwBadRequestError(
-        `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
-          ', '
-        )}`
+        `NSFW models cannot use base models with license restrictions. Restricted base models: ${matureRestrictedBaseModels(
+          'models'
+        ).join(', ')}`
       );
     }
   }
@@ -4219,14 +4288,11 @@ export const upsertModel = async (
     if (modelMeta?.showcaseCollectionId) {
       // Best-effort — model create should not fail if the showcase collection
       // can't be written to (e.g. user references one they don't own).
-      await saveItemInCollections({
-        input: {
-          collections: [{ collectionId: modelMeta.showcaseCollectionId }],
-          modelId: result.id,
-          type: 'Model',
-          userId,
-          isModerator,
-        },
+      await addModelToShowcaseCollection({
+        modelId: result.id,
+        collectionId: modelMeta.showcaseCollectionId,
+        userId,
+        isModerator,
       }).catch((error) =>
         logToAxiom({
           type: 'error',
@@ -4731,24 +4797,38 @@ export const upsertModel = async (
         ).catch(() => undefined);
     }
 
+    // The model is already saved: a refused add puts the previous showcase back, and is returned
+    // only after the follow-ups below run.
+    let showcaseAddError: unknown;
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
-        await saveItemInCollections({
-          input: {
-            collections: [{ collectionId: modelMeta.showcaseCollectionId }],
-            modelId: id,
-            type: 'Model',
-            userId,
-            isModerator,
-          },
-        }).catch((error) =>
-          logToAxiom({
-            type: 'error',
-            name: 'save-model-showcase-collection',
-            error,
-            message: error.message,
-          })
-        );
+        await addModelToShowcaseCollection({
+          modelId: id,
+          collectionId: modelMeta.showcaseCollectionId,
+          userId,
+          isModerator,
+        }).catch(async (error) => {
+          showcaseAddError = error;
+          const previous = (beforeUpdate.meta as ModelMeta | null)?.showcaseCollectionId ?? null;
+          await updateModelById({
+            id,
+            data: {},
+            meta: (stored) =>
+              ({
+                ...stored,
+                ...(stored?.showcaseCollectionId === modelMeta.showcaseCollectionId && {
+                  showcaseCollectionId: previous,
+                }),
+              } as ModelMeta),
+          }).catch((revertError) =>
+            logToAxiom({
+              type: 'error',
+              name: 'revert-model-showcase-collection',
+              error: revertError,
+              message: revertError.message,
+            })
+          );
+        });
       } else {
         saveItemInCollections({
           input: {
@@ -4790,6 +4870,8 @@ export const upsertModel = async (
         context: { name: result.name, isModerator },
       });
     }
+
+    if (showcaseAddError) throw showcaseAddError;
 
     return withoutModeratorOnlyMeta(result);
   }
@@ -5052,14 +5134,14 @@ export const publishModelById = async ({
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
         const hasRestrictedBaseModel = model.modelVersions.some((version) =>
-          nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+          isMatureRestricted(version.baseModel, 'models')
         );
 
         if (hasRestrictedBaseModel) {
           throw throwBadRequestError(
-            `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
-              ', '
-            )}`
+            `NSFW models cannot use base models with license restrictions. Restricted base models: ${matureRestrictedBaseModels(
+              'models'
+            ).join(', ')}`
           );
         }
       }
@@ -6840,19 +6922,54 @@ export async function copyGallerySettingsToAllModelsByUser({
   return result;
 }
 
+/**
+ * A showcase collection must list its model. A model already in it is left alone: re-saving would
+ * demand write access and a tag the caller may not have, and would clear an existing item's tag.
+ */
+async function addModelToShowcaseCollection({
+  modelId,
+  collectionId,
+  userId,
+  isModerator,
+}: {
+  modelId: number;
+  collectionId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const existing = await dbWrite.collectionItem.findFirst({
+    where: { collectionId, modelId },
+    select: { id: true },
+  });
+  if (existing) return;
+  const status = await saveItemInCollections({
+    input: { collections: [{ collectionId }], modelId, type: 'Model', userId, isModerator },
+  });
+  if (status !== 'added')
+    throw throwBadRequestError('The model could not be added to that collection');
+}
+
 export async function setModelShowcaseCollection({
   id,
   collectionId,
   userId,
   isModerator,
+  modelAlreadyInCollection,
 }: SetModelCollectionShowcaseInput & {
   userId: number;
   isModerator?: boolean;
+  /** The caller has already written this model's item into the collection; nothing to add. */
+  modelAlreadyInCollection?: boolean;
 }) {
-  const model = await getModel({ id, select: { id: true, userId: true } });
+  const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
+  if (!isModerator && isRemovedWithOwner(model.meta)) throw removedWithOwnerEditError();
+
+  // Add first so a refused add leaves the showcase unchanged.
+  if (collectionId != null && !modelAlreadyInCollection)
+    await addModelToShowcaseCollection({ modelId: id, collectionId, userId, isModerator });
 
   const updated = await updateModelById({
     id,
@@ -7006,6 +7123,7 @@ export async function migrateResourceToCollection({
     id: modelId,
     userId: model.userId,
     isModerator,
+    modelAlreadyInCollection: true,
   });
 
   // Bust caches
