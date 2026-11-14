@@ -85,6 +85,8 @@ describe.each([
   it('touches only entities that have images, as the old inner join did', async () => {
     await fn([1, 2]);
     expect(sentText()).toContain(imageGuard);
+    // A post with only text items is not rated: an image is still required.
+    expect(sentText()).not.toMatch(/OR\s*\(?\s*EXISTS/);
   });
 
   it('writes only when the final value differs', async () => {

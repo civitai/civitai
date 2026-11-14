@@ -10,7 +10,7 @@ import type { Orchestrator } from './orchestrator.types';
 // The EFFECTIVE cap is 300 s, not this value: the response headers arrive only when the copy
 // finishes, and Node's fetch (undici) gives up waiting for headers after its default
 // `headersTimeout` of 300 s. A copy that takes longer fails with a headers timeout whatever this
-// deadline says. Raising the cap would need a custom dispatcher, which is deliberately not used.
+// deadline says.
 const COPY_ASSET_TIMEOUT_MS = 600_000;
 
 class OrchestratorCaller extends HttpCaller {

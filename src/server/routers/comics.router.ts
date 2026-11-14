@@ -2203,6 +2203,8 @@ export const comicsRouter = router({
     )
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
+      // The enhancement is a paid step toward a panel the kill switch would refuse: refuse it first.
+      await assertPresetGenerationAllowed(ctx.user! as SessionUser);
       // Get all user's ready references for prompt context
       const allUserRefs = await dbRead.comicReference.findMany({
         where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },

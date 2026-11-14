@@ -24,6 +24,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { publicAvatarUrl } from '~/server/utils/public-avatar';
 import { Flags } from '~/shared/utils/flags';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
@@ -88,18 +89,7 @@ async function buildPublicModelResponse(
     creator: user
       ? {
           username: user.username,
-          // A rated picture above the served level is dropped, not swapped for the unrated one.
-          image: user.profilePicture
-            ? !Flags.intersects(user.profilePicture.nsfwLevel, browsingLevel)
-              ? null
-              : getEdgeUrl(user.profilePicture.url, {
-                  width: 96,
-                  name: user.username,
-                  type: user.profilePicture.type,
-                })
-            : user.image
-            ? getEdgeUrl(user.image, { width: 96, name: user.username })
-            : null,
+          image: publicAvatarUrl(user, browsingLevel),
         }
       : undefined,
     tags: tagsOnModels.map(({ name }) => name),

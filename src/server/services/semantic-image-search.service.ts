@@ -6,7 +6,6 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
-import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
@@ -22,10 +21,6 @@ import {
 import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
-import {
-  nsfwBrowsingLevelsArray,
-  nsfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -172,7 +167,7 @@ export async function searchSemanticImages({
     const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
     return work.finally(() => end());
   };
-  // "Made On-site" is judged from the image's meta, so only hydration applies it.
+  // Made On-site and Metadata only are judged from the image's meta, so only hydration applies them.
   const hydrate: Hydrate<HydratedImage> = (ids) =>
     timed(
       'hydrate',
@@ -204,20 +199,6 @@ export async function searchSemanticImages({
       gte: input.postedAfter?.toISOString(),
       lte: input.postedBefore?.toISOString(),
     },
-    // As the image search index: no NSFW images made with a base model whose license forbids it.
-    // A gate with no NSFW level already excludes them, and Qdrant would still test every candidate.
-    // Kept here, not only in hydration: Image."modelRestricted" is set by an hourly job, so a new
-    // image would pass hydration until it runs.
-    mustNot: Flags.intersects(level, nsfwBrowsingLevelsFlag)
-      ? [
-          {
-            must: [
-              { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
-              { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
-            ],
-          },
-        ]
-      : [],
   };
 
   const query: SearchQuery = input.imageId

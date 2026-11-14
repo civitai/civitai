@@ -4,15 +4,19 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { dbWrite } from '~/server/db/client';
 import {
   PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+  PAYMENT_REFUNDED_MESSAGE,
   paymentOutcomeUnknown,
 } from '~/server/services/buzz-keyed-charge';
-import { isPrismaLockTimeout } from '~/server/utils/errorHandling';
+import { isPrismaLockTimeout, throwBadRequestError } from '~/server/utils/errorHandling';
 
 /**
  * Serialises what two requests with one client key do with ONE charge: record it once, and never
  * refund a charge the other recorded. The Buzz charge itself runs outside (the ledger dedupes it
- * by external id), so no database connection waits on the Buzz service except a refund after a
- * failed record (`refundUnlessRecorded`).
+ * by external id). Buzz calls do run while the lock's connection is held, each ledger read or write
+ * one attempt with a deadline (the budget below): the refund-state check (`CHARGE_LOCKED_READ`) on
+ * every keyed record, because refunds are serialised by this same lock and the check only holds
+ * under it; and, after a failed record only, the refund itself (`CHARGE_LOCKED_REFUND`,
+ * `refundUnlessRecorded`).
  *
  * A short primary transaction takes `pg_advisory_xact_lock(hashtextextended(<key>, 0))`, released
  * at commit or rollback. No table, no migration. Bounded: the lock wait (past it, "may have gone
@@ -27,8 +31,9 @@ import { isPrismaLockTimeout } from '~/server/utils/errorHandling';
  *   lock wait                    10s  (lock_timeout)
  *   setup statements (3)          ~0s  (set_config / SET LOCAL; each also under the statement bound)
  *   the record check              5s  (statement_timeout)
- *   the refund check             2 x 3s (a donation lists its prefix, then reads its one leg's
- *                                       refund: one leg, as a donation charges one account type)
+ *   the refund check             2 x 3s (a prefix charge lists its prefix, then reads its one leg's
+ *                                       refund: one leg, as a donation, an appeal fee and a crucible
+ *                                       entry fee each charge one account type)
  *   the refund                   10s  (one attempt: `retries: 0`)
  *                               -----
  *                                31s  < 45s transaction deadline (14s margin)
@@ -47,6 +52,8 @@ export const CHARGE_LOCKED_READ = { timeoutMs: 3_000, retries: 0 };
  * The client's default would retry it (refunds retry every failure), multiplying the deadline.
  */
 export const CHARGE_LOCKED_REFUND = { timeoutMs: 10_000, retries: 0 };
+/** Between refund attempts after a failed record (`recordKeyedCharge`'s `refundAttempts`), times the attempt. */
+export const CHARGE_REFUND_RETRY_PAUSE_MS = 250;
 
 /**
  * After a charge succeeded, how an error from the record step reaches the user. A refusal (a 4xx:
@@ -96,13 +103,9 @@ export async function withChargeKeyLock<T>(
 /**
  * After a failed record: refunds the charge unless another request with the same key recorded it
  * meanwhile (that record owns the charge). Under the key's lock, so no request records on a charge
- * while it is being refunded. The refund is the one Buzz call made while holding a connection,
- * one attempt bounded by `CHARGE_LOCKED_REFUND`, on this rare path only, and it ends before the
- * transaction deadline (see the budget above).
- *
- * Not refunding after commit instead ("mark, then refund") because there is nowhere to put the mark
- * without a migration: a refund started after the lock is released could reverse a charge a
- * concurrent request records in between.
+ * while it is being refunded. The refund-state check and the refund both run under the lock and
+ * end before the transaction deadline (see the budget above).
+ * Refunding after release instead could reverse a charge a concurrent request records meanwhile.
  *
  * A refund that fails leaves the charge unrecorded and unrefunded, which a retry with the same key
  * continues from (it finds the charge and records it), so it is reported as "may have gone through".
@@ -132,5 +135,77 @@ export async function refundUnlessRecorded(
       'refund after a failed record did not complete',
       { error: refundError }
     );
+  }
+}
+
+/**
+ * Records a keyed charge once, after `chargeByPrefix` / `chargeByExternalId` charged it OUTSIDE any
+ * transaction. In a short transaction under the key's lock (`withChargeKeyLock`):
+ * - already recorded by an earlier or concurrent request under the key: that record answers this
+ *   request (`findRecorded` returns it), and nothing is written;
+ * - refunded meanwhile (an earlier request failed its record and refunded the charge): refused
+ *   with a 400, so the client starts a new action;
+ * - otherwise `record` writes on the lock's transaction.
+ *
+ * `findRecorded` must return a non-null value for a recorded charge. `isRefunded` is a bounded
+ * ledger read (`CHARGE_LOCKED_READ`) and throws "may have gone through" when it fails.
+ *
+ * A failed `record` refunds the charge under the same lock unless another request recorded it
+ * (`refundUnlessRecorded`, `refund` bounded by `CHARGE_LOCKED_REFUND`), then throws
+ * `recordFailed(error)` (the record's own error by default). `refundAttempts` (default 1) retries a
+ * refund that failed, each attempt its own short lock transaction with a pause between them, never
+ * one held across the attempts; for a refusal the caller treats as routine, where a retry of the
+ * action is refused before it reaches the charge and so could not continue from it. When every
+ * attempt fails: "may have gone through". Any other failure after the charge is
+ * `recordStepError`: "may have gone through", with no refund.
+ */
+export async function recordKeyedCharge<T>(
+  key: string,
+  context: { userId: number; amount?: number },
+  {
+    findRecorded,
+    isRefunded,
+    record,
+    refund,
+    recordFailed = (error) => error,
+    refundAttempts = 1,
+  }: {
+    findRecorded: (tx: Prisma.TransactionClient) => Promise<T | null | undefined>;
+    isRefunded: () => Promise<boolean>;
+    record: (tx: Prisma.TransactionClient) => Promise<T>;
+    refund: () => Promise<unknown>;
+    recordFailed?: (error: unknown) => unknown;
+    refundAttempts?: number;
+  }
+): Promise<T> {
+  let writeFailed = false;
+  try {
+    return await withChargeKeyLock(key, context, async (tx) => {
+      const recorded = await findRecorded(tx);
+      if (recorded != null) return recorded;
+      if (await isRefunded()) throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
+      try {
+        return await record(tx);
+      } catch (error) {
+        writeFailed = true;
+        throw error;
+      }
+    });
+  } catch (error) {
+    if (!writeFailed) throw recordStepError(error, { externalTransactionId: key, ...context });
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await refundUnlessRecorded(key, context, {
+          isRecorded: async (tx) => (await findRecorded(tx)) != null,
+          isRefunded,
+          refund,
+        });
+        break;
+      } catch (refundError) {
+        if (attempt >= refundAttempts) throw refundError;
+        await new Promise((resolve) => setTimeout(resolve, CHARGE_REFUND_RETRY_PAUSE_MS * attempt));
+      }
+    }
+    throw recordFailed(error);
   }
 }

@@ -264,6 +264,7 @@ type SubmitArgs = {
     metadata?: Record<string, unknown>;
     externalId?: string;
     allowMatureContent?: boolean;
+    nsfwLevel?: string;
   };
   query?: { whatif?: boolean };
 };
@@ -397,6 +398,10 @@ beforeEach(() => {
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
   // The fee's payee: an owner who is NOT the viewer (no self-dealing skip).
   dbMock.dbRead.oauthClient.findUnique.mockResolvedValue({ id: 'app_test', userId: APP_OWNER });
+  // Every Civitai version a step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
 });
 afterEach(() => envMock.reset());
 
@@ -946,6 +951,46 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     expect(sent.metadata).toEqual({
       blockWorkflowSteps: [{ name: 'gen' }, { name: '$1', suppressOutput: true }, { name: '$2' }],
     });
+  });
+
+  describe('the resources a step names', () => {
+    const naming = (model: string) =>
+      body({ steps: [{ $type: 'echo', input: { model } }], arguments: undefined });
+
+    beforeEach(() => {
+      // Under one step's budget.
+      whatifCost = { total: 20, base: 20 };
+      h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
+        }))) as never);
+    });
+
+    it('holds the output to PG-13 when one is on a base model that restricts mature generation', async () => {
+      await submit(naming('urn:air:sdxl:checkpoint:civitai:1@11'));
+      expect(realSubmits()[0].body).toMatchObject({ nsfwLevel: 'pg13', allowMatureContent: false });
+    });
+
+    it('leaves a mature ceiling alone for an unrestricted base model', async () => {
+      await submit(naming('urn:air:sdxl:checkpoint:civitai:1@10'));
+      expect(realSubmits()[0].body.nsfwLevel).toBeUndefined();
+      expect(realSubmits()[0].body.allowMatureContent).not.toBe(false);
+    });
+
+    it.each(paths)(
+      '%s refuses a Hugging Face resource before any orchestrator call',
+      async (_, run) => {
+        await expect(
+          run(naming('urn:air:sdxl:checkpoint:huggingface:org/repo@main/x.safetensors'))
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+        expect(whatifs()).toHaveLength(0);
+        expect(realSubmits()).toHaveLength(0);
+      }
+    );
   });
 
   it('🔴 the fee is ONE resolved value: estimate = reservation = charge, under one type', async () => {
