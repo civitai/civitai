@@ -1,6 +1,5 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { SITE_REPLICATION, VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, qdrantClient, type CollectionSpec } from '../qdrant';
 import type { Model3DPayload } from './source';
 
 /**
@@ -35,10 +34,9 @@ export const MODEL3D_COLLECTION: CollectionSpec<Model3DPayload> = {
 };
 
 export function model3dVectorStore() {
-  const { qdrantUrl, qdrantApiKey, model3dCollection } = config.vectorSync;
   return new VectorStore<Model3DPayload>(
-    new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey }),
-    model3dCollection,
+    qdrantClient(),
+    config.vectorSync.model3dCollection,
     MODEL3D_COLLECTION
   );
 }
