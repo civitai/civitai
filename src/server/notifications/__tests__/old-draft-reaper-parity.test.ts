@@ -201,7 +201,7 @@ describe('a draft the reaper keeps', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 1, userId: 2 }]);
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
     await (removeOldDrafts as unknown as () => Promise<void>)();
-    const isDelete = ([strings]: [readonly string[]]) =>
+    const isDelete = ([strings]: [readonly string[], ...unknown[]]) =>
       strings.join('?').includes('DELETE FROM "Model"');
     const reads = dbMock.dbRead.$queryRaw.mock.calls as [readonly string[], ...unknown[]][];
     const deletes = (
