@@ -158,7 +158,12 @@ export function ServiceOfferingCard({
   );
 
   return (
-    <Paper withBorder radius="md" className="flex h-full flex-col overflow-hidden">
+    <Paper
+      withBorder
+      radius="md"
+      className="flex h-full flex-col overflow-hidden"
+      data-testid="service-offering-card"
+    >
       {cover ? (
         <AspectRatioImageCard
           href={href}

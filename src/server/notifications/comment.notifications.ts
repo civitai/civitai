@@ -7,6 +7,7 @@ import {
   notBlockedBetween,
   notCommentMuted,
 } from '~/server/notifications/base.notifications';
+import { TEXT_SLIDE_PARAM } from '~/components/Image/Detail/detail-items';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
@@ -52,6 +53,20 @@ export const notOnHiddenModel = (alias: string, ownerMay?: string) => `NOT EXIST
               }
           )`;
 
+/**
+ * A storyline text's thread is readable only where `post.get` serves the text
+ * (`assertPostTextVisible`): never once refused or held, and otherwise only on a published, rated
+ * post with a scanned text. `ownerMay` hears the unscanned and unpublished cases only.
+ */
+export const notOnHiddenPostText = (alias: string, ownerMay?: string) => `NOT EXISTS (
+            SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
+            WHERE ${alias}."entityType" = 'postText' AND ht.id = ${alias}."entityId"
+              AND (ht.refused OR ht."csamHeld" OR (
+                (ht."nsfwLevel" = 0 OR hp."publishedAt" IS NULL OR hp."publishedAt" >= now()
+                  OR hp."nsfwLevel" = 0)${ownerMay ? ` AND hp."userId" <> ${ownerMay}` : ''}
+              ))
+          )`;
+
 /** The comment a reply answers: the depth clamp keeps it in `replyToId` when it is not the parent. */
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
@@ -69,7 +84,34 @@ export const deepLinkParentId = (alias: string) => `${alias}."parentId"`;
  */
 export const v3EntityJoins = (alias: string) =>
   `LEFT JOIN "ComicChapter" cch ON ${alias}."entityType" = 'comicChapter' AND cch.id = ${alias}."entityId"
-        LEFT JOIN "app_listings" al ON ${alias}."entityType" = 'appListing' AND al."serial_id" = ${alias}."entityId"`;
+        LEFT JOIN "app_listings" al ON ${alias}."entityType" = 'appListing' AND al."serial_id" = ${alias}."entityId"
+        LEFT JOIN "PostText" ptx ON ${alias}."entityType" = 'postText' AND ptx.id = ${alias}."entityId"
+        LEFT JOIN LATERAL ${postTextAnchorImage('ptx')} pti ON true`;
+
+/**
+ * The image a text slide's URL keeps: the last of its post's images that sorts before it
+ * (`comparePostItems`), else the first after it. The SQL copy of `anchorImageIndex`
+ * (`detail-items.ts`); change both together. Only an image any reader may open: rated, scanned, not
+ * in review, not blocked, not taken down. A one-row derived table.
+ */
+export const postTextAnchorImage = (text: string) => `(
+          SELECT i.id FROM "Image" i
+          -- Constant per row: skips the scan for every comment not on a text.
+          WHERE ${text}.id IS NOT NULL AND i."postId" = ${text}."postId"
+            AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
+            AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
+          ORDER BY COALESCE(i.index, 0) <= ${text}.index DESC,
+            CASE WHEN COALESCE(i.index, 0) <= ${text}.index THEN -COALESCE(i.index, 0) ELSE COALESCE(i.index, 0) END,
+            CASE WHEN COALESCE(i.index, 0) <= ${text}.index THEN -i.id ELSE i.id END
+          LIMIT 1
+        )`;
+
+/** What the owner notice of a comment on text `$1` names and links to (`notifyPostTextOwner`). */
+export const postTextOwnerNoticeSql = `SELECT t."postId", p."userId", p.title, a.id "anchorImageId"
+     FROM "PostText" t
+     JOIN "Post" p ON p.id = t."postId"
+     LEFT JOIN LATERAL ${postTextAnchorImage('t')} a ON true
+     WHERE t.id = $1`;
 
 export const v3AppListingResolved = (alias: string) =>
   `(${alias}."entityType" <> 'appListing' OR al.slug IS NOT NULL)`;
@@ -81,13 +123,14 @@ export const v3AppListingResolved = (alias: string) =>
  */
 export const v3ThreadType = (alias: string) => `CASE ${alias}."entityType"::text
                 WHEN 'comicChapter' THEN 'comicProject'
+                WHEN 'postText' THEN CASE WHEN pti.id IS NOT NULL THEN 'postText' ELSE 'comment' END
                 WHEN 'appListing' THEN CASE WHEN al.slug IS NOT NULL THEN 'appListing' ELSE 'comment' END
                 WHEN 'model3dReview' THEN 'comment'
                 ELSE ${alias}."entityType"::text
               END`;
 
 export const v3ThreadParentId = (alias: string) =>
-  `CASE ${alias}."entityType" WHEN 'comicChapter' THEN cch."projectId" ELSE ${alias}."entityId" END`;
+  `CASE ${alias}."entityType" WHEN 'comicChapter' THEN cch."projectId" WHEN 'postText' THEN pti.id ELSE ${alias}."entityId" END`;
 
 /**
  * The details a thread-addressed notification carries; `extra` is more `'key', value,` pairs.
@@ -101,6 +144,7 @@ export const v3ThreadDetails = (extra: string) => `JSONB_BUILD_OBJECT(
             'threadType', ${v3ThreadType('c')},
             'appListingSlug', al.slug,
             'comicChapterPosition', cch.position,
+            'postTextId', ptx.id,
             'commentParentId', COALESCE(${deepLinkParentId('c')}, ${v3ThreadParentId('c')}),
             'commentParentType', CASE WHEN c."parentId" IS NULL THEN ${v3ThreadType(
               'c'
@@ -162,6 +206,8 @@ const THREAD_TYPE_LABELS = new Map<string, string>([
   ['appListing', 'app listing'],
   ['bountyEntry', 'bounty entry'],
   ['comicProject', 'comic'],
+  // Named by its post: a notice outlives a later hold on the text.
+  ['postText', 'post'],
   ['model3d', '3D model'],
 ]);
 
@@ -217,6 +263,8 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     storyline: `${storylineUrl(threadParentId)}?${queryString}`,
     comicChapter: comicUrl,
     comicProject: comicUrl,
+    // A text slide's URL is its anchor image's, with the text param.
+    postText: `/images/${threadParentId}?${TEXT_SLIDE_PARAM}=${details.postTextId}&${queryString}`,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
     // The one SLUG-addressed entry — see `v3EntityJoins`. `threadParentId` is NOT the
     // address here (it is `app_listings.serial_id`, which the URL never contains), so this
@@ -490,6 +538,7 @@ export const commentNotifications = createNotificationProcessor({
           AND ${liveV3Since(lastSent)}
           AND c."userId" != pc."userId"
           AND ${notOnUnpublishedArticle('c', 'pc."userId"')}
+          AND ${notOnHiddenPostText('c', 'pc."userId"')}
           AND ${notBlockedBetween('pc."userId"', 'c."userId"')}
           AND ${notCommentMuted('pc."userId"', 'c')}
           AND ${v3AppListingResolved('c')}
@@ -559,6 +608,7 @@ export const commentNotifications = createNotificationProcessor({
           AND (NOT ${isModelComment('c')} OR c."parentId" IS NOT NULL)
           AND ${notOnUnpublishedArticle('c')}
           AND ${notOnHiddenModel('c')}
+          AND ${notOnHiddenPostText('c')}
           AND ${v3AppListingResolved('c')}
       )
       SELECT
@@ -661,17 +711,22 @@ export const commentNotifications = createNotificationProcessor({
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => {
+      // A comment on one of the post's texts opens that text slide (`notifyPostTextOwner`).
+      const url =
+        details.postTextId && details.anchorImageId
+          ? `/images/${details.anchorImageId}?${TEXT_SLIDE_PARAM}=${details.postTextId}&highlight=${details.commentId}`
+          : `/posts/${details.postId}?highlight=${details.commentId}`;
       // Post.title is nullable AND trims to '' rather than null when cleared, so both are untitled.
       if (details.postTitle)
         return {
           message: `${details.username} commented on your post: "${details.postTitle}"`,
-          url: `/posts/${details.postId}?highlight=${details.commentId}`,
+          url,
         };
       // Untitled is the common case for model-gallery posts, and without a disambiguator a creator
       // gets a run of identical rows. Same fallback new-image-comment uses.
       let message = `${details.username} commented on your post`;
       if (details.modelName) message += ` on ${withDefiniteArticle(details.modelName)} model`;
-      return { message, url: `/posts/${details.postId}?highlight=${details.commentId}` };
+      return { message, url };
     },
     prepareQuery: entityOwnerCommentQuery({
       type: 'new-post-comment',

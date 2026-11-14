@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type {
@@ -12,7 +13,7 @@ import type {
   GetCompletedChallengesWithWinnersInput,
 } from '~/server/schema/challenge.schema';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
-import { ChallengeSource } from '~/shared/utils/prisma/enums';
+import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 
 // The author to show on a card/detail. User challenges credit the real creator; System/Mod
 // challenges present the judge persona (e.g. CivBot) — System already stores the judge as its
@@ -49,14 +50,49 @@ export function useQueryChallenges(
 ) {
   const { enabled = true } = options ?? {};
   const browsingLevel = useBrowsingLevelDebounced();
+  const features = useFeatureFlags();
+  const input = { ...defaultFilters, ...filters, browsingLevel };
 
-  const { data, ...rest } = trpc.challenge.getInfinite.useInfiniteQuery(
-    { ...defaultFilters, ...filters, browsingLevel },
+  const query = input.query?.trim();
+  // Cancelled challenges are not indexed: a Cancelled-only filter is the feed's to answer.
+  const searchStatus = input.status?.filter(
+    (s): s is Exclude<ChallengeStatus, typeof ChallengeStatus.Cancelled> =>
+      s !== ChallengeStatus.Cancelled
+  );
+  const semanticEnabled =
+    !!query &&
+    !!features.semanticChallengeSearch &&
+    !(input.status?.length && !searchStatus?.length);
+  const semantic = trpc.semanticChallengeSearch.search.useInfiniteQuery(
+    {
+      query: query ?? '',
+      status: searchStatus,
+      source: input.source,
+      includeEnded: input.includeEnded,
+      userId: input.userId,
+      modelVersionId: input.modelVersionId,
+      challengeEventId: input.challengeEventId,
+      excludeEventChallenges: input.excludeEventChallenges,
+      participation: input.participation,
+      browsingLevel,
+      limit: input.limit,
+    },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      enabled,
+      enabled: enabled && semanticEnabled,
+      retry: false,
     }
   );
+  // A failed semantic search falls back to the feed's own query (retry: false so it is immediate).
+  const useSemantic = semanticEnabled && !semantic.isError;
+  const feed = trpc.challenge.getInfinite.useInfiniteQuery(
+    { ...input, query },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      enabled: enabled && !useSemantic,
+    }
+  );
+  const { data, ...rest } = useSemantic ? semantic : feed;
 
   const flatData = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data?.pages]);
 

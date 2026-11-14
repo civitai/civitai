@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import type { ActionIconProps, BadgeProps, ButtonProps } from '@mantine/core';
 import {
   Anchor,
@@ -68,10 +69,10 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
 import { StorylineChapterRemoveItem } from '~/components/Storyline/StorylineChapterRemoveItem';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { anchorImageIndex } from '~/components/Image/Detail/detail-items';
 import { TextSlideMenu } from '~/components/Image/DetailV2/TextSlideMenu';
-import { PostComments } from '~/components/Post/Detail/PostComments';
 import { trpc } from '~/utils/trpc';
 import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
@@ -823,7 +824,14 @@ function ImageDetail2Content() {
                             storageKey="discussion"
                           >
                             {textPost && (
-                              <PostComments postId={textPost.id} userId={textPost.user.id} />
+                              <CommentSection
+                                entityType="postText"
+                                entityId={text.id}
+                                ownerId={textPost.user.id}
+                                title={null}
+                                hideSort
+                                borderless
+                              />
                             )}
                           </CollapsibleCard>
                         </>
@@ -886,14 +894,7 @@ function ImageDetailReactions({
     <Metrics
       entityType="Image"
       entityId={image.id}
-      initial={{
-        likeCount: image.stats?.likeCountAllTime ?? 0,
-        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-        heartCount: image.stats?.heartCountAllTime ?? 0,
-        laughCount: image.stats?.laughCountAllTime ?? 0,
-        cryCount: image.stats?.cryCountAllTime ?? 0,
-        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-      }}
+      initial={imageStatsToReactionMetrics(image.stats)}
     >
       {(metrics) => (
         <ImageReactorsPreview imageId={image.id} ownerId={image.user.id}>

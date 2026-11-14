@@ -15,7 +15,7 @@ import { upsertModel } from '~/server/services/model.service';
 import { upsertModelVersion } from '~/server/services/model-version.service';
 import { createFile } from '~/server/services/model-file.service';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -23,6 +23,7 @@ import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
 import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/training/studio-draft-filter';
+import { studioWithheldWorkflowIds } from '~/server/services/orchestrator/training/studio-withheld';
 import type * as z from 'zod';
 import {
   aiToolkitTrainingDetailsParams,
@@ -396,6 +397,8 @@ export async function createDraftModelFromWorkflow({
   if (!workflow.id) throw throwBadRequestError('Workflow is missing an id');
   // Ahead of the idempotency lookup, so re-entry on an existing draft is refused too.
   assertTrainingModerationApproved(workflow);
+  if (!user.isModerator && (await studioWithheldWorkflowIds(user.id, [workflow.id])).length > 0)
+    throw throwNotFoundError('Training run not found');
 
   const trainingResults = mapWorkflowToTrainingResultsV2(workflow);
   const selectedEpoch =

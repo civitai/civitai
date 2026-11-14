@@ -1,4 +1,4 @@
-import { IconBox, IconFileText, IconPhoto } from '@tabler/icons-react';
+import { IconBox, IconFileText, IconPhoto, IconPlayerPlayFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -8,6 +8,7 @@ import { coverRequestWidth } from '~/components/Events/ScoredEvent/scored-event.
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 const TYPE_ICON = { Image: IconPhoto, Model: IconBox, Article: IconFileText } as const;
 
@@ -25,6 +26,7 @@ export function EventContentThumb({
   className,
   wornOn,
   displayWidth = 450,
+  onPlay,
 }: {
   entityType: string;
   image: (ImageProps & { entityId: number; entityType: string }) | null;
@@ -38,6 +40,8 @@ export function EventContentThumb({
   wornOn?: EventDecorationEntity;
   /** About how wide the card is drawn at 2x, for the picture request. */
   displayWidth?: number;
+  /** For a video: a play button over it, once the viewer may see it. */
+  onPlay?: () => void;
 }) {
   const Icon = TYPE_ICON[entityType as keyof typeof TYPE_ICON] ?? IconPhoto;
   const card = (
@@ -51,15 +55,32 @@ export function EventContentThumb({
         <ImageGuard2 image={image} explain={false}>
           {(safe) =>
             safe ? (
-              <EdgeMedia2
-                src={image.url}
-                name={image.name ?? image.id.toString()}
-                alt=""
-                type={image.type}
-                metadata={image.metadata}
-                width={coverRequestWidth(image, displayWidth)}
-                className="size-full object-cover"
-              />
+              <>
+                <EdgeMedia2
+                  src={image.url}
+                  name={image.name ?? image.id.toString()}
+                  alt=""
+                  type={image.type}
+                  metadata={image.metadata}
+                  width={coverRequestWidth(image, displayWidth)}
+                  className="size-full object-cover"
+                />
+                {onPlay && image.type === MediaType.video && (
+                  <button
+                    type="button"
+                    aria-label="Play video"
+                    // Not a tap on the hat's card wrapper, which bursts the hat.
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPlay();
+                    }}
+                    className="absolute left-1/2 top-1/2 grid size-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white shadow-md hover:bg-black/75"
+                    data-testid="event-content-play"
+                  >
+                    <IconPlayerPlayFilled size={22} />
+                  </button>
+                )}
+              </>
             ) : (
               <MediaHash {...image} />
             )
