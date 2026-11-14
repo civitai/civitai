@@ -858,6 +858,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
 
+      # The registry adapter's bundle, and its check that every external it loads loads under
+      # this Node (`scripts/build-registry-adapter.mjs`), which no other job builds. It takes
+      # seconds, so one shard pays it.
+      - name: Registry adapter bundle loads its externals
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        run: pnpm run build:registry-adapter
+
       # See the restore step for why this is push-only. Three further details:
       #
       #   `!cancelled()` rather than the default — a RED suite still produced a

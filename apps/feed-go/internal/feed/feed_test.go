@@ -35,7 +35,7 @@ func TestParseFallsBackOnUnportedShapes(t *testing.T) {
 		"input-tags":         {"tags": []any{num("1")}},
 		"input-sort":         {"sort": "Random"},
 		"input-include":      {"include": []any{"cosmetics", "tags"}},
-		"input-cursor":       {"cursor": "12|34"},
+		"input-cursor":       {"cursor": true},
 		"input-collectionId": {"collectionId": num("3")},
 	}
 	for want, m := range cases {
@@ -160,7 +160,7 @@ func TestBuildPostAndSort(t *testing.T) {
 	// Post 10: fetched images 3 (index 1) then 2 (index 0). Newest sorts the images by index,
 	// but the post-level fields come from image 3 (the first as fetched).
 	p := buildPost(10, []Image{img(3, 10, 1, 4, 77, 5, t0), img(2, 10, 0, 1, 77, 1, t0)}, SortNewest,
-		map[int]Review{77: {Rating: 5, ID: 9}})
+		map[int]Review{77: {Rating: 5, ID: 9}}, false, false)
 	ids := []int64{}
 	imgs, _ := p.wire.Get("images")
 	for _, w := range imgs.([]any) {
@@ -183,9 +183,9 @@ func TestBuildPostAndSort(t *testing.T) {
 
 	// MostReactions: stable on ties, so equal totals keep ascending postId order.
 	posts := []post{
-		buildPost(1, []Image{img(11, 1, 0, 1, 1, 2, t0)}, SortMostReactions, nil),
-		buildPost(2, []Image{img(12, 2, 0, 1, 1, 9, t0)}, SortMostReactions, nil),
-		buildPost(3, []Image{img(13, 3, 0, 1, 1, 2, t0)}, SortMostReactions, nil),
+		buildPost(1, []Image{img(11, 1, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false, false),
+		buildPost(2, []Image{img(12, 2, 0, 1, 1, 9, t0)}, SortMostReactions, nil, false, false),
+		buildPost(3, []Image{img(13, 3, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false, false),
 	}
 	sortPosts(posts, SortMostReactions)
 	order := []int64{}
@@ -264,8 +264,13 @@ func TestResultValueNextCursor(t *testing.T) {
 	if want := `{"json":{"items":[]},"meta":{"values":{"nextCursor":["undefined"]},"v":1}}`; string(got) != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
-	got, _ = superjson.Serialize((&Result{NextCursor: 12}).Value())
+	got, _ = superjson.Serialize((&Result{NextCursor: Cursor{N: 12}}).Value())
 	if want := `{"json":{"nextCursor":12,"items":[]}}`; string(got) != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+	// The feed service's cursor is a plain string on the wire.
+	got, _ = superjson.Serialize((&Result{NextCursor: Cursor{S: "feed:1700000000000:12"}}).Value())
+	if want := `{"json":{"nextCursor":"feed:1700000000000:12","items":[]}}`; string(got) != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
 }

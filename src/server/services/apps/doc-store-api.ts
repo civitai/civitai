@@ -107,9 +107,9 @@ import {
   DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
   DOC_STORE_READ_RATE_LIMIT_MAX,
   DOC_STORE_REPORT_RATE_LIMIT_MAX,
+  DOC_STORE_SHARED_WRITE_BUDGET,
   DOC_STORE_TALLY_RATE_LIMIT_MAX,
   reserveSharedWrite,
-  SHARED_WRITE_BUDGET,
   type DocStoreRateBucket,
 } from '~/server/utils/shared-storage-rate-limit';
 import {
@@ -911,17 +911,22 @@ function isOurFault(err: unknown): boolean {
 }
 
 /**
- * A shared document write spends the shared write budget: reserved before the write and any
- * inline moderation scan, and given back only if the write does not land. `fn` calls `landed()`
- * the moment the store has committed, so a failure after that (presenting the result) spends the
- * token like any landed write.
+ * A shared document write spends the document store's shared write budget
+ * (`DOC_STORE_SHARED_WRITE_BUDGET`, its own, not the legacy surface's): reserved before the
+ * write and any inline moderation scan, and given back only if the write does not land. `fn`
+ * calls `landed()` the moment the store has committed, so a failure after that (presenting the
+ * result) spends the token like any landed write.
  */
 async function withSharedWriteBudget<T>(
   access: StorageAccess,
   uid: number,
   fn: (landed: () => void) => Promise<T>
 ): Promise<T> {
-  const reservation = await reserveSharedWrite(uid, access.ctx.appId);
+  const reservation = await reserveSharedWrite(
+    uid,
+    access.ctx.appId,
+    DOC_STORE_SHARED_WRITE_BUDGET
+  );
   if (!reservation.allowed) {
     throw new DocStoreError('rate_limited', 'shared write budget exhausted', {
       bucket: 'shared-write',
@@ -989,8 +994,8 @@ async function run(
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
           marksAndCountersPerMinute: DOC_STORE_TALLY_RATE_LIMIT_MAX,
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
-          sharedWritesBurst: SHARED_WRITE_BUDGET.burst.capacity,
-          sharedWritesPerDay: SHARED_WRITE_BUDGET.daily.capacity,
+          sharedWritesBurst: DOC_STORE_SHARED_WRITE_BUDGET.burst.capacity,
+          sharedWritesPerDay: DOC_STORE_SHARED_WRITE_BUDGET.daily.capacity,
         },
       },
       usage,

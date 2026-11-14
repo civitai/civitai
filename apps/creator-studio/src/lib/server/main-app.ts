@@ -7,7 +7,9 @@ import { env } from '$env/dynamic/private';
 // had already diverged between them.
 export const MAIN_APP_URL = env.CIVITAI_APP_URL || 'https://civitai.com';
 
-export type MainAppResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
+export type MainAppResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; error: string; code?: string };
 
 export async function callMainApp<T>(
   path: string,
@@ -44,11 +46,13 @@ export async function callMainApp<T>(
     const data = (await res.json().catch(() => null)) as {
       error?: string;
       message?: string;
+      code?: unknown;
     } | null;
     return {
       ok: false,
       status: res.status,
       error: data?.error ?? data?.message ?? `Request failed (${res.status}).`,
+      ...(typeof data?.code === 'string' && { code: data.code }),
     };
   } catch {
     return {

@@ -1,14 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge, Group } from '@mantine/core';
+import { IconClock, IconFlagCheck, IconHourglassHigh } from '@tabler/icons-react';
+import { Countdown } from '~/components/Countdown/Countdown';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { FALLBACK_COLOR } from '~/components/HatTurf/hat-turf.utils';
 import {
+  finalHourAt,
   flagClock,
   flagCounting,
-  formatClock,
 } from '~/components/HatTurf/FlagRace/flag-race.utils';
 import type { FlagSummary } from '~/server/events/turf/turf.service';
 import { abbreviateNumber } from '~/utils/number-helpers';
+
+/** Time to the final hour, as the site's short countdown ("2h 20m"). The end is memoized so a
+ * parent's every-second tick doesn't restart Countdown's timer. */
+export function FinalHourCountdown({ closesAt }: { closesAt: Date | string }) {
+  const key = new Date(closesAt).getTime();
+  const end = useMemo(() => finalHourAt(key), [key]);
+  return <Countdown endTime={end} format="short" />;
+}
 
 /** The race's clock for a flag day, ticking each second until it closes. */
 export function useFlagClock(summary: Pick<FlagSummary, 'closesAt' | 'closed'> | null | undefined) {
@@ -32,8 +42,15 @@ export function FlagRaceHeader({ summary }: { summary: FlagSummary }) {
   if (!clock) return null;
   if (flagCounting(summary))
     return (
-      <Badge variant="light" color="gray" size="lg" radius="xl" data-testid="flag-race-header">
-        ⏳ Counting results…
+      <Badge
+        variant="light"
+        color="gray"
+        size="lg"
+        radius="xl"
+        leftSection={<IconHourglassHigh size={14} />}
+        data-testid="flag-race-header"
+      >
+        Counting results…
       </Badge>
     );
   if (clock.phase === 'closed') {
@@ -42,8 +59,14 @@ export function FlagRaceHeader({ summary }: { summary: FlagSummary }) {
       .sort(([, a], [, b]) => b - a);
     return (
       <Group gap={6} wrap="wrap" data-testid="flag-race-header">
-        <Badge variant="light" color="gray" size="lg" radius="xl">
-          🏁 Race complete
+        <Badge
+          variant="light"
+          color="gray"
+          size="lg"
+          radius="xl"
+          leftSection={<IconFlagCheck size={14} />}
+        >
+          Race complete
         </Badge>
         {won.map(([team, points]) => (
           <Badge
@@ -66,11 +89,16 @@ export function FlagRaceHeader({ summary }: { summary: FlagSummary }) {
       size="lg"
       radius="xl"
       className={clock.phase === 'final' ? 'animate-pulse' : undefined}
+      leftSection={<IconClock size={14} />}
       data-testid="flag-race-header"
     >
-      {clock.phase === 'final'
-        ? '⏱ Final hour: could end any moment'
-        : `⏱ Final hour in ${formatClock(clock.secondsLeft)}`}
+      {clock.phase === 'final' ? (
+        'Final hour: could end any moment'
+      ) : (
+        <>
+          Final hour in <FinalHourCountdown closesAt={summary.closesAt} />
+        </>
+      )}
     </Badge>
   );
 }

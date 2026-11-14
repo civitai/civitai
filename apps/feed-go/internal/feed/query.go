@@ -35,6 +35,13 @@ type ImagesQuery struct {
 	ExcludedUsers  []int
 	ViewerID       int
 	IsModerator    bool
+	// IDs is the feed-service hydrate (feedHydrateQuery): exactly these images, whatever their order.
+	IDs []int
+	// PostIDs is the gallery's post completion: only these posts' images.
+	PostIDs []int
+	// ThrowOnStatementTimeout makes a statement timeout an error instead of an empty page (the
+	// feed-service hydrate sets it, so a slow hydrate is not read as a page the filters emptied).
+	ThrowOnStatementTimeout bool
 }
 
 // Built is the SQL for one page plus its caching policy.
@@ -43,6 +50,8 @@ type Built struct {
 	Args      []any
 	CacheTTL  time.Duration // 0 = not cached
 	CacheTags []string
+	// ThrowOnStatementTimeout: see ImagesQuery.
+	ThrowOnStatementTimeout bool
 }
 
 type sqlArgs struct{ args []any }
@@ -75,6 +84,9 @@ func (q *ImagesQuery) Build() Built {
 		browsingLevel = browsing.PublicLevels
 	}
 
+	if len(q.IDs) > 0 {
+		and = append(and, `i."id" = ANY(`+a.add(q.IDs)+`::int[])`)
+	}
 	if len(q.Types) > 0 {
 		and = append(and, `i.type = ANY(`+a.add(q.Types)+`::text[]::"MediaType"[])`)
 	}
@@ -142,6 +154,9 @@ func (q *ImagesQuery) Build() Built {
 	}
 	if len(q.Generation) > 0 {
 		and = append(and, `i."generationProcess" = ANY(`+a.add(q.Generation)+`::text[]::"ImageGenerationProcess"[])`)
+	}
+	if len(q.PostIDs) > 0 {
+		and = append(and, `i."postId" = ANY(`+a.add(q.PostIDs)+`::int[])`)
 	}
 	if len(q.ExcludedUsers) > 0 {
 		and = append(and, `i."userId" != ALL(`+a.add(q.ExcludedUsers)+`::int[])`)
@@ -232,7 +247,7 @@ func (q *ImagesQuery) Build() Built {
     ORDER BY ` + orderBy + `
     LIMIT ` + a.add(q.Limit+1)
 
-	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags}
+	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout}
 }
 
 // imageOnSiteSQL is imageOnSiteSql('i.meta') (src/server/utils/image-onsite.ts).

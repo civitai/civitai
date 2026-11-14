@@ -533,6 +533,38 @@ read that file. As of this writing the families are:
   answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged for its existing modes; its
   `purpose: 'trainingData'` mode is described under "Training runs". Logic:
   `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
+- **Batch media upload** (page host only, no scope, behind the
+  `app-blocks-batch-media-upload` flag): `OPEN_MEDIA_UPLOAD_BATCH`
+  (→ `MEDIA_UPLOAD_BATCH_RESULT`) uploads many files the app already holds (a
+  dataset to caption, say) as private generation inputs, behind ONE confirm in
+  host chrome ("Upload 80 images (312 MB) for <app>?"). Request
+  `{ requestId, purpose: 'generationSource', items: [{ kind, bytes, mimeType? }] }`,
+  1 to 1,200 items and at most 10 GB in total. Each item is checked exactly as an
+  `OPEN_MEDIA_UPLOAD` bytes upload is, before the confirm, and a refused item is
+  answered for that item only; nothing uploads until the viewer confirms. There is
+  no per-minute window: the host uploads at most 3 files at a time, and the
+  server charges a per-viewer daily quota across all apps (1,200 files and 10 GB
+  per UTC day) when the batch starts. The byte half is charged on the sizes the
+  host declares (the bytes go straight to the orchestrator, whose own per-file
+  limits apply); the file count is enforced by the server, which mints at most
+  three upload URLs per declared file (a first try, one upload retry, and a
+  spare for a URL whose answer was lost); recording a file is idempotent. The host reads its current block token for
+  every call, so a batch can outlive the token it started with. Every upload URL is minted with the
+  viewer's own orchestrator token, so every file gets the orchestrator's content
+  scan, and a blocked file is answered as an error for that item. Each batch is
+  recorded for moderators (`app_block_upload_batches`: viewer, app, file count,
+  size, the blob keys, and an `expires_at` 30 days after it started; a file whose
+  record still fails after 3 attempts is answered as an error and can be missing
+  from the row), viewable in
+  the moderator app under Audit → App Upload Batches. The answer is
+  `{ requestId, results, expiresAt }` with one `{ index, selected }` or
+  `{ index, error }` per item, `{ requestId }` when the viewer declined (or in
+  review mode / not ready), or `{ requestId, error }` when the whole batch was
+  refused. The files keep the orchestrator's default consumer-blob retention,
+  so they are kept for at least 30 days (`expires_at` is that lower bound, not
+  a deletion time; nothing pins a file's expiry yet). Logic:
+  `src/components/AppBlocks/mediaUploadBatchLogic.ts` and
+  `src/server/services/blocks/media-upload-batch.service.ts`.
 - **Model file contents** (page host only, no scope, session-authed): the host
   resolves the file as the signed-in viewer through the site's download gate,
   fetches it in the viewer's tab and posts back only parsed content; the app never

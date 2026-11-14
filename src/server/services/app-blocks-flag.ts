@@ -1215,6 +1215,27 @@ export async function isAppBlocksAppReactionsEnabled(opts: {
 }
 
 /**
+ * Dedicated fail-closed flag for BATCH PRIVATE UPLOADS — `OPEN_MEDIA_UPLOAD_BATCH` and the three
+ * `blocks.*MediaUploadBatch*` procedures behind it (`media-upload-batch.service.ts`). A batch puts
+ * up to a day's quota of files into the viewer's account in one confirm, so it is armed on its own
+ * rather than by the runtime flag widening. The single-file `OPEN_MEDIA_UPLOAD` is not gated by it.
+ *
+ * NO moderator static floor: an ABSENT flag resolves `false` for everyone, mods included.
+ * Evaluated with the TOKEN SUBJECT'S hydrated `SessionUser`, already proven to be the session user.
+ *
+ * 🔴 SHIPS OFF. The flag is created separately in Flipt, base `enabled: false`; until it exists,
+ * `isFlipt` turns the failed evaluation into `false`, so batches stay off.
+ */
+export const APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG = 'app-blocks-batch-media-upload';
+
+export async function isAppBlocksBatchMediaUploadEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind — the
  * training estimate/submit arm of
  * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's

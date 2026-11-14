@@ -7,7 +7,8 @@
  *   - No token is anonymous: what anyone may read ({@link ANONYMOUS_PRINCIPAL}).
  *   - A token is verified by the site's own mechanism ({@link VerifyToken}; `auth.live.ts` wires
  *     it). Anything it does not accept, an expired token included, is `invalid_token`.
- *   - Each subscription is streamed what its token may read (`audience.ts`), and its cursor is
+ *   - Each subscription is streamed what its token may read (`audience.ts`), held to the SFW
+ *     rule from a region the site restricts to SFW content, and its cursor is
  *     tied to the token's subject (`subscription.ts`) and, for a document, app, release or
  *     schema stream, to its audience (`doc-feed.ts`, `cursor.ts`).
  *   - A stream never outlives its token: {@link watchPrincipal} ends it with `invalid_token` at
@@ -67,11 +68,20 @@ const expired = (token: VerifiedToken, now: number) =>
  * The principal of a request whose `Authorization` value (HTTP header or gRPC metadata) is
  * `authorization`. Without `verify`, this source accepts no token, so any token is
  * `invalid_token`.
+ *
+ * `regionRestricted` says whether the request comes from a region the site restricts to SFW
+ * content (`request-origin.ts`); its audience is then the SFW one (`audienceForUser`). It is
+ * asked again at each re-check, with the same answer for the same request until a restriction's
+ * effective date passes, so a re-check compares like with like and a restriction that starts
+ * mid-stream ends the stream with `cursor_expired`.
  */
 export async function authenticate(
   authorization: string | undefined,
   verify: VerifyToken | undefined,
-  now: () => number = Date.now
+  {
+    now = Date.now,
+    regionRestricted = () => false,
+  }: { now?: () => number; regionRestricted?: () => boolean } = {}
 ): Promise<Principal> {
   if (authorization === undefined || authorization === '') return ANONYMOUS_PRINCIPAL;
   const token = BEARER_RE.exec(authorization)?.[1];
@@ -80,7 +90,9 @@ export async function authenticate(
   const verified = await verify(token);
   if (!verified) throw invalidToken('the token is not active');
   if (expired(verified, now())) throw invalidToken('the token has expired');
-  const audience = audienceForUser(verified.user);
+  const audienceOf = (user: VerifiedToken['user']) =>
+    audienceForUser(user, { regionRestricted: regionRestricted() });
+  const audience = audienceOf(verified.user);
   return {
     subject: verified.subject,
     audience,
@@ -90,7 +102,7 @@ export async function authenticate(
       if (again === null || again.subject !== verified.subject || expired(again, now())) {
         return 'inactive';
       }
-      return audienceForUser(again.user).key === audience.key ? 'active' : 'audience-changed';
+      return audienceOf(again.user).key === audience.key ? 'active' : 'audience-changed';
     },
   };
 }

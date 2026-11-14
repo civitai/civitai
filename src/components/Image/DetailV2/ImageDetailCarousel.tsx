@@ -28,6 +28,8 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import type { DetailText } from '~/components/Image/Detail/detail-items';
+import { TextSlide } from '~/components/Image/DetailV2/TextSlide';
 import { allowNativeDragStart, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
@@ -45,6 +47,9 @@ type ImageProps = {
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
   eventDecoration?: WornDecoration;
 };
+type CarouselItem =
+  | { type: 'image'; key: string; image: ImageProps }
+  | { type: 'text'; key: string; text: DetailText };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
 type State = ReturnType<typeof useCarouselNavigation<ImageProps>>;
@@ -94,7 +99,9 @@ export function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLEleme
 export const SETTLE_FALLBACK_MS = 800;
 
 export function ImageDetailCarousel({
-  images,
+  images: imageSlides,
+  items,
+  textUserId,
   videoRef,
   connect,
   index,
@@ -106,6 +113,10 @@ export function ImageDetailCarousel({
   loop = true,
 }: ImageDetailCarouselProps & {
   images: ImageProps[];
+  /** Slides with text items among the images; `index` points into these when given. */
+  items?: CarouselItem[];
+  /** The text items' author, so their own unrated text is not blurred for them. */
+  textUserId?: number;
   index: number;
   navigate?: (index: number) => void;
   next: () => void;
@@ -116,6 +127,7 @@ export function ImageDetailCarousel({
   loop?: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
+  const slideCount = (items ?? imageSlides).length;
   const emblaRef = useRef<EmblaCarouselType | null>(null);
 
   // Embla owns the slide animation, but `index` is the source of truth. Feeding
@@ -157,8 +169,7 @@ export function ImageDetailCarousel({
     syncingRef.current = true;
     // A slide added in the same commit as the index that names it is not embla's yet, and its
     // own reinit would announce the old slide and write it back through `navigate`.
-    if (index >= api.slideNodes().length && index < images.length)
-      api.reInit({ startIndex: index });
+    if (index >= api.slideNodes().length && index < slideCount) api.reInit({ startIndex: index });
     else if (api.selectedScrollSnap() !== index) api.scrollTo(index);
     syncingRef.current = false;
   };
@@ -174,7 +185,7 @@ export function ImageDetailCarousel({
   useEffect(() => {
     if (embla) followIndex(embla);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- not on every render
-  }, [embla, index, images.length]);
+  }, [embla, index, slideCount]);
 
   // The URL replace and the incoming neighbor's full-size decode hang off the
   // settled index rather than the live one — landing either mid-transform is
@@ -220,7 +231,7 @@ export function ImageDetailCarousel({
     embla?.reInit();
   });
 
-  if (!images.length) return null;
+  if (!slideCount) return null;
 
   return (
     <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
@@ -237,8 +248,12 @@ export function ImageDetailCarousel({
         {/* pan-y keeps vertical page scrolling native while horizontal drags go to embla */}
         <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
-            {images.map((image, i) => (
-              <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
+            {(items ?? imageSlides.map(asImageItem)).map((item, i) => (
+              <Embla.Slide
+                key={item.type === 'image' ? item.image.id : item.key}
+                index={i}
+                className="flex-[0_0_100%]"
+              >
                 {/* function child opts out of Embla's own in-view gating — adjacency
                     is the gate here, so a neighbor is painted before the drag reveals it.
                     Neighbors key off the settled index so a new full-size decode never
@@ -246,16 +261,19 @@ export function ImageDetailCarousel({
                     isn't mounted yet, so a drag started in that window reveals it late;
                     the fallback timer above bounds how long that can last. */}
                 {() =>
-                  (i === index || isAdjacent(i, settledIndex, images.length, loop)) && (
+                  (i === index || isAdjacent(i, settledIndex, slideCount, loop)) &&
+                  (item.type === 'text' ? (
+                    <TextSlide text={item.text} userId={textUserId} {...connect} />
+                  ) : (
                     <ImageContent
-                      image={image}
+                      image={item.image}
                       active={index === i}
                       hatLayer={hatLayer}
                       embla={embla}
                       {...connect}
                       videoRef={index === i ? videoRef : undefined}
                     />
-                  )
+                  ))
                 }
               </Embla.Slide>
             ))}
@@ -266,6 +284,10 @@ export function ImageDetailCarousel({
       <div ref={setHatLayer} className="pointer-events-none absolute inset-0 isolate" />
     </div>
   );
+}
+
+function asImageItem(image: ImageProps): CarouselItem {
+  return { type: 'image', key: `img:${image.id}`, image };
 }
 
 function ImageContent({
