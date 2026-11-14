@@ -77,6 +77,21 @@ export function setQueryRuleStaleAge(
   gauge.set({ type }, seconds);
 }
 
+const RULE_FALLBACK = 'semantic_search_query_rule_fallback';
+
+/** 1 while this pod's query rules come from the fallback file, having never read the blocklist. */
+export function setQueryRuleFallback(type: string, on: boolean, reg: Registry = client.register) {
+  const gauge =
+    (reg.getSingleMetric(RULE_FALLBACK) as Gauge<string> | undefined) ??
+    new client.Gauge({
+      name: RULE_FALLBACK,
+      help: 'Whether the semantic search query rules of this type are served from the fallback file (1) or not (0)',
+      labelNames: ['type'],
+      registers: [reg],
+    });
+  gauge.set({ type }, on ? 1 : 0);
+}
+
 const CACHE_NAME = 'semantic_search_candidate_cache_total';
 const STAGE_NAME = 'semantic_search_stage_seconds';
 

@@ -105,11 +105,15 @@ export async function semanticQueryRefusal(
     // Mirrors the search boxes, which a request can skip: raw text, since the benign phrases do not
     // carve out this list, and moderators exempt.
     if (!isModerator && getBlockedNsfwWords(query).length) return 'blocked';
-    // Moderator-edited additions to the audit lists. Mods are exempt from the POI additions. A
-    // minor addition is its own verdict, so the help event and its counts stay the minor list's.
-    if (!isModerator && (await matchesQueryRule(audited, BlocklistType.SemanticSearchPoiRefuse)))
-      return 'poi';
-    if (await matchesQueryRule(audited, BlocklistType.SemanticSearchMinorSafe)) return 'minor-safe';
+    // Moderator-edited additions to the audit lists. Mods are exempt from the POI additions even
+    // with `disablePoi`, by design. A minor addition is its own verdict, so the help event and its
+    // counts stay the minor list's.
+    const [poiRule, minorRule] = await Promise.all([
+      !isModerator && matchesQueryRule(audited, BlocklistType.SemanticSearchPoiRefuse),
+      matchesQueryRule(audited, BlocklistType.SemanticSearchMinorSafe),
+    ]);
+    if (poiRule) return 'poi';
+    if (minorRule) return 'minor-safe';
     return false;
   } catch {
     return 'error';

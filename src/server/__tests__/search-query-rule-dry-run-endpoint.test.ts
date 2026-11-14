@@ -38,8 +38,8 @@ const handler = (await import('~/pages/api/mod/search-query-rule-dry-run')).defa
 // Synthetic token: on no real list.
 const POI = 'zqvoxpoitoken';
 
-function call(method: string, body: Record<string, string>) {
-  const req = { method, query: {}, headers: {}, body };
+function call(method: string, body: Record<string, string>, query: Record<string, string> = {}) {
+  const req = { method, query, headers: {}, body };
   let statusCode = 200;
   let payload: unknown;
   const res = {
@@ -101,6 +101,13 @@ describe('/api/mod/search-query-rule-dry-run', () => {
       expect.objectContaining({ action: 'searchQueryRules.dryRun', outcome: 'ok' })
     );
     expect(JSON.stringify(mockAudit.mock.calls)).not.toContain(POI);
+  });
+
+  it('refuses a query sent in the query string, which access logs keep', async () => {
+    const { status } = await call('POST', {}, { query: `photo of ${POI}` });
+
+    expect(status).toBe(400);
+    expect(trackModActivity).not.toHaveBeenCalled();
   });
 
   it('refuses a non-moderator', async () => {

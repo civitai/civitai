@@ -86,6 +86,10 @@ describe('createQueryRuleReader', () => {
 
     await writeFile(path, `${POI_TYPE} replaced\n`);
     expect(await reader.read(POI_TYPE)).toEqual({ terms: ['replaced'], source: 'fallback' });
+    const flag = await promClient.register
+      .getSingleMetric('semantic_search_query_rule_fallback')
+      ?.get();
+    expect(flag?.values.find((v) => v.labels.type === POI_TYPE)?.value).toBe(1);
   });
 
   it('serves a warm pod its last good copy during an outage, ahead of the file, past 5 minutes', async () => {
@@ -165,6 +169,16 @@ describe('semanticQueryRefusal with query rules', () => {
       allBrowsingLevelsFlag & sfwBrowsingLevelsFlag
     );
     expect(queryVerdictLevel(mod, allBrowsingLevelsFlag, true)).toBe('refuse');
+  });
+
+  it('matches terms literally, so one malformed entry cannot break the others', async () => {
+    setQueryRuleReaderForTests(
+      stubReader({ [POI_TYPE]: ['(unclosed', 'zq.vox', 'zqa|zqb', POI], [MINOR_TYPE]: ['[x'] })
+    );
+    expect(await refusal(`photo of ${POI}`, false)).toBe('poi');
+    expect(await refusal('zqXvox', false)).toBe(false);
+    expect(await refusal('zqa', false)).toBe(false);
+    expect(await refusal('a red bicycle', false)).toBe(false);
   });
 
   it('fails closed when the rules cannot be read', async () => {
