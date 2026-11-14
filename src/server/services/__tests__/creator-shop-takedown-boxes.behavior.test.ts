@@ -681,6 +681,28 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.failures).toEqual([]);
   });
 
+  it('leaves the whole price to a moderator when the ledger cannot be read after the refund', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId);
+    // The box refund goes by prefix (`refundMultiAccountTransaction`); the ledger read that fails
+    // is the clawback check's.
+    buzz.getMultiAccountTransactionsByPrefix.mockRejectedValue(new Error('buzz down'));
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        stage: 'clawback',
+        userId: CREATOR,
+        boxId,
+        amount: 800,
+        error: expect.stringContaining(
+          `${sourceKey} has no recorded payouts and its ledger could not be read`
+        ),
+      }),
+    ]);
+  });
+
   // The payout failed, or landed after the refund began and reversed itself: nothing is owed.
   it('files no clawback for a creator box sale whose ledger shows no unreversed payout', async () => {
     const boxId = await seedBox({ sellerId: CREATOR });
