@@ -237,7 +237,7 @@ permissions:
 # over 2026-10-30..11-13. Replaying those push times with queueing gives about
 # the same runner time (~248h of run wall vs ~241h) and 873 completed verdicts
 # instead of 364. The newest finished run checks a tree that contains every older
-# commit; a commit whose run was replaced while waiting shows no run. To pin a
+# commit; a commit whose run was replaced while waiting shows as `cancelled`. To pin a
 # break to one of them, push a branch at that commit and dispatch this workflow
 # on it (`only` narrows it to one suite).
 #
@@ -541,7 +541,7 @@ jobs:
     # test-file type errors from draft or red-merged PRs otherwise reach `main`
     # unmeasured and every later PR inherits the red. On `main` it renders red and
     # blocks nothing. Push runs queue (see `concurrency`), so in a burst a commit whose
-    # waiting run was replaced has no run; the error shows on the next finished one.
+    # waiting run was replaced shows `cancelled`; the error shows on the next finished one.
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
     timeout-minutes: 30
     steps:

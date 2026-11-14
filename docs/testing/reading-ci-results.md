@@ -55,7 +55,7 @@ every later push runs every Lint job, the unit shards included, in the PR run (t
 PR's paths reach them) until the label is removed. Same-repo PRs only; it does not lift the draft
 gate on schema drift or tRPC parity. Or dispatch one on the branch, which
 runs against the branch head rather than the merge with `main` — only a suite the PR's own run on
-that commit did not run (with the label on, it ran all of them; read `gh pr checks <pr>`):
+that commit did not run (with the label on, it ran every Lint suite a PR runs, unit shards included; read `gh pr checks <pr>`):
 
 ```bash
 gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>   # typecheck, unit, packages, component, ...
