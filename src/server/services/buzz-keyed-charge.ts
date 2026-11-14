@@ -63,6 +63,47 @@ export function chargeWasDeclined(error: unknown): boolean {
   return refusedBeforeSending || !writeMayHaveLanded(error);
 }
 
+/** Told to a request whose key names a charge made for different terms. */
+export const CHARGE_MISMATCH_MESSAGE =
+  'This request does not match the earlier attempt with the same key. Please start again.';
+
+/**
+ * Whether the transaction the ledger holds under a reused id is the charge this request describes:
+ * the same amount, payer and payee, and (where both sides name them) the same source account type
+ * and transaction type. The ledger answers a held id with the transaction it holds whatever the
+ * request sent, so without this a request reusing a key with other terms would carry on as if its
+ * own charge had been made.
+ */
+export function heldChargeMatches(
+  held: {
+    amount?: unknown;
+    fromAccountId?: unknown;
+    toAccountId?: unknown;
+    fromAccountType?: unknown;
+    type?: unknown;
+  },
+  input: {
+    amount: number;
+    fromAccountId: number;
+    toAccountId: number;
+    fromAccountType?: string;
+    type?: unknown;
+  }
+): boolean {
+  if (Number(held.amount) !== input.amount) return false;
+  if (Number(held.fromAccountId) !== input.fromAccountId) return false;
+  if (Number(held.toAccountId) !== input.toAccountId) return false;
+  if (
+    input.fromAccountType !== undefined &&
+    held.fromAccountType != null &&
+    String(held.fromAccountType).toLowerCase() !== input.fromAccountType.toLowerCase()
+  )
+    return false;
+  if (input.type !== undefined && held.type != null && Number(held.type) !== Number(input.type))
+    return false;
+  return true;
+}
+
 type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {
   toAccountId: number;
   externalTransactionId: string;
@@ -83,6 +124,10 @@ export const CHARGE_DECLINED_MESSAGE = 'Unable to charge this payment';
  * - The ledger answers a held id with whatever it holds, including a charge a failed earlier
  *   attempt refunded, so that is checked and refused with a 400: the client starts a new action
  *   with a new key.
+ * - It also answers a held id whatever this request sent. However the id was reached (held
+ *   before charging, a resend, or a first send another request beat), the held transaction is
+ *   compared with this request (`heldChargeMatches`) and a mismatch is refused with a 400
+ *   (`CHARGE_MISMATCH_MESSAGE`) before the caller records anything.
  *
  * Not held (or not reusable): charged. A failure that provably moved nothing is rethrown. Any other
  * failure is an unknown outcome, resolved by resending the same write once (see
@@ -118,16 +163,21 @@ export async function chargeByExternalId(
     return resent;
   };
 
+  type Held = Awaited<ReturnType<typeof getTransactionByExternalId>>;
   let transactionId: string | undefined;
   if (reusable) {
-    let held: unknown;
+    let held: Held;
     try {
       held = await getTransactionByExternalId(input.externalTransactionId);
     } catch (lookupError) {
       throw paymentOutcomeUnknown(context, 'lookup before charging failed', { lookupError });
     }
-    if (held) transactionId = await resend('held before charging');
+    if (held) {
+      if (!heldChargeMatches(held, input)) throw throwBadRequestError(CHARGE_MISMATCH_MESSAGE);
+      transactionId = await resend('held before charging');
+    }
   }
+  const wasHeld = transactionId !== undefined;
 
   if (!transactionId) {
     let sent: { transactionId: string | null };
@@ -141,6 +191,19 @@ export async function chargeByExternalId(
     transactionId = sent.transactionId;
   }
   if (!reusable) return { transactionId };
+
+  // A send (first or resend) under a reused id is answered with the held transaction if another
+  // request under the key got there first, so what was charged is read back and compared.
+  if (!wasHeld) {
+    let charged: Held;
+    try {
+      charged = await getTransactionByExternalId(input.externalTransactionId);
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown(context, 'lookup after charging failed', { lookupError });
+    }
+    if (!charged) throw paymentOutcomeUnknown(context, 'charge not found after charging');
+    if (!heldChargeMatches(charged, input)) throw throwBadRequestError(CHARGE_MISMATCH_MESSAGE);
+  }
 
   let refund: unknown;
   try {
