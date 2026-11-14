@@ -198,6 +198,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['upload-app'],
     why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN app-wide bucket keyed on appId, shared by every viewer and install of the app. NOT the per-install publish bucket: a page app install id is shared by every viewer, so charging it let one viewer’s uploads use up the allowance publishGenerationOutputs and post creation draw on. No per-viewer upload bucket: the 60/h per-user rateLimit is tighter for every prod non-moderator, and the host’s 8-per-60-s bytes window holds a single-page moderator to 40 per 300 s.',
   },
+  presignMediaUploadBatchItem: {
+    buckets: [],
+    why: 'NONE OF THESE BUCKETS. Bounded by its batch instead: only for an open batch of this viewer and app, and at most three upload URLs per file the daily batch quota was charged for at startMediaUploadBatch. The per-install catalog bucket would let one viewer’s 1,000-file batch drain every viewer’s allowance on a page app.',
+  },
   previewQuoteGrant: {
     buckets: ['catalog'],
     why: 'The read-only half of the viewer-confirmed quote consent pair, either kind — a quote read, a Buzz balance read and the viewer’s daily-limit read; materialises nothing. previewTrainingQuote is its training-named delegate.',
@@ -218,9 +222,17 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: 'Up to 50 projections per call off an orchestrator LIST; pre-existing.',
   },
+  recordMediaUploadBatchItem: {
+    buckets: [],
+    why: 'NONE OF THESE BUCKETS. Bounded by its batch: one blob key per file the batch declared, no repeats, while the batch is open — a conditional UPDATE that does nothing past that.',
+  },
   setReactionFromApp: {
     buckets: [],
     why: 'NONE OF THESE BUCKETS, ON PURPOSE. It is charged the SITE’S own per-user reaction quota through the rateLimit middleware with sharedKey reaction:toggle, so an app’s reactions and the viewer’s clicks share ONE budget instead of the app adding one (maintainer decision, civitai-app-starters#669). That middleware is not one of the primitives this file derives; the shared key is pinned in block-reaction.rate-limit-key.test.ts and blocks.router.appReactions.test.ts.',
+  },
+  startMediaUploadBatch: {
+    buckets: [],
+    why: 'NONE OF THESE BUCKETS. Charged the viewer’s own UTC-day batch quota instead (1,200 files and 10 GiB across all apps, sysRedis, fail-closed) in media-upload-batch.service, which this file’s derivation does not read; pinned in media-upload-batch.service.test.ts.',
   },
   submitWorkflow: {
     buckets: ['submit', 'submit-user'],
@@ -442,7 +454,15 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
     // `setReactionFromApp` is not unlimited in fact — it is charged the site's per-user reaction
     // quota by the rateLimit middleware, which this file's derivation does not read. It is listed
     // here because that is what `buckets: []` means to this file; its ledger entry says why.
-    expect(unlimited).toEqual(['listMyWorkflows', 'setReactionFromApp', 'updateUserSettings']);
+    // The three batch-upload steps likewise: bounded by the daily batch quota and the batch itself.
+    expect(unlimited).toEqual([
+      'listMyWorkflows',
+      'presignMediaUploadBatchItem',
+      'recordMediaUploadBatchItem',
+      'setReactionFromApp',
+      'startMediaUploadBatch',
+      'updateUserSettings',
+    ]);
   });
 
   it('pollWorkflow charges a bucket of its OWN — not the catalog one', () => {

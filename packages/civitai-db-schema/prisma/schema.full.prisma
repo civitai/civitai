@@ -4998,6 +4998,45 @@ model AppUserScopeGrant {
   @@map("app_user_scope_grants")
 }
 
+/// One batch of private generation inputs an App Block uploaded for a viewer through
+/// `OPEN_MEDIA_UPLOAD_BATCH` (`media-upload-batch.service.ts`): the moderator audit record of
+/// which consumer blobs a batch created, for which user and app. Written when the viewer confirms
+/// the batch, then one key appended per uploaded file.
+///
+/// No foreign keys, on purpose: an audit row must outlive the app (a deleted or synthetic dev
+/// `app_block_id`) the same way `BlockScopeInvocation.oauthClientId` does.
+///
+/// MANUALLY APPLIED (migration 20270102120000_app_block_upload_batches). Until it is, the batch
+/// path refuses every batch with a clear error; the single-file upload paths do not touch it.
+model AppBlockUploadBatch {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  /// The verified token's AppBlock id (`apb_*`), its OauthClient id and its block id.
+  appBlockId   String   @map("app_block_id")
+  appId        String   @map("app_id")
+  blockId      String   @map("block_id")
+  /// `AppBlock.version` when the batch started; NULL when the token's app has no AppBlock row.
+  version      String?
+  itemCount    Int      @map("item_count")
+  /// Raw bytes the host declared for the items it was about to upload (before an image's JPEG
+  /// re-encode). Declared by the browser, so an upper bound the quota counted, not a measurement.
+  totalBytes   BigInt   @map("total_bytes")
+  /// Upload URLs minted for this batch so far (a retried file takes a second one).
+  presignCount Int      @default(0) @map("presign_count")
+  /// Upload URLs minted per declared file, by position: at most three each.
+  presignCounts Int[]   @default([]) @map("presign_counts")
+  /// The consumer blob keys of the files uploaded, in upload-completion order.
+  blobKeys     String[] @default([]) @map("blob_keys")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// `created_at` + 30 days: the files are kept at least this long (the orchestrator's default
+  /// consumer-blob retention). Not a deletion time.
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@index([userId, createdAt(sort: Desc)], map: "app_block_upload_batches_user_created_idx")
+  @@index([appBlockId, createdAt(sort: Desc)], map: "app_block_upload_batches_app_created_idx")
+  @@map("app_block_upload_batches")
+}
+
 // App Blocks cross-app storage imports: the per-source consent ledger. RAW SQL ONLY
 // (`storage-import-grant.service.ts`), so the model is stripped from the generated client; the
 // migration `20261218120000_app_storage_import_grants` is applied by hand and the service

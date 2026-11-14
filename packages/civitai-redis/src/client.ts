@@ -2608,6 +2608,13 @@ export const REDIS_SYS_KEYS = {
      * block-quote-grant.service.
      */
     STEP_QUOTE: 'system:blocks:step-quote',
+    /**
+     * Per-viewer UTC-day quota for App Blocks batch private uploads (`OPEN_MEDIA_UPLOAD_BATCH`),
+     * across all apps: `system:blocks:media-upload-batch-daily:<items|bytes>:<userId>:<yyyy-mm-dd>`.
+     * INCRBY reserve-and-refund on `sysRedis`, first-write EX ~2 days, fail-CLOSED. See
+     * media-upload-batch.service.
+     */
+    MEDIA_UPLOAD_BATCH_DAILY: 'system:blocks:media-upload-batch-daily',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
