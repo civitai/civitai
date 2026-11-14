@@ -16,7 +16,8 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties, PointerEvent, ReactNode } from 'react';
-import { forwardRef, useCallback, useRef, useState } from 'react';
+import { forwardRef, useCallback, useMemo, useState } from 'react';
+import { resamplePeaks } from '~/components/Audio/resample-peaks';
 import { useAudioPeaks } from '~/components/Audio/useAudioPeaks';
 import { WaveformBars } from '~/components/Audio/WaveformBars';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -43,13 +44,18 @@ import { MusicUpNextPanel } from '~/components/MusicPlayer/MusicUpNextPanel';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime, playbackProgress, timeFromPointer } from '~/utils/audio-player';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 
 const SEEK_STEP_SECONDS = 5;
-const WAVEFORM_BARS = 100;
+// Decoded once at this resolution, then shown as one bar per WAVEFORM_BAR_PITCH px of the timeline,
+// so a wide screen gets more bars rather than the same bars spread thin.
+const WAVEFORM_PEAKS = 400;
+const WAVEFORM_BAR_PITCH = 6;
+const WAVEFORM_MIN_BARS = 40;
 // The waveform decode downloads the whole song: wait until it has played this long, so skipping
 // through songs costs nothing.
 const WAVEFORM_AFTER_LISTENED_SEC = 1;
@@ -379,12 +385,18 @@ function Transport({ playing }: { playing: boolean }) {
 function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
   const currentTime = useMusicPlayheadStore((s) => s.currentTime);
   const duration = useMusicPlayheadStore((s) => s.duration) || track.durationSec;
-  const sliderRef = useRef<HTMLDivElement>(null);
+  const [barCount, setBarCount] = useState(100);
+  const sliderRef = useResizeObserver<HTMLDivElement>((entry) =>
+    setBarCount(
+      Math.max(WAVEFORM_MIN_BARS, Math.floor(entry.contentRect.width / WAVEFORM_BAR_PITCH))
+    )
+  );
   const { url } = useEdgeUrl(track.url, { type: 'audio' });
   const listened = useMusicPlayerStore(
     (s) => (s.playback?.listenedSec ?? 0) >= WAVEFORM_AFTER_LISTENED_SEC
   );
-  const peaks = useAudioPeaks(url, WAVEFORM_BARS, sliderRef, { enabled: listened });
+  const peaks = useAudioPeaks(url, WAVEFORM_PEAKS, sliderRef, { enabled: listened });
+  const bars = useMemo(() => (peaks ? resamplePeaks(peaks, barCount) : null), [peaks, barCount]);
   const progress = playbackProgress(currentTime, duration);
   const played = playing ? ACCENT : accentAt(50);
 
@@ -421,10 +433,10 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
           e.preventDefault();
         }}
       >
-        {peaks ? (
+        {bars ? (
           <>
             <WaveformBars
-              peaks={peaks}
+              peaks={bars}
               progress={progress}
               className="justify-between"
               barClassName="min-w-px max-w-[3px] flex-1 rounded-[2px]"
