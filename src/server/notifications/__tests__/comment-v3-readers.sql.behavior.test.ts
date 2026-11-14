@@ -100,7 +100,7 @@ CREATE TABLE "ModelVersion"(id int PRIMARY KEY, name text, "modelId" int);
 CREATE TABLE "UserEngagement"("userId" int, "targetUserId" int, type text);
 CREATE TABLE "UserNotificationSettings"("userId" int, type text);
 INSERT INTO "Post"(id, "userId") VALUES (1, 1);
--- Text 50 sits after post 1's image 10 (index 0 = 0, the image sorts first).
+-- Text 50 sits after post 1's image 10: both are at index 0, and an image sorts before a text.
 INSERT INTO "PostText"(id, "postId", index) VALUES (50, 1, 0);
 ALTER TABLE "Article" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN "userId" int,
   -- Read by new-mention's article branch; no article here names anyone.

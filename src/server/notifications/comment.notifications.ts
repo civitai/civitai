@@ -89,10 +89,10 @@ export const v3EntityJoins = (alias: string) =>
         LEFT JOIN LATERAL ${postTextAnchorImage('ptx')} pti ON true`;
 
 /**
- * The image a text slide's URL keeps (`anchorImageIndex`, `detail-items.ts`): the last of its post's
- * images that sorts before it (`comparePostItems`), else the first after it. Only an image any reader
- * may open: rated, scanned, not in review, not taken down (`isPanelTainted`'s rule). A one-row
- * derived table.
+ * The image a text slide's URL keeps: the last of its post's images that sorts before it
+ * (`comparePostItems`), else the first after it. The SQL copy of `anchorImageIndex`
+ * (`detail-items.ts`); change both together. Only an image any reader may open: rated, scanned, not
+ * in review, not blocked, not taken down. A one-row derived table.
  */
 export const postTextAnchorImage = (text: string) => `(
           SELECT i.id FROM "Image" i
