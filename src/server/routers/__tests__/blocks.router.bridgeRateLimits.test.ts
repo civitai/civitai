@@ -375,6 +375,25 @@ describe('blocks.pollWorkflow — the POLL bucket', () => {
     expect(mockCheckBlockCatalogRateLimit).not.toHaveBeenCalled();
   });
 
+  // The refusal is a poll the host could not serve, and says so: without `throttled` it is
+  // indistinguishable from a real non-terminal snapshot, and a block would wipe its queue/ETA/
+  // progress display on every shed poll. Pinned as the WHOLE object.
+  it('a shed poll answers exactly { workflowId, status: processing, throttled: true }', async () => {
+    mockCheckBlockPollRateLimit.mockResolvedValue(REFUSED);
+
+    const result = await caller().pollWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
+
+    expect(result).toStrictEqual({
+      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+    });
+  });
+
+  it('a served poll carries no `throttled` key at all', async () => {
+    const result = await caller().pollWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
+    expect(result.snapshot.status).toBe('processing');
+    expect('throttled' in result.snapshot).toBe(false);
+  });
+
   it('INVARIANT GUARD — an allowed poll still returns its snapshot', async () => {
     const result = await caller().pollWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
     // Distinct from every other fixture value in this file: a constant-returning stub cannot
@@ -413,6 +432,24 @@ describe('blocks.cancelWorkflow — the asymmetry with cancelAppWorkflow, resolv
     expect(TERMINAL).not.toContain(result.snapshot.status);
     expect(result.snapshot.workflowId).not.toBe('');
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  // Same placeholder, same reason: the cancel was not issued and nothing was read.
+  it('a shed cancel answers exactly { workflowId, status: processing, throttled: true }', async () => {
+    mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
+
+    const result = await caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
+
+    expect(result).toStrictEqual({
+      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+    });
+  });
+
+  it('a served cancel carries no `throttled` key at all', async () => {
+    mockGetWorkflow.mockResolvedValue(workflowFixture({ status: 'canceled' }));
+    const result = await caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID });
+    expect(result.snapshot.status).toBe('canceled');
+    expect('throttled' in result.snapshot).toBe(false);
   });
 
   it('INVARIANT GUARD — an allowed cancel still reaches the orchestrator', async () => {
