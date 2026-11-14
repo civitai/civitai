@@ -377,6 +377,30 @@ describe('saveItemInCollections with an existing closed-contest membership', () 
     vi.clearAllMocks();
   });
 
+  it('refuses a new single entry when a normal collection is at its cap', async () => {
+    arrange({ alreadyInContest: true });
+    mockDbRead.collection.findMany.mockResolvedValue([
+      collectionRow({ id: OWN_COLLECTION_ID, metadata: { maxItemsPerUser: 2 } }),
+    ]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+    mockDbWrite.collectionItem.findMany.mockResolvedValue([]);
+    mockDbWrite.collectionItem.count.mockResolvedValue(2);
+    mockDbWrite.$transaction.mockImplementation(
+      async (write: (tx: typeof mockDbWrite) => unknown) => write(mockDbWrite)
+    );
+    await expect(
+      saveItemInCollections({
+        input: {
+          modelId: MODEL_ID,
+          type: 'Model',
+          userId: USER_ID,
+          collections: [{ collectionId: OWN_COLLECTION_ID }],
+          removeFromCollectionIds: [],
+        },
+      })
+    ).rejects.toThrow('maximum number');
+  });
+
   it('saves to an unrelated collection without re-validating the closed contest', async () => {
     arrange({ alreadyInContest: true });
 

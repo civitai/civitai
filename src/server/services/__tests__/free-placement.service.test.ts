@@ -620,6 +620,9 @@ describe('the advisory locks have exactly one call site', () => {
   // app-hibernation/hibernation.repo takes one per user (0x48424e54) as the first statement of its
   // commit transaction, around the record, usage and User FOR SHARE reads, the decision and the upsert.
   // The only advisory lock in its transaction, never nested inside another lock.
+  // collection-submission-limit hashes a namespaced collection/user key around the active-entry
+  // count and membership write. Multiple collection locks are acquired by ascending collection id;
+  // there are no other advisory locks in those transactions.
   const ALLOWED = [
     'services/access-token.service.ts',
     'services/app-hibernation/hibernation.repo.ts',
@@ -627,6 +630,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/article.service.ts',
     'services/blocks/review-autodeploy.service.ts',
     'services/buzz-charge-lock.ts',
+    'services/collection-submission-limit.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',

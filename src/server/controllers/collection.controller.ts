@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { CollectionSubmissionLimitError } from '~/server/services/collection-submission-limit';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
@@ -701,9 +702,17 @@ export const addSimpleImagePostHandler = async ({
       publishedAt: collection.read === CollectionReadConfiguration.Public ? new Date() : undefined,
     });
 
-    // Everything that can refuse an entry without having charged anything runs inside this try.
-    // Once bulkSaveItems starts, fee legs may be on the ledger (never refunded, keyed on the
-    // image id), so from there the post and its images stay whatever happens.
+    const rollbackPost = () =>
+      deletePost({ id: post.id, isModerator }).catch((rollbackError) =>
+        logToAxiom({
+          type: 'error',
+          name: 'add-simple-image-post-rollback-failed',
+          message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+          postId: post.id,
+          collectionId,
+        }).catch(() => undefined)
+      );
+
     let imageIds: number[];
     try {
       // createImage's own primary-DB post-owner check runs once per request per post;
@@ -738,15 +747,7 @@ export const addSimpleImagePostHandler = async ({
       }
     } catch (error) {
       // The refusal is what the user needs to see; a failed cleanup must not replace it.
-      await deletePost({ id: post.id, isModerator }).catch((rollbackError) =>
-        logToAxiom({
-          type: 'error',
-          name: 'add-simple-image-post-rollback-failed',
-          message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-          postId: post.id,
-          collectionId,
-        }).catch(() => undefined)
-      );
+      await rollbackPost();
       throw error;
     }
 
@@ -759,6 +760,10 @@ export const addSimpleImagePostHandler = async ({
         canAccessUserChallenges: ctx.features.userChallenges,
       },
       permissions,
+    }).catch(async (error) => {
+      // A quota refusal happens before the item write or any entry-fee charge.
+      if (error instanceof CollectionSubmissionLimitError) await rollbackPost();
+      throw error;
     });
 
     // The entry is saved; a reward error must not surface as a failed entry and invite a resubmit.

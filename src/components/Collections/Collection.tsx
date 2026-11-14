@@ -555,10 +555,7 @@ export function Collection({
   const { collection, permissions, collaborators, pendingReviewCount, isLoading } =
     useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
-    enabled:
-      !!currentUser?.id &&
-      collection?.mode === CollectionMode.Contest &&
-      !!collection?.metadata?.maxItemsPerUser,
+    enabled: !!currentUser?.id && !!collection?.metadata?.maxItemsPerUser,
   });
 
   const { blockedUsers } = useHiddenPreferencesData();
