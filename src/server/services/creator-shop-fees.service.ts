@@ -21,6 +21,7 @@ import { getTransactionByExternalId, refundTransaction } from '~/server/services
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 /**
  * A read failure is deliberately NOT swallowed into the defaults. The fee is charged
@@ -59,7 +60,7 @@ export type SubmissionFeeKind = keyof typeof SUBMISSION_FEE_PREFIX;
  * The fee charge's external id for one submission. With the client's key (a uuid, minted once per
  * submission and resent on its retries) it is the same on every retry, so the ledger holds one
  * charge for it. The user id comes first and has no '-', so one user's key never names another
- * user's charge. Without a key (a client from before keys), a new id per call, as before.
+ * user's charge. Without a key, a new id per call (no dedup).
  */
 export function submissionFeeTransactionId(
   kind: SubmissionFeeKind,
@@ -77,17 +78,10 @@ export const SUBMISSION_ALREADY_COMPLETED_MESSAGE =
  * refunding the fee if `write` fails. `write` gets the transaction its inserts must use and the
  * fee's ledger transaction id.
  *
- * Without a key (a client from before keys): charged under a new id, then `write` in its own
- * transaction, as before.
+ * Without a key: charged under a new id (no dedup), then `write` in its own transaction.
  *
- * With a key:
- * - the charge is chargeByExternalId's, outside any transaction: a fee the ledger already holds
- *   under the key is this submission's, continued from without a balance check;
- * - then, under the key's lock (buzz-charge-lock.ts) in a short transaction that `write` also uses:
- *   a fee already recorded on a listing paid for that listing (a lost response, a concurrent
- *   request, or other content under a reused key), so this submission is refused; a refunded fee
- *   is refused; otherwise the listing is written;
- * - a failed write refunds the fee unless another request recorded it meanwhile.
+ * With a key: a fee already recorded on a listing paid for that listing, so this submission is
+ * refused.
  */
 export async function withSubmissionFee<T>(
   {
@@ -143,7 +137,10 @@ export async function withSubmissionFee<T>(
         LIMIT 1`
     ).length > 0;
   const isRefunded = async () =>
-    !!(await getTransactionByExternalId(`refund-${transactionId}`, CHARGE_LOCKED_READ));
+    !!(await getTransactionByExternalId(
+      refundExternalTransactionId(transactionId),
+      CHARGE_LOCKED_READ
+    ));
 
   let writeFailed = false;
   try {

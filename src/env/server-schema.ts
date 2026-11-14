@@ -798,6 +798,7 @@ export const serverSchema = z
     PROMPT_CHECK_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
     BLOCKS_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     PRESET_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
+    ONSITE_ENHANCE_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
     // SESSION_REVOCATION_CACHE: a failed session-revocation read still denies a revocation this process
     // has already read (@civitai/auth createRevocationCheck `markerCache`); off restores the plain

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { NsfwLevel } from '~/server/common/enums';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * Non-mocked regression test for the per-image browsingLevel filter inside the
@@ -157,7 +160,7 @@ describe('runModelSearch — per-image browsingLevel filter (real Flags)', () =>
 });
 
 describe('runModelSearch — the creator avatar is held to the level', () => {
-  async function avatarAt(browsingLevel: number, avatarLevel: number) {
+  async function avatarAt(browsingLevel: number, avatarLevel: number | null) {
     const [model] = fakeModelWith([1]);
     mockGetModelsWithVersions.mockResolvedValue({
       items: [
@@ -166,7 +169,10 @@ describe('runModelSearch — the creator avatar is held to the level', () => {
           user: {
             username: 'creator',
             image: 'unrated.png',
-            profilePicture: { url: 'avatar.png', type: 'image', nsfwLevel: avatarLevel },
+            profilePicture:
+              avatarLevel === null
+                ? null
+                : { url: 'avatar.png', type: 'image', nsfwLevel: avatarLevel },
           },
         },
       ],
@@ -188,5 +194,13 @@ describe('runModelSearch — the creator avatar is held to the level', () => {
 
   it('keeps an avatar within the level (control)', async () => {
     expect(await avatarAt(sfwBrowsingLevelsFlag, NsfwLevel.PG)).toBe('avatar.png');
+  });
+
+  it('serves no avatar for a user with only the unrated image', async () => {
+    expect(await avatarAt(allBrowsingLevelsFlag, null)).toBeNull();
+  });
+
+  it('drops a mixed rating that only partly overlaps the level', async () => {
+    expect(await avatarAt(sfwBrowsingLevelsFlag, NsfwLevel.PG | NsfwLevel.R)).toBeNull();
   });
 });
