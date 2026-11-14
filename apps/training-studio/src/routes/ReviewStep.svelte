@@ -11,6 +11,7 @@
     IconInfoCircle,
     IconPhotoPlus,
   } from '@tabler/icons-svelte';
+  import { KOHYA_BOUNDS, KOHYA_OPTIMIZERS, KOHYA_SCHEDULERS, kohyaFieldSupported } from '$lib/data/kohya';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
@@ -27,6 +28,7 @@
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import {
@@ -55,6 +57,8 @@
     paramHelpText,
     promptHasTrigger,
     runCard,
+    runEngine,
+    runTrainingParams,
     runExtraCapabilities,
     runParamsKey,
     runTakesSampleImages,
@@ -196,16 +200,11 @@
   // them — so nothing is added on top. Debounce/blank/latest-wins live in `debouncedQuote`.
   const quoteInputAt = (i: number) => {
     const run = selection.runs[i]!;
-    const v = runVersion(run);
     const p = paramsAt(i);
+    const config = runTrainingParams(run, p, labelMode, trigger, selection.loraType);
     return {
-      ecosystem: v.ecosystem,
-      modelVariant: v.modelVariant,
-      version: v.version,
-      engine: v.engine,
-      model: isCustom(run) ? run.customAir?.trim() || undefined : v.air,
-      steps: p.steps,
-      epochs: p.epochs > 0 ? p.epochs : undefined,
+      ...config,
+      model: config.customModel ?? config.model,
       imageCount: imageCount > 0 ? imageCount : undefined,
       editTraining: runTrainsPairs(run) || undefined,
     };
@@ -265,7 +264,9 @@
   );
 
   function seen(i: number) {
-    return imageCount > 0 ? Math.round(paramsAt(i).steps / imageCount) : 0;
+    const p = paramsAt(i);
+    const batch = runEngine(selection.runs[i]!) === 'kohya' ? Number(p.batchSize) || 1 : 1;
+    return imageCount > 0 ? Math.round((p.steps * batch) / imageCount) : 0;
   }
   function low(i: number) {
     return seen(i) < Math.round(presetSeen * 0.6);
@@ -289,13 +290,16 @@
   }
 
   // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
-  const boundsFor = (i: number) => paramBounds(runCard(selection.runs[i]!));
+  const boundsFor = (i: number) =>
+    runEngine(selection.runs[i]!) === 'kohya'
+      ? KOHYA_BOUNDS
+      : paramBounds(runCard(selection.runs[i]!));
   const noAdvancedParams = (run: Run) => isFlux2(runVersion(run).engine);
 
   type ParamField = keyof RunParams;
   interface FieldDef {
     field: ParamField;
-    kind: 'number' | 'select' | 'bool';
+    kind: 'number' | 'select' | 'bool' | 'text';
     options?: string[];
   }
   const CORE_FIELDS: FieldDef[] = [
@@ -309,6 +313,32 @@
     { field: 'lrScheduler', kind: 'select', options: LR_SCHEDULERS },
     { field: 'optimizer', kind: 'select', options: OPTIMIZERS },
   ];
+  const KOHYA_FIELDS: FieldDef[] = [
+    { field: 'negativePrompt', kind: 'text' },
+    { field: 'numRepeats', kind: 'number' },
+    { field: 'enableBucket', kind: 'bool' },
+    { field: 'clipSkip', kind: 'number' },
+    { field: 'lrSchedulerNumCycles', kind: 'number' },
+    { field: 'seed', kind: 'number' },
+    { field: 'fp8Base', kind: 'bool' },
+    { field: 'blocksToSwap', kind: 'number' },
+    { field: 'vParameterization', kind: 'select', options: ['auto', 'false', 'true'] },
+    { field: 'zeroTerminalSnr', kind: 'select', options: ['auto', 'false', 'true'] },
+  ];
+  const coreFields = (i: number): FieldDef[] => {
+    const run = selection.runs[i]!;
+    if (runEngine(run) !== 'kohya') return CORE_FIELDS;
+    return [
+      ...CORE_FIELDS.map((field) =>
+        field.field === 'optimizer' ? { ...field, options: KOHYA_OPTIMIZERS }
+          : field.field === 'lrScheduler' ? { ...field, options: KOHYA_SCHEDULERS }
+          : field
+      ),
+      ...KOHYA_FIELDS.filter((field) => kohyaFieldSupported(field.field, runVersion(run).ecosystem)),
+    ];
+  };
+  const optionLabel = (value: string) =>
+    ({ auto: 'Auto (checkpoint metadata)', true: 'On', false: 'Off' }[value] ?? value);
   const EXTRA_KIND: Record<ExtraParamField, FieldDef['kind']> = {
     shuffleTokens: 'bool',
     keepTokens: 'number',
@@ -352,7 +382,8 @@
     return [...groups].map(([reason, labels]) => ({ reason, labels }));
   };
   const fieldBound = (i: number, field: ParamField): ParamBound | undefined =>
-    isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
+    runEngine(selection.runs[i]!) === 'kohya' ? KOHYA_BOUNDS[field]
+      : isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
     const lockReason = paramLockReason(run, field);
@@ -390,7 +421,8 @@
     if (typeof p[field] === 'string' && !p[field].trim()) return;
     const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
-    const clamped = Math.min(bound.max, Math.max(bound.min, n));
+    const rounded = runEngine(selection.runs[i]!) === 'kohya' && bound.step >= 1 ? Math.round(n / bound.step) * bound.step : n;
+    const clamped = Math.min(bound.max, Math.max(bound.min, rounded));
     if (clamped !== n) p[field] = clamped;
   }
   function addPrompt() {
@@ -598,12 +630,12 @@
   {@const bound = fieldBound(i, f.field)}
   {@const unacknowledged = fieldLocked(i, f.field)}
   <div
-    class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm {last
+    class="grid min-w-0 grid-cols-[minmax(0,1fr)_120px] items-center gap-2 py-1.5 text-sm {last
       ? ''
       : 'border-b border-dark-4/60'}"
   >
     <span class="flex min-w-0 flex-col">
-      <span class="flex items-center gap-1 text-dark-2">
+      <span class="flex flex-wrap items-center gap-1 text-dark-2">
         {PARAM_LABELS[f.field]}
         {#if locked}<span>(unavailable)</span>{/if}
         {@render help(helpFor(i, f.field), PARAM_LABELS[f.field])}
@@ -612,7 +644,15 @@
         {@render recommendedHint(i, f.field, paramDisplay(defaultsAt(i)[f.field]))}
       {/if}
     </span>
-    {#if f.kind === 'bool'}
+    {#if f.kind === 'text'}
+      <Textarea
+        aria-label={PARAM_LABELS[f.field]}
+        rows={2}
+        bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
+        disabled={unacknowledged}
+        class="text-xs"
+      />
+    {:else if f.kind === 'bool'}
       <div class="flex h-7 items-center justify-end pr-1">
         <Checkbox
           aria-label={PARAM_LABELS[f.field]}
@@ -626,12 +666,14 @@
         disabled={unacknowledged}
         bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
       >
-        <Select.Trigger class="h-7 font-mono" aria-label={PARAM_LABELS[f.field]}>
-          {String(paramsAt(i)[f.field])}
+        <Select.Trigger class="h-7 w-full min-w-0 font-mono" aria-label={PARAM_LABELS[f.field]}>
+          <span class="min-w-0 truncate" title={optionLabel(String(paramsAt(i)[f.field]))}>
+            {optionLabel(String(paramsAt(i)[f.field]))}
+          </span>
         </Select.Trigger>
         <Select.Content portalProps={portalProps()}>
           {#each f.options ?? [] as o (o)}
-            <Select.Item value={o}>{o}</Select.Item>
+            <Select.Item value={o}>{optionLabel(o)}</Select.Item>
           {/each}
         </Select.Content>
       </Select.Root>
@@ -708,7 +750,7 @@
             <div>
               <div class="text-sm font-bold text-dark-0">
                 {multi ? `Run ${i + 1} · ` : ''}{card.name}
-                {runVersionLabel(run)}{isCustom(run) ? ' · custom' : ''}
+                {runVersionLabel(run)}{isCustom(run) ? ' · custom' : ''}{runEngine(run) === 'kohya' ? ' · Kohya' : ''}
               </div>
               {#if noAdvancedParams(run)}
                 <div class="mt-1 font-mono text-xs text-dark-2">
@@ -772,6 +814,9 @@
               />{/if}each image seen ~{seen(i)}× ({low(i)
               ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
               : `good for a ${presetType}, target ~${presetSeen}×`})
+            {#if runEngine(run) === 'kohya'}
+              {@render help('Estimated from steps × batch size; partially filled batches can reduce exposure.', 'Image exposure')}
+            {/if}
           </div>
           {/if}
 
@@ -816,13 +861,16 @@
                 </div>
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
-                {#each CORE_FIELDS as f, k (f.field)}
-                  {@render paramRow(i, f, extras.length === 0 && k === CORE_FIELDS.length - 1)}
+                {#each coreFields(i) as f, k (f.field)}
+                  {@render paramRow(i, f, extras.length === 0 && k === coreFields(i).length - 1)}
                 {/each}
                 {#each extras as f, k (f.field)}
                   {@render paramRow(i, f, k === extras.length - 1)}
                 {/each}
               </div>
+              {#if runEngine(run) === 'kohya'}
+                <p class="mb-0 mt-3 text-xs text-dark-2">LoRA type: LoRA · Optimizer arguments: automatic</p>
+              {/if}
               {#if hidden.length > 0}
                 <ul class="m-0 mt-2.5 list-none p-0 font-mono text-[11px] leading-snug text-dark-2">
                   {#each hidden as group (group.reason)}

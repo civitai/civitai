@@ -20,6 +20,7 @@ import {
   isNonModClampOn,
 } from '~/server/services/semantic-query-guard';
 import {
+  MAX_HITS_PER_USER,
   collectPage,
   searchServiceSource,
   type CandidateFilter,
@@ -31,8 +32,7 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 
-/** One creator's comics shown on a page at most, so a prolific author cannot fill it. */
-export const MAX_HITS_PER_USER = 3;
+export { MAX_HITS_PER_USER };
 
 const searchServiceCandidates = searchServiceSource('comics', {
   notFoundMessage: 'Comic not found',

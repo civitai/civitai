@@ -65,8 +65,10 @@ import {
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   buzzCapRedisKey,
-  buzzCapWindowKey,
   clearDailyCapRefusal,
+  consentBudgetRedisKey,
+  consentCapExceeded,
+  markConsentLimitRefused,
   markDailyCapRefused,
 } from '~/server/services/blocks/block-buzz-cap';
 import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
@@ -274,6 +276,7 @@ import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflo
 import { collectTrainingTriggerWords } from '~/server/services/blocks/block-training-trigger-word';
 import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
+import { checkAppStepResources } from '~/server/services/blocks/app-step-resources';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -1060,6 +1063,15 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
   };
 }
 
+/**
+ * The maturity fields of a real submit: the token's ceiling, held to PG-13 with mature content
+ * refused when a resource's base model restricts mature generation (`capsGenerationOutput`).
+ */
+function blockOutputClamp(capOutput: boolean, allowMatureContent: boolean | undefined) {
+  if (capOutput) return { nsfwLevel: 'pg13' as const, allowMatureContent: false };
+  return allowMatureContent === false ? { allowMatureContent: false } : {};
+}
+
 // SECURITY-CRITICAL (W10). A page token has no model binding, so the model-
 // binding check (`ctxModelId === body.modelId`) that bounds a model slot does
 // NOT apply. The replacement bound is a PRE-SPEND slice of the platform's
@@ -1541,15 +1553,6 @@ async function reservePrivateRunBuzzSpend(
 // to before this existed, which is what makes shipping it without a backfill safe.
 const CONSENT_BUDGET_TTL_SECONDS = 25 * 60 * 60;
 
-function consentBudgetRedisKey(
-  userId: number,
-  appBlockId: string
-): `${typeof REDIS_SYS_KEYS.BLOCKS.CONSENT_BUDGET}:${string}` {
-  // PER-(user, app) — the appBlockId IS in the key, which is the whole difference
-  // from buzzCapRedisKey. Same UTC-day window so the two counters roll together.
-  return `${REDIS_SYS_KEYS.BLOCKS.CONSENT_BUDGET}:${userId}:${appBlockId}:${buzzCapWindowKey()}`;
-}
-
 /**
  * Atomically reserves `cost` against the (user, app, UTC-day) consent-budget
  * counter. Same shared `reserveCumulativeBuzzKey` primitive as
@@ -1573,16 +1576,6 @@ async function reserveConsentBudgetSpend(
 }
 
 /**
- * What the viewer has already spent today against their consent limit for this app —
- * a READ of the counter `reserveConsentBudgetSpend` increments (same key, same UTC-day
- * window). Reserves nothing. 0 when the counter is absent or unreadable as a number.
- */
-async function readConsentBudgetSpent(userId: number, appBlockId: string): Promise<number> {
-  const raw = Number((await sysRedis.get(consentBudgetRedisKey(userId, appBlockId))) ?? 0);
-  return Number.isFinite(raw) && raw > 0 ? raw : 0;
-}
-
-/**
  * The reservation a spend path holds. `key`/`total`/`cap` are the PLATFORM
  * cumulative reservation (daily per-user, or the run-for-real session ceiling) —
  * unchanged names so every existing destructure still reads the same thing.
@@ -1594,7 +1587,7 @@ type BlockBuzzReservation = {
   total: number;
   key: string;
   cap: number;
-  consent: { total: number; key: string; cap: number } | null;
+  consent: { total: number; key: string; cap: number; userId: number; appBlockId: string } | null;
 };
 
 /**
@@ -1752,7 +1745,10 @@ async function reserveBlockBuzzSpendForClaims(
 
   try {
     const consent = await reserveConsentBudgetSpend(userId, claims.appBlockId, cost);
-    return { ...platform, consent: { ...consent, cap: budget } };
+    return {
+      ...platform,
+      consent: { ...consent, cap: budget, userId, appBlockId: claims.appBlockId },
+    };
   } catch (e) {
     await refundBlockBuzzSpend(key, cost);
     throw e;
@@ -1795,32 +1791,42 @@ function consentBudgetExceeded(
 }
 
 /**
- * THE consent-limit rule: a day's spend INCLUDING the cost under judgement exceeds the
- * viewer's limit. One copy — the reservation above applies it to the counter it just
- * incremented, and the confirmed-quote preview applies it to `spent so far + cost`
- * (`readConsentDailyLimit`), so the dialog and the submit cannot disagree about the
- * boundary.
- */
-function consentCapExceeded(totalIncludingCost: number, cap: number): boolean {
-  return totalIncludingCost > cap;
-}
-
-/**
  * Rejection copy for a consent-budget breach. Deliberately NUMBER-BEARING, unlike
  * the per-app aggregate cap's message: that ceiling is a platform secret an app
  * must not learn, while THIS one is the user's own setting — they chose it, they
  * are the one being told, and hiding it would make the rejection unactionable.
- * `costClause` differs per path (a fixed estimate vs a post-paid ceiling).
+ * `costClause` differs per path (a fixed estimate vs a post-paid ceiling). Also marks the
+ * refusal so the host may offer the raise dialog (`markConsentLimitRefused`).
  */
 function consentBudgetRejection(
   consent: NonNullable<BlockBuzzReservation['consent']>,
   cost: number,
   costClause: string
 ): string {
+  void markConsentLimitRefused(consent.userId, consent.appBlockId, consent.cap);
   return (
     `app Buzz limit reached: ${consent.total - Math.ceil(cost)} already spent today by ` +
     `this app on your behalf, ${costClause}, your limit for this app is ${consent.cap}`
   );
+}
+
+const DAILY_LIMIT_READ_RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
+
+/** Fails closed: a Redis error reads as over the limit, which only keeps the dialog shut. */
+async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
+  const key = `${REDIS_SYS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
+  try {
+    const count = await sysRedis.incrBy(key, 1);
+    if (count === 1) {
+      await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
+    } else {
+      const ttl = await sysRedis.ttl(key);
+      if (ttl < 0) await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
+    }
+    return count <= DAILY_LIMIT_READ_RATE_LIMIT.max;
+  } catch {
+    return false;
+  }
 }
 
 // RUN-FOR-REAL mint rate limit — per-mod fixed window. A privileged,
@@ -2019,7 +2025,7 @@ async function createBlockTextToImageStep(opts: {
     // the population phase 3's reject/degrade decision has to be measured on.
     'block'
   );
-  const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
+  const { steps, workflowMetadata, capOutput } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
@@ -2076,6 +2082,7 @@ async function createBlockTextToImageStep(opts: {
         ? { ...workflowMetadata, [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions }
         : workflowMetadata,
     modelSubstitutions,
+    capOutput,
   };
 }
 
@@ -3787,9 +3794,8 @@ export const blocksRouter = router({
       // NOTE the ORDER: this reads the CURRENT grant, so consenting to a budget in
       // the same call that grants `ai:write:budgeted` works (the scope is in
       // `toGrant`), and so does raising a budget on an app that already holds it.
-      const { recordScopeGrant, getGrantedScopes } = await import(
-        '~/server/services/blocks/scope-grant.service'
-      );
+      const { recordScopeGrant, getGrantedScopes, getConsentBuzzBudget, recordConsentLimitChange } =
+        await import('~/server/services/blocks/scope-grant.service');
       // `CONSENT_SPEND_SCOPE`, not the literal — along with the ELEVEN identical
       // `claims.scopes.includes(...)` spend gates elsewhere in this file.
       //
@@ -3819,6 +3825,14 @@ export const blocksRouter = router({
           })
         ).has(CONSENT_SPEND_SCOPE);
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
+      const writesBudget = input.buzzBudgetPerDay !== undefined && budgetIsMeaningful;
+      const previousLimit = writesBudget
+        ? await getConsentBuzzBudget({
+            userId: ctx.user!.id,
+            appBlockId: input.appBlockId,
+            db: 'write',
+          })
+        : null;
       // `apps:storage:import`: the consent covers exactly what the prompt DISPLAYED — each source
       // app with its collections and access, one row per source. The client sends what it
       // showed; it must equal the approved manifest's imports now, or nothing is recorded.
@@ -3891,6 +3905,14 @@ export const blocksRouter = router({
         block.manifest,
         cleared.revokedScopesAfterClear
       );
+      if (writesBudget) {
+        await recordConsentLimitChange({
+          userId: ctx.user!.id,
+          appBlockId: input.appBlockId,
+          previousLimit,
+          limit: input.buzzBudgetPerDay ?? null,
+        });
+      }
       return {
         ok: true,
         granted: toGrant,
@@ -3901,6 +3923,103 @@ export const blocksRouter = router({
             ? input.buzzBudgetPerDay
             : undefined,
       };
+    }),
+
+  /**
+   * The viewer's own daily Buzz limit for one app and what they have spent against it today, for
+   * the host's raise dialog. `null` when there is nothing to raise: the flag is off, the app is
+   * not approved, no limit is set, spending is revoked, or this viewer has read it too often.
+   * `refusedRecently`: a spend was refused at the current limit in the last few minutes
+   * (`markConsentLimitRefused`). It lets an app's own request open the dialog when the host did
+   * not relay a refusal itself, as for a REST submitter.
+   * Session only, so an app holding a block token cannot call it.
+   */
+  getMyAppDailyLimit: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user!.id;
+      const { isAppDailyLimitRaiseEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!ctx.features.appBlocks || !(await isAppDailyLimitRaiseEnabled({ user: ctx.user })))
+        return null;
+      if (!(await checkDailyLimitReadRateLimit(userId))) return null;
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true },
+      });
+      if (block?.status !== 'approved') return null;
+      const [{ readConsentDailyLimit }, { wasConsentLimitRefusedRecently }] = await Promise.all([
+        import('~/server/services/blocks/scope-grant.service'),
+        import('~/server/services/blocks/block-buzz-cap'),
+      ]);
+      const limit = await readConsentDailyLimit(userId, input.appBlockId, 0);
+      if (!limit) return null;
+      return {
+        limit: limit.limit,
+        spentToday: limit.spentToday,
+        refusedRecently: await wasConsentLimitRefusedRecently(
+          userId,
+          input.appBlockId,
+          limit.limit
+        ),
+      };
+    }),
+
+  /**
+   * Raises the viewer's own daily Buzz limit for one app, from the host's dialog. Raise only, and
+   * never a scope change: it refuses unless spending is granted and unrevoked right now, a limit
+   * is set, and the new value is higher (`raiseConsentDailyLimit`).
+   */
+  raiseAppDailyLimit: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        buzzBudgetPerDay: z
+          .number()
+          .int()
+          .min(BLOCK_CONSENT_BUDGET_MIN_PER_DAY)
+          .max(BLOCK_CONSENT_BUDGET_MAX_PER_DAY),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user!.id;
+      const { isAppDailyLimitRaiseEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!ctx.features.appBlocks || !(await isAppDailyLimitRaiseEnabled({ user: ctx.user }))) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Raising a limit here is not available',
+        });
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.status !== 'approved') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
+      }
+      const { raiseConsentDailyLimit, recordConsentLimitChange } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      const raised = await raiseConsentDailyLimit({
+        userId,
+        appBlockId: input.appBlockId,
+        buzzBudgetPerDay: input.buzzBudgetPerDay,
+      });
+      if (!raised) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Your limit for this app changed. Close this and try again.',
+        });
+      }
+      await recordConsentLimitChange({
+        userId,
+        appBlockId: input.appBlockId,
+        previousLimit: raised.previousLimit,
+        limit: input.buzzBudgetPerDay,
+      });
+      return { previousLimit: raised.previousLimit, limit: input.buzzBudgetPerDay };
     }),
 
   /**
@@ -7526,6 +7645,7 @@ export const blocksRouter = router({
               cost,
               `this generation costs ${cost}`
             ),
+            errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
             ...(preflightSubstitutions?.length
               ? { modelSubstitutions: preflightSubstitutions }
               : {}),
@@ -7759,11 +7879,12 @@ export const blocksRouter = router({
         // `createBlockTextToImageStep` returns it. Mirrors the normal form path
         // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
         // already stripped fields the block context lacks (e.g. remixOfId).
-        const { step, workflowMetadata, modelSubstitutions } = await createBlockTextToImageStep({
-          input: generateInput,
-          user,
-          isGreen,
-        });
+        const { step, workflowMetadata, modelSubstitutions, capOutput } =
+          await createBlockTextToImageStep({
+            input: generateInput,
+            user,
+            isGreen,
+          });
         const submitted = await submitWorkflow({
           token,
           body: {
@@ -7772,8 +7893,9 @@ export const blocksRouter = router({
             currencies,
             metadata: workflowMetadata,
             // Authoritative maturity clamp on the REAL submit — the orchestrator
-            // rejects mature output when this is false. Token-claim derived.
-            ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+            // rejects mature output when this is false. Token-claim derived, and a base model
+            // that restricts mature generation holds it to PG-13 whatever the token allows.
+            ...blockOutputClamp(capOutput, allowMatureContent),
             // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
             // OWN internal 3× retry of THIS call — collapses to the existing
             // workflow on the orchestrator (dedupe on (userId, externalId)) → no
@@ -10414,11 +10536,10 @@ async function submitCustomComfyWorkflow(opts: {
   // ── Entitlement gate (plan §6). A raw customComfy step submits its `resources`
   // AIR array DIRECTLY, bypassing the generation-graph path's automatic
   // resolveCanGenerateForVersions. Run the SAME belt the txt2img page branch uses
-  // over EVERY civitai version the recipe pins (v1 = fixed public LoRAs) BEFORE
-  // emitting the step — so the code-reviewed registry can't be quietly edited to
-  // point at a gated / early-access / Private / unpublished version without the
-  // belt catching it. The huggingface staticAirs carry no civitai entitlement
-  // (exempt-by-construction). checkpointPolicy:'pinned' → no user checkpoint in v1.
+  // over the recipe's `checkpoints` and `loras` BEFORE emitting the step — so the
+  // code-reviewed registry can't be quietly edited to point at a gated /
+  // early-access / Private / unpublished version without the belt catching it.
+  // `staticAirs` are checked by `checkAppStepResources` below.
   const versionIds = recipe ? recipeCivitaiVersionIds(recipe) : [];
   if (recipe && versionIds.length > 0) {
     const gates: ReturnType<typeof buildGateVersion>[] = [];
@@ -10426,7 +10547,6 @@ async function submitCustomComfyWorkflow(opts: {
       const resolvedVersion = await resolvePageResourceContext(versionId);
       gates.push(buildGateVersion(resolvedVersion.gate));
     }
-    assertNoRestrictedBaseModels({ baseModels: gates.map((g) => g.baseModel) });
     await assertViewerCanGeneratePageResources({
       gates,
       viewer: { id: userId, isModerator: !!user.isModerator },
@@ -10435,9 +10555,24 @@ async function submitCustomComfyWorkflow(opts: {
     });
   }
 
-  // A recipe's Hugging Face AIRs depend on the engine its params pick, so check the built step's.
-  if (recipe && params)
-    assertNoRestrictedBaseModels({ airs: recipe.buildStep(params, {}).resources });
+  // 🔴 THE STEP INPUT IS CONSTRUCTED SERVER-SIDE FROM AN ALLOWLISTED SET OF
+  // FIELDS — the app's body is NEVER spread into it. `CustomComfyInput` also
+  // carries `sessionOwnerApiToken` (a Civitai API token forwarded to the
+  // claiming worker), `comfyImage` (an arbitrary OCI container), `minVramGb`
+  // (changes the worker tier, and therefore the Buzz/second rate the whole
+  // ceiling argument rests on), `sessionId`, `useSageAttention` and
+  // `minimumDurationSeconds`. A spread would hand every one of those to the
+  // app. Only these three keys are ever emitted; the wire schema's `.strict()`
+  // is the second belt, rejecting a body that names any of them at all.
+  const stepInput = inlineBody
+    ? {
+        resources: inlineBody.resources,
+        trace: 'binary' as const,
+        workflow: inlineBody.workflow,
+      }
+    : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
+  // Every resource the graph loads must be a Civitai version; their base models decide the cap.
+  const { capOutput } = await checkAppStepResources(stepInput);
 
   const token = await getOrchestratorToken(userId, ctx);
 
@@ -10604,6 +10739,7 @@ async function submitCustomComfyWorkflow(opts: {
           ceiling,
           `this generation may cost up to ${ceiling}`
         ),
+        errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
   }
@@ -10714,22 +10850,6 @@ async function submitCustomComfyWorkflow(opts: {
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
   const submittedAt = Date.now();
   try {
-    // 🔴 THE STEP INPUT IS CONSTRUCTED SERVER-SIDE FROM AN ALLOWLISTED SET OF
-    // FIELDS — the app's body is NEVER spread into it. `CustomComfyInput` also
-    // carries `sessionOwnerApiToken` (a Civitai API token forwarded to the
-    // claiming worker), `comfyImage` (an arbitrary OCI container), `minVramGb`
-    // (changes the worker tier, and therefore the Buzz/second rate the whole
-    // ceiling argument rests on), `sessionId`, `useSageAttention` and
-    // `minimumDurationSeconds`. A spread would hand every one of those to the
-    // app. Only these three keys are ever emitted; the wire schema's `.strict()`
-    // is the second belt, rejecting a body that names any of them at all.
-    const stepInput = inlineBody
-      ? {
-          resources: inlineBody.resources,
-          trace: 'binary' as const,
-          workflow: inlineBody.workflow,
-        }
-      : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
     // Stamp the SAME per-engine timeout the ceiling above was reserved against —
     // the timeout is the physical cap for that reservation (v1.1). For an inline
     // body that timeout IS the declared `maxBuzz`.
@@ -10744,7 +10864,7 @@ async function submitCustomComfyWorkflow(opts: {
         tags,
         currencies,
         // Authoritative maturity clamp on the real submit — token-claim derived.
-        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        ...blockOutputClamp(capOutput, allowMatureContent),
         // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s OWN
         // internal 3× retry of THIS call — collapses to the existing workflow on the
         // orchestrator → no second Buzz charge. Always present.
@@ -12045,6 +12165,7 @@ async function submitStepWorkflow(opts: {
           reserveBuzz,
           `this step costs ${reserveBuzz}`
         ),
+        errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
   }
@@ -12591,6 +12712,7 @@ async function estimatePassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
+  await checkAppStepResources(body.input);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // The token mint is INSIDE the quote's catch on this path and outside it on
@@ -12806,6 +12928,7 @@ async function submitPassThroughStepWorkflow(opts: {
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
+  const { capOutput } = await checkAppStepResources(body.input);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   await auditPassThroughPrompts({
@@ -12965,6 +13088,7 @@ async function submitPassThroughStepWorkflow(opts: {
           ceiling,
           `this step may cost up to ${ceiling}`
         ),
+        errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
   }
@@ -13066,7 +13190,7 @@ async function submitPassThroughStepWorkflow(opts: {
         steps: [orchestratorStep as any],
         tags,
         currencies,
-        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        ...blockOutputClamp(capOutput, allowMatureContent),
         externalId: blockExternalId,
       },
     });
@@ -13390,6 +13514,7 @@ async function estimateMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
+  await checkAppStepResources(body);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   // A mint failure is a missing quote here (`unavailable`), not a throw as on the
@@ -13474,6 +13599,7 @@ async function submitMultiStepWorkflow(opts: {
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
+  const { capOutput } = await checkAppStepResources(body);
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -13638,6 +13764,7 @@ async function submitMultiStepWorkflow(opts: {
           reserveBuzz,
           `this workflow may cost up to ${reserveBuzz}`
         ),
+        errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
   }
@@ -13721,7 +13848,7 @@ async function submitMultiStepWorkflow(opts: {
         steps: orchestratorSteps as any,
         tags,
         currencies,
-        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        ...blockOutputClamp(capOutput, allowMatureContent),
         ...(body.arguments ? { arguments: body.arguments } : {}),
         // Which steps this submit named, so a later poll can tell them from a
         // step the orchestrator added. See `WORKFLOW_METADATA_BLOCK_STEPS_KEY`.
@@ -14065,34 +14192,6 @@ async function authorizeQuotedGrantConsentRequest(
 }
 
 /**
- * The viewer's own opted-in daily Buzz limit for this app, what remains of it today,
- * and whether `cost` would exceed it — or `null` when they set none (or the grant is
- * revoked; the submit refuses that on its own). Read-only.
- *
- * 🔴 ONE RULE: the "exceeds" answer is `consentCapExceeded`, the same predicate the
- * submit's reservation (`consentBudgetExceeded`) applies to the same counter
- * (`readConsentBudgetSpent` reads the key `reserveConsentBudgetSpend` increments).
- */
-async function readConsentDailyLimit(
-  userId: number,
-  appBlockId: string,
-  cost: number
-): Promise<{ limit: number; spentToday: number; remaining: number; exceeds: boolean } | null> {
-  const { resolveConsentSpendPosture } = await import(
-    '~/server/services/blocks/scope-grant.service'
-  );
-  const posture = await resolveConsentSpendPosture({ userId, appBlockId });
-  if (posture.kind !== 'budget') return null;
-  const spentToday = await readConsentBudgetSpent(userId, appBlockId);
-  return {
-    limit: posture.budget,
-    spentToday,
-    remaining: Math.max(0, posture.budget - spentToday),
-    exceeds: consentCapExceeded(spentToday + cost, posture.budget),
-  };
-}
-
-/**
  * The read-only consent PREVIEW, both kinds: every number the host's confirm shows,
  * resolved from the server-stored quote, never from the block. Confers nothing.
  *
@@ -14168,6 +14267,7 @@ async function previewQuoteGrantFor(
   // consent leg there and the training host does not act on `exceedsDailyLimit`. That
   // is how training private runs behaved before this read existed; the private-run cap
   // bounds them.
+  const { readConsentDailyLimit } = await import('~/server/services/blocks/scope-grant.service');
   let limit: Awaited<ReturnType<typeof readConsentDailyLimit>>;
   try {
     limit = await readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);
@@ -14254,6 +14354,8 @@ type QuotedGrantSubmitPlan = {
   invocation: { step: string; variant: string };
   /** Constant settle labels (metric cardinality). */
   settle: { engine: string; recipe: string };
+  /** Hold the output to PG-13 (`blockOutputClamp`). */
+  capOutput?: boolean;
 };
 
 /**
@@ -14541,7 +14643,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
           steps: [plan.step as any],
           tags: plan.tags,
           currencies,
-          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          ...blockOutputClamp(!!plan.capOutput, allowMatureContent),
           externalId: blockExternalId,
         },
       });
@@ -14918,6 +15020,8 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
   body: PassThroughStepBody & { quoteId: string };
 }) {
   const { ctx, claims, body } = opts;
+  // Set by the preflight, read by the plan.
+  let capOutput = false;
   return submitConfirmedQuoteWorkflow({
     ctx,
     claims,
@@ -14939,6 +15043,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           steps: [body],
         });
         await assertBlockTrainingModelsAllowed([body]);
+        capOutput = (await checkAppStepResources(body.input)).capOutput;
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -14974,6 +15079,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           },
           invocation: { step: body.$type, variant: PASS_THROUGH_ENGINE_LABEL },
           settle: { engine: PASS_THROUGH_ENGINE_LABEL, recipe: PASS_THROUGH_RECIPE_LABEL },
+          capOutput,
         };
       },
     },

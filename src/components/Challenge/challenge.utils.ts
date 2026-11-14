@@ -120,9 +120,10 @@ export function useQueryChallenge(id: number, options?: { enabled?: boolean }) {
 // Hook to get challenge winners
 export function useQueryChallengeWinners(challengeId: number, options?: { enabled?: boolean }) {
   const { enabled = true } = options ?? {};
+  const browsingLevel = useBrowsingLevelDebounced();
 
   return trpc.challenge.getWinners.useQuery(
-    { challengeId },
+    { challengeId, browsingLevel },
     { enabled: enabled && challengeId > 0 }
   );
 }

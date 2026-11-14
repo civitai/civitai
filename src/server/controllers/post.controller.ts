@@ -1,3 +1,5 @@
+import { getPostTextsForViewer } from '~/server/services/post-text.service';
+import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 import { increaseDate } from '~/utils/date-helpers';
@@ -669,7 +671,16 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
     });
 
-    return { ...post, publishedWithApp };
+    // Storyline text items, after the post's own visibility above.
+    const texts = ctx.features.storylineText
+      ? await getPostTextsForViewer({
+          postId: post.id,
+          browsingLevel: storylineReaderLevel(ctx, undefined),
+          seesAll: !!ctx.user && (ctx.user.id === post.user.id || !!ctx.user.isModerator),
+        })
+      : [];
+
+    return { ...post, publishedWithApp, texts };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -699,7 +710,11 @@ export const deletePostHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const result = await deletePost({ ...input, deletedById: ctx.user.id });
+    const result = await deletePost({
+      ...input,
+      deletedById: ctx.user.id,
+      viewerIsModerator: ctx.user.isModerator,
+    });
     if (result) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({
@@ -769,10 +784,13 @@ export const removeResourceFromPostImageHandler = async ({
 
 export const reorderPostImagesHandler = async ({
   input,
+  ctx,
 }: {
   input: ReorderPostImagesInput;
   ctx: ProtectedContext;
 }) => {
+  // Text items move only with their flag; without it a reorder moves images alone.
+  if (input.items && !ctx.features.storylineText) throw throwAuthorizationError();
   try {
     return await reorderPostImages({ ...input });
   } catch (error) {
@@ -866,7 +884,19 @@ export const getPostResourcesHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
 
-    return resources.filter((x) => x.name !== 'vae');
+    const rows = resources.filter((x) => x.name !== 'vae');
+    const modelIds = [...new Set(rows.map((x) => x.modelId).filter(isDefined))];
+    const models = modelIds.length
+      ? await dbRead.model.findMany({
+          where: { id: { in: modelIds } },
+          select: { id: true, userId: true },
+        })
+      : [];
+    const ownerByModelId = new Map(models.map((m) => [m.id, m.userId]));
+    return rows.map((x) => ({
+      ...x,
+      modelUserId: x.modelId != null ? ownerByModelId.get(x.modelId) ?? null : null,
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

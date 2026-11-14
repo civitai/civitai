@@ -9,8 +9,13 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
   RATING_DISPUTE = 'rating-dispute',
+  // Kill switch for minting review sheet batches; off answers 503.
+  REVIEW_BATCHES_MINT = 'review-batches-mint',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
+  // Remix sweep and post scan: an age-check hit goes to the external classifier instead of
+  // blocking. Off when Flipt is unreachable.
+  SHADOW_AGE_PROMPT = 'shadow-age-prompt',
   // Percentage rollout keyed on the file id: the share of files whose mini response leads with
   // the content-hash download url. Each file's url changes once over the ramp. Create the key in
   // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
@@ -29,10 +34,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
   // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
   FEED_SERVICE_DEGRADE = 'feed-service-degrade',
-  // Off-switch for the image feed's shorter feed-service budget: on puts it back from 2.5s to 5s
-  // (`FEED_PRIMARY_TIMEOUT_MS`). Off, unknown or an uninitialised client keep 2.5s. Global boolean,
-  // read at most once per 5s per process (`createCachedFlagGate`).
-  FEED_SERVICE_TIMEOUT_WIDEN = 'feed-service-timeout-widen',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -245,6 +246,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // boolean, read at most once per 5s per process. A no-op unless TRPC_FAST_SUPERJSON_SHARED_REFS
   // is on too (the fast walk would bail on the shared users). See `feed-shared-users.ts`.
   IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
+  // Mirrors a sampled fraction of image.getImagesAsPostsInfinite requests (input, the headers the
+  // answer depends on, Node's response) to the feed-go shadow comparator, after the response is
+  // written. DEFAULT-OFF. Global boolean, read at most once per 5s per process; also needs
+  // FEED_GO_SHADOW_URL and FEED_GO_SHADOW_SAMPLE_RATE > 0. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW = 'feed-go-shadow',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -260,6 +266,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off:
   // `evaluateBoolean` throws and `isFliptSync` swallows it, at most once per refresh per process.
   OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
+  // Lets the inbound HTTP instrumentation make the head-sampling decision BEFORE it does any span
+  // work, for a request with no `traceparent`: unsampled requests then run with tracing suppressed
+  // (no span built at all), sampled ones are recorded exactly as before, at the same ratio. See
+  // `src/server/otel-root-presample.ts`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
+  // or an uninitialized client, which keeps today's behaviour. Global boolean, evaluated with no
+  // entity or context, read at most once per 5s per process. A flip reaches each process after the
+  // Flipt config poll, the eval cache and the gate's 5s cache.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off.
+  OTEL_ROOT_PRESAMPLE = 'otel-root-presample',
   // Picks how `getFeatureFlagsLazy` (feature-flags.service.ts) builds the per-request flag
   // object: ON = one small instance of a class whose prototype carries the per-key getters,
   // defined once at module load; OFF = a fresh object with one getter defined per flag key on
@@ -271,6 +287,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
   // at most once per 5s per process.
   FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
+  // `getFeatureFlags` result cache: ON = keep a whole-registry result until the Flipt state version
+  // moves (or 10 min); OFF/unknown = the 10-second cache. Global boolean, read at most once per 5s.
+  //
+  // The key exists in flag state, enabled: false. Were it missing it would read as off:
+  // `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it, at most once
+  // per 5s per process.
+  FEATURE_FLAGS_STATE_VERSION_CACHE = 'feature-flags-state-version-cache',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path
@@ -537,11 +560,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // state (enabled: false) before this code serves traffic.
   SSR_CLIENT_ONLY_SECTIONS = 'ssr-client-only-sections',
 
-  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
-  // or unreachable: every link answers 404 and no link is minted.
+  // Download links (`/api/download/l/<id>`, the mint at `/api/v1/download-links`, and the provider
+  // links mini hands out on `?downloadLink=1`). Off, unknown or unreachable: every link answers 404
+  // and no link is minted.
   //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
-  // must exist in flag state (enabled: false) before this code serves traffic.
+  // 🔴 BOOLEAN ONLY, no entityId, with context `mode`: `api` (the mint route and its links) or
+  // `provider` (mini's links), so a rule can turn on one without the other. The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
   DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
   // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
@@ -701,6 +726,11 @@ export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.
 export const getFliptCacheStats = flipt.getCacheStats;
+// Moves whenever the flag state this process evaluates against may have changed (see the package's
+// `getStateVersion`), and the eval-cache TTL that bounds how long evaluations cached before such a
+// move keep answering. For `getFeatureFlags`' version-keyed result cache (feature-flags.service.ts).
+export const getFliptStateVersion = flipt.getStateVersion;
+export const getFliptEvalCacheTtlMs = (): number => flipt.config.evalCacheTtlMs;
 // The underlying SDK client (or `null` before init), for a short-lived process that must
 // `close()` it on the way out — its config poller is a timer that otherwise keeps the
 // process alive. `getClientSync` closes over the instance (no `this`), like the above.

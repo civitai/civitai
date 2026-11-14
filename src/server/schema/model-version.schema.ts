@@ -226,12 +226,24 @@ export const aiToolkitTrainingDetailsParams = z.object({
   maxTrainEpochs: z.number().nullable().optional(),
 });
 
+export const studioKohyaTrainingDetailsParams = trainingDetailsParams.extend({
+  engine: z.literal('kohya'),
+  optimizerType: z.enum([...optimizerTypes, 'AdamW', 'AdamW8bit', 'Lion', 'Lion8bit']),
+  lrScheduler: z.enum([...lrSchedulerTypes, 'constant_with_warmup', 'polynomial']),
+  seed: z.number().int().optional(),
+  fp8Base: z.boolean().optional(),
+  blocksToSwap: z.number().int().optional(),
+  vParameterization: z.boolean().optional(),
+  zeroTerminalSnr: z.boolean().optional(),
+});
+
 // Union type for database storage - supports both formats
 export const trainingDetailsParamsUnion = z.discriminatedUnion('engine', [
   trainingDetailsParams.extend({
-    engine: z.enum(['kohya', 'rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi'] as const),
+    engine: z.enum(['rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi'] as const),
   }),
   aiToolkitTrainingDetailsParams,
+  studioKohyaTrainingDetailsParams,
 ]);
 export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUnion>;
 

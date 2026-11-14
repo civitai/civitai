@@ -1,6 +1,12 @@
 import { getHighestBrowsingLevelBit, NsfwLevel, nsfwBrowsingLevelsFlag } from './browsing-levels';
 
-export type ScanFloorEntityType = 'Article' | 'Post' | 'Bounty' | 'BountyEntry' | 'Collection';
+export type ScanFloorEntityType =
+  | 'Article'
+  | 'Post'
+  | 'Bounty'
+  | 'BountyEntry'
+  | 'Collection'
+  | 'ServiceOffering';
 export type DerivedNsfwEntityType = 'Post' | 'Bounty' | 'BountyEntry';
 
 const SCAN_FLOOR_ENTITY_TYPES: readonly string[] = [
@@ -9,9 +15,10 @@ const SCAN_FLOOR_ENTITY_TYPES: readonly string[] = [
   'Bounty',
   'BountyEntry',
   'Collection',
+  'ServiceOffering',
 ];
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
-const INTERNAL_ALIASES = new Set(['i', 'ic', 'em', 'd', 'ar', 'r']);
+const INTERNAL_ALIASES = new Set(['i', 'ic', 'em', 'd', 'ar', 'r', 'pt', 'pi']);
 
 // Both apps inline these strings as raw SQL, so every input is checked against a closed set.
 function identifier(value: string) {
@@ -42,11 +49,26 @@ export function raiseNsfwLevelText(level: string, floor: string) {
   return `(CASE WHEN ${l} = 0 OR ${f} = 0 THEN ${l} WHEN (${l} & ~(${f} - 1)) = 0 THEN ${f} ELSE ${l} & ~(${f} - 1) END)`;
 }
 
+/** An XGuard (fallback check) row, which has no result version, that blocked or flagged nsfw. */
+const fallbackFlaggedText = (entityType: string, id: string) =>
+  `EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = '${entityType}' AND em."entityId" = ${id} AND em.result->>'version' IS NULL AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels")))`;
+
 export function articleModerationFloorText(idColumn: string) {
   const id = identifier(idColumn);
-  return `GREATEST(CASE WHEN EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'Article' AND em."entityId" = ${id} AND em.result->>'version' IS NULL AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))) OR EXISTS (SELECT 1 FROM "ArticleReport" ar JOIN "Report" r ON r.id = ar."reportId" WHERE ar."articleId" = ${id} AND r.reason = 'NSFW'::"ReportReason" AND r.status = 'Actioned'::"ReportStatus") THEN ${
+  return `GREATEST(CASE WHEN ${fallbackFlaggedText(
+    'Article',
+    id
+  )} OR EXISTS (SELECT 1 FROM "ArticleReport" ar JOIN "Report" r ON r.id = ar."reportId" WHERE ar."articleId" = ${id} AND r.reason = 'NSFW'::"ReportReason" AND r.status = 'Actioned'::"ReportStatus") THEN ${
     NsfwLevel.R
   } ELSE 0 END, ${scanFloorText('Article', id)})`;
+}
+
+/** R for a flagged XGuard row, else the detected level of a text-scan verdict, else 0. */
+export function serviceOfferingTextFloorText(idColumn: string) {
+  const id = identifier(idColumn);
+  return `GREATEST(CASE WHEN ${fallbackFlaggedText('ServiceOffering', id)} THEN ${
+    NsfwLevel.R
+  } ELSE 0 END, ${scanFloorText('ServiceOffering', id)})`;
 }
 
 export function collectionTextFloorBucketText(alias: string, bucket: number) {
@@ -59,7 +81,11 @@ export function collectionTextFloorBucketText(alias: string, bucket: number) {
 }
 
 const imageLevelText: Record<DerivedNsfwEntityType, (alias: string) => string> = {
-  Post: (a) => `(SELECT bit_or(i."nsfwLevel") FROM "Image" i WHERE i."postId" = ${a}.id)`,
+  // A post's storyline text items rate it as its images do; a refused text is never shown, so it
+  // does not rate it. A post with no images stays unrated (NULL), text or not. Wholly Blocked
+  // images stay exactly Blocked: that level is a removal, which a text's bit must not undo.
+  Post: (a) =>
+    `(SELECT CASE WHEN pi.l IS NULL OR pi.l = ${NsfwLevel.Blocked} THEN pi.l ELSE pi.l | COALESCE((SELECT bit_or(pt."nsfwLevel") FROM "PostText" pt WHERE pt."postId" = ${a}.id AND pt.refused = FALSE), 0) END FROM (SELECT (SELECT bit_or(i."nsfwLevel") FROM "Image" i WHERE i."postId" = ${a}.id) AS l) pi)`,
   Bounty: (a) =>
     `(SELECT bit_or(i."nsfwLevel") FROM "ImageConnection" ic JOIN "Image" i ON i.id = ic."imageId" WHERE ic."entityType" = 'Bounty' AND ic."entityId" = ${a}.id)`,
   BountyEntry: (a) =>

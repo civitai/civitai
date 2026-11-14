@@ -20,6 +20,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
+    KOHYA_FLAG_KEY,
     MEDIA_OPTIONS,
     cardsForMedia,
     visibleVersions,
@@ -44,6 +45,10 @@
     cardUnavailability,
     versionStatusKey,
     runCard,
+    runEngine,
+    runSupportsKohya,
+    withEngine,
+    runFromPrice,
     runVersion,
     runVersionLabel,
     selectionFromTotal,
@@ -74,11 +79,12 @@
 
   // Derived so the seed and lists reflect the prop rather than a captured snapshot.
   const enabledFlags = $derived(new Set(enabledModelFlags));
+  const kohyaEnabled = $derived(enabledFlags.has(KOHYA_FLAG_KEY));
 
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
   // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
   function price(cardType: string): number | null {
-    return cardFromPrice(prices, cardType, enabledFlags);
+    return focused.cardType === cardType ? runFromPrice(prices, focused) : cardFromPrice(prices, cardType, enabledFlags);
   }
 
   // Seed from a restored selection (Back from Data) when present, else the defaults. untrack marks the
@@ -87,7 +93,12 @@
   let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
   let runs = $state<Run[]>(
     untrack(() =>
-      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
+      initial
+        // A restored Kohya run (Back, Train again) falls back to AI Toolkit for a viewer without the gate.
+        ? initial.runs.map((run) =>
+            kohyaEnabled || runEngine(run) !== 'kohya' ? run : withEngine(run, 'ai-toolkit', enabledFlags)
+          )
+        : [newRun(recommendedCardFor('character', 'image', enabledFlags), enabledFlags)]
     )
   );
   let focus = $state(0);
@@ -259,6 +270,12 @@
     if (runs.length === 1) addRun();
   }
 
+  function pickEngine(index: number, engine: string) {
+    runs = runs.map((run, i) =>
+      i !== index || !runSupportsKohya(run) ? run : withEngine(run, engine, enabledFlags)
+    );
+  }
+
   function pickVersion(runIndex: number, versionKey: string) {
     runs = runs.map((r, i) => (i === runIndex ? { ...r, versionKey } : r));
     userPickedModel = true;
@@ -339,6 +356,31 @@
     target.click();
   }
 </script>
+
+{#snippet enginePicker(run: Run, index: number)}
+  {#if kohyaEnabled && runSupportsKohya(run)}
+    <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Training engine</div>
+    <div
+      class="mt-1.5 flex gap-2"
+      role="radiogroup"
+      tabindex="-1"
+      aria-label={`Run ${index + 1} training engine`}
+      onkeydown={radioKeydown}
+    >
+      {#each [{ value: 'ai-toolkit', label: 'AI Toolkit' }, { value: 'kohya', label: 'Kohya' }] as engine (engine.value)}
+        <Button
+          variant={runEngine(run) === engine.value ? 'default' : 'outline'}
+          size="sm"
+          role="radio"
+          aria-checked={runEngine(run) === engine.value}
+          tabindex={runEngine(run) === engine.value ? 0 : -1}
+          onclick={() => pickEngine(index, engine.value)}
+        >{engine.label}</Button>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
+
 
 {#snippet customIncompleteNote()}
   {#if blockedMessage}
@@ -671,8 +713,8 @@
       <!-- version choice for the single selected model, inline (no disclosure) -->
       {#if !multi}
         {@const card = selectedCard}
-        {@const runPrice = price(primary.cardType)}
-        {@const versions = versionOptions(card, enabledFlags)}
+        {@const runPrice = runFromPrice(prices, primary)}
+        {@const versions = versionOptions(card, enabledFlags, runEngine(primary))}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0">
@@ -686,6 +728,7 @@
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
+          {@render enginePicker(primary, 0)}
           {#if versions.length > 1}
             <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
@@ -742,7 +785,7 @@
           {#each runs as r, ri (r.id)}
             {@const card = runCard(r)}
             {@const focusedRow = ri === focus}
-            {@const runPrice = price(r.cardType)}
+            {@const runPrice = runFromPrice(prices, r)}
             <!-- Whole-card pointer target: anywhere on the row focuses the run (inner controls keep
                  their own behavior and bubble here, which also focuses — intended; the remove X is
                  the exception, since its run is gone and removeRun already re-aims focus). Keyboard
@@ -789,8 +832,9 @@
                   </button>
                 {/if}
               </div>
+              {@render enginePicker(r, ri)}
               <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
-                {#each versionOptions(card, enabledFlags) as v (v.key)}
+                {#each versionOptions(card, enabledFlags, runEngine(r)) as v (v.key)}
                   <button
                     type="button"
                     role="radio"

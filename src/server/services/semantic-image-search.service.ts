@@ -6,7 +6,6 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
-import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
@@ -19,11 +18,9 @@ import {
   type QueryStage,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
+import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
+import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
-import {
-  nsfwBrowsingLevelsArray,
-  nsfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -130,7 +127,12 @@ export async function searchSemanticImages({
   const fetchVisible = async (
     ids: number[],
     level: number,
-    filters: { tags?: number[]; excludedTagIds: number[]; fromPlatform?: boolean }
+    filters: {
+      tags?: number[];
+      excludedTagIds: number[];
+      fromPlatform?: boolean;
+      withMeta?: boolean;
+    }
   ) => {
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
@@ -161,9 +163,26 @@ export async function searchSemanticImages({
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
-  // "Made On-site" is judged from the image's meta, so only hydration applies it.
+  const timed = <T>(stage: 'candidates' | 'hydrate', work: Promise<T>) => {
+    const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
+    return work.finally(() => end());
+  };
+  // Made On-site and Metadata only are judged from the image's meta, so only hydration applies them.
   const hydrate: Hydrate<HydratedImage> = (ids) =>
-    fetchVisible(ids, level, { tags: tagIds, excludedTagIds, fromPlatform: input.fromPlatform });
+    timed(
+      'hydrate',
+      fetchVisible(ids, level, {
+        tags: tagIds,
+        excludedTagIds,
+        fromPlatform: input.fromPlatform,
+        withMeta: input.withMeta,
+      })
+    );
+  const cachedSource = withCandidateCache(
+    IMAGE_COLLECTION,
+    candidateSource,
+    user?.isModerator ? 'mod' : 'user'
+  );
 
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
@@ -180,20 +199,6 @@ export async function searchSemanticImages({
       gte: input.postedAfter?.toISOString(),
       lte: input.postedBefore?.toISOString(),
     },
-    // As the image search index: no NSFW images made with a base model whose license forbids it.
-    // A gate with no NSFW level already excludes them, and Qdrant would still test every candidate.
-    // Kept here, not only in hydration: Image."modelRestricted" is set by an hourly job, so a new
-    // image would pass hydration until it runs.
-    mustNot: Flags.intersects(level, nsfwBrowsingLevelsFlag)
-      ? [
-          {
-            must: [
-              { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
-              { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
-            ],
-          },
-        ]
-      : [],
   };
 
   const query: SearchQuery = input.imageId
@@ -201,15 +206,23 @@ export async function searchSemanticImages({
     : { text: input.query ?? '' };
 
   let correctedQuery: string | undefined;
+  // Every correction is audited, not only the first: rounds of one page can come from cached blocks
+  // of different ages.
+  const corrections = new Map<string, ReturnType<typeof refusalOf>>();
   let correctedRefusal: QueryRefusal | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
-      const result = await candidateSource({ query, filter, offset, limit, sort: input.sort });
+      const result = await timed(
+        'candidates',
+        cachedSource({ query, filter, offset, limit, sort: input.sort })
+      );
       // The service embeds its spelling correction, not the text audited above.
-      if (correctedRefusal === undefined && result.correctedQuery !== undefined)
-        correctedRefusal =
-          result.correctedQuery !== input.query &&
-          (await refusalOf(result.correctedQuery, 'correction'));
+      const corrected = result.correctedQuery;
+      if (!correctedRefusal && corrected !== undefined && corrected !== input.query) {
+        if (!corrections.has(corrected))
+          corrections.set(corrected, refusalOf(corrected, 'correction'));
+        correctedRefusal = (await corrections.get(corrected)) || undefined;
+      }
       if (correctedRefusal) return [];
       correctedQuery ??= result.correctedQuery;
       return result.ids;

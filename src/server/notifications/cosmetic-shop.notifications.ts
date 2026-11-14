@@ -81,6 +81,26 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: `/user/transactions`,
     }),
   },
+  // A takedown took back what a moderator's grant gave: nothing was paid, so nothing is refunded.
+  'cosmetic-shop-item-removed': {
+    displayName: 'Shop: A cosmetic you were given was removed',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `"${
+        details.title as string
+      }" had to be removed from the shop and was taken off your account.`,
+      url: '/user/account',
+    }),
+  },
+  'mystery-box-refunded-unopenable': {
+    displayName: 'Shop: A mystery box you held was refunded',
+    category: NotificationCategory.System,
+    prepareMessage: () => ({
+      message:
+        "A mystery box you held can't be opened any more: everything left in it is already yours. It's been taken off your account and your Buzz was refunded.",
+      url: '/user/transactions',
+    }),
+  },
   // Event-driven (created in runWithdrawnRefund).
   'cosmetic-shop-item-refunded': {
     displayName: 'Shop: A cosmetic you bought was withdrawn',

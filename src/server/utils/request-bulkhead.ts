@@ -22,6 +22,8 @@
 // Correctness: Node is single-threaded, so the check-then-increment below is
 // atomic (no preemption between the comparison and `active++` — it's synchronous).
 
+import { TRPCError } from '@trpc/server';
+
 export class BulkheadFullError extends Error {
   constructor(public readonly key: string, public readonly limit: number) {
     super(`bulkhead "${key}" at capacity (${limit})`);
@@ -110,6 +112,21 @@ export async function withBulkheadSlot<T>(
     return await fn();
   } finally {
     release();
+  }
+}
+
+/** `withBulkheadSlot` for a tRPC path: a full bulkhead answers 429 "Server busy". */
+export async function withBulkheadSlotOrBusy<T>(
+  key: string,
+  limit: number,
+  fn: () => Promise<T>
+): Promise<T> {
+  try {
+    return await withBulkheadSlot(key, limit, fn);
+  } catch (e) {
+    if (e instanceof BulkheadFullError)
+      throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Server busy — please retry.' });
+    throw e;
   }
 }
 
