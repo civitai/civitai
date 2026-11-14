@@ -243,24 +243,21 @@ export async function chargeByExternalId(
   };
 
   if (!transactionId) {
-    let sent: { transactionId: string | null };
+    let sentId: string | null | undefined;
     try {
-      sent = await createBuzzTransaction(input);
+      ({ transactionId: sentId } = await createBuzzTransaction(input));
     } catch (error) {
-      if (!chargeWasDeclined(error))
-        sent = { transactionId: await resend('unknown outcome', error) };
+      if (!chargeWasDeclined(error)) sentId = await resend('unknown outcome', error);
       else {
-        const continued = await continueIfHeld();
-        if (!continued) throw error;
-        sent = { transactionId: continued };
+        sentId = await continueIfHeld();
+        if (!sentId) throw error;
       }
     }
-    if (!sent.transactionId) {
-      const continued = await continueIfHeld();
-      if (!continued) throw throwBadRequestError(declinedMessage);
-      sent = { transactionId: continued };
+    if (!sentId) {
+      sentId = await continueIfHeld();
+      if (!sentId) throw throwBadRequestError(declinedMessage);
     }
-    transactionId = sent.transactionId;
+    transactionId = sentId;
   }
   if (!reusable) return { transactionId };
 

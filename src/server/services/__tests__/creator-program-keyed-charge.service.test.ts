@@ -678,8 +678,9 @@ describe('cash withdrawal with a client key', () => {
     const first = await outcome(withdraw(KEY));
     expect((first as Error).message).toBe(PAYMENT_OUTCOME_UNKNOWN_MESSAGE);
     ledger.clearFaults();
-    // The retry's lookup before charging misses the burn: the ledger read lags its write.
-    buzz.getTransactionByExternalId.mockResolvedValueOnce(null);
+    // The retry's first two reads miss the burn (the ledger read lags its write): whichever reads
+    // come before the send see nothing, so the send is declined for funds.
+    buzz.getTransactionByExternalId.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
 
     await withdraw(KEY);
 
