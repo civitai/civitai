@@ -29,6 +29,10 @@
 // coding agent with an API token. Its rows are deduplicated on a server-computed fingerprint held
 // in `context.server`, so the generic inputs refuse it for the same reason they refuse `app-block`:
 // a row written there would carry no fingerprint and never be counted.
+//
+// `knights` is written by the Knights of New Order app (`apps/knights`, `POST /feedback`), which shares this
+// Postgres and writes its rows directly, not through feedback.create. It applies the same message bound and the same
+// 5/hour numbers, counted over the user's `knights` rows. The generic inputs still accept it.
 export const FEEDBACK_AREAS = [
   'bitdex-image-feed',
   'apps-marketplace',
@@ -36,6 +40,7 @@ export const FEEDBACK_AREAS = [
   'app-block',
   'apps-platform',
   'semantic-image-search',
+  'knights',
   'orchestration',
 ] as const;
 

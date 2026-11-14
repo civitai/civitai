@@ -3,7 +3,8 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as NewOrderService from '~/server/services/games/new-order.service';
 import type * as Shadow from '~/server/services/shadow-sexual-prompt.service';
 
-const { submit, queueImageSearchIndexUpdate, addImageToQueue } = vi.hoisted(() => ({
+const { submit, queueImageSearchIndexUpdate, addImageToQueue, v1Live } = vi.hoisted(() => ({
+  v1Live: vi.fn(async () => true),
   submit: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(() => Promise.resolve()),
   addImageToQueue: vi.fn(() => Promise.resolve()),
@@ -21,6 +22,7 @@ vi.mock('~/server/services/games/new-order.service', async (importOriginal) => (
   ...(await importOriginal<typeof NewOrderService>()),
   addImageToQueue,
 }));
+vi.mock('~/server/games/new-order/v1-gate', () => ({ isV1KnightsLive: v1Live }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
@@ -63,6 +65,7 @@ async function run() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  v1Live.mockResolvedValue(true);
 });
 
 describe('applyIngestionSideEffects: the shadow sexual-prompt scan', () => {
@@ -121,5 +124,13 @@ describe('applyIngestionSideEffects: feedback page captures', () => {
     // The control: the same image under an ordinary owner is queued.
     await applyIngestionSideEffects({ image, outcome });
     expect(addImageToQueue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('applyIngestionSideEffects: the v1 Knights rating queue', () => {
+  it('stops queueing scanned images once the v1 game is retired', async () => {
+    v1Live.mockResolvedValue(false);
+    await applyIngestionSideEffects({ image, outcome });
+    expect(addImageToQueue).not.toHaveBeenCalled();
   });
 });

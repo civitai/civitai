@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { sql } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import {
@@ -5,12 +6,14 @@ import {
   ORCHESTRATION_FEEDBACK_AREA,
 } from '@civitai/shared/feedback.constants';
 import { prefixCacheKey, type RedisKeyTemplateCache } from '@civitai/redis';
+import { logToAxiom } from './axiom';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
 import { getRedis } from './redis';
 import { getImageReviewCounts } from './image-review.service';
 import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
+import { countImageTagsNeedingReview, IMAGE_TAGS_COUNT_TIMEOUT_MS } from './image-tags-count';
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getRatingReviewCounts } from './rating-reviews.service';
@@ -42,6 +45,8 @@ import {
 import { ticketSnapshot } from './tickets/snapshot';
 import { peekTicketCounts } from './tickets/view-counts';
 import { NEEDS_REVIEW_COUNT_KEYS, needsReviewTotal } from '$lib/minor-flags/needs-review';
+import { countInquisitorQueue } from './knights/inquisitor.service';
+import { countPendingLinkReviews } from './knights/link-review.service';
 import { getRestrictedVerdictCount } from './restricted-nsfw-verdicts';
 
 export type SidebarCounts = Record<string, number>;
@@ -58,22 +63,62 @@ export const LAST_GOOD_MS = 15 * 60_000;
 const lastGoodKey = (part: string) =>
   prefixCacheKey(`mod:sidebar-counts:last-good:${part}`) as RedisKeyTemplateCache;
 
+const fillLockKey = (part: string) =>
+  prefixCacheKey(`mod:sidebar-counts:fill-lock:${part}`) as RedisKeyTemplateCache;
+
+/** Deletes the lock only while it still holds this server's token, so a lock that expired and was taken by another server is not released from under it. */
+const RELEASE_LOCK = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0`;
+
 /**
  * A part of a badge sum, waited on for `ms` at most. A late or failed fill is answered with the last
  * value any server landed in the past `LAST_GOOD_MS`: stale by what changed since, not missing. Null
  * only when there is none. Kept in Redis, not in this process: every server fills the shared counts,
  * so a per-process value made consecutive refreshes disagree (see `cache.ts`).
+ *
+ * `lockSeconds`: a fill that outlives its wait keeps running (nothing cancels the query), and the
+ * counts refill every minute, so a slow part would stack scans. With it, one server at a time runs the
+ * fill, holding a Redis lock (set `lockSeconds` longer than the query can run). The lock is released
+ * when the fill lands; after a failed fill it is kept until it expires, so a fill that keeps failing is
+ * retried every `lockSeconds`, not every minute. A refresh that does not get the lock answers from the
+ * last value.
  */
-async function withLastGood<T>(part: string, run: () => Promise<T>, ms: number): Promise<T | null> {
+async function withLastGood<T>(
+  part: string,
+  run: () => Promise<T>,
+  ms: number,
+  { lockSeconds }: { lockSeconds?: number } = {}
+): Promise<T | null> {
   const key = lastGoodKey(part);
-  const fill = run();
-  // A fill that outlives the wait still lands, so the next refresh has it.
-  fill
-    .then((value) =>
-      getRedis().set(key, JSON.stringify({ value, at: Date.now() }), { EX: LAST_GOOD_MS / 1000 })
-    )
-    .catch(() => undefined);
-  const fresh = await bounded(() => fill, ms);
+  const lock = lockSeconds ? fillLockKey(part) : null;
+  const token = randomUUID();
+  let fresh: T | null = null;
+  const locked =
+    lock === null ||
+    (await getRedis()
+      .set(lock, token, { NX: true, EX: lockSeconds })
+      .then((reply) => reply !== null)
+      .catch(() => false));
+  if (locked) {
+    const fill = run();
+    // A fill that outlives the wait still lands, so the next refresh has it.
+    fill
+      .then(
+        async (value) => {
+          await getRedis()
+            .set(key, JSON.stringify({ value, at: Date.now() }), { EX: LAST_GOOD_MS / 1000 })
+            .catch(() => undefined);
+          if (lock) await getRedis().eval(RELEASE_LOCK, { keys: [lock], arguments: [token] });
+        },
+        (error: unknown) =>
+          void logToAxiom({
+            type: 'sidebar-count-fill-failed',
+            part,
+            message: error instanceof Error ? error.message : String(error),
+          }).catch(() => undefined)
+      )
+      .catch(() => undefined);
+    fresh = await bounded(() => fill, ms);
+  }
   if (fresh !== null) return fresh;
   try {
     const raw = await getRedis().get(key);
@@ -139,22 +184,18 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     csamTextHolds,
     siteAppeals,
     evidenceHoldsEnding,
+    knightsInquisitor,
+    knightsLinkReviews,
     ticketCounts,
     bountyUnpaidAwards,
     trainingDataReview,
   ] = await Promise.all([
     getImageReviewCounts(),
-    // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
-    // The nsfwLevel bound must match the QUEUE's (image-tags.service.ts) — without it, blocked images
-    // inflate a badge whose page can never show them, so the count never reaches zero.
-    dbRead
-      .selectFrom('TagsOnImageNew as toi')
-      .innerJoin('Image as i', 'i.id', 'toi.imageId')
-      .select((eb) => eb.fn.count('toi.imageId').distinct().as('count'))
-      .where(sql<boolean>`((toi.attributes >> 9)::integer & 1) = 1`)
-      .where(sql<boolean>`((toi.attributes >> 10)::integer & 1) <> 1`)
-      .where('i.nsfwLevel', '<', NsfwLevel.Blocked)
-      .executeTakeFirst(),
+    // Waited on for 3 seconds at most, and at most one scan runs across all servers: it can take
+    // minutes on a large TagsOnImageNew, and every other badge in the fill waits behind it.
+    withLastGood('image-tags', countImageTagsNeedingReview, 3_000, {
+      lockSeconds: IMAGE_TAGS_COUNT_TIMEOUT_MS / 1000 + 60,
+    }),
     getImageRatingReviewCount(),
     dbRead
       .selectFrom('Image')
@@ -205,6 +246,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countSiteAppeals),
     // Bounded: the view aggregates every hold row, so no index serves it.
     bounded(() => countEvidenceHoldsEnding(dbRead)),
+    bounded(countInquisitorQueue),
+    bounded(countPendingLinkReviews),
     // Bounded so a slow Redis read cannot hold up the sidebar; these keys are not in `maybe`, so a timeout shows no badge rather than `unavailable`.
     bounded(() => peekTicketCounts(() => ticketSnapshot.peek())),
     // Bounded: the legacy half filters ModActivity on `activity`, which no index covers.
@@ -225,7 +268,10 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     evidenceHoldsEnding: evidenceHoldsEnding?.owners ?? null,
     stuckIngestion,
     ingestionErrors,
+    knightsInquisitor,
+    knightsLinkReviews,
     bountyUnpaidAwards,
+    imageTags,
     trainingDataReview,
   };
   const unavailable = Object.keys(maybe).filter((key) => maybe[key] == null);
@@ -234,7 +280,6 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     counts: {
       ...modes,
       ...reports,
-      imageTags: Number(imageTags?.count ?? 0),
       imageRatings,
       appeals: Number(appeals?.count ?? 0),
       articles,

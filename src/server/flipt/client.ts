@@ -3,6 +3,9 @@ import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
 export enum FLIPT_FEATURE_FLAGS {
+  // Mirrors the `knightsApp` fliptKey (KNIGHTS_APP_FLIPT_FLAG) and the Knights app's own access flag.
+  // Read here with no user for the server-side cutover from the old in-app game.
+  KNIGHTS_APP = 'knights-of-new-order-app',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.

@@ -298,6 +298,8 @@ function withApiMetrics(
   });
 }
 
+const TOKEN_HEADER = 'x-webhook-token';
+
 /**
  * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, and
  * whitespace-only counts as blank. Without this, a blank secret leaves every endpoint on this wrapper
@@ -324,10 +326,13 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    const { bearer, queryToken } = presentedTokens(req);
+    // `x-webhook-token` is what the Knights app sends. When it is present it is the only credential
+    // read, so a wrong header is refused even if `?token=` is right.
+    const { bearer, queryToken, header } = presentedTokens(req);
+    const headerOk = header !== undefined && timingSafeEqualStrings(token, header);
     const bearerOk = timingSafeEqualStrings(token, bearer);
     const queryOk = timingSafeEqualStrings(token, queryToken);
-    if (!bearerOk && !queryOk) {
+    if (header !== undefined ? !headerOk : !bearerOk && !queryOk) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
@@ -343,9 +348,11 @@ export function TokenSecuredEndpoint(
  * arrives as an array and is refused rather than read.
  */
 function presentedTokens(req: NextApiRequest) {
+  const header = req.headers[TOKEN_HEADER];
   return {
     bearer: req.headers.authorization?.match(/^Bearer (.+)$/)?.[1],
     queryToken: typeof req.query.token === 'string' ? req.query.token : undefined,
+    header: typeof header === 'string' && header !== '' ? header : undefined,
   };
 }
 
@@ -417,11 +424,14 @@ function webhookTokenEndpoint(
       return;
     }
 
-    const { bearer, queryToken } = presentedTokens(req);
+    const { bearer, queryToken, header } = presentedTokens(req);
+    // Same rule as `TokenSecuredEndpoint`: a present `x-webhook-token` is the only credential read.
     const slot =
-      matchWebhookToken(bearer) ??
-      matchWebhookToken(queryToken) ??
-      (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
+      header !== undefined
+        ? matchWebhookToken(header)
+        : matchWebhookToken(bearer) ??
+          matchWebhookToken(queryToken) ??
+          (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
     if (!slot) {
       res.status(401).json({ error: 'Unauthorized' });
       return;

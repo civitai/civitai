@@ -23,6 +23,8 @@ const { counterStub, poolStub, mockQuery } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/games/new-order/utils', () => ({
+  // The branch reads this to map a Paladin onto the Templar pools; the real mapping is one line.
+  legacyRank: (rank: string) => (rank === 'Paladin' ? 'Templar' : rank),
   acolyteFailedJudgments: counterStub,
   allJudgmentsCounter: counterStub,
   blessedBuzzCounter: counterStub,

@@ -6,7 +6,11 @@ import { TokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
  * that branch and a blank secret is compared rather than refused — the rationale is on the function.
  */
 
-function call(secret: string, query: Record<string, unknown>) {
+function call(
+  secret: string,
+  query: Record<string, unknown>,
+  headers: Record<string, string | string[]> = {}
+) {
   const handler = vi.fn(async (_req: never, res: { status: (c: number) => unknown }) => {
     res.status(200);
   });
@@ -23,7 +27,7 @@ function call(secret: string, query: Record<string, unknown>) {
     setHeader: () => res,
     end: () => res,
   };
-  return endpoint({ method: 'GET', query, headers: {} } as never, res as never).then(() => ({
+  return endpoint({ method: 'GET', query, headers } as never, res as never).then(() => ({
     statusCode,
     handler,
   }));
@@ -69,6 +73,54 @@ describe('TokenSecuredEndpoint with no secret configured', () => {
     const { statusCode, handler } = await call('a-real-secret', {
       token: ['a-real-secret', 'x'],
     });
+
+    expect(statusCode).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('TokenSecuredEndpoint token in a header', () => {
+  it('admits the right token sent in the x-webhook-token header', async () => {
+    const { statusCode, handler } = await call(
+      'a-real-secret',
+      {},
+      {
+        'x-webhook-token': 'a-real-secret',
+      }
+    );
+
+    expect(statusCode).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a wrong header token even when the query carries the right one', async () => {
+    const { statusCode, handler } = await call(
+      'a-real-secret',
+      { token: 'a-real-secret' },
+      {
+        'x-webhook-token': 'wrong',
+      }
+    );
+
+    expect(statusCode).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('refuses a blank header against a blank secret', async () => {
+    const { statusCode, handler } = await call('', {}, { 'x-webhook-token': '' });
+
+    expect(statusCode).toBe(503);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('refuses a repeated header, which arrives as an array', async () => {
+    const { statusCode, handler } = await call(
+      'a-real-secret',
+      {},
+      {
+        'x-webhook-token': ['a-real-secret', 'x'],
+      }
+    );
 
     expect(statusCode).toBe(401);
     expect(handler).not.toHaveBeenCalled();

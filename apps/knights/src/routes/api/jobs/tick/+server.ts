@@ -1,0 +1,134 @@
+import { json } from '@sveltejs/kit';
+import { logToAxiom } from '$lib/server/axiom';
+import { retryPendingConversions } from '$lib/server/conversion/convert';
+import { runLabelPass } from '$lib/server/conversion/label-pass';
+import { TICK_CONVERSION_RETRY } from '$lib/server/conversion/config';
+import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
+import { db } from '$lib/server/db';
+import { TICK_PURCHASE_RETRY } from '$lib/server/shop/config';
+import { getMainAppPort } from '$lib/server/shop/main-app';
+import { retryPendingPurchases } from '$lib/server/shop/purchase';
+import { settleHiddenChecks } from '$lib/server/hidden/settle';
+import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { isJobRequest } from '$lib/server/jobs-auth';
+import { metrics, type TickFailureStep } from '$lib/server/metrics';
+import { applyPendingResolutions, escalateExpired } from '$lib/server/queue/queue.service';
+import { settleFinalItems } from '$lib/server/progression/progression';
+import { queueDeps } from '$lib/server/queue/runtime';
+import { resetDeps } from '$lib/server/smites/runtime';
+import { expireSmites, resetPendingPlayers } from '$lib/server/smites/smites.service';
+import { yesNoConfig } from '$lib/server/yesno/runtime';
+import { closeStrandedYesNo } from '$lib/server/yesno/sweep';
+import type { RequestHandler } from './$types';
+
+async function settle<T>(step: string, run: () => Promise<T>) {
+  try {
+    return { ok: true as const, value: await run() };
+  } catch (error) {
+    console.error(`knights: ${step} failed`, error);
+    return { ok: false as const };
+  }
+}
+
+export const POST: RequestHandler = async ({ request }) => {
+  if (!isJobRequest(request)) return new Response(null, { status: 401 });
+
+  // `escalated`, `toInquisitor`, `extended` and `expired` (unvoted items closed) go straight into the response.
+  const escalation = await settle('escalation', () => escalateExpired(db, { now: new Date() }));
+  const writeBacks = await settle('rating write-back', () =>
+    applyPendingResolutions(db, queueDeps)
+  );
+  const progression = await settle('progression', () =>
+    settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
+  );
+  const hidden = await settle('hidden checks', () =>
+    settleHiddenChecks(db, {
+      now: new Date(),
+      settings: hiddenSettings(),
+      mirrorXp: queueDeps.mirrorXp,
+      ...resetDeps,
+    })
+  );
+  const yesNo = await settle('yes/no sweep', () =>
+    closeStrandedYesNo(db, {
+      now: new Date(),
+      maxAgeDays: yesNoConfig().maxAgeDays,
+      mirror: queueDeps.mirrorXp,
+    })
+  );
+  // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
+  const resets = await settle('career resets', () => resetPendingPlayers(db, resetDeps));
+  const smites = await settle('smite expiry', () => expireSmites(db, new Date()));
+  const conversions = await settle('conversion retries', async () => {
+    if (!conversionEnabled()) return { retried: 0, paid: 0, failed: 0 };
+    if (!buzzConfigured()) {
+      await logToAxiom({
+        type: 'warning',
+        name: 'knights-conversion-retries-skipped',
+        message: 'BUZZ_ENDPOINT is not configured; unconfirmed conversions were not retried',
+      });
+      return { retried: 0, paid: 0, failed: 0 };
+    }
+    return retryPendingConversions(db, getBuzzPort(), {
+      now: new Date(),
+      log: logToAxiom,
+      ...TICK_CONVERSION_RETRY,
+    });
+  });
+  // Membership purchases the main app never confirmed. Not behind the Buzz kill switch: they never touch Buzz.
+  const purchases = await settle('shop purchase retries', () =>
+    retryPendingPurchases(db, getMainAppPort(), {
+      now: new Date(),
+      log: logToAxiom,
+      ...TICK_PURCHASE_RETRY,
+    })
+  );
+  const labels = await settle('label write-back', () =>
+    runLabelPass(db, { now: new Date(), log: logToAxiom })
+  );
+  // Only a step that throws fails the tick (a 500 pages). Items that failed inside a step are retried by the next tick, so
+  // they are counted and logged instead: one bad item would otherwise page for hours and hide a real tick outage.
+  if (
+    !escalation.ok ||
+    !writeBacks.ok ||
+    !progression.ok ||
+    !hidden.ok ||
+    !yesNo.ok ||
+    !smites.ok ||
+    !resets.ok ||
+    !conversions.ok ||
+    !purchases.ok ||
+    !labels.ok
+  ) {
+    return json({ error: 'job failed' }, { status: 500 });
+  }
+  const itemFailures: Record<TickFailureStep, number> = {
+    writeback: writeBacks.value.failed ?? 0,
+    payout: progression.value.failed,
+    yesno: yesNo.value.failed,
+    reset: resets.value.failed,
+    buzz_grant: conversions.value.failed,
+  };
+  const failing = Object.entries(itemFailures).filter(([, count]) => count > 0);
+  if (failing.length > 0) {
+    for (const [step, count] of failing) metrics.tickItemFailures(step as TickFailureStep, count);
+    await logToAxiom({
+      type: 'warning',
+      name: 'knights-tick-item-failures',
+      message: 'Some items failed in the tick; the next tick retries them',
+      details: Object.fromEntries(failing),
+    });
+  }
+  return json({
+    ...escalation.value,
+    ...writeBacks.value,
+    settledVotes: progression.value.votes,
+    hiddenChecksGraded: hidden.value.graded,
+    yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,
+    expiredSmites: smites.value,
+    resets: resets.value.due,
+    conversionsRetried: conversions.value.retried,
+    purchasesRetried: purchases.value.retried,
+    labels: labels.value,
+  });
+};

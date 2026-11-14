@@ -103,6 +103,7 @@ on:
       - 'src/components/Account/creator-score-copy.ts'
       - 'src/server/services/crucible-bradley-terry.ts'
       - 'src/server/utils/__tests__/redis-lua-harness.ts'
+      - 'src/server/services/knights/**'
       - 'containers/notification-db/docker-init/**'
   push:
     branches: [main]

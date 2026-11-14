@@ -1,0 +1,77 @@
+/* Shared by the /play overlays and states (guide, rank-up, level-up, reset, all watched). Imported by the components, so
+   global.css stays untouched. Class names are prefixed `ov-`. */
+
+.ov-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(14 12 9 / 0.82);
+  animation: ov-fade var(--motion-base) var(--ease-out-quart);
+}
+
+.ov-eyebrow {
+  margin: 0;
+  color: var(--io-gold);
+  font: 600 11px/1.2 var(--io-font-ui);
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+.ov-eyebrow.crimson {
+  color: var(--io-crimson-text);
+}
+
+.ov-crest {
+  display: grid;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--io-gold);
+  border-radius: 50%;
+  background: var(--io-bg);
+  color: var(--io-gold);
+}
+
+button.ov-primary {
+  min-height: 48px;
+  padding: 0 28px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--io-gold);
+  color: var(--io-bg);
+  font: 700 15px/1 var(--io-font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+button.ov-primary:hover:not(:disabled) {
+  background: #d8b45a;
+}
+
+button.ov-secondary {
+  min-height: 48px;
+  padding: 0 28px;
+  border: 1px solid var(--io-gold);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--io-gold);
+  font: 700 15px/1 var(--io-font-display);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+button.ov-secondary:hover:not(:disabled) {
+  background: var(--io-surface);
+}
+
+@keyframes ov-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-backdrop {
+    animation: none;
+  }
+}

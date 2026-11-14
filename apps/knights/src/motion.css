@@ -1,0 +1,297 @@
+/* Shared keyframes for the play loop and the milestones (the design's M0-M8). Components pick them up by name, with the
+   duration and curve tokens from global.css. Under prefers-reduced-motion every one is redefined below as a plain
+   opacity fade: no translate, scale, rotate or clip. */
+
+@keyframes mo-stamp {
+  0% {
+    opacity: 0;
+    transform: scale(1.4) rotate(-6deg);
+  }
+  27% {
+    opacity: 1;
+    transform: scale(1.04) rotate(-3deg);
+  }
+  47% {
+    transform: scale(0.97) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes mo-float {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(var(--rise, -24px));
+  }
+}
+
+@keyframes mo-fleck {
+  from {
+    opacity: 1;
+    transform: translate(0, 0) scale(0.5);
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--dx), var(--dy)) scale(1);
+  }
+}
+
+@keyframes mo-unroll {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes mo-roller {
+  from {
+    top: 0;
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  to {
+    top: calc(100% - 3px);
+    opacity: 0;
+  }
+}
+
+@keyframes mo-crest-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mo-descend {
+  from {
+    opacity: 0.35;
+    transform: translateY(-150px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mo-flare {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  40% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+@keyframes mo-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes mo-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes mo-sweep {
+  from {
+    opacity: 0;
+    transform: translateX(-100%);
+  }
+  30% {
+    opacity: 0.5;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+@keyframes mo-heart-drain {
+  0% {
+    color: var(--io-crimson-text);
+    transform: scale(1);
+  }
+  15% {
+    color: var(--io-parchment);
+    transform: scale(1.12);
+  }
+  30% {
+    transform: translateX(-3px);
+  }
+  45% {
+    transform: translateX(3px);
+  }
+  60% {
+    color: var(--io-parchment-muted);
+    transform: translateX(0) scale(1);
+  }
+  100% {
+    color: var(--io-parchment-muted);
+    transform: scale(1);
+  }
+}
+
+@keyframes mo-smite-flash {
+  0% {
+    box-shadow: inset 0 0 0 100vmax transparent;
+  }
+  13% {
+    box-shadow: inset 0 0 0 100vmax rgb(155 44 44 / 0.35);
+  }
+  100% {
+    box-shadow: inset 0 0 0 100vmax transparent;
+  }
+}
+
+/* Any click or key during a milestone jumps it to its end state. */
+[data-skipped],
+[data-skipped] *,
+[data-skipped] *::before,
+[data-skipped] *::after {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes mo-stamp {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-float {
+    0%,
+    100% {
+      opacity: 0;
+    }
+    30% {
+      opacity: 1;
+    }
+  }
+  @keyframes mo-fleck {
+    from,
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-unroll {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-roller {
+    from,
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-crest-rise {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-descend {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-flare {
+    from,
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-rise-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-sweep {
+    from,
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes mo-heart-drain {
+    from {
+      color: var(--io-crimson-text);
+    }
+    to {
+      color: var(--io-parchment-muted);
+    }
+  }
+  @keyframes mo-smite-flash {
+    from,
+    to {
+      box-shadow: none;
+    }
+  }
+}
+
+/* An XP gauge ring fills in from empty (the ring's path is normalised to length 100). */
+@keyframes mo-gauge-fill {
+  from {
+    stroke-dashoffset: 100;
+  }
+}
+
+/* A hero crest catches the light once when the home screen loads. */
+@keyframes mo-crest-shimmer {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(120%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes mo-crest-shimmer {
+    from,
+    to {
+      transform: translateX(120%);
+    }
+  }
+}
+
+/* A counter that just went up. The glow is for a bar or ring stroke, the pop for a number. Both are 400ms or less,
+   and a component applies them only under prefers-reduced-motion: no-preference. */
+@keyframes mo-bump-glow {
+  40% {
+    box-shadow: 0 0 10px rgb(201 162 74 / 0.9);
+    filter: drop-shadow(0 0 4px rgb(201 162 74 / 0.9));
+  }
+}
+@keyframes mo-bump-pop {
+  40% {
+    transform: scale(1.18);
+    color: var(--io-gold);
+  }
+}

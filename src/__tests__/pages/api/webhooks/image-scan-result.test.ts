@@ -200,6 +200,11 @@ vi.mock('~/server/services/games/new-order.service', () => ({
   addImageToQueue: vi.fn().mockResolvedValue(undefined),
 }));
 
+// The old-game gate reads a Flipt flag over the network.
+vi.mock('~/server/games/new-order/v1-gate', () => ({
+  isV1KnightsLive: vi.fn().mockResolvedValue(false),
+}));
+
 // Mock system-cache
 vi.mock('~/server/services/system-cache', () => ({
   getTagRules: vi.fn().mockResolvedValue([]),

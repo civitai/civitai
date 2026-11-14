@@ -343,3 +343,69 @@ function reportOf(suspects: AbuseSuspect[], smitedUserIds: Set<number>) {
     finishedAt: new Date('2026-09-14T23:00:42Z'),
   });
 }
+
+describe('v2 suspects', () => {
+  it('are named in the reason and never filed as actioned, even if the account was smited for v1', () => {
+    const finding = toFinding(suspect({ source: 'v2' }), true);
+
+    expect(finding.actioned).toBe(false);
+    expect(finding.action ?? null).toBeNull();
+    expect(finding.reason).toContain('Knights v2');
+  });
+
+  it('build a report the contract accepts beside the same account smited for v1', () => {
+    const report = buildAbuseReport({
+      suspects: [suspect(), suspect({ source: 'v2' })],
+      smitedUserIds: new Set([100]),
+      startedAt: new Date('2026-11-10T23:00:00Z'),
+      finishedAt: new Date('2026-11-10T23:01:00Z'),
+    });
+
+    expect(abuseReportInput.parse(report).findings.map((f) => f.actioned)).toEqual([true, false]);
+    // One account, flagged twice: counted once, and it was smited.
+    expect(report.counters).toMatchObject({ suspects: 1, auto_smited: 1, filed_for_review: 0 });
+  });
+});
+
+describe('coverage and unique accounts', () => {
+  const run = (coverage?: Parameters<typeof buildAbuseReport>[0]['coverage']) =>
+    buildAbuseReport({
+      suspects: [suspect({ source: 'v2' })],
+      smitedUserIds: new Set(),
+      startedAt: new Date('2026-11-10T23:00:00Z'),
+      finishedAt: new Date('2026-11-10T23:01:00Z'),
+      coverage,
+    });
+
+  it('says which source is missing, in the summary the contract already carries', () => {
+    expect(run({ v1: 'failed', v2: 'ok' }).summary).toContain(
+      'Knights v1 scan failed; only v2 votes were scanned.'
+    );
+    expect(run({ v1: 'not-run', v2: 'ok' }).summary).toContain(
+      'did not run (ClickHouse unavailable)'
+    );
+    expect(run({ v1: 'ok', v2: 'failed' }).summary).toContain(
+      'Knights v2 scan failed; only v1 votes were scanned.'
+    );
+    expect(abuseReportInput.parse(run({ v1: 'failed', v2: 'ok' }))).toBeTruthy();
+  });
+
+  it('adds nothing when both sources ran, and says it even with no suspects', () => {
+    expect(run({ v1: 'ok', v2: 'ok' }).summary).not.toMatch(/scan (failed|did not run)/);
+    expect(renderSummary([], 0, { v1: 'failed', v2: 'ok' })).toMatch(/^Knights v1 scan failed/);
+  });
+
+  it('counts an account flagged in both games once', () => {
+    const report = buildAbuseReport({
+      suspects: [suspect(), suspect({ source: 'v2' }), suspect({ userId: 101, source: 'v2' })],
+      smitedUserIds: new Set([100]),
+      startedAt: new Date('2026-11-10T23:00:00Z'),
+      finishedAt: new Date('2026-11-10T23:01:00Z'),
+    });
+
+    expect(report.findings).toHaveLength(3);
+    expect(report.summary).toContain('2 accounts matched');
+    expect(report.summary).toContain('1 was auto-smited');
+    expect(report.counters).toMatchObject({ suspects: 2, auto_smited: 1, filed_for_review: 1 });
+  });
+});

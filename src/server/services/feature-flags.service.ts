@@ -9,6 +9,7 @@ import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { KNIGHTS_APP_FLIPT_FLAG } from '~/shared/constants/knights.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
@@ -698,6 +699,9 @@ const featureFlags = createFeatureFlags({
   // loading models for free.
   resourceLoad: ['mod', 'granted'],
   newOrderGame: ['blue', 'red', 'public'],
+  // Dark and owned by Flipt: the Knights app's own access flag, so the links to it follow who the app
+  // admits (testers before launch, everyone after).
+  knightsApp: { availability: [], fliptKey: KNIGHTS_APP_FLIPT_FLAG },
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   bugsPage: ['public'],
@@ -763,6 +767,8 @@ const featureFlags = createFeatureFlags({
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
+  knightsEnqueue: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.

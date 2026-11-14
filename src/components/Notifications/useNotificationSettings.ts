@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import {
   isOptInNotification,
-  notificationCategoryTypes,
+  notificationSettingGroups,
 } from '~/server/notifications/utils.notifications';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -13,7 +13,7 @@ export const useNotificationSettings = (enabled = true) => {
     let hasNotifications = false;
     const notificationSettings: Record<string, boolean> = {};
     const hasCategory: Record<string, boolean> = {};
-    for (const [category, settings] of Object.entries(notificationCategoryTypes)) {
+    for (const [category, settings] of Object.entries(notificationSettingGroups)) {
       hasCategory[category] = false;
       for (const { type, optIn } of settings) {
         const hasRow = userNotificationSettings.some((setting) => setting.type === type);

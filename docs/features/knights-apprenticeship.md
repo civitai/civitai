@@ -1,0 +1,22 @@
+# Knights of New Order: the Acolyte apprenticeship
+
+Replaces the old Trial (a 12-item run with a pass mark and a cooldown). Code: `apps/knights/src/lib/server/apprenticeship`, UI on `/play`.
+
+## What an Acolyte does
+
+- A continuous stream of graded items, never repeating for a player. The curated core set comes first; after that harvested rating images (`KnightsReferenceImage`, pool `trials`) are mixed with yes/no references (`KnightsYesNoReference`, active, on an active `bool` question) on a fixed rhythm. Either kind fills in when the other runs out.
+- Every answer is graded against the reference. A right answer pays 100 XP on the Knights level curve (the original game's curve up to level 20, where the apprenticeship ends); a wrong one pays nothing. Acolytes are never smitten and their answers decide nothing. They earn no gold per answer, but each Acolyte level gained (2 to 20) pays `PROGRESSION.acolyteLevelGold` gold straight into `goldEarned`, in the transaction that moves the XP, outside the daily cap. `KnightsAcolyteLevelGold` (player, level) keeps each paid level for good, so a career restart never lets a level pay twice; the milestone level-up notice shows the gold paid for the levels since the previous milestone (5, 10, 15), in the current career, and it stops at the milestone the card celebrates: it does not grow with the levels reached while the card is open. The card lasts for the item it appears with: answering that item, or pressing Continue on the recap, records the standing it showed as seen, as "Onward" does, so a milestone that same answer crosses still gets its own card. Table `KnightsAcolyteLevelGold` is in `20261210120000_knights_v2_tables` (by hand, idempotent; apply before deploying the Knights build).
+- Promotion to Knight happens on the answer that makes both true: level 20 and at least 75% right over the last 100 answers (a full window). A player at level 20 below the bar keeps playing; nothing resets. The rank-up dialog reads "You have risen to Knight".
+- `/play` shows level progress toward Knight and an accuracy meter, no verdict per answer (only the correct/wrong sound), a recap every 20 answers listing exactly those 20 answers' misses with the right answers (each with its reference's explanation, or, when it has none, the correct rating's own definition from the rating guide), the rating guide offered as help when accuracy is low, and a short moment at levels 5, 10 and 15. With nothing left to serve it says to check back soon.
+
+## Data
+
+Migration `20261210120000_knights_v2_tables` (applied by hand, idempotent) creates `KnightsApprenticeAnswer`: one graded answer per row, pointing at one of `referenceId` / `yesNoReferenceId` (both go NULL if the reference is deleted; see the snapshot below), with the answer as given, the correct answer as it stood, whether it was right, the XP paid and `checkpointSeenAt` (set on the answer that closed a checkpoint once the player moved past its recap). Partial unique indexes keep a player from answering a reference twice, and a unique index on (`playerId`, `imageId`, `questionKey`) does the same for a pair deleted and added again. Deploy order: apply `20261210120000_knights_v2_tables` by hand, then deploy the Knights and moderator builds.
+
+Moderators manage the yes/no references on the `yes-no` tab of the moderator app's Knights of New Order trials page (`/knights-of-new-order/trials`): add a pair (image id or image page URL, question, answer, optional explanation), toggle it active or inactive, edit it, or delete it. A pair that has answers is frozen: it can only be deactivated, never edited or deleted (see the snapshot migration below). To change a frozen pair, deactivate it and add a new one.
+
+The same migration makes an answer outlive its reference. Each answer also stores the `imageId` and `questionKey` it was given for, and both reference foreign keys are `ON DELETE SET NULL`, so deleting a yes/no pair or the image behind one never changes a player's counts, window, recap or promotion. The no-repeat rule matches on that image and question, so a pair deleted and added again is not served twice. A recap miss whose reference is gone shows no explanation.
+
+Accuracy, the recap and promotion read only answers since the player's last career reset (`NewOrderPlayer.startAt`); the no-repeat rule reads all of them.
+
+The Redis marker `knights:trial-summary:<id>` is no longer read or written and can expire or be deleted.

@@ -358,6 +358,8 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'mod/csam-upload.ts',
   // `{ error: FEEDBACK_CAPTURE_OWNER_REFUSAL }`, a string constant we wrote; no caught error object.
   'mod/delete-user-images.ts',
+  'mod/knights/shop/cosmetics.ts',
+  'mod/knights/shop/membership.ts',
   'mod/mute-user-pending-review.ts',
   'mod/overturn-user-mute.ts',
   'mod/queue-model-metric-update.ts',

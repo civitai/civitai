@@ -11,6 +11,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { getKnightsLink } from '~/shared/constants/knights.constants';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { EventPointPopsSetting } from '~/components/HatTurf/EventPointPopsSetting';
@@ -55,6 +56,7 @@ export function BrowsingModeMenu({
   const setState = useBrowsingSettings((x) => x.setState);
   const userBrowsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const features = useFeatureFlags();
+  const knightsLink = getKnightsLink(features);
   const { isRestricted } = useIsRegionRestricted();
   const hasMatureLevelSelected = Flags.intersects(userBrowsingLevel, nsfwBrowsingLevelsFlag);
 
@@ -72,12 +74,12 @@ export function BrowsingModeMenu({
               <Stack gap={0}>
                 <Group align="flex-start">
                   <Text style={{ lineHeight: 1 }}>Browsing Level</Text>
-                  {features.newOrderGame && (
+                  {knightsLink.visible && (
                     <Tooltip label="Help us improve by playing!" withArrow>
                       <Button
                         onClick={closeMenu}
                         component={Link}
-                        href="/games/knights-of-new-order"
+                        href={knightsLink.href}
                         size="compact-xs"
                         ml="auto"
                         variant="outline"

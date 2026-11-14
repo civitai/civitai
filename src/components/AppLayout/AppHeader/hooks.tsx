@@ -50,6 +50,7 @@ import { useQueryNotificationsCount } from '~/components/Notifications/notificat
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import { getKnightsLink } from '~/shared/constants/knights.constants';
 import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -350,8 +351,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         {
           id: 'knights-of-new',
-          href: '/games/knights-of-new-order',
-          visible: features.newOrderGame,
+          ...getKnightsLink(features),
           icon: IconSword,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Knights of New',

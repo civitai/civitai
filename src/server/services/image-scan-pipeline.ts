@@ -43,6 +43,7 @@ import {
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { queueScanSampleForKnights } from '~/server/services/knights/sources';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import {
@@ -70,6 +71,7 @@ import {
   type RatingAxes,
 } from '~/server/services/image-nsfw-axes';
 import { signalClient } from '~/utils/signal-client';
+import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -1218,7 +1220,9 @@ export async function applyIngestionSideEffects({
       }
 
       if (!reviewKey && image.type === 'image' && image.userId !== FEEDBACK_CAPTURE_OWNER_ID) {
-        await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+        if (await isV1KnightsLive())
+          await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+        await queueScanSampleForKnights({ imageId: image.id, nsfw: audit.nsfw });
       }
     }
   }
