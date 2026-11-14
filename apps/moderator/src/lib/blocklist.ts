@@ -15,7 +15,7 @@ export const BLOCKLIST_TYPES = [
   'SemanticSearchMinorSafe',
 ] as const;
 
-/** The semantic search query rules: the page offers a dry run of the query audit on these tabs. */
+/** The semantic search query rule types, read by the main app's query audit. */
 export const QUERY_RULE_TYPES: readonly BlocklistType[] = [
   'SemanticSearchPoiRefuse',
   'SemanticSearchMinorSafe',

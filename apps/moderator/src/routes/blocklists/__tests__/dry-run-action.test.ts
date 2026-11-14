@@ -59,4 +59,17 @@ describe('blocklists dry-run action', () => {
       data: { dryRunError: 'Dry run: slow down' },
     });
   });
+
+  it('reports a 502 when the main app answers in an unexpected shape', async () => {
+    callModEndpoint.mockResolvedValue({ ok: true, body: { nonModerator: 'refuse' } });
+    expect(await dryRun('q')).toMatchObject({ status: 502 });
+  });
+
+  it('reports a 502 when the main app could not be reached', async () => {
+    callModEndpoint.mockResolvedValue({ ok: false, error: 'Dry run: fetch failed' });
+    expect(await dryRun('q')).toMatchObject({
+      status: 502,
+      data: { dryRunError: 'Dry run: fetch failed' },
+    });
+  });
 });
