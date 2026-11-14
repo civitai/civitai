@@ -470,7 +470,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "PostText" ptx ON c."entityType" = 'postText' AND ptx.id = c."entityId"
       LEFT JOIN LATERAL (
       SELECT i.id FROM "Image" i
-      WHERE i."postId" = ptx."postId"
+      WHERE ptx.id IS NOT NULL AND i."postId" = ptx."postId"
       AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
       AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
       ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,
@@ -616,7 +616,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "PostText" ptx ON c."entityType" = 'postText' AND ptx.id = c."entityId"
       LEFT JOIN LATERAL (
       SELECT i.id FROM "Image" i
-      WHERE i."postId" = ptx."postId"
+      WHERE ptx.id IS NOT NULL AND i."postId" = ptx."postId"
       AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
       AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
       ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,
@@ -710,7 +710,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "PostText" ptx ON c."entityType" = 'postText' AND ptx.id = c."entityId"
       LEFT JOIN LATERAL (
       SELECT i.id FROM "Image" i
-      WHERE i."postId" = ptx."postId"
+      WHERE ptx.id IS NOT NULL AND i."postId" = ptx."postId"
       AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
       AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
       ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,

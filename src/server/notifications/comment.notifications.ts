@@ -96,7 +96,8 @@ export const v3EntityJoins = (alias: string) =>
  */
 export const postTextAnchorImage = (text: string) => `(
           SELECT i.id FROM "Image" i
-          WHERE i."postId" = ${text}."postId"
+          -- Constant per row: skips the scan for every comment not on a text.
+          WHERE ${text}.id IS NOT NULL AND i."postId" = ${text}."postId"
             AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
             AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
           ORDER BY COALESCE(i.index, 0) <= ${text}.index DESC,
