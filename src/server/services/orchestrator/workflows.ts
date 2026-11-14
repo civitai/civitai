@@ -637,6 +637,7 @@ export async function submitWorkflowWithRetry(
       // park that is `3 x 30s` from one that is a single 95s attempt; a counter alone cannot make that
       // join. Cardinality-free (a span attribute, not a label).
       setActiveSpanAttributes({ 'orchestrator.submit.attempts': result.attempts });
+      if (result.data) result.data = withoutCallbacks(result.data);
       return result;
     }
   );
