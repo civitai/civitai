@@ -46,6 +46,21 @@ export function reusableComFaceIntent(
   return { detected: record.detected && !record.overturnedAt, reason: record.reason };
 }
 
+/**
+ * The verdict after a moderator lifts the nsfw lock: that ruling covers the listing text as it
+ * stands, so the check never locks that text again. With no stored verdict for this text there was
+ * no detection to overturn, so it is stored as allowed.
+ */
+export function comFaceIntentAfterModeratorUnlock(
+  record: ComFaceIntentRecord | undefined,
+  textHash: string,
+  at: string
+): ComFaceIntentRecord {
+  if (record?.textHash !== textHash) return { detected: false, textHash, at, overturnedAt: at };
+  const { priorSystemNsfwLock: _prior, laterVerdict: _later, ...rest } = record;
+  return { ...rest, overturnedAt: record.overturnedAt ?? at };
+}
+
 export async function readComFaceIntentModel(modelId: number) {
   return dbWrite.model.findUnique({
     where: { id: modelId },

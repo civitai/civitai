@@ -272,6 +272,11 @@ import {
 } from '~/server/utils/minor-flag-meta';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
 import {
+  comFaceIntentAfterModeratorUnlock,
+  comFaceIntentTextHash,
+  getOwnTriggerWords,
+} from '~/server/services/model-com-face-intent.service';
+import {
   buildGetAllModelImages,
   filterImagesForViewer,
   GET_ALL_IMAGES_PER_MODEL,
@@ -3960,6 +3965,10 @@ function liftsSfwOnlyLock(stored: string[] | null | undefined, next: string[] | 
   return next !== undefined && (stored ?? []).includes('sfwOnly') && !next.includes('sfwOnly');
 }
 
+function liftsNsfwLock(stored: string[] | null | undefined, next: string[] | undefined) {
+  return next !== undefined && (stored ?? []).includes('nsfw') && !next.includes('nsfw');
+}
+
 function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
   const { [SYSTEM_NSFW_LOCK_META_KEY]: _marker, ...rest } = meta;
   return rest;
@@ -4551,6 +4560,25 @@ export const upsertModel = async (
           mergedMeta = withoutSystemNsfwLock(mergedMeta);
           const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;
           mergedMeta = rest;
+        }
+        if (
+          isModerator &&
+          locked &&
+          liftsNsfwLock(locked.lockedProperties, data.lockedProperties)
+        ) {
+          const textHash = comFaceIntentTextHash({
+            name: data.name ?? locked.name,
+            description: data.description !== undefined ? data.description : locked.description,
+            triggerWords: await getOwnTriggerWords({ modelId: id, userId: locked.userId, db: tx }),
+          });
+          mergedMeta = {
+            ...mergedMeta,
+            comFaceIntent: comFaceIntentAfterModeratorUnlock(
+              prevMeta?.comFaceIntent,
+              textHash,
+              new Date().toISOString()
+            ),
+          };
         }
         if (locked?.minor && flags && !flags.minor && mergedMeta.minorFlagSnapshot)
           mergedMeta = {

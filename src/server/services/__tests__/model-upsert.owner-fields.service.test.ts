@@ -166,7 +166,11 @@ vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal)
 import { MODERATION_FLOW_META_KEYS } from '~/server/utils/minor-flag-meta';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
-import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import type { ModelMeta, ModelUpsertInput } from '~/server/schema/model.schema';
+import {
+  comFaceIntentTextHash,
+  reusableComFaceIntent,
+} from '~/server/services/model-com-face-intent.service';
 import {
   copyGallerySettingsToAllModelsByUser,
   heldGalleryLevel,
@@ -464,6 +468,64 @@ describe('comFaceRemoved', () => {
       meta: { comFaceRemoved: sent, hideBuzz: true } as ModelUpsertInput['meta'],
     });
     expect(updateData().meta).toEqual({ comFaceRemoved: MARKER, hideBuzz: true });
+  });
+});
+
+// A moderator's unlock is a ruling on this listing: the intent check must not lock it again.
+describe('a moderator lifting the nsfw lock', () => {
+  const words = ['trigger'];
+  const listingHash = comFaceIntentTextHash({
+    name: storedModel.name,
+    description: storedModel.description,
+    triggerWords: words,
+  });
+  const detection = {
+    detected: true,
+    reason: 'r',
+    textHash: listingHash,
+    at: '2026-11-01T00:00:00.000Z',
+    priorSystemNsfwLock: { source: 'text-scan', at: '2026-10-01T00:00:00.000Z' },
+  };
+
+  beforeEach(() => {
+    mockDbWrite.modelVersion.findMany.mockImplementation((async (args: {
+      select?: { trainedWords?: boolean };
+    }) => (args.select?.trainedWords ? [{ trainedWords: words }] : [])) as never);
+  });
+
+  const unlock = () =>
+    upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, lockedProperties: [] });
+
+  it('overturns the stored detection of the listing as it stands', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    await unlock();
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toMatchObject({ detected: true, textHash: listingHash });
+    expect(meta.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
+    expect(meta.comFaceIntent).not.toHaveProperty('priorSystemNsfwLock');
+    expect(reusableComFaceIntent(meta, listingHash)).toEqual({ detected: false, reason: 'r' });
+  });
+
+  it.each([
+    ['no stored verdict', {}],
+    ['a verdict on other text', { comFaceIntent: { ...detection, textHash: 'old' } }],
+  ])('stores the listing as allowed when there is %s', async (_, meta) => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta });
+    await unlock();
+    const written = updateData().meta as ModelMeta;
+    expect(written.comFaceIntent).toMatchObject({ detected: false, textHash: listingHash });
+    expect(written.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
+  });
+
+  it('leaves the verdict alone when the save keeps the lock (control)', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['nsfw'],
+    });
+    expect((updateData().meta as ModelMeta).comFaceIntent).toEqual(detection);
   });
 });
 

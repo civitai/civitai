@@ -264,7 +264,7 @@ export async function resolveLockReviewAppeal({
       });
       throw throwBadRequestError(LOCK_REVIEW_MATCH_CHECK_FAILED);
     });
-  const { claimed, unlocked } = await dbWrite.$transaction(async (tx) => {
+  const { claimed, unlocked, dispute } = await dbWrite.$transaction(async (tx) => {
     const [row] = await tx.$queryRaw<
       {
         id: number;
@@ -277,10 +277,12 @@ export async function resolveLockReviewAppeal({
         detectionHeld: boolean;
         lockSource: string | null;
         verdictMeta: unknown;
+        intentPromptId: number | null;
       }[]
     >`
       SELECT a.id, a.context, m."lockedProperties", m.poi, m.minor,
         m.meta->'systemNsfwLock'->>'source' AS "lockSource",
+        (m.meta->'comFaceIntent'->>'promptId')::int AS "intentPromptId",
         jsonb_build_object('systemNsfwLock', m.meta->'systemNsfwLock',
           'comFaceIntent', jsonb_build_object('laterVerdict', m.meta->'comFaceIntent'->'laterVerdict')
         ) AS "verdictMeta",
@@ -382,8 +384,30 @@ export async function resolveLockReviewAppeal({
     ])
       await trackModActivity(userId, { entityType: 'model', entityId: modelId, activity }, tx);
 
-    return { claimed, unlocked: lift };
+    return {
+      claimed,
+      unlocked: lift,
+      dispute: asked.dispute === COM_FACE_INTENT_DISPUTE ? row : null,
+    };
   });
+
+  // A moderator's ruling on a review the intent check's second pass left to them: a prompt-tuning
+  // sample. The job's own approvals log their sample where they are judged.
+  if (dispute && !asDisputeJob) {
+    const context = dispute.context as Record<string, unknown> | null;
+    logToAxiom({
+      type: 'info',
+      name: 'model-com-face-intent-dispute',
+      message: 'moderator-ruled',
+      appealId,
+      modelId,
+      approved: approve,
+      unlocked,
+      autoReview: context?.autoReview ?? null,
+      autoReviewAttempts: context?.autoReviewAttempts ?? null,
+      firstPromptId: dispute.intentPromptId,
+    }).catch(() => undefined);
+  }
 
   if (unlocked.length) await preventReplicationLag('model', modelId);
   // The ruling is committed: a failed notice must not read as a failed ruling, which cannot be retried.

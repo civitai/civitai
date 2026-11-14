@@ -3,6 +3,7 @@ import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
 import type * as Email from '~/server/email/templates';
@@ -684,6 +685,63 @@ describe('approving a lock review', () => {
 
     expect(await appealRow()).toEqual({ status: 'Approved', resolvedBy: MODERATOR });
     expect(mocks.settleResolvedAppeals).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A moderator's ruling on a review the second pass left to them is a sample for tuning the prompt.
+describe('a moderator ruling on a listing intent dispute', () => {
+  const seedDispute = async (context: Record<string, unknown>) => {
+    await seed({
+      locked: ['nsfw'],
+      meta: { comFaceIntent: { detected: true, textHash: 'h', at: 'x', promptId: 77 } },
+    });
+    await db.query(`UPDATE "Appeal" SET context = $1 WHERE id = 1`, [context]);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      name: 'n',
+      description: '',
+      userId: OWNER,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+  };
+  const samples = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.name === 'model-com-face-intent-dispute');
+
+  it.each([
+    ['an approval', approve, true],
+    ['a rejection', reject, false],
+  ])(
+    'logs one sample for %s, with the job outcome and the first prompt',
+    async (_, rule, approved) => {
+      await seedDispute({
+        kind: 'lock-review',
+        locks: ['nsfw'],
+        dispute: 'comFaceIntent',
+        autoReview: 'upheld',
+      });
+
+      await rule();
+
+      expect(samples()).toEqual([
+        expect.objectContaining({
+          message: 'moderator-ruled',
+          appealId: 1,
+          modelId: MODEL,
+          approved,
+          autoReview: 'upheld',
+          firstPromptId: 77,
+        }),
+      ]);
+    }
+  );
+
+  it('logs nothing for an ordinary review (control)', async () => {
+    await seedDispute({ kind: 'lock-review', locks: ['nsfw'] });
+
+    await approve();
+
+    expect(samples()).toEqual([]);
   });
 });
 
