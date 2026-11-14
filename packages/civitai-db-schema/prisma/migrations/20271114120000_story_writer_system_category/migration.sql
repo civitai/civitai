@@ -6,10 +6,11 @@
 -- only the few articles classified so far. Do not apply between 23:00 and 00:01 UTC
 -- (prepare-leaderboard / deliver-leaderboard-cosmetics). Leaves "active" as it is.
 --
--- Idempotent: a query already switched is left alone. RAISEs, changing nothing, when the board row is
--- missing, when its query has neither the author-tag predicate nor the new one (edited since
--- 20261112170000_story_writer_leaderboard), or when there is no 'story' article category the
--- category call can pick (the call is never offered adminOnly tags).
+-- Fail-closed: the live query must hash to the text 20261112170000_story_writer_leaderboard wrote
+-- (md5 b0d929c8..., matched on the primary 2026-11-14), and the result must hash to the reviewed
+-- switched text. Idempotent: a query already switched is left alone. RAISEs, changing nothing, when
+-- the board row is missing, when its query is any other text, or when there is no 'story' article
+-- category the category call can pick (the call is never offered adminOnly tags).
 
 BEGIN;
 
@@ -28,6 +29,8 @@ DECLARE
     JOIN "Tag" p ON p.id = tt."fromTagId" AND p.name = 'article category'
     WHERE t.name = 'story'
   )$new$;
+  live_md5 constant text := 'b0d929c8dfc788d5f5b2cac2fc813fd2';
+  switched_md5 constant text := '36a04202e0a7ed9eeeae5dcc980a308a';
   current_query text;
   story_admin_only boolean;
 BEGIN
@@ -48,17 +51,19 @@ BEGIN
     RAISE EXCEPTION 'story-writer leaderboard row not found - apply 20261112170000_story_writer_leaderboard first';
   END IF;
 
-  IF position(new_predicate IN current_query) > 0 THEN
+  IF md5(current_query) = switched_md5 THEN
     RAISE NOTICE 'story-writer query already uses the system category - nothing to do';
-  ELSIF position(old_predicate IN current_query) > 0 THEN
-    UPDATE "Leaderboard" SET query = replace(query, old_predicate, new_predicate) WHERE id = 'story-writer';
-  ELSE
-    RAISE EXCEPTION 'story-writer query has neither the author-tag predicate nor the system-category one - it was edited; switch it by hand';
+    RETURN;
+  END IF;
+  IF md5(current_query) <> live_md5 THEN
+    RAISE EXCEPTION 'story-writer query (md5 %) is not the reviewed text (md5 %) - it was edited; inspect SELECT query FROM "Leaderboard" WHERE id = ''story-writer'' and switch it by hand', md5(current_query), live_md5;
   END IF;
 
+  UPDATE "Leaderboard" SET query = replace(query, old_predicate, new_predicate) WHERE id = 'story-writer';
+
   SELECT query INTO current_query FROM "Leaderboard" WHERE id = 'story-writer';
-  IF position(new_predicate IN current_query) = 0 OR position('TagsOnArticle' IN current_query) > 0 THEN
-    RAISE EXCEPTION 'post-check failed: story-writer query does not read the system category only';
+  IF md5(current_query) <> switched_md5 THEN
+    RAISE EXCEPTION 'switched story-writer query hashes to %, not the reviewed %', md5(current_query), switched_md5;
   END IF;
 END $$;
 

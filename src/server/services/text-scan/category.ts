@@ -80,8 +80,11 @@ type TextCategoryWorkflowMetadata = {
 
 export type TextCategorySubmitOutcome = 'submitted' | 'no-categories' | 'empty' | 'failed';
 
-// Separate workflow, not a scan step: the scan request must stay byte-identical.
-/** Logs its own failures and never throws for them; the outcome says what happened. */
+/**
+ * A separate workflow, not a scan step: the scan request must stay byte-identical. Returns the outcome
+ * for an orchestrator rejection or an empty category list (both logged). Callers still need to catch a
+ * thrown error from the category lookup or the transport.
+ */
 export async function submitTextCategoryScan({
   entityType,
   entityId,

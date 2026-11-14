@@ -346,6 +346,27 @@ describe('story-writer system-category switch preconditions', () => {
       `UPDATE "Leaderboard" SET query = 'SELECT 2' WHERE id = 'story-writer';`,
       /was edited/
     ));
+
+  it('refuses an edit outside the predicate it replaces, such as a changed weight', () =>
+    refuses(
+      `UPDATE "Leaderboard" SET query = replace(query, '* 4', '* 5') WHERE id = 'story-writer';`,
+      /was edited/
+    ));
+
+  it('expects the text the board migration wrote, which is what production holds', async () => {
+    const pg = new PGlite();
+    try {
+      await pg.exec(SCHEMA + WRITER_BOARD + CATEGORIES);
+      await pg.exec(MIGRATION);
+      const { rows } = await pg.query<{ md5: string }>(
+        `SELECT md5(query) FROM "Leaderboard" WHERE id = 'story-writer'`
+      );
+      expect(rows).toEqual([{ md5: 'b0d929c8dfc788d5f5b2cac2fc813fd2' }]);
+      expect(SWITCH).toContain(rows[0].md5);
+    } finally {
+      await pg.close();
+    }
+  });
 });
 
 describe('article category backfill selection', () => {
