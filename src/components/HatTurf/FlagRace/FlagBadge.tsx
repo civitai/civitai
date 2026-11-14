@@ -143,7 +143,7 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
             )
           ) : (
             <>
-              <IconClock size={11} stroke={2.5} />
+              <IconClock size={11} stroke={2.5} className="-mt-px" />
               {clock?.phase === 'final' ? (
                 'Any moment'
               ) : (
