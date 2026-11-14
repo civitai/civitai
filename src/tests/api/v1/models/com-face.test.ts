@@ -227,7 +227,8 @@ describe('POST /api/v1/models/com-face', () => {
       );
       const res = await call({ action: 'draft', modelId: 11 });
       expect(res.statusCode).toBe(status);
-      const message = res.body.message ?? res.body.error;
+      // The refusal is the endpoint's own reply; the rest go through the shared error handler.
+      const message = status === 422 ? res.body.error : res.body.message;
       expect(message).toMatch(shown);
       expect(message).toMatch(/civitai\.red/);
       // A refusal is marked so Creator Studio offers the dispute instead of a retry.

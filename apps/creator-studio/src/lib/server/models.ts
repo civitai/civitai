@@ -52,9 +52,7 @@ export function hasComFaceSql(alias: string) {
   return sql<boolean>`(${m}"sfwName" is not null and not (${m}"meta"->'comFaceRemoved' is not null and ${m}"sfwCoverImageId" is null))`;
 }
 
-// Mature with no civitai.com face, where one could be added: the nsfw rating is not locked (a lock is
-// a moderator's call or the listing intent check's), no flag rules a face out, as the main app's
-// com-face endpoint does, and the listing intent check has no standing detection, which refuses one.
+// Mirrors the main app's com-face endpoint eligibility; keep in step with it.
 export function comFaceReadySql(alias: string) {
   const m = sql.raw(`${alias}.`);
   const intentDetected = sql`coalesce((${m}"meta"->'comFaceIntent'->>'detected')::boolean and not (${m}"meta"->'comFaceIntent' ? 'overturnedAt'), false)`;

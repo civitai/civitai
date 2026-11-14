@@ -147,6 +147,8 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
   if (!(await stillIntentLock(row))) return markJudged(row, 'needs-moderator');
   // A system rating verdict the lock kept from applying would be lost with it: a moderator decides.
   if (hasLaterVerdictUnderLock(row.meta)) return markJudged(row, 'later-verdict');
+  const intentLockAt = (row.meta as ModelMeta | null)?.systemNsfwLock?.at;
+  if (typeof intentLockAt !== 'string') return markJudged(row, 'needs-moderator');
 
   try {
     await resolveLockReviewAppeal({
@@ -154,8 +156,8 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
       modelId: row.modelId,
       approve: true,
       userId: SYSTEM_USER_ID,
-      // Re-read under the row lock: a verdict can land during the re-check above.
-      refuseLaterVerdict: true,
+      // Both re-read under the row lock: a ruling or a verdict can land during the re-check above.
+      asDisputeJob: { intentLockAt },
       internalNotes:
         'Approved automatically: the listing intent check allowed it on a second pass.',
     });

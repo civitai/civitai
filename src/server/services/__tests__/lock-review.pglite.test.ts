@@ -69,6 +69,7 @@ const {
   latestModelAppealOfKind,
   LOCK_REVIEW_DETECTION_HELD,
   LOCK_REVIEW_LATER_VERDICT,
+  LOCK_REVIEW_LOCK_CHANGED,
   LOCK_REVIEW_MATCH_CHECK_FAILED,
   LOCK_REVIEW_HELD,
   LOCK_REVIEW_UNAVAILABLE,
@@ -428,7 +429,7 @@ describe('approving a lock review', () => {
         modelId: MODEL,
         approve: true,
         userId: MODERATOR,
-        refuseLaterVerdict: true,
+        asDisputeJob: { intentLockAt: lockedAt },
       });
 
     // The job read the model before its slow re-check; the verdict landed after that read.
@@ -458,6 +459,60 @@ describe('approving a lock review', () => {
       await approve();
 
       expect(await appealRow()).toMatchObject({ status: 'Approved' });
+    });
+  });
+
+  describe('as the re-judging job, after a ruling replaced the intent lock it judged', () => {
+    const lockedAt = '2026-02-01T00:00:00.000Z';
+    const intent = { detected: true, textHash: 'h', at: 'x' };
+    const approveAsJob = () =>
+      resolveLockReviewAppeal({
+        appealId: 1,
+        modelId: MODEL,
+        approve: true,
+        userId: MODERATOR,
+        asDisputeJob: { intentLockAt: lockedAt },
+      });
+    const expectUnchanged = async () => {
+      expect(await appealRow()).toMatchObject({ status: 'Pending', resolvedBy: null });
+      expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
+    };
+
+    // The job read the intent lock; the moderator app's rating ruling then set nsfw and the nsfw lock
+    // and dropped the marker, logging no moderator activity.
+    it("refuses to lift a moderator's rating-review lock", async () => {
+      await seed({
+        locked: ['nsfw'],
+        meta: {
+          [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: lockedAt },
+          comFaceIntent: intent,
+        },
+      });
+      await db.query(
+        `UPDATE "Model" SET nsfw = true, "lockedProperties" = array['nsfw'], meta = meta - $2 WHERE id = $1`,
+        [MODEL, SYSTEM_NSFW_LOCK_META_KEY]
+      );
+
+      await expect(approveAsJob()).rejects.toThrow(LOCK_REVIEW_LOCK_CHANGED);
+
+      await expectUnchanged();
+    });
+
+    it('refuses when the intent lock was set again since the job read it', async () => {
+      await seed({
+        locked: ['nsfw'],
+        meta: {
+          [SYSTEM_NSFW_LOCK_META_KEY]: {
+            source: 'com-face-intent',
+            at: '2026-03-01T00:00:00.000Z',
+          },
+          comFaceIntent: intent,
+        },
+      });
+
+      await expect(approveAsJob()).rejects.toThrow(LOCK_REVIEW_LOCK_CHANGED);
+
+      await expectUnchanged();
     });
   });
 

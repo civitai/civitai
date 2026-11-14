@@ -55,6 +55,9 @@ export const LOCK_REVIEW_HELD =
 /** Moderators only. */
 export const LOCK_REVIEW_DETECTION_HELD =
   'A real person or minor detection on this model is waiting for a moderator. Rule on it first, or reject this review.';
+/** The re-judging job only: the lock is no longer the intent lock it judged, so a moderator decides. */
+export const LOCK_REVIEW_LOCK_CHANGED =
+  "This nsfw lock is no longer the listing intent check's; a moderator must rule on it.";
 /** The re-judging job only: a system rating verdict landed under the lock, so a moderator decides. */
 export const LOCK_REVIEW_LATER_VERDICT =
   'A system rating verdict landed under this lock; a moderator must rule on it.';
@@ -222,7 +225,7 @@ export async function resolveLockReviewAppeal({
   userId,
   resolvedReason,
   internalNotes,
-  refuseLaterVerdict = false,
+  asDisputeJob,
 }: {
   /** The request the moderator was shown; a model can carry another, after a transfer. */
   appealId: number;
@@ -231,8 +234,12 @@ export async function resolveLockReviewAppeal({
   userId: number;
   resolvedReason?: string;
   internalNotes?: string;
-  /** Refuse an approval when a system rating verdict was recorded under the lock (the job's). */
-  refuseLaterVerdict?: boolean;
+  /**
+   * The re-judging job's approval, re-checked under the row lock: refused unless the nsfw lock is
+   * still the intent lock the job judged (its marker stamped at `intentLockAt`), and refused when a
+   * system rating verdict was recorded under it.
+   */
+  asDisputeJob?: { intentLockAt: string };
 }) {
   const status = approve ? AppealStatus.Approved : AppealStatus.Rejected;
   if (resolvedReason) {
@@ -309,8 +316,18 @@ export async function resolveLockReviewAppeal({
         );
       if (row.detectionHeld || minorMatchPending)
         throw throwBadRequestError(LOCK_REVIEW_DETECTION_HELD);
-      if (refuseLaterVerdict && hasLaterVerdictUnderLock(row.verdictMeta))
-        throw throwBadRequestError(LOCK_REVIEW_LATER_VERDICT);
+      if (asDisputeJob) {
+        // A moderator's ruling can replace the lock without a moderator activity row to show it.
+        const marker = (row.verdictMeta as ModelMeta | null)?.systemNsfwLock;
+        if (
+          !locked.includes('nsfw') ||
+          row.lockSource !== COM_FACE_INTENT_LOCK_SOURCE ||
+          marker?.at !== asDisputeJob.intentLockAt
+        )
+          throw throwBadRequestError(LOCK_REVIEW_LOCK_CHANGED);
+        if (hasLaterVerdictUnderLock(row.verdictMeta))
+          throw throwBadRequestError(LOCK_REVIEW_LATER_VERDICT);
+      }
       lift = locksToLift(asked.locks, locked);
       if (lift.length)
         await tx.model.update({

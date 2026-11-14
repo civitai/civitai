@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as LockReview from '~/server/services/lock-review.service';
 
 /** The dispute job's own selection SQL against PGlite: which appeals it may judge. Ids are invented. */
 
@@ -12,7 +13,8 @@ vi.mock('~/server/services/model-sfw-face.service', () => ({
   checkComFaceIntentVerdict: mocks.verdict,
   getOwnTriggerWords: vi.fn(async () => []),
 }));
-vi.mock('~/server/services/lock-review.service', () => ({
+vi.mock('~/server/services/lock-review.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LockReview>()),
   resolveLockReviewAppeal: mocks.resolve,
 }));
 

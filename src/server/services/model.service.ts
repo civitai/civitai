@@ -4019,7 +4019,6 @@ async function assertScanRatingKept({
     sfwName: after('sfwName'),
     sfwCoverImageId: after('sfwCoverImageId'),
   });
-  // A face changes how a mature model shows on civitai.com, not whether it is mature.
   if (after('nsfw')) return;
   // A row already not mature (an older one): only removing the face that listed it.
   if (!before.nsfw && (faceAfter || !hasFace(before))) return;

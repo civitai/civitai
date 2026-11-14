@@ -67,7 +67,7 @@ describe('processComFaceIntentDisputes', () => {
         modelId: 7,
         approve: true,
         userId: -1,
-        refuseLaterVerdict: true,
+        asDisputeJob: { intentLockAt: '2026-01-01T00:00:00.000Z' },
       })
     );
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -136,6 +136,17 @@ describe('processComFaceIntentDisputes', () => {
 
     expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
     expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(appealWrites()).toEqual([['needs-moderator', 1]]);
+  });
+
+  it('hands it to a moderator when the approval finds the intent lock replaced', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute()] as never);
+    mocks.verdict.mockResolvedValue({ status: 'allowed' });
+    const { LOCK_REVIEW_LOCK_CHANGED } = await import('~/server/services/lock-review.service');
+    mocks.resolve.mockRejectedValue(new Error(LOCK_REVIEW_LOCK_CHANGED));
+
+    expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
+    expect(appealWrites()).toEqual([['needs-moderator', 1]]);
   });
 
   it('marks it later-verdict when the approval finds a verdict that landed during the re-check', async () => {
@@ -163,6 +174,7 @@ describe('processComFaceIntentDisputes', () => {
     expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
     expect(mocks.verdict).not.toHaveBeenCalled();
     expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(appealWrites()).toEqual([['needs-moderator', 1]]);
   });
 
   it('retries a missing verdict, then gives it to a moderator on the third', async () => {
