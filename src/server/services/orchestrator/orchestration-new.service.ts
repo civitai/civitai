@@ -82,6 +82,7 @@ import {
 } from '~/server/services/generation-input-urls';
 import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import {
   getWorkflow,
   setWorkflowDownloadPriority,
@@ -3324,7 +3325,7 @@ export async function updateWorkflow({
 }
 
 export async function formatGenerationResponse2(
-  workflows: Workflow[],
+  rawWorkflows: Workflow[],
   user?: { id?: number; isModerator?: boolean; tier?: string },
   {
     acceptBoostRequired = false,
@@ -3336,6 +3337,10 @@ export async function formatGenerationResponse2(
     skipResourceEnrichment?: boolean;
   } = {}
 ): Promise<NormalizedWorkflow[]> {
+  // A training run's weights are moderators-only on every workflow read (`withoutTrainingWeightHandles`).
+  const workflows = rawWorkflows.map((workflow) =>
+    withoutTrainingWeightHandles(workflow, { isModerator: user?.isModerator })
+  );
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
   const allResourceRefs: Array<{ id: number; epoch?: number }> = [];
@@ -3720,11 +3725,14 @@ export type WorkflowStatusUpdate = Awaited<ReturnType<typeof getWorkflowStatusUp
 export async function getWorkflowStatusUpdate({
   token,
   workflowId,
+  isModerator,
 }: {
   token: string;
   workflowId: string;
+  isModerator?: boolean;
 }) {
-  const result = await getWorkflow({ token, path: { workflowId } });
+  const fetched = await getWorkflow({ token, path: { workflowId } });
+  const result = fetched && withoutTrainingWeightHandles(fetched, { isModerator });
   if (result) {
     const wfMeta = (result.metadata ?? {}) as Record<string, unknown>;
     const wfParams = (wfMeta.params ?? {}) as Record<string, unknown>;

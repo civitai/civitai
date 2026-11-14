@@ -41,8 +41,11 @@ type Config struct {
 	LazyPostImages   bool            // FEED_GO_LAZY_POST_IMAGES: mirrors `gallery-lazy-post-images`
 	ImageIndexFeed   bool            // FEED_GO_IMAGE_INDEX_FEED: mirrors `image-index-feed`
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
-	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: event decorations visible to everyone
+	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// Pprof is FEED_GO_PPROF (default off): serve net/http/pprof under /debug/pprof/ on the internal
+	// listener only (never the public one).
+	Pprof bool
 
 	// System redis through its Sentinels (internal/sysredis). Same names and precedence as the
 	// Node app: a non-empty REDIS_SYS_SENTINELS selects Sentinel mode, else REDIS_SYS_URL is used.
@@ -84,6 +87,7 @@ func Load() (*Config, error) {
 		FeedServiceURL:   os.Getenv("FEED_SERVICE_URL"),
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
+		Pprof:            boolEnv("FEED_GO_PPROF", false),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),

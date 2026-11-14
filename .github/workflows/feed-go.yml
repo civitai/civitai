@@ -79,7 +79,7 @@ jobs:
           # they passed. Raise the package floor when a package gains its first test.
           [ "$failed" -eq 0 ]
           [ "$pkgs" -ge 12 ]
-          [ "$passed" -ge 95 ]
+          [ "$passed" -ge 131 ]
 
       - name: go build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go

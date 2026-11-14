@@ -277,6 +277,14 @@ path as serving, and compares decoded values:
 - `json` trees structurally (object key order ignored, array order kept, numbers compared
   numerically), `meta.values` as a set (a `Date` or `undefined` on one side only is a difference the
   client would see), `meta.referentialEqualities` ignored;
+- `["undefined"]` annotations applied first, as `superjson.deserialize` applies them: superjson
+  writes an undefined object member as `null` plus the annotation, this service's writer omits the
+  member and writes the same annotation, and `setDeep` assigns the annotated path either way, so
+  both decode to the same object. (Before this, every such member — `images.*.tags` on every image,
+  `images.*.thumbnailUrl` on every image without a video thumbnail, `review` on every post without
+  one — was counted `missing-in-go`, and at 64 differences per comparison those artifacts also
+  truncated the report before any real difference was reached.) A real `null` against an
+  `undefined` is still a difference;
 - each comparison gets one result: `match`, `fields` (same posts, same order, some field differs),
   `order` (same posts, different order), `membership` (different posts), `unsupported` (Go fell back,
   with its reason), `go_error`;
@@ -309,7 +317,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | `creator-promotions` | sponsored post on page 1 of a model-version gallery | `FEED_GO_CREATOR_PROMOTIONS` names the flag's audience: `false` (off for everyone), `mods-testers` (the flag's rule as of 2026-11-14: off signed out, on for moderators, unknown for other signed-in users, who may be on a user-id list feed-go does not hold, and for a banned user's session, which Node still evaluates the flag for), `everyone`, or `true` / unset (fail-safe: unknown for everyone). Where the value is known the sponsored post is ported; where it is unknown, a page that would carry one falls back (`sponsored-post`) and a page that would not is served (the flag cannot change it) |
 | `image-resource-use-write` | model-gallery queries read the primary | not mirrored: off in production; the replica is used |
 | `image-feed-shared-users` | one `user` object per creator on the wire | decoded value unchanged; nothing to do |
-| event decoration flags | which event hats are visible to which viewer | `FEED_GO_DECORATION_EVENTS`: the events visible to **every** viewer; tester-only previews are a parity gap |
+| event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
 ## 9. Not at parity (yet)
@@ -333,11 +341,19 @@ will show.
 
 **Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an
 empty page, as Node does, rather than falling back (which would run the same slow query a second time
-on Node).
+on Node). A metric hash holding only the `notFound` marker is a KNOWN image with zero counts
+(`statsUnknown: false`): `getImageMetricsObject` gives every id whose hash exists an entry on both
+its arms, so `toImageV2Stats` only reports `statsUnknown: true` when the ClickHouse read failed and
+no hash was cached — a case this service falls back on (`metrics-miss`) instead of answering.
 
 **Divergences the comparator will show:**
 - `referentialEqualities` and opaque-object key order (not visible after decode; excluded by design);
-- per-viewer event-decoration visibility (testers before an event launches);
+- per-viewer event-decoration visibility: only while an event's flag base is OFF (a preview before
+  launch, or the kill switch), when Node shows its hats to moderators and testers alone and this
+  service, which does not evaluate Flipt, shows them to nobody. With the base on every viewer sees
+  them in Node and the mirror (§8) matches. A Node pod whose Flipt client has not yet initialised
+  evaluates every flag as off, so it shows hats to moderators only, while the mirror shows them to
+  all; once initialised the client keeps evaluating from its last config if Flipt goes away;
 - the session cookie roll: Node re-issues a session cookie older than a day; this service never sets
   cookies, so the next Node request rolls it instead;
 - web-client response headers Node adds (`x-update-required`, site alerts, rate-limit headers) are not
@@ -365,10 +381,9 @@ on Node).
 Shadow mode gives both sides the same requests. During it the Go process does nothing but handle
 shadow samples, so its CPU per call is a plain ratio. **That ratio is an UPPER BOUND for serving:**
 each shadow sample also costs work serving never does — receiving and decoding Node's envelope (up
-to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That comparison
-overhead is included in `process_cpu_seconds_total` and is not separated out, so a measured Go
-figure below Node's is conservative, and a figure near Node's does not by itself show Go is no
-cheaper.
+to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That overhead is
+in `process_cpu_seconds_total`, so a whole-process figure below Node's is conservative, and one near
+Node's does not by itself show Go is no cheaper. The per-phase series below separate it out.
 
 ```promql
 # Go: CPU seconds per computed answer (shadow), GC and runtime included.
@@ -382,6 +397,105 @@ sum(rate(feed_go_requests_total{mode="shadow",outcome="served"}[10m]))
 # What blocks serving more: fallback reasons by rate.
 topk(10, sum by (reason) (rate(feed_go_fallback_total{mode="shadow"}[1h])))
 ```
+
+### 10.1 Compute-only CPU: the per-phase series
+
+Each shadow sample runs three phases, each recorded with `{phase, outcome}`:
+
+| phase | covers | outcomes | serving pays it? |
+|---|---|---|---|
+| `decode` | reading the posted body and parsing the `ShadowRequest` (Node's envelope included) | `ok`, `bad_request` | no |
+| `compute` | `compute`: auth, the page, hydration, `superjson.Serialize` — the answer serving returns | `served`, `fallback`, `error` | yes |
+| `compare` | `shadow.Compare` (parses both envelopes, walks both trees) + `Classify` | `ok`, `bad_request` | no |
+
+Series:
+
+- `feed_go_shadow_phase_seconds` — wall time of every phase (histogram).
+- `feed_go_shadow_phase_cpu_seconds_total` — **process** CPU (`getrusage(RUSAGE_SELF)`, user+system)
+  consumed between the phase's start and end, added only when the phase was **solo**: it was the only
+  shadow sample holding a queue slot when it started, and no sample was admitted before it ended.
+- `feed_go_shadow_phase_solo_total` — how many phases were counted in the CPU series (its denominator).
+- `feed_go_shadow_phase_solo_wall_seconds_total` — the wall time of those same solo phases, to compare
+  with the mean over every phase (the length-bias check below).
+
+**Method, and why.** Go has no faithful per-request CPU clock: a request's work runs on several
+goroutines (the hydration lookups run in parallel) that migrate across OS threads, so a thread CPU
+clock misses work and a goroutine cannot be pinned without changing the program. Process CPU deltas
+are exact when only one request is running, and the shadow pod is in that regime almost all the time
+(it serves nothing but sampled shadow requests, at a low rate). So the CPU series counts only phases
+no other sample overlapped, and `solo_total` says how many that was. Wall time is NOT a CPU proxy for
+`compute`: it is mostly waiting on Redis, Postgres and the feed service, so apportioning process CPU by
+wall-time share overstates compute; use the wall histogram for latency and as a sanity check only.
+
+```promql
+# Go CPU per SERVED call, compute only (the go/no-go figure).
+sum(rate(feed_go_shadow_phase_cpu_seconds_total{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
+
+# Coverage: share of served computes that were solo (low share = the per-phase figure is a sample).
+sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_seconds_count{phase="compute",outcome="served"}[1h]))
+
+# Length bias: mean wall of the solo computes over the mean wall of all of them. Near 1 = the solo
+# phases are representative; below 1 = long computes are being excluded (see Limits).
+(sum(rate(feed_go_shadow_phase_solo_wall_seconds_total{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h])))
+/ (sum(rate(feed_go_shadow_phase_seconds_sum{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_seconds_count{phase="compute",outcome="served"}[1h])))
+
+# Shadow overhead per sample (what the whole-process ratio above over-counts).
+sum by (phase) (rate(feed_go_shadow_phase_cpu_seconds_total{phase=~"decode|compare"}[1h]))
+  / sum by (phase) (rate(feed_go_shadow_phase_solo_total{phase=~"decode|compare"}[1h]))
+
+# Cross-check: CPU the phases do not account for (idle runtime, GC not inside a phase, scrapes,
+# fallback samples). Should be small next to the phase CPU when coverage is high.
+sum(rate(process_cpu_seconds_total{job="feed-go"}[1h]))
+  - sum(rate(feed_go_shadow_phase_cpu_seconds_total[1h]))
+```
+
+**Limits.**
+
+- *Background runtime work is attributed to whichever phase it lands in.* The GC runs concurrently:
+  the collection of `compute`'s garbage may run during `compare` (which allocates heavily and so tends
+  to trigger it) or after the sample, and a collection of an EARLIER sample's garbage (its decode and
+  compare included) may run during this sample's `compute`. The direction of the net error is therefore
+  not known from these series: a profile decides it. Bound it with the unaccounted-CPU cross-check, and with the Go GC
+  series (`go_gc_*`) from the runtime collector; under real serving load the GC share is better read
+  from a profile (below) than from these series.
+- *Solo only.* Overlapping samples are excluded, not apportioned; if coverage is low (raised sample
+  rate, a burst), the figure is a sample of the quiet periods, which can differ from loaded behaviour
+  (less cache contention, no scheduler pressure).
+- *Length bias.* A phase is excluded when another sample is admitted before it ends, and a longer
+  phase is more likely to have that happen, so the solo phases lean short. Where a compute's CPU grows
+  with its wall time (cache misses, large hydrations), the compute-only figure then reads LOW, which
+  favours Go. The bias shrinks as coverage approaches 1; the length-bias query above measures it
+  directly, and coverage alone does not.
+- *Shadow-only process.* The method assumes the process runs nothing but shadow samples. The solo
+  check sees only shadow samples, so in a deployment that also serves the public route (or proxies
+  fallbacks) on the same process, that traffic's CPU lands in whichever phase it overlaps and the
+  figure reads HIGH. Read it only from a shadow-only deployment.
+- *Not covered:* building the synthetic request, the goroutine hand-off, and on the serving path the
+  response write (`trpc.WriteResult`) and the reverse-proxy cost of a fallback. All are small next to
+  `compute`; a fallback's proxy cost is Node's request, read on Node's side.
+- A Prometheus scrape that lands inside a phase is charged to it (one scrape per interval, small).
+- Off unix there is no process CPU clock: only the wall histogram is recorded.
+
+### 10.2 CPU profile
+
+With `FEED_GO_PPROF=true` the internal listener (the `FEED_GO_INTERNAL_ADDR` port, never the public
+one) serves `net/http/pprof` under `/debug/pprof/`. Off by default; turning it on is an env change
+and a restart. Anything the network allows to reach the internal port can then pull profiles, and a
+`profile`/`trace` request holds its connection for the `seconds` it asks for (the internal server sets
+no write timeout), so enable it for a profiling session and turn it off after. Pull a profile through
+a port-forward to the pod's internal port:
+
+```bash
+go tool pprof -http=: 'http://localhost:9090/debug/pprof/profile?seconds=60'
+```
+
+A profile is the authority on where compute's CPU goes (including the GC share), and checks the
+phase series: `compute` frames (`server.(*Server).compute` and below) against `shadow.Compare` and the
+`ShadowHandler` body decode.
 
 Node's side is the per-procedure CPU attribution already used to rank tRPC procedures (the same
 measurement that identified this one), read over the same window for
@@ -400,8 +514,9 @@ measurement that identified this one), read over the same window for
   rate is raised (shadowing doubles the read work for sampled requests, and on the feed-service path
   each sample is one more feed-service call per page and per completion batch).
 
-The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity,
-with Go's side read as an upper bound (it includes the shadow decode and compare, above).
+The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity.
+For Go, read the compute-only figure (§10.1) as the serving estimate, with its coverage beside it,
+and the whole-process figure (above) as the upper bound that includes the shadow decode and compare.
 
 ## 11. Deploy prerequisites (infrastructure repo, later)
 

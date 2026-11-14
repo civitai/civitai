@@ -1,13 +1,21 @@
 import { Button, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconArrowsMove, IconClock, IconHanger } from '@tabler/icons-react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import { HatStats } from '~/components/Events/ScoredEvent/HatStats';
+import HatTurfVideoModal from '~/components/Events/ScoredEvent/HatTurfVideoModal';
 import { EVENT_CARD_SURFACE } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 export type MyHat = RouterOutput['event']['getMyHats'][number];
+type PlacementStats = NonNullable<RouterOutput['event']['getMyHatPlacementStats']>[number];
+
+const ENTITY_NOUN: Record<string, string> = { Image: 'image', Model: 'model', Article: 'article' };
+const plural = (n: number, word: string) => `${abbreviateNumber(n)} ${word}${n === 1 ? '' : 's'}`;
 
 // Not overflow-hidden: the worn hat sits on the picture's corner and reaches past the card, as on
 // a feed card. The picture rounds its own top corners to the card's (8px less the 1px border).
@@ -20,13 +28,17 @@ export function MyHatCard({
   color,
   minutesLeft,
   onPlace,
+  placement,
 }: {
   hat: MyHat;
   color: string;
   /** Minutes until the move cooldown ends. */
   minutesLeft: number;
   onPlace?: () => void;
+  /** Views of what the hat is on now, since it went on. */
+  placement?: PlacementStats;
 }) {
+  const image = hat.placedOn?.image;
   return (
     <div className={CARD} data-testid="my-hat">
       {/* Move takes the free top-right corner; the worn hat sits on the top-left. */}
@@ -41,6 +53,15 @@ export function MyHatCard({
               entityType: hat.placedOn.entityType as CosmeticEntity,
               entityId: hat.placedOn.entityId,
             }}
+            onPlay={
+              image
+                ? () =>
+                    dialogStore.trigger({
+                      component: HatTurfVideoModal,
+                      props: { video: image.url, title: image.name ?? 'Video' },
+                    })
+                : undefined
+            }
           />
         ) : (
           <div
@@ -75,6 +96,19 @@ export function MyHatCard({
         <div className="mt-auto">
           <HatStats stats={hat} color={color} compact />
         </div>
+        {hat.placedOn && placement && (
+          <Tooltip
+            label="Views from signed-in people. Updates every few minutes."
+            multiline
+            w={240}
+            withArrow
+          >
+            <Text size="xs" c="dimmed" data-testid="my-hat-placement-stats">
+              On this {ENTITY_NOUN[hat.placedOn.entityType] ?? 'post'}:{' '}
+              {plural(placement.views, 'view')} since you placed it
+            </Text>
+          </Tooltip>
+        )}
         {minutesLeft > 0 && (
           <Text size="xs" c="dimmed">
             <IconClock size={12} className="inline align-[-1px]" /> Can move in {minutesLeft} min
