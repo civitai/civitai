@@ -35,7 +35,7 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   }),
 }));
 
-const { mintReviewBatch, isDeclared } = await import('../review-batch.service');
+const { mintReviewBatch } = await import('../review-batch.service');
 const { revokeReviewBatchesOfKeys } = await import('../review-batch.store');
 
 // ---------------------------------------------------------------------------------------------
@@ -138,7 +138,6 @@ const mint = (over: Partial<Parameters<typeof mintReviewBatch>[0]> = {}) =>
       viewer: VIEWER.id,
       suspect: false,
       source: 'card-1',
-      sourceText: ['look'],
       ...over,
     },
     ctx
@@ -147,7 +146,6 @@ const mint = (over: Partial<Parameters<typeof mintReviewBatch>[0]> = {}) =>
 beforeEach(() => {
   installFakeSysRedis();
   setEnv({
-    REVIEW_SHEET_SUSPECT_TERMS: 'alpha\nbeta gamma',
     REVIEW_SHEET_BLOCKEDFOR_PATTERNS: '# signal\n^sig$\n# known-non-minor\n^benign$',
   });
   mockIsFlipt.mockResolvedValue(true);
@@ -169,8 +167,11 @@ beforeEach(() => {
 });
 
 describe('the tier', () => {
-  it('clean images with clean source text mint general', async () => {
-    expect((await mint()).tier).toBe('general');
+  // The positive control: without it every case below would pass on a mint that holds everything.
+  it('clean images, a source card and suspect=false mint general', async () => {
+    const { batchId, tier } = await mint();
+    expect(tier).toBe('general');
+    expect(batchFor(batchId)!.declared).toBe(false);
   });
 
   it('a batch its minter declares suspect is held, whatever its images', async () => {
@@ -178,13 +179,15 @@ describe('the tier', () => {
     expect(tier).toBe('held');
     expect(batchFor(batchId)!.declared).toBe(true);
   });
-  it('suspect=false is overridden by a term in the source text', async () => {
-    expect((await mint({ sourceText: ['see ALPHA here'] })).tier).toBe('held');
+
+  it('no source card is held', async () => {
+    expect((await mint({ source: ' ' })).tier).toBe('held');
   });
 
-  it('no source card, or no source text, is held', async () => {
-    expect((await mint({ source: ' ' })).tier).toBe('held');
-    expect((await mint({ sourceText: [] })).tier).toBe('held');
+  it("reads each image's suspect leg with the CsamReport image listing", async () => {
+    await mint();
+    const query = JSON.stringify(dbMock.dbWrite.$queryRaw.mock.calls[0]);
+    expect(query).toContain('FROM \\"CsamReport\\" lr');
   });
 
   it('an image with a Postgres signal, an unreadable scan, or no row at all is held', async () => {
@@ -208,14 +211,8 @@ describe('the tier', () => {
     expect((await mint()).tier).toBe('held');
   });
 
-  it('without the term list or the blockedFor patterns every batch is held', async () => {
-    setEnv({ REVIEW_SHEET_SUSPECT_TERMS: undefined });
-    expect(isDeclared({ suspect: false, source: 'c', sourceText: ['x'] })).toBe(true);
-    expect((await mint()).tier).toBe('held');
-    setEnv({
-      REVIEW_SHEET_SUSPECT_TERMS: 'alpha',
-      REVIEW_SHEET_BLOCKEDFOR_PATTERNS: undefined,
-    });
+  it('without the blockedFor patterns every batch is held', async () => {
+    setEnv({ REVIEW_SHEET_BLOCKEDFOR_PATTERNS: undefined });
     expect((await mint()).tier).toBe('held');
   });
 });
@@ -226,13 +223,13 @@ describe('who may mint', () => {
     await expect(mint()).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
     await expect(
       mintReviewBatch(
-        { ids: [1], viewer: 8, suspect: false, source: 'c', sourceText: ['x'] },
+        { ids: [1], viewer: 8, suspect: false, source: 'c' },
         { actor: { ...MOD, permissions: [] } as never, apiKeyId: 99 }
       )
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(
       mintReviewBatch(
-        { ids: [1], viewer: 8, suspect: false, source: 'c', sourceText: ['x'] },
+        { ids: [1], viewer: 8, suspect: false, source: 'c' },
         { actor: MOD as never, apiKeyId: null }
       )
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -243,12 +240,11 @@ describe('who may mint', () => {
 });
 
 describe('the batch store', () => {
-  it('stores the record under the id hash, never the id, card text or a signal', async () => {
-    const { batchId, link } = await mint({ sourceText: ['secret words'] });
+  it('stores the record under the id hash, never the id or a signal', async () => {
+    const { batchId, link } = await mint();
     expect(link).toBe(`https://moderator.civitai.com/api/review-media/b/${batchId}`);
     const raw = JSON.stringify([...store.entries()].map(([k, e]) => [k, [e.value].flat()]));
     expect(raw).not.toContain(batchId);
-    expect(raw).not.toContain('secret words');
     expect(Object.keys(batchFor(batchId)!).sort()).toEqual(
       ['createdAt', 'createdBy', 'declared', 'ids', 'keyId', 'seat', 'tier', 'viewer'].sort()
     );
@@ -277,7 +273,7 @@ describe('the batch store', () => {
     const a = await mint();
     const b = await mint();
     const other = await mintReviewBatch(
-      { ids: [1], viewer: VIEWER.id, suspect: false, source: 'c', sourceText: ['x'] },
+      { ids: [1], viewer: VIEWER.id, suspect: false, source: 'c' },
       { actor: MOD as never, apiKeyId: 100 }
     );
     await revokeReviewBatchesOfKeys([99]);

@@ -68,10 +68,10 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
 import { StorylineChapterRemoveItem } from '~/components/Storyline/StorylineChapterRemoveItem';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { anchorImageIndex } from '~/components/Image/Detail/detail-items';
 import { TextSlideMenu } from '~/components/Image/DetailV2/TextSlideMenu';
-import { PostComments } from '~/components/Post/Detail/PostComments';
 import { trpc } from '~/utils/trpc';
 import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
@@ -823,7 +823,14 @@ function ImageDetail2Content() {
                             storageKey="discussion"
                           >
                             {textPost && (
-                              <PostComments postId={textPost.id} userId={textPost.user.id} />
+                              <CommentSection
+                                entityType="postText"
+                                entityId={text.id}
+                                ownerId={textPost.user.id}
+                                title={null}
+                                hideSort
+                                borderless
+                              />
                             )}
                           </CollapsibleCard>
                         </>

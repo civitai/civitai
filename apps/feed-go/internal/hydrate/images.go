@@ -98,25 +98,33 @@ func truthyJS(v any) bool {
 }
 
 // EventDecorations is getEventDecorationsForEntity for the events visible to every viewer (see
-// DESIGN.md: per-viewer event access is not ported; the visible set is configuration). Empty when no
-// event is visible, as in Node. A miss falls back (its lookup reads the primary).
+// DESIGN.md §8: Node asks the event engine and Flipt per viewer; here the visible set is the
+// FEED_GO_DECORATION_EVENTS mirror). Empty when no event is visible, with no cache read, as in Node
+// (decorationsForEvents returns before its fetch). A miss falls back (its lookup reads the primary).
 func (s *Sources) EventDecorations(ctx context.Context, imageIDs []int, visibleEvents map[string]bool) (map[int]superjson.Object, error) {
-	out := map[int]superjson.Object{}
 	imageIDs = Unique(imageIDs)
 	if len(imageIDs) == 0 || len(visibleEvents) == 0 {
-		return out, nil
+		return map[int]superjson.Object{}, nil
 	}
-	got := s.Packed.Get(ctx, KeyImageEvents, imageIDs, 0)
+	return VisibleEventDecorations(imageIDs, s.Packed.Get(ctx, KeyImageEvents, imageIDs, 0), visibleEvents)
+}
+
+// VisibleEventDecorations is decorationsForEvents over the event-decoration cache's answer: an entry
+// whose `data.event` is a string naming a visible event (isEventDecorationData), picked field by
+// field so the wearer's `userId` (and any stale extra field) is not sent. An id the cache did not
+// answer falls back.
+func VisibleEventDecorations(imageIDs []int, got map[int]Entry, visibleEvents map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("event-decoration-miss", "%d ids", len(miss))
 	}
+	out := map[int]superjson.Object{}
 	for id, e := range got {
 		if e.NotFound {
 			continue
 		}
 		data, _ := e.Value["data"].(map[string]any)
-		event, _ := data["event"].(string)
-		if event == "" || !visibleEvents[event] {
+		event, ok := data["event"].(string)
+		if !ok || !visibleEvents[event] {
 			continue
 		}
 		out[id] = Pick(e.Value, "id", "name", "type", "source", "data", "equippedToId", "equippedToType")
