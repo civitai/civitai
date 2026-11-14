@@ -42,7 +42,7 @@ export async function assertPostTextVisible(
   if (!text) throw throwNotFoundError('Text not found');
   const post = await assertPostVisibleToViewer({ id: text.postId, user: ctx.user });
   const seesAll = !!ctx.user && (ctx.user.id === post.user.id || !!ctx.user.isModerator);
-  const pending = await pendingCsamHoldTextIds([textId]);
+  const pending = await pendingCsamHoldTextIds([textId], { primary: true });
   if (
     !isPostTextShownToViewer(
       { ...text, csamHeld: text.csamHeld || pending.has(textId) },

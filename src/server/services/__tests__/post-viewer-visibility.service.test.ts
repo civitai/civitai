@@ -64,6 +64,7 @@ beforeEach(() => {
   mocks.getPostDetail.mockResolvedValue({ id: POST, user: { id: AUTHOR } });
   mocks.amIBlockedByUser.mockResolvedValue(false);
   dbMock.dbRead.textScanHold.findMany.mockResolvedValue([] as never);
+  dbMock.dbWrite.textScanHold.findMany.mockResolvedValue([] as never);
 });
 
 describe("a storyline text's thread is readable exactly where post.get serves the text", () => {
@@ -110,11 +111,20 @@ describe("a storyline text's thread is readable exactly where post.get serves th
   it('a text with a Pending csam hold has no readable thread, author and moderators included', async () => {
     givenText(scanned);
     dbMock.dbRead.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
+    dbMock.dbWrite.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
     for (const user of [undefined, member, author, moderator]) {
       const c = ctx(user);
       expect(await threadReadable(c)).toBe(false);
       expect(await servedByPostGet(c)).toBe(false);
     }
+  });
+
+  it('reads a Pending csam hold from the primary, so one just written is not missed on a lagging replica', async () => {
+    givenText(scanned);
+    // The replica has not seen the hold yet; the primary has.
+    dbMock.dbRead.textScanHold.findMany.mockResolvedValue([] as never);
+    dbMock.dbWrite.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
+    expect(await threadReadable(ctx(member))).toBe(false);
   });
 
   it('an unscanned text is readable by its author and moderators only', async () => {

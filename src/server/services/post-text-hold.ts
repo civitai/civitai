@@ -19,9 +19,10 @@ export const postHoldsHeldTextSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
  * The texts among these under a Pending csam hold. The hold is written before `csamHeld` is set, and
  * not in one transaction, so readers treat a pending hold as held (`postTextPendingCsamHoldText`).
  */
-export async function pendingCsamHoldTextIds(textIds: number[]) {
+export async function pendingCsamHoldTextIds(textIds: number[], { primary = false } = {}) {
   if (!textIds.length) return new Set<number>();
-  const holds = await dbRead.textScanHold.findMany({
+  // `primary`: a hold written a moment ago may not have reached the replica yet.
+  const holds = await (primary ? dbWrite : dbRead).textScanHold.findMany({
     where: { entityType: 'PostText', entityId: { in: textIds }, label: 'csam', status: 'Pending' },
     select: { entityId: true },
   });
