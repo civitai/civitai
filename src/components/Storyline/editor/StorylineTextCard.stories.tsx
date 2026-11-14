@@ -1,6 +1,7 @@
 import '@mantine/tiptap/styles.layer.css';
 import type { ReactNode } from 'react';
 import { StoryTRPCProvider } from '../../../../.ladle/trpc';
+import { FixedSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { MediaUploadSettingsProvider } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageCards } from '~/components/Post/EditV2/PostImageCards/PostImageCards';
@@ -11,8 +12,8 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { PostDetailEditable } from '~/server/services/post.service';
 
-// Design review stories for storyline text items. "Held" shows the read-only card after the
-// server refuses a change: click Delete in the story to get there.
+// Design review stories for storyline text items, viewed as the chapter's author. "Held" shows
+// the read-only card after the server refuses a change: click Delete in the story to get there.
 
 const flags = { storylines: true, storylineText: true } as unknown as FeatureAccess;
 
@@ -62,18 +63,25 @@ const post = {
   texts,
 } as unknown as PostDetailEditable;
 
+// The post is a draft chapter, so the author gets text items.
+const storylineMocks = {
+  'storyline.getPendingForPost': { storylineId: 1, parentChapter: null },
+};
+
 function Frame({ children, mocks = {} }: { children: ReactNode; mocks?: Record<string, unknown> }) {
   return (
-    <StoryTRPCProvider mocks={mocks}>
-      <FeatureFlagsProvider flags={flags}>
-        <BrowserSettingsProvider>
-          <MediaUploadSettingsProvider settings={{ maxItems: 20 }}>
-            <PostEditProvider post={post}>
-              <div className="w-[min(800px,calc(100vw-48px))]">{children}</div>
-            </PostEditProvider>
-          </MediaUploadSettingsProvider>
-        </BrowserSettingsProvider>
-      </FeatureFlagsProvider>
+    <StoryTRPCProvider mocks={{ ...storylineMocks, ...mocks }}>
+      <FixedSessionProvider user={{ id: 1, username: 'author' }}>
+        <FeatureFlagsProvider flags={flags}>
+          <BrowserSettingsProvider>
+            <MediaUploadSettingsProvider settings={{ maxItems: 20 }}>
+              <PostEditProvider post={post}>
+                <div className="w-[min(800px,calc(100vw-48px))]">{children}</div>
+              </PostEditProvider>
+            </MediaUploadSettingsProvider>
+          </BrowserSettingsProvider>
+        </FeatureFlagsProvider>
+      </FixedSessionProvider>
     </StoryTRPCProvider>
   );
 }
