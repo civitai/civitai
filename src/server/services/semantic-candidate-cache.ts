@@ -44,6 +44,16 @@ const readBlock = (key: CandidateKey) =>
  * With the audit flag on, the key also carries the guard's mode and version, so an enforce flip or a
  * new artifact stops serving blocks the old guard judged. An unreadable status skips Redis.
  */
+/**
+ * The key's mode comes from the pod's memoised status read, which can lag the replica that answered.
+ * A block is cached only under the mode and version that judged it, or when no guard judged the text.
+ */
+function judgedUnder(blockGuard: GuardRead | undefined, key: string | undefined) {
+  if (key === undefined || !blockGuard || blockGuard.outcome === 'none') return true;
+  if (blockGuard.outcome === 'unknown') return false;
+  return `${blockGuard.mode}:${blockGuard.version ?? 'none'}` === key;
+}
+
 export function withCandidateCache(
   collection: SearchCollection,
   source: CandidateSource,
@@ -77,7 +87,7 @@ export function withCandidateCache(
         .update(JSON.stringify({ query, qdrantFilter, sort, start, viewerClass, guard }))
         .digest('hex')}` as const;
     const write = (key: CandidateKey, block: Block) =>
-      uncached
+      uncached || !judgedUnder(block.guard, guard)
         ? undefined
         : clusterCacheGuard.writeBestEffort('semantic candidates set', () =>
             redis.packed.set(key, block, { EX: CacheTTL.md })

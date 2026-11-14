@@ -237,6 +237,47 @@ describe('withCandidateCache and the query guard', () => {
     expect(calls()).toBe(3);
   });
 
+  it('does not cache a block under a mode other than the one that judged it', async () => {
+    h.auditFlag = true;
+    const { source, calls } = guardedSource();
+    // The pod's status read still says enforce; the replica that answered judged in shadow.
+    await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
+    const again = await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
+    expect(again.cacheHit).toBe(false);
+    expect(calls()).toBe(2);
+  });
+
+  it('does not cache a block from a replica that reported no full guard result', async () => {
+    h.auditFlag = true;
+    let calls = 0;
+    const source: CandidateSource = async ({ offset, limit }) => {
+      calls++;
+      return {
+        ids: Array.from({ length: limit }, (_, i) => offset + i + 1),
+        guard: { outcome: 'unknown', rules: [], mode: '', version: null },
+      };
+    };
+    await run(withCandidateCache('images', source, 'user', status('shadow:v1')));
+    await run(withCandidateCache('images', source, 'user', status('shadow:v1')));
+    expect(calls).toBe(2);
+  });
+
+  it('caches a block no guard judged, such as a search by image', async () => {
+    h.auditFlag = true;
+    let calls = 0;
+    const source: CandidateSource = async ({ offset, limit }) => {
+      calls++;
+      return {
+        ids: Array.from({ length: limit }, (_, i) => offset + i + 1),
+        guard: { outcome: 'none', rules: [], mode: '', version: null },
+      };
+    };
+    await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
+    const again = await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
+    expect(again.cacheHit).toBe(true);
+    expect(calls).toBe(1);
+  });
+
   it('goes to the service every time while the guard status is unreadable', async () => {
     h.auditFlag = true;
     const { source, calls } = guardedSource();
