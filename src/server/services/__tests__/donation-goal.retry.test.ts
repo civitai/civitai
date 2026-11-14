@@ -15,6 +15,7 @@ const { buzz, prefixRefund } = vi.hoisted(() => ({
     createMultiAccountBuzzTransaction: vi.fn(),
     refundMultiAccountTransaction: vi.fn(),
     getMultiAccountTransactionsByPrefix: vi.fn(),
+    getTransactionByExternalId: vi.fn(),
   },
   prefixRefund: { getPrefixRefundState: vi.fn() },
 }));
@@ -104,6 +105,7 @@ beforeEach(() => {
   buzz.getMultiAccountTransactionsByPrefix.mockImplementation(
     ledger.getMultiAccountTransactionsByPrefix
   );
+  buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
   prefixRefund.getPrefixRefundState.mockImplementation(ledger.getPrefixRefundState);
   // Each attempt is a later moment, as it is for a donor pressing donate again.
   vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1000));
@@ -198,6 +200,30 @@ describe('a donation across an unknown outcome', () => {
 
     expect(ledger.charges()).toHaveLength(2);
     expect(donations).toEqual([expect.objectContaining({ amount: 300 })]);
+  });
+
+  // The prefix carries the amount but not the currency: a retry under the same key in another
+  // currency would be answered with the first one's legs and recorded as a donation it never paid.
+  it('a retry under the same key in another currency is refused, and records nothing', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await expect(donate(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+
+    await expect(
+      donateToGoal({
+        donationGoalId: GOAL_ID,
+        amount: 500,
+        userId: DONOR,
+        buzzType: 'green',
+        idempotencyKey: KEY,
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This payment was already started with different details. Please start it again.',
+    });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(donations).toHaveLength(0);
   });
 
   it('files the charge under the donor, the goal and the amount, then the key', async () => {
