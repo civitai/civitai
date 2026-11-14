@@ -255,6 +255,25 @@ describe('child-label reindex: reindex', () => {
     });
   });
 
+  it('a reindex stopped above `after` hands back that same `after`', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({
+      step: 'reindex',
+      dryRun: false,
+      chunkSize: 2,
+      after: 1,
+    });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      images: 2,
+      lastImageId: 1,
+      done: false,
+      aborted: expect.any(String),
+    });
+  });
+
   it('a dry run over stale entries counts and does not stop', async () => {
     fetch.mockImplementation(async (ids: number[]) =>
       Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
