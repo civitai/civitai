@@ -88,11 +88,11 @@ export async function signIns(
   for (const ids of chunks(userIds)) {
     const rows = await ch.$query<{ userId: string; ip: string; ipAccounts: string }>(`
       WITH l AS (
-        SELECT DISTINCT userId, ip FROM userActivities
-        WHERE ${window} AND userId IN (${ints(ids)}) AND ip != ''
+        SELECT DISTINCT targetUserId AS userId, ip FROM userActivities
+        WHERE ${window} AND targetUserId IN (${ints(ids)}) AND ip != ''
       ),
       c AS (
-        SELECT ip, uniqExact(userId) AS accounts FROM userActivities
+        SELECT ip, uniqExact(targetUserId) AS accounts FROM userActivities
         WHERE ${window} AND ip IN (SELECT ip FROM l)
         GROUP BY ip
       )
