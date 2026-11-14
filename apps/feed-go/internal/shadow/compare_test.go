@@ -130,6 +130,26 @@ func TestCompareUndefinedIsNotNull(t *testing.T) {
 	}
 }
 
+// An ["undefined"] annotation on one side only, with the member absent from the other side, is ONE
+// difference (the annotation), not also a missing-in-* from the walk. Both directions, so each half
+// of the walk's skip case is pinned.
+func TestCompareOneSidedUndefinedIsOneAnnotationDiff(t *testing.T) {
+	plain := []byte(`{"json":{"a":{"x":1}}}`)
+	annotated := []byte(`{"json":{"a":{"x":1,"review":null}},"meta":{"values":{"a.review":["undefined"]},"v":1}}`)
+	for name, envs := range map[string][2][]byte{
+		"node annotated": {plain, annotated},
+		"go annotated":   {annotated, plain},
+	} {
+		r, err := Compare(envs[0], envs[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Match || len(r.Diffs) != 1 || r.Diffs[0].Path != "a.review" || r.Diffs[0].Kind != "annotation" {
+			t.Errorf("%s: want exactly one a.review annotation diff, got %+v", name, r.Diffs)
+		}
+	}
+}
+
 func TestCompareNumbersNumerically(t *testing.T) {
 	r, err := Compare([]byte(`{"json":{"a":1.0,"b":[1,2]}}`), []byte(`{"json":{"a":1,"b":[1,2,3]}}`))
 	if err != nil {
