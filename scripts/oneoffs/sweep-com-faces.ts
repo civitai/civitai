@@ -13,7 +13,8 @@
  *     longer a candidate.
  *   Both take --concurrency (default 4).
  *
- * Prints counts only, never model ids, text or reasons.
+ * Prints counts only, never model ids, text or reasons. Run it with no `prisma*` entry in LOGGING:
+ * those print each query's parameters. A model any moderator has ruled on for nsfw is never locked.
  */
 import path from 'path';
 import type { ComFaceIntentWrites } from '~/server/services/model-sfw-face.service';
@@ -40,6 +41,7 @@ export type NotLockedReason =
   | 'sfw-only'
   | 'already-locked'
   | 'relock-suppressed'
+  | 'moderator-ruled'
   | 'lock-refused';
 export type Outcome = 'allowed' | 'unavailable' | 'locked' | NotLockedReason;
 
@@ -65,6 +67,7 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   const { getOwnTriggerWords, recordComFaceIntent, lockForComFaceIntent, comFaceIntentTextHash } =
     await import('~/server/services/model-com-face-intent.service');
   const { resolveComFaceIntent } = await import('~/server/services/model-sfw-face.service');
+  const { moderatorRuledNsfwSince } = await import('~/server/services/rating-review.entities');
 
   const listing = {
     name: face.name,
@@ -72,18 +75,28 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
     triggerWords: await getOwnTriggerWords({ modelId: face.id, userId: face.userId }),
   };
   const textHash = comFaceIntentTextHash(listing);
-  const writes: ComFaceIntentWrites = apply
-    ? { record: recordComFaceIntent, lock: lockForComFaceIntent }
-    : {
-        record: async () => undefined,
-        lock: async (_modelId, hash) => notLockedReason(face, hash) === null,
-      };
+  // A face save checks for a moderator's nsfw ruling only since a stored verdict, and no candidate
+  // has one: a ruling made before `comFaceIntentRelockSuppressed` existed would go unseen, and a
+  // bulk lock would override it. So any moderator nsfw ruling ever keeps the sweep's lock off.
+  let ruled = false;
+  const lock: ComFaceIntentWrites['lock'] = async (modelId, hash) => {
+    if (await moderatorRuledNsfwSince(modelId, new Date(0))) {
+      ruled = true;
+      return false;
+    }
+    return apply ? lockForComFaceIntent(modelId, hash) : notLockedReason(face, hash) === null;
+  };
+  const writes: ComFaceIntentWrites = {
+    record: apply ? recordComFaceIntent : async () => undefined,
+    lock,
+  };
   const verdict = await resolveComFaceIntent(
     { ...listing, modelId: face.id, userId: face.userId },
     writes
   );
   if (verdict.status !== 'detected') return verdict.status;
   if (verdict.disputable) return 'locked';
+  if (ruled) return 'moderator-ruled';
   return notLockedReason(face, textHash) ?? 'lock-refused';
 }
 
@@ -145,13 +158,28 @@ export async function readCandidates(limit: number, apply: boolean) {
   return { candidates, dangling, faces };
 }
 
+class UsageError extends Error {}
+
+/** The services' `logToAxiom` echoes each event, model id and error text included, to stdout outside
+ *  production, which is how `tsscript` runs. Dropped here, counted: stdout stays counts only. */
+function muteAxiomEcho() {
+  const log = console.log;
+  const muted = { lines: 0 };
+  console.log = (...args: unknown[]) => {
+    if (args[0] === 'logToAxiom') muted.lines++;
+    else log(...args);
+  };
+  return muted;
+}
+
 async function main() {
+  const muted = muteAxiomEcho();
   const apply = process.argv.includes('--apply');
   const limit = Number(arg('--limit'));
   const concurrency = Number(arg('--concurrency') ?? 4);
-  if (!Number.isInteger(limit) || limit < 1) throw new Error('--limit <n> is required');
+  if (!Number.isInteger(limit) || limit < 1) throw new UsageError('--limit <n> is required');
   if (!Number.isInteger(concurrency) || concurrency < 1)
-    throw new Error('--concurrency must be a whole number from 1');
+    throw new UsageError('--concurrency must be a whole number from 1');
 
   const { candidates, dangling, faces } = await readCandidates(limit, apply);
   const started = Date.now();
@@ -165,6 +193,9 @@ async function main() {
     ...outcomes,
     ownersLocked,
     failed,
+    // An apply that leaves this as high as `candidates` made no progress (verdicts not stored).
+    ...(apply && { candidatesAfter: (await readCandidates(1, apply)).candidates }),
+    mutedLogLines: muted.lines,
     elapsedSeconds: Math.round((Date.now() - started) / 1000),
   });
 }
@@ -173,6 +204,7 @@ if (path.basename(process.argv[1] ?? '').startsWith(`${SCRIPT_BASENAME}.`))
   main()
     .then(() => process.exit(0))
     .catch((e) => {
-      console.error(e instanceof Error ? e.message : e);
+      // Only our own usage errors are printed whole: a database error can carry row text.
+      console.error(e instanceof UsageError ? e.message : `failed: ${e?.constructor?.name}`);
       process.exit(1);
     });

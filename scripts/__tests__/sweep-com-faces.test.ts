@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   record: vi.fn(),
   lock: vi.fn(),
   resolve: vi.fn(),
+  ruled: vi.fn(),
 }));
 
 vi.mock('@civitai/orchestration-client', () => ({
@@ -26,6 +27,9 @@ vi.mock('~/server/services/model-com-face-intent.service', async (importOriginal
   recordComFaceIntent: mocks.record,
   lockForComFaceIntent: mocks.lock,
   getOwnTriggerWords: vi.fn(async () => ['tw']),
+}));
+vi.mock('~/server/services/rating-review.entities', () => ({
+  moderatorRuledNsfwSince: mocks.ruled,
 }));
 // A spy around the real face-save resolver, so the sweep is pinned to it.
 vi.mock('~/server/services/model-sfw-face.service', async (importOriginal) => {
@@ -67,7 +71,22 @@ describe('sweep-com-faces', () => {
     vi.clearAllMocks();
     mocks.record.mockResolvedValue(undefined);
     mocks.lock.mockResolvedValue(true);
+    mocks.ruled.mockResolvedValue(false);
   });
+
+  // Decision: a face save looks for a moderator's ruling only after a stored verdict, which no
+  // candidate has, so the sweep checks for any ruling ever. Don't drop it as redundant.
+  it.each([true, false])(
+    'never locks a model a moderator has ruled on (apply %s)',
+    async (apply) => {
+      mocks.read.mockResolvedValue(face());
+      mocks.preview.mockResolvedValue(verdict(true));
+      mocks.ruled.mockResolvedValue(true);
+      await expect(sweepOne(face(), apply)).resolves.toBe('moderator-ruled');
+      expect(mocks.ruled).toHaveBeenCalledWith(7, new Date(0));
+      expect(mocks.lock).not.toHaveBeenCalled();
+    }
+  );
 
   // Decision: the sweep runs the face-save resolver itself, never a copy, so a change on main to
   // what a face save stores or locks is what the sweep does too. Don't inline it.
@@ -83,7 +102,7 @@ describe('sweep-com-faces', () => {
         modelId: 7,
         userId: 1,
       },
-      { record: mocks.record, lock: mocks.lock }
+      { record: mocks.record, lock: expect.any(Function) }
     );
   });
 
