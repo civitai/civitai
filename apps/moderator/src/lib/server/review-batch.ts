@@ -56,7 +56,9 @@ export async function mintingKeyLive(keyId: number): Promise<boolean> {
   return !!row;
 }
 
-/** * Whether the scanner's ClickHouse rows hold an image on the held tier: a CSAM or minor label, or no * rows. A read that fails answers yes, so the general route answers moved and the held route serves. */
+/**
+ * Whether the scanner's ClickHouse rows hold an image on the held tier: a CSAM or minor label, or no
+ * rows. A read that fails answers yes, so the general route answers moved and the held route serves.
  */
 export async function scannerHoldsImage(imageId: number): Promise<boolean> {
   try {
