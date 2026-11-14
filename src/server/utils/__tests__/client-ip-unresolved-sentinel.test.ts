@@ -63,7 +63,7 @@ describe('client-ip: the unresolvable sentinel and its adapter', () => {
       // header had been accepted, this would still be the label.
       expect(
         resolveClientIp(
-          reqWith({ 'cf-connecting-ip': UNRESOLVED_CLIENT_IP, 'x-client-ip': '198.51.100.4' })
+          reqWith({ 'cf-connecting-ip': UNRESOLVED_CLIENT_IP, 'x-forwarded-for': '198.51.100.4' })
         )
       ).toBe('198.51.100.4');
     });
@@ -77,7 +77,7 @@ describe('client-ip: the unresolvable sentinel and its adapter', () => {
     it.each([
       ['an edge-stamped IPv4 address', { 'cf-connecting-ip': '203.0.113.7' }, '203.0.113.7'],
       ['an edge-stamped IPv6 address', { 'cf-connecting-ip': '2001:db8::1' }, '2001:db8::1'],
-      ['a value recovered by the fallback', { 'x-client-ip': '198.51.100.4' }, '198.51.100.4'],
+      ['a value recovered by the fallback', { 'x-forwarded-for': '198.51.100.4' }, '198.51.100.4'],
     ])('passes %s through unchanged', (_label, headers, expected) => {
       expect(resolveClientIpOrNull(reqWith(headers))).toBe(expected);
     });
@@ -97,7 +97,7 @@ describe('client-ip: the unresolvable sentinel and its adapter', () => {
         reqWith({ 'cf-connecting-ip': '2001:db8::1' }),
         reqWith({ 'cf-connecting-ip': 'notanip' }, '10.42.0.9'),
         reqWith({ 'cf-connecting-ip': 'fe80::1%eth0' }, '10.42.0.9'),
-        reqWith({ 'x-client-ip': '198.51.100.4' }),
+        reqWith({ 'x-forwarded-for': '198.51.100.4' }),
         reqWith({}, '10.42.0.9'),
         reqWith({ 'cf-connecting-ip': ['203.0.113.9', '203.0.113.10'] }),
       ];
