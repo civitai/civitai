@@ -99,6 +99,7 @@ beforeAll(async () => {
       "modelVersionId" int NOT NULL REFERENCES "ModelVersion"(id) ON DELETE CASCADE,
       "createdAt" timestamp(3) NOT NULL
     );
+    CREATE TABLE "ImageResourceNew" ("imageId" int NOT NULL, "modelVersionId" int NOT NULL);
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
@@ -276,34 +277,49 @@ describe('remove-old-drafts and models a moderator acted on', () => {
 
 // Any CsamReport tied to a model keeps it, whatever the report's status and whoever it names.
 describe('remove-old-drafts and models tied to a CsamReport', () => {
-  const OLD_REPORT_OWNER = 80; // named on a report sent and archived two years ago: no longer a hold
+  const OLD = `now() - interval '2 years'`; // sent and archived this long ago: no longer a legal hold
+  const OLD_REPORT_OWNER = 80; // the subject of an old report
+  const SECONDARY_OWNER = 84; // the secondary user of an old report
+  const PAST_OWNER = 85; // the subject of an old report; gave model 186 away
   const OTHER_SUBJECT = 81; // whom the version and image reports name; owns no model
-  const POSTER = 82; // posted the listed image to a free owner's version
-  const OLD_REPORT_MODEL = 180;
-  const LISTED_VERSION_MODEL = 181; // a report lists one of its versions
-  const LISTED_IMAGE_MODEL = 182; // a report lists an image posted to one of its versions
-  const UNLISTED_MODEL = 183; // control: a report lists another image and another version
-  const tied = [
-    { id: OLD_REPORT_MODEL, userId: OLD_REPORT_OWNER },
-    { id: LISTED_VERSION_MODEL, userId: FREE_OWNER },
-    { id: LISTED_IMAGE_MODEL, userId: FREE_OWNER },
-    { id: UNLISTED_MODEL, userId: FREE_OWNER },
-  ];
+  const POSTER = 82; // posted or made the listed images
+  const cases = {
+    oldReportOwner: { id: 180, userId: OLD_REPORT_OWNER },
+    listedVersion: { id: 181, userId: FREE_OWNER },
+    postedImage: { id: 182, userId: FREE_OWNER },
+    secondaryOwner: { id: 184, userId: SECONDARY_OWNER },
+    resourceVersion: { id: 185, userId: FREE_OWNER }, // a generated image report names it as a resource
+    pastOwner: { id: 186, userId: GIVEN_BY_FREE_OWNER },
+    madeWith: { id: 187, userId: FREE_OWNER }, // a listed image was made with it
+  };
+  const UNLISTED_MODEL = 183; // control: reports list other images, versions and resources
+  const tied = [...Object.values(cases), { id: UNLISTED_MODEL, userId: FREE_OWNER }];
+  const keptIds = Object.values(cases).map((c) => c.id);
 
   beforeAll(async () => {
+    const { listedVersion, postedImage, resourceVersion, pastOwner, madeWith } = cases;
     await db.exec(`
-      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (8201, ${POSTER}, ${LISTED_IMAGE_MODEL}0),
-        (8301, ${POSTER}, ${UNLISTED_MODEL}0);
-      INSERT INTO "Image" (id, "userId", "postId") VALUES (8202, ${POSTER}, 8201), (8302, ${POSTER}, 8301),
-        (8999, ${POSTER}, NULL);
-      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
-        (${OLD_REPORT_OWNER}, now() - interval '2 years', now() - interval '2 years');
-      INSERT INTO "CsamReport" ("userId", details) VALUES
-        (${OTHER_SUBJECT}, '{"modelVersionIds": [${LISTED_VERSION_MODEL}0]}'),
-        (${OTHER_SUBJECT}, '{"modelVersionIds": [999999]}');
-      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images) VALUES
-        (${OTHER_SUBJECT}, now() - interval '2 years', now() - interval '2 years', '[{"id": 8202}]'),
-        (${OTHER_SUBJECT}, now() - interval '2 years', now() - interval '2 years', '[{"id": 8999}]');
+      INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
+        (${pastOwner.id}, ${PAST_OWNER}, 'create'), (${pastOwner.id}, ${GIVEN_BY_FREE_OWNER}, 'transfer');
+      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES
+        (8201, ${POSTER}, ${postedImage.id}0), (8301, ${POSTER}, ${UNLISTED_MODEL}0);
+      INSERT INTO "Image" (id, "userId", "postId") VALUES
+        (8202, ${POSTER}, 8201), (8302, ${POSTER}, 8301), (8999, ${POSTER}, NULL),
+        (8702, ${POSTER}, NULL), (8303, ${POSTER}, NULL);
+      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId") VALUES
+        (8702, ${madeWith.id}0), (8303, ${UNLISTED_MODEL}0);
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images, details) VALUES
+        (${OLD_REPORT_OWNER}, ${OLD}, ${OLD}, '[]', '{}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[]', '{"secondaryUserId": ${SECONDARY_OWNER}}'),
+        (${PAST_OWNER}, ${OLD}, ${OLD}, '[]', '{}'),
+        (${OTHER_SUBJECT}, NULL, NULL, '[]', '{"modelVersionIds": [${listedVersion.id}0]}'),
+        (${OTHER_SUBJECT}, NULL, NULL, '[]', '{"modelVersionIds": [999999]}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8202}]', '{}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8999}]', '{}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8702}]', '{}'),
+        (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[]', '{"generatedImages": [{"resources": [
+          "urn:air:sdxl:lora:civitai:1@${resourceVersion.id}0", "urn:air:sdxl:lora:civitai:1@${UNLISTED_MODEL}00"
+        ]}]}');
     `);
   });
 
@@ -319,13 +335,17 @@ describe('remove-old-drafts and models tied to a CsamReport', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue(tied);
   });
 
-  it('keeps a model whose owner, version or posted image a report names, and deletes the control', async () => {
+  it.each(Object.entries(cases))('keeps the model: %s', async (_name, { id }) => {
     await (removeOldDrafts as unknown as () => Promise<void>)();
+    expect(await remainingModels()).toContain(id);
+  });
 
-    const remaining = await remainingModels();
-    expect(remaining).toEqual(
-      expect.arrayContaining([OLD_REPORT_MODEL, LISTED_VERSION_MODEL, LISTED_IMAGE_MODEL])
-    );
-    expect(remaining).not.toContain(UNLISTED_MODEL);
+  it('deletes the control, and reports the kept ones apart from legal holds', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+    expect(await remainingModels()).not.toContain(UNLISTED_MODEL);
+    expect(axiomEvents('Kept old draft models tied to a CsamReport')).toEqual([
+      expect.objectContaining({ modelIds: [...keptIds].sort((a, b) => a - b) }),
+    ]);
+    expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
   });
 });

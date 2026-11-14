@@ -20,29 +20,58 @@ const moderatedSql = (m: Prisma.Sql) => Prisma.sql`(
   OR (${m}.status::text = 'Deleted' AND ${m}."deletedBy" IS NOT NULL AND ${m}."deletedBy" <> ${m}."userId")
 )`;
 
-/** A model tied to any CsamReport, whatever its status, is kept: one naming its owner or a past owner,
- *  one listing one of its versions, or one listing an image posted to one of its versions. Wider than
- *  the legal hold, which a report stops holding a year after it is sent and archived. */
+/** Everyone a CsamReport names, as its subject or its secondary user, whatever its status, as text. */
+const reportedUserIdsSql = Prisma.sql`
+  SELECT ru."userId"::text FROM "CsamReport" ru WHERE ru."userId" IS NOT NULL
+  UNION
+  SELECT rs.details ->> 'secondaryUserId' FROM "CsamReport" rs
+  WHERE rs.details ->> 'secondaryUserId' IS NOT NULL`;
+
+const asArray = (json: Prisma.Sql) =>
+  Prisma.sql`CASE WHEN jsonb_typeof(${json}) = 'array' THEN ${json} ELSE '[]'::jsonb END`;
+
+/** Every version a CsamReport lists, or names as a resource of a generated image it reports, as text. */
+const reportedVersionIdsSql = Prisma.sql`
+  SELECT rv.id FROM "CsamReport" rvr
+  CROSS JOIN LATERAL jsonb_array_elements_text(${asArray(
+    Prisma.sql`rvr.details -> 'modelVersionIds'`
+  )}) rv(id)
+  UNION
+  SELECT substring(rr.air from ':civitai:[0-9]+@([0-9]+)') FROM "CsamReport" rgr
+  CROSS JOIN LATERAL jsonb_array_elements(${asArray(
+    Prisma.sql`rgr.details -> 'generatedImages'`
+  )}) rg
+  CROSS JOIN LATERAL jsonb_array_elements_text(${asArray(Prisma.sql`rg -> 'resources'`)}) rr(air)`;
+
+/** The image ids a CsamReport lists that fit an int, so a lookup by image id can use its index. */
+const listedImageIntIdsSql = Prisma.sql`
+  SELECT CASE WHEN li.id ~ '^[0-9]{1,9}$' THEN li.id::int END
+  FROM (${csamReportListedImageIdsSql}) li`;
+
+/** A model tied to any CsamReport, whatever its status, is kept: one naming its owner or a past
+ *  owner, listing or naming as a resource one of its versions, or listing an image posted to one of
+ *  its versions or made with one. Wider than the legal hold, which a report stops holding a year
+ *  after it is sent and archived. The sets are uncorrelated, so each is built once per statement. */
 const csamReportTiedSql = (m: Prisma.Sql) => Prisma.sql`(
-  EXISTS (
-    SELECT 1 FROM "CsamReport" cr
-    WHERE cr."userId" = ${m}."userId"
-      OR cr.details ->> 'secondaryUserId' = (${m}."userId")::text
-      OR cr."userId" IN (SELECT co."userId" FROM "ModelOwnership" co WHERE co."modelId" = ${m}.id)
-      OR cr.details ->> 'secondaryUserId' IN (
-        SELECT co."userId"::text FROM "ModelOwnership" co WHERE co."modelId" = ${m}.id
-      )
-      OR (jsonb_typeof(cr.details -> 'modelVersionIds') = 'array' AND EXISTS (
-        SELECT 1 FROM "ModelVersion" cv
-        JOIN jsonb_array_elements_text(cr.details -> 'modelVersionIds') cvi ON cvi = cv.id::text
-        WHERE cv."modelId" = ${m}.id
-      ))
+  (${m}."userId")::text IN (${reportedUserIdsSql})
+  OR EXISTS (
+    SELECT 1 FROM "ModelOwnership" co
+    WHERE co."modelId" = ${m}.id AND (co."userId")::text IN (${reportedUserIdsSql})
+  )
+  OR EXISTS (
+    SELECT 1 FROM "ModelVersion" cv
+    WHERE cv."modelId" = ${m}.id AND (cv.id)::text IN (${reportedVersionIdsSql})
   )
   OR EXISTS (
     SELECT 1 FROM "ModelVersion" iv
     JOIN "Post" ip ON ip."modelVersionId" = iv.id
     JOIN "Image" ii ON ii."postId" = ip.id
     WHERE iv."modelId" = ${m}.id AND (ii.id)::text IN (${csamReportListedImageIdsSql})
+  )
+  OR EXISTS (
+    SELECT 1 FROM "ImageResourceNew" ir
+    JOIN "ModelVersion" rv ON rv.id = ir."modelVersionId"
+    WHERE rv."modelId" = ${m}.id AND ir."imageId" IN (${listedImageIntIdsSql})
   )
 )`;
 
@@ -295,13 +324,16 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
       // Reporting only, so a failure here must not fail a batch whose deletes have committed.
       const notDeleted = deletable.filter((id) => !deletedSet.has(id));
       if (notDeleted.length > 0) {
-        await dbWrite.$queryRaw<{ id: number; moderated: boolean }[]>`
-          SELECT m.id, ${moderatedSql(Prisma.raw('m'))} AS moderated
+        await dbWrite.$queryRaw<{ id: number; moderated: boolean; held: boolean }[]>`
+          SELECT m.id, ${moderatedSql(Prisma.raw('m'))} AS moderated,
+            ${modelDataHeldSql(Prisma.raw('m.id'), true)} AS held
           FROM "Model" m WHERE m.id = ANY(${notDeleted}) ORDER BY m.id
         `.then(
           (rows) => {
-            const held = rows.filter((r) => !r.moderated).map((r) => r.id);
             const moderated = rows.filter((r) => r.moderated).map((r) => r.id);
+            // Only a hold read as false counts as a report keep; anything else stays a legal hold.
+            const held = rows.filter((r) => !r.moderated && r.held !== false).map((r) => r.id);
+            const reported = rows.filter((r) => !r.moderated && r.held === false).map((r) => r.id);
             heldCount += held.length;
             // Model ids only: the same held drafts come up every night.
             if (held.length > 0)
@@ -317,6 +349,13 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
                 name: 'remove-old-drafts',
                 message: 'Kept old draft models a moderator acted on',
                 modelIds: moderated,
+              });
+            if (reported.length > 0)
+              logToAxiom({
+                type: 'info',
+                name: 'remove-old-drafts',
+                message: 'Kept old draft models tied to a CsamReport',
+                modelIds: reported,
               });
           },
           (error: unknown) =>
