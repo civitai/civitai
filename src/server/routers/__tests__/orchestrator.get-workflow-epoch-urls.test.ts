@@ -52,7 +52,7 @@ const SOURCE_EPOCH = 'urn:air:flux1:lora:blob:SOURCE-EPOCH5';
 const trainingStep = {
   $type: 'training',
   name: 'train',
-  metadata: { modelFileId: 11 },
+  metadata: { modelFileId: 11, x: WEIGHTS },
   preparation: [{ resource: SOURCE_EPOCH, status: 'downloaded' }],
   input: { engine: 'ai-toolkit', epochs: 10, continueFrom: SOURCE_EPOCH },
   output: {
@@ -98,6 +98,8 @@ const legacyStep = {
 const generationStep = {
   $type: 'textToImage',
   name: 'gen',
+  metadata: { params: { prompt: 'a cat' } },
+  preparation: [{ resource: 'urn:air:sdxl:checkpoint:civitai:1@2', status: 'downloaded' }],
   input: { prompt: 'a cat' },
   output: { images: [{ id: 'IMG1', url: 'https://example.invalid/IMG1.jpg', available: true }] },
 };
@@ -145,6 +147,22 @@ describe('orchestrator.getWorkflow — a training run’s weights', () => {
     await expect(caller().getWorkflow({ workflowId: 'wf-1' })).resolves.toEqual(
       workflow([generationStep])
     );
+  });
+
+  it('leaves a non-training step untouched beside a training step', async () => {
+    h.getWorkflow.mockResolvedValue(workflow([trainingStep, generationStep]));
+    const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as { steps: unknown[] };
+    expect(result.steps[1]).toEqual(generationStep);
+  });
+
+  it("keeps only a training step's model file from its metadata", async () => {
+    const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as {
+      steps: { metadata: unknown }[];
+    };
+    expect(result.steps.map((step) => step.metadata)).toEqual([
+      { modelFileId: 11 },
+      { modelFileId: 12 },
+    ]);
   });
 
   it("drops a training step's preparing resources", async () => {

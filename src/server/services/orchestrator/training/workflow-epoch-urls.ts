@@ -1,6 +1,12 @@
 import type { Workflow } from '@civitai/orchestration-client';
 
-type TrainingStep = { $type?: string; input?: unknown; output?: unknown; preparation?: unknown };
+type TrainingStep = {
+  $type?: string;
+  input?: unknown;
+  output?: unknown;
+  preparation?: unknown;
+  metadata?: unknown;
+};
 
 const isTrainingStep = (step: TrainingStep) =>
   step.$type === 'training' || step.$type === 'imageResourceTraining';
@@ -18,7 +24,8 @@ const withoutJob = (blob: unknown) =>
 
 /**
  * A training step without anything naming a run's weights: each epoch's weight blob and trace, the
- * epoch a continued run starts from (`input.continueFrom`) and the resources it is preparing.
+ * epoch a continued run starts from (`input.continueFrom`), the resources it is preparing, and any
+ * metadata but its model file.
  * Epoch numbers and samples are kept.
  */
 function withoutWeightHandles(step: TrainingStep): TrainingStep {
@@ -35,8 +42,15 @@ function withoutWeightHandles(step: TrainingStep): TrainingStep {
       })
     : undefined;
   const { preparation: _preparation, ...rest } = step;
+  // Step metadata is the owner's to write; only the model file the server stamps is kept.
+  const metadata = step.metadata as { modelFileId?: unknown } | null | undefined;
   return {
     ...rest,
+    ...(metadata && typeof metadata === 'object'
+      ? {
+          metadata: metadata.modelFileId !== undefined ? { modelFileId: metadata.modelFileId } : {},
+        }
+      : {}),
     ...(input && typeof input === 'object' ? { input: without(input, ['continueFrom']) } : {}),
     ...(epochs ? { output: { ...output, epochs } } : {}),
   };
