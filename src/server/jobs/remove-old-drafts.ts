@@ -4,76 +4,15 @@ import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  csamReportListedImageIdsSql,
-  modelDataHeldSql,
-} from '~/server/services/legal-hold.service';
+import { modelDataHeldSql } from '~/server/services/legal-hold.service';
+import { draftKeptSql, draftModeratedSql } from '~/server/common/draft-keep';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
 
 const log = createLogger('remove-old-drafts');
 
-/** A model a moderator acted on is kept: taken down, or deleted by someone other than its owner.
- *  An owner's own delete, and an account delete (no actor), stay reapable. */
-const moderatedSql = (m: Prisma.Sql) => Prisma.sql`(
-  ${m}.mode::text IS NOT DISTINCT FROM 'TakenDown'
-  OR (${m}.status::text = 'Deleted' AND ${m}."deletedBy" IS NOT NULL AND ${m}."deletedBy" <> ${m}."userId")
-)`;
-
-/** Everyone a CsamReport names, as its subject or its secondary user, whatever its status, as text. */
-const reportedUserIdsSql = Prisma.sql`
-  SELECT ru."userId"::text FROM "CsamReport" ru WHERE ru."userId" IS NOT NULL
-  UNION
-  SELECT rs.details ->> 'secondaryUserId' FROM "CsamReport" rs
-  WHERE rs.details ->> 'secondaryUserId' IS NOT NULL`;
-
-const asArray = (json: Prisma.Sql) =>
-  Prisma.sql`CASE WHEN jsonb_typeof(${json}) = 'array' THEN ${json} ELSE '[]'::jsonb END`;
-
-/** Every version a CsamReport lists, or names as a resource of a generated image it reports, as text. */
-const reportedVersionIdsSql = Prisma.sql`
-  SELECT rv.id FROM "CsamReport" rvr
-  CROSS JOIN LATERAL jsonb_array_elements_text(${asArray(
-    Prisma.sql`rvr.details -> 'modelVersionIds'`
-  )}) rv(id)
-  UNION
-  SELECT substring(rr.air from ':civitai:[0-9]+@([0-9]+)') FROM "CsamReport" rgr
-  CROSS JOIN LATERAL jsonb_array_elements(${asArray(
-    Prisma.sql`rgr.details -> 'generatedImages'`
-  )}) rg
-  CROSS JOIN LATERAL jsonb_array_elements_text(${asArray(Prisma.sql`rg -> 'resources'`)}) rr(air)`;
-
-/** The image ids a CsamReport lists that fit an int, so a lookup by image id can use its index. */
-const listedImageIntIdsSql = Prisma.sql`
-  SELECT CASE WHEN li.id ~ '^[0-9]{1,9}$' THEN li.id::int END
-  FROM (${csamReportListedImageIdsSql}) li`;
-
-/** A model tied to any CsamReport, whatever its status, is kept: one naming its owner or a past
- *  owner, listing or naming as a resource one of its versions, or listing an image posted to one of
- *  its versions or made with one. Wider than the legal hold, which a report stops holding a year
- *  after it is sent and archived. The sets are uncorrelated, so each is built once per statement. */
-const csamReportTiedSql = (m: Prisma.Sql) => Prisma.sql`(
-  (${m}."userId")::text IN (${reportedUserIdsSql})
-  OR EXISTS (
-    SELECT 1 FROM "ModelOwnership" co
-    WHERE co."modelId" = ${m}.id AND (co."userId")::text IN (${reportedUserIdsSql})
-  )
-  OR EXISTS (
-    SELECT 1 FROM "ModelVersion" cv
-    WHERE cv."modelId" = ${m}.id AND (cv.id)::text IN (${reportedVersionIdsSql})
-  )
-  OR EXISTS (
-    SELECT 1 FROM "ModelVersion" iv
-    JOIN "Post" ip ON ip."modelVersionId" = iv.id
-    JOIN "Image" ii ON ii."postId" = ip.id
-    WHERE iv."modelId" = ${m}.id AND (ii.id)::text IN (${csamReportListedImageIdsSql})
-  )
-  OR EXISTS (
-    SELECT 1 FROM "ImageResourceNew" ir
-    JOIN "ModelVersion" rv ON rv.id = ir."modelVersionId"
-    WHERE rv."modelId" = ${m}.id AND ir."imageId" IN (${listedImageIntIdsSql})
-  )
-)`;
+const draftKept = Prisma.raw(draftKeptSql('m'));
+const draftModerated = Prisma.raw(draftModeratedSql('m'));
 
 /**
  * The reaping schedule now lives in `src/server/common/draft-reaping.ts` and is
@@ -200,9 +139,8 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
     FROM "Model" m
     JOIN "ModelMetric" mm ON mm."modelId" = m.id
     WHERE m.status IN ('Draft', 'Deleted')
-      -- The same rule as moderatedSql, written out so the pinned predicate shows it.
-      AND NOT ( m.mode::text IS NOT DISTINCT FROM 'TakenDown'
-        OR (m.status::text = 'Deleted' AND m."deletedBy" IS NOT NULL AND m."deletedBy" <> m."userId") )
+      -- Kept drafts (draft-keep.ts); the DELETE checks it again on the primary.
+      AND NOT ${draftKept}
       -- REAP_AGE_DAYS. Abandonment threshold: lowering this WIDENS what is
       -- destroyed. Not part of the fence below, and not tied to its window.
       AND m."updatedAt" < now() - INTERVAL '30 days'
@@ -263,6 +201,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
   let errorCount = 0;
   let skippedCount = 0;
   let heldCount = 0;
+  let reportedCount = 0;
 
   log(`Found ${modelIds.length} old draft models to remove`);
 
@@ -308,8 +247,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
           SELECT m.id FROM "Model" m
           WHERE m.id = ANY(${deletable})
             AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
-            AND NOT ${moderatedSql(Prisma.raw('m'))}
-            AND NOT ${csamReportTiedSql(Prisma.raw('m'))}
+            AND NOT ${draftKept}
         ),
         ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT id FROM doomed`), true)}
         DELETE FROM "Model" m
@@ -325,7 +263,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
       const notDeleted = deletable.filter((id) => !deletedSet.has(id));
       if (notDeleted.length > 0) {
         await dbWrite.$queryRaw<{ id: number; moderated: boolean; held: boolean }[]>`
-          SELECT m.id, ${moderatedSql(Prisma.raw('m'))} AS moderated,
+          SELECT m.id, ${draftModerated} AS moderated,
             ${modelDataHeldSql(Prisma.raw('m.id'), true)} AS held
           FROM "Model" m WHERE m.id = ANY(${notDeleted}) ORDER BY m.id
         `.then(
@@ -335,6 +273,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
             const held = rows.filter((r) => !r.moderated && r.held !== false).map((r) => r.id);
             const reported = rows.filter((r) => !r.moderated && r.held === false).map((r) => r.id);
             heldCount += held.length;
+            reportedCount += reported.length;
             // Model ids only: the same held drafts come up every night.
             if (held.length > 0)
               logToAxiom({
@@ -425,6 +364,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
     `Removed ${deletedCount} old draft models` +
       `${skippedCount > 0 ? `, ${skippedCount} skipped for recent activity` : ''}` +
       `${heldCount > 0 ? `, ${heldCount} kept for a legal hold` : ''}` +
+      `${reportedCount > 0 ? `, ${reportedCount} kept for a report` : ''}` +
       `${errorCount > 0 ? `, ${errorCount} failed` : ''}`
   );
 });
