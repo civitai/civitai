@@ -330,6 +330,20 @@ describe('bank deposit with a client key', () => {
     expect(ledger.charges()).toHaveLength(1);
   });
 
+  it('a retry with the asked amount continues from a deposit the cap reduced, banking nothing more', async () => {
+    // 6,000 of cap left: asking 10,000 banks 6,000, and that answer is lost.
+    await bank(OTHER_KEY, CAP - 6_000);
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await outcome(bank(KEY, 10_000));
+    ledger.clearFaults();
+
+    // The client resends the same action: the asked amount, under the same key.
+    await expect(bank(KEY, 10_000)).resolves.toBeUndefined();
+
+    expect(ledger.charges().map((t) => t.amount)).toEqual([CAP - 6_000, 6_000]);
+  });
+
   it('a lookup that fails before anything is checked is "may have gone through", and banks nothing', async () => {
     ledger.failLookups();
 
@@ -654,6 +668,30 @@ describe('cash withdrawal with a client key', () => {
     expect((error as Error).message).toBe('This amount is more than your cash ready to withdraw.');
     expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
     expect(rows).toHaveLength(0);
+  });
+
+  it('a retry whose burn already left the ready cash is not refused by the ready check', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await outcome(withdraw(KEY, WITHDRAWAL));
+    ledger.clearFaults();
+    // The ready figure now excludes the burn that landed.
+    cache.fetchByKey.set(REDIS_KEYS.CREATOR_PROGRAM.CASH, {
+      [USER]: {
+        id: USER,
+        status: 'ready',
+        ready: WITHDRAWAL / 2,
+        pending: 0,
+        withdrawn: 0,
+        paymentMethod: 'ACH',
+      },
+    });
+
+    await withdraw(KEY, WITHDRAWAL);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+    expect(tipalti.payToTipaltiAccount).toHaveBeenCalledTimes(1);
   });
 
   it('a different key is a different withdrawal', async () => {

@@ -24,7 +24,7 @@ const CHARGE_MISMATCH_MESSAGE =
   'This request does not match the earlier attempt with the same key. Please start again.';
 
 const ID = 'creator-cash-withdrawal-42-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
-const charge = (overrides: { amount?: number } = {}) => ({
+const charge = (overrides: { amount?: number; toAccountId?: number } = {}) => ({
   amount: 10_000,
   fromAccountId: 42,
   fromAccountType: 'cashSettled' as const,
@@ -108,6 +108,47 @@ describe('chargeByExternalId with a reused id', () => {
     expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
   });
 
+  it('a charge that reads back as not found once, then found, succeeds', async () => {
+    buzz.getTransactionByExternalId
+      .mockResolvedValueOnce(null) // before charging
+      .mockResolvedValueOnce(null); // the first read-back lags the write
+
+    const { transactionId } = await chargeByExternalId(charge(), { reusable: true });
+
+    expect(transactionId).toBe(ledger.charges()[0].transactionId);
+    expect(ledger.charges()).toHaveLength(1);
+  });
+
+  it('a charge that never reads back is "may have gone through", after a bounded number of reads', async () => {
+    buzz.getTransactionByExternalId.mockResolvedValue(null);
+
+    const error = await refusal(chargeByExternalId(charge(), { reusable: true }));
+
+    expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    // One read before charging, then the read-back and three re-reads.
+    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(5);
+    expect(ledger.charges()).toHaveLength(1);
+  });
+
+  it('matchAmount false: a held charge of another amount continues; other terms are still refused', async () => {
+    await chargeByExternalId(charge(), { reusable: true });
+
+    const again = await chargeByExternalId(charge({ amount: 25_000 }), {
+      reusable: true,
+      matchAmount: false,
+    });
+    expect(again.transactionId).toBe(ledger.charges()[0].transactionId);
+
+    const other = await refusal(
+      chargeByExternalId(charge({ amount: 25_000, toAccountId: 9 }), {
+        reusable: true,
+        matchAmount: false,
+      })
+    );
+    expect(other).toMatchObject({ code: 'BAD_REQUEST', message: CHARGE_MISMATCH_MESSAGE });
+    expect(ledger.charges()).toHaveLength(1);
+  });
+
   it('without reuse, no lookup at all', async () => {
     await chargeByExternalId(charge(), { reusable: false });
     expect(buzz.getTransactionByExternalId).not.toHaveBeenCalled();
@@ -137,6 +178,13 @@ describe('heldChargeMatches', () => {
     ['transaction type', { type: TransactionType.Tip }],
   ])('refuses another %s', (_name, change) => {
     expect(heldChargeMatches({ ...held, ...change }, input)).toBe(false);
+  });
+
+  it('matchAmount false ignores only the amount', () => {
+    expect(heldChargeMatches({ ...held, amount: 9 }, input, { matchAmount: false })).toBe(true);
+    expect(
+      heldChargeMatches({ ...held, amount: 9, fromAccountId: 2_223 }, input, { matchAmount: false })
+    ).toBe(false);
   });
 
   it('a field the ledger did not return is not compared; amount, payer and payee always are', () => {
