@@ -277,6 +277,14 @@ path as serving, and compares decoded values:
 - `json` trees structurally (object key order ignored, array order kept, numbers compared
   numerically), `meta.values` as a set (a `Date` or `undefined` on one side only is a difference the
   client would see), `meta.referentialEqualities` ignored;
+- `["undefined"]` annotations applied first, as `superjson.deserialize` applies them: superjson
+  writes an undefined object member as `null` plus the annotation, this service's writer omits the
+  member and writes the same annotation, and `setDeep` assigns the annotated path either way, so
+  both decode to the same object. (Before this, every such member — `images.*.tags` on every image,
+  `images.*.thumbnailUrl` on every image without a video thumbnail, `review` on every post without
+  one — was counted `missing-in-go`, and at 64 differences per comparison those artifacts also
+  truncated the report before any real difference was reached.) A real `null` against an
+  `undefined` is still a difference;
 - each comparison gets one result: `match`, `fields` (same posts, same order, some field differs),
   `order` (same posts, different order), `membership` (different posts), `unsupported` (Go fell back,
   with its reason), `go_error`;
@@ -333,7 +341,10 @@ will show.
 
 **Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an
 empty page, as Node does, rather than falling back (which would run the same slow query a second time
-on Node).
+on Node). A metric hash holding only the `notFound` marker is a KNOWN image with zero counts
+(`statsUnknown: false`): `getImageMetricsObject` gives every id whose hash exists an entry on both
+its arms, so `toImageV2Stats` only reports `statsUnknown: true` when the ClickHouse read failed and
+no hash was cached — a case this service falls back on (`metrics-miss`) instead of answering.
 
 **Divergences the comparator will show:**
 - `referentialEqualities` and opaque-object key order (not visible after decode; excluded by design);
