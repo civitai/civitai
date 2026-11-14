@@ -45,15 +45,15 @@ export function useCarouselUrlSync({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change or mode entry
   }, [index, storyline.active]);
 
-  // Only for the image the URL already names: any other moves the URL, and the effect above follows.
-  const seekTo = useRef<(imageId: number) => void>();
-  seekTo.current = (imageId) => {
-    if (items[index]?.key !== `img:${imageId}`) return;
-    lastSettledKeyRef.current = items[index].key;
+  // Only for the slide the URL already names: any other moves the URL, and the effect above follows.
+  const seekTo = useRef<(key: string) => void>();
+  seekTo.current = (key) => {
+    if (items[index]?.key !== key) return;
+    lastSettledKeyRef.current = key;
     carouselNavigate(index);
   };
   const onSeek = storyline.active ? storyline.onSeek : undefined;
-  useEffect(() => onSeek?.((imageId) => seekTo.current?.(imageId)), [onSeek]);
+  useEffect(() => onSeek?.((key) => seekTo.current?.(key)), [onSeek]);
 
   return handleSettle;
 }

@@ -36,7 +36,7 @@ export function TextSlide({
     >
       {(safe) => (
         <div
-          className="flex size-full justify-center overflow-y-auto px-4 py-6 @md:px-10"
+          className="flex size-full justify-center overflow-y-auto px-12 py-6 @md:px-16"
           data-testid="text-slide"
           data-text-id={text.id}
         >

@@ -76,7 +76,7 @@ export function mergeDetailItems<I extends Placed>(
 }
 
 /** The image a slide's URL names: the slide itself, else the image before it, else the one after. */
-export function anchorImageIndex<I extends Placed>(items: DetailItem<I>[], index: number) {
+export function anchorImageIndex(items: { type: 'image' | 'text' }[], index: number) {
   for (let i = index; i >= 0; i--) if (items[i]?.type === 'image') return i;
   for (let i = index + 1; i < items.length; i++) if (items[i].type === 'image') return i;
   return -1;
