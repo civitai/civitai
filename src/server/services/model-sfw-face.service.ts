@@ -188,6 +188,11 @@ export async function checkComFaceIntentVerdict({
     : { status: 'allowed', promptId };
 }
 
+export type ComFaceIntentWrites = {
+  record: typeof recordComFaceIntent;
+  lock: typeof lockForComFaceIntent;
+};
+
 /**
  * The owner's verdict on this listing text: the stored one while the text is unchanged, else a fresh
  * check, stored only when it read the model's stored listing (a draft is judged, never stored, so it
@@ -195,15 +200,12 @@ export async function checkComFaceIntentVerdict({
  * rating (`lockForComFaceIntent`), which the owner can dispute; that includes a stored detection
  * first made while the model was not mature, unless a moderator has ruled on its rating since.
  * `disputable`: the nsfw lock is now the intent check's. Nothing is read or stored unless `userId`
- * owns the model.
+ * owns the model. `writes` lets the one-off .com face sweep dry-run this exact path.
  */
-async function resolveComFaceIntent({
-  modelId,
-  userId,
-  ...listing
-}: ComFaceIntentListing & { modelId?: number; userId?: number }): Promise<
-  ComFaceIntentVerdict & { disputable?: boolean }
-> {
+export async function resolveComFaceIntent(
+  { modelId, userId, ...listing }: ComFaceIntentListing & { modelId?: number; userId?: number },
+  writes: ComFaceIntentWrites = { record: recordComFaceIntent, lock: lockForComFaceIntent }
+): Promise<ComFaceIntentVerdict & { disputable?: boolean }> {
   const found = modelId && userId ? await readComFaceIntentModel(modelId) : null;
   const model = found && found.userId === userId ? found : null;
   const textHash = comFaceIntentTextHash(listing);
@@ -224,7 +226,7 @@ async function resolveComFaceIntent({
   else {
     verdict = await checkComFaceIntentVerdict(listing);
     if (!model || verdict.status === 'unavailable' || storedHash !== textHash) return verdict;
-    await recordComFaceIntent(model.id, {
+    await writes.record(model.id, {
       detected: verdict.status === 'detected',
       textHash,
       ...(verdict.status === 'detected' && verdict.reason && { reason: verdict.reason }),
@@ -245,7 +247,7 @@ async function resolveComFaceIntent({
   const recordedAt = stored && meta?.comFaceIntent?.at ? new Date(meta.comFaceIntent.at) : null;
   if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) return verdict;
 
-  const locked = await lockForComFaceIntent(model.id, textHash).catch((error: Error) => {
+  const locked = await writes.lock(model.id, textHash).catch((error: Error) => {
     logToAxiom({
       type: 'error',
       name: 'model-com-face-intent',
