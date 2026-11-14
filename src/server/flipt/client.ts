@@ -13,9 +13,8 @@ export enum FLIPT_FEATURE_FLAGS {
   REVIEW_BATCHES_MINT = 'review-batches-mint',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
-  // The remix-source sweep and the post-scan prompt check send an age-check hit to the external
-  // classifier instead of blocking on it. DEFAULT-OFF: isFlipt is false for an unknown flag or an
-  // unreachable Flipt, which keeps the block.
+  // Remix sweep and post scan: an age-check hit goes to the external classifier instead of
+  // blocking. Off when Flipt is unreachable.
   SHADOW_AGE_PROMPT = 'shadow-age-prompt',
   // Percentage rollout keyed on the file id: the share of files whose mini response leads with
   // the content-hash download url. Each file's url changes once over the ramp. Create the key in

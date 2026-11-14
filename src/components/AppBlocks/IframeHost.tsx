@@ -79,6 +79,7 @@ import {
   projectBlockInitViewer,
 } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
 import type { BlockHostSurface } from './blockInitFragmentGate';
@@ -2214,6 +2215,10 @@ export function IframeHost({
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
+  const dailyLimitRaise = useDailyLimitRaiseBridge({
+    appBlockId: install.appBlockId,
+    appName: install.manifest.name,
+  });
 
   useEffect(() => {
     const off = onMessage<
@@ -2238,6 +2243,7 @@ export function IframeHost({
         });
         reportAppSubmitResult(install.appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        dailyLimitRaise.onRelayedSnapshot(snapshot);
       } catch (err) {
         reportAppSubmitError(install.appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', {
@@ -2247,7 +2253,32 @@ export function IframeHost({
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, countAppSubmit, install.appBlockId]);
+  }, [
+    onMessage,
+    send,
+    token,
+    submitWorkflowMutation,
+    countAppSubmit,
+    install.appBlockId,
+    dailyLimitRaise,
+  ]);
+
+  // REQUEST_DAILY_LIMIT_RAISE → DAILY_LIMIT_RAISE_ACK, then DAILY_LIMIT_RAISE_RESULT. Same
+  // handler as PageBlockHost; see `useDailyLimitRaiseBridge` for when the dialog may open.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'REQUEST_DAILY_LIMIT_RAISE',
+      (raw) => {
+        const requestId = raw?.requestId;
+        if (typeof requestId !== 'string' || requestId.length === 0) return;
+        void dailyLimitRaise.onRaiseRequest({
+          ack: (opened) => send('DAILY_LIMIT_RAISE_ACK', { requestId, opened }),
+          result: (raised) => send('DAILY_LIMIT_RAISE_RESULT', { requestId, raised }),
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, dailyLimitRaise]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(

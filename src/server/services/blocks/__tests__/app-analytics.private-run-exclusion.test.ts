@@ -113,6 +113,17 @@ const PRIVATE_RUN_ROW: Row = {
 /** The same row with the marker removed — the over-filtering positive control. */
 const UNMARKED_TWIN: Row = { ...PRIVATE_RUN_ROW, source: 'app-block' };
 
+/** Not an app call: the viewer raised their daily limit for the app in host UI. */
+const VIEWER_CONSENT_ROW: Row = {
+  appBlockId: OWNED_ID,
+  userId: 51099,
+  scope: 'ai:write:budgeted',
+  endpoint: 'consent:daily-limit',
+  statusCode: 200,
+  source: 'viewer-consent',
+  invokedAt: IN_RANGE,
+};
+
 /**
  * 🔴 A SOURCE VALUE THE PREDICATE DOES NOT KNOW ABOUT, carrying a REAL `appBlockId` so it
  * reaches the owner-visible reads. It exists to make one documented design decision
@@ -299,7 +310,17 @@ function wireMocks() {
       if (at === -1) return undefined;
       return (arg.__values as unknown[])[sql.slice(0, at + needle.length).split('?').length - 1];
     };
-    const excluded = paramAt('"source" <> ');
+    const excluded = ((): unknown[] => {
+      const needle = '"source" NOT IN (';
+      const at = sql.indexOf(needle);
+      if (at === -1) {
+        const one = paramAt('"source" <> ');
+        return one === undefined ? [] : [one];
+      }
+      const first = sql.slice(0, at + needle.length).split('?').length - 1;
+      const count = sql.slice(at + needle.length, sql.indexOf(')', at)).split('?').length - 1;
+      return (arg.__values as unknown[]).slice(first, first + count);
+    })();
     // 🔴 AND THE RANGE BOUNDS COME OFF THE STATEMENT TOO, not from module constants. The
     // previous shim asserted `r.invokedAt >= RANGE_FROM && <= RANGE_TO` using the values the
     // TEST chose — so DELETING both `AND "invoked_at"` lines from the real statement left the
@@ -329,7 +350,7 @@ function wireMocks() {
         inSet(r.appBlockId) &&
         (gte === undefined || r.invokedAt >= gte) &&
         (lte === undefined || r.invokedAt <= lte) &&
-        (excluded === undefined || r.source !== excluded)
+        !excluded.includes(r.source)
     );
     return [{ value: BigInt(new Set(visible.map((r) => r.userId)).size) }];
   });
@@ -403,6 +424,13 @@ describe('owner-visible engagement analytics exclude private-run activity', () =
     rows = [...ORDINARY_ROWS, PRIVATE_RUN_ROW];
     const after = (await analytics()).engagement;
     expect(after).toEqual(before);
+  });
+
+  it('[REG] a viewer changing their own daily limit changes NONE of the five numbers', async () => {
+    rows = [...ORDINARY_ROWS];
+    const before = (await analytics()).engagement;
+    rows = [...ORDINARY_ROWS, VIEWER_CONSENT_ROW];
+    expect((await analytics()).engagement).toEqual(before);
   });
 
   it('[REG] the count(DISTINCT user_id) read does not count the reviewer', async () => {
@@ -557,7 +585,7 @@ describe('owner-visible engagement analytics exclude private-run activity', () =
       .map((c) => c[0] as any)
       .find((a) => (a?.__sql ?? '').includes('block_scope_invocations'));
     expect(call, 'the distinct-user statement must have been issued').toBeTruthy();
-    expect(call.__sql).toContain('"source" <> ');
+    expect(call.__sql).toContain('"source" NOT IN (');
     expect(call.__values).toContain(MARKER);
     expect(call.__values).not.toContain('app-block');
   });

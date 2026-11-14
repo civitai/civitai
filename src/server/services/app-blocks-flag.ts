@@ -1626,3 +1626,26 @@ export async function isAppHibernateEnabled(opts: { user?: SessionUser | null })
     return false;
   }
 }
+
+/**
+ * The in-app raise of a viewer's own per-app daily Buzz limit: the host's daily-limit dialog
+ * offers "Raise limit", and `blocks.getMyAppDailyLimit` / `blocks.raiseAppDailyLimit` answer.
+ * Checked on the server as well as the client so turning it off reaches tabs that loaded the
+ * client flags while it was on. No user, an absent flag or an unreachable Flipt: `false`.
+ * Mirrors `appDailyLimitRaise` in `feature-flags.service.ts`.
+ */
+export const APP_DAILY_LIMIT_RAISE_FLAG = 'app-daily-limit-raise';
+
+export async function isAppDailyLimitRaiseEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(APP_DAILY_LIMIT_RAISE_FLAG, String(user.id), buildFliptContext(user))) === true
+    );
+  } catch {
+    return false;
+  }
+}

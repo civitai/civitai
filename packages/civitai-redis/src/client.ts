@@ -2591,6 +2591,13 @@ export const REDIS_SYS_KEYS = {
      * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
+    // A spend was refused at the viewer's own per-app daily limit in the last few minutes:
+    // `system:blocks:consent-limit-refused:${userId}:${appBlockId}` = the limit it was refused at.
+    // What lets the host open the raise dialog for an app's request; nothing an app declares can set it.
+    CONSENT_LIMIT_REFUSED: 'system:blocks:consent-limit-refused',
+    // Per-user fixed-window rate limit on `blocks.getMyAppDailyLimit`, the host's read behind the
+    // raise dialog: `system:blocks:daily-limit-read-rate:${userId}`.
+    DAILY_LIMIT_READ_RATE: 'system:blocks:daily-limit-read-rate',
     /** App Blocks `kind:'training'` run generation per (viewer, app, body); see block-training-quote.service. */
     TRAINING_RUNS: 'system:blocks:training-runs',
     /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
