@@ -3230,6 +3230,8 @@ const REDIS_KEYS_UNPREFIXED = {
     CREATOR_ENGAGEMENT_RANKING: 'packed:caches:creator-engagement-ranking:v1',
     // `<prefix>:<userId>` — the 30-day reacted-image candidates, shared by every ranking type.
     CREATOR_ENGAGEMENT_CANDIDATES: 'packed:caches:creator-engagement-candidates:v1',
+    // `<prefix>:<event>:<userId>:<placements hash>` — what each placed hat earned where it is now.
+    EVENT_HAT_PLACEMENT_STATS: 'packed:caches:event-hat-placement-stats:v1',
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',

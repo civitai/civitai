@@ -301,3 +301,36 @@ func hasNil(args []any) bool {
 	}
 	return false
 }
+
+// getAllImagesUncaptured sets `eventDecoration: eventDecorations?.[i.id] ?? null`: the visible hat,
+// else null (never undefined, so no ["undefined"] annotation).
+func TestBuildImagesEventDecoration(t *testing.T) {
+	now := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	rows := []RawImage{
+		{ID: 1, UserID: 5, PostID: 1, PublishedAt: &past},
+		{ID: 2, UserID: 5, PostID: 1, PublishedAt: &past},
+	}
+	hat := superjson.Object{{Key: "id", Val: int64(501)}, {Key: "equippedToId", Val: int64(1)}}
+	got := BuildImages(rows, &Hydrated{Decorations: map[int]superjson.Object{1: hat}}, Viewer{}, now)
+	if len(got) != 2 {
+		t.Fatalf("want 2 images, got %d", len(got))
+	}
+	want := map[int]string{
+		1: `{"json":{"id":501,"equippedToId":1}}`,
+		2: `{"json":null}`,
+	}
+	for _, img := range got {
+		v, ok := img.Wire.Get("eventDecoration")
+		if !ok {
+			t.Fatalf("image %d has no eventDecoration key", img.ID)
+		}
+		out, err := superjson.Serialize(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != want[img.ID] {
+			t.Errorf("image %d: got %s, want %s", img.ID, out, want[img.ID])
+		}
+	}
+}

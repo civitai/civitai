@@ -28,6 +28,7 @@ import { ModelStatus, ModelUsageControl, VaultItemStatus } from '~/shared/utils/
 import { formatKBytes } from '~/utils/number-helpers';
 import { getGetUrlByKey } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 
 type VaultWithUsedStorage = {
   userId: number;
@@ -317,7 +318,7 @@ export const refreshVaultItems = async ({
 };
 
 export const getPaginatedVaultItems = async (
-  input: GetPaginatedVaultItemsSchema & { userId?: number }
+  input: GetPaginatedVaultItemsSchema & { userId?: number; isModerator?: boolean }
 ) => {
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
@@ -395,10 +396,24 @@ export const getPaginatedVaultItems = async (
     orderBy,
   });
 
+  // A taken-down model's media is moderators-only, vault included, as its downloads are.
+  const takenDown = new Set(
+    input.isModerator || !items.length
+      ? []
+      : (
+          await dbRead.model.findMany({
+            where: { id: { in: [...new Set(items.map((item) => item.modelId))] } },
+            select: { id: true, mode: true },
+          })
+        )
+          .filter(isModelWithheld)
+          .map((model) => model.id)
+  );
+
   const itemsWithCoverImages = await Promise.all(
     items.map(async (item) => {
       const { url } =
-        item.status === VaultItemStatus.Stored
+        item.status === VaultItemStatus.Stored && !takenDown.has(item.modelId)
           ? await getGetUrlByKey(
               constants.vault.keys.cover
                 .replace(':modelVersionId', item.modelVersionId.toString())
