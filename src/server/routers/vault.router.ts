@@ -28,7 +28,11 @@ export const vaultRouter = router({
     .meta({ requiredScope: TokenScope.VaultRead })
     .input(getPaginatedVaultItemsSchema)
     .query(({ input, ctx }) => {
-      return getPaginatedVaultItems({ ...input, userId: ctx.user.id });
+      return getPaginatedVaultItems({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
     }),
   isModelVersionInVault: protectedProcedure
     .meta({ requiredScope: TokenScope.VaultRead })
