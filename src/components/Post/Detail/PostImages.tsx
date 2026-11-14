@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { Badge, Button, Center, Group, Loader, Paper } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
@@ -254,13 +255,7 @@ export function PostImages({
                               entityType="image"
                               reactions={image.reactions}
                               metricsUnknown={image.stats?.statsUnknown}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
+                              metrics={imageStatsToReactionMetrics(image.stats)}
                               targetUserId={image.user.id}
                               readonly={!safe}
                               disableBuzzTip={image.poi}

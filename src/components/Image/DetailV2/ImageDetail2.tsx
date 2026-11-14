@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import type { ActionIconProps, BadgeProps, ButtonProps } from '@mantine/core';
 import {
   Anchor,
@@ -886,14 +887,7 @@ function ImageDetailReactions({
     <Metrics
       entityType="Image"
       entityId={image.id}
-      initial={{
-        likeCount: image.stats?.likeCountAllTime ?? 0,
-        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-        heartCount: image.stats?.heartCountAllTime ?? 0,
-        laughCount: image.stats?.laughCountAllTime ?? 0,
-        cryCount: image.stats?.cryCountAllTime ?? 0,
-        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-      }}
+      initial={imageStatsToReactionMetrics(image.stats)}
     >
       {(metrics) => (
         <ImageReactorsPreview imageId={image.id} ownerId={image.user.id}>
