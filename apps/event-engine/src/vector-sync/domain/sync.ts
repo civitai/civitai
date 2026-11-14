@@ -225,6 +225,11 @@ export type Domain<P extends DomainPayload> = {
   outboxEntity?: string;
   /** VECTOR_<NAME>_EMBED_ENABLED unset: whether it embeds. True only for models, which predate it. */
   embedByDefault?: boolean;
+  /**
+   * For a domain whose eligibility or document reads state no CDC signal covers: every `everyMs`,
+   * all ids are re-synced, so a point that no longer qualifies is deleted.
+   */
+  refresh?: { everyMs: number; batch: number };
   store: () => VectorStore<P>;
   alias: () => string;
 };

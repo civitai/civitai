@@ -167,10 +167,11 @@ import {
   getOrchestratorVersionAirs,
 } from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import { addPostImage, bustCachesForPosts, createPost } from '~/server/services/post.service';
 import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
+  handleLogError,
   runClickHouseRead,
   sleep,
   throwAuthorizationError,
@@ -223,6 +224,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
 import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
@@ -4150,6 +4152,9 @@ export const mergeVersions = async ({
     },
     { timeout: 60000 }
   );
+
+  const restricted = await flagImagesOnRestrictedVersions({ modelVersionIds: [targetVersionId] });
+  if (restricted.postIds.length) await bustCachesForPosts(restricted.postIds).catch(handleLogError);
 
   // Post-transaction cache busting
   const allVersionIds2 = [targetVersionId, ...sourceVersionIds];

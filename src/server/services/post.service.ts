@@ -157,6 +157,7 @@ import type {
 } from './../schema/post.schema';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
@@ -2056,6 +2057,10 @@ export async function creditResourcesToImages({
   });
 
   if (createdResources.length > 0) {
+    await flagImagesOnRestrictedVersions({
+      modelVersionIds: uniq(createdResources.map((x) => x.modelVersionId)),
+      imageIds: uniq(createdResources.map((x) => x.imageId)),
+    });
     await queueImageSearchIndexUpdate({
       ids: uniq(createdResources.map((x) => x.imageId)),
       action: SearchIndexUpdateQueueAction.Update,
