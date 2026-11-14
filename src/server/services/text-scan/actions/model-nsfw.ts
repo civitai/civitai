@@ -279,7 +279,8 @@ export async function applyHeldVerdictLeavingPrivate(db: RawDb, modelId: number)
       AND NOT (m.meta->'restrictedNsfwVerdict' ? 'liftedBy')
   `;
   if (!lead) return false;
-  if (!(await flipRow(db, modelId, lead.source ?? 'text-scan', true))) return false;
+  // A lead with no source is not the text scan's, so it keeps the lock (`locksRating`).
+  if (!(await flipRow(db, modelId, lead.source ?? 'unknown', true))) return false;
   await trackModActivity(
     SYSTEM_USER_ID,
     { entityType: 'model', entityId: modelId, activity: 'restrictedNsfwVerdict:autoApply' },

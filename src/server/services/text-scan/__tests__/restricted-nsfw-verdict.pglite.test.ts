@@ -704,6 +704,17 @@ describe('a Private model, which must stay SFW-only', () => {
     expect(after.meta.systemNsfwLock).toMatchObject({ source: 'profanity-filter' });
   });
 
+  it('applies a held lead with no source with the nsfw lock', async () => {
+    await seed({
+      sfwOnly: true,
+      meta: { restrictedNsfwVerdict: { at: '2026-11-04T00:00:00.000Z', restriction: 'minor' } },
+    });
+    await makePrivate();
+    await applyHeldRestrictedVerdict(MODEL);
+    expect(await publish()).toBe(true);
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+  });
+
   it('the scan on a model that went Private between submit and callback holds the verdict', async () => {
     await seed({ sfwOnly: true });
     await makePrivate();
