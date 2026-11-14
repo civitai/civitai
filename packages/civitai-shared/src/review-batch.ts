@@ -18,7 +18,7 @@ export const REVIEW_BATCH_TTL_SECONDS = 24 * 60 * 60;
 export type ReviewBatchRecord = {
   ids: number[];
   tier: ReviewTier;
-  /** The batch was declared suspect, by its minter or by its source text. */
+  /** The batch was declared suspect by its minter, or has no source card. */
   declared: boolean;
   viewer: number;
   createdBy: number;
