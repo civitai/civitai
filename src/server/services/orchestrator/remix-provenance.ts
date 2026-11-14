@@ -133,11 +133,7 @@ function extractImageUuid(url: string): string | undefined {
   return withoutQuery.split('/').find((segment) => UUID_SEGMENT.test(segment));
 }
 
-/**
- * Its own key, derived rather than using `NEXTAUTH_SECRET` raw, so a token can
- * never be confused with anything else keyed by the same secret. Bumping
- * `VERSION` rotates it.
- */
+/** Bumping `VERSION` rotates the key domain and the token prefix. */
 const SEAL = { domain: `remix-provenance:v${VERSION}`, prefix: `p${VERSION}` };
 
 /**

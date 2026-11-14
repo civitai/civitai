@@ -11,9 +11,10 @@ export function viewerOwnBrowsingLevel(req: NextApiRequest, sessionUser: Session
 }
 
 /**
- * The domain ceiling intersected with the viewer's own level. Never wider than
- * `maxBrowsingLevel`: on `blue` the viewer's saved level may carry R/X/XXX while
- * the domain permits SFW only.
+ * The domain ceiling intersected with the viewer's own level. `maxBrowsingLevel`
+ * is per domain, so without this a viewer with NSFW off would get the same wide
+ * ceiling as one at XXX. Never wider than `maxBrowsingLevel`: on `blue` the
+ * viewer's saved level may carry R/X/XXX while the domain permits SFW only.
  */
 export function viewerEffectiveBrowsingLevel(args: {
   req: NextApiRequest;

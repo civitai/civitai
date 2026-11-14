@@ -39,7 +39,8 @@ export type BlockOutputViewer = { userId: number | null; browsingLevel: number }
 /**
  * Orchestrator ratings this gate understands. Step-output `na` is a verdict with
  * no level, and reads as PG. Anything else is refused rather than mapped, so a
- * rating added upstream can only hide.
+ * rating added upstream can only hide. Not built from `orchestratorNsfwLevelMap`:
+ * that map also accepts `pg-13`, and this gate takes only the step-output spellings.
  */
 const KNOWN_RATINGS: Record<string, NsfwLevel> = {
   na: NsfwLevel.PG,
