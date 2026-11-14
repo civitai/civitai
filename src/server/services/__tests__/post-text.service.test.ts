@@ -57,7 +57,6 @@ const stored = (content = '<p>old</p>', csamHeld = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   w.$queryRaw.mockResolvedValue([] as never);
-  w.textScanHold.findMany.mockResolvedValue([] as never);
   w.$executeRaw.mockResolvedValue(1 as never);
   w.post.findUnique.mockResolvedValue({ userId: AUTHOR } as never);
   w.storylineChapter.findFirst.mockResolvedValue({ id: 9 } as never);
@@ -243,11 +242,30 @@ describe('deletePostText', () => {
 
 describe('what readers are shown', () => {
   const rows = [
-    { id: 1, postId: POST, index: 0, content: 'pg', nsfwLevel: NsfwLevel.PG, refused: false },
-    { id: 2, postId: POST, index: 1, content: 'xxx', nsfwLevel: NsfwLevel.XXX, refused: false },
+    { id: 1, postId: POST, index: 0, content: 'pg', nsfwLevel: NsfwLevel.PG },
+    { id: 2, postId: POST, index: 1, content: 'xxx', nsfwLevel: NsfwLevel.XXX },
   ];
+  /** The primary's verdict: these ids are hidden (refused, held, or under a csam hold). */
+  const primaryHides = (...ids: number[]) =>
+    w.$queryRaw.mockResolvedValue(ids.map((id) => ({ id })) as never);
+  const readerIds = async (seesAll: boolean) =>
+    (
+      await getPostTextsForViewer({
+        postId: POST,
+        browsingLevel: NsfwLevel.PG | NsfwLevel.XXX,
+        seesAll,
+      })
+    ).map((t) => t.id);
+  const stubIds = async () =>
+    (
+      await getStorylineTextStubs({
+        postIds: [POST],
+        browsingLevel: NsfwLevel.PG | NsfwLevel.XXX,
+        maxNsfwLevel: NsfwLevel.XXX,
+      })
+    ).map((t) => t.id);
 
-  it('asks only for scanned, unrefused, unheld rows, then holds them to the level', async () => {
+  it('asks the replica for rated rows, then holds them to the level', async () => {
     r.postText.findMany.mockResolvedValue(rows as never);
     const texts = await getPostTextsForViewer({
       postId: POST,
@@ -255,74 +273,61 @@ describe('what readers are shown', () => {
       seesAll: false,
     });
     expect(r.postText.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { postId: POST, refused: false, csamHeld: false, nsfwLevel: { not: 0 } },
-      })
+      expect.objectContaining({ where: { postId: POST, nsfwLevel: { not: 0 } } })
     );
     expect(texts.map((t) => t.id)).toEqual([1]);
   });
 
-  it('gives the author every level and their unscanned text, but never a refused or held text', async () => {
+  it('gives the author every level and their unscanned text, but never one the primary hides', async () => {
     r.postText.findMany.mockResolvedValue([
       ...rows,
-      { id: 3, postId: POST, index: 2, content: 'draft', nsfwLevel: 0, refused: false },
-      { id: 4, postId: POST, index: 3, content: 'refused words', nsfwLevel: 1, refused: true },
-      {
-        id: 5,
-        postId: POST,
-        index: 4,
-        content: 'held words',
-        nsfwLevel: 1,
-        refused: false,
-        csamHeld: true,
-      },
+      { id: 3, postId: POST, index: 2, content: 'draft', nsfwLevel: 0 },
+      { id: 4, postId: POST, index: 3, content: 'refused words', nsfwLevel: 1 },
+      { id: 5, postId: POST, index: 4, content: 'held words', nsfwLevel: 1 },
     ] as never);
+    primaryHides(4, 5);
     const texts = await getPostTextsForViewer({
       postId: POST,
       browsingLevel: NsfwLevel.PG,
       seesAll: true,
     });
     expect(r.postText.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { postId: POST, refused: false, csamHeld: false } })
+      expect.objectContaining({ where: { postId: POST } })
     );
     expect(texts.map((t) => t.id)).toEqual([1, 2, 3]);
     expect(JSON.stringify(texts)).not.toMatch(/refused words|held words/);
   });
 
-  // A csam hold is written before `csamHeld` is set, and not in one transaction: a Pending hold
-  // with the flag still false is held all the same.
-  it('treats a text with a Pending csam hold as held, author included, reading the hold from the primary', async () => {
+  // The primary decides from the row flags and the csam hold in one snapshot; the replica row only
+  // supplies the words and the rating, so its lag cannot show or hide a text.
+  it('asks the primary once, for these ids, with the flags and a Pending or Confirmed csam hold', async () => {
     r.postText.findMany.mockResolvedValue(rows as never);
-    // Written seconds ago: on the primary, not yet on the replica.
-    w.textScanHold.findMany.mockResolvedValue([{ entityId: 1 }] as never);
-    for (const seesAll of [false, true]) {
-      const texts = await getPostTextsForViewer({
-        postId: POST,
-        browsingLevel: NsfwLevel.PG | NsfwLevel.XXX,
-        seesAll,
-      });
-      expect(texts.map((t) => t.id)).toEqual([2]);
-    }
-    expect(
-      await getStorylineTextStubs({
-        postIds: [POST],
-        browsingLevel: NsfwLevel.PG | NsfwLevel.XXX,
-        maxNsfwLevel: NsfwLevel.XXX,
-      })
-    ).toEqual([{ id: 2, postId: POST, index: 1, nsfwLevel: NsfwLevel.XXX }]);
-    expect(w.textScanHold.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          entityType: 'PostText',
-          entityId: { in: [1, 2] },
-          label: 'csam',
-          status: 'Pending',
-        },
-      })
-    );
+    await readerIds(false);
+    expect(w.$queryRaw).toHaveBeenCalledTimes(1);
+    const text = JSON.stringify(w.$queryRaw.mock.calls[0]);
+    for (const part of ['t.refused', 'csamHeld', 'TextScanHold', "'Pending', 'Confirmed'"])
+      expect(text).toContain(part);
   });
 
-  it('makes no primary call for a post with no texts', async () => {
+  it.each([
+    ['(a) right after its hold is confirmed, the replica still showing it unheld', [1]],
+    ['(b) right after a hold is detected, before the replica has it', [1]],
+  ])('leaves a text out %s, author included', async (_, hidden) => {
+    r.postText.findMany.mockResolvedValue(rows as never);
+    primaryHides(...hidden);
+    expect(await readerIds(false)).toEqual([2]);
+    expect(await readerIds(true)).toEqual([2]);
+    expect(await stubIds()).toEqual([2]);
+  });
+
+  it('(c) shows a text again once its hold is released, though the replica row is stale', async () => {
+    r.postText.findMany.mockResolvedValue(rows.map((row) => ({ ...row, csamHeld: true })) as never);
+    primaryHides();
+    expect(await readerIds(false)).toEqual([1, 2]);
+    expect(await stubIds()).toEqual([1, 2]);
+  });
+
+  it('(d) makes no primary call for a post with no texts', async () => {
     r.postText.findMany.mockResolvedValue([] as never);
     await getPostTextsForViewer({ postId: POST, browsingLevel: NsfwLevel.PG, seesAll: true });
     await getStorylineTextStubs({
@@ -330,7 +335,7 @@ describe('what readers are shown', () => {
       browsingLevel: NsfwLevel.PG,
       maxNsfwLevel: NsfwLevel.PG,
     });
-    expect(w.textScanHold.findMany).not.toHaveBeenCalled();
+    expect(w.$queryRaw).not.toHaveBeenCalled();
   });
 
   it("holds the path's stubs to the storyline ceiling, with no content", async () => {
@@ -342,9 +347,7 @@ describe('what readers are shown', () => {
     });
     expect(stubs).toEqual([{ id: 1, postId: POST, index: 0, nsfwLevel: NsfwLevel.PG }]);
     expect(r.postText.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { postId: { in: [POST] }, refused: false, csamHeld: false, nsfwLevel: { not: 0 } },
-      })
+      expect.objectContaining({ where: { postId: { in: [POST] }, nsfwLevel: { not: 0 } } })
     );
   });
 });
