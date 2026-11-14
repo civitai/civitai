@@ -70,7 +70,10 @@ beforeAll(async () => {
       "createdAt" timestamp(3) NOT NULL DEFAULT now(), "publishedAt" timestamp(3),
       "modelVersionId" int, "collectionId" int, metadata jsonb
     );
-    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL DEFAULT 'Draft', mode text,
+      "deletedBy" int
+    );
     CREATE TABLE "Thread" (
       id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "reviewId" int,
       "postId" int, "imageId" int, "parentThreadId" int, "rootThreadId" int, "commentId" int,
@@ -230,5 +233,38 @@ describe("remove-old-drafts and a held author's review of a free owner's model",
         holdReasons: ['hold-marker'],
       },
     ]);
+  });
+});
+
+// The DELETE re-checks what a moderator did, as it re-checks holds: the replica read can be stale.
+describe('remove-old-drafts and models a moderator acted on', () => {
+  const MOD = 99;
+  const CASES = [
+    { id: 210, status: 'Draft', mode: 'TakenDown', deletedBy: null, kept: true },
+    { id: 220, status: 'Deleted', mode: null, deletedBy: MOD, kept: true },
+    { id: 230, status: 'Deleted', mode: 'TakenDown', deletedBy: null, kept: true },
+    { id: 240, status: 'Deleted', mode: null, deletedBy: FREE_OWNER, kept: false },
+    { id: 250, status: 'Deleted', mode: null, deletedBy: null, kept: false },
+    { id: 260, status: 'Draft', mode: null, deletedBy: null, kept: false },
+  ];
+  const sql = (v: string | number | null) =>
+    v === null ? 'NULL' : typeof v === 'number' ? v : `'${v}'`;
+
+  beforeEach(async () => {
+    await db.exec(`
+      DELETE FROM "Model";
+      INSERT INTO "Model" (id, "userId", status, mode, "deletedBy") VALUES ${CASES.map(
+        (c) => `(${c.id}, ${FREE_OWNER}, ${sql(c.status)}, ${sql(c.mode)}, ${sql(c.deletedBy)})`
+      ).join(', ')};
+      INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${CASES.map(
+        (c) => `(${c.id * 10}, ${c.id}, now() - interval '200 days', now() - interval '200 days')`
+      ).join(', ')};
+    `);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(CASES.map(({ id }) => ({ id, userId: FREE_OWNER })));
+  });
+
+  it('keeps a taken-down model and one deleted by a moderator, and reaps owner and account deletes', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+    expect(await remainingModels()).toEqual(CASES.filter((c) => c.kept).map((c) => c.id));
   });
 });
