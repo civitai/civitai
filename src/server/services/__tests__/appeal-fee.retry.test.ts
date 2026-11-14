@@ -213,7 +213,10 @@ describe('an appeal fee across an unknown outcome', () => {
   });
 
   // Five hidden: the lookup before charging and all four re-reads miss, so the decline stands.
-  it('a decline stands when every re-read after it misses the held charge', async () => {
+  // An ACCEPTED LIMITATION, pinned so it stays visible: a ledger read that lags past the whole
+  // re-read window leaves the earlier charge held and unrecorded. A fix that continues from it
+  // changes this test on purpose; it is not a regression.
+  it('accepted limitation: a decline stands when every re-read after it misses the held charge', async () => {
     ledger.setBalance(USER, FEE);
     loseEveryAnswer();
     await expect(appeal(KEY)).rejects.toThrow();
@@ -309,6 +312,20 @@ describe('an appeal fee across an unknown outcome', () => {
 
     await expect(appeal(KEY)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(ledger.refunds()).toHaveLength(1);
+  });
+
+  it('a refund that fails on every attempt after a refused record is "may have gone through"', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0 as never);
+    buzz.refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
+
+    await expect(appeal(KEY)).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+    });
+
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(3);
+    expect(ledger.refunds()).toHaveLength(0);
+    expect(appeals).toHaveLength(0);
   });
 
   // Both refusals are routine, and a retry of the appeal is refused by the handler before it

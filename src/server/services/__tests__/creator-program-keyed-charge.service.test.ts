@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createFakeBuzzLedger } from './buzz-ledger.fake';
 import { createFakeAdvisoryLocks, settle } from './charge-lock.fake';
+import { CHARGE_LOCKED_REFUND } from '~/server/services/buzz-charge-lock';
 
 /**
  * A Creator Program bank deposit or cash withdrawal whose Buzz write ends with an unknown outcome
@@ -614,7 +615,7 @@ describe('cash withdrawal with a client key', () => {
     expect(ledger.refunds()).toHaveLength(1);
     // One attempt: a refund the client retried under the key's lock could run past the lock
     // transaction's deadline, releasing the lock while the refund is still in flight.
-    expect(buzz.refundTransaction.mock.calls[0][3]).toMatchObject({ retries: 0 });
+    expect(buzz.refundTransaction.mock.calls[0][3]).toBe(CHARGE_LOCKED_REFUND);
     expect(locks.taken()).toEqual([burnId, burnId]);
     expect(tipalti.payToTipaltiAccount).not.toHaveBeenCalled();
   });

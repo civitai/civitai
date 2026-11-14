@@ -354,7 +354,10 @@ describe('a crucible entry fee across an unknown outcome', () => {
   });
 
   // Five hidden: the lookup before charging and all four re-reads miss, so the refusal stands.
-  it('a balance refusal stands when every re-read after it misses the held charge', async () => {
+  // An ACCEPTED LIMITATION, pinned so it stays visible: a ledger read that lags past the whole
+  // re-read window leaves the earlier charge held and unrecorded. A fix that continues from it
+  // changes this test on purpose; it is not a regression.
+  it('accepted limitation: a balance refusal stands when every re-read after it misses the held charge', async () => {
     ledger.setBalance(USER, FEE);
     ledger.queueFault('lose-response');
     ledger.queueFault('lose-response');

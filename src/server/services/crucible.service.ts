@@ -6,6 +6,7 @@ import { chargeByPrefix, prefixWasRefunded } from '~/server/services/buzz-keyed-
 import {
   CHARGE_LOCKED_READ,
   CHARGE_LOCKED_REFUND,
+  CHARGE_REFUND_RETRY_PAUSE_MS,
   recordKeyedCharge,
   ROUTINE_REFUSAL_REFUND_ATTEMPTS,
 } from '~/server/services/buzz-charge-lock';
@@ -39,6 +40,7 @@ import {
   throwNotFoundError,
   throwInsufficientFundsError,
   throwAuthorizationError,
+  sleep,
 } from '~/server/utils/errorHandling';
 import {
   createMultiAccountBuzzTransaction,
@@ -2036,7 +2038,6 @@ function getEntryLockKey(crucibleId: number, userId: number): RedisKeyTemplateSy
 // than that. It is released at the end of every submit; the TTL matters only for a holder that
 // died, which blocks that user's next submit until it lapses.
 const ENTRY_LOCK_TTL_MS = 180_000;
-const ENTRY_REFUND_ATTEMPTS = 3;
 
 /**
  * One submit per user per crucible at a time, so two can't both read the same entry count. Throws
@@ -2496,7 +2497,7 @@ export const submitEntry = async ({
       // Retried, since a refusal near the end is routine rather than a rare failure.
       if (buzzTransactionId) {
         let lastError: unknown;
-        for (let attempt = 1; attempt <= ENTRY_REFUND_ATTEMPTS; attempt++) {
+        for (let attempt = 1; attempt <= ROUTINE_REFUSAL_REFUND_ATTEMPTS; attempt++) {
           try {
             await refundCrucibleTransactionOnce({
               externalTransactionIdPrefix: buzzTransactionId,
@@ -2512,8 +2513,8 @@ export const submitEntry = async ({
             break;
           } catch (refundError) {
             lastError = refundError;
-            if (attempt < ENTRY_REFUND_ATTEMPTS)
-              await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+            if (attempt < ROUTINE_REFUSAL_REFUND_ATTEMPTS)
+              await sleep(CHARGE_REFUND_RETRY_PAUSE_MS * attempt);
           }
         }
         if (lastError)

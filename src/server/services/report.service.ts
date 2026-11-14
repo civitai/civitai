@@ -1102,7 +1102,8 @@ export async function createEntityAppeal({
               ? new TRPCError({ code: 'BAD_REQUEST', message: APPEAL_ALREADY_PENDING })
               : error,
           // Already pending and IMAGE_NOT_APPEALABLE are routine, and a retry is then refused by the
-          // handler before it reaches the charge, so the refund is retried here.
+          // handler before it reaches the charge, so the refund is retried here. Worst case: the
+          // record transaction (45s) plus three refund transactions (31s each) and the pauses, ~140s.
           refundAttempts: ROUTINE_REFUSAL_REFUND_ATTEMPTS,
         });
       }
