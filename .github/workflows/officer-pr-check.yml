@@ -1,0 +1,120 @@
+name: officer-pr-check
+
+# The second wall for pull requests opened by an officer agent's GitHub App: such a PR may
+# change APPLICATION CODE ONLY (src/**, packages/**), never dependencies, lockfiles, schema,
+# migrations, env files, containers, CI, hooks, scripts or agent instructions.
+#
+# Armed when the head branch starts with `officer/` OR the author is a login listed in the
+# BASE commit's .github/officer/bot-logins.txt (the branch prefix is configurable on the
+# agent side, so a name alone is not an identity). Every other PR is decided in seconds and
+# runs nothing else but the self-test.
+#
+# What it checks when armed (.github/officer/officer_pr_check.py): every path the PR changes,
+# adds, deletes or renames away from, against the merge ref's first parent (the base tip the
+# PR lands on):
+#   1. it is under src/ or packages/ (an allowlist);
+#   2. it matches no glob of the BASE's .github/officer/forbidden-paths.txt, which is also the
+#      list the agent's push gate (the first wall) reads, so the two walls cannot drift;
+#   3. it is not a symlink or a submodule gitlink;
+#   4. and the PR adds or modifies at least one test file (`*.test.*`, `*.spec.*` or under
+#      `__tests__/`): every officer PR carries a regression test for what it fixes.
+# An empty diff fails. Tests under src/ and packages/ are application code here.
+#
+# The self-test (.github/officer/test_officer_pr_check.py, the PR's own copy) runs on EVERY
+# PR: it shows the walls go red on what they exist to catch, and fails when a new top-level
+# file or directory is not yet in forbidden-paths.txt (the push gate has no allowlist).
+#
+# 🔴 FAIL CLOSED: when armed, the checker, the list and the logins all come from the BASE
+# commit. If the base lacks one, the job fails; it never runs the PR's own copy. Before this
+# file is on the base, arming falls back to the `officer/` prefix and the check fails closed.
+#
+# 🔴 What this does NOT protect: THIS FILE. GitHub runs a `pull_request` workflow from the
+# PR's merge ref, so a PR that edits this workflow decides whether and how it runs. The walls
+# for workflow tampering are the push gate (`.github` is on its list) and GitHub refusing a
+# push under .github/workflows/ from an App token without the `workflows` permission, which
+# the officer Apps are not granted.
+#
+# 🔴 This is a merge block only if branch protection on `main` requires this check. Without
+# that, a red here is a signal to the human reviewer, not a wall.
+#
+# `pull_request`, not `pull_request_target`: the PR's code runs with a read-only token and no
+# secrets. Officer PRs are drafts, and `pull_request` runs on drafts.
+
+on:
+  pull_request:
+    # `edited` fires on a base retarget, so a PR judged against another base is judged again.
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: officer-pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  officer-pr-check:
+    name: officer-pr-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The merge ref and its two parents only: HEAD^1 is the base tip, HEAD^2 the PR head.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Resolve base and head
+        id: refs
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [ "$(git rev-list --parents -n1 HEAD | wc -w)" -eq 3 ] \
+            || { echo "::error::HEAD is not a two-parent merge ref; cannot tell base from head (fail closed)"; exit 2; }
+          [ "$(git rev-parse HEAD^2)" = "$HEAD_SHA" ] \
+            || { echo "::error::the merge ref's second parent is not the PR head ${HEAD_SHA} (fail closed)"; exit 2; }
+          echo "base=$(git rev-parse HEAD^1)" >>"$GITHUB_OUTPUT"
+          echo "base $(git rev-parse --short HEAD^1), head $(git rev-parse --short HEAD^2), merge $(git rev-parse --short HEAD)"
+
+      - name: Self-test (forbidden-path grammar, fixtures, top-level coverage)
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/selftest.out"
+          python3 .github/officer/test_officer_pr_check.py >"$out" 2>&1 || { cat "$out"; exit 1; }
+          cat "$out"
+          # COUNT the result, never trust the exit code alone: a run of 0 tests is a failure.
+          n="$(sed -n 's/^Ran \([0-9][0-9]*\) tests\? in .*/\1/p' "$out")"
+          [ -n "$n" ] && [ "$n" -ge 20 ] && grep -qx 'OK' "$out" \
+            || { echo "::error::self-test ran ${n:-0} tests (expected at least 20) or did not report OK"; exit 1; }
+
+      # Decided from the BASE commit's checker and logins, so a PR cannot choose whether it is
+      # checked. A base without the checker falls back to the `officer/` prefix alone.
+      - name: Arm (officer/ head branch, or a listed officer bot author)
+        id: arm
+        env:
+          BASE: ${{ steps.refs.outputs.base }}
+          HEAD_REF_NAME: ${{ github.head_ref }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          if git cat-file -e "${BASE}:.github/officer/officer_pr_check.py" 2>/dev/null; then
+            git show "${BASE}:.github/officer/officer_pr_check.py" >"$RUNNER_TEMP/officer_pr_check.py"
+            python3 "$RUNNER_TEMP/officer_pr_check.py" arm "$BASE" "$HEAD_REF_NAME" "$AUTHOR" | tee "$RUNNER_TEMP/arm.out"
+          else
+            case "$HEAD_REF_NAME" in officer/*) echo "armed=true" ;; *) echo "armed=false" ;; esac | tee "$RUNNER_TEMP/arm.out"
+          fi
+          grep -m1 '^armed=' "$RUNNER_TEMP/arm.out" >>"$GITHUB_OUTPUT"
+
+      - name: Officer PR check (allowed roots, forbidden paths, symlinks, regression test)
+        if: steps.arm.outputs.armed == 'true'
+        env:
+          BASE: ${{ steps.refs.outputs.base }}
+        run: |
+          set -euo pipefail
+          # The checker comes from the BASE commit and from nowhere else (fail closed).
+          git cat-file -e "${BASE}:.github/officer/officer_pr_check.py" 2>/dev/null \
+            || { echo "::error::.github/officer/officer_pr_check.py is not on the base; refusing to run the PR's copy"; exit 2; }
+          git show "${BASE}:.github/officer/officer_pr_check.py" >"$RUNNER_TEMP/officer_pr_check.py"
+          python3 "$RUNNER_TEMP/officer_pr_check.py" check "$BASE" HEAD
