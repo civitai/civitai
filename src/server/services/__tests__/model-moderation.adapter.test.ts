@@ -173,7 +173,10 @@ describe('modelModerationAdapter.applyResult', () => {
       actorRole: 'system',
       reason: 'xguard-text-moderation',
     });
-    expect(rows.find((r) => r.field === 'lockedProperties')).toBeUndefined();
+    expect(rows.find((r) => r.field === 'lockedProperties')).toMatchObject({
+      actorRole: 'system',
+      reason: 'xguard-text-moderation',
+    });
   });
 
   // A moderation write is exactly the case a replication-lag read must not miss a lock a

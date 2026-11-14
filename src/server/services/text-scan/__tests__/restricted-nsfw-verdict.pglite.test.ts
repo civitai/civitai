@@ -297,6 +297,12 @@ describe('the scan on a restricted model', () => {
     expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
   });
 
+  it('locks for a source it does not know, by default', async () => {
+    await seed({});
+    await applySystemModelNsfwFlag({ model: scanned(), source: 'some-later-check' });
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+  });
+
   it('rates a model listed on .com by its face, so removing the face later leaves it mature', async () => {
     await seed({});
     expect(
@@ -310,7 +316,7 @@ describe('the scan on a restricted model', () => {
 
   it("keeps an earlier marker's time, and marks nothing under a moderator's lock", async () => {
     await seed({ nsfw: true, meta: { systemNsfwLock: SYSTEM_LOCK } });
-    await applySystemModelNsfwFlag({ model: scanned({ nsfw: true }), source: 'xguard' });
+    await applySystemModelNsfwFlag({ model: scanned({ nsfw: true }), source: 'text-scan' });
     expect((await row()).meta.systemNsfwLock).toEqual(SYSTEM_LOCK);
 
     await seed({ nsfw: true, locked: ['nsfw'] });
@@ -677,6 +683,26 @@ describe('a Private model, which must stay SFW-only', () => {
       await expectApplied();
     }
   );
+
+  // Every source but the text scan keeps the lock, as before this change: here the profanity filter.
+  it('applies a held profanity-filter lead with the nsfw lock and its marker', async () => {
+    await seed({
+      sfwOnly: true,
+      meta: {
+        restrictedNsfwVerdict: {
+          source: 'profanity-filter',
+          at: '2026-11-04T00:00:00.000Z',
+          restriction: 'minor',
+        },
+      },
+    });
+    await makePrivate();
+    await applyHeldRestrictedVerdict(MODEL);
+    expect(await publish()).toBe(true);
+    const after = await row();
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after.meta.systemNsfwLock).toMatchObject({ source: 'profanity-filter' });
+  });
 
   it('the scan on a model that went Private between submit and callback holds the verdict', async () => {
     await seed({ sfwOnly: true });
