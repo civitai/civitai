@@ -74,6 +74,7 @@ const HIDDEN_SERVER_OWNED_META_KEYS = [
   'restrictedNsfwVerdict',
   'restrictedNsfwVerdictRulings',
   'restrictedNsfwVerdictDormant',
+  'comFaceIntent',
 ] as const satisfies readonly (typeof SERVER_OWNED_META_KEYS)[number][];
 
 const CLIENT_HIDDEN_META_KEYS: readonly string[] = [
@@ -177,7 +178,8 @@ export function withPrivateCannotPromote<T extends object>(meta: T, banned: bool
  * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
  * paths read both. `systemNsfwLock` marks an nsfw lock a system check added, which the owner may
- * dispute. `comFaceRemoved` records that the listing re-check took the model off civitai.com.
+ * dispute. `comFaceRemoved` records that the listing re-check took the model off civitai.com;
+ * `comFaceIntent` keeps the listing intent verdict a .com face was judged by.
  * `restrictedNsfwVerdict` is a moderator's lead, kept with its rulings and dormant verdict;
  * `ownerDeclaredFlags` outlives the override a ruling drops. Client meta carrying any of these is
  * ignored, so on update the stored values survive the `{ ...prevMeta, ...meta }` merge.
@@ -191,6 +193,7 @@ export const SERVER_OWNED_META_KEYS = [
   'restrictedNsfwVerdictDormant',
   'ownerDeclaredFlags',
   'comFaceRemoved',
+  'comFaceIntent',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 export function systemNsfwLockMarker(source: string): { source: string; at: string } {

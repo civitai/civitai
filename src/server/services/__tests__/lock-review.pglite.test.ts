@@ -286,6 +286,32 @@ describe('approving a lock review', () => {
     expect(await modelMeta()).toEqual({ other: 1 });
   });
 
+  it('overturns the listing intent detection when it lifts the nsfw lock, so a .com version is allowed', async () => {
+    const intent = { detected: true, textHash: 'h', at: '2026-01-01T00:00:00.000Z' };
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: intent.at },
+        comFaceIntent: intent,
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta).not.toHaveProperty(SYSTEM_NSFW_LOCK_META_KEY);
+    expect(meta.comFaceIntent).toEqual({ ...intent, overturnedAt: expect.any(String) });
+  });
+
+  it('leaves the listing intent detection standing on a rejection', async () => {
+    const intent = { detected: true, textHash: 'h', at: '2026-01-01T00:00:00.000Z' };
+    await seed({ locked: ['nsfw'], meta: { comFaceIntent: intent } });
+
+    await reject();
+
+    expect((await modelMeta()).comFaceIntent).toEqual(intent);
+  });
+
   it('keeps the marker when the nsfw lock is not among those lifted', async () => {
     await seed({
       locked: ['nsfw', 'tags'],
@@ -703,6 +729,20 @@ describe("an owner's request", () => {
         entityId: MODEL,
         context: { kind: 'lock-review', locks: ['nsfw'] },
         skipFee: true,
+      })
+    );
+  });
+
+  it('tags a request on the listing intent lock as a dispute, for the re-judging job', async () => {
+    ownModel({
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-01-01' } },
+    });
+
+    await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+    expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: { kind: 'lock-review', locks: ['nsfw'], dispute: 'comFaceIntent' },
       })
     );
   });

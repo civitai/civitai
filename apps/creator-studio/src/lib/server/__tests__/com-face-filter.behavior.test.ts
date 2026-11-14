@@ -35,7 +35,7 @@ vi.mock('@civitai/db/kysely', () => {
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
-const { hasComFaceSql } = await import('../models');
+const { comFaceReadySql, hasComFaceSql } = await import('../models');
 
 let db: PGlite;
 
@@ -63,5 +63,37 @@ describe('hasComFaceSql', () => {
     );
     // 1: no face. 3: a moderator removed it and cleared the cover. 4: removed, then the owner set a new cover.
     expect(rows.map((r) => r.id)).toEqual([2, 4, 5]);
+  });
+});
+
+describe('comFaceReadySql', () => {
+  it('lists mature models with no face where one could be added, and none a lock or flag rules out', async () => {
+    const ready = new PGlite();
+    await ready.exec(`
+      CREATE TABLE "Model" (
+        id int PRIMARY KEY, nsfw boolean, "lockedProperties" text[], minor boolean, poi boolean,
+        "sfwOnly" boolean, mode text, "sfwName" text, "sfwCoverImageId" int, meta jsonb
+      );
+      INSERT INTO "Model" VALUES
+        (1, true, NULL, false, false, false, NULL, NULL, NULL, NULL),
+        (2, false, NULL, false, false, false, NULL, NULL, NULL, NULL),
+        (3, true, '{nsfw}', false, false, false, NULL, NULL, NULL, NULL),
+        (4, true, '{tags}', false, false, false, NULL, NULL, NULL, NULL),
+        (5, true, NULL, true, false, false, NULL, NULL, NULL, NULL),
+        (6, true, NULL, false, false, false, 'TakenDown', NULL, NULL, NULL),
+        (7, true, NULL, false, false, false, NULL, 'Safe name', 11, NULL),
+        (8, true, NULL, false, false, false, NULL, 'Safe name', NULL, '{"comFaceRemoved": {}}');
+    `);
+    const where = (comFaceReadySql('"Model"') as unknown as {
+      render: () => { text: string; params: unknown[] };
+    }).render();
+    const { rows } = await ready.query<{ id: number }>(
+      `select id from "Model" where ${where.text} order by id`,
+      where.params
+    );
+    // 2: not mature. 3: nsfw locked. 5: minor. 6: taken down. 7: has a face. 8 is in: a removed
+    // face can be added again.
+    expect(rows.map((r) => r.id)).toEqual([1, 4, 8]);
+    await ready.close();
   });
 });

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import {
+  COM_FACE_INTENT_DISPUTE,
   LOCK_REVIEW_COOLDOWN_DAYS,
   LOCK_REVIEW_KIND,
   type LockReviewContext,
@@ -16,6 +17,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { hasPendingMinorHashMatch } from '~/server/services/minor-hash.service';
+import {
+  COM_FACE_INTENT_LOCK_SOURCE,
+  overturnComFaceIntentSql,
+} from '~/server/services/model-com-face-intent.service';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { POI_HASH_MATCH_KEY } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
@@ -33,6 +39,8 @@ export type LockReviewState = {
   pending: boolean;
   /** Set while a recent request was closed with every setting it named still locked. */
   reopensAt: Date | null;
+  /** The nsfw lock is the listing intent check's, added when the owner tried a civitai.com version. */
+  comFaceIntent: boolean;
 };
 
 export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.";
@@ -60,12 +68,15 @@ export async function getLockReviewState({
   if (isModerator) return null;
   const model = await db.model.findUnique({
     where: { id: modelId },
-    select: { userId: true, lockedProperties: true, poi: true, minor: true },
+    select: { userId: true, lockedProperties: true, poi: true, minor: true, meta: true },
   });
   if (!model || model.userId !== userId) return null;
 
   const requestable = requestableLocks(model);
-  if (!requestable.length) return { requestable, pending: false, reopensAt: null };
+  const comFaceIntent =
+    requestable.includes('nsfw') &&
+    (model.meta as ModelMeta | null)?.systemNsfwLock?.source === COM_FACE_INTENT_LOCK_SOURCE;
+  if (!requestable.length) return { requestable, pending: false, reopensAt: null, comFaceIntent };
 
   const latest = await db.appeal.findFirst({
     where: {
@@ -79,9 +90,9 @@ export async function getLockReviewState({
     select: { status: true, resolvedAt: true, context: true },
   });
   const asked = parseLockReviewContext(latest?.context);
-  if (!latest || !asked) return { requestable, pending: false, reopensAt: null };
+  if (!latest || !asked) return { requestable, pending: false, reopensAt: null, comFaceIntent };
   if (latest.status === AppealStatus.Pending)
-    return { requestable, pending: true, reopensAt: null };
+    return { requestable, pending: true, reopensAt: null, comFaceIntent };
 
   // A request whose settings were all left locked starts the cooldown; lifting any of them ends it.
   const locked = model.lockedProperties ?? [];
@@ -93,6 +104,7 @@ export async function getLockReviewState({
     requestable,
     pending: false,
     reopensAt: reopensAt && reopensAt > new Date() ? reopensAt : null,
+    comFaceIntent,
   };
 }
 
@@ -175,7 +187,10 @@ export async function assertLockReviewAllowed({
         'MMMM D, YYYY'
       )}.`
     );
-  return lockReviewContext(locks as RequestableLock[]);
+  // An nsfw lock the listing intent check added is re-judged by a job before a moderator sees it.
+  const dispute =
+    state.comFaceIntent && locks.includes('nsfw') ? COM_FACE_INTENT_DISPUTE : undefined;
+  return lockReviewContext(locks as RequestableLock[], dispute);
 }
 
 /**
@@ -272,10 +287,14 @@ export async function resolveLockReviewAppeal({
           data: { lockedProperties: locked.filter((key) => !(lift as string[]).includes(key)) },
         });
       // As the model form does on a moderator's nsfw unlock: a later lock must not read as the system's.
-      if (lift.includes('nsfw'))
+      if (lift.includes('nsfw')) {
         await tx.$executeRaw`
           UPDATE "Model" SET meta = ${withoutSystemNsfwLockSql('meta')} WHERE id = ${modelId}
         `;
+        // Lifting the nsfw lock rules the listing is not made for sexual content: the stored
+        // intent detection stops refusing a civitai.com version for this text.
+        await tx.$executeRaw(overturnComFaceIntentSql(modelId));
+      }
     }
 
     // Appeal rows are reopened in place, which erases this ruling from the row: the owner's

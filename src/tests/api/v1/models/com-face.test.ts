@@ -212,11 +212,11 @@ describe('POST /api/v1/models/com-face', () => {
   });
 
   it.each([
-    [COM_FACE_REFUSED_MESSAGE, /in the model editor/],
-    [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/],
+    [COM_FACE_REFUSED_MESSAGE, /in the model editor/, 422],
+    [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/, 400],
   ])(
     'tells the card which fields a refused draft read, apart from a check that failed',
-    async (thrown, shown) => {
+    async (thrown, shown, status) => {
       caller.model.getCoverCandidates.mockResolvedValue([
         { id: 2, url: 'b', type: 'image', nsfwLevel: 2 },
       ]);
@@ -224,9 +224,12 @@ describe('POST /api/v1/models/com-face', () => {
         new TRPCError({ code: 'BAD_REQUEST', message: thrown })
       );
       const res = await call({ action: 'draft', modelId: 11 });
-      expect(res.statusCode).toBe(400);
-      expect(res.body.message).toMatch(shown);
-      expect(res.body.message).toMatch(/civitai\.red/);
+      expect(res.statusCode).toBe(status);
+      const message = res.body.message ?? res.body.error;
+      expect(message).toMatch(shown);
+      expect(message).toMatch(/civitai\.red/);
+      // A refusal is marked so Creator Studio offers the dispute instead of a retry.
+      if (status === 422) expect(res.body.code).toBe('intent-refused');
     }
   );
 

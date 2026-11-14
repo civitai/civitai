@@ -426,6 +426,15 @@ export type RestrictedNsfwVerdictRulingRecord = {
 
 export type ComFaceRemovedReason = 'detected' | 'recheck-unverified';
 
+export type ComFaceIntentRecord = {
+  detected: boolean;
+  reason?: string;
+  promptId?: number;
+  textHash: string;
+  at: string;
+  overturnedAt?: string;
+};
+
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
@@ -503,6 +512,10 @@ export type ModelMeta = Partial<{
    *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
    *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com
    *  cover clears it. Server-owned. */
+  /** The listing intent check's verdict at .com-face time, kept while the listing text it read
+   *  (`textHash`) is unchanged so a repeat attempt is not re-judged. `overturnedAt`: a dispute or a
+   *  moderator lifted the lock it set. `reason` is for moderators only. Server-owned. */
+  comFaceIntent: ComFaceIntentRecord;
   comFaceRemoved: {
     at: string;
     sfwCoverImageId: number;
