@@ -247,6 +247,7 @@ const SESSION_BOUND = new Set([
   'blocks.previewPostFromApp',
   'blocks.previewQuoteGrant',
   'blocks.previewTrainingQuote',
+  'blocks.persistGenerationSource',
   'blocks.publishGenerationOutputs',
   'blocks.recordMediaUploadBatchItem',
   'blocks.setReactionFromApp',
@@ -306,6 +307,7 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.previewQuoteGrant': { kind: 'training', quoteId: QUOTE_ID },
   'blocks.previewTrainingQuote': { quoteId: QUOTE_ID },
   'blocks.publishGenerationOutputs': { workflowId: 'wf_1' },
+  'blocks.persistGenerationSource': { workflowId: 'wf_1', imageIndex: 0 },
   'blocks.queryAppWorkflows': {},
   // No ticket, so a token that passes every auth step stops at the provenance guard.
   'blocks.setReactionFromApp': {
@@ -1466,6 +1468,50 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       'TOO_MANY_REQUESTS',
       'Rate limit exceeded, please retry shortly.',
       ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
+  // The publish preamble without the publish bucket (its limit is the per-user `rateLimit`
+  // middleware, which does not run under test), then the ownership guard refuses the fixture.
+  'blocks.persistGenerationSource': {
+    'valid token': E(
+      'FORBIDDEN',
+      'workflow is not in this app subqueue',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'saving a generation source requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'FORBIDDEN',
+      'workflow is not in this app subqueue',
+      [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     "session user is not the token subject (session user's run flag off)": E(

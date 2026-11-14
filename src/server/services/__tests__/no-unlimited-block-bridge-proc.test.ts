@@ -198,6 +198,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['upload-app'],
     why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token, before the row is created, from its OWN app-wide bucket keyed on appId, shared by every viewer and install of the app. NOT the per-install publish bucket: a page app install id is shared by every viewer, so charging it let one viewer’s uploads use up the allowance publishGenerationOutputs and post creation draw on. No per-viewer upload bucket: the 60/h per-user rateLimit is tighter for every prod non-moderator, and the host’s 8-per-60-s bytes window holds a single-page moderator to 40 per 300 s.',
   },
+  persistGenerationSource: {
+    buckets: [],
+    why: 'NONE OF THESE BUCKETS. The server half of PERSIST_GENERATION_SOURCE: one private, scanned Image row per call, charged the per-user 60/h rateLimit middleware (as persistAppUploadImage), which this file’s derivation does not read. NOT the per-install publish bucket, which every viewer of a page app shares. A repeat call for an output already kept returns that row and writes nothing.',
+  },
   presignMediaUploadBatchItem: {
     buckets: [],
     why: 'NONE OF THESE BUCKETS. Bounded by its batch instead: only for an open batch of this viewer and app, and at most three upload URLs per file the daily batch quota was charged for at startMediaUploadBatch. The per-install catalog bucket would let one viewer’s 1,000-file batch drain every viewer’s allowance on a page app.',
@@ -457,6 +461,8 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
     // The three batch-upload steps likewise: bounded by the daily batch quota and the batch itself.
     expect(unlimited).toEqual([
       'listMyWorkflows',
+      // Charged the per-user 60/h rateLimit middleware, like setReactionFromApp's quota.
+      'persistGenerationSource',
       'presignMediaUploadBatchItem',
       'recordMediaUploadBatchItem',
       'setReactionFromApp',
