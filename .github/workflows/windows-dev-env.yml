@@ -3,7 +3,7 @@ name: Windows dev-env smoke
 # Canary for the DEFAULT (non-Nix) contributor setup on native Windows. Runs on a
 # push to `main` that touches the install path, and on dispatch; not on PRs.
 #
-# WHY: every other job in this repo runs on ubuntu-latest, so nothing validates
+# WHY: every other job in this repo runs on Ubuntu, so nothing validates
 # Windows — while Windows support is real and actively maintained:
 # `.claude/skills/dev-server/scripts/defender-exclusions.ps1`, `win32` branches in
 # `scripts/test-unit-run.mjs`, `scripts/test-perf/bench.mjs`,

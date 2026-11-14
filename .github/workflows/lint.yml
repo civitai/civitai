@@ -1000,7 +1000,8 @@ jobs:
 
   component:
     name: Component + geometry tests (${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    # Playwright 1.57.0 has no Chromium build for Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
     if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # ── `component` SHARDED ACROSS 3 RUNNERS; GEOMETRY ON SHARD 1 ──
@@ -1083,7 +1084,7 @@ jobs:
       # .../chromium_headless_shell-<rev>/..." and not one spec ran.
       #
       # `--with-deps` installs the shared libraries Chromium needs on a bare
-      # ubuntu-latest image; `chromium` alone, because the browser config in
+      # Ubuntu image; `chromium` alone, because the browser config in
       # vitest.config.mts declares `instances: [{ browser: 'chromium' }]` and
       # firefox/webkit would be several hundred MB of download for nothing.
       #
