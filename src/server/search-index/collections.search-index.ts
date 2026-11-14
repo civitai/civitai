@@ -28,6 +28,7 @@ import {
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import {
+  COLLECTION_INDEX_ITEM_COVERS,
   collectionItemCoversSql,
   coverUploadSql,
   servableCollectionCoverSql,
@@ -329,7 +330,7 @@ export const pullData = async (
   if (collectionsNeedingImages.length > 0) {
     itemImages = await db.$queryRaw<CollectionImageRaw[]>`${collectionItemCoversSql({
       collectionIds: collectionsNeedingImages,
-      itemsPerCollection: 10,
+      itemsPerCollection: COLLECTION_INDEX_ITEM_COVERS,
       imageSql: collectionIndexImageSql,
     })}`;
   }

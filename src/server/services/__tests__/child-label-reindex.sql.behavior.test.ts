@@ -37,17 +37,42 @@ beforeAll(async () => {
       "imageId" int NOT NULL, "tagId" int NOT NULL, source "TagSource" NOT NULL,
       disabled boolean NOT NULL DEFAULT false
     );
-    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int);
-    CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int, "userId" int);
-    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
-    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int);
+    -- Columns past the ids are the ones the collection indexer's item-cover SQL reads.
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "postId" int, "userId" int NOT NULL DEFAULT 7, index int NOT NULL DEFAULT 0,
+      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false
+    );
+    CREATE TABLE "Post" (
+      id int PRIMARY KEY, "modelVersionId" int, "userId" int,
+      "publishedAt" timestamp NOT NULL DEFAULT now() - interval '1 day',
+      availability text NOT NULL DEFAULT 'Public'
+    );
+    CREATE TABLE "ModelVersion" (
+      id int PRIMARY KEY, "modelId" int NOT NULL, index int NOT NULL DEFAULT 0,
+      status text NOT NULL DEFAULT 'Published', availability text NOT NULL DEFAULT 'Public',
+      "publishedAt" timestamp
+    );
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, "userId" int, status text NOT NULL DEFAULT 'Published',
+      "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public', mode text
+    );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
-    CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int, "bannerId" int);
-    CREATE TABLE "Model3D" (id int PRIMARY KEY, "thumbnailImageId" int);
+    CREATE TABLE "Article" (
+      id int PRIMARY KEY, "coverId" int, "bannerId" int, cover text,
+      status text NOT NULL DEFAULT 'Published',
+      "publishedAt" timestamp NOT NULL DEFAULT now() - interval '1 day',
+      availability text NOT NULL DEFAULT 'Public', ingestion text NOT NULL DEFAULT 'Scanned'
+    );
+    CREATE TABLE "Model3D" (
+      id int PRIMARY KEY, "thumbnailImageId" int, status text NOT NULL DEFAULT 'Published',
+      "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public'
+    );
     CREATE TABLE "Collection" (id int PRIMARY KEY, "imageId" int, "userId" int);
     CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId");
     CREATE TABLE "CollectionItem" (
-      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "postId" int,
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, status text NOT NULL DEFAULT 'ACCEPTED',
+      "addedById" int NOT NULL DEFAULT 7, "imageId" int, "postId" int,
       "modelId" int, "articleId" int, "model3dId" int
     );
   `);
@@ -86,9 +111,11 @@ beforeEach(async () => {
       (12, ${OTHER}, 'Rekognition', false), (12, 9001, 'WD14', false),
       (13, ${CHILD}, 'WD14', false),
       (14, ${CHILD}, 'Rekognition', false), (14, 9001, 'WD14', true);
-    INSERT INTO "Image" (id, "postId") VALUES (1, 100), (2, 200), (3, NULL), (10, 300), (20, 200);
-    INSERT INTO "Post" (id, "modelVersionId", "userId") VALUES (100, 1000, 7), (200, NULL, 7), (300, 3000, 8);
-    INSERT INTO "ModelVersion" (id, "modelId") VALUES (1000, 50), (3000, 60);
+    INSERT INTO "Image" (id, "postId", index) VALUES (1, 100, 0), (2, 200, 0), (3, NULL, 0), (10, 300, 0), (20, 200, 1), (31, 99, 0);
+    -- Model 50's first showcase image is 31, on its earlier version 999: a collection holding model
+    -- 50 shows 31, not the selected image 1.
+    INSERT INTO "Post" (id, "modelVersionId", "userId") VALUES (99, 999, 7), (100, 1000, 7), (200, NULL, 7), (300, 3000, 8);
+    INSERT INTO "ModelVersion" (id, "modelId", index) VALUES (999, 50, 0), (1000, 50, 1), (3000, 60, 0);
     INSERT INTO "Model" (id, "userId") VALUES (50, 7), (60, 8);
     INSERT INTO "User" (id, "profilePictureId") VALUES (7, 2), (8, 10);
     INSERT INTO "Article" (id, "coverId", "bannerId") VALUES (500, 2, NULL), (501, NULL, 3), (502, 10, NULL);
@@ -217,12 +244,13 @@ describe('child-label reindex: reindex', () => {
     const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
     expect(refresh).not.toHaveBeenCalled();
     expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: false, chunkSize: 500 });
-    // 70 cover (1); 72 item image (3); 73 item post (200: image 2); 75 item model 50;
-    // 77 article cover (2); 78 article banner (3); 80 3D thumbnail (1).
-    // 82 owned by user 7, whose avatar is image 2.
-    // Not 71/74/76/79/81/83: only image 10 or model 60, which are not selected.
-    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80, 82]);
-    expect(result).toMatchObject({ images: 3, collections: 8, collectionsQueued: 8 });
+    // Only collections whose search document shows a selected image: 70 cover (1); 72 item image
+    // (3); 73 item post 200, whose first image is 2; 77 article cover (2); 78 article banner (3);
+    // 80 3D thumbnail (1).
+    // Not 75: model 50 shows its first image, 31. Not 82: an avatar carries no tags into the
+    // document. Not 71/74/76/79/81/83: only image 10 or model 60, which are not selected.
+    expect(queuedCollections()).toEqual([70, 72, 73, 77, 78, 80]);
+    expect(result).toMatchObject({ images: 3, collections: 6, collectionsQueued: 6 });
   });
 
   it('resumes above `after` and stops at maxChunks', async () => {
@@ -233,8 +261,8 @@ describe('child-label reindex: reindex', () => {
       after: 1,
       maxChunks: 1,
     });
-    // Image 2 only: 73 item post 200, 77 article cover, 82 avatar.
-    expect(queuedCollections()).toEqual([73, 77, 82]);
+    // Image 2 only: 73 item post 200, 77 article cover.
+    expect(queuedCollections()).toEqual([73, 77]);
     expect(result).toMatchObject({ images: 1, lastImageId: 2 });
   });
 
@@ -282,7 +310,7 @@ describe('child-label reindex: reindex', () => {
     expect(result).toMatchObject({
       probe: 3,
       probeVerified: 0,
-      collections: 8,
+      collections: 6,
       collectionsQueued: 0,
     });
     expect(result).not.toHaveProperty('aborted');
@@ -293,7 +321,7 @@ describe('child-label reindex: reindex', () => {
   it('looks up models and collections a chunk of images at a time', async () => {
     await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 2 });
     const modelLookups = dbMock.dbRead.$queryRaw.mock.calls.filter(([sql]) =>
-      (sql as unknown as Prisma.Sql).text?.includes('"ModelVersion"')
+      (sql as unknown as Prisma.Sql).text?.includes('mv."modelId" AS id')
     );
     expect(modelLookups.map(([sql]) => (sql as unknown as Prisma.Sql).values[0])).toEqual([
       [1, 2],
@@ -317,7 +345,7 @@ describe('child-label reindex: reindex', () => {
     const result = await runChildLabelReindex({ step: 'reindex', dryRun: true, chunkSize: 500 });
     expect(collectionsQueueUpdate).not.toHaveBeenCalled();
     expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: true, chunkSize: 500 });
-    expect(result).toMatchObject({ collections: 8, collectionsQueued: 0 });
+    expect(result).toMatchObject({ collections: 6, collectionsQueued: 0 });
   });
 });
 

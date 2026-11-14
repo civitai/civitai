@@ -83,6 +83,9 @@ export const publishedArticleSql = Prisma.sql`(
   AND a.ingestion = 'Scanned'
 )`;
 
+/** How many of a coverless collection's first items the collections search index shows. */
+export const COLLECTION_INDEX_ITEM_COVERS = 10;
+
 /**
  * For each collection, a cover drawn from its first `itemsPerCollection` accepted items: one row
  * per item, `image` projected by `imageSql` over `"Image" i` (null when no item yields a servable

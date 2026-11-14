@@ -3,6 +3,10 @@ import { childBrowsingTagIds } from '@civitai/shared';
 import { dbRead } from '~/server/db/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import {
+  COLLECTION_INDEX_ITEM_COVERS,
+  collectionItemCoversSql,
+} from '~/server/services/collection-cover-visibility';
+import {
   enqueueCollectionRebuild,
   getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
@@ -45,6 +49,43 @@ export const modelIdsForImagesSql = (imageIds: number[]) => Prisma.sql`
 const ids = async (sql: Prisma.Sql) =>
   (await dbRead.$queryRaw<{ id: number }[]>(sql)).map((r) => r.id);
 
+// Every route an image reaches a collection by, so a superset of the documents that show it.
+const CANDIDATE_CAP = 1_000_000;
+// Collections per item-cover read, as the collections index reads them.
+const COVER_READ_BATCH = 1000;
+
+/**
+ * The collections whose search document shows one of these images, and so carries its tag ids:
+ * the collection's own cover, or one of the item images the index picks for a coverless
+ * collection (`collectionItemCoversSql`, the index's own query). A collection that only reaches
+ * the image another way, such as through a model whose first image is a different one, shows
+ * nothing of it.
+ */
+async function collectionIdsShowingImages(imageIds: number[]) {
+  const wanted = new Set(imageIds);
+  const covers = await ids(
+    Prisma.sql`SELECT id FROM "Collection" WHERE "imageId" = ANY(${imageIds}::int[])`
+  );
+  const candidates = await getCollectionIdsForImages({
+    imageIds,
+    source: SOURCE,
+    cap: CANDIDATE_CAP,
+    db: dbRead,
+  });
+  const shown = new Set(covers);
+  for (const batch of chunkIds(candidates.collectionIds, COVER_READ_BATCH)) {
+    const rows = await dbRead.$queryRaw<{ id: number; image: number | null }[]>(
+      collectionItemCoversSql({
+        collectionIds: batch,
+        itemsPerCollection: COLLECTION_INDEX_ITEM_COVERS,
+        imageSql: Prisma.sql`i.id image`,
+      })
+    );
+    for (const row of rows) if (row.image !== null && wanted.has(row.image)) shown.add(row.id);
+  }
+  return { collectionIds: [...shown], truncated: candidates.truncated };
+}
+
 /**
  * The selected images, ascending: child-labelled by Rekognition and also tagged by WD14. Read in
  * pages of `chunkSize` from a cursor that advances, stopping once `limit` are selected.
@@ -72,11 +113,7 @@ async function documentIdsForImages(imageIds: number[], chunkSize: number) {
   let truncated = false;
   for (const chunk of chunkIds(imageIds, chunkSize)) {
     for (const id of await ids(modelIdsForImagesSql(chunk))) modelIds.add(id);
-    const collections = await getCollectionIdsForImages({
-      imageIds: chunk,
-      source: SOURCE,
-      db: dbRead,
-    });
+    const collections = await collectionIdsShowingImages(chunk);
     for (const id of collections.collectionIds) collectionIds.add(id);
     truncated ||= collections.truncated;
   }
