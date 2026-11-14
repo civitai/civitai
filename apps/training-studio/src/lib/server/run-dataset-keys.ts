@@ -5,20 +5,10 @@ import { orchestratorClient } from './orchestrator';
 
 const TTL_MS = 60_000;
 const MAX_ENTRIES = 500;
-// A dataset grid asks once per image; one read of the run answers them all.
-const cache = new Map<string, { at: number; keys: Set<string> }>();
+// A dataset grid asks for every image at once; one read of the run answers them all.
+const cache = new Map<string, { at: number; keys: Promise<Set<string>> }>();
 
-/** The blob keys `workflowId` may serve as dataset images: a training run's dataset, or an image
- *  edit's starting images. Read with the caller's token, so another user's run gives none. */
-export async function runDatasetKeys(
-  token: string,
-  userId: number,
-  workflowId: string
-): Promise<Set<string>> {
-  const key = `${userId}\n${workflowId}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.keys;
-
+async function readKeys(token: string, workflowId: string): Promise<Set<string>> {
   const { data, error } = await readWorkflow(orchestratorClient(token), workflowId);
   if (!data) {
     if (error?.status === 404) return new Set();
@@ -28,11 +18,24 @@ export async function runDatasetKeys(
     ...(workflowToDetail(data)?.dataset ?? []).map((i) => i.air),
     ...editSourceAirs(data),
   ];
-  const keys = new Set(airs.map(blobIdFromAir));
-  // An empty answer may be a run mid-transition; only a real dataset is kept.
-  if (keys.size > 0) {
-    if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!);
-    cache.set(key, { at: Date.now(), keys });
-  }
-  return keys;
+  return new Set(airs.map(blobIdFromAir));
+}
+
+/** The blob keys `workflowId` may serve as dataset images: a training run's dataset, or an image
+ *  edit's starting images. Read with the caller's token, so another user's run gives none. */
+export function runDatasetKeys(
+  token: string,
+  userId: number,
+  workflowId: string
+): Promise<Set<string>> {
+  const key = `${userId}\n${workflowId}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.keys;
+  if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value!);
+  const entry = { at: Date.now(), keys: readKeys(token, workflowId) };
+  cache.set(key, entry);
+  // A failed read, or an empty answer from a run mid-transition, is not kept.
+  const evict = () => cache.get(key) === entry && cache.delete(key);
+  entry.keys.then((keys) => keys.size === 0 && evict(), evict);
+  return entry.keys;
 }

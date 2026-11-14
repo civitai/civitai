@@ -126,4 +126,16 @@ describe('GET /api/dataset-blob', () => {
     await get('air=ds-1.png&workflowId=wf-1', 902);
     expect(getWorkflow).toHaveBeenCalledTimes(1);
   });
+
+  it('shares one read of the run across a grid asked for at once', async () => {
+    const grid = Array.from({ length: 5 }, () => get('air=ds-1.png&workflowId=wf-1', 903));
+    await Promise.all(grid);
+    expect(getWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the run again after a failed read', async () => {
+    getWorkflow.mockResolvedValueOnce({ data: undefined, error: { status: 503 } });
+    expect(await status(() => get('air=ds-1.png&workflowId=wf-1', 904))).toBe(502);
+    expect(await (await get('air=ds-1.png&workflowId=wf-1', 904)).text()).toBe('bytes');
+  });
 });
