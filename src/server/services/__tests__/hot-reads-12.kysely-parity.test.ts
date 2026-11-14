@@ -67,7 +67,9 @@ const U_FULL = 12201; // a Scanned picture, two equipped cosmetics (plus two tha
 const U_BARE = 12202; // no picture, no cosmetics, NULL username and image
 const U_PENDING = 12203; // a picture not yet Scanned: served to no one
 const U_CSAM = 12204; // a Scanned picture flagged csam: served to no one
-const U_MINOR = 12205; // a Scanned picture held for another review: still served
+// A Scanned picture held for another review: still served. Its image's "userId" is another user's,
+// so the picture's owner is read from the image, not copied from the user.
+const U_MINOR = 12205;
 const U_DANGLING = 12206; // deleted, and the picture id points at a deleted image
 const U_UNREAD = 12207; // has rows of every kind, never requested
 
@@ -225,7 +227,7 @@ describe.skipIf(!parityUrl)('hot reads 12: Kysely returns exactly what Prisma re
         (${IMG_FULL}, 'avatar.png', 'full-uuid', ${U_FULL}, 'fullhash', 512, 384, 'image', '{"size":11}', 1, NULL, 'Scanned'),
         (${IMG_PENDING}, 'pending.png', 'pending-uuid', ${U_PENDING}, NULL, NULL, NULL, 'image', '{}', 0, NULL, 'Pending'),
         (${IMG_CSAM}, 'csam.png', 'csam-uuid', ${U_CSAM}, 'csamhash', 64, 64, 'image', '{}', 2, 'csam', 'Scanned'),
-        (${IMG_MINOR}, NULL, 'minor-uuid', ${U_MINOR}, NULL, 128, 96, 'video', '{"duration":3}', 4, 'minor', 'Scanned'),
+        (${IMG_MINOR}, NULL, 'minor-uuid', ${U_UNREAD}, NULL, 128, 96, 'video', '{"duration":3}', 4, 'minor', 'Scanned'),
         (${IMG_UNREAD}, 'unread.png', 'unread-uuid', ${U_UNREAD}, NULL, NULL, NULL, 'image', '{}', 8, NULL, 'Scanned')
     `);
     await exec(`
@@ -367,7 +369,7 @@ describe.skipIf(!parityUrl)('hot reads 12: Kysely returns exactly what Prisma re
       url: 'minor-uuid',
       nsfwLevel: 4,
       hash: null,
-      userId: U_MINOR,
+      userId: U_UNREAD,
       ingestion: 'Scanned',
       type: 'video',
       width: 96,
