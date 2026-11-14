@@ -157,8 +157,11 @@ export const hibernationSql = {
     SELECT count(*)::int AS "apps", COALESCE(sum("bytes"), 0)::bigint AS "bytes"
     FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId} AND "app_key" <> ${excludeAppKey}`,
+  // Selects a constant FROM the lock call, never the call itself: pg_advisory_xact_lock returns
+  // `void`, and Prisma's $queryRaw (the only path `query` has) cannot deserialize a void column, so
+  // `SELECT pg_advisory_xact_lock(...)` threw on every commit in production.
   lock: (userId: number) =>
-    Prisma.sql`SELECT pg_advisory_xact_lock(${LOCK_NAMESPACE}::int, ${userId}::int)`,
+    Prisma.sql`SELECT 1 AS "locked" FROM pg_advisory_xact_lock(${LOCK_NAMESPACE}::int, ${userId}::int)`,
   upsert: (w: HibernationRow) => Prisma.sql`
     INSERT INTO "app_sandbox_hibernations" (
       "user_id", "app_key", "attempt_id", "object_key", "sha256", "bytes", "excluded",
