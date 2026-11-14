@@ -1,3 +1,6 @@
+import { buildKohyaInput, type KohyaRunParams } from './kohya-training';
+import { kohyaDefaults } from './data/kohya';
+import { MODEL_CARDS, versionStepDefault } from './data/trainingModels';
 // Client-safe orchestrator reads: everything here takes an already-built SDK client, so it runs
 // in the browser (the web-component build) as well as in the shell's server routes, which wrap
 // these with an env-configured client (lib/server/orchestrator.ts).
@@ -316,14 +319,14 @@ export async function whatIfCost(
  * 1/3/6 prompts and for ['green'] vs ['yellow','blue']), not by any contract. If the orchestrator
  * ever starts pricing either, this type must grow the field or Review misquotes silently.
  */
-export interface TrainingWhatIfInput {
+export interface TrainingWhatIfInput extends Partial<KohyaRunParams> {
   ecosystem: string;
   modelVariant?: string;
   /** The base checkpoint AIR. Required by the `flux2-dev` path; on ai-toolkit it pins the base the
    * submit will pin (shared-ecosystem cards like Illustrious would otherwise quote/train the
    * ecosystem default). Price-neutral, but the whatif and the real submit MUST stay identical. */
   model?: string;
-  /** Non-default engine (e.g. `flux2-dev`); when set the whatif uses the `imageResourceTraining` shape. */
+  /** Defaults to AI Toolkit; the quote uses the chosen engine's submission contract. */
   engine?: string;
   /** Ecosystem-specific version selector (e.g. the `qwen` ecosystem's `version` field). */
   version?: string;
@@ -349,6 +352,31 @@ export async function trainingWhatIf(
   input: TrainingWhatIfInput
 ): Promise<number | null> {
   const count = input.imageCount ?? WHATIF_IMAGE_COUNT;
+  if (input.engine === 'kohya') {
+    const version =
+      MODEL_CARDS.flatMap((c) => c.versions).find((v) => v.air === input.model) ??
+      MODEL_CARDS.flatMap((c) => c.versions).find((v) => v.ecosystem === input.ecosystem);
+    if (!version) throw new Error('Unsupported Kohya model family.');
+    const defaults = kohyaDefaults(version);
+    const config = buildKohyaInput(
+      {
+        ...defaults,
+        ...input,
+        steps: input.steps ?? versionStepDefault(version.key),
+        epochs: input.epochs ?? defaults.epochs,
+        trigger: '',
+        prompts: WHATIF_SAMPLE_PROMPTS,
+      },
+      { type: 'zip', sourceUrl: 'https://fake', count },
+      'none'
+    );
+    return whatIfCost(
+      client,
+      { $type: 'training', priority: 'normal', input: config } as unknown as WorkflowStepTemplate,
+      'training whatif'
+    );
+  }
+
   // The SDK type marks server-computed fields (defaultSteps, usesStepPricing, …) as required outputs we
   // must not send; cast past them, as the main app's training step builders do.
   const step = (isFlux2(input.engine)

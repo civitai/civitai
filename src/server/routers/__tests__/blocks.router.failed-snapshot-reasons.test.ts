@@ -68,6 +68,7 @@ function isFailedStatus(init: ts.Expression): boolean {
 }
 
 const refusals: { line: number; text: string }[] = [];
+const consentLimitRefusals: { line: number; errorCode: string | null }[] = [];
 let failedSnapshotsWithError = 0;
 source.forEachChild(function visit(node) {
   if (ts.isObjectLiteralExpression(node)) {
@@ -76,6 +77,18 @@ source.forEachChild(function visit(node) {
     const error = props.find((p) => p.name.getText(source) === 'error');
     if (status && error && isFailedStatus(status.initializer)) {
       failedSnapshotsWithError += 1;
+      const init = unwrap(error.initializer);
+      if (
+        ts.isCallExpression(init) &&
+        ts.isIdentifier(init.expression) &&
+        init.expression.text === 'consentBudgetRejection'
+      ) {
+        const code = props.find((p) => p.name.getText(source) === 'errorCode');
+        consentLimitRefusals.push({
+          line: source.getLineAndCharacterOfPosition(error.getStart(source)).line + 1,
+          errorCode: code ? code.initializer.getText(source) : null,
+        });
+      }
       const line = source.getLineAndCharacterOfPosition(error.getStart(source)).line + 1;
       for (const text of literalTexts(error.initializer)) refusals.push({ line, text });
     }
@@ -123,5 +136,15 @@ describe('blocks router failed-snapshot refusals are classified', () => {
     }
     expect(reasonOf('generation temporarily unavailable')).toEqual(['server_error']);
     expect(reasonOf('app generation rate limit reached')).toEqual(['rate_limited']);
+  });
+});
+
+describe("a refusal at the viewer's own per-app daily limit is machine-readable", () => {
+  it('every one carries the daily-limit errorCode, so the host can offer the raise', () => {
+    // Positive control: the six spend paths that check the limit are all found.
+    expect(consentLimitRefusals).toHaveLength(6);
+    expect(
+      consentLimitRefusals.filter((r) => r.errorCode !== 'CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE')
+    ).toEqual([]);
   });
 });

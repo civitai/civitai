@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import {
   PLACEHOLDER_OWNER_ID,
   reportHolds,
@@ -115,16 +116,7 @@ function holdLegsSql(id: Prisma.Sql) {
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
 }
 
-/** Every image id listed on any CsamReport, whatever its state, as text. */
-export const csamReportListedImageIdsSql = Prisma.sql`
-  SELECT listed.id FROM (
-    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
-    FROM "CsamReport" lr
-    CROSS JOIN LATERAL jsonb_array_elements(
-      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
-    ) le
-  ) listed
-  WHERE listed.id IS NOT NULL`;
+export const csamReportListedImageIdsSql = Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL);
 
 /**
  * Each state that keeps the capture row aliased `image`. `evidenceHold` is the record a kept delete

@@ -39,6 +39,7 @@ export const CLASSIFIER_COLUMNS: Record<string, readonly string[]> = {
     'acceptableMinor',
     'scanRequestedAt',
   ],
+  PostText: ['csamHeld', 'refused'],
   WildcardSet: ['auditRuleVersion', 'invalidationReason'],
   ModelFile: ['pickleScanMessage', 'virusScanMessage'],
 };

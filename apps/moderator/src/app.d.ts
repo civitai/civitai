@@ -27,6 +27,9 @@ declare global {
       /** Set to 'sheet' by `hooks.server.ts` only when the held-media sheet cookie authenticated this
        *  request in place of the web session. */
       heldCredential?: 'sheet';
+      /** Set by `hooks.server.ts` only on a review batch route: the sheet session's tier and the
+       *  batch hashes it may open. */
+      reviewSheet?: { tier: import('@civitai/shared/review-batch').ReviewTier; batches: string[] };
     }
     // interface PageData {}
     // interface PageState {}

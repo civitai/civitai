@@ -14,6 +14,8 @@ import { StoryTRPCProvider } from './trpc';
 // simply stop being a picture of the app.
 import '../src/styles/globals.css';
 import '@mantine/core/styles.layer.css';
+// As `_app.tsx` does, so stories of rich-text editors get their toolbar.
+import '@mantine/tiptap/styles.layer.css';
 
 // Subset of the app theme (from src/providers/ThemeProvider.tsx)
 const theme = createTheme({

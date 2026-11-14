@@ -393,6 +393,76 @@ describe('REGRESSION — a ~1040 fixed-price pass-through step above the 1000 bu
   });
 });
 
+describe('the resources a pass-through step names', () => {
+  const NAMED = {
+    engine: 'meshy',
+    prompt: 'a teapot',
+    model: 'urn:air:sdxl:checkpoint:civitai:1@11',
+  };
+  const HUGGING_FACE = {
+    ...NAMED,
+    model: 'urn:air:sdxl:checkpoint:huggingface:org/repo@main/x.safetensors',
+  };
+
+  beforeEach(() => {
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    // A mature ceiling spends yellow Buzz.
+    h.buzzAccounts.mockImplementation(async () => ({ ...ENOUGH_BUZZ, yellow: 20_000 }));
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) =>
+      args.where.id.in.map((id) => ({
+        id,
+        baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
+      }))) as never);
+  });
+  const UNRESTRICTED = { ...NAMED, model: 'urn:air:sdxl:checkpoint:civitai:1@10' };
+
+  const sentBody = () => (realSubmits()[0][0] as { body: Record<string, unknown> }).body;
+
+  const unconfirmed = async (input: Record<string, unknown>) => {
+    whatifPrice = { total: 100 };
+    chargedPrice = 100;
+    await submit(body({ input }));
+  };
+  const confirmed = async (input: Record<string, unknown>) => {
+    const { snapshot } = await estimate(body({ input }));
+    const quoteId = snapshot.stepQuote!.quoteId;
+    await consent(quoteId);
+    await submit(body({ input, quoteId }));
+  };
+
+  it.each([
+    ['an unconfirmed', unconfirmed],
+    ['a confirmed', confirmed],
+  ])(
+    'holds %s submit to PG-13 when one is on a base model that restricts mature generation',
+    async (_, run) => {
+      await run(NAMED);
+      expect(realSubmits()).toHaveLength(1);
+      expect(sentBody()).toMatchObject({ nsfwLevel: 'pg13', allowMatureContent: false });
+    }
+  );
+
+  it.each([
+    ['an unconfirmed', unconfirmed],
+    ['a confirmed', confirmed],
+  ])('leaves %s submit on an unrestricted base model uncapped', async (_, run) => {
+    await run(UNRESTRICTED);
+    expect(realSubmits()).toHaveLength(1);
+    expect(sentBody().nsfwLevel).toBeUndefined();
+  });
+
+  it.each([
+    ['estimate', () => estimate(body({ input: HUGGING_FACE }))],
+    ['submit', () => submit(body({ input: HUGGING_FACE }))],
+    ['confirmed submit', () => submit(body({ input: HUGGING_FACE, quoteId: SEEDED }))],
+  ])('%s refuses a Hugging Face resource before any orchestrator call', async (_, run) => {
+    await expect(run()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
 describe('ESTIMATE — grants a confirmable quote only for a fixed price above the budget', () => {
   it('returns the quote and stores it UNCONSENTED, reserving nothing', async () => {
     const { snapshot } = await estimate();

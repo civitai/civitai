@@ -375,6 +375,17 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // The app asks the host to offer the viewer a higher daily Buzz limit for it, after a refusal
+  // at that limit. The host sends DAILY_LIMIT_RAISE_ACK { opened } first, then this reply.
+  REQUEST_DAILY_LIMIT_RAISE: {
+    request: true,
+    reply: 'DAILY_LIMIT_RAISE_RESULT',
+    replyKeys: ['raised'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // App generator SUBQUEUE bridges (tag-scoped) — the calling app's OWN slice of
   // the viewer's generation queue: read (image results) + cancel one, both scoped
   // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed
@@ -567,6 +578,20 @@ export const INVENTORY = {
     errorKeys: ['error'],
     IframeHost:
       'media upload is a page-only affordance today; the shared dispatcher NACKs it with a MEDIA_UPLOAD_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Many files the block holds, uploaded as PRIVATE generation inputs behind one host-chrome
+  // confirm — see `mediaUploadBatchLogic.ts`. `results` is absent on a declined batch; `expiresAt`
+  // is absent when no item was valid (nothing was asked or uploaded). REQUEST-style; ahead of the
+  // published SDK dist union (the SDK pair lands in the SDK repo).
+  OPEN_MEDIA_UPLOAD_BATCH: {
+    request: true,
+    reply: 'MEDIA_UPLOAD_BATCH_RESULT',
+    replyKeys: ['results?', 'expiresAt?'],
+    errorKeys: ['error'],
+    IframeHost:
+      'batch media upload is a page-only affordance today; the shared dispatcher NACKs it with a MEDIA_UPLOAD_BATCH_RESULT error',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },

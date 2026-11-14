@@ -48,7 +48,6 @@ import {
 import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import {
   getMiniModerationState,
-  MINI_MODERATION_EXPIRES_MS,
   moderationBlocksGeneration,
   receivesMiniModeration,
 } from '~/server/utils/mini-moderation-state';
@@ -72,6 +71,7 @@ import {
   hasVersionGrant,
 } from '~/server/utils/mini-epoch-caller';
 import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
+import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const MINI_ROUTE = '/api/v1/model-versions/mini/[id]';
@@ -86,11 +86,18 @@ export const schema = z.object({
   // → the existing 400 path fires. (The `if (!id)` guard below still covers a
   // legitimately absent id.)
   id: z.coerce.number().int().gt(0).lte(2147483647),
-  epoch: z.number().optional(),
+  // Read only for a caller who may pick the epoch (see `epochSchema`); everyone else is answered as
+  // if it were absent, so a malformed value refuses nobody else.
+  epoch: z.unknown().optional(),
   // When supplied, the response describes that exact ModelFile (download url,
   // hashes, size, AIR with `+<fileId>`) rather than the version's generation file.
   modelFileId: z.coerce.number().int().positive().optional(),
+  // `1`: also a `downloadLink` the caller fetches the file with as a provider, for a caller on the
+  // provider allowlist. Anyone else is answered as if it were absent, not refused.
+  downloadLink: z.unknown().optional(),
 });
+
+const epochSchema = z.coerce.number().int();
 
 type VersionRow = {
   id: number;
@@ -161,7 +168,7 @@ export default MixedAuthEndpoint(async function handler(
   const credential = orchestrator
     ? { outcome: 'session' as const, effectiveUser: sessionUser }
     : downloadCredentialGate(req, sessionUser, MINI_SCOPES);
-  // Read only where the answer depends on it, so the flag and its log see the epoch arm alone.
+  // Read lazily, so the flag and its log stay off paths whose answer does not depend on it.
   let scopeRefused: Promise<boolean> | undefined;
   const isScopeRefused = () =>
     (scopeRefused ??=
@@ -418,6 +425,7 @@ export default MixedAuthEndpoint(async function handler(
   // Only the owner, a moderator, a grantee or the service token gets a freshly signed url; anyone
   // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
   let mayResign = false;
+  let maySelectEpoch = false;
   // Decided before the epoch is read, so a refused caller gets the same answer whatever the
   // version's training results hold.
   if (useEpochUrl) {
@@ -438,12 +446,24 @@ export default MixedAuthEndpoint(async function handler(
       // 404 to a caller who would be served.
       if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
       mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
+      maySelectEpoch = ['owner', 'moderator', 'orchestrator'].includes(caller.callerClass);
     } else {
       mayResign =
         orchestrator ||
         ((user?.id === modelVersion.modelUserId || !!user?.isModerator) &&
           !(await isScopeRefused()));
+      maySelectEpoch = mayResign;
     }
+  }
+
+  let requestedEpoch: number | undefined;
+  if (maySelectEpoch && results.data.epoch !== undefined) {
+    const parsed = epochSchema.safeParse(results.data.epoch);
+    if (!parsed.success)
+      return res.status(400).json({ error: z.prettifyError(parsed.error) ?? 'Invalid epoch' });
+    requestedEpoch = parsed.data;
+    // The body varies by ?epoch= for this caller; keep it out of shared caches.
+    res.setHeader('Cache-Control', 'private, no-store');
   }
 
   const targetFile = useEpochUrl
@@ -472,10 +492,10 @@ export default MixedAuthEndpoint(async function handler(
     const epoch =
       trainingResults.epochs?.find((e) => {
         if ('epoch_number' in e) {
-          return e.epoch_number === results.data.epoch;
+          return e.epoch_number === requestedEpoch;
         }
 
-        return e.epochNumber === results.data.epoch;
+        return e.epochNumber === requestedEpoch;
       }) ??
       // Non-mutating last-element read. `epochs?.pop()` would MUTATE the
       // metadata object this handler was handed, and it is the only reader here
@@ -727,6 +747,7 @@ export default MixedAuthEndpoint(async function handler(
     trainingResults && mayResign && !withholdEpochUrl
       ? getConsumerBlobId(downloadUrls[0])
       : undefined;
+  let resignedEpochUrl: string | undefined;
   if (blobId) {
     const resigned = await resignEpochBlob(modelVersion.modelUserId, blobId, !!user?.isModerator);
     // A blocked blob is never served; a missing one is, until the stored url expires.
@@ -738,6 +759,7 @@ export default MixedAuthEndpoint(async function handler(
     if (resigned.status === 'refreshed') {
       res.setHeader('Cache-Control', 'private, no-store');
       downloadUrls[0] = resigned.url;
+      resignedEpochUrl = resigned.url;
     } else
       logToAxiom({
         type: 'warning',
@@ -751,6 +773,11 @@ export default MixedAuthEndpoint(async function handler(
         blobId,
       }).catch(() => undefined);
   }
+
+  const downloadLink =
+    results.data.downloadLink === '1' && !trainingResults
+      ? await providerDownloadLink(req, modelVersion.id, targetFile.id, isScopeRefused)
+      : undefined;
 
   const includeModeration = receivesMiniModeration(req, user);
   const data = {
@@ -785,15 +812,47 @@ export default MixedAuthEndpoint(async function handler(
     payoutEnabled,
     tipsEnabled,
     ...(includeModeration ? { moderation } : {}),
+    ...(downloadLink ? { downloadLink } : {}),
   };
   logMiniModerationCaller(req, user, modelVersion, includeModeration);
-  if (includeModeration) {
-    res.setHeader('Cache-Control', 'private, no-store');
-    // Read by the orchestrator as the absolute time its cached copy of this response expires.
-    res.setHeader('X-Expires', new Date(Date.now() + MINI_MODERATION_EXPIRES_MS).toISOString());
-  }
+  if (includeModeration || downloadLink) res.setHeader('Cache-Control', 'private, no-store');
+  const preset = res.getHeader?.('X-Expires');
+  const expiresAt = miniResponseExpiresAt({
+    now: Date.now(),
+    alreadySet: typeof preset === 'string' ? Date.parse(preset) : undefined,
+    moderation: includeModeration,
+    epochUrl: resignedEpochUrl,
+    downloadLinkExpiresAt: downloadLink ? Date.parse(downloadLink.expiresAt) : undefined,
+  });
+  // Read by the orchestrator as the absolute time its cached copy of this response expires.
+  if (expiresAt !== undefined) res.setHeader('X-Expires', new Date(expiresAt).toISOString());
   res.status(200).json(data);
 });
+
+/**
+ * The orchestrator's link to the file this response describes, for an allowlisted ApiKey; undefined
+ * for anyone else, and whenever the mint is off or fails, so the response is what it was without it.
+ */
+async function providerDownloadLink(
+  req: NextApiRequest,
+  modelVersionId: number,
+  fileId: number,
+  isScopeRefused: () => Promise<boolean>
+): Promise<{ url: string; expiresAt: string } | undefined> {
+  // Loaded on demand: only an orchestrator call that asks for a link needs the download-link graph.
+  const [{ headerApiKeyCredential }, { mintProviderLink }] = await Promise.all([
+    import('~/server/services/download-link/download-link-minter'),
+    import('~/server/services/download-link/download-link.service'),
+  ]);
+  const credential = headerApiKeyCredential(req);
+  if (!credential || (await isScopeRefused())) return undefined;
+  const minted = await mintProviderLink(credential, {
+    provider: 'orchestrator',
+    modelVersionId,
+    fileId,
+  }).catch(() => null);
+  return minted?.ok ? { url: minted.url, expiresAt: minted.expiresAt } : undefined;
+}
 
 /** Logs which principal the request's credential resolves to. */
 function logMiniModerationCaller(

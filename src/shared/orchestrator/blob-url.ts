@@ -33,6 +33,18 @@ export function shouldRefreshBlobUrl(url: string): boolean {
   }
 }
 
+/** When a signed consumer blob URL stops being usable: its expiry less the refresh buffer. */
+export function blobUrlUsableUntil(url: string): number | undefined {
+  try {
+    if (!CONSUMER_BLOB_RE.test(url)) return undefined;
+    const exp = new URL(url).searchParams.get('exp');
+    const expiry = exp ? Date.parse(exp) : NaN;
+    return isNaN(expiry) ? undefined : expiry - BLOB_REFRESH_BUFFER_MS;
+  } catch {
+    return undefined;
+  }
+}
+
 /** blobId if this is a consumer blob URL that needs refreshing, else undefined. */
 export function refreshableBlobId(url: string): string | undefined {
   const blobId = getConsumerBlobId(url);

@@ -55,6 +55,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ storylines: mocks.enabled }),
+  useOptionalFeatureFlags: () => ({ storylines: mocks.enabled }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => (mocks.userId ? { id: mocks.userId } : null),

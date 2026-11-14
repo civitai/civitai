@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { baseModelRecords, licenseById } from '@civitai/shared/basemodel.constants';
-import { baseModelLicenses, getRestrictedNsfwLevelsForBaseModel } from '~/server/common/constants';
+import { baseModelLicenses } from '~/server/common/constants';
 import type { BaseModel } from '@civitai/shared/basemodel.constants';
 
 // Catch-alls with no single licence of their own.
@@ -29,10 +29,8 @@ describe('base model licences', () => {
       expect(shared, `no shared licence ${record.licenseId}`).toBeDefined();
       expect(app, `no app licence for '${name}'`).toBeDefined();
 
-      const { id: _id, disableMature, ...sharedFields } = shared!;
-      const { restrictedNsfwLevels: _levels, disableMature: _app, ...appFields } = app!;
-      expect(appFields).toEqual(sharedFields);
-      expect(getRestrictedNsfwLevelsForBaseModel(name).length > 0).toBe(!!disableMature);
+      const { id: _id, ...sharedFields } = shared!;
+      expect(app).toEqual(sharedFields);
     }
   );
 });

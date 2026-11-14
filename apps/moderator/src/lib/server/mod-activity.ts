@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import type { ReviewTier } from '@civitai/shared/review-batch';
 import { dbRead, dbWrite } from './db';
 import { usersByIds } from './users.service';
 
@@ -24,6 +25,8 @@ type ModActivityInsert = {
   entityId: number | null;
   activity: string;
   credential?: 'sheet' | 'web';
+  /** The review batch a view was served from, by its hash: the id itself is the link's secret. */
+  review?: { batchHash: string; tier: ReviewTier; declared: boolean };
 };
 
 /** The same row, throwing when it is not written: for a caller that must not go on without it. */
@@ -37,6 +40,13 @@ export async function insertModActivity(input: ModActivityInsert): Promise<void>
       activity: input.activity,
       // Named only when set, so no other writer depends on the column.
       ...(input.credential ? { credential: input.credential } : {}),
+      ...(input.review
+        ? {
+            reviewBatchId: input.review.batchHash,
+            reviewTier: input.review.tier,
+            declaredSuspect: input.review.declared,
+          }
+        : {}),
     })
     .onConflict((oc) => oc.doNothing())
     .returning('id')

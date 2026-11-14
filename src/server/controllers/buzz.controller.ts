@@ -251,10 +251,10 @@ export async function createBuzzTipTransactionHandler({
     // key is charset-restricted (`^[A-Za-z0-9_-]{1,64}$`) at the endpoint, and both
     // `fromUserId` and `toAccountId` are numeric, so `block-tip:${fromUserId}:${key}`
     // is delimiter-injective — no two distinct (user, key, target) triples collide.
-    // Absent key → the original per-call `crypto.randomUUID()` (no dedup), byte-identical to today.
-    // The on-site key is a uuid (schema-checked) under its own `tip:` namespace, after the numeric
-    // user id, so no user's id can name another's. The amount and entity that follow only separate
-    // one user's tips under one key.
+    // The on-site key (`inputKey`) is a uuid (schema-checked) under its own `tip:` namespace, after
+    // the numeric user id, so no user's id can name another's. The amount and entity that follow
+    // only separate one user's tips under one key. No key → a new `crypto.randomUUID()` per call
+    // (no dedup).
     const keyed = !!(idempotencyKey ?? inputKey);
     const sharedId = idempotencyKey
       ? `block-tip:${ctx.user.id}:${idempotencyKey}`
@@ -286,12 +286,8 @@ export async function createBuzzTipTransactionHandler({
     // Looked up BEFORE the balance check: a leg that already moved spent the balance this check
     // reads, and refusing its retry as "insufficient funds" tells the client to start a new tip.
     //
-    // No lock and no transaction here. A leg found here was moved by an earlier request and is
-    // never recorded again (`upsertBuzzTip` adds to a running total, and nothing records which
-    // request recorded a leg). The batch answer alone cannot decide who records the rest: a
-    // second request whose lookup ran before the first one committed can be answered with the
-    // first one's legs as successes. So, with a key, only the request that wins the record claim
-    // below writes the tip record, notification and metric.
+    // Invariant: the tip record, notification and metric fire only for legs this call moved, and,
+    // with a key, only from the request that wins the tip-record claim below.
     const alreadyMoved = new Set<string>();
     if (keyed) {
       const existing = await Promise.all(

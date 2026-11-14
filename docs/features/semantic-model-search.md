@@ -18,9 +18,11 @@ only rewrites the payload.
 
 ## Eligibility
 
-Published, not deleted, not `tosViolation`, not `minor`, availability not `Unsearchable`, a
-`publishedAt`, and at least one Published version that is not `Unsearchable`. The site still
-applies access rules when it hydrates results, so the index is a candidate set, not the gate.
+Published, not deleted, not `tosViolation`, not `minor`, availability neither `Unsearchable` nor
+`Private`, a `publishedAt`, and at least one Published version that is neither `Unsearchable` nor
+`Private`. Private versions are left out of the document too. A model that turns Private loses its
+point on its next change event. The site still applies access rules when it hydrates results, so
+the index is a candidate set, not the gate.
 
 ## Collection
 
@@ -102,9 +104,8 @@ after the writes land.
 
 - `title_normalized` is computed with the Unicode version of the Node runtime and the query key
   with Python's. They agree except for characters one version knows and the other does not.
-- Private-availability models are indexed, as on the current search index, with their name and
-  description in the payload. Results must be hydrated through the site's access rules, never
-  returned from the payload.
+- Results must be hydrated through the site's access rules, never returned from the payload. A
+  point can lag its model's state until the model's next event, or the next backfill.
 
 ## Not built yet
 

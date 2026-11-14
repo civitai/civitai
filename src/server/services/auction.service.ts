@@ -24,7 +24,10 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import type { Context } from '~/server/createContext';
-import { canViewImageMedia } from '~/server/utils/image-media-visibility';
+import {
+  canViewImageMedia,
+  type MediaCredentialViewer,
+} from '~/server/utils/image-media-visibility';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -272,25 +275,53 @@ export const getAuctionNameBySlug = async (slug: string) => {
   return auctionBase?.name ?? null;
 };
 
-type BidWithImage = { entityData?: { image?: { nsfwLevel: number; userId: number } } };
+type BidCreator = {
+  id: number;
+  image?: string | null;
+  profilePicture?: { nsfwLevel: number } | null;
+};
+type BidWithImage = {
+  entityData?: {
+    image?: { nsfwLevel: number; userId: number };
+    model?: { user?: BidCreator };
+  };
+};
 type BidImageFilter = (image: { nsfwLevel: number; userId: number }) => boolean;
 
+function capCreatorAvatar<U extends BidCreator>(user: U, keep: BidImageFilter): U {
+  const picture = user.profilePicture;
+  const shown =
+    picture && picture.nsfwLevel !== 0 && keep({ nsfwLevel: picture.nsfwLevel, userId: user.id })
+      ? picture
+      : null;
+  return { ...user, image: null, profilePicture: shown };
+}
+
 /**
- * Each bid with its image kept only when `keep` allows it. A bid's model passes the site cap on
- * its own level, which says nothing about the one image shown for it. Unlike capNestedImages the
- * bid stays (only its image goes), and each image has its own owner rather than one per parent.
+ * Each bid with its image, and its model creator's avatar, kept only when `keep` allows it. A
+ * bid's model passes the site cap on its own level, which says nothing about the one image shown
+ * for it. Unlike capNestedImages the bid stays (only its image goes), and each image has its own
+ * owner rather than one per parent.
  */
 export function capBidImages<B extends BidWithImage>(bids: B[], keep: BidImageFilter): B[] {
   return bids.map((bid) => {
-    const image = bid.entityData?.image;
-    if (!image || keep(image)) return bid;
-    return { ...bid, entityData: { ...bid.entityData, image: undefined } };
+    const entityData = bid.entityData;
+    if (!entityData) return bid;
+    const { image, model } = entityData;
+    return {
+      ...bid,
+      entityData: {
+        ...entityData,
+        image: image && keep(image) ? image : undefined,
+        ...(model?.user && { model: { ...model, user: capCreatorAvatar(model.user, keep) } }),
+      },
+    };
   });
 }
 
 /** A bid's image is held to the request's cap like a single image; its owner and moderators keep it. */
 export const bidImagesFor =
-  (ctx: Pick<Context, 'user' | 'features' | 'req'>): BidImageFilter =>
+  (ctx: MediaCredentialViewer): BidImageFilter =>
   (image) =>
     canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } });
 
