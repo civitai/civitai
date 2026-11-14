@@ -7,7 +7,7 @@ import {
   NothingToArchiveError,
   RunNotFoundError,
 } from '$lib/orchestrator-core';
-import { assertNotWithheld, RunWithheldError } from '$lib/server/withheld';
+import { askerOf, assertNotWithheld, RunWithheldError } from '$lib/server/withheld';
 
 // POST — it creates archive steps on the orchestrator, so it must not be a prefetchable GET.
 export const POST: RequestHandler = async ({ locals, request, url }) => {
@@ -17,7 +17,7 @@ export const POST: RequestHandler = async ({ locals, request, url }) => {
   if (kind !== 'weights' && kind !== 'samples') error(400, 'Unknown archive kind.');
   const token = await requireToken(locals, 'Archive downloads are unavailable right now.');
   try {
-    await assertNotWithheld(request.headers.get('cookie') ?? '', id);
+    await assertNotWithheld(askerOf({ locals, request }), id);
     return json(await createEpochArchive(token, id, kind));
   } catch (err) {
     if (err instanceof RunNotFoundError) error(404, 'Training not found.');

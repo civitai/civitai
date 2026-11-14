@@ -505,6 +505,8 @@ export interface DatasetItem {
  *  keys (a main-app kohya run's `unetLR`, `maxTrainEpochs`, `clipSkip`, …) aren't dropped. */
 const SETTINGS_EXCLUDED_INPUT_KEYS = new Set([
   'trainingData',
+  // A blob reference to another run's weights.
+  'continueFrom',
   'samples',
   'samplePrompts',
   'trace',

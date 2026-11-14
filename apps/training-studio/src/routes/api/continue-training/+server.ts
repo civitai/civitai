@@ -11,7 +11,7 @@ import { TrainingBatchValidationError } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 import { datasetRatingFor } from '$lib/server/dataset-rating';
 import { isKohyaAllowed } from '$lib/server/flipt';
-import { assertNotWithheld, RunWithheldError } from '$lib/server/withheld';
+import { askerOf, assertNotWithheld, RunWithheldError } from '$lib/server/withheld';
 
 function parse(v: string | null): number | null {
   const n = Number(v);
@@ -32,7 +32,7 @@ export const GET: RequestHandler = async ({ locals, request, url }) => {
   };
   const token = await requireToken(locals, 'Pricing is unavailable right now.');
   try {
-    await assertNotWithheld(request.headers.get('cookie') ?? '', workflowId);
+    await assertNotWithheld(askerOf({ locals, request }), workflowId);
     return json(
       await continueTrainingWhatIf(
         token,
@@ -72,7 +72,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 
   const token = await requireToken(locals, 'Training is unavailable right now.');
   try {
-    await assertNotWithheld(request.headers.get('cookie') ?? '', body.workflowId);
+    await assertNotWithheld(askerOf({ locals, request }), body.workflowId);
     return json({
       workflowId: await continueTraining(
         token,

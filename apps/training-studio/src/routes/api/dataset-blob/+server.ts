@@ -2,22 +2,32 @@ import { error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
-import { consumerBlobUrl } from '$lib/orchestrator-core';
+import { blobIdFromAir, consumerBlobUrl } from '$lib/orchestrator-core';
+import { runDatasetKeys } from '$lib/server/run-dataset-keys';
 
 // Serve one of the caller's dataset blobs for the detail-page gallery. The workflow stores each image as a
 // blob `air` (a bare key, or an unsigned `/v2/consumer/blobs/{key}.ext` URL); neither is directly viewable,
 // so we proxy the orchestrator's authenticated GET (`/v2/consumer/blobs/{blobId}`) with the user's token.
-// The token scopes to the caller, so this only ever serves the caller's own blobs.
+// Only a blob in the named run's own dataset is served; the run is read with the caller's token.
 
 export const GET: RequestHandler = async ({ locals, url, fetch }) => {
   const air = url.searchParams.get('air');
   const workflowId = url.searchParams.get('workflowId');
-  if (!air) error(400, 'Missing blob air.');
+  if (!air || !workflowId) error(400, 'Missing blob air or run id.');
 
   const token = await requireToken(locals, 'Dataset is unavailable right now.');
   if (!env.ORCHESTRATOR_ENDPOINT) error(502, 'Orchestrator not configured.');
 
-  const target = consumerBlobUrl(env.ORCHESTRATOR_ENDPOINT, air, workflowId ?? undefined);
+  let keys: Set<string>;
+  try {
+    keys = await runDatasetKeys(token, locals.user.id, workflowId);
+  } catch (err) {
+    console.warn('[training-studio] dataset blob run read failed', err);
+    error(502, 'Dataset image unavailable.');
+  }
+  if (!keys.has(blobIdFromAir(air))) error(404, 'Dataset image not found.');
+
+  const target = consumerBlobUrl(env.ORCHESTRATOR_ENDPOINT, air, workflowId);
 
   let upstream: Response;
   try {

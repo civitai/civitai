@@ -7,10 +7,10 @@ const continueTraining = vi.fn();
 // Empty: the route loads train-core only for its error class; the client's dist can't load under Node's ESM loader.
 vi.mock('@civitai/orchestration-client', () => ({}));
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
-const assertNotWithheld = vi.fn(async (_cookie: string, _id: string) => undefined);
+const assertNotWithheld = vi.fn(async (_asker: unknown, _id: string) => undefined);
 vi.mock('$lib/server/withheld', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/withheld')>()),
-  assertNotWithheld: (cookie: string, id: string) => assertNotWithheld(cookie, id),
+  assertNotWithheld: (asker: unknown, id: string) => assertNotWithheld(asker, id),
 }));
 vi.mock('$lib/server/text-check', () => ({
   textCheckCookie: () => null,

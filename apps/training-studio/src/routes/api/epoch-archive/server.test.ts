@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RunWithheldError } from '$lib/server/withheld';
 
 const createEpochArchive = vi.fn();
-const assertNotWithheld = vi.fn(async (_cookie: string, _id: string) => undefined);
+const assertNotWithheld = vi.fn(async (_asker: unknown, _id: string) => undefined);
 vi.mock('@civitai/orchestration-client', () => ({}));
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
 vi.mock('$lib/server/orchestrator', () => ({
@@ -10,7 +10,7 @@ vi.mock('$lib/server/orchestrator', () => ({
 }));
 vi.mock('$lib/server/withheld', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/withheld')>()),
-  assertNotWithheld: (cookie: string, id: string) => assertNotWithheld(cookie, id),
+  assertNotWithheld: (asker: unknown, id: string) => assertNotWithheld(asker, id),
 }));
 
 const { POST } = await import('./+server');
@@ -27,7 +27,10 @@ describe('POST /api/epoch-archive', () => {
     createEpochArchive.mockClear();
     assertNotWithheld.mockRejectedValueOnce(new RunWithheldError());
     await expect(archive(kind)).rejects.toMatchObject({ status: 403 });
-    expect(assertNotWithheld).toHaveBeenLastCalledWith('civ-token=x', 'wf-1');
+    expect(assertNotWithheld).toHaveBeenLastCalledWith(
+      { cookie: 'civ-token=x', userId: 1 },
+      'wf-1'
+    );
     expect(createEpochArchive).not.toHaveBeenCalled();
   });
 

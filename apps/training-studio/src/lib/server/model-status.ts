@@ -20,15 +20,18 @@ export function mainAppModelLive(cookie: string): (modelId: number) => Promise<b
 /** Which of the user's runs the main app withholds epoch data for, asked with their forwarded
  *  session cookie. Rejects when the main app gives no answer. */
 export async function mainAppWithheldRuns(
-  cookie: string,
+  asker: { cookie: string; userId: number },
   workflowIds: string[]
 ): Promise<Set<string>> {
-  const res = await fetch(
-    `${mainAppSessionOrigin()}/api/training-studio/model-status?workflowIds=${workflowIds
-      .map(encodeURIComponent)
-      .join(',')}`,
-    { headers: { cookie }, redirect: 'error', signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) }
-  );
+  const query = new URLSearchParams({
+    workflowIds: workflowIds.join(','),
+    userId: String(asker.userId),
+  });
+  const res = await fetch(`${mainAppSessionOrigin()}/api/training-studio/model-status?${query}`, {
+    headers: { cookie: asker.cookie },
+    redirect: 'error',
+    signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`model-status ${res.status}`);
   const data = (await res.json()) as { withheld?: unknown };
   if (!Array.isArray(data.withheld) || !data.withheld.every((id) => typeof id === 'string'))

@@ -261,6 +261,16 @@ describe('workflowToDetail settings export', () => {
     expect(text).not.toContain('trace');
   });
 
+  it("leaves a continuation's source checkpoint out", () => {
+    const source = 'urn:air:sdxl:lora:orchestrator:blob@parent-weights-key';
+    const base = workflow();
+    const step = (base.steps as unknown as { input: Record<string, unknown> }[])[0]!;
+    step.input = { ...step.input, continueFrom: source };
+    const detail = workflowToDetail(base);
+    expect(detail?.settings.training).toMatchObject({ ecosystem: 'sdxl' });
+    expect(JSON.stringify(detail)).not.toContain('parent-weights-key');
+  });
+
   it("keeps a legacy kohya run's engine-specific params", () => {
     const detail = workflowToDetail(
       workflow({

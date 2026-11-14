@@ -109,7 +109,7 @@ describe('GET /api/training-studio/model-status?workflowIds', () => {
 
   it("answers the caller's withheld runs among the ids asked", async () => {
     studioWithheldWorkflowIds.mockResolvedValueOnce(['wf-2']);
-    expect(await call({ workflowIds: 'wf-1,wf-2,wf-1' }, OWNER)).toEqual({
+    expect(await call({ workflowIds: 'wf-1,wf-2,wf-1', userId: '1' }, OWNER)).toEqual({
       code: 200,
       body: { withheld: ['wf-2'] },
     });
@@ -118,7 +118,7 @@ describe('GET /api/training-studio/model-status?workflowIds', () => {
 
   it('withholds nothing from a moderator', async () => {
     const mod = { ...OWNER, isModerator: true } as SessionUser;
-    expect(await call({ workflowIds: 'wf-1' }, mod)).toEqual({
+    expect(await call({ workflowIds: 'wf-1', userId: '1' }, mod)).toEqual({
       code: 200,
       body: { withheld: [] },
     });
@@ -128,7 +128,17 @@ describe('GET /api/training-studio/model-status?workflowIds', () => {
   it.each([[''], [Array.from({ length: 101 }, (_, i) => `wf-${i}`).join(',')]])(
     'refuses an empty or oversized batch',
     async (workflowIds) => {
-      expect((await call({ workflowIds }, OWNER)).code).toBe(400);
+      expect((await call({ workflowIds, userId: '1' }, OWNER)).code).toBe(400);
     }
   );
+
+  it.each([
+    ['another user', '2'],
+    ['no user', undefined],
+  ])('gives no answer when the Studio asks for %s', async (_label, userId) => {
+    const query: Record<string, string> = { workflowIds: 'wf-1' };
+    if (userId) query.userId = userId;
+    expect((await call(query, OWNER)).code).toBe(userId ? 403 : 400);
+    expect(studioWithheldWorkflowIds).not.toHaveBeenCalled();
+  });
 });

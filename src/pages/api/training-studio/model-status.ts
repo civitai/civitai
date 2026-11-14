@@ -7,6 +7,7 @@ import { studioWithheldWorkflowIds } from '~/server/services/orchestrator/traini
 const schema = z.object({ id: z.coerce.number().int().positive() });
 const MAX_WORKFLOW_IDS = 100;
 const workflowIdsSchema = z.object({
+  userId: z.coerce.number().int().positive(),
   workflowIds: z
     .string()
     .transform((s) => [...new Set(s.split(',').filter(Boolean))])
@@ -19,6 +20,8 @@ export default AuthedEndpoint(async (req, res, user) => {
   if (req.query.workflowIds !== undefined) {
     const input = workflowIdsSchema.safeParse(req.query);
     if (!input.success) return res.status(400).json({ error: 'Invalid workflow ids.' });
+    // The Studio names the user it asks for; a session that is someone else gets no answer.
+    if (input.data.userId !== user.id) return res.status(403).json({ error: 'Wrong user.' });
     const withheld = user.isModerator
       ? []
       : await studioWithheldWorkflowIds(user.id, input.data.workflowIds);

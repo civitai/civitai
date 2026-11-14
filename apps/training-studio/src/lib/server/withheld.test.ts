@@ -1,12 +1,26 @@
 import type { Workflow } from '@civitai/orchestration-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { workflowToDetail, workflowToRow } from '$lib/data/trainingRows';
-import { assertNotWithheld, gateDetail, gateRows, RunWithheldError } from './withheld';
+import type { TrainingDetail } from '$lib/data/trainingRows';
+import {
+  assertNotWithheld,
+  gateRows,
+  RunWithheldError,
+  withheldRuns,
+  withholdDetail,
+} from './withheld';
+
+// The detail routes' composition: ask for the run, and hide its epochs if it comes back withheld.
+const gateDetail = async (asker: typeof ASKER, detail: TrainingDetail) =>
+  (await withheldRuns(asker, [detail.workflowId])).has(detail.workflowId)
+    ? withholdDetail(detail)
+    : detail;
 
 vi.mock('@civitai/orchestration-client', () => ({}));
 
 const mainApp = vi.fn<(url: string, init: RequestInit) => Promise<Response>>();
 const COOKIE = 'civ-token=x';
+const ASKER = { cookie: COOKIE, userId: 7 };
 const MARK = 'epoch-marker';
 
 beforeEach(() => {
@@ -49,17 +63,19 @@ const detailOf = (w: Workflow) => workflowToDetail(w)!;
 const answer = (withheld: string[]) =>
   mainApp.mockImplementation(async () => Response.json({ withheld }));
 
-describe('gateDetail', () => {
+describe('withheldRuns + withholdDetail', () => {
   it('hides every epoch sample, weight and key of a withheld run', async () => {
     answer(['wf-1']);
     const detail = detailOf(run('wf-1'));
     expect(JSON.stringify(detail)).toContain(MARK);
-    const gated = await gateDetail(COOKIE, detail);
+    const gated = await gateDetail(ASKER, detail);
     expect(JSON.stringify(gated)).not.toContain(MARK);
     expect(gated.epochs).toEqual([{ id: detail.epochs[0]!.id, number: 1, samples: [null] }]);
     expect(gated.name).toBe('Run');
     const [url, init] = mainApp.mock.calls[0]!;
-    expect(url).toBe('https://civitai.test/api/training-studio/model-status?workflowIds=wf-1');
+    expect(url).toBe(
+      'https://civitai.test/api/training-studio/model-status?workflowIds=wf-1&userId=7'
+    );
     expect(new Headers(init.headers).get('cookie')).toBe(COOKIE);
   });
 
@@ -67,13 +83,13 @@ describe('gateDetail', () => {
   it('keeps everything for a run the main app does not withhold', async () => {
     answer([]);
     const detail = detailOf(run('wf-1'));
-    expect(await gateDetail(COOKIE, detail)).toEqual(detail);
+    expect(await gateDetail(ASKER, detail)).toEqual(detail);
   });
 
   it('asks by run id, so a rewritten modelId or tag cannot clear the gate', async () => {
     answer(['wf-1']);
     const rewritten = detailOf(run('wf-1', { modelId: undefined }, ['modelVersion:999']));
-    const gated = await gateDetail(COOKIE, rewritten);
+    const gated = await gateDetail(ASKER, rewritten);
     expect(JSON.stringify(gated)).not.toContain(MARK);
   });
 
@@ -83,7 +99,7 @@ describe('gateDetail', () => {
     ['no response', () => mainApp.mockRejectedValue(new Error('timeout'))],
   ])('withholds when the main app gives %s', async (_label, fail) => {
     fail();
-    const gated = await gateDetail(COOKIE, detailOf(run('wf-1')));
+    const gated = await gateDetail(ASKER, detailOf(run('wf-1')));
     expect(JSON.stringify(gated)).not.toContain(MARK);
   });
 });
@@ -92,16 +108,16 @@ describe('gateRows', () => {
   it('asks once for the whole list and clears only the withheld rows', async () => {
     answer(['wf-2']);
     const rows = ['wf-1', 'wf-2'].map((id) => workflowToRow(run(id))!);
-    const gated = await gateRows(COOKIE, rows);
+    const gated = await gateRows(ASKER, rows);
     expect(mainApp).toHaveBeenCalledTimes(1);
-    expect(mainApp.mock.calls[0]![0]).toContain('workflowIds=wf-1,wf-2');
+    expect(mainApp.mock.calls[0]![0]).toContain('workflowIds=wf-1%2Cwf-2&userId=7');
     expect(gated[0]!.sampleUrls).toEqual(rows[0]!.sampleUrls);
     expect(gated[0]!.sampleUrls.length).toBeGreaterThan(0);
     expect(gated[1]!.sampleUrls).toEqual([]);
   });
 
   it('asks nothing for an empty list', async () => {
-    expect(await gateRows(COOKIE, [])).toEqual([]);
+    expect(await gateRows(ASKER, [])).toEqual([]);
     expect(mainApp).not.toHaveBeenCalled();
   });
 });
@@ -109,7 +125,15 @@ describe('gateRows', () => {
 describe('assertNotWithheld', () => {
   it('refuses a withheld run and passes any other', async () => {
     answer(['wf-1']);
-    await expect(assertNotWithheld(COOKIE, 'wf-1')).rejects.toBeInstanceOf(RunWithheldError);
-    await expect(assertNotWithheld(COOKIE, 'wf-2')).resolves.toBeUndefined();
+    await expect(assertNotWithheld(ASKER, 'wf-1')).rejects.toBeInstanceOf(RunWithheldError);
+    await expect(assertNotWithheld(ASKER, 'wf-2')).resolves.toBeUndefined();
+  });
+});
+
+describe('run ids outside the orchestrator charset', () => {
+  it('are withheld without asking', async () => {
+    answer([]);
+    await expect(assertNotWithheld(ASKER, 'wf-1,wf-2')).rejects.toBeInstanceOf(RunWithheldError);
+    expect(mainApp).not.toHaveBeenCalled();
   });
 });

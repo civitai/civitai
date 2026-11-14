@@ -16,6 +16,7 @@ const {
   mockGetToken,
   mockGetWorkflow,
   mockUpdateWorkflow,
+  mockWithheld,
 } = vi.hoisted(() => ({
   mockUpsertModel: vi.fn(),
   mockUpsertModelVersion: vi.fn(),
@@ -23,6 +24,7 @@ const {
   mockGetToken: vi.fn(),
   mockGetWorkflow: vi.fn(),
   mockUpdateWorkflow: vi.fn(),
+  mockWithheld: vi.fn(),
 }));
 
 vi.mock('~/server/services/model.service', () => ({ upsertModel: mockUpsertModel }));
@@ -32,6 +34,9 @@ vi.mock('~/server/services/model-version.service', () => ({
 vi.mock('~/server/services/model-file.service', () => ({ createFile: mockCreateFile }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mockGetToken,
+}));
+vi.mock('~/server/services/orchestrator/training/studio-withheld', () => ({
+  studioWithheldWorkflowIds: mockWithheld,
 }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   getWorkflow: mockGetWorkflow,
@@ -92,6 +97,7 @@ function studioWorkflow(overrides: Partial<Record<string, unknown>> = {}): Workf
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockWithheld.mockResolvedValue([]);
   mockFindFirst.mockResolvedValue(null);
   mockUpsertModel.mockResolvedValue({ id: 100 });
   mockUpsertModelVersion.mockResolvedValue({ id: 200 });
@@ -281,6 +287,35 @@ describe('mapWorkflowToTrainingResultsV2', () => {
 });
 
 describe('createDraftModelFromWorkflow', () => {
+  it.each([
+    ['an existing draft', { id: 77, modelVersions: [{ id: 88 }] }],
+    ['no draft yet', null],
+  ])('refuses a run the main app withholds, with %s', async (_label, existing) => {
+    mockWithheld.mockResolvedValue(['wf-studio-1']);
+    mockFindFirst.mockResolvedValue(existing as never);
+    await expect(
+      createDraftModelFromWorkflow({
+        user: USER,
+        workflow: studioWorkflow(),
+        selectedEpochNumber: 3,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockWithheld).toHaveBeenCalledWith(USER.id, ['wf-studio-1']);
+    expect(mockUpsertModel).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator through without asking', async () => {
+    mockWithheld.mockResolvedValue(['wf-studio-1']);
+    mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] } as never);
+    const result = await createDraftModelFromWorkflow({
+      user: { ...USER, isModerator: true } as SessionUser,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 3,
+    });
+    expect(result.selectedEpoch?.modelUrl).toBe('https://blobs/epoch-3');
+    expect(mockWithheld).not.toHaveBeenCalled();
+  });
+
   it('cuts a run name over 150 characters to 150 instead of failing the publish', async () => {
     await createDraftModelFromWorkflow({
       user: USER,

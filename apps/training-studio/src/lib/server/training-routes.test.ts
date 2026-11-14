@@ -104,3 +104,14 @@ describe('POST /api/train refused while files are still processing', () => {
     });
   });
 });
+
+describe('POST /api/train with a checkpoint to continue from', () => {
+  it('is refused before anything is submitted', async () => {
+    train.submitTrainingBatch.mockReset();
+    const status = await statusOf(() =>
+      trainPost(event({ runs: [{ continueFrom: 'urn:air:sdxl:lora:orchestrator:blob@k' }] }))
+    );
+    expect(status).toBe(400);
+    expect(train.submitTrainingBatch).not.toHaveBeenCalled();
+  });
+});
