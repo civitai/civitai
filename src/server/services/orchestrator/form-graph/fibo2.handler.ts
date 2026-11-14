@@ -6,7 +6,6 @@ import type {
 import {
   FIBO2_TURBO_BASE_MODEL,
   fibo2ModeOf,
-  fibo2VersionIds,
 } from '~/shared/form-graph/generation/image/fibo2.graph';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -30,6 +29,8 @@ export const createFibo2Input = defineHandler<EcosystemData<'Fibo2'>, [ImageGenS
     };
 
     const checkpoint = 'model' in data ? data.model : undefined;
+    // Always named, official weights included: the licensing fee is charged by checkpoint AIR.
+    const diffusionModel = checkpoint ? ctx.airs.getOrThrow(checkpoint.id) : undefined;
     if (fibo2ModeOf(checkpoint) === 'turbo') {
       return [
         {
@@ -38,19 +39,15 @@ export const createFibo2Input = defineHandler<EcosystemData<'Fibo2'>, [ImageGenS
             ...shared,
             model: 'editTurbo',
             operation: 'editImage',
+            diffusionModel,
             images: 'images' in data ? data.images?.map((x) => x.url) ?? [] : [],
           }),
         },
       ];
     }
 
-    // 'dev' already selects the official weights; send diffusionModel only for a fine-tune.
     if (checkpoint?.baseModel === FIBO2_TURBO_BASE_MODEL)
       throw throwBadRequestError('Fibo 2.0 Turbo checkpoints can only edit images');
-    const diffusionModel =
-      checkpoint && checkpoint.id !== fibo2VersionIds.dev
-        ? ctx.airs.getOrThrow(checkpoint.id)
-        : undefined;
 
     return [
       {

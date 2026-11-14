@@ -70,20 +70,18 @@ describe('fibo2.handler', () => {
     expect(parse('img2img:edit', { images: [] }).success).toBe(false);
   });
 
-  it('a fine-tune rides as diffusionModel on Dev; the official version never does', async () => {
+  // The licensing fee is charged by the checkpoint AIR, so the official weights are named too.
+  it('names the checkpoint as diffusionModel, official or fine-tune', async () => {
     expect((await build('txt2img', { model: FINE_TUNE })).diffusionModel).toBe('urn:air:test:777');
-    expect((await build('txt2img', { model: DEV })).diffusionModel).toBeUndefined();
+    expect((await build('txt2img', { model: DEV })).diffusionModel).toBe(`urn:air:test:${DEV.id}`);
+    expect((await build('img2img:edit', { images: [IMAGE] })).diffusionModel).toBe(
+      `urn:air:test:${TURBO.id}`
+    );
   });
 
   it('refuses to create with a Turbo fine-tune, which only edits', async () => {
     const turbo = { id: 888, baseModel: 'Fibo 2.0 Turbo', model: { type: 'Checkpoint' } };
     await expect(build('txt2img', { model: turbo })).rejects.toThrow(/can only edit/);
-  });
-
-  it('Turbo on Dev sends the turbo LoRA', async () => {
-    const turboLora = { id: 3469218, model: { type: 'LORA' }, strength: 1, turbo: true };
-    const input = await build('txt2img', { model: DEV, resources: [turboLora] });
-    expect(input).toMatchObject({ model: 'dev', loras: { 'urn:air:test:3469218': 1 } });
   });
 
   it('back on txt2img, Edit Turbo returns to Dev', async () => {

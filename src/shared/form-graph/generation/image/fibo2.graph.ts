@@ -38,7 +38,6 @@ const dev = defineGraph<Fibo2ModeExt>().use(
   comfyResourceBlock({
     cfgScale: { min: 1, max: 10, step: 0.5, default: 5 },
     steps: { min: 4, max: 60, default: 30 },
-    // Fibo 2.0 Turbo LoRA
     turbo: { lora: 3469218 },
   })
 );
