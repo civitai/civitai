@@ -210,6 +210,8 @@ const GUARD_CALL_SITE_LEDGER = [
   'estimateWorkflowBatch',
   'getImagesByIds',
   'listMyWorkflows',
+  // PERSIST_GENERATION_SOURCE: the publish preamble, spelled inline.
+  'persistGenerationSource',
   'pollWorkflow',
   'publishGenerationOutputs',
   'queryAppWorkflows',
@@ -268,6 +270,8 @@ const BRIDGE_INPUT_LEDGER = [
   'startMediaUploadBatch',
   'presignMediaUploadBatchItem',
   'recordMediaUploadBatchItem',
+  // PERSIST_GENERATION_SOURCE (a private generation source); calls the guard directly.
+  'persistGenerationSource',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',

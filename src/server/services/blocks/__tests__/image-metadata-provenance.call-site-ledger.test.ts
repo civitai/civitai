@@ -120,6 +120,7 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
 const STAMPER_FUNCTIONS: string[] = [
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage',
   'src/server/services/image.service.ts#createImage',
 ];
 

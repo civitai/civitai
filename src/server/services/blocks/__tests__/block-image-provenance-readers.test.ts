@@ -26,10 +26,23 @@ const UPLOADED = 'BLOCK_UPLOADED_APP_ID_META_KEY';
 const POSTABLE = 'BLOCK_POSTABLE_APP_ID_META_KEYS';
 const POST_MARKER = 'BLOCK_POST_APP_ID_META_KEY';
 const POST_ITEM_MARKER = 'BLOCK_POST_SUB_LISTING_ID_META_KEY';
-const KEY_IDENTIFIERS = new Set([PUBLISHED, UPLOADED, POSTABLE, POST_MARKER, POST_ITEM_MARKER]);
+const GENERATION_SOURCE = 'BLOCK_GENERATION_SOURCE_APP_ID_META_KEY';
+const KEY_IDENTIFIERS = new Set([
+  PUBLISHED,
+  UPLOADED,
+  POSTABLE,
+  POST_MARKER,
+  POST_ITEM_MARKER,
+  GENERATION_SOURCE,
+]);
 // `Post.metadata` only, so not in the Image strip list (`BLOCK_PROVENANCE_METADATA_KEYS`).
 const POST_ONLY_LITERALS = ['blockPublishedSubListingId'];
-const KEY_LITERALS = new Set(['blockPublishedAppId', 'blockUploadedAppId', ...POST_ONLY_LITERALS]);
+const KEY_LITERALS = new Set([
+  'blockPublishedAppId',
+  'blockUploadedAppId',
+  'blockGenerationSourceAppId',
+  ...POST_ONLY_LITERALS,
+]);
 
 type Role =
   /** Declares a key constant. */
@@ -51,7 +64,12 @@ type Role =
    * Selects stamped rows for a one-off admin repair that writes only non-provenance keys
    * (the blurhash placeholder). Never returns a row to an app, never an access decision.
    */
-  | 'backfill-selector';
+  | 'backfill-selector'
+  /**
+   * Reads the PRIVATE generation-source key to find a source this app already kept for THIS
+   * viewer (the idempotency lookup). Bound to the image's owner; never returns a row to anyone else.
+   */
+  | 'source-reader';
 
 const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-image-upload.service.ts#BLOCK_PUBLISHED_APP_ID_META_KEY':
@@ -63,6 +81,12 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': 'writer',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage':
     'writer',
+  'src/server/services/blocks/block-image-upload.service.ts#BLOCK_GENERATION_SOURCE_APP_ID_META_KEY':
+    'declaration',
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage':
+    'writer',
+  'src/server/services/blocks/block-generation-source.service.ts#findBlockGenerationSourceImage':
+    'source-reader',
   'src/server/services/blocks/block-post.service.ts#resolveAppPublishedImages': 'post-reader',
   'src/server/services/blocks/block-post.service.ts#adoptImagesIntoPost': 'post-reader',
   'src/server/services/blocks/block-gated-images.service.ts#getBlockGatedImagesByIds':
@@ -238,6 +262,28 @@ describe('App Blocks image provenance-key sites', () => {
       'src/server/services/blocks/block-image-upload.service.ts#BLOCK_UPLOADED_APP_ID_META_KEY',
       'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS',
     ]);
+  });
+
+  it('🔴 the private generation-source key is named only by its declaration, its writer, its owner-bound reader and the server-owned list', () => {
+    // A private source must never reach the shared grid, a post or the "Published with" credit.
+    // Every site that names it, by constant or by spelling, is one of these four.
+    const naming = [...sites.entries()]
+      .filter(
+        ([, tokens]) => tokens.has(GENERATION_SOURCE) || tokens.has("'blockGenerationSourceAppId'")
+      )
+      .map(([site]) => site)
+      .sort();
+    expect(naming).toEqual([
+      'src/server/services/blocks/block-generation-source.service.ts#findBlockGenerationSourceImage',
+      'src/server/services/blocks/block-image-upload.service.ts#BLOCK_GENERATION_SOURCE_APP_ID_META_KEY',
+      'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage',
+      'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS',
+    ]);
+    // And the postable set does not carry it: every POST reader accepts the postable set.
+    const postable = sites.get(
+      'src/server/services/blocks/block-image-upload.service.ts#BLOCK_POSTABLE_APP_ID_META_KEYS'
+    );
+    expect([...(postable ?? [])].sort()).toEqual([POSTABLE, PUBLISHED, UPLOADED].sort());
   });
 
   it('the keys this ledger tracks are exactly the server-owned provenance keys', () => {
