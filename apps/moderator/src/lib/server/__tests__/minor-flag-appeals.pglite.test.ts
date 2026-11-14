@@ -870,6 +870,8 @@ describe('lock review rows', () => {
     expect(items.find((i) => i.modelId === 9)).toMatchObject({
       lockReview: ['nsfw'],
       lockedProperties: ['nsfw', 'tags'],
+      comFaceDispute: null,
+      comFaceLaterVerdict: null,
     });
     expect(items.find((i) => i.modelId === 1)!.lockReview).toBeNull();
   });
