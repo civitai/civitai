@@ -12,6 +12,7 @@ import { ServiceSlotsBadge } from '~/components/CreatorShop/Services/ServiceSlot
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -25,6 +26,24 @@ type ServiceCoverImage = Pick<
 type ServiceCardSeller = ComponentProps<typeof UserAvatar>['user'];
 
 const COVER_ASPECT_RATIO = 4 / 3;
+
+/**
+ * Whether ImageGuard draws its own level chip on the cover: always while blurred, and on a
+ * revealed cover only for its owner or a moderator. Where it does, ours would be a second one.
+ */
+export function coverShowsLevelChip({
+  safe,
+  isModerator,
+  viewerId,
+  coverUserId,
+}: {
+  safe?: boolean;
+  isModerator?: boolean;
+  viewerId?: number;
+  coverUserId?: number;
+}) {
+  return !safe || !!isModerator || (viewerId != null && viewerId === coverUserId);
+}
 
 /** Cover tile for an offering with no cover image. Filled in by the same overlays as a cover. */
 function NoCover() {
@@ -99,9 +118,10 @@ export function ServiceOfferingCard({
   const domain = useDomainColor();
   const cover = offering.coverImage;
 
-  const header = (
+  const currentUser = useCurrentUser();
+  const header = (hideRating = false) => (
     <div className="flex w-full items-start justify-between gap-2">
-      <ServiceRatingBadge rating={offering.maxNsfwLevel} />
+      {!hideRating && <ServiceRatingBadge rating={offering.maxNsfwLevel} />}
       <div className="ml-auto rounded-sm bg-black/60 backdrop-blur-sm">
         <ServiceSlotsBadge slotsOpen={slotsOpen ?? null} />
       </div>
@@ -127,13 +147,22 @@ export function ServiceOfferingCard({
           image={{ ...cover, metadata: cover.metadata as MixedObject | null }}
           explain={false}
           overlay={({ safe }) => (safe ? null : <BlurCaption level={cover.nsfwLevel} />)}
-          header={header}
+          header={({ safe }) =>
+            header(
+              coverShowsLevelChip({
+                safe,
+                isModerator: currentUser?.isModerator,
+                viewerId: currentUser?.id,
+                coverUserId: cover.userId,
+              })
+            )
+          }
           footer={price}
         />
       ) : (
         <div className="relative" style={{ aspectRatio: COVER_ASPECT_RATIO }}>
           <NoCover />
-          <div className={cardStyles.header}>{header}</div>
+          <div className={cardStyles.header}>{header()}</div>
           <div className={cardStyles.footer}>{price}</div>
         </div>
       )}

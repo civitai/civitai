@@ -3,15 +3,17 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'blue' }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ user }: { user: { username: string } }) =>
     createElement('span', { 'data-seller': true }, user.username),
 }));
 
-const { ServiceOfferingCard } = await import(
+const ServiceOfferingCardModule = await import(
   '~/components/CreatorShop/Services/ServiceOfferingCard'
 );
+const { ServiceOfferingCard } = ServiceOfferingCardModule;
 
 const offering = {
   title: 'Portrait commission',
@@ -52,5 +54,17 @@ describe('ServiceOfferingCard', () => {
     const html = render({ href: '/x', footer: createElement('button', null, 'Request') });
     expect(html).toContain('Request');
     expect(html).not.toContain('>View<');
+  });
+});
+
+describe('coverShowsLevelChip', () => {
+  const { coverShowsLevelChip } = ServiceOfferingCardModule;
+  it('is true while blurred, and on a revealed cover only for a moderator or the cover owner', () => {
+    expect(coverShowsLevelChip({ safe: false })).toBe(true);
+    expect(coverShowsLevelChip({ safe: true })).toBe(false);
+    expect(coverShowsLevelChip({ safe: true, isModerator: true })).toBe(true);
+    expect(coverShowsLevelChip({ safe: true, viewerId: 5, coverUserId: 5 })).toBe(true);
+    expect(coverShowsLevelChip({ safe: true, viewerId: 5, coverUserId: 6 })).toBe(false);
+    expect(coverShowsLevelChip({ safe: true, coverUserId: 6 })).toBe(false);
   });
 });

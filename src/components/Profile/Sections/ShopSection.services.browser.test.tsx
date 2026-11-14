@@ -20,6 +20,7 @@ vi.mock(
     useInViewDynamic: () => [() => undefined, true],
   })
 );
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/CreatorShop/creator-shop.util', () => ({
   useQueryCreatorShop: () => ({ shop: state.shop, isLoading: false }),
 }));
