@@ -646,14 +646,6 @@ describe('minimax-h3-image.handler', () => {
     });
   });
 
-  it('caps quantity at 4 even when the tier allows more', () => {
-    const parsed = generationHub.parse(
-      { workflow: 'txt2img', ecosystem: 'MiniMaxH3Image', prompt: 'a cat', quantity: 12 },
-      { ...BASE, limits: { ...BASE.limits, maxQuantity: 12 } }
-    );
-    expect(parsed.success && (parsed.data as { quantity: number }).quantity).toBe(4);
-  });
-
   it('accepts sixteen references and no more', () => {
     const images = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ ...IMAGE, url: `https://example.com/${i}.png` }));

@@ -46,7 +46,7 @@ CREATE TABLE "Image" (
   "pHash" BIGINT,
   "ingestion" TEXT NOT NULL DEFAULT 'Scanned'
 );
-CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB);
+CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB, "images" JSONB);
 CREATE TABLE "EvidenceHold" ("userId" INTEGER);
 CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN NOT NULL DEFAULT FALSE);
@@ -74,6 +74,8 @@ const CASES: [string, number, number][] = [
   ['a scan that has not finished', 80, 81],
   ['a blockedFor value matching no known-non-minor pattern', 90, 91],
   ['a blockedFor signal pattern', 92, 93],
+  ['an image listed on a CsamReport about another user', 100, 101],
+  ['an image listed by bare id on a CsamReport', 102, 101],
 ];
 
 let db: PGlite;
@@ -98,7 +100,12 @@ beforeAll(async () => {
       (70, NULL, FALSE, 1, NULL, 'Scanned', NULL), (71, NULL, FALSE, 1, NULL, 'Scanned', NULL),
       (80, NULL, FALSE, 1, NULL, 'Pending', NULL), (81, NULL, FALSE, 1, NULL, 'Blocked', 'moderated'),
       (90, NULL, FALSE, 1, NULL, 'Blocked', 'never seen'), (91, NULL, FALSE, 1, NULL, 'Blocked', 'benign'),
-      (92, NULL, FALSE, 1, NULL, 'Blocked', 'signal word'), (93, NULL, FALSE, 1, NULL, 'Blocked', 'tos');
+      (92, NULL, FALSE, 1, NULL, 'Blocked', 'signal word'), (93, NULL, FALSE, 1, NULL, 'Blocked', 'tos'),
+      (100, NULL, FALSE, 1, NULL, 'Scanned', NULL), (101, NULL, FALSE, 1, NULL, 'Scanned', NULL),
+      (102, NULL, FALSE, 1, NULL, 'Scanned', NULL);
+    -- The report names user 999, not the images' owner (1), so only the listing can hold them.
+    INSERT INTO "CsamReport" ("userId", "details", "images") VALUES
+      (999, '{}', '[{"id": 100}, {"id": 7}]'), (999, '{}', '[102]');
     UPDATE "Image" SET "acceptableMinor" = TRUE WHERE id = 22;
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", "disabled") VALUES
       (30, ${CHILD_TAG}, FALSE), (31, ${CHILD_TAG}, FALSE),

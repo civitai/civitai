@@ -34,7 +34,6 @@ export function flagHatChoices(available: number) {
 
 const FINAL_HOUR_MS = 60 * 60 * 1000;
 
-/** When a flag day's final hour starts: an hour before it closes. */
 export const finalHourAt = (closesAt: Date | string | number) =>
   new Date(new Date(closesAt).getTime() - FINAL_HOUR_MS);
 
