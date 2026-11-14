@@ -152,7 +152,9 @@ export default AuthedEndpoint(
       const message = error instanceof Error ? cardMessages[error.message] : undefined;
       // The card offers the dispute, which lives in the editor.
       if (error instanceof Error && error.message === COM_FACE_REFUSED_MESSAGE)
-        return res.status(422).json({ error: message, code: 'intent-refused' });
+        return res
+          .status(422)
+          .json({ error: cardMessages[COM_FACE_REFUSED_MESSAGE], code: 'intent-refused' });
       return handleEndpointError(
         res,
         message ? new TRPCError({ code: 'BAD_REQUEST', message }) : error
