@@ -112,6 +112,27 @@ export function resolveBrowsingSettingsAddons(
   }, emptyResolvedAddons());
 }
 
+/**
+ * The poi/minor exclusions for a response that is not resolved at one viewer's own level: on for
+ * each one if it is on at ANY level a viewer within `levels` could browse at, so the answer is never
+ * looser than what the client would resolve for that viewer, whatever shape the rules take.
+ */
+export function resolveStrictestPoiMinor(
+  data: BrowsingSettingsAddon[],
+  levels: number,
+  opts?: { isModerator?: boolean }
+) {
+  const bits = Flags.instanceToArray(levels);
+  const result = { disablePoi: false, disableMinor: false };
+  for (let mask = 1; mask < 1 << bits.length; mask++) {
+    const level = bits.reduce((acc, bit, i) => (mask & (1 << i) ? acc | bit : acc), 0);
+    const resolved = resolveBrowsingSettingsAddons(data, level, opts);
+    result.disablePoi ||= resolved.disablePoi;
+    result.disableMinor ||= resolved.disableMinor;
+  }
+  return result;
+}
+
 // Seed for the hard navigation blocklist (W2) — blocks the tag page and nav, not the
 // content carrying the tag. The redis key `system:blocked-browsing-tags` overrides this
 // when present; ops manage the live list there without a deploy.
