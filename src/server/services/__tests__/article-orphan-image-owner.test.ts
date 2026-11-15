@@ -696,6 +696,40 @@ describe('the article banner', () => {
     expect(deletedIds()).toEqual([]);
   });
 
+  describe('when a moderator replaces the cover', () => {
+    const replaceAsModerator = async (stored: Row, next: Row) => {
+      dbMock.dbWrite.article.findUnique.mockResolvedValue({
+        ...((await dbMock.dbWrite.article.findUnique({} as never)) as object),
+        coverId: stored.id,
+      } as never);
+      dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+      await upsertArticle({
+        id: ARTICLE_ID,
+        userId: MODERATOR,
+        isModerator: true,
+        title: 'A title',
+        content: '<p>had images</p>',
+        status: 'Draft',
+        coverImage: { id: next.id, url: 'u' },
+      } as never);
+    };
+
+    it('🔴 keeps a cover owned by someone other than the author, whose safety report is on file', async () => {
+      dbMock.dbWrite.csamReport.count.mockImplementation((async ({ where }: any) =>
+        where.userId === SOMEONE_ELSE ? 1 : 0) as never);
+
+      await replaceAsModerator(FOREIGN, COVER);
+
+      expect(deletedIds()).not.toContain(FOREIGN.id);
+    });
+
+    it("deletes the author's own replaced cover", async () => {
+      await replaceAsModerator(COVER, NEW_BANNER);
+
+      expect(deletedIds()).toContain(COVER.id);
+    });
+  });
+
   it('clears a cover saved as null even when another article shows it', async () => {
     dbMock.dbWrite.article.count.mockResolvedValue(1 as never);
 

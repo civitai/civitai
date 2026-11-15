@@ -1514,9 +1514,15 @@ export const upsertArticle = async ({
     try {
       // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
       // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
+      // Only the author's own image: the hold below is read for the author alone.
       const replacedImageIds: number[] = [];
       if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
-        const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
+        const isImgOwner =
+          (await isImageOwner({ userId, isModerator, imageId: article.coverId })) &&
+          !!(await dbWrite.image.findFirst({
+            where: { id: article.coverId, userId: result.userId },
+            select: { id: true },
+          }));
         const shownElsewhere =
           isImgOwner &&
           (await dbWrite.article.count({
