@@ -1,7 +1,7 @@
 # Golden fixtures
 
-One JSON file per request shape: `as-posts/` for `image.getImagesAsPostsInfinite`, `v1-images/` for
-`GET /api/v1/images`. `internal/server/golden_test.go` loads every file, builds a real `*Server`
+One JSON file per request shape: `as-posts/` for `image.getImagesAsPostsInfinite`, `infinite/` for
+`image.getInfinite`, `v1-images/` for `GET /api/v1/images`. `internal/server/golden_test.go` loads every file, builds a real `*Server`
 over in-memory fakes (`internal/testkit`) holding exactly what the fixture records, computes the
 request, and compares the answer with the Node answer the fixture expects (`shadow.Compare` for the
 superjson envelope, `shadow.CompareJSON` for the REST body). All data is synthetic: invented ids
@@ -18,7 +18,7 @@ hosts.
 | `feed` | every call the request makes to the image feed service: the exact `query` string (asserted: an unlisted query fails, and on a served fixture an unasked one fails) and the reply `status` / `body` |
 | `redis` | cache-cluster keys: `packed` (base64 of msgpackr bytes, with the readable `value`), `raw` (JSON strings such as gallery settings) or `hash` (metric hashes) |
 | `sysRedis` | system-redis keys (the browsing-settings addons) |
-| `db` | Postgres tables (`images` rows as the getAllImages SELECT returns them, plus `_resources`, their ImageResourceNew rows; `posts`, `modelVersions`, `models`, `reviews`, `reactions`, `placements`, `users`). The harness answers each query feed-go sends from these, evaluating the clauses the fixtures reach |
+| `db` | Postgres tables (`images` rows as the getAllImages SELECT returns them, plus `_resources`, their ImageResourceNew rows, and in `infinite/` `_tags`, their TagsOnImageDetails tag ids; `posts`, `modelVersions`, `models`, `reviews`, `reactions`, `placements`, `users`). The harness answers each query feed-go sends from these, evaluating the clauses the fixtures reach |
 | `expect` | `fallback` (the reason feed-go must fall back with), or the Node answer: `envelope` (`{json, meta}`) plus `cacheable` (signed out), or `body` (REST) |
 
 ## Where the expectations come from
@@ -38,7 +38,7 @@ node apps/feed-go/testdata/golden/pack.mjs <fixture.json>...   # re-pack edited 
 
 Both need the repo's `node_modules` (`pnpm install`; from a worktree without one, set
 `GOLDEN_NODE_MODULES=<clone>/node_modules`). After regenerating, raise `goldenMinAsPosts` /
-`goldenMinV1` in the harness if fixtures were added.
+`goldenMinInfinite` / `goldenMinV1` in the harness if fixtures were added.
 
 ## Refreshing from a Node dev instance
 
