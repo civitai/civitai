@@ -36,7 +36,7 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   login     → no valid session  → redirect to the hub login, returning here afterward
 //   forbidden → signed in, not mod → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated moderator → populate locals.user and continue
-// The sheets' sign-in and sign-out POSTs, which carry no web session.
+
 const SHEET_SIGN_IN_OUT_PATHS = new Set([
   '/api/held-media/auth/exchange',
   '/api/review-media/auth/exchange',
