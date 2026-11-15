@@ -1,7 +1,7 @@
 name: feed-go
 
-# apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`; see
-# apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
+# apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`, and in
+# shadow only of `image.getInfinite` and `GET /api/v1/images`; see apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
 # This workflow is its only gate: gofmt, vet, the unit tests with coverage floors, the integration
 # tests and a build of the binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
@@ -304,6 +304,7 @@ jobs:
         internal/auth:FuzzTokenFromCookieHeader:120000
         internal/auth:FuzzVerify:67000
         internal/feed:FuzzParse:180000
+        internal/feed:FuzzParseInfinite:100000
         internal/hydrate:FuzzUnpack:180000
         internal/shadow:FuzzCompare:280000
         internal/shadow:FuzzCompareJSON:390000

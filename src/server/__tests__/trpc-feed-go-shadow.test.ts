@@ -6,7 +6,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
-import { FEED_GO_SHADOW_PATH, resetFeedGoShadowForTests } from '~/server/trpc/feed-go-shadow';
+import {
+  FEED_GO_SHADOW_INFINITE_PATH,
+  FEED_GO_SHADOW_PATH,
+  resetFeedGoShadowForTests,
+} from '~/server/trpc/feed-go-shadow';
 
 /**
  * The feed-go shadow sampler wired end to end: the real route (`src/pages/api/trpc/[trpc].ts`,
@@ -35,14 +39,21 @@ vi.mock('~/shared/utils/trpc-union-transformer', async (importOriginal) => ({
     return h.writeDevalue;
   },
 }));
-const flag = vi.hoisted(() => ({ shadow: null as boolean | null }));
-const handler = vi.hoisted(() => ({ fail: false }));
+const flag = vi.hoisted(() => ({
+  shadow: null as boolean | null,
+  infinite: null as boolean | null,
+}));
+const handler = vi.hoisted(() => ({ fail: false, infiniteBadRequest: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
     isFliptSync: (key: string, ...rest: [string?, Record<string, string>?]) =>
-      key === 'feed-go-shadow' ? flag.shadow : actual.isFliptSync(key, ...rest),
+      key === 'feed-go-shadow'
+        ? flag.shadow
+        : key === 'feed-go-shadow-infinite'
+        ? flag.infinite
+        : actual.isFliptSync(key, ...rest),
   };
 });
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
@@ -66,7 +77,13 @@ vi.mock('~/server/routers', async () => {
           if (handler.fail) throw new Error('handler failed');
           return PAYLOAD;
         }),
-        getInfinite: publicProcedure.query(() => PAYLOAD),
+        getInfinite: publicProcedure.query(async () => {
+          if (handler.infiniteBadRequest) {
+            const { TRPCError } = await import('@trpc/server');
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'bad cursor' });
+          }
+          return PAYLOAD;
+        }),
       }),
     }),
   };
@@ -142,7 +159,9 @@ beforeEach(() => {
   feedGo.hold = undefined;
   feedGo.onReceived = undefined;
   flag.shadow = true;
+  flag.infinite = false;
   handler.fail = false;
+  handler.infiniteBadRequest = false;
   h.writeDevalue = false;
   configure({
     FEED_GO_SHADOW_URL: fakeBase,
@@ -169,7 +188,7 @@ async function receivedWithin(n: number, ms = 1000) {
   return feedGo.received;
 }
 
-async function outcomeCounts(): Promise<Record<string, number>> {
+async function outcomeCounts(endpoint = 'as-posts'): Promise<Record<string, number>> {
   const metric = instrumentationRegistry.getSingleMetric(
     'civitai_app_feed_go_shadow_samples_total'
   );
@@ -178,7 +197,7 @@ async function outcomeCounts(): Promise<Record<string, number>> {
   // This route's series only: the REST route's (feed_endpoint v1-images) are seeded at 0 too.
   return Object.fromEntries(
     values
-      .filter((v) => v.labels.feed_endpoint === 'as-posts')
+      .filter((v) => v.labels.feed_endpoint === endpoint)
       .map((v) => [String(v.labels.outcome), v.value])
   );
 }
@@ -324,11 +343,61 @@ describe('feed-go shadow, end to end', () => {
       const metric = instrumentationRegistry.getSingleMetric(name);
       expect(metric, name).toBeDefined();
       const { values } = await metric!.get();
-      // Seeded for both endpoints, so the label set is visible without traffic.
+      // Seeded for every endpoint, so the label set is visible without traffic.
       expect(values.map((v) => v.labels.feed_endpoint).sort(), name).toEqual(
-        expect.arrayContaining(['as-posts', 'v1-images'])
+        expect.arrayContaining(['as-posts', 'v1-images', 'infinite'])
       );
       for (const v of values) expect(Object.keys(v.labels), name).not.toContain('endpoint');
     }
+  });
+});
+
+describe('feed-go shadow, image.getInfinite end to end', () => {
+  const INFINITE = 'image.getInfinite';
+
+  it('flag on: one POST to its own compare path with the raw input and the envelope Node wrote', async () => {
+    flag.shadow = false; // the gallery flag plays no part
+    flag.infinite = true;
+    resetFeedGoShadowForTests();
+    const served = await get(INFINITE, {
+      cookie: '__Secure-civ-token=hdr.payload.sig; theme=dark',
+    });
+    expect(served.status).toBe(200);
+    expect(JSON.parse(served.text).result.data).toEqual(SUPERJSON_PAYLOAD);
+    const posts = await receivedWithin(1);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe(FEED_GO_SHADOW_INFINITE_PATH);
+    expect(posts[0].body.input).toBe(INPUT);
+    expect(posts[0].body.node).toEqual(SUPERJSON_PAYLOAD);
+    expect(posts[0].body.headers).toEqual({
+      host: new URL(baseUrl).host,
+      cookie: '__Secure-civ-token=hdr.payload.sig',
+    });
+    // Exactly one: nothing more arrives (the gallery procedure was not asked).
+    expect(await receivedWithin(2, 200)).toHaveLength(1);
+  });
+
+  it('a 4xx answer is not mirrored, and is counted as skipped_status under its endpoint', async () => {
+    flag.infinite = true;
+    resetFeedGoShadowForTests();
+    handler.infiniteBadRequest = true;
+    const before = await outcomeCounts('infinite');
+    const served = await get(INFINITE);
+    expect(served.status).toBe(400);
+    const start = Date.now();
+    while (
+      ((await outcomeCounts('infinite')).skipped_status ?? 0) === (before.skipped_status ?? 0) &&
+      Date.now() - start < 1000
+    )
+      await new Promise((r) => setTimeout(r, 10));
+    expect((await outcomeCounts('infinite')).skipped_status).toBe((before.skipped_status ?? 0) + 1);
+    expect(await receivedWithin(1, 200)).toHaveLength(0);
+  });
+
+  it('flag off: nothing is mirrored (the first case proves the same request IS when on)', async () => {
+    flag.infinite = false;
+    resetFeedGoShadowForTests();
+    expect((await get(INFINITE)).status).toBe(200);
+    expect(await receivedWithin(1, 200)).toHaveLength(0);
   });
 });

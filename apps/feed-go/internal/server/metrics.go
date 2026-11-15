@@ -12,8 +12,9 @@ const EndpointLabel = "feed_endpoint"
 // Metrics are this service's Prometheus series. The Go and process collectors (registered in main)
 // add `process_cpu_seconds_total` and the GC series the CPU-per-call measurement reads.
 //
-// Every feed_go_* series carries EndpointLabel (`feed_endpoint`: EndpointAsPosts | EndpointV1Images):
-// two values, so the label multiplies each family's cardinality by two at most.
+// Every feed_go_* series carries EndpointLabel (`feed_endpoint`: one of Endpoints, EndpointAsPosts |
+// EndpointV1Images | EndpointInfinite): three values, so the label multiplies each family's
+// cardinality by three at most.
 type Metrics struct {
 	Requests      *prometheus.CounterVec   // endpoint, mode, outcome
 	Fallbacks     *prometheus.CounterVec   // endpoint, mode, reason
@@ -106,7 +107,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
 	// rather than an absent series.
-	for _, e := range []string{EndpointAsPosts, EndpointV1Images} {
+	for _, e := range Endpoints {
 		m.ShadowDropped.WithLabelValues(e)
 		m.ShadowResults.WithLabelValues(e, "deadline")
 	}

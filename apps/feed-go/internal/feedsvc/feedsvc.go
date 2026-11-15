@@ -71,6 +71,9 @@ type Query struct {
 	PostID int
 	// UserID is the creator filter (`userId`, or the id a `username` resolved to), sent as `userIds`.
 	UserID int
+	// Tags is the input's own `tags` inclusion list (image.getInfinite's tag scope), after
+	// enforceBlockedBrowsingTags stripped the blocked ones.
+	Tags   []int
 	Sort   string
 	Period string
 	// Limit is the per-call limit (the handler's overscan), before the feed's own clamp.
@@ -226,6 +229,15 @@ func Map(q Query) (string, *Refusal) {
 	if len(lv) == 0 {
 		return skip("browsingLevel:0")
 	}
+	tags := positive(q.Tags)
+	if len(q.Tags) > 0 && len(tags) == 0 {
+		// `emptied`: an inclusion list of only impossible ids matches nothing; serveFromFeed answers
+		// 'tags:none' with an empty page.
+		return skip("tags:none")
+	}
+	if len(tags) > maxExcluded {
+		return skip(fmt.Sprintf("tags>%d", maxExcluded))
+	}
 	excludedTags := positive(q.ExcludedTagIDs)
 	if len(excludedTags) > maxExcluded {
 		return skip(fmt.Sprintf("excludedTags>%d", maxExcluded))
@@ -266,6 +278,9 @@ func Map(q Query) (string, *Refusal) {
 
 	p := &params{}
 	p.set("levels", strings.Join(lv, ","))
+	if len(tags) > 0 {
+		p.set("tags", join(tags))
+	}
 	if len(excludedTags) > 0 {
 		p.set("excludedTags", join(excludedTags))
 	}
