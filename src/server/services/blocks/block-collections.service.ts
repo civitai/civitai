@@ -290,7 +290,6 @@ export async function getFallbackCoverImages(
   const levelOf = await getCoverBrowsingLevels(rows, browsingLevel);
   const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();
   for (const r of rows) {
-    // A cover above its model's stored gallery level leaves the tile a placeholder.
     if (r.nsfwLevel != null && !Flags.intersects(levelOf(r), r.nsfwLevel)) continue;
     if (r.collectionId != null && r.url) {
       // An unrated image stores 0; a null column read is the same "unrated" claim.

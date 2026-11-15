@@ -7,21 +7,9 @@ import {
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
- * Queue every indexed minor or SFW-only model for a models-index rewrite.
- *
- * Hidden admin route. Guarded by WEBHOOK_TOKEN via `?token=` query param.
- *
- * Purpose: the models search document now carries only the showcase images within a minor or
- * SFW-only model's gallery level, but the indexer applies that only to documents it rewrites. A
- * flag or gallery-level change queues the model from now on; this rewrites those set before that.
- *
- * Usage:
- *   POST /api/admin/temp/queue-held-showcase-models-reindex?token=$WEBHOOK_TOKEN
- *   then again with &dryRun=false
- *
- * Params (query):
- *   dryRun    - default true. Report the id count and the current queue depth, queue nothing.
- *   chunkSize - default 1000. Ids per queueUpdate call.
+ * The models search document now carries only the showcase images within a minor or SFW-only
+ * model's gallery level, but the indexer applies that only to documents it rewrites. A flag or
+ * gallery-level change queues the model from now on; this rewrites those set before that.
  *
  * The response is read back from the queue; what `landed` proves is in `queueModelsReindex`.
  */

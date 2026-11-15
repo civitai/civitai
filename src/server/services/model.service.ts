@@ -6691,7 +6691,6 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
   const levels = await getShowcaseHeldLevels(
     [...modelOf.values()].filter((m) => !viewer || m.ownerId !== viewer.id)
   );
-  // The owner of a held model the caller did not name an owner for.
   const owners = new Map<number, number>();
   if (viewer) {
     const unknown = uniq(
