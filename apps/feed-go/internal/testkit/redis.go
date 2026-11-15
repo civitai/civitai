@@ -72,8 +72,9 @@ func (r *Redis) String(key string) ([]byte, bool) {
 	return v, ok
 }
 
-// TTL returns the expiry a SET gave key (0 = none or absent).
-func (r *Redis) TTL(key string) time.Duration {
+// Expiry returns the expiry a SET gave key (0 = none or absent). (Not TTL: that name belongs to the
+// embedded client interface.)
+func (r *Redis) Expiry(key string) time.Duration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.ttls[key]
@@ -91,8 +92,9 @@ func (r *Redis) Members(key string) []string {
 	return out
 }
 
-// Keys returns every key holding a value of any type, sorted.
-func (r *Redis) Keys() []string {
+// AllKeys returns every key holding a value of any type, sorted. (Not KEYS: that name belongs to the
+// embedded client interface.)
+func (r *Redis) AllKeys() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []string
