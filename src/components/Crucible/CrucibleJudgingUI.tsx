@@ -261,7 +261,8 @@ export function CrucibleJudgingUI({
   }, [isDisabled, onSkip, anyUnavailable]);
 
   const handleDismiss = useCallback(() => {
-    if (isDisabled || !onDismiss) return;
+    // A side already chosen is a vote on its way; the dismissal would only race it.
+    if (isDisabled || !onDismiss || voteQueued.current) return;
     setSelectedSide(null);
     onDismiss();
   }, [isDisabled, onDismiss]);

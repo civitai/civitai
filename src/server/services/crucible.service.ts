@@ -3362,7 +3362,8 @@ export async function countJudgingPairs({
       return { id, judgeEntryVotes, voted, decided };
     })
   );
-  const counted = judgedOnly ? judgeState.filter(({ voted }) => voted.length > 0) : judgeState;
+  // `decided` holds every pair the judge has acted on, dismissals included, not only votes.
+  const counted = judgedOnly ? judgeState.filter(({ decided }) => decided.length > 0) : judgeState;
   if (!counted.length) return counts;
 
   const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`

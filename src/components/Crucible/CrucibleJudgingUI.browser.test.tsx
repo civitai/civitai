@@ -512,6 +512,27 @@ describe("CrucibleJudgingUI — Don't show again", () => {
     expect(onSkip).not.toHaveBeenCalled();
   });
 
+  test('a vote already chosen wins over a dismiss clicked inside the feedback delay', async () => {
+    const onVote = vi.fn();
+    const onDismiss = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={pairOf(1, 2)}
+        onVote={onVote}
+        onSkip={vi.fn()}
+        onDismiss={onDismiss}
+      />
+    );
+    await expectBothCardsRendered();
+
+    voteButton('right')!.click();
+    dismissButton()!.click();
+    await new Promise((resolve) => setTimeout(resolve, 400)); // past the 200ms feedback delay
+
+    expect(onVote).toHaveBeenCalledTimes(1);
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
   test('offers no button where the page cannot dismiss', async () => {
     renderWithProviders(
       <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />

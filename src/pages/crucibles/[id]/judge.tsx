@@ -274,7 +274,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   const votingRef = useRef(false);
   const handleVote = useCallback(
     async (winnerId: number, loserId: number, watched: WatchedMs) => {
-      if (votingRef.current || !pair) return;
+      if (votingRef.current || dismissingRef.current || !pair) return;
 
       votingRef.current = true;
       setIsVoting(true);
@@ -324,34 +324,30 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
   const isDismissing = dismissPairMutation.isPending;
+  // A ref, like votingRef: a second click lands before `isDismissing` re-renders.
+  const dismissingRef = useRef(false);
   // The skip list doesn't change, so the query input doesn't either: the next pair is refetched.
   const handleDismiss = useCallback(async () => {
-    if (isVoting || isDismissing || isPairPending || !pair) return;
+    if (votingRef.current || dismissingRef.current || isPairPending || !pair) return;
+    dismissingRef.current = true;
     try {
       await dismissPairMutation.mutateAsync({
         crucibleId: id,
         entryIds: [pair.left.id, pair.right.id],
       });
+      refetchProgress();
+      const result = await refetchPair();
+      // Only an explicit null means no pairs are left; a failed refetch leaves `data` undefined.
+      if (result.data === null) {
+        await refetchProgress();
+        setAllPairsJudged(true);
+      }
     } catch {
-      return; // Reported by the mutation's onError.
+      // Reported by the mutation's onError.
+    } finally {
+      dismissingRef.current = false;
     }
-    refetchProgress();
-    const result = await refetchPair();
-    // Only an explicit null means no pairs are left; a failed refetch leaves `data` undefined.
-    if (result.data === null) {
-      await refetchProgress();
-      setAllPairsJudged(true);
-    }
-  }, [
-    isVoting,
-    isDismissing,
-    isPairPending,
-    pair,
-    dismissPairMutation,
-    id,
-    refetchProgress,
-    refetchPair,
-  ]);
+  }, [isPairPending, pair, dismissPairMutation, id, refetchProgress, refetchPair]);
 
   // Changing the excluded ids changes the query input, which fetches the next pair on its own.
   // Awaiting a `refetch()` here instead resolved with the NEW input's still-empty result, which
