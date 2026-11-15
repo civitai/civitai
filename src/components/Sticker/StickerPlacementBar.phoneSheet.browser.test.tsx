@@ -11,6 +11,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 
 /**
  * On a phone the bar sits in the image page's bottom sheet, which is slid down
@@ -55,7 +56,10 @@ vi.mock('~/components/Sticker/StickerShopTile', () => ({ StickerShopTile: () => 
 vi.mock('~/components/Sticker/use-sticker-drag-out', () => ({
   useStickerDragOut: () => ({ grab: () => undefined, dragging: false }),
 }));
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  // The real module underneath, so an export this file does not override (useOptionalFeatureFlags,
+  // for one) still exists for every module this tree imports.
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));

@@ -46,7 +46,7 @@ describe('hatTurfBatchedCalls is dark until Flipt turns it on', () => {
 
   it('is on when its own Flipt key says so', async () => {
     // Key-aware, so a typo in `fliptKey` turns this red.
-    mocks.isFliptSync.mockImplementation((key: string) => key === 'hat-turf-batched-calls' || null);
+    mocks.isFliptSync.mockImplementation((key?: string) => key === 'hat-turf-batched-calls' || null);
     const tester = { id: 9423, isModerator: false, tier: 'free' } as SessionUser;
     const flags = await getFeatureFlagsAsync({ user: tester });
     expect(flags.hatTurfBatchedCalls).toBe(true);
