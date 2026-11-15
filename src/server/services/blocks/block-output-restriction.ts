@@ -224,7 +224,7 @@ export function blockOutputCeilingFromClaims(claims: {
       flooredForSignedInViewer
         ? {
             maxBrowsingLevel: claims.maxBrowsingLevel,
-            viewerBrowsingLevel: viewer | sfwBrowsingLevelsFlag,
+            viewerBrowsingLevel: viewer,
           }
         : claims
     ),
