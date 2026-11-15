@@ -1,6 +1,7 @@
 package superjson
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -154,5 +155,53 @@ func BenchmarkSerializeBuffer(b *testing.B) {
 			b.Fatal(err)
 		}
 		buf.Release()
+	}
+}
+
+// smallBody is an error envelope's body, the smallest output this service writes.
+func smallBody() Object {
+	return Object{{"message", "unavailable"}, {"code", -32603}, {"data", Object{{"code", "INTERNAL_SERVER_ERROR"}, {"httpStatus", 503}, {"path", "image.getImagesAsPostsInfinite"}}}}
+}
+
+// bigPage is feedPage with a ~7.5 KB jsonb member per item: an output of a few hundred KiB, the size
+// of a real feed page.
+func bigPage() Object {
+	page := feedPage()
+	items, _ := page[0].Val.([]any)
+	meta := json.RawMessage(`{"prompt":"` + strings.Repeat("a long prompt ", 540) + `"}`)
+	for i, it := range items {
+		obj, _ := it.(Object)
+		obj = append(obj, Field{"meta", meta})
+		items[i] = obj
+	}
+	return page
+}
+
+// BenchmarkSerializeColdStart is a serialization on a writer fresh from the pool's New (the pool is
+// emptied by every GC cycle), for each candidate starting buffer size, on the smallest and a
+// page-sized output. Its B/op is what a cold get costs, growth included.
+func BenchmarkSerializeColdStart(b *testing.B) {
+	payloads := []struct {
+		name string
+		v    any
+	}{{"small", smallBody()}, {"page", bigPage()}}
+	for _, size := range []int{16 << 10, 64 << 10, 512 << 10} {
+		for _, p := range payloads {
+			b.Run("start="+strconv.Itoa(size>>10)+"KiB/"+p.name, func(b *testing.B) {
+				w := newWriter(size)
+				if err := w.envelope(p.v); err != nil {
+					b.Fatal(err)
+				}
+				out := len(w.buf)
+				b.ReportAllocs()
+				for b.Loop() {
+					w := newWriter(size)
+					if err := w.envelope(p.v); err != nil {
+						b.Fatal(err)
+					}
+				}
+				b.ReportMetric(float64(out), "out-bytes")
+			})
+		}
 	}
 }

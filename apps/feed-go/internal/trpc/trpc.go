@@ -110,17 +110,17 @@ func WriteError(w http.ResponseWriter, path string, e *Error) {
 			{Key: "path", Val: path},
 		}},
 	}
-	enc, err := superjson.SerializeBuffer(body)
+	// A plain (owned) Serialize: an error body is tiny and rare, so it does not hold a pooled buffer.
+	enc, err := superjson.Serialize(body)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	defer enc.Release() // after the writes below: Write does not keep the slice
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(e.HTTPStatus)
 	_, _ = w.Write([]byte(`{"error":`))
-	_, _ = w.Write(enc.Bytes())
+	_, _ = w.Write(enc)
 	_, _ = w.Write([]byte(`}`))
 }
 

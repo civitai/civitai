@@ -19,10 +19,9 @@ import (
 // narrower than Hydrator: the endpoint publishes no cosmetics, frames, tags, reactions or decorations,
 // so their reads (and their cache-miss fallbacks) are skipped.
 type V1Sources interface {
-	BasicUsers(ctx context.Context, ids []int) (map[int]hydrate.BasicUser, error)
-	Thumbnails(ctx context.Context, ids []int) (map[int]hydrate.Thumbnail, error)
-	ImageMetrics(ctx context.Context, ids []int) (map[int]hydrate.Metrics, error)
-	ImageResources(ctx context.Context, ids []int) (map[int][]hydrate.ImageResource, error)
+	// V1Page is the page's basic users, thumbnails, metric hashes and image resources, their cache
+	// reads in one pipeline.
+	V1Page(ctx context.Context, req hydrate.V1PageRequest) (*hydrate.V1Page, error)
 	PostVersions(ctx context.Context, postIDs []int) (map[int]int, error)
 	VersionModels(ctx context.Context, versionIDs []int) (map[int]int, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
@@ -356,32 +355,19 @@ func (d *V1Deps) userIDByUsername(ctx context.Context, username string) (int, er
 
 // shapeV1Page hydrates what the endpoint publishes and shapes each image (runImageSearch's map).
 func shapeV1Page(ctx context.Context, d *V1Deps, rows []RawImage, level int) ([]v1Item, error) {
-	imageIDs := make([]int, 0, len(rows))
-	userIDs := make([]int, 0, len(rows))
-	var videoIDs []int
+	req := hydrate.V1PageRequest{UserIDs: make([]int, 0, len(rows)), ImageIDs: make([]int, 0, len(rows))}
 	for _, r := range rows {
-		imageIDs = append(imageIDs, r.ID)
-		userIDs = append(userIDs, r.UserID)
+		req.ImageIDs = append(req.ImageIDs, r.ID)
+		req.UserIDs = append(req.UserIDs, r.UserID)
 		if r.Type == "video" {
-			videoIDs = append(videoIDs, r.ID)
+			req.VideoIDs = append(req.VideoIDs, r.ID)
 		}
 	}
-	users, err := d.Sources.BasicUsers(ctx, userIDs)
+	page, err := d.Sources.V1Page(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	thumbs, err := d.Sources.Thumbnails(ctx, videoIDs)
-	if err != nil {
-		return nil, err
-	}
-	metrics, err := d.Sources.ImageMetrics(ctx, imageIDs)
-	if err != nil {
-		return nil, err
-	}
-	resources, err := d.Sources.ImageResources(ctx, imageIDs)
-	if err != nil {
-		return nil, err
-	}
+	users, thumbs, metrics, resources := page.Basic, page.Thumbs, page.Metrics, page.Resources
 	out := make([]v1Item, 0, len(rows))
 	for _, r := range rows {
 		thumb, hasThumb := thumbs[r.ID]

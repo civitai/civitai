@@ -34,17 +34,13 @@ type ImageResource struct {
 	BaseModel      any
 }
 
-// ImageResources is imageResourcesCache.fetch for the public images endpoint (`includeBaseModel`):
-// per image, its resources in cached order. An image the lookup found none for is cached as a
-// notFound marker and is absent from the result (Node: `imageResources[id]` undefined). A miss falls
-// back: the lookup picks a replica by write lag (getDbWithoutLagBatch), which this service cannot.
-func (s *Sources) ImageResources(ctx context.Context, imageIDs []int) (map[int][]ImageResource, error) {
-	imageIDs = Unique(imageIDs)
+// imageResourcesFrom is imageResourcesCache.fetch for the public images endpoint (`includeBaseModel`)
+// over the cache's answer got for (unique) image ids: per image, its resources in cached order. An
+// image the lookup found none for is cached as a notFound marker and is absent from the result (Node:
+// `imageResources[id]` undefined). A miss falls back: the lookup picks a replica by write lag
+// (getDbWithoutLagBatch), which this service cannot.
+func imageResourcesFrom(imageIDs []int, got map[int]Entry) (map[int][]ImageResource, error) {
 	out := map[int][]ImageResource{}
-	if len(imageIDs) == 0 {
-		return out, nil
-	}
-	got := s.Packed.Get(ctx, KeyImageResources, imageIDs, 0)
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("image-resources-miss", "%d ids", len(miss))
 	}

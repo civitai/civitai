@@ -256,17 +256,11 @@ func pickIDs[V any](m map[int]V, ids []int) map[int]V {
 	return out
 }
 
-func (f *fakeV1Sources) BasicUsers(_ context.Context, ids []int) (map[int]hydrate.BasicUser, error) {
-	return pickIDs(f.users, ids), nil
-}
-func (f *fakeV1Sources) Thumbnails(_ context.Context, ids []int) (map[int]hydrate.Thumbnail, error) {
-	return pickIDs(f.thumbs, ids), nil
-}
-func (f *fakeV1Sources) ImageMetrics(_ context.Context, ids []int) (map[int]hydrate.Metrics, error) {
-	return pickIDs(f.metrics, ids), nil
-}
-func (f *fakeV1Sources) ImageResources(_ context.Context, ids []int) (map[int][]hydrate.ImageResource, error) {
-	return pickIDs(f.resources, ids), nil
+func (f *fakeV1Sources) V1Page(_ context.Context, req hydrate.V1PageRequest) (*hydrate.V1Page, error) {
+	return &hydrate.V1Page{
+		Basic: pickIDs(f.users, req.UserIDs), Thumbs: pickIDs(f.thumbs, req.VideoIDs),
+		Metrics: pickIDs(f.metrics, req.ImageIDs), Resources: pickIDs(f.resources, req.ImageIDs),
+	}, nil
 }
 func (f *fakeV1Sources) PostVersions(_ context.Context, ids []int) (map[int]int, error) {
 	return pickIDs(f.posts, ids), nil

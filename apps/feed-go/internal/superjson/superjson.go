@@ -85,9 +85,13 @@ const (
 	maxPooledBufSize = 1 << 20
 )
 
-var writerPool = sync.Pool{New: func() any {
-	return &writer{buf: make([]byte, 0, pooledBufSize), path: make([]segment, 0, 8)}
-}}
+var writerPool = sync.Pool{New: func() any { return newWriter(pooledBufSize) }}
+
+// newWriter is a writer whose buffer starts at size bytes (the pool's New, and the cold-start
+// benchmarks).
+func newWriter(size int) *writer {
+	return &writer{buf: make([]byte, 0, size), path: make([]segment, 0, 8)}
+}
 
 type writer struct {
 	buf []byte

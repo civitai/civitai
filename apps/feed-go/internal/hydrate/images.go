@@ -8,26 +8,11 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
-// ImageFrames is getCosmeticsForEntity({entity: 'Image'}): the content-decoration cosmetic each image
-// wears. The cached value is the raw lookup row `{cosmeticId, equippedToId, userData}`; the cache's
-// appendFn joins it with the cosmetic record on every read, and that join is repeated here.
-// A frame miss falls back: its lookup reads the primary and filters withheld creator cosmetics.
-func (s *Sources) ImageFrames(ctx context.Context, imageIDs []int) (map[int]superjson.Object, error) {
-	imageIDs = Unique(imageIDs)
-	got := s.Packed.Get(ctx, KeyImageFrames, imageIDs, 0)
-	cosmeticIDs, err := frameCosmeticIDs(imageIDs, got)
-	if err != nil {
-		return nil, err
-	}
-	cosmetics, err := s.Cosmetics(ctx, cosmeticIDs)
-	if err != nil {
-		return nil, err
-	}
-	return joinFrames(got, cosmetics)
-}
-
-// frameCosmeticIDs is ImageFrames' first half over the frame cache's answer got for (unique) ids: the
-// cosmetic ids to join (unordered, possibly repeated). Any miss falls back.
+// frameCosmeticIDs is getCosmeticsForEntity({entity: 'Image'})'s first half over the frame cache's
+// answer got for (unique) ids: the cosmetic ids to join (unordered, possibly repeated). The cached value
+// is the raw lookup row `{cosmeticId, equippedToId, userData}`; the cache's appendFn joins it with the
+// cosmetic record on every read, and joinFrames repeats that join. A frame miss falls back: its lookup
+// reads the primary and filters withheld creator cosmetics.
 func frameCosmeticIDs(imageIDs []int, got map[int]Entry) ([]int, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("image-frame-miss", "%d ids", len(miss))
@@ -44,9 +29,9 @@ func frameCosmeticIDs(imageIDs []int, got map[int]Entry) ([]int, error) {
 	return cosmeticIDs, nil
 }
 
-// joinFrames is ImageFrames' second half: each frame joined with its cosmetic record. cosmetics is
-// Cosmetics' answer for (at least) the ids frameCosmeticIDs returned; a record is a pure function of
-// its id, so extra ids change nothing.
+// joinFrames is the frame lookup's second half: each frame joined with its cosmetic record. cosmetics
+// is cosmeticsFrom's answer for (at least) the ids frameCosmeticIDs returned; a record is a pure
+// function of its id, so extra ids change nothing.
 func joinFrames(got map[int]Entry, cosmetics map[int]superjson.Object) (map[int]superjson.Object, error) {
 	out := map[int]superjson.Object{}
 	for id, e := range got {
@@ -111,18 +96,6 @@ func truthyJS(v any) bool {
 	return true // objects and arrays
 }
 
-// EventDecorations is getEventDecorationsForEntity for the events visible to every viewer (see
-// DESIGN.md §8: Node asks the event engine and Flipt per viewer; here the visible set is the
-// FEED_GO_DECORATION_EVENTS mirror). Empty when no event is visible, with no cache read, as in Node
-// (decorationsForEvents returns before its fetch). A miss falls back (its lookup reads the primary).
-func (s *Sources) EventDecorations(ctx context.Context, imageIDs []int, visibleEvents map[string]bool) (map[int]superjson.Object, error) {
-	imageIDs = Unique(imageIDs)
-	if len(imageIDs) == 0 || len(visibleEvents) == 0 {
-		return map[int]superjson.Object{}, nil
-	}
-	return VisibleEventDecorations(imageIDs, s.Packed.Get(ctx, KeyImageEvents, imageIDs, 0), visibleEvents)
-}
-
 // VisibleEventDecorations is decorationsForEvents over the event-decoration cache's answer: an entry
 // whose `data.event` is a string naming a visible event (isEventDecorationData), picked field by
 // field so the wearer's `userId` (and any stale extra field) is not sent. An id the cache did not
@@ -156,17 +129,8 @@ type Thumbnail struct {
 	Height any
 }
 
-// Thumbnails is getThumbnailsForImages(videoIds). The miss path is the cache's own two queries.
-func (s *Sources) Thumbnails(ctx context.Context, videoIDs []int) (map[int]Thumbnail, error) {
-	videoIDs = Unique(videoIDs)
-	if len(videoIDs) == 0 {
-		return map[int]Thumbnail{}, nil
-	}
-	return s.thumbnailsFrom(ctx, videoIDs, s.Packed.Get(ctx, KeyThumbnails, videoIDs, ttlDay))
-}
-
-// thumbnailsFrom is Thumbnails over the cache's answer got for (unique) video ids: the misses are read
-// from the replica.
+// thumbnailsFrom is getThumbnailsForImages(videoIds) over the cache's answer got for (unique) video ids
+// (stale entries served). The miss path is the cache's own two queries, on the replica.
 func (s *Sources) thumbnailsFrom(ctx context.Context, videoIDs []int, got map[int]Entry) (map[int]Thumbnail, error) {
 	out := map[int]Thumbnail{}
 	for id, e := range got {
@@ -209,21 +173,6 @@ type Metrics map[string]int
 
 // metricHashKey is cacheKeys.metric (event-engine-common/utils/cache-keys.ts); never namespace-prefixed.
 func metricHashKey(id int) string { return "metrics:Image:" + strconv.Itoa(id) }
-
-// ImageMetrics is getImageMetricsObject over the watcher-fed metric hashes. An image with no hash at
-// all is a miss and falls back (the Node path populates it from ClickHouse). Every image whose hash
-// exists is KNOWN, a `notFound` marker included: on the direct read getImageMetricsObjectDirect writes
-// `shapeImageMetrics(id, metrics[id])` for every requested id, so the id MetricService.fetch skips for
-// the marker gets an all-null entry; on the image-metrics-swr read shapeCachedMetricHash shapes the
-// marker hash to nulls. Either way toImageV2Stats sees an entry: zero counts, statsUnknown false.
-// (Node reports statsUnknown only when the ClickHouse read failed or timed out and the cache held no
-// hash; an image with no hash falls back here, so this service never answers statsUnknown true.)
-func (s *Sources) ImageMetrics(ctx context.Context, imageIDs []int) (map[int]Metrics, error) {
-	b := NewBatch()
-	r := s.queueMetrics(b, Unique(imageIDs))
-	b.Exec(ctx)
-	return r.result()
-}
 
 // metricsReadFailed is the fallback for a metric hash read that failed.
 func metricsReadFailed(err error) error { return fallback.Newf("metrics-read-failed", "%v", err) }
@@ -302,15 +251,9 @@ func Stats(m Metrics, ok bool) superjson.Object {
 	}
 }
 
-// TagIDs is tagIdsForImagesCache.fetch: per image, the `tags` id array. A miss falls back (the lookup
-// joins the tag cache and drops some Rekognition tags; not ported). Read with ttl 0: entries are served
-// regardless of age.
-func (s *Sources) TagIDs(ctx context.Context, imageIDs []int) (map[int]any, error) {
-	imageIDs = Unique(imageIDs)
-	return tagIDsFrom(imageIDs, s.Packed.Get(ctx, KeyTagIDs, imageIDs, 0))
-}
-
-// tagIDsFrom is TagIDs over the cache's answer got for (unique) image ids.
+// tagIDsFrom is tagIdsForImagesCache.fetch over the cache's answer got for (unique) image ids: per
+// image, the `tags` id array. A miss falls back (the lookup joins the tag cache and drops some
+// Rekognition tags; not ported). Read with ttl 0: entries are served regardless of age.
 func tagIDsFrom(imageIDs []int, got map[int]Entry) (map[int]any, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("tag-ids-miss", "%d ids", len(miss))

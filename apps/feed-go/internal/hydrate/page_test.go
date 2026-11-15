@@ -140,6 +140,7 @@ type pageReplica struct {
 	*testkit.DB
 	mu        sync.Mutex
 	cosmetics [][]int
+	users     [][]int
 }
 
 func newPageReplica() *pageReplica {
@@ -169,6 +170,7 @@ func newPageReplica() *pageReplica {
 			p.cosmetics = append(p.cosmetics, sorted)
 			p.mu.Unlock()
 			return only(args, map[int][]any{
+				501: {int64(501), "c501-db", "Badge", map[string]any{"url": "b-db.png"}, "Trophy", int64(0)},
 				502: {int64(502), "c502", "Badge", map[string]any{"url": "d.png"}, "Purchase", nil},
 				505: {int64(505), "c505", "ContentDecoration", map[string]any{"url": "g.png"}, "Purchase", int64(1)},
 			}, "id", "name", "type", "data", "source", "flags"), nil
@@ -182,7 +184,16 @@ func newPageReplica() *pageReplica {
 				"id", "url", "width", "height", "nsfwLevel", "parentId"), nil
 		}},
 		{Match: `FROM "User" WHERE id = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
-			return only(args, map[int][]any{1002: {int64(1002), "db-user-1002", nil, "db.jpeg"}}, "id", "username", "deletedAt", "image"), nil
+			ids, _ := args[0].([]int)
+			sorted := slices.Clone(ids)
+			sort.Ints(sorted)
+			p.mu.Lock()
+			p.users = append(p.users, sorted)
+			p.mu.Unlock()
+			return only(args, map[int][]any{
+				1001: {int64(1001), "db-user-1001", nil, "db1001.jpeg"},
+				1002: {int64(1002), "db-user-1002", nil, "db.jpeg"},
+			}, "id", "username", "deletedAt", "image"), nil
 		}},
 	}}
 	return p
@@ -192,6 +203,12 @@ func (p *pageReplica) cosmeticQueries() [][]int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return slices.Clone(p.cosmetics)
+}
+
+func (p *pageReplica) userQueries() [][]int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.users)
 }
 
 // load builds Sources over a fresh copy of f.
@@ -484,37 +501,28 @@ func TestBatchGroupsByClientIdentity(t *testing.T) {
 	}
 }
 
-// BenchmarkHydratePage hydrates basePageFixture's page through the in-memory Redis fake, with Page
-// (pipelined) and with the per-lookup methods it replaces (per-lookup), and reports the pipelines
-// each sends per page. The counts are asserted: 2 and 10.
+// BenchmarkHydratePage hydrates basePageFixture's page with Page through the in-memory Redis fake and
+// reports the pipelines it sends per page (asserted: 2). The per-lookup path it replaced measured 10
+// pipelines and 946 allocs/op against 851 here, once, in #9025; it is not benchmarked on every run.
 func BenchmarkHydratePage(b *testing.B) {
 	f := basePageFixture(b)
-	for _, c := range []struct {
-		name      string
-		pipelines int
-		run       func(context.Context, *Sources, PageRequest) (*Page, error)
-	}{
-		{"pipelined", 2, func(ctx context.Context, s *Sources, req PageRequest) (*Page, error) { return s.Page(ctx, req) }},
-		{"per-lookup", 10, perLookup},
-	} {
-		b.Run(c.name, func(b *testing.B) {
-			s, r, _ := f.load()
-			ctx := context.Background()
-			req := pageRequest()
-			if _, err := c.run(ctx, s, req); err != nil {
+	b.Run("pipelined", func(b *testing.B) {
+		s, r, _ := f.load()
+		ctx := context.Background()
+		req := pageRequest()
+		if _, err := s.Page(ctx, req); err != nil {
+			b.Fatal(err)
+		}
+		if r.Calls != 2 {
+			b.Fatalf("Page sent %d pipelines per page, want 2", r.Calls)
+		}
+		before := r.Calls
+		b.ReportAllocs()
+		for b.Loop() {
+			if _, err := s.Page(ctx, req); err != nil {
 				b.Fatal(err)
 			}
-			if r.Calls != c.pipelines {
-				b.Fatalf("%s sent %d pipelines per page, want %d", c.name, r.Calls, c.pipelines)
-			}
-			before := r.Calls
-			b.ReportAllocs()
-			for b.Loop() {
-				if _, err := c.run(ctx, s, req); err != nil {
-					b.Fatal(err)
-				}
-			}
-			b.ReportMetric(float64(r.Calls-before)/float64(b.N), "pipelines/op")
-		})
-	}
+		}
+		b.ReportMetric(float64(r.Calls-before)/float64(b.N), "pipelines/op")
+	})
 }

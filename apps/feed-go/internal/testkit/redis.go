@@ -17,9 +17,11 @@ import (
 // HGETALL, SET and SADD, directly or in a pipeline. Any other command panics (the embedded nil
 // interface), so a test never passes on a command the fake silently ignored.
 //
-// Failure modes: Err makes every command fail with it (a transport failure); Delay holds every call
-// (direct or pipelined) for that long or until the context ends, whichever is first, and a context
-// that ends first fails the call with the context's error (a slow store under a deadline).
+// Failure modes: Err makes every command fail with it (a transport failure); KeyErr, when it returns
+// an error for a key, fails only the commands on that key with it (one shard of a cluster down, the
+// rest of the pipeline answering); Delay holds every call (direct or pipelined) for that long or until
+// the context ends, whichever is first, and a context that ends first fails the call with the
+// context's error (a slow store under a deadline).
 type Redis struct {
 	redis.UniversalClient
 
@@ -29,8 +31,9 @@ type Redis struct {
 	sets    map[string]map[string]bool
 	ttls    map[string]time.Duration
 
-	Err   error
-	Delay time.Duration
+	Err    error
+	KeyErr func(key string) error
+	Delay  time.Duration
 
 	// Calls counts round trips (one per direct command, one per Pipelined call).
 	Calls int
@@ -128,6 +131,14 @@ func (r *Redis) wait(ctx context.Context) error {
 	return r.Err
 }
 
+// keyErr is KeyErr's verdict on key (nil = the command runs).
+func (r *Redis) keyErr(key string) error {
+	if r.KeyErr == nil {
+		return nil
+	}
+	return r.KeyErr(key)
+}
+
 func (r *Redis) get(key string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -206,6 +217,9 @@ func (r *Redis) Get(ctx context.Context, key string) *redis.StringCmd {
 	if err := r.wait(ctx); err != nil {
 		return redis.NewStringResult("", err)
 	}
+	if err := r.keyErr(key); err != nil {
+		return redis.NewStringResult("", err)
+	}
 	return redis.NewStringResult(r.get(key))
 }
 
@@ -213,6 +227,9 @@ func (r *Redis) Get(ctx context.Context, key string) *redis.StringCmd {
 func (r *Redis) HGet(ctx context.Context, key, field string) *redis.StringCmd {
 	r.count()
 	if err := r.wait(ctx); err != nil {
+		return redis.NewStringResult("", err)
+	}
+	if err := r.keyErr(key); err != nil {
 		return redis.NewStringResult("", err)
 	}
 	return redis.NewStringResult(r.hget(key, field))
@@ -252,6 +269,9 @@ func (p *pipe) Get(ctx context.Context, key string) *redis.StringCmd {
 	cmd := redis.NewStringCmd(ctx, "get", key)
 	p.cmds = append(p.cmds, cmd)
 	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
 		if failErr != nil {
 			cmd.SetErr(failErr)
 			return
@@ -267,6 +287,9 @@ func (p *pipe) HGet(ctx context.Context, key, field string) *redis.StringCmd {
 	cmd := redis.NewStringCmd(ctx, "hget", key, field)
 	p.cmds = append(p.cmds, cmd)
 	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
 		if failErr != nil {
 			cmd.SetErr(failErr)
 			return
@@ -282,6 +305,9 @@ func (p *pipe) HGetAll(ctx context.Context, key string) *redis.MapStringStringCm
 	cmd := redis.NewMapStringStringCmd(ctx, "hgetall", key)
 	p.cmds = append(p.cmds, cmd)
 	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
 		if failErr != nil {
 			cmd.SetErr(failErr)
 			return
@@ -295,6 +321,9 @@ func (p *pipe) Set(ctx context.Context, key string, val any, ttl time.Duration) 
 	cmd := redis.NewStatusCmd(ctx, "set", key)
 	p.cmds = append(p.cmds, cmd)
 	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
 		if failErr != nil {
 			cmd.SetErr(failErr)
 			return
@@ -309,6 +338,9 @@ func (p *pipe) SAdd(ctx context.Context, key string, members ...any) *redis.IntC
 	cmd := redis.NewIntCmd(ctx, "sadd", key)
 	p.cmds = append(p.cmds, cmd)
 	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
 		if failErr != nil {
 			cmd.SetErr(failErr)
 			return

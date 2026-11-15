@@ -286,6 +286,12 @@ jobs:
         working-directory: apps/feed-go
     env:
       FUZZ_TIME: 20s
+      # Minimization of each new interesting input, as a count of executions (`Nx`). The default is
+      # 60s per input: a worker minimizing reports no executions until it returns (internal/fuzz
+      # worker.minimize: its count arrives with the result, and an interrupted one returns none), so
+      # inside a 20s window a target spent most of it at 0 execs/sec once workers began minimizing,
+      # and the floors below measured that stall, not fuzzing.
+      FUZZ_MINIMIZE: 100x
       # <package dir>:<target>:<min execs>. The first step fails when this list and the Fuzz functions
       # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
       # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). The Fuzz step fails a
@@ -336,7 +342,7 @@ jobs:
             IFS=: read -r pkg name floor <<< "$t"
             echo "::group::$pkg:$name"
             out="$RUNNER_TEMP/fuzz-$name.log"
-            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "$FUZZ_TIME" "./$pkg" 2>&1 | tee "$out"; then
+            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "$FUZZ_TIME" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$out"; then
               echo "::error::$pkg:$name failed; the crasher is in the uploaded artifact ($pkg/testdata/fuzz/$name/)"
               status=1
             fi
@@ -417,12 +423,12 @@ jobs:
       - name: allocs/op gate
         run: |
           set -euo pipefail
-          # Positive control: every benchmark produced its 6 samples (10 benchmarks: superjson Serialize
-          # and SerializeBuffer, hydrate Unpack, TagIDs, HydratePage/pipelined and
-          # HydratePage/per-lookup, feed BuildImages, shadow Compare/golden, Compare/page50 and
-          # CompareJSON). A filter or build change that drops benchmarks would otherwise pass as "no
-          # regression"; raise the count with each new benchmark.
+          # Positive control: every benchmark produced its 6 samples (15 benchmarks: superjson Serialize,
+          # SerializeBuffer and the six SerializeColdStart/start=<16|64|512>KiB/<small|page>, hydrate
+          # Unpack, TagIDs and HydratePage/pipelined, feed BuildImages, shadow Compare/golden,
+          # Compare/page50 and CompareJSON). A filter or build change that drops benchmarks would
+          # otherwise pass as "no regression"; raise the count with each new benchmark.
           samples=$(grep -c ' allocs/op' "$RUNNER_TEMP/head.txt" || true)
           echo "head samples with allocs/op: $samples"
-          [ "$samples" -ge 60 ]
+          [ "$samples" -ge 90 ]
           python3 ci/allocs_gate.py "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
