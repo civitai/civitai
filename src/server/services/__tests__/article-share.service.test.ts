@@ -357,6 +357,17 @@ describe('getArticleByShareToken: cover and viewer', () => {
     expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
   });
 
+  it('🔴 shows no cover, and not the banner, when the cover is one its model withholds', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('JOIN "Post" p ON p.id = i."postId"')
+        ? [{ id: 5 }]
+        : []) as never);
+    articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
+    const result = await read();
+    expect(result.status).toBe('ok');
+    expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+  });
+
   it('refuses a signed-in viewer the author has blocked', async () => {
     vi.mocked(amIBlockedByUser).mockResolvedValueOnce(true);
     expect(await read(STRANGER)).toEqual({ status: 'unavailable' });

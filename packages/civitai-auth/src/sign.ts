@@ -96,6 +96,10 @@ export interface AccessTokenJwtClaims {
   iat: number;
   exp: number;
   act?: { sub: string };
+  /** A service token's roles at the resource (RFC 9068 §2.2.3.1). */
+  roles?: string[];
+  /** A service token's user id at the resource. */
+  civitai_uid?: number;
 }
 
 export const ACCESS_TOKEN_JWT_TYP = 'at+jwt';
@@ -187,6 +191,8 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
       client_id: claims.client_id,
       scope: claims.scope,
       ...(claims.act ? { act: { sub: claims.act.sub } } : {}),
+      ...(claims.roles ? { roles: [...claims.roles] } : {}),
+      ...(claims.civitai_uid !== undefined ? { civitai_uid: claims.civitai_uid } : {}),
     })
       .setProtectedHeader({ alg: ALG, kid: cfg.kid, typ: ACCESS_TOKEN_JWT_TYP })
       .setIssuer(claims.iss)

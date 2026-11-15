@@ -2,7 +2,13 @@ import { decodeProtectedHeader } from 'jose';
 import { env } from '$env/dynamic/private';
 import { createAccessTokenJwtVerifier } from '@civitai/auth';
 import { logToAxiom } from '$lib/server/axiom';
-import { getExchangeResources } from './exchange-resources';
+import {
+  getExchangeResources,
+  isServiceClient,
+  isServiceClientId,
+  type ExchangeResource,
+} from './exchange-resources';
+import { db } from '$lib/server/db/db';
 import {
   exchangeScopeCeiling,
   findExchangeClient,
@@ -12,10 +18,11 @@ import {
   userRefusal,
 } from './token-exchange';
 
-// RFC 7662 introspection of a JWT minted by the user token exchange. Active only while everything it was
-// minted from still holds: the signature, the resource's lists, the exchange record, the access token it came
-// from, the app and the user. Each of those failing reads as {active:false}; a lookup that cannot answer
-// is `indeterminate`, which the route turns into a 503.
+// RFC 7662 introspection of a JWT minted by the user token exchange, or a service token (service-token.ts).
+// Active only while everything it was minted from still holds: the signature, the resource's lists, the
+// record, and for an exchange the access token it came from, the app and the user; for a service token its
+// client and its `services` entry, whose current roles and uid the answer carries. Any of those failing
+// reads as {active:false}; a lookup that cannot answer is `indeterminate` (503).
 
 /** Whether `token` is a compact JWS whose header says `typ: at+jwt`. */
 export function isAccessTokenJwt(token: string): boolean {
@@ -82,6 +89,10 @@ export async function introspectAccessTokenJwt(
     const resource = (await getExchangeResources()).find((r) => r.resource === aud);
     if (!resource) return inactive('resource not registered', log);
     if (!resource.introspectors.includes(callerId)) return inactive('not an introspector', log);
+    // A service token names its client as `sub`; a user's token has a numeric `sub`.
+    if (sub === clientId && isServiceClientId(clientId)) {
+      return await introspectServiceToken(payload, resource, log);
+    }
     if (!resource.apps.includes(clientId)) return inactive('app no longer listed', log);
     if (actor !== null && !resource.relays.includes(actor)) {
       return inactive('relay no longer listed', log);
@@ -90,6 +101,7 @@ export async function introspectAccessTokenJwt(
     const record = await readExchangeRecord(jti);
     if (!record) return inactive('no exchange record', log);
     if (
+      record.kind === 'service' ||
       record.resource !== aud ||
       record.clientId !== clientId ||
       record.actor !== actor ||
@@ -141,4 +153,54 @@ export async function introspectAccessTokenJwt(
     }).catch(() => undefined);
     return { kind: 'indeterminate' };
   }
+}
+
+async function introspectServiceToken(
+  payload: Record<string, unknown>,
+  resource: ExchangeResource,
+  log: Record<string, unknown>
+): Promise<JwtIntrospection> {
+  const { jti, sub } = payload as { jti: string; sub: string };
+  if (payload.act !== undefined) return inactive('service token with act', log);
+
+  const entry = resource.services.find((s) => s.client === sub);
+  if (!entry) return inactive('service no longer listed', log);
+
+  const record = await readExchangeRecord(jti);
+  if (
+    !record ||
+    record.kind !== 'service' ||
+    record.clientId !== sub ||
+    record.resource !== resource.resource
+  ) {
+    return inactive('no matching service record', log);
+  }
+
+  const client = await db
+    .selectFrom('OauthClient')
+    .select(['userId', 'grants', 'accessMode'])
+    .where('id', '=', sub)
+    .executeTakeFirst();
+  if (!client || !isServiceClient(client)) return inactive('service client not active', log);
+
+  const scopeBits = record.scopeBits & entry.scopes;
+  if (scopeBits === 0) return inactive('scope now empty', log);
+
+  return {
+    kind: 'active',
+    body: {
+      active: true,
+      token_type: 'access_token',
+      iss: payload.iss,
+      sub,
+      aud: resource.resource,
+      client_id: sub,
+      scope: scopeNames(scopeBits),
+      roles: entry.roles,
+      civitai_uid: entry.uid,
+      exp: payload.exp,
+      iat: payload.iat,
+      jti,
+    },
+  };
 }

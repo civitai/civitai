@@ -20,8 +20,8 @@ describe('parseGroupRuling — the resolved answer', () => {
         form({
           ruling: 'resolved',
           answerText: `  ${ANSWER}\n`,
-          answerTicketId: '73618',
-          answerConversationId: '150003911207',
+          answerTicketId: '990200000',
+          answerConversationId: '990000000001',
         }),
         GK
       )
@@ -30,7 +30,7 @@ describe('parseGroupRuling — the resolved answer', () => {
       targetKey: null,
       escalateTo: null,
       note: null,
-      answer: { text: ANSWER, source: { ticketId: '73618', conversationId: '150003911207' } },
+      answer: { text: ANSWER, source: { ticketId: '990200000', conversationId: '990000000001' } },
     });
   });
 
@@ -46,8 +46,8 @@ describe('parseGroupRuling — the resolved answer', () => {
         form({
           ruling: 'correct',
           answerText: ANSWER,
-          answerTicketId: '73618',
-          answerConversationId: '150003911207',
+          answerTicketId: '990200000',
+          answerConversationId: '990000000001',
         }),
         GK
       )
@@ -93,10 +93,10 @@ describe('parseGroupRuling — the resolved answer', () => {
   });
 
   it.each([
-    ['a ticket without its reply', { answerTicketId: '73618' }],
-    ['a reply without its ticket', { answerConversationId: '150003911207' }],
-    ['a non-numeric ticket', { answerTicketId: '7361a', answerConversationId: '150003911207' }],
-    ['a non-numeric reply', { answerTicketId: '73618', answerConversationId: '15000391120x' }],
+    ['a ticket without its reply', { answerTicketId: '990200000' }],
+    ['a reply without its ticket', { answerConversationId: '990000000001' }],
+    ['a non-numeric ticket', { answerTicketId: '7361a', answerConversationId: '990000000001' }],
+    ['a non-numeric reply', { answerTicketId: '990200000', answerConversationId: '99000000000x' }],
   ])('refuses %s', (_label, fields) => {
     expect(
       parseGroupRuling(form({ ruling: 'resolved', answerText: ANSWER, ...fields }), GK)

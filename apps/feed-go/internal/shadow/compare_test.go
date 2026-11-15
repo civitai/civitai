@@ -1,6 +1,7 @@
 package shadow
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -200,9 +201,5 @@ func TestDiffsAreBounded(t *testing.T) {
 }
 
 func repeat(s string, n int) string {
-	out := s
-	for i := 1; i < n; i++ {
-		out += "," + s
-	}
-	return out
+	return strings.TrimSuffix(strings.Repeat(s+",", n), ",")
 }

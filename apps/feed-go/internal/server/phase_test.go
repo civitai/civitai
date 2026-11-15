@@ -46,7 +46,7 @@ func metricValue(t *testing.T, reg *prometheus.Registry, name string, labels map
 }
 
 func phaseLabels(phase, outcome string) map[string]string {
-	return map[string]string{"endpoint": EndpointAsPosts, "phase": phase, "outcome": outcome}
+	return map[string]string{"feed_endpoint": EndpointAsPosts, "phase": phase, "outcome": outcome}
 }
 
 // nodeEnvelope is a minimal superjson page both sides answer, so the comparison is a match.
@@ -64,7 +64,7 @@ func shadowBody(t *testing.T, input string) io.Reader {
 func post(t *testing.T, s *Server, input string) {
 	t.Helper()
 	w := httptest.NewRecorder()
-	s.ShadowHandler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/"+Procedure, shadowBody(t, input)))
+	s.ShadowHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, shadowBody(t, input)))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("post %q: code %d, want 202", input, w.Code)
 	}
@@ -109,7 +109,7 @@ func TestShadowPhasesRecordedForServedSample(t *testing.T) {
 	})
 	post(t, s, "{}")
 	waitFor(t, "the sample to finish", func() bool {
-		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointAsPosts, "result": "match"})
+		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"})
 		return v == 1 && len(s.ShadowQueue) == 0
 	})
 
@@ -156,7 +156,7 @@ func TestShadowPhaseCPUOnlyForPhasesNoOtherSampleOverlapped(t *testing.T) {
 	})
 	matches := func(n float64) func() bool {
 		return func() bool {
-			v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointAsPosts, "result": "match"})
+			v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"})
 			return v == n
 		}
 	}
@@ -202,13 +202,13 @@ func TestShadowPhaseCPUExcludesSampleAdmittedAndReleasedDuringPhase(t *testing.T
 	post(t, s, "A")
 	<-entered // A's compute started alone.
 	w := httptest.NewRecorder()
-	s.ShadowHandler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/"+Procedure, strings.NewReader("not json")))
+	s.ShadowHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, strings.NewReader("not json")))
 	if w.Code != http.StatusBadRequest || len(s.ShadowQueue) != 1 {
 		t.Fatalf("bad body: code=%d queued=%d, want 400 and 1 (only A)", w.Code, len(s.ShadowQueue))
 	}
 	close(release)
 	waitFor(t, "A to finish", func() bool {
-		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointAsPosts, "result": "match"})
+		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"})
 		return v == 1 && len(s.ShadowQueue) == 0
 	})
 
@@ -223,7 +223,7 @@ func TestShadowPhaseRecordedForBadBody(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s := newPhaseServer(reg, 1, nil)
 	w := httptest.NewRecorder()
-	s.ShadowHandler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/"+Procedure, strings.NewReader("not json")))
+	s.ShadowHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, strings.NewReader("not json")))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code %d, want 400", w.Code)
 	}

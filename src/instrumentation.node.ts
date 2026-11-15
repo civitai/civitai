@@ -58,11 +58,8 @@ if (pgDbWrite) {
 // before its first request, so this is in place by then. See ~/server/middleware/standalone-api-policy.
 registerStandaloneApiPolicy();
 
-// Per-route request counter for every pages-API route (civitai_app_api_route_requests_total),
-// hooked on http.Server's `request` event so it covers every route whatever wrapper it uses, under
-// both Next and the standalone server. DARK by default: nothing is installed unless
-// API_ROUTE_METRICS='true'. Installed before either server takes its first request (the standalone
-// server awaits register(); Next runs it while preparing). See ~/server/prom/api-route.metrics.
+// Must run before either server takes its first request (the standalone server awaits register();
+// Next runs it while preparing).
 registerApiRouteMetrics();
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state

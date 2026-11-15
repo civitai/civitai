@@ -1,9 +1,15 @@
+import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
   collectBlockStepTypes,
   isMergeStepType,
   isRepeatStepType,
+  MEDIA_REF_ANALYSERS,
+  isMediaLikeSegment,
+  MEDIA_REF_ERROR,
   resolveBlockWorkflowGraph,
+  SCANNED_VIDEO_GEN_ENGINES,
+  WRITE_TARGET_ERROR,
   WORKFLOW_INPUT_DEPTH_MAX,
   WORKFLOW_MAX_REFS,
   WORKFLOW_MAX_STEPS,
@@ -94,7 +100,7 @@ describe('resolveBlockWorkflowGraph — references', () => {
     const steps = resolved([
       step({ name: 'gen' }),
       step({ $type: 'imageUpscaler', input: { image: ref('gen') } }),
-      step({ $type: 'convertImage', input: { image: ref('$1'), nested: [{ deep: ref('gen') }] } }),
+      step({ $type: 'imageGen', input: { image: ref('$1'), nested: [{ deep: ref('gen') }] } }),
     ]);
     expect(steps).toHaveLength(3);
   });
@@ -135,9 +141,9 @@ describe('resolveBlockWorkflowGraph — references', () => {
     expect(r.error).toContain('workflow step 1: "$ref": "$0" does not name');
   });
 
-  it('checks a reference that IS the whole input', () => {
+  it('refuses a reference that IS the whole input', () => {
     const r = refusal([step({ input: ref('ghost') as unknown as Record<string, unknown> })]);
-    expect(r.error).toContain('workflow step 0: "$ref": "ghost" does not name');
+    expect(r.error).toBe('workflow step 0: a step input must be an object, not a reference');
   });
 
   it('refuses a reference whose `$ref` or `path` is not a string', () => {
@@ -158,19 +164,19 @@ describe('resolveBlockWorkflowGraph — references', () => {
     expect(r.error).toBe('workflow step 0: a reference "format" must be a string');
   });
 
-  it('does NOT treat an object with other keys as a reference', () => {
-    // The orchestrator's own predicate: `$ref` + `path` and nothing but
-    // `default` / `format`. A JSON-schema `$ref`, or an object with an extra key,
-    // is plain data and is forwarded whatever it names.
-    const steps = resolved([
-      step({
-        input: {
-          schema: { $ref: '#/definitions/thing' },
-          notARef: { $ref: 'nowhere', path: 'p', extra: true },
-        },
-      }),
-    ]);
-    expect(steps).toHaveLength(1);
+  it('does NOT treat a `$ref` with no `path` as a reference', () => {
+    // The orchestrator reads `$ref` + `path` as a reference; a JSON-schema `$ref` is plain data.
+    expect(resolved([step({ input: { schema: { $ref: '#/definitions/thing' } } })])).toHaveLength(
+      1
+    );
+  });
+
+  it('🔴 refuses a `$ref` + `path` object carrying another key, rather than forward it as data', () => {
+    for (const extra of [{ extra: true }, { reduce: 'first' }]) {
+      expect(
+        refusal([step({ input: { x: { $ref: '$arguments', path: 'p', ...extra } } })]).error
+      ).toBe('workflow step 0: a reference may carry only "$ref", "path", "default" and "format"');
+    }
   });
 
   it(`accepts ${WORKFLOW_MAX_REFS} references and refuses one more`, () => {
@@ -236,16 +242,16 @@ describe('resolveBlockWorkflowGraph — repeat', () => {
     const r = graph([
       step({ name: 'gen' }),
       repeat(overImages, {
-        $type: 'wdTagging',
+        $type: 'imageUpscaler',
         input: {
-          mediaUrl: ref('item', 'url'),
+          image: ref('item', 'url'),
           other: ref('gen'),
           arg: ref('$arguments', 'strength'),
         },
       }),
     ]);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.steps[1].stepTypes).toEqual(['repeat', 'wdTagging']);
+    if (r.ok) expect(r.steps[1].stepTypes).toEqual(['repeat', 'imageUpscaler']);
   });
 
   it('🔴 refuses a repeat over an EARLIER STEP’s output, naming the step index', () => {
@@ -352,7 +358,10 @@ describe('resolveBlockWorkflowGraph — repeat', () => {
   it('🔴 refuses a repeat variable that is also a step name, earlier or later', () => {
     for (const steps of [
       [step({ name: 'item' }), repeat(overImages, { $type: 'echo', input: {} })],
-      [repeat(overImages, { $type: 'echo', input: { v: ref('item') } }), step({ name: 'item' })],
+      [
+        repeat(overImages, { $type: 'echo', input: { v: ref('item', 'text') } }),
+        step({ name: 'item' }),
+      ],
     ]) {
       const r = graph(steps);
       expect(r.ok).toBe(false);
@@ -636,6 +645,593 @@ describe('resolveBlockWorkflowGraph — merge', () => {
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) {
       expect(unknown.error).toContain('workflow step 0: "$ref": "ghost" does not name');
+    }
+  });
+});
+
+describe('resolveBlockWorkflowGraph — references into media', () => {
+  const gen = step({ name: 'gen' });
+  const video = step({ name: 'clip', $type: 'videoGen', input: { engine: 'wan', prompt: 'x' } });
+  const mediaRefused = (steps: BlockWorkflowStepInput[], index: number) => {
+    const r = refusal(steps);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+    expect(r.error).toBe(`workflow step ${index}: ${MEDIA_REF_ERROR}`);
+  };
+
+  it('CONTROL: a generator may take an earlier output’s media, and any step may take text', () => {
+    expect(
+      resolved([
+        gen,
+        video,
+        step({
+          $type: 'videoGen',
+          input: { engine: 'wan', provider: 'comfy', images: [ref('gen')] },
+        }),
+        step({ $type: 'videoUpscaler', input: { video: ref('clip', 'output.video.url') } }),
+        step({ name: 'chat', $type: 'chatCompletion', input: { messages: [] } }),
+        step({ $type: 'imageGen', input: { prompt: ref('chat', 'output.text') } }),
+      ])
+    ).toHaveLength(6);
+  });
+
+  it('🔴 a merge may not copy a media url, id or whole output into its fields', () => {
+    for (const path of [
+      'output.video.url',
+      'output.video.id',
+      'output.video',
+      'output',
+      'output.images[*].url',
+    ]) {
+      mediaRefused(
+        [
+          video,
+          step({
+            $type: 'merge',
+            input: { onMissing: 'fail', fields: { x: { $ref: 'clip', path, reduce: 'first' } } },
+          }),
+        ],
+        1
+      );
+    }
+  });
+
+  it.each([
+    ['a media reference', { $ref: 'clip', path: 'output.video.url' }],
+    ['an unknown source', { $ref: 'nope', path: 'text' }],
+    ['many references', Array.from({ length: 200 }, () => ({ $ref: 'clip', path: 'output.text' }))],
+  ])('🔴 a merge field whose `reduce` holds %s is refused', (_label, reduce) => {
+    const r = refusal([
+      video,
+      step({
+        $type: 'merge',
+        input: { onMissing: 'fail', fields: { x: { $ref: 'clip', path: 'output.text', reduce } } },
+      }),
+    ]);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+  });
+
+  it.each([
+    ['a step', 'clip'],
+    ['`$arguments`', '$arguments'],
+  ])('🔴 a merge field from %s with no `path` and a string `reduce` is refused', (_l, source) => {
+    // Only the media check stands here: the field is not a reference without a path.
+    const r = refusal([
+      video,
+      step({
+        $type: 'merge',
+        input: { onMissing: 'fail', fields: { x: { $ref: source, reduce: 'first' } } },
+      }),
+    ]);
+    expect(r.error).toBe(`workflow step 1: ${MEDIA_REF_ERROR}`);
+  });
+
+  it('a merge may still read text and scalar fields', () => {
+    expect(
+      resolved([
+        video,
+        step({
+          $type: 'merge',
+          input: {
+            onMissing: 'fail',
+            fields: { n: { $ref: 'clip', path: 'output.video.nsfwLevel', reduce: 'first' } },
+          },
+        }),
+      ])
+    ).toHaveLength(2);
+  });
+
+  it('🔴 non-generators may not take media: chat, convertImage, blobArchive, analysers, unknown $types (transcode takes no refs at all)', () => {
+    for (const $type of [
+      'chatCompletion',
+      'convertImage',
+      'blobArchive',
+      'echo',
+      'someVendorStep',
+      'comfy',
+      'preprocessImage',
+      'polyGen',
+    ]) {
+      mediaRefused([gen, step({ $type, input: { x: ref('gen') } })], 1);
+    }
+  });
+
+  it('🔴 videoGen takes media only for an engine on the scanned allow-list, given literally', () => {
+    for (const engine of ['vidu-q3', 'kling', 'veo3', 'seedance', 'ltx2-fal', 'comfy', undefined]) {
+      mediaRefused([gen, step({ $type: 'videoGen', input: { engine, images: [ref('gen')] } })], 1);
+    }
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'videoGen',
+          input: { engine: ref('$arguments', 'engine'), images: [ref('gen')] },
+        }),
+      ],
+      1
+    );
+  });
+
+  it('🔴 wan takes media only with an explicit scanned provider; other engines may omit it', () => {
+    const video = (input: Record<string, unknown>) =>
+      step({ $type: 'videoGen', input: { images: [ref('gen')], ...input } });
+    for (const provider of ['comfy', 'civitai', 'Comfy']) {
+      expect(resolved([gen, video({ engine: 'wan', provider })])).toHaveLength(2);
+    }
+    expect(resolved([gen, video({ engine: 'ltx2' })])).toHaveLength(2);
+    for (const input of [
+      { engine: 'wan' },
+      { engine: 'wan', provider: 'fal' },
+      { engine: 'wan', provider: null },
+      { engine: 'wan', provider: ref('$arguments', 'p') },
+      { engine: 'ltx2', provider: 'fal' },
+      { engine: 'wan', provider: 'comfy', Provider: 'fal' },
+    ]) {
+      mediaRefused([gen, video(input)], 1);
+    }
+  });
+
+  it.each(['output.images[0].URL', 'output.images[0].Url'])(
+    '🔴 a re-cased media leaf (%s) into chat is refused',
+    (path) => {
+      mediaRefused([gen, step({ $type: 'chatCompletion', input: { x: ref('gen', path) } })], 1);
+    }
+  );
+
+  it.each(['output.steps[*].output.url', 'output.images[*]'])(
+    '🔴 a merge wildcard path (%s) into a non-consumer is refused',
+    (path) => {
+      mediaRefused(
+        [
+          gen,
+          step({
+            $type: 'merge',
+            input: { onMissing: 'fail', fields: { x: { $ref: 'gen', path, reduce: 'first' } } },
+          }),
+        ],
+        1
+      );
+    }
+  );
+
+  it('🔴 a whole repeat item, used as a value in a non-consumer, is refused', () => {
+    const r = resolveBlockWorkflowGraph({
+      steps: [
+        step({
+          $type: 'repeat',
+          input: {
+            for: { $ref: '$arguments', path: 'images', as: 'item' },
+            template: { $type: 'chatCompletion', input: { x: { $ref: 'item', path: '' } } },
+          },
+        }),
+      ],
+      arguments: { images: [{ url: 'u' }] },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe(`workflow step 0: ${MEDIA_REF_ERROR}`);
+  });
+
+  it.each([['image'], ['text', 'Image'], 'image', ref('$arguments', 'm')])(
+    '🔴 a chat step asking for image output is refused: %j',
+    (modalities) => {
+      expect(
+        refusal([step({ $type: 'chatCompletion', input: { messages: [], modalities } })]).error
+      ).toBe('workflow step 0: a chat step may not generate images');
+    }
+  );
+
+  it.each([
+    ['null', null],
+    ['an empty list', []],
+    ['a non-text entry', ['images']],
+    ['a padded entry', [' image']],
+  ])('🔴 chat modalities refuse %s', (_label, modalities) => {
+    expect(
+      refusal([step({ $type: 'chatCompletion', input: { messages: [], modalities } })]).error
+    ).toBe('workflow step 0: a chat step may not generate images');
+  });
+
+  it('🔴 a provider spelled with a dotless ı is not a scanned provider', () => {
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'videoGen',
+          input: { engine: 'wan', provider: 'cıvıtaı', images: [ref('gen')] },
+        }),
+      ],
+      1
+    );
+  });
+
+  it('CONTROL: a chat step asking for text output is fine', () => {
+    expect(
+      resolved([step({ $type: 'chatCompletion', input: { messages: [], modalities: ['text'] } })])
+    ).toHaveLength(1);
+  });
+
+  it('pins the exact scanned videoGen engine set: adding one is a reviewed diff', () => {
+    expect([...SCANNED_VIDEO_GEN_ENGINES].sort()).toEqual(
+      ['hunyuan', 'lightricks', 'ltx2', 'ltx2.3', 'ltx2.5', 'mochi', 'wan'].sort()
+    );
+  });
+
+  it('composeMedia takes media only when its output is statically video', () => {
+    const compose = (output: unknown) =>
+      step({ $type: 'composeMedia', input: { output, elements: [{ url: ref('gen') }] } });
+    expect(resolved([gen, compose({ type: 'video' })])).toHaveLength(2);
+    for (const output of [{ type: 'audio' }, {}, undefined, { type: ref('$arguments', 'kind') }]) {
+      mediaRefused([gen, compose(output)], 1);
+    }
+  });
+
+  it('🔴 the rule also covers `$arguments` and a repeat’s loop variable', () => {
+    mediaRefused(
+      [step({ $type: 'chatCompletion', input: { image: ref('$arguments', 'imageUrl') } })],
+      0
+    );
+    const r = resolveBlockWorkflowGraph({
+      steps: [
+        step({
+          $type: 'repeat',
+          input: {
+            for: { $ref: '$arguments', path: 'images', as: 'item' },
+            template: { $type: 'chatCompletion', input: { image: ref('item', 'url') } },
+          },
+        }),
+      ],
+      arguments: { images: [{ url: 'u' }] },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe(`workflow step 0: ${MEDIA_REF_ERROR}`);
+  });
+
+  it.each([
+    'imageUrl',
+    'src.uri',
+    'blob',
+    'blobId',
+    'id',
+    'images',
+    'images[0]',
+    'video',
+    'frames',
+    'model',
+    'mesh',
+    'samples.0',
+    'thumbnail',
+    'svg',
+    'audio',
+    'imageId',
+    'blobIDs',
+    'sourceUri',
+  ])('🔴 a non-generator may not take `$arguments` path "%s"', (path) => {
+    mediaRefused([step({ $type: 'chatCompletion', input: { x: ref('$arguments', path) } })], 0);
+  });
+
+  it('🔴 a merge field sourced from `$arguments` follows the same rule', () => {
+    const merge = (path: string) =>
+      step({
+        $type: 'merge',
+        input: {
+          onMissing: 'fail',
+          fields: { x: { $ref: '$arguments', path, reduce: 'first' } },
+        },
+      });
+    mediaRefused([merge('images[0].url')], 0);
+    expect(resolved([merge('caption')])).toHaveLength(1);
+  });
+
+  it('CONTROL: a non-generator may take the app’s own text and scalar `$arguments`', () => {
+    for (const path of ['prompt', 'strength', 'settings.steps', 'grid', 'paid', 'security']) {
+      expect(
+        resolved([step({ $type: 'chatCompletion', input: { x: ref('$arguments', path) } })])
+      ).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    ['a re-cased $ref', { $REF: 'gen', path: 'output.images[0].url' }],
+    ['a re-cased path', { $ref: 'gen', Path: 'output.images[0].url' }],
+    ['a $ref with a re-cased twin', { $ref: 'chat', $Ref: 'gen', path: 'output.text' }],
+  ])('🔴 refuses a reference object with %s', (_label, refObject) => {
+    const r = refusal([gen, step({ $type: 'chatCompletion', input: { x: refObject } })]);
+    expect(r.error).toBe(
+      'workflow step 1: a reference key must be spelled "$ref", "path", "default" or "format"'
+    );
+  });
+
+  it('CONTROL: an object that merely has a key named like a reference field is plain data', () => {
+    expect(
+      resolved([gen, step({ $type: 'chatCompletion', input: { x: { Path: 'a', Format: 'b' } } })])
+    ).toHaveLength(2);
+  });
+
+  it('🔴 a reference default is held to the same rules as the reference', () => {
+    const withDefault = (fallback: unknown) =>
+      step({
+        $type: 'chatCompletion',
+        input: { x: { $ref: 'gen', path: 'output.text', default: fallback } },
+      });
+    mediaRefused([gen, withDefault(ref('gen', 'output.video.url'))], 1);
+    expect(refusal([gen, withDefault(ref('zzz', 'output.text'))]).error).toContain('"zzz"');
+    expect(resolved([gen, withDefault('a literal fallback')])).toHaveLength(2);
+  });
+
+  it.each([
+    ['a reference', { src: { $ref: 'gen', path: 'output.video.url' } }],
+    ['a re-cased reference', { list: [{ $REF: 'gen', path: 'output.text' }] }],
+  ])('🔴 refuses workflow arguments holding %s', (_label, args) => {
+    const r = resolveBlockWorkflowGraph({
+      steps: [gen, step({ $type: 'chatCompletion', input: { x: ref('$arguments', 'src') } })],
+      arguments: args,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('workflow arguments may not hold a reference');
+  });
+
+  it('🔴 a transcode step takes no references at all, even to text', () => {
+    const chat = step({ name: 'llm', $type: 'chatCompletion', input: { messages: [] } });
+    for (const input of [
+      { sourceUrl: ref('llm', 'output.text') },
+      { options: ref('llm', 'output.parsed.text') },
+    ]) {
+      expect(refusal([chat, step({ $type: 'transcode', input })]).error).toBe(
+        'workflow step 1: a transcode step takes literal input only, no references'
+      );
+    }
+    expect(
+      resolved([chat, step({ $type: 'transcode', input: { sourceUrl: 'https://a' } })])
+    ).toHaveLength(2);
+  });
+
+  it('🔴 a step input may not itself be a reference', () => {
+    const chat = step({ name: 'llm', $type: 'chatCompletion', input: { messages: [] } });
+    expect(
+      refusal([chat, step({ $type: 'imageGen', input: ref('llm', 'output.parsed.text') })]).error
+    ).toBe('workflow step 1: a step input must be an object, not a reference');
+  });
+
+  it('🔴 an analyser takes media on its media field only, never in its free-text fields', () => {
+    const caption = (input: Record<string, unknown>) =>
+      step({ $type: 'mediaCaptioning', input: { mediaUrl: 'https://a', ...input } });
+    expect(resolved([gen, caption({ mediaUrl: ref('gen', 'output.video.url') })])).toHaveLength(2);
+    mediaRefused([gen, caption({ customInstructions: ref('gen', 'output.video.url') })], 1);
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'wdTagging',
+          input: { mediaUrl: 'https://a', prompt: ref('gen', 'output.images[0].url') },
+        }),
+      ],
+      1
+    );
+  });
+
+  it('🔴 refuses media into videoGen when `provider` has a re-cased twin', () => {
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'videoGen',
+          input: { engine: 'wan', provider: 'civitai', Provider: 'comfy', images: [ref('gen')] },
+        }),
+      ],
+      1
+    );
+  });
+
+  it('🔴 a merge field from `$arguments` with a non-string path is refused', () => {
+    const r = refusal([
+      step({
+        $type: 'merge',
+        input: {
+          onMissing: 'fail',
+          fields: { x: { $ref: '$arguments', path: 5, reduce: 'first' } },
+        },
+      }),
+    ]);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+  });
+
+  it.each(['destınationUrl', 'deſtinationUrl'])(
+    '🔴 refuses the destination key spelled %s',
+    (key) => {
+      expect(refusal([step({ $type: 'transcode', input: { [key]: 'https://b' } })]).error).toBe(
+        `workflow step 0: ${WRITE_TARGET_ERROR}`
+      );
+    }
+  );
+
+  it.each([
+    [
+      'an `engıne` twin',
+      { engine: 'wan', provider: 'comfy', engıne: 'kling', images: [ref('gen')] },
+    ],
+    [
+      'a `provıder` twin',
+      { engine: 'wan', provider: 'civitai', provıder: 'comfy', images: [ref('gen')] },
+    ],
+  ])('🔴 a twin spelled with a dotless ı still refuses videoGen media: %s', (_label, input) => {
+    mediaRefused([gen, step({ $type: 'videoGen', input })], 1);
+  });
+
+  it('🔴 a `tranſcode` step is still a transcode step and takes no references', () => {
+    const chat = step({ name: 'llm', $type: 'chatCompletion', input: { messages: [] } });
+    expect(
+      refusal([chat, step({ $type: 'tranſcode', input: { sourceUrl: ref('llm', 'output.text') } })])
+        .error
+    ).toBe('workflow step 1: a transcode step takes literal input only, no references');
+  });
+
+  it.each([{ public: true }, { opts: { Public: true } }])(
+    '🔴 refuses a step input that makes its output public: %j',
+    (extra) => {
+      expect(
+        refusal([step({ $type: 'transcode', input: { sourceUrl: 'https://a', ...extra } })]).error
+      ).toBe(`workflow step 0: ${WRITE_TARGET_ERROR}`);
+    }
+  );
+
+  it('🔴 an analyser with a non-object input takes no media references', () => {
+    const r = resolveBlockWorkflowGraph({
+      steps: [
+        gen,
+        step({
+          $type: 'repeat',
+          input: {
+            for: { $ref: '$arguments', path: 'items', as: 'it' },
+            template: {
+              $type: 'mediaCaptioning',
+              input: [{ prompt: ref('gen', 'output.images[0].url') }],
+            },
+          },
+        }),
+      ],
+      arguments: { items: [1] },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe(`workflow step 1: ${MEDIA_REF_ERROR}`);
+  });
+
+  it('🔴 refuses any input key naming an output destination, at any depth and in any case', () => {
+    for (const input of [
+      { sourceUrl: 'https://a', destinationUrl: 'https://b' },
+      { nested: [{ DestinationURL: 'https://b' }] },
+      { output: { destination: 'https://b' } },
+    ]) {
+      const r = refusal([step({ $type: 'transcode', input })]);
+      expect(r.error).toBe(`workflow step 0: ${WRITE_TARGET_ERROR}`);
+    }
+  });
+
+  it('🔴 refuses a destination key in the workflow arguments, or arguments too deep to check', () => {
+    const graph = (args: Record<string, unknown>) =>
+      resolveBlockWorkflowGraph({
+        steps: [step({ $type: 'chatCompletion', input: { opts: ref('$arguments', 'opts') } })],
+        arguments: args,
+      });
+    const r = graph({ opts: { destinationUrl: 'https://b' } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe(`workflow arguments: ${WRITE_TARGET_ERROR}`);
+    let deep: Record<string, unknown> = { destinationUrl: 'https://b' };
+    for (let i = 0; i < WORKFLOW_INPUT_DEPTH_MAX + 1; i += 1) deep = { a: deep };
+    const d = graph({ opts: deep });
+    expect(d.ok).toBe(false);
+    if (!d.ok) expect(d.error).toContain('workflow arguments are nested deeper than');
+    expect(graph({ opts: { quality: 'high' } }).ok).toBe(true);
+  });
+
+  it('🔴 refuses media into videoGen or composeMedia when a gating key has a re-cased twin', () => {
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'videoGen',
+          input: { engine: 'wan', Engine: 'kling', images: [ref('gen')] },
+        }),
+      ],
+      1
+    );
+    const compose = (input: Record<string, unknown>) =>
+      step({ $type: 'composeMedia', input: { ...input, elements: [{ url: ref('gen') }] } });
+    mediaRefused([gen, compose({ output: { type: 'video' }, Output: { type: 'audio' } })], 1);
+    mediaRefused([gen, compose({ output: { type: 'video', TYPE: 'audio' } })], 1);
+  });
+
+  it('every orchestrator input type field naming a destination is one this refuses', () => {
+    const types = readFileSync(
+      require.resolve('@civitai/orchestration-client/dist/generated/types.gen.d.ts'),
+      'utf8'
+    );
+    const keys = [...types.matchAll(/^\s+(\w*destination\w*)\??:/gim)].map((m) => m[1]);
+    // Positive control: the client does carry one such field today.
+    expect(keys).toContain('destinationUrl');
+    for (const key of new Set(keys)) {
+      const r = refusal([step({ $type: 'transcode', input: { [key]: 'https://b' } })]);
+      expect(r.error).toBe(`workflow step 0: ${WRITE_TARGET_ERROR}`);
+    }
+  });
+});
+
+describe('analysers that may take media', () => {
+  const typesSource = readFileSync(
+    require.resolve('@civitai/orchestration-client/dist/generated/types.gen.d.ts'),
+    'utf8'
+  );
+
+  function typeBody(name: string): string | null {
+    const m = typesSource.match(new RegExp(`^export type ${name} = `, 'm'));
+    if (!m || m.index === undefined) return null;
+    let depth = 0;
+    let end = m.index + m[0].length;
+    for (; end < typesSource.length; end++) {
+      const c = typesSource[end];
+      if (c === '{') depth++;
+      else if (c === '}') depth--;
+      else if (c === ';' && depth === 0) break;
+    }
+    return typesSource.slice(m.index + m[0].length, end).replace(/\/\*\*[\s\S]*?\*\//g, '');
+  }
+
+  /** Every media-like field reachable from `name`, nested records included; unreadable types count. */
+  function mediaLikeFields(name: string, seen = new Set<string>(), path: string[] = []): string[] {
+    if (seen.has(name)) return [];
+    seen.add(name);
+    const body = typeBody(name);
+    if (body === null) return [`${name}: unreadable`];
+    const found: string[] = [];
+    for (const [, key, type] of body.matchAll(/(\w+)\??:\s*([^;]+);/g)) {
+      const at = [...path, key].join('.');
+      if (isMediaLikeSegment(key)) found.push(`${name}.${at}`);
+      for (const [, ref] of type.matchAll(/\b([A-Z]\w+)\b/g)) {
+        if (/Blob$/.test(ref)) found.push(`${name}.${at}: ${ref}`);
+        if (typeBody(ref)?.trim().startsWith('{'))
+          found.push(...mediaLikeFields(ref, seen, [...path, key]));
+      }
+    }
+    return found;
+  }
+
+  const outputType = (stepType: string) => `${stepType[0].toUpperCase()}${stepType.slice(1)}Output`;
+
+  it('POSITIVE CONTROL: the walk flags a url nested in a record, and a blob field', () => {
+    expect(mediaLikeFields('ImageResourceTrainingOutput')).toContain('EpochResult.epochs.blobUrl');
+    expect(mediaLikeFields('VideoGenOutput').some((f) => f.endsWith('VideoBlob'))).toBe(true);
+  });
+
+  it.each(MEDIA_REF_ANALYSERS)(
+    '%s declares no url-, blob- or id-like output at any depth',
+    (type) => {
+      expect(mediaLikeFields(outputType(type))).toEqual([]);
+    }
+  );
+
+  it('an analyser may take a media reference', () => {
+    for (const $type of MEDIA_REF_ANALYSERS) {
+      expect(
+        resolved([step({ name: 'gen' }), step({ $type, input: { mediaUrl: ref('gen') } })])
+      ).toHaveLength(2);
     }
   });
 });

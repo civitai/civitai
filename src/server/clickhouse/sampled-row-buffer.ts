@@ -45,9 +45,12 @@ export type SampledRowBufferDeps<Row> = {
 export type SampledRowBuffer<Row> = {
   /**
    * Samples, then builds and buffers one row. `build` gets the time and the active OTEL traceId.
-   * Never throws: capture must not surface on the request path.
+   * `unsampled` rows skip the rate roll but not the switch, `until` or the cap. Never throws.
    */
-  push: (build: (at: number, traceId: string) => Row) => Promise<void>;
+  push: (
+    build: (at: number, traceId: string) => Row,
+    opts?: { unsampled?: boolean }
+  ) => Promise<void>;
   flush: () => Promise<void>;
   readonly pending: number;
   readonly dropped: number;
@@ -114,13 +117,16 @@ export function createSampledRowBuffer<Row>(
     timer.unref?.();
   }
 
-  async function push(build: (at: number, traceId: string) => Row) {
+  async function push(
+    build: (at: number, traceId: string) => Row,
+    { unsampled = false }: { unsampled?: boolean } = {}
+  ) {
     const traceId = trace.getActiveSpan()?.spanContext().traceId ?? '';
     const at = now();
     try {
       const config = await deps.getConfig();
       if (config.sampleRate <= 0 || at > config.until) return;
-      if (random() >= config.sampleRate) return;
+      if (!unsampled && random() >= config.sampleRate) return;
       if (buffer.length >= MAX_BUFFERED_ROWS) {
         dropped++;
         deps.counters.rows.inc({ outcome: 'dropped' });

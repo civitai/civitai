@@ -110,6 +110,7 @@ func WriteError(w http.ResponseWriter, path string, e *Error) {
 			{Key: "path", Val: path},
 		}},
 	}
+	// A plain (owned) Serialize: an error body is tiny and rare, so it does not hold a pooled buffer.
 	enc, err := superjson.Serialize(body)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -131,7 +132,9 @@ type CacheTTL struct {
 // SignedOutTTL is createContext's cacheable policy.
 var SignedOutTTL = CacheTTL{Browser: 60, Edge: 60, StaleWhileRevalidate: 30}
 
-// WriteResult writes a success envelope around an already-serialized superjson payload.
+// WriteResult writes a success envelope around an already-serialized superjson payload. It does not
+// keep payload once it returns (an http.ResponseWriter's Write copies or sends it before returning), so
+// the caller may release a pooled payload (superjson.Buffer) right after.
 func WriteResult(w http.ResponseWriter, payload []byte, ttl *CacheTTL) {
 	h := w.Header()
 	h.Set("Content-Type", "application/json")

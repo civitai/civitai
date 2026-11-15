@@ -146,7 +146,7 @@ export type GuardRead = {
 };
 
 export const GUARD_NONE: GuardRead = { outcome: 'none', rules: [], mode: '', version: null };
-const GUARD_UNKNOWN: GuardRead = { outcome: 'unknown', rules: [], mode: '', version: null };
+export const GUARD_UNKNOWN: GuardRead = { outcome: 'unknown', rules: [], mode: '', version: null };
 
 /** A service without the full guard result (missing, or `refused` alone) reads as `unknown`. */
 export function readGuard(raw: unknown): GuardRead {
@@ -314,12 +314,12 @@ export function auditedTextCandidates({
     refused: false,
     returned: 0,
     // The first call's: every call of one search carries the same query.
-    first: undefined as { guard?: GuardRead; cacheHit?: boolean } | undefined,
+    first: undefined as { ids: number[]; guard?: GuardRead; cacheHit?: boolean } | undefined,
   };
   let audited = false;
   const candidates = async (offset: number, limit: number) => {
     const result = await source({ query: { text }, filter, offset, limit, viewer });
-    state.first ??= { guard: result.guard, cacheHit: result.cacheHit };
+    state.first ??= { ids: result.ids, guard: result.guard, cacheHit: result.cacheHit };
     if (!audited && result.correctedQuery !== undefined) {
       audited = true;
       state.refused = result.correctedQuery !== text && !!(await audit(result.correctedQuery));

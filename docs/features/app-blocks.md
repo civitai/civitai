@@ -818,6 +818,22 @@ that is each `sourceImage` / `sourceImages` entry.
   generation inputs; upload the image instead. Free text in a chat step's messages and tool
   schemas is not an image input.
 
+### Prompt refusals (every generation `kind`)
+
+When the site's prompt check refuses a generation submit's prompt, on any `kind`, the submit
+returns the refusal as a failed snapshot an app can branch on, before anything is quoted or
+reserved. This is the same over the bridge and over `POST /api/v1/blocks/workflows/submit`, which
+answers `200` with the snapshot where it used to answer `400`:
+
+- `errorCode: 'prompt-policy-refused'`: the check refused the prompt. `error` is the refusal
+  reasons (`Your prompt was flagged: …`) and nothing else; show it and stop. Resubmitting the same
+  prompt, or retrying it on another model, is refused again.
+- `errorCode: 'prompt-check-unavailable'`: the check could not run. Nothing was submitted or
+  charged. Retry no sooner than 30 seconds later, at most 3 times.
+
+A stored refusal records the App Block that submitted it, so moderators reviewing it see that an
+app sent the prompt. The submit-failure metric counts these as `prompt_refused`.
+
 ### Private generation sources (`PERSIST_GENERATION_SOURCE`)
 
 An app can keep one of its own finished generation outputs as a private, scanned source and

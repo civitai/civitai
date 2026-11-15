@@ -4,7 +4,7 @@ import { NON_USER_SCOPES, TokenScope, tokenScopeLabels } from '@civitai/auth/tok
 import { db } from '$lib/server/db/db';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } from '$lib/server/oauth/block-guard';
-import { SYSTEM_USER_ID } from '$lib/server/oauth/constants';
+import { SERVICE_GRANT, SYSTEM_USER_ID } from '$lib/server/oauth/constants';
 import { firstNonSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
 
 // System OAuth apps: registered apps owned by the civitai system account (User id -1), the first-party
@@ -125,6 +125,70 @@ export async function createSystemClient(
     metadata: { owner: 'system' },
   });
   return { clientId, clientSecret };
+}
+
+/**
+ * Register a service client: a system app that gets resource tokens as itself, and nothing else. It holds
+ * only the service grant, no redirect URIs or origins, and UserRead; what it receives at a resource is set
+ * by that resource's `services` entry in OAUTH_EXCHANGE_RESOURCES. The secret is returned once.
+ */
+export async function createServiceClient(
+  name: string,
+  actorUserId: number
+): Promise<{ clientId: string; clientSecret: string }> {
+  const clientId = randomUUID();
+  const clientSecret = generateKey(48);
+  await db
+    .insertInto('OauthClient')
+    .values({
+      id: clientId,
+      secret: generateSecretHash(clientSecret),
+      name,
+      description: '',
+      redirectUris: [],
+      allowedOrigins: [],
+      grants: [SERVICE_GRANT],
+      isConfidential: true,
+      allowedScopes: TokenScope.UserRead,
+      userId: SYSTEM_USER_ID,
+      isVerified: true,
+    })
+    .execute();
+  logOAuthEvent({
+    type: 'client.created',
+    userId: actorUserId,
+    clientId,
+    metadata: { owner: 'system', service: true },
+  });
+  return { clientId, clientSecret };
+}
+
+/**
+ * Give a service client a new secret, returned once; the old one stops working. Tokens already issued stay
+ * valid until they expire: disable the client first to end them. Returns null when the id is not a service
+ * client.
+ */
+export async function rotateServiceSecret(
+  clientId: string,
+  actorUserId: number
+): Promise<{ clientSecret: string } | null> {
+  const clientSecret = generateKey(48);
+  const rotated = await db
+    .updateTable('OauthClient')
+    .set({ secret: generateSecretHash(clientSecret) })
+    .where('id', '=', clientId)
+    .where('userId', '=', SYSTEM_USER_ID)
+    .where('grants', '=', [SERVICE_GRANT])
+    .returning('id')
+    .executeTakeFirst();
+  if (!rotated) return null;
+  logOAuthEvent({
+    type: 'client.secret_rotated',
+    userId: actorUserId,
+    clientId,
+    metadata: { owner: 'system', service: true },
+  });
+  return { clientSecret };
 }
 
 /**

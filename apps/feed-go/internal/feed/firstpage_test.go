@@ -271,7 +271,7 @@ func TestAssemblePinnedFirstAndSponsoredSlot(t *testing.T) {
 
 func TestBuildSponsored(t *testing.T) {
 	// Eight approved images out of index order; no per-post index sort for a sponsored post.
-	var images []Image
+	images := make([]Image, 0, 8)
 	for i, idx := range []int{7, 0, 1, 2, 3, 4, 5, 6} {
 		im := wimg(i+1, 40, idx, 1)
 		if idx == 7 {
@@ -285,8 +285,9 @@ func TestBuildSponsored(t *testing.T) {
 		t.Fatalf("keys = %v, want %v", got, want)
 	}
 	shown, _ := w.Get("images")
-	var ids []int64
-	for _, x := range shown.([]any) {
+	list := shown.([]any)
+	ids := make([]int64, 0, len(list))
+	for _, x := range list {
 		v, _ := x.(superjson.Object).Get("id")
 		ids = append(ids, v.(int64))
 	}

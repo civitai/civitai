@@ -26,10 +26,10 @@ const SERVER = {
   fingerprint: 'ccb33a3af2f5981c140b409d7cd44a50d469685d7c0b5966d4c18609f3681819',
   reporters: 7,
   reports: 13,
-  reporterIds: [90817, 90818, 90819],
+  reporterIds: [990100004, 990100005, 990100006],
   firstSeenAt: '2026-10-01T10:00:00.000Z',
   lastSeenAt: '2026-10-05T11:11:11.000Z',
-  samples: [{ userId: 90818, text: 'same here <b>x</b>', clientVersion: '2.3.1' }],
+  samples: [{ userId: 990100005, text: 'same here <b>x</b>', clientVersion: '2.3.1' }],
   reopenOf: 41,
   regressionOf: 43,
   resolution: {
@@ -72,7 +72,7 @@ describe('splitPlatformContext', () => {
       reopenOf: 41,
       regressionOf: 43,
       resolution: SERVER.resolution,
-      samples: [{ userId: 90818, text: 'same here <b>x</b>', clientVersion: '2.3.1' }],
+      samples: [{ userId: 990100005, text: 'same here <b>x</b>', clientVersion: '2.3.1' }],
       other: null,
     });
   });
@@ -80,9 +80,9 @@ describe('splitPlatformContext', () => {
   it('never carries a reporter id out, only the count', () => {
     const out = splitPlatformContext({ report: REPORT, server: SERVER });
     const text = JSON.stringify(out);
-    // 90818 is also a sample's author, which the panel does show; the other two are ids only.
-    expect(text).not.toContain('90817');
-    expect(text).not.toContain('90819');
+    // 990100005 is also a sample's author, which the panel does show; the other two are ids only.
+    expect(text).not.toContain('990100004');
+    expect(text).not.toContain('990100006');
     expect(text).not.toContain('reporterIds');
   });
 

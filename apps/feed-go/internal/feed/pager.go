@@ -9,6 +9,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -169,24 +170,26 @@ const (
 	completionRowsPerFetch  = feedsvc.MaxLimit
 )
 
-// completionConcurrency caps the completion fetches one request runs at once. Node runs them all
-// at once (Promise.all); a shadow comparison only re-runs a served request, so it is held to a few
-// at a time to bound what it adds to the feed service and the pool. Results land by batch index,
-// so the cap changes timing only, never the page.
-const completionConcurrency = 4
+// DefaultCompletionConcurrency caps the completion fetches one request runs at once
+// (Config.CompletionConcurrency, FEED_GO_COMPLETION_CONCURRENCY). Node runs them all at once
+// (Promise.all); a shadow comparison only re-runs a served request, so it is held to a few at a time
+// to bound what it adds to the feed service and the pool. Serving may want a higher cap: completions
+// are on the request's critical path, so each batch of this many is another round trip against the
+// budget. Results land by batch index, so the cap changes timing only, never the page.
+const DefaultCompletionConcurrency = 4
 
 // packPostCompletions groups posts into completion fetches of at most completionPostsPerFetch posts
 // and completionRowsPerFetch rows, in order; a post larger than one fetch goes alone.
 func packPostCompletions(postIDs []int, rowsOf func(int) int) [][]int {
 	var batches [][]int
-	var batch []int
+	batch := make([]int, 0, completionPostsPerFetch)
 	rows := 0
 	for _, id := range postIDs {
 		r := rowsOf(id)
 		full := len(batch) >= completionPostsPerFetch || rows+r > completionRowsPerFetch
 		if len(batch) > 0 && full {
 			batches = append(batches, batch)
-			batch, rows = nil, 0
+			batch, rows = make([]int, 0, completionPostsPerFetch), 0
 		}
 		batch = append(batch, id)
 		rows += r
@@ -233,8 +236,8 @@ func PostImageCounts(ctx context.Context, db Querier, postIDs []int) (map[int]in
 // than its row count is fetched again whole (in the requested sort), and the images it lacks are
 // appended to it in the order the completions return them. counts nil = the count query failed,
 // so every post counts as POST_IMAGE_LIMIT rows (Node completes all of them rather than leave one
-// short).
-func completePosts(ctx context.Context, src pageSource, posts map[int][]Image, postIDs []int, counts map[int]int) error {
+// short). concurrency caps the fetches in flight (<= 0 = DefaultCompletionConcurrency).
+func completePosts(ctx context.Context, src pageSource, posts map[int][]Image, postIDs []int, counts map[int]int, concurrency int) error {
 	rowCountOf := func(id int) int {
 		if n, ok := counts[id]; ok {
 			return n
@@ -250,20 +253,23 @@ func completePosts(ctx context.Context, src pageSource, posts map[int][]Image, p
 	batches := packPostCompletions(partial, rowCountOf)
 	results := make([][]Image, len(batches))
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(completionConcurrency)
+	if concurrency <= 0 {
+		concurrency = DefaultCompletionConcurrency
+	}
+	g.SetLimit(concurrency)
 	for i, batch := range batches {
 		limit := 0
 		for _, id := range batch {
 			limit += rowCountOf(id)
 		}
-		g.Go(func() error {
+		g.Go(safe.Go(func() error {
 			images, err := src.Posts(gctx, batch, limit)
 			if err != nil {
 				return fmt.Errorf("post completion: %w", err)
 			}
 			results[i] = images
 			return nil
-		})
+		}))
 	}
 	if err := g.Wait(); err != nil {
 		return err

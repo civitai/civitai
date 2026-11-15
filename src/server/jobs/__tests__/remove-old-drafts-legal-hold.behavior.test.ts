@@ -380,7 +380,7 @@ describe('remove-old-drafts and models tied to a CsamReport', () => {
         (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[]', '{"secondaryUserId": ${SECONDARY_OWNER}}'),
         (${PAST_OWNER}, ${OLD}, ${OLD}, '[]', '{}'),
         (${OTHER_SUBJECT}, NULL, NULL, '[]', '{"modelVersionIds": [${listedVersion.id}0]}'),
-        (${OTHER_SUBJECT}, NULL, NULL, '[]', '{"modelVersionIds": [999999]}'),
+        (${OTHER_SUBJECT}, NULL, NULL, '[]', '{"modelVersionIds": [990100026]}'),
         (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8202}]', '{}'),
         (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8999}]', '{}'),
         (${OTHER_SUBJECT}, ${OLD}, ${OLD}, '[{"id": 8702}]', '{}'),

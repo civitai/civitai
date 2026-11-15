@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { isServableBodyImage, removeBodyMedia } from '~/server/utils/article-body-media';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { dbWrite } from '~/server/db/client';
+import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import { isDefined } from '~/utils/type-guards';
 import { sysRedis } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -249,11 +251,16 @@ export async function getArticleByShareToken({
     where: { entityId: article.id, entityType: ImageConnectionType.Article },
     select: { image: { select: articleContentImageSelect } },
   });
+  const withheldByModel = await getModelWithheldImageIds(
+    [article.coverImage?.id, article.bannerImage?.id].filter(isDefined),
+    dbWrite
+  );
   return {
     status: 'ok',
     article: toSharedArticle(
       article,
-      connections.map((c) => c.image)
+      connections.map((c) => c.image),
+      withheldByModel
     ),
   };
 }
@@ -309,7 +316,9 @@ function readSharedArticleRow(id: number) {
 /** Only what the read-only view renders. */
 function toSharedArticle(
   article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>,
-  contentImages: Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }>[]
+  contentImages: Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }>[],
+  /** Cover or banner images their model withholds: no cover, and no banner in its place. */
+  withheldByModel: Set<number>
 ) {
   const { id, title, nsfwLevel, updatedAt } = article;
   // A link holder is a reader: media only its owner and moderators may get leaves the body.
@@ -326,7 +335,10 @@ function toSharedArticle(
   // The banner stands in for a missing cover.
   const coverImage = article.coverImage ?? article.bannerImage;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
-  const showCover = servableArticleImage(coverImage) !== null;
+  const showCover =
+    !!coverImage &&
+    !withheldByModel.has(coverImage.id) &&
+    servableArticleImage(coverImage) !== null;
   return {
     id,
     title,

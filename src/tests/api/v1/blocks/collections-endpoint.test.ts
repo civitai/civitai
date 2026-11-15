@@ -138,13 +138,14 @@ vi.mock('~/server/services/blocks/block-collections.service', async () => {
 });
 // The held gallery level of a cover's post; by default no post is held.
 const heldCoverPosts = vi.hoisted(() => new Map<number, number>());
-vi.mock('~/server/utils/public-cover-image', () => ({
-  getCoverBrowsingLevels:
-    async (_covers: unknown[], browsingLevel: number) =>
-    (cover?: { postId?: number | null } | null) => {
-      const held = cover?.postId != null ? heldCoverPosts.get(cover.postId) : undefined;
-      return held === undefined ? browsingLevel : held & browsingLevel;
-    },
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getHeldLevelsByPost: async (postIds: number[]) =>
+    new Map(
+      postIds
+        .filter((id) => heldCoverPosts.has(id))
+        .map((id) => [id, { level: heldCoverPosts.get(id)! }])
+    ),
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: mockRate,

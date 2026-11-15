@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("\xde\x00\x05\xa2id\xcd\x03\xe9\xa8username\xaaartist_one\xa5image\xd9$00000000-0000-4000-8000-000000000901\xa9deletedAt\xc0\xa8cachedAt\xd6\xffj/\xe8\x14")

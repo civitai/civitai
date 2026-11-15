@@ -62,7 +62,7 @@ const DESCRIPTION: Record<ExchangeError, string> = {
 };
 
 let signer: SessionSigner | null | undefined;
-function getSigner(): SessionSigner | null {
+export function getSigner(): SessionSigner | null {
   if (signer === undefined) signer = maybeCreateSessionSigner() ?? null;
   return signer;
 }

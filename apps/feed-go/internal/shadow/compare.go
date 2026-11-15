@@ -12,6 +12,7 @@ package shadow
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -392,7 +393,7 @@ func CompareJSON(goBody, nodeBody []byte) (*Report, error) {
 		return nil, fmt.Errorf("node body: %w", err)
 	}
 	if _, ok := nv.(map[string]any); !ok {
-		return nil, fmt.Errorf("node body: not an object")
+		return nil, errors.New("node body: not an object")
 	}
 	r := &Report{opaque: jsonOpaque}
 	walk(r, gv, nv, nil)

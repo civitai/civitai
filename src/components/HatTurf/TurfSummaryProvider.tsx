@@ -23,14 +23,13 @@ import type { TurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
+import { MAX_TURF_IMAGES_PER_MARK, TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
 /** Matches the `imageIds` cap on `turfSummariesSchema`. */
 const SUMMARY_CHUNK = 100;
-/** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
-const WATCH_BATCH = 50;
+/** Re-marked on this interval; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_REFRESH_MS = 30_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
@@ -421,8 +420,7 @@ function TurfWatcher({
   const everMarked = useRef(new Set<number>());
   const send = useCallback(
     (ids: number[]) => {
-      for (let i = 0; i < ids.length; i += WATCH_BATCH)
-        mark({ event, imageIds: ids.slice(i, i + WATCH_BATCH) });
+      for (const imageIds of chunkIds(ids, MAX_TURF_IMAGES_PER_MARK)) mark({ event, imageIds });
     },
     [event, mark]
   );

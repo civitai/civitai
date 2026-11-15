@@ -15,7 +15,13 @@ import { SYSTEM_USER_ID } from '$lib/server/oauth/constants';
 export async function authenticatedConfidentialClient(
   request: Request,
   body: Record<string, unknown>
-): Promise<{ id: string; tokenRateLimit: number | null; accessMode: string } | null> {
+): Promise<{
+  id: string;
+  tokenRateLimit: number | null;
+  accessMode: string;
+  userId: number;
+  grants: string[];
+} | null> {
   const basic = basicCredentials(request);
   const clientId = basic?.id ?? (typeof body.client_id === 'string' ? body.client_id : '');
   const clientSecret =
@@ -24,7 +30,7 @@ export async function authenticatedConfidentialClient(
 
   const client = await db
     .selectFrom('OauthClient')
-    .select(['id', 'secret', 'isConfidential', 'tokenRateLimit', 'userId', 'accessMode'])
+    .select(['id', 'secret', 'isConfidential', 'tokenRateLimit', 'userId', 'accessMode', 'grants'])
     .where('id', '=', clientId)
     .executeTakeFirst();
   if (!client?.isConfidential || !client.secret) return null;
@@ -33,7 +39,13 @@ export async function authenticatedConfidentialClient(
   const stored = Buffer.from(client.secret);
   if (provided.length !== stored.length || !timingSafeEqual(provided, stored)) return null;
   const tokenRateLimit = client.userId === SYSTEM_USER_ID ? client.tokenRateLimit : null;
-  return { id: client.id, tokenRateLimit, accessMode: client.accessMode };
+  return {
+    id: client.id,
+    tokenRateLimit,
+    accessMode: client.accessMode,
+    userId: client.userId,
+    grants: client.grants,
+  };
 }
 
 /** The client id in a Basic Authorization header, parsed as the OAuth library's `basic-auth` dependency parses it. */

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,7 +15,7 @@ var pprofPaths = []string{"/debug/pprof/", "/debug/pprof/cmdline", "/debug/pprof
 
 func statusOf(h http.Handler, path string) int {
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	h.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil))
 	return w.Code
 }
 

@@ -10,38 +10,16 @@ import {
 } from '@civitai/telemetry/client';
 import { apiRouteLabel } from '~/server/utils/page-routes';
 
-// ---------------------------------------------------------------------------
-// Per-route request counter for every pages-API route (`src/pages/api/**`)
-// ---------------------------------------------------------------------------
+// Hooked on `http.Server`'s `emit('request')`, not an endpoint wrapper: the pages-API routes use
+// many different wrappers, bare handlers included, so a wrapper hook misses some. That covers both
+// `next start` and the standalone server (scripts/trpc-server/server.cjs).
 //
-// WHY: tRPC procedures have `civitai_app_trpc_procedure_duration_seconds{path}`, but the REST routes
-// had no per-route request count, so their share of server CPU could not be attributed. This counts
-// every request to a pages-API route, labelled by the route PATTERN. A counter rather than a
-// histogram: the request rate is what attribution needs, and buckets would multiply the series.
+// Counted on the response's `close`, which fires exactly once per response, finished or not. The
+// route is read then because it is resolved after the request arrives: Next's route match, or the
+// page the standalone server matched (`STANDALONE_API_ROUTE_PAGE_KEY`). The label is checked
+// against the build's pages manifest (`apiRouteLabel`), so a URL never becomes a label.
 //
-// WHERE IT HOOKS: `http.Server.prototype.emit('request')`, not an endpoint wrapper. The routes use
-// a dozen different wrappers (endpoint-helpers, defineModeratorEndpoint, withBlockScope, bare
-// withAxiom, bare handlers such as every /api/auth/* route), so a wrapper hook covers only part of
-// them. The server sees every request, on both servers this app runs under: `next start` and the
-// standalone server (scripts/trpc-server/server.cjs), which is also a plain `http.Server`. The
-// response's `close` event fires exactly once per response, whether it finished or the client went
-// away, so each request is observed exactly once — including one whose handler threw (Next answers
-// it with a 500) and one that never answered (`status_class="aborted"`).
-//
-// WHERE THE ROUTE COMES FROM, read when the response closes (by then the route has been resolved):
-//   - under Next, the route match Next stores on the request (`match.definition.page`, the same
-//     pattern its own OTel span names use);
-//   - under the standalone server, the page it matched, which it stores under
-//     `STANDALONE_API_ROUTE_PAGE_KEY` because it calls route modules without Next's router.
-// Either way the value must be a key of the build's pages-manifest (`apiRouteLabel`), or it labels
-// `other`. So the label set is the build's API routes plus `other`: a URL never reaches a label.
-//
-// COST: requests whose URL does not start with `/api/` pay one string compare. API requests pay one
-// `close` listener; the label lookups run once, when the response closes, and do no async work.
-//
-// DARK BY DEFAULT: nothing is installed unless API_ROUTE_METRICS=true, the same opt-in shape as
-// TRPC_PROCEDURE_METRICS, because a series per route x method x status class is a large count per
-// pod. Enable it on the pools being measured.
+// Dark unless API_ROUTE_METRICS=true.
 
 export const API_ROUTE_REQUESTS_METRIC = PROM_PREFIX + 'api_route_requests_total';
 

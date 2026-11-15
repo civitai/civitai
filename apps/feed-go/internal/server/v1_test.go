@@ -23,14 +23,14 @@ func postV1(t *testing.T, s *Server, node string) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	s.ShadowV1Handler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/api/v1/images", strings.NewReader(string(b))))
+	s.ShadowV1Handler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/api/v1/images", strings.NewReader(string(b))))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("code %d, want 202", w.Code)
 	}
 }
 
 // A v1-images sample is computed by the REST compute (not the tRPC one), compared as plain JSON, and
-// every series it touches carries endpoint="v1-images".
+// every series it touches carries feed_endpoint="v1-images".
 func TestV1ShadowSampleIsLabelledAndComparedAsJSON(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	var seen *http.Request
@@ -46,7 +46,7 @@ func TestV1ShadowSampleIsLabelledAndComparedAsJSON(t *testing.T) {
 	postV1(t, s, `{"metadata":{"nextCursor":"feed:1:2"},"items":[{"createdAt":"2024-03-01T10:00:00.000Z","id":11}]}`)
 	v1 := func(result string) func() bool {
 		return func() bool {
-			v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointV1Images, "result": result})
+			v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": result})
 			return v == 1 && len(s.ShadowQueue) == 0
 		}
 	}
@@ -54,16 +54,16 @@ func TestV1ShadowSampleIsLabelledAndComparedAsJSON(t *testing.T) {
 	if seen == nil || seen.URL.Path != "/api/v1/images" || seen.URL.Query().Get("cursor") != "feed:1:1" || seen.Host != "civitai.example" {
 		t.Fatalf("synthetic request = %+v", seen)
 	}
-	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"endpoint": EndpointV1Images, "phase": "compute", "outcome": "served"}); n != 1 {
+	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"feed_endpoint": EndpointV1Images, "phase": "compute", "outcome": "served"}); n != 1 {
 		t.Fatalf("v1 compute phase count = %v, want 1", n)
 	}
-	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointAsPosts, "result": "match"}); found {
+	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); found {
 		t.Fatal("a v1 sample must not be counted under the as-posts endpoint")
 	}
 	// A value diff is counted by category under the endpoint.
 	postV1(t, s, `{"items":[{"id":11,"createdAt":"2024-03-01T10:00:01.000Z"}],"metadata":{"nextCursor":"feed:1:2"}}`)
 	waitFor(t, "the v1 fields diff", v1("fields"))
-	if n, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"endpoint": EndpointV1Images, "category": "items.*.createdAt", "kind": "value"}); n != 1 {
+	if n, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"feed_endpoint": EndpointV1Images, "category": "items.*.createdAt", "kind": "value"}); n != 1 {
 		t.Fatalf("createdAt diff count = %v, want 1", n)
 	}
 }
@@ -73,10 +73,10 @@ func TestV1ShadowWithoutDepsFallsBack(t *testing.T) {
 	s := newPhaseServer(reg, 1, nil) // no V1 deps, no test compute: the real computeV1 runs
 	postV1(t, s, v1Body)
 	waitFor(t, "the unsupported result", func() bool {
-		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointV1Images, "result": "unsupported"})
+		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "unsupported"})
 		return v == 1 && len(s.ShadowQueue) == 0
 	})
-	if n, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"endpoint": EndpointV1Images, "mode": "shadow", "reason": "v1-unconfigured"}); n != 1 {
+	if n, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"feed_endpoint": EndpointV1Images, "mode": "shadow", "reason": "v1-unconfigured"}); n != 1 {
 		t.Fatalf("fallback v1-unconfigured = %v, want 1", n)
 	}
 }
@@ -105,21 +105,21 @@ func TestV1TrivialAnswerIsKeptOutOfServedAndMatch(t *testing.T) {
 	}
 	postV1(t, s, `{"items":[],"metadata":{}}`)
 	waitFor(t, "the trivial match", func() bool {
-		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointV1Images, "result": "match_empty"})
+		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "match_empty"})
 		return v == 1 && len(s.ShadowQueue) == 0
 	})
-	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointV1Images, "result": "match"}); found {
+	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointV1Images, "result": "match"}); found {
 		t.Fatal("a trivial answer must not count as a match")
 	}
-	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"endpoint": EndpointV1Images, "phase": "compute", "outcome": "served_empty"}); n != 1 {
+	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"feed_endpoint": EndpointV1Images, "phase": "compute", "outcome": "served_empty"}); n != 1 {
 		t.Fatalf("served_empty compute phases = %v, want 1", n)
 	}
-	if _, found := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"endpoint": EndpointV1Images, "phase": "compute", "outcome": "served"}); found {
+	if _, found := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"feed_endpoint": EndpointV1Images, "phase": "compute", "outcome": "served"}); found {
 		t.Fatal("a trivial answer must not be a served compute")
 	}
 	// The dropped counter starts at 0 for both endpoints.
 	for _, e := range []string{EndpointAsPosts, EndpointV1Images} {
-		if v, found := metricValue(t, reg, "feed_go_shadow_dropped_total", map[string]string{"endpoint": e}); !found || v != 0 {
+		if v, found := metricValue(t, reg, "feed_go_shadow_dropped_total", map[string]string{"feed_endpoint": e}); !found || v != 0 {
 			t.Fatalf("dropped{%s} = %v found=%v, want a 0 series", e, v, found)
 		}
 	}
