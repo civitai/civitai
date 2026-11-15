@@ -3095,6 +3095,8 @@ export const REDIS_SYS_KEYS = {
     // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
     ANCHOR_VOTES: 'crucible:anchor-votes',
     SERVED_PAIR: 'crucible:served-pair',
+    // Per judge: pair keys they chose never to be shown again.
+    DISMISSED_PAIRS: 'crucible:dismissed-pairs',
     JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',

@@ -2,6 +2,8 @@ package server
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
 // EndpointLabel names the endpoint label. Not `endpoint`: that is a reserved scrape target label (the
@@ -46,6 +48,14 @@ type Metrics struct {
 	// response with http.ErrAbortHandler and is not counted. Not per endpoint: only the as-posts
 	// procedure is served, and so proxied.
 	FallbackProxyErrors *prometheus.CounterVec
+	// CacheMisses counts the per-entity cache misses hydration computed (cache, result: computed |
+	// error), per missed id. Not per endpoint: hydration is shared by both.
+	CacheMisses *prometheus.CounterVec
+}
+
+// ObserveCacheMiss is hydrate.MissCompute's Observe.
+func (m *Metrics) ObserveCacheMiss(cache, result string, n int) {
+	m.CacheMisses.WithLabelValues(cache, result).Add(float64(n))
 }
 
 // NewMetrics registers the series on reg.
@@ -105,6 +115,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_jwks_refresh_total",
 			Help: "Periodic JWKS refreshes by result (ok|error); an error keeps the last good key set.",
 		}, []string{"result"}),
+		CacheMisses: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_cache_miss_total",
+			Help: "Per-entity cache miss ids this service computed itself (result=computed) or failed to (result=error, the request falls back), by cache.",
+		}, []string{"cache", "result"}),
 		JWKSStale: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "feed_go_jwks_stale_total",
 			Help: "Times the JWKS key set was dropped (sessions verify as signed out) because no fetch had succeeded for FEED_GO_JWKS_MAX_STALENESS_MS.",
@@ -129,8 +143,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, r := range []string{"upstream", "canceled"} {
 		m.FallbackProxyErrors.WithLabelValues(r)
 	}
+	for _, c := range hydrate.MissCaches {
+		for _, r := range []string{"computed", "error"} {
+			m.CacheMisses.WithLabelValues(c, r)
+		}
+	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
-		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors)
+		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses)
 	return m
 }

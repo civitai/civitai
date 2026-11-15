@@ -26,6 +26,8 @@ CREATE TYPE "CommercialUse" AS ENUM ('None', 'Image', 'RentCivit', 'Rent', 'Sell
 CREATE TYPE "TrainingStatus" AS ENUM ('Pending', 'Submitted', 'Paused', 'Denied', 'Processing', 'InReview', 'Failed', 'Approved', 'Expired');
 CREATE TYPE "PaidAccessEntityType" AS ENUM ('ModelVersion', 'ComicChapter');
 CREATE TYPE "SaleDiscountType" AS ENUM ('Fixed', 'Percent');
+CREATE TYPE "CosmeticEntity" AS ENUM ('Model', 'Image', 'Article', 'Post', 'Model3D');
+CREATE TYPE "CosmeticShopItemStatus" AS ENUM ('Draft', 'PendingReview', 'Published', 'Rejected', 'RequestedChanges', 'Archived');
 
 CREATE TABLE "User" (
   id                 integer PRIMARY KEY,
@@ -98,12 +100,35 @@ CREATE TABLE "ImageReaction" (
 );
 
 CREATE TABLE "Cosmetic" (
-  id     integer PRIMARY KEY,
-  name   text NOT NULL,
-  type   "CosmeticType" NOT NULL,
-  source "CosmeticSource" NOT NULL,
-  data   jsonb NOT NULL,
-  flags  integer NOT NULL DEFAULT 0
+  id            integer PRIMARY KEY,
+  name          text NOT NULL,
+  type          "CosmeticType" NOT NULL,
+  source        "CosmeticSource" NOT NULL,
+  data          jsonb NOT NULL,
+  flags         integer NOT NULL DEFAULT 0,
+  "createdById" integer
+);
+
+-- The cache miss lookups (internal/hydrate/misses.go): equipped and placed cosmetics, and the creator
+-- shop listings getWithheldCosmeticIds reads.
+CREATE TABLE "UserCosmetic" (
+  "userId"         integer NOT NULL,
+  "cosmeticId"     integer NOT NULL,
+  "equippedAt"     timestamp(3),
+  data             jsonb,
+  "claimKey"       text NOT NULL DEFAULT 'claimed',
+  "equippedToId"   integer,
+  "equippedToType" "CosmeticEntity",
+  PRIMARY KEY ("userId", "cosmeticId", "claimKey")
+);
+
+CREATE TABLE "CosmeticShopItem" (
+  id                serial PRIMARY KEY,
+  "cosmeticId"      integer,
+  "addedById"       integer,
+  meta              jsonb NOT NULL DEFAULT '{}',
+  status            "CosmeticShopItemStatus" NOT NULL DEFAULT 'Published',
+  "rejectionReason" text
 );
 
 -- The columns after "gallerySettings" (and on ModelVersion after "modelId") are model.getAll's
