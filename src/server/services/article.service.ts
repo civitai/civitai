@@ -1516,7 +1516,12 @@ export const upsertArticle = async ({
       // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
       // Only the author's own image: the hold below is read for the author alone.
       const replacedImageIds: number[] = [];
-      if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
+      if (
+        coverId !== undefined &&
+        article.coverId !== coverId &&
+        article.coverId &&
+        article.coverId !== result.bannerId
+      ) {
         const isImgOwner =
           (await isImageOwner({ userId, isModerator, imageId: article.coverId })) &&
           !!(await dbWrite.image.findFirst({

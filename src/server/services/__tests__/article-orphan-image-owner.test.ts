@@ -730,6 +730,21 @@ describe('the article banner', () => {
     });
   });
 
+  it('🔴 keeps the cover when the save does not mention it', async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+
+    await upsertArticle({
+      id: ARTICLE_ID,
+      userId: AUTHOR,
+      title: 'A title',
+      content: '<p>had images</p>',
+      status: 'Draft',
+    } as never);
+
+    expect(saved.coverId).toBe(COVER.id);
+    expect(deletedIds()).not.toContain(COVER.id);
+  });
+
   it('clears a cover saved as null even when another article shows it', async () => {
     dbMock.dbWrite.article.count.mockResolvedValue(1 as never);
 
