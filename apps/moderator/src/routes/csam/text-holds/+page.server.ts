@@ -131,6 +131,9 @@ const decideSchema = z
   .refine((input) => input.decision === 'dismiss' || input.reportChoice !== undefined, {
     message: 'Pick a report category, or None of these.',
   })
+  .refine((input) => input.decision !== 'remove_ban_report' || input.reportChoice !== 'none', {
+    message: 'Filing a report needs a reportable category.',
+  })
   .transform((input) =>
     input.decision === 'dismiss' ? { ...input, reportChoice: undefined } : input
   );

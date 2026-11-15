@@ -94,6 +94,9 @@ function call(body: Record<string, unknown>) {
   return handler(req, res).then(() => ({ status: statusCode, body: payload }));
 }
 
+/** Filing a report needs a reportable category; every other confirm can say none. */
+const choiceFor = (decision: string) => (decision === 'remove_ban_report' ? 'imagery' : 'none');
+
 const pendingHold = (over: Record<string, unknown> = {}) => ({
   id: 12,
   status: 'Pending',
@@ -165,6 +168,18 @@ describe('textScan.resolveCsamHold', () => {
     ).toBe(400);
     expect(findFirst).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses the report decision with "none", before reading or acting', async () => {
+    const res = await call({
+      holdId: 12,
+      textHash: 'h-1',
+      decision: 'remove_ban_report',
+      reportChoice: 'none',
+    });
+    expect(res.status).toBe(400);
+    expect(findFirst).not.toHaveBeenCalled();
+    expect(mocks.toggleBan).not.toHaveBeenCalled();
   });
 
   it('refuses a single-hold decision without the text hash', async () => {
@@ -279,7 +294,7 @@ describe('textScan.resolveCsamHold', () => {
         holdId: 12,
         textHash: 'h-1',
         decision: 'remove_ban_report',
-        reportChoice: 'none',
+        reportChoice: 'imagery',
       });
       expect(mocks.bulkSetCommentV3TosViolation).toHaveBeenCalled();
       expect(mocks.toggleBan).toHaveBeenCalledTimes(1);
@@ -565,7 +580,7 @@ describe('textScan.resolveCsamHold', () => {
           holdId: 12,
           textHash: 'h-1',
           decision,
-          ...(decision === 'dismiss' ? {} : { reportChoice: 'none' }),
+          ...(decision === 'dismiss' ? {} : { reportChoice: choiceFor(decision) }),
         });
         expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
         expect(labelCalls()).toHaveLength(1);
@@ -597,7 +612,7 @@ describe('textScan.resolveCsamHold', () => {
           holdId: 12,
           textHash: 'h-1',
           decision,
-          ...(decision === 'dismiss' ? {} : { reportChoice: 'none' }),
+          ...(decision === 'dismiss' ? {} : { reportChoice: choiceFor(decision) }),
         });
       expect(dbMock.dbWrite.report.create).not.toHaveBeenCalled();
     });
@@ -682,7 +697,8 @@ describe('textScan.resolveCsamHold', () => {
     ])('refuses %s without the %s grant, before reading or acting', async (decision, grant) => {
       mocks.hasModeratorGrant.mockImplementation(async (_, id) => id !== grant);
       expect(
-        (await call({ holdId: 12, textHash: 'h-1', decision, reportChoice: 'none' })).status
+        (await call({ holdId: 12, textHash: 'h-1', decision, reportChoice: choiceFor(decision) }))
+          .status
       ).toBe(403);
       expect(mocks.hasModeratorGrant).toHaveBeenCalledWith(
         expect.objectContaining({ id: 7 }),

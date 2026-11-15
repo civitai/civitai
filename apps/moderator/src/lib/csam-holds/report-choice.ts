@@ -11,6 +11,10 @@ export type CsamReportChoice = (typeof CSAM_REPORT_CHOICES)[number];
 export const isReportableChoice = (choice: string | null | undefined) =>
   (CSAM_REPORTABLE_CHOICES as readonly string[]).includes(choice ?? '');
 
+/** The choices a confirming decision offers: filing a report needs a reportable category. */
+export const reportChoicesFor = (decision: string): readonly CsamReportChoice[] =>
+  decision === 'remove_ban_report' ? CSAM_REPORTABLE_CHOICES : CSAM_REPORT_CHOICES;
+
 export const CSAM_REPORT_QUESTION = 'Does this text fall in a reportable category?';
 
 const CSAM_REPORT_CHOICE_COPY: Record<CsamReportChoice, { title: string; body: string }> = {

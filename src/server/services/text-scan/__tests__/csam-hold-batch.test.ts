@@ -132,7 +132,11 @@ describe('resolveCsamHoldInput', () => {
     'refuses %s on a batch',
     (decision) => {
       expect(
-        resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision, reportChoice: 'none' }).success
+        resolveCsamHoldInput.safeParse({
+          holds: [hold(1)],
+          decision,
+          reportChoice: decision === 'remove_ban_report' ? 'imagery' : 'none',
+        }).success
       ).toBe(false);
     }
   );

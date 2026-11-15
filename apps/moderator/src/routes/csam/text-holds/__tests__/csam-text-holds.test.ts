@@ -69,7 +69,7 @@ const decide = (fields: Record<string, string>, grants: Record<string, boolean>)
   const body = new FormData();
   const withChoice =
     fields.decision && fields.decision !== 'dismiss' && !('reportChoice' in fields)
-      ? { ...fields, reportChoice: 'none' }
+      ? { ...fields, reportChoice: fields.decision === 'remove_ban_report' ? 'imagery' : 'none' }
       : fields;
   for (const [key, value] of Object.entries(withChoice)) if (value) body.set(key, value);
   const event = {
@@ -287,7 +287,12 @@ describe('csam text holds decide', () => {
         holdId: 12,
         textHash: 'h-12',
         decision,
-        reportChoice: decision === 'dismiss' ? undefined : 'none',
+        reportChoice:
+          decision === 'dismiss'
+            ? undefined
+            : decision === 'remove_ban_report'
+            ? 'imagery'
+            : 'none',
         note: 'looked fine',
       });
     }
@@ -320,6 +325,16 @@ describe('csam text holds decide', () => {
   it('refuses a confirm with no report choice, before calling the main app', async () => {
     expect(
       await decide({ holdId: '12', textHash: 'h-12', decision: 'remove', reportChoice: '' }, holder)
+    ).toMatchObject({ status: 400 });
+    expect(decideCsamHold).not.toHaveBeenCalled();
+  });
+
+  it('refuses the report decision with "none", before calling the main app', async () => {
+    expect(
+      await decide(
+        { holdId: '12', textHash: 'h-12', decision: 'remove_ban_report', reportChoice: 'none' },
+        holder
+      )
     ).toMatchObject({ status: 400 });
     expect(decideCsamHold).not.toHaveBeenCalled();
   });

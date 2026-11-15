@@ -129,7 +129,7 @@ describe('the csam hold decision record, against the real label store', () => {
       holdId: 12,
       textHash: 'h',
       decision: 'remove_ban_report',
-      reportChoice: 'none',
+      reportChoice: 'imagery',
       actor: { id: 7 },
       tracker: tracker as never,
     });
@@ -201,6 +201,18 @@ describe('the csam hold decision record, against the real label store', () => {
         expect(syncs()).toEqual([31]);
       }
     );
+
+    it("recomputes after the hold's own status is written", async () => {
+      await decide('remove');
+      const syncAt = dbMock.dbWrite.$executeRaw.mock.calls.findIndex(([strings]) =>
+        (strings as readonly string[]).join('?').includes('post_text_sync_csam_hold')
+      );
+      const [holdWrite] = dbMock.dbWrite.textScanHold.updateMany.mock.invocationCallOrder.slice(-1);
+      expect(syncAt).toBeGreaterThanOrEqual(0);
+      expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[syncAt]).toBeGreaterThan(
+        holdWrite
+      );
+    });
 
     it('stays held when removed, its content kept', async () => {
       await decide('remove');

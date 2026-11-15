@@ -268,6 +268,8 @@ async function strikeAuthor(hold: HeldRow, { actor, holdId }: DecideArgs) {
 const subjectTypeOf = (entityType: string) =>
   `${entityType.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()}_text`;
 
+const REPORT_NEEDS_CATEGORY = 'Filing a report needs a reportable category, not "none".';
+
 /**
  * Applies a moderator's decision to a pending csam hold. The content, strike and ban run first and each is
  * safe to repeat, so the hold is claimed first, and a failure releases the claim and leaves it pending for a retry; the decision and its label-store
@@ -282,6 +284,8 @@ export async function decideCsamHold(args: DecideArgs) {
         ? 'A dismissal takes no report choice.'
         : 'Confirming a hold needs a report choice.'
     );
+  if (decision === 'remove_ban_report' && reportChoice === 'none')
+    throw throwBadRequestError(REPORT_NEEDS_CATEGORY);
 
   const hold = await dbWrite.textScanHold.findFirst({
     where: { id: holdId, label: 'csam' },
@@ -476,6 +480,8 @@ export const resolveCsamHoldInput = z
             ? 'A dismissal takes no `reportChoice`.'
             : '`reportChoice` is required to confirm a hold.',
       });
+    if (input.decision === 'remove_ban_report' && input.reportChoice === 'none')
+      ctx.addIssue({ code: 'custom', path: ['reportChoice'], message: REPORT_NEEDS_CATEGORY });
     if ((input.holdId === undefined) === (input.holds === undefined))
       ctx.addIssue({ code: 'custom', message: 'Give exactly one of `holdId` and `holds`.' });
     if (input.holdId !== undefined && input.textHash === undefined)

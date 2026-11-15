@@ -280,6 +280,7 @@ it('reaches a purgeable text behind more kept ones than its page budget', async 
   expect(await purgeConfirmedCsamText({ page: 1, maxPages: 1 })).toMatchObject({
     deleted: 1,
     skipped: { 'pending-appeal': 2 },
+    stillHeld: 0,
   });
 });
 
