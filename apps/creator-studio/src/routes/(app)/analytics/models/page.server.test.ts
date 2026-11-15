@@ -47,6 +47,13 @@ describe('/analytics/models all-time period', () => {
     expect(getModelPerformance).not.toHaveBeenCalled();
   });
 
+  it('shows "unavailable" (null) rather than failing the page when the all-time read times out', async () => {
+    jar.set('cs-model-period', 'all');
+    getModelPerformance.mockRejectedValue(new Error('TIMEOUT_EXCEEDED'));
+    const out = await run();
+    expect(out.modelPerformance).toBeNull();
+  });
+
   it('defaults to the selected month when the cookie is absent', async () => {
     await run();
     expect(getFirstVersionDate).not.toHaveBeenCalled();
