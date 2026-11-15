@@ -147,6 +147,8 @@ function persist(
     workflowId: WF,
     imageIndex: 0,
     getWorkflow: async () => wf,
+    // Every browsing level: no fixture output is above the ceiling.
+    ceiling: { maxBrowsingLevel: 31 },
     ...over,
   });
 }
@@ -313,6 +315,42 @@ describe('ownership: refused before anything is fetched or written', () => {
       message: GENERATION_SOURCE_OUTPUT_UNAVAILABLE_MESSAGE,
     });
     expect(fetch).not.toHaveBeenCalled();
+    expect(createImage).not.toHaveBeenCalled();
+  });
+
+  // 🔴 `imageIndex` is a STABLE output position: a restricted output keeps its slot.
+  // The workflow refused mature content (the paying pool) and output 0 is rated R.
+  const restricted = () =>
+    workflow({
+      allowMatureContent: false,
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [
+              { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'r' },
+              { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            ],
+          },
+        },
+      ],
+    });
+
+  it('refuses a RESTRICTED position by name, and fetches and writes nothing', async () => {
+    await expect(persist({ imageIndex: 0 }, restricted())).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'output 0 is restricted',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(createImage).not.toHaveBeenCalled();
+  });
+
+  it('a restricted output still holds its position: index 2 of two outputs is out of range', async () => {
+    // Index 2 is out of range (two positions), not "the second unrestricted output".
+    await expect(persist({ imageIndex: 2 }, restricted())).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: GENERATION_SOURCE_INDEX_OUT_OF_RANGE_MESSAGE,
+    });
     expect(createImage).not.toHaveBeenCalled();
   });
 });

@@ -23,7 +23,11 @@ import { scanSource } from '../../../../../test/source-scan';
 
 const ROOT = join(__dirname, '../../../../..');
 
-const PRODUCERS = ['snapshotFromWorkflow', 'projectAppWorkflow'] as const;
+const PRODUCERS = [
+  'snapshotFromWorkflow',
+  'projectAppWorkflow',
+  'projectAppWorkflowWithPositions',
+] as const;
 const HOME = 'src/server/services/blocks/workflow.service.ts';
 
 /** The token's ceiling, from the verified claims in scope at that site. */
@@ -40,19 +44,73 @@ const LEDGER: Record<string, string> = {
   'src/server/routers/blocks.router.ts::submitPassThroughStepWorkflow::snapshotFromWorkflow': TOKEN,
   'src/server/routers/blocks.router.ts::submitMultiStepWorkflow::snapshotFromWorkflow': TOKEN,
   'src/server/routers/blocks.router.ts::submitConfirmedQuoteWorkflow::snapshotFromWorkflow': TOKEN,
-  // The subqueue listing, its cancel, and publish — whose `imageIndexes` index the
-  // `images` of THIS projection, so it must be built with the same ceiling as the list.
+  // The subqueue listing and its cancel.
   'src/server/routers/blocks.router.ts::queryAppWorkflows::projectAppWorkflow': TOKEN,
   'src/server/routers/blocks.router.ts::cancelAppWorkflow::projectAppWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::publishGenerationOutputs::projectAppWorkflow': TOKEN,
-  // Post: `BlockPostActor.outputCeiling`, built from the token claims at both actor sites.
-  'src/server/services/blocks/block-post.service.ts::resolveOwnedWorkflowOutputs::projectAppWorkflow':
+  // Publish, post and persist resolve `imageIndexes` / `imageIndex` against the STABLE
+  // output positions; the ceiling decides which positions are restricted (refused).
+  'src/server/routers/blocks.router.ts::publishGenerationOutputs::projectAppWorkflowWithPositions':
+    TOKEN,
+  // Post and persist: `BlockPostActor.outputCeiling` / the persist input's `ceiling`.
+  'src/server/services/blocks/block-post.service.ts::resolveOwnedWorkflowOutputs::projectAppWorkflowWithPositions':
     'input.ceiling',
+  // `projectAppWorkflow` is the positions projection's `workflow` half.
+  'src/server/services/blocks/workflow.service.ts::projectAppWorkflow::projectAppWorkflowWithPositions':
+    'ceiling',
   // The author's activity view: reads only a COUNT of every output (restricted ones
   // included), never a url, so the fail-closed SFW ceiling is passed.
   'src/server/services/app-assistant/app-activity.service.ts::generationOf::projectAppWorkflow':
     'blockOutputCeilingFromClaims({})',
 };
+
+/**
+ * The OBJECT-argument callers that carry a ceiling down to `resolveOwnedWorkflowOutputs`:
+ * the `ceiling:` property each passes, by call site. Same grow-or-shrink rule.
+ */
+const OBJECT_CALLEES = ['resolveOwnedWorkflowOutputs', 'persistBlockGenerationSource'] as const;
+const OBJECT_LEDGER: Record<string, string> = {
+  'src/server/services/blocks/block-post.service.ts::resolveBlockPostSources::resolveOwnedWorkflowOutputs':
+    'input.actor.outputCeiling',
+  'src/server/services/blocks/block-generation-source.service.ts::persistWithin::resolveOwnedWorkflowOutputs':
+    'input.ceiling',
+  'src/server/routers/blocks.router.ts::persistGenerationSource::persistBlockGenerationSource':
+    TOKEN,
+};
+
+/** The `ceiling:` property of the call opening at `open`, or null. */
+function ceilingProperty(code: string, open: number): string | null {
+  let depth = 0;
+  for (let i = open; i < code.length; i += 1) {
+    const c = code[i];
+    if (c === '(' || c === '[' || c === '{') depth += 1;
+    else if (c === ')' || c === ']' || c === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const m = /\bceiling:\s*([^,\n}]+)/.exec(code.slice(open, i));
+        return m ? m[1].replace(/\s+/g, '') : null;
+      }
+    }
+  }
+  return null;
+}
+
+function scanObjectCallers() {
+  const source = scanSource(ROOT);
+  const found: Record<string, string | null> = {};
+  for (const file of source.files) {
+    const code = source.code.get(file)!;
+    for (const name of OBJECT_CALLEES) {
+      for (const m of code.matchAll(new RegExp(`\\b${name}\\s*\\(`, 'g'))) {
+        const at = m.index!;
+        if (/function\s+$/.test(code.slice(Math.max(0, at - 40), at))) continue;
+        const key = `${file}::${enclosing(code, at)}::${name}`;
+        if (key in found) throw new Error(`two ${name} calls in one declaration: ${key}`);
+        found[key] = ceilingProperty(code, at + m[0].length - 1);
+      }
+    }
+  }
+  return found;
+}
 
 const DECL = /^(?:export )?(?:async )?function (\w+)|^ {2}(\w+): \w*[pP]rocedure/gm;
 
@@ -133,6 +191,15 @@ describe('snapshot and listing producers — the ceiling each one passes', () =>
       Object.entries(LEDGER).map(([k, v]) => [k, v.replace(/\s+/g, '')])
     );
     expect(found).toStrictEqual(normalisedLedger);
+  });
+
+  it('every caller that resolves an output position passes the token ceiling', () => {
+    const objectCallers = scanObjectCallers();
+    // POSITIVE CONTROL: the scan found the callers at all.
+    expect(Object.keys(objectCallers).length).toBeGreaterThanOrEqual(3);
+    expect(objectCallers).toStrictEqual(
+      Object.fromEntries(Object.entries(OBJECT_LEDGER).map(([k, v]) => [k, v.replace(/\s+/g, '')]))
+    );
   });
 
   it('no producer is passed around as a bare value (e.g. `.map(projectAppWorkflow)`)', () => {

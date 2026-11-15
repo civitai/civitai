@@ -312,17 +312,53 @@ describe.each(CASES)('restricted outputs never reach %s', (_label, maxBrowsingLe
     expect(fetched).toStrictEqual([OK_A, OK_B]);
   });
 
-  it('publishGenerationOutputs: imageIndexes index the listing images, so [1] is OK_B', async () => {
+  it('publishGenerationOutputs: imageIndexes are positions in outputs, so [2] is OK_B', async () => {
     await caller({ id: VIEWER }).publishGenerationOutputs({
       blockToken: 'tok',
       workflowId: OWN_ID,
-      imageIndexes: [1],
+      imageIndexes: [2],
     });
     expect(
       mockPersistBlockWorkflowOutputImage.mock.calls.map(
         (c) => (c[0] as { imageUrl: string }).imageUrl
       )
     ).toStrictEqual([OK_B]);
+  });
+
+  it('publishGenerationOutputs REFUSES a restricted position and writes nothing', async () => {
+    for (const imageIndexes of [[1], [0, 1], [1, 2]]) {
+      await expect(
+        caller({ id: VIEWER }).publishGenerationOutputs({
+          blockToken: 'tok',
+          workflowId: OWN_ID,
+          imageIndexes,
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'output 1 is restricted' });
+    }
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('a rating that lands late never moves a publish index: [2] is OK_B before and after', async () => {
+    const unrated = restrictedWorkflow();
+    const blobs = (unrated.steps[0].output as { blobs: Array<Record<string, unknown>> }).blobs;
+    delete blobs[1].nsfwLevel;
+    mockGetWorkflow.mockResolvedValueOnce(unrated);
+    await caller({ id: VIEWER }).publishGenerationOutputs({
+      blockToken: 'tok',
+      workflowId: OWN_ID,
+      imageIndexes: [2],
+    });
+    // Now rated R on the restricted workflow (the default fixture).
+    await caller({ id: VIEWER }).publishGenerationOutputs({
+      blockToken: 'tok',
+      workflowId: OWN_ID,
+      imageIndexes: [2],
+    });
+    expect(
+      mockPersistBlockWorkflowOutputImage.mock.calls.map(
+        (c) => (c[0] as { imageUrl: string }).imageUrl
+      )
+    ).toStrictEqual([OK_B, OK_B]);
   });
 });
 

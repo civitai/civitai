@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BLOCK_STEP_NAME,
   projectAppWorkflow,
+  projectAppWorkflowWithPositions,
   snapshotFromWorkflow,
   WORKFLOW_METADATA_BLOCK_STEPS_KEY,
 } from '~/server/services/blocks/workflow.service';
@@ -326,6 +327,44 @@ describe('(h) restricted outputs — projectAppWorkflow', () => {
         snapshotFromWorkflow(workflow, ceiling).imageUrls
       );
     }
+  });
+});
+
+describe('stable output positions — the index space of publish, post and persist', () => {
+  it('a position per available output, restricted ones included, aligned with outputs', () => {
+    const { workflow, positions } = projectAppWorkflowWithPositions(
+      wf([image('p0', 'pg'), image('p1', 'r'), image('p2', 'pg13')], { allowMatureContent: false }),
+      MATURE
+    );
+    expect(positions.map((p) => p.output)).toStrictEqual(workflow.outputs);
+    expect(positions.map((p) => p.image.url)).toStrictEqual([
+      'https://cdn/p0.png',
+      'https://cdn/p1.png',
+      'https://cdn/p2.png',
+    ]);
+  });
+
+  it('(a) a rating that lands late never moves a position', () => {
+    const before = projectAppWorkflowWithPositions(
+      wf([image('l0', null), image('l1', 'pg')], { allowMatureContent: false }),
+      MATURE
+    ).positions;
+    const after = projectAppWorkflowWithPositions(
+      wf([image('l0', 'r'), image('l1', 'pg')], { allowMatureContent: false }),
+      MATURE
+    ).positions;
+    expect(before[1].image.url).toBe('https://cdn/l1.png');
+    expect(after[1].image.url).toBe('https://cdn/l1.png');
+    expect(after[0].output).toStrictEqual({ restricted: true, reason: 'pool' });
+    // The convenience view DID shift — which is why it is not an index space.
+    const view = (w: Parameters<typeof projectAppWorkflow>[0]) =>
+      projectAppWorkflow(w, MATURE).images.map((i) => i.url);
+    expect(view(wf([image('l0', null), image('l1', 'pg')], { allowMatureContent: false }))[1]).toBe(
+      'https://cdn/l1.png'
+    );
+    expect(view(wf([image('l0', 'r'), image('l1', 'pg')], { allowMatureContent: false }))[0]).toBe(
+      'https://cdn/l1.png'
+    );
   });
 });
 
