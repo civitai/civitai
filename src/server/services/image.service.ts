@@ -1853,8 +1853,14 @@ export const ingestImage = async ({
         "scanRequestedAt" = ${scanRequestedAt},
         -- The last failure moves to lastFailure, so the cron keeps this row's retry ceiling
         -- while the new scan is in flight; error itself is cleared, ending any 429 run.
+        -- An Error row with no error is re-sent after a scan that never called back: that
+        -- counts as a failed attempt, or the retry ceiling never applies to it.
         "scanJobs" = ${scanJobsJson}::jsonb || jsonb_strip_nulls(jsonb_build_object(
-          'retryCount', "scanJobs"->'retryCount',
+          'retryCount', CASE
+            WHEN "ingestion" = 'Error'::"ImageIngestionStatus" AND NOT COALESCE("scanJobs" ? 'error', FALSE)
+              THEN to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+            ELSE "scanJobs"->'retryCount'
+          END,
           'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
         )) || ${keepPermanentScanFailureSql()}
       WHERE id = ${id}
