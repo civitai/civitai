@@ -371,6 +371,7 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledTimes(1);
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
     // The search document carries the showcase, so it is rebuilt at the new level.
+    expect(mockModelsQueueUpdate).toHaveBeenCalledTimes(1);
     expect(mockModelsQueueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
   });
 

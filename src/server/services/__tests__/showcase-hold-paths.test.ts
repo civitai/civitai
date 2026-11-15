@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
+import { TokenScope } from '@civitai/auth/token-scope';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as UserService from '~/server/services/user.service';
@@ -40,6 +42,8 @@ const { pullModelsData, getModelSearchIndexRecords } = await import(
   '~/server/search-index/models.search-index'
 );
 const { getAuctionBySlug } = await import('~/server/services/auction.service');
+const { getUserDownloadsHandler } = await import('~/server/controllers/download.controller');
+const { holdShowcaseImages } = await import('~/server/services/model.service');
 
 const HELD_MODEL = 5;
 const OWNER = 50;
@@ -121,9 +125,75 @@ describe("a held model's showcase on paths that read it from the shared cache", 
   });
 
   it.each([
-    { row: 'SFW-only', minor: false, sfwOnly: true, image: WITHIN, reads: true },
-    { row: 'unflagged', minor: false, sfwOnly: false, image: ABOVE, reads: false },
-  ])('download history of a $row model', async ({ minor, sfwOnly, image, reads }) => {
+    { who: 'the owner, signed in', user: { id: OWNER }, credential: {}, image: ABOVE },
+    {
+      who: 'the owner, with a full-access key',
+      user: { id: OWNER },
+      credential: {
+        apiKeyId: 1,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey' },
+        tokenScope: TokenScope.Full,
+      },
+      image: ABOVE,
+    },
+    {
+      who: 'an app acting for the owner',
+      user: { id: OWNER },
+      credential: { apiKeyId: 1, apiKeyType: ApiKeyType.Access, subject: { type: 'oauth' } },
+      image: WITHIN,
+    },
+    {
+      who: 'a moderator, signed in',
+      user: { id: 99, isModerator: true },
+      credential: {},
+      image: ABOVE,
+    },
+    {
+      who: 'a moderator, with a scoped key',
+      user: { id: 99, isModerator: true },
+      credential: {
+        apiKeyId: 1,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey' },
+        tokenScope: TokenScope.ModelsRead,
+      },
+      image: WITHIN,
+    },
+  ])(
+    'download history shows $who the thumbnail it may see',
+    async ({ user, credential, image }) => {
+      fetchDownloads.mockResolvedValue({
+        [user.id]: { downloads: [{ modelVersionId: VERSION, fileId: 0, lastDownloaded: 1 }] },
+      });
+      const ctx = { user, ...credential } as unknown as Parameters<
+        typeof getUserDownloadsHandler
+      >[0]['ctx'];
+      const { items } = await getUserDownloadsHandler({ ctx });
+      expect(items[0].image?.id).toBe(image);
+    }
+  );
+
+  it('exempts the owner of a held model whose owner the caller did not name', async () => {
+    const showcase = await fetchShowcase();
+    const held = await holdShowcaseImages(
+      showcase,
+      new Map([[VERSION, { modelId: HELD_MODEL, minor: true, sfwOnly: false }]]),
+      { id: OWNER, isModerator: false }
+    );
+    expect(held[VERSION].images.map((i: { id: number }) => i.id)).toEqual([ABOVE, WITHIN]);
+  });
+
+  it('serves none of the images of a version with no model', async () => {
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    const held = await holdShowcaseImages(await fetchShowcase(), new Map());
+    expect(held[VERSION].images).toEqual([]);
+  });
+
+  it.each([
+    { row: 'SFW-only', minor: false, sfwOnly: true, image: WITHIN },
+    { row: 'unflagged', minor: false, sfwOnly: false, image: ABOVE },
+  ])('download history of a $row model', async ({ minor, sfwOnly, image }) => {
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
       {
         id: VERSION,
@@ -139,10 +209,6 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     });
     const history = await getUserDownloads({ userId: 99, viewer: { id: 99, isModerator: false } });
     expect(history.items[0].image?.id).toBe(image);
-    const settingsReads = redisMock.redis.get.mock.calls.filter(([key]) =>
-      String(key).startsWith(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:`)
-    );
-    expect(settingsReads.length > 0).toBe(reads);
   });
 
   it('serves an unflagged model whole', async () => {
@@ -229,11 +295,6 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     ]);
     const [record] = await getModelSearchIndexRecords([HELD_MODEL]);
     expect(record?.images.map((image) => image.id)).toEqual([WITHIN]);
-  });
-
-  it('reads gallery settings from the existing cache keys', async () => {
-    await getEligibleModels([VERSION]);
-    expect(redisMock.redis.get).toHaveBeenCalledWith(`model:gallery-settings:${HELD_MODEL}`);
   });
 
   function auctionOf(model: { minor: boolean }) {

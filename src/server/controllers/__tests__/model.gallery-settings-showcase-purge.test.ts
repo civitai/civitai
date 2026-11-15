@@ -58,6 +58,7 @@ describe('updateGallerySettingsHandler — public showcase caches and search doc
     await save({ ...flags, gallerySettings: { level: 3 } }, 1);
     expect(mockPurgeHeldShowcase).toHaveBeenCalledTimes(1);
     expect(mockPurgeHeldShowcase).toHaveBeenCalledWith(MODEL);
+    expect(mockQueueUpdate).toHaveBeenCalledTimes(1);
     expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: MODEL, action: 'Update' }]);
   });
 
