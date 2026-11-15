@@ -103,8 +103,8 @@ jobs:
           # Positive control: a count below these floors means tests stopped being discovered, not that
           # they passed. Raise the package floor when a package gains its first test.
           [ "$failed" -eq 0 ]
-          [ "$pkgs" -ge 13 ]
-          [ "$passed" -ge 253 ]
+          [ "$pkgs" -ge 16 ]
+          [ "$passed" -ge 430 ]
 
       # Statement coverage of the unit run (each package's own tests), per package and in total,
       # against the ratchet floors in ci/coverage-floors.txt. A second instrument prints its own total
@@ -401,8 +401,10 @@ jobs:
       - name: allocs/op gate
         run: |
           set -euo pipefail
-          # Positive control: every benchmark function produced its 6 samples (a filter or build
-          # change that drops benchmarks would otherwise pass as "no regression").
+          # Positive control: every benchmark produced its 6 samples (7 benchmarks: superjson Serialize,
+          # hydrate Unpack and TagIDs, feed BuildImages, shadow Compare/golden, Compare/page50 and
+          # CompareJSON). A filter or build change that drops benchmarks would otherwise pass as "no
+          # regression"; raise the count with each new benchmark.
           samples=$(grep -c ' allocs/op' "$RUNNER_TEMP/head.txt" || true)
           echo "head samples with allocs/op: $samples"
           [ "$samples" -ge 42 ]

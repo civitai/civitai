@@ -90,11 +90,11 @@ def main(argv):
         mark = ""
         if floor is not None and measured[p] < floor:
             mark = "  BELOW FLOOR"
-            failures.append(f"{p}: {measured[p]:.1f}% < floor {floor:g}%")
+            failures.append(f"{p}: {measured[p]:.2f}% < floor {floor:g}%")
         elif floor is not None and int(measured[p]) > floor:
             mark = f"  (floor can be raised to {int(measured[p])})"
         floor_s = "-" if floor is None else f"{floor:g}"
-        print(f"{p:<28} {stmts:>6} {measured[p]:>8.1f}% {floor_s:>6}{mark}")
+        print(f"{p:<28} {stmts:>6} {measured[p]:>8.2f}% {floor_s:>6}{mark}")
     for p in sorted(floors):
         if p not in measured:
             failures.append(f"{p}: listed in the floors file but absent from the profile")
