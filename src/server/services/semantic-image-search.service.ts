@@ -12,6 +12,7 @@ import {
   beginSemanticAudit,
   queryVerdictLevel,
   recordRefusal,
+  refusedTextCandidates,
   isNonModClampOn,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
@@ -20,6 +21,7 @@ import {
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
+import type { RefusedCandidates } from '~/server/services/semantic-search-audit.service';
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
@@ -113,8 +115,8 @@ export async function searchSemanticImages({
   };
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return audit.done(emptyPage(), browsingLevel);
-  if (verdictLevel !== browsingLevel) {
+  const queryRefused = verdictLevel === 'refuse';
+  if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
   }
@@ -160,7 +162,7 @@ export async function searchSemanticImages({
 
   // "More like this" from an image the viewer cannot see would reveal what it resembles.
   let level = browsingLevel;
-  if (input.imageId) {
+  if (input.imageId && !queryRefused) {
     const [anchor] = await fetchVisible([input.imageId], browsingLevel, {
       excludedTagIds: viewerExcludedTagIds,
     });
@@ -207,6 +209,15 @@ export async function searchSemanticImages({
   };
 
   const viewer = { isModerator: !!user?.isModerator };
+  // Refused before any search: the audit may run it after the response, for its row only.
+  if (queryRefused)
+    return input.query && !input.imageId
+      ? audit.refused(
+          emptyPage(),
+          browsingLevel,
+          refusedTextCandidates(cachedSource, { text: input.query, filter, viewer })
+        )
+      : audit.done(emptyPage(), browsingLevel);
   const query: SearchQuery = input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
@@ -216,6 +227,7 @@ export async function searchSemanticImages({
   // of different ages.
   const corrections = new Map<string, ReturnType<typeof refusalOf>>();
   let correctedRefusal: QueryRefusal | undefined;
+  let first: RefusedCandidates | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await timed(
@@ -223,6 +235,7 @@ export async function searchSemanticImages({
         cachedSource({ query, filter, offset, limit, viewer, sort: input.sort })
       );
       audit.candidates(result);
+      first ??= result;
       // The service embeds its spelling correction, not the text audited above.
       const corrected = result.correctedQuery;
       if (!correctedRefusal && corrected !== undefined && corrected !== input.query) {
@@ -239,6 +252,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedRefusal) return audit.done(emptyPage(), level);
+  if (correctedRefusal) return audit.refused(emptyPage(), level, async () => first ?? { ids: [] });
   return audit.done({ ...page, correctedQuery }, level);
 }

@@ -97,6 +97,37 @@ describe('createTtlMemo', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('single-flight: concurrent callers on a cold or expired memo share one fetch', async () => {
+    const clock = makeClock();
+    let n = 0;
+    const fetcher = vi.fn(async () => {
+      const value = `value-${++n}`;
+      await new Promise((r) => setTimeout(r, 1));
+      return value;
+    });
+    const memo = createTtlMemo(fetcher, 30_000, clock.now);
+
+    expect(await Promise.all([memo(), memo(), memo()])).toEqual(['value-1', 'value-1', 'value-1']);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    clock.advance(30_001);
+    expect(await Promise.all([memo(), memo()])).toEqual(['value-2', 'value-2']);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('single-flight: a shared rejection reaches every waiter and is not cached', async () => {
+    const fetcher = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValueOnce('value-1');
+    const memo = createTtlMemo(fetcher, 30_000);
+
+    const results = await Promise.allSettled([memo(), memo()]);
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(await memo()).toBe('value-1');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('freeze: the cached array is frozen so an accidental in-place mutation throws instead of corrupting the shared blob', async () => {
     const clock = makeClock();
     const fetcher = vi.fn(async () => [{ id: 1, name: 'tag' }]);
