@@ -762,6 +762,7 @@ type Bundle = {
   confirmedQuoteOverchargeTotal: Counter<string>;
   succeededWithoutMediaTotal: Counter<string>;
   mediaVerdictTotal: Counter<string>;
+  outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
@@ -1143,6 +1144,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_media_verdict_total',
     'App Block workflow media decisions, one per item judged for a viewer: at the media route (each fetch) and in GET_WORKFLOW_MEDIA (each ref). verdict = served | pending | hidden. reason = the hidden reason (blocked, above_level, unknown_rating, unrated, owner_only, private, paused, unrecognised_url, invalid), or none. Its own denominator: the share hidden is hidden / sum over verdicts.',
     ['surface', 'verdict', 'reason']
+  );
+
+  const outputTruncatedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_output_truncated_total',
+    'Pass-through step output subtrees nested past the output walk cap, dropped (nulled) instead of forwarded to the block. Counted per subtree in a step output that reaches the block; a suppressOutput step, read only for its training epochs, is not counted. step_type = `passthrough` (the $type is app-supplied, an open set). Non-zero means a block received a step output with a part removed.',
+    ['step_type']
   );
 
   // ── REST approved-status GATE verdicts ───────────────────────────────────────
@@ -1594,6 +1602,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     confirmedQuoteOverchargeTotal,
     succeededWithoutMediaTotal,
     mediaVerdictTotal,
+    outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
@@ -1873,6 +1882,18 @@ export function recordBlockMediaVerdict(
 ): void {
   try {
     ensureRegisterAppBlockRuntimeMetrics().mediaVerdictTotal.inc({ surface, verdict, reason });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/** Fail-soft emit of pass-through output subtrees dropped past the walk cap (see the counter). */
+export function recordOutputTruncated(count: number): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().outputTruncatedTotal.inc(
+      { step_type: 'passthrough' },
+      count
+    );
   } catch {
     /* instrument-only */
   }
