@@ -45,14 +45,23 @@ describe('App Block prompt refusal coverage', () => {
     ['submitMultiStepWorkflow', /await auditPassThroughPrompts\(/],
     ['submitConfirmedPassThroughStepWorkflow', /await auditPassThroughPrompts\(/],
     ['submitTrainingWorkflow', /await auditTrainingSamplePrompts\(/],
-    ['submitCustomComfyWorkflow', /await auditPromptServer\(/],
+    ['submitCustomComfyWorkflow', /await auditAppBlockPrompt\(/],
     ['submitStepWorkflow', /await runStepModeration\(/],
   ])('%s audits before it quotes or reserves', (name, audit) => {
     expectAuditBeforeMoney(body(router, name), audit, name);
   });
 
   it('textToImage, inline in the procedure, audits before it reserves', () => {
-    expectAuditBeforeMoney(submitWorkflowBody(), /await auditPromptServer\(/, 'textToImage');
+    expectAuditBeforeMoney(submitWorkflowBody(), /await auditAppBlockPrompt\(/, 'textToImage');
+  });
+
+  it('the registry step audit goes through the App Block wrapper', () => {
+    expect(stepModeration).toMatch(/await auditAppBlockPrompt\(/);
+  });
+
+  it('no App Block site calls the gate around the wrapper', () => {
+    expect(router).not.toMatch(/await auditPromptServer\(/);
+    expect(stepModeration).not.toMatch(/await auditPromptServer\(/);
   });
 
   it('the submit procedure answers a refusal as a coded snapshot', () => {
