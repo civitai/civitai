@@ -1134,8 +1134,9 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   falls back;
 - a cursor's date token with a 1- or 2-digit fraction (`.25`, how Postgres writes 250 ms) falls back
   (`short-fraction-cursor`): this service reads it as 250 ms, but Node's dayjs reads the digits as
-  milliseconds (25 ms) and starts the next page at the wrong row. That is a Node bug, being fixed
-  separately; the fallback goes once the fix is deployed (the TODO on `cursorTimestamp`);
+  milliseconds (25 ms) and starts the next page at the wrong row. That is a Node bug, fixed on main
+  by #9075 but not yet deployed; the fallback goes once the fix is deployed (the TODO on
+  `cursorTimestamp`);
 - `ids` falls back whenever it is present, empty included: Node reads `[]` as `[]` and `""` as `[0]`,
   both truthy, so either turns off the private-model filter;
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,

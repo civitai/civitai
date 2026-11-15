@@ -146,9 +146,10 @@ var cursorFraction = regexp.MustCompile(`\.(\d+)$`)
 //
 // Node's dayjs.utc does NOT read every such token this way: it takes the fraction's digits as a
 // count of milliseconds, so ".25" (250 ms, as Postgres writes it) binds as 25 ms and ".5" as 5 ms,
-// and the next page starts at the wrong row. That is a Node bug, fixed separately; a fraction of
-// three digits reads the same on both. Until the fix is deployed, a token with a 1- or 2-digit
-// fraction is the short-fraction-cursor fallback: serving it correctly would not match Node.
+// and the next page starts at the wrong row. That is a Node bug, fixed on main by #9075 (the
+// fraction padded to three digits) but not yet deployed; a fraction of three digits reads the same
+// on both. Until the fix is deployed, a token with a 1- or 2-digit fraction is the
+// short-fraction-cursor fallback: serving it correctly would not match the deployed Node.
 //
 // TODO(short-fraction-cursor): remove this fallback once the Node cursor fix is deployed.
 func cursorTimestamp(tok string) (time.Time, error) {

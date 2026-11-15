@@ -76,22 +76,32 @@ func TestParseInfiniteFallsBack(t *testing.T) {
 }
 
 func TestInfiniteOwnScopeAndPath(t *testing.T) {
-	in := &InfiniteInput{UserID: 5, Username: "Alice"}
+	// The viewer is 5 / "alice" unless the case says otherwise; creator 6 is "bob".
 	cases := []struct {
-		id   int
-		name string
-		want bool
+		name     string
+		in       InfiniteInput
+		viewerID int
+		viewer   string
+		want     bool
 	}{
-		{5, "", true},        // by id
-		{0, "alice", true},   // by name, case-insensitively
-		{6, "bob", false},    // neither
-		{0, "", false},       // signed out
-		{6, "ALICE", true},   // the name alone
-		{6, "alice2", false}, // a prefix is not the name
+		{"own id", InfiniteInput{UserID: 5}, 5, "alice", true},
+		{"own name, case-insensitively", InfiniteInput{Username: "ALICE"}, 5, "alice", true},
+		{"own id and own name", InfiniteInput{UserID: 5, Username: "Alice"}, 5, "alice", true},
+		{"another creator's id", InfiniteInput{UserID: 6}, 5, "alice", false},
+		{"another creator's name", InfiniteInput{Username: "bob"}, 5, "alice", false},
+		{"another creator's id with the viewer's name", InfiniteInput{UserID: 6, Username: "alice"}, 5, "alice", false},
+		{"own id beside a name that does not match (a slugified one)", InfiniteInput{UserID: 5, Username: "johndoe"}, 5, "john.doe", true},
+		{"a prefix is not the name", InfiniteInput{Username: "alice2"}, 5, "alice", false},
+		{"no creator scope", InfiniteInput{}, 5, "alice", false},
+		{"signed out, by id", InfiniteInput{UserID: 5}, 0, "", false},
+		{"signed out, by name", InfiniteInput{Username: "alice"}, 0, "", false},
+		{"a viewer without a name (v1), own id beside a name", InfiniteInput{UserID: 5, Username: "alice"}, 5, "", true},
+		{"a viewer without a name (v1), by name alone", InfiniteInput{Username: "alice"}, 5, "", false},
 	}
 	for _, c := range cases {
-		if got := in.ownScoped(c.id, c.name); got != c.want {
-			t.Errorf("ownScoped(%d, %q) = %v, want %v", c.id, c.name, got, c.want)
+		in := c.in
+		if got := in.ownScoped(c.viewerID, c.viewer); got != c.want {
+			t.Errorf("%s: ownScoped(%d, %q) on {UserID: %d, Username: %q} = %v, want %v", c.name, c.viewerID, c.viewer, in.UserID, in.Username, got, c.want)
 		}
 	}
 	for _, c := range []struct {

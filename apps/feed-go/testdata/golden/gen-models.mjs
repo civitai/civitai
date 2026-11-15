@@ -523,14 +523,22 @@ function pgText(v) {
 
 /** The values parseCursor (src/server/utils/pagination-helpers.ts, not exported) binds for a string
  *  cursor, transcribed with the real dayjs: a token with `-` that is not an integer is
- *  dayjs.utc(token).toDate(), any other parseInt(token, 10). The fixture records them so the harness
- *  checks the instant feed-go binds, not only the cursor string it was handed. */
+ *  dayjs.utc(normalizeCursorTimestamp(token)).toDate() (the fraction padded or cut to three digits),
+ *  any other parseInt(token, 10). The fixture records them so the harness checks the instant
+ *  feed-go binds, not only the cursor string it was handed. */
 function boundCursor(cursor) {
   if (typeof cursor !== 'string') return null;
+  const normalize = (tok) =>
+    tok.replace(
+      /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\.(\d+)/,
+      (_, head, fraction) => `${head}.${fraction.padEnd(3, '0').slice(0, 3)}`
+    );
   return cursor
     .split('|')
     .map((tok) =>
-      tok.includes('-') && !/^-?\d+$/.test(tok) ? dayjs.utc(tok).toDate() : parseInt(tok, 10)
+      tok.includes('-') && !/^-?\d+$/.test(tok)
+        ? dayjs.utc(normalize(tok)).toDate()
+        : parseInt(tok, 10)
     );
 }
 
@@ -1111,7 +1119,7 @@ const SPECS = [
   {
     name: 'fallback-short-fraction-cursor',
     description:
-      'A cursor timestamp with a 1- or 2-digit fraction (250 ms written ".25"): Node binds it as 25 ms (a Node bug, fixed separately), so feed-go falls back until that fix ships.',
+      'A cursor timestamp with a 1- or 2-digit fraction (250 ms written ".25"): the deployed Node binds it as 25 ms (fixed on main by #9075, not yet deployed), so feed-go falls back until that fix is deployed.',
     host: HOST.blue,
     input: { sort: 'Newest', limit: 1, browsingLevel: 31, cursor: '2026-06-12 10:00:00.25|5001' },
     fallback: 'short-fraction-cursor',
