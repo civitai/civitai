@@ -29,10 +29,10 @@ import { describe, expect, it } from 'vitest';
 // tiers into a different workflow, renaming the jobs, or splitting the file
 // keeps this green; losing main coverage does not, however it is lost.
 //
-// THE UNIT SUITE IS VERIFIED IN BATCHES, NOT PER PUSH (2026-11). Its verdict for a commit on
-// `main` comes from a scheduled batch run (every 2 hours, operator decision 2026-11-15) that
-// bisects a red to the first bad commit and posts a failing commit status there, so a red still
-// lands on the commit that caused it, up to about 3 hours later rather than minutes. The guard for
+// THE UNIT SUITE IS VERIFIED IN BATCHES, NOT PER PUSH. Its verdict for a commit on `main` comes
+// from a scheduled batch run that bisects a red to the first bad commit and posts a failing commit
+// status there, so a red still lands on the commit that caused it, one interval or more later
+// rather than minutes (MAX_BATCH_HOURS bounds the interval). The guard for
 // it below asserts that path (a schedule that fires at least every MAX_BATCH_HOURS, a dispatch
 // target that runs the suite, a job that posts commit statuses) rather
 // than a push-reachable job. The regression above, a commit on `main` with no verdict at all, is

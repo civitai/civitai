@@ -263,7 +263,7 @@ describe('report and bisect parsing', () => {
     expect(parseFirstBad(`running node step\n${BAD} is the first bad commit\ncommit ${BAD}`)).toBe(
       BAD
     );
-    // The form git 2.56 (the CI runner's) prints, read from a live run.
+    // The quoted form newer git prints, copied from a live CI run; older git does not quote.
     expect(parseFirstBad(`${BAD} is the first 'bad' commit\ncommit ${BAD}`)).toBe(BAD);
     expect(parseFirstBad('There are only skipped commits left to test.')).toBeNull();
   });

@@ -6,7 +6,8 @@
 //   node scripts/ci/unit-batched.mjs gate <ref>
 //       In unit-batched.yml, on its schedule. Dispatches lint.yml `only: unit` on <ref> unless <ref>'s
 //       head is the commit the last batch run already verified (green or red).
-//   node scripts/ci/unit-batched.mjs verify <unit-result> <reports-dir>
+//   node scripts/ci/unit-batched.mjs verify <unit-result> <reports-dir> <shards>
+//       (<shards> is the number of shard reports a complete batch must have.)
 //       In lint.yml's `unit-verify` job, after the shards of that dispatched run. Green: a success
 //       status on HEAD. Red: re-runs the failed files at HEAD (a pass = flaky: a success on HEAD
 //       whose description names the flaky files, plus a warning annotation), then
