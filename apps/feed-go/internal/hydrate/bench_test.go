@@ -81,7 +81,6 @@ func BenchmarkUnpack(b *testing.B) {
 // pipeline, Unpack per entry and the wire conversion. The entries are the golden fixtures' own
 // tag-id values, cycled over 50 image ids.
 func BenchmarkTagIDs(b *testing.B) {
-	var samples [][]byte
 	packed := goldenPacked(b)
 	keys := make([]string, 0, len(packed))
 	for k := range packed {
@@ -90,6 +89,7 @@ func BenchmarkTagIDs(b *testing.B) {
 		}
 	}
 	sort.Strings(keys)
+	samples := make([][]byte, 0, len(keys))
 	for _, k := range keys {
 		samples = append(samples, packed[k])
 	}

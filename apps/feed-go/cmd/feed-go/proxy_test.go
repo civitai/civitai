@@ -17,7 +17,7 @@ import (
 func TestFallbackProxyForwarding(t *testing.T) {
 	seen := make(chan *http.Request, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen <- r.Clone(context.Background())
+		seen <- r.Clone(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer backend.Close()
@@ -68,7 +68,7 @@ func TestFallbackProxyForwarding(t *testing.T) {
 func TestFallbackProxyStartsTheForwardedChain(t *testing.T) {
 	seen := make(chan *http.Request, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen <- r.Clone(context.Background())
+		seen <- r.Clone(r.Context())
 	}))
 	defer backend.Close()
 	target, err := url.Parse(backend.URL)

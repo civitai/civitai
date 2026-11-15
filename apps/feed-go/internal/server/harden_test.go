@@ -238,7 +238,7 @@ func TestServeHTTPPanicFallsBack(t *testing.T) {
 	var logs bytes.Buffer
 	s := serveServer(reg, func(context.Context, *http.Request) (*computed, error) {
 		var m map[string]int
-		m["x"] = 1 //nolint:govet // nilness: the nil-map write is deliberate, the test needs a runtime panic
+		m["x"] = 1 //nolint:govet,staticcheck // nilness, SA5000: the nil-map write is deliberate, the test needs a runtime panic
 		return nil, nil
 	}, fb)
 	s.Log = slog.New(slog.NewJSONHandler(&logs, nil))
