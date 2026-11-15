@@ -14,9 +14,7 @@
     "headers": {
       "host": "blue.example.test"
     },
-    "session": {
-      "userId": 1003
-    }
+    "session": null
   },
   "redis": {},
   "sysRedis": {

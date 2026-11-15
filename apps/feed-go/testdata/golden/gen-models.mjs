@@ -1113,7 +1113,6 @@ const SPECS = [
     description:
       'A cursor timestamp with a 1- or 2-digit fraction (250 ms written ".25"): Node binds it as 25 ms (a Node bug, fixed separately), so feed-go falls back until that fix ships.',
     host: HOST.blue,
-    viewer: 1003,
     input: { sort: 'Newest', limit: 1, browsingLevel: 31, cursor: '2026-06-12 10:00:00.25|5001' },
     fallback: 'short-fraction-cursor',
   },
