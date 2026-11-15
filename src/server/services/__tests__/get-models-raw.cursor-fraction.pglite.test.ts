@@ -20,16 +20,20 @@ redisMock.redis.packed.set.mockImplementation(async () => undefined);
 
 const { db } = vi.hoisted(() => ({ db: { pg: undefined as PGlite | undefined } }));
 
-vi.mock('~/server/db/pgDb', () => ({
-  pgDbRead: {
-    cancellableQuery: vi.fn(async (query: { text: string; values: unknown[] }) => ({
-      result: async () => (await db.pg!.query(query.text, query.values)).rows,
-      cancel: async () => undefined,
-    })),
-  },
-  pgDbWrite: {},
-  pgDbReadLong: {},
-}));
+// A real `createPool`, so `getModelsRaw`'s Prisma.Sql goes through the production
+// `cancellableQuery` and its parameter formatting (`formatSqlParam`: a Date is sent as its ISO
+// string) before PGlite parses it. Only the connection is swapped: the pool never opens a socket,
+// and its one connection hands the formatted text and params to PGlite.
+vi.mock('~/server/db/pgDb', async () => {
+  const { createPool } = await import('@civitai/db/db-helpers');
+  const pool = createPool({ connectionString: 'postgresql://u:p@localhost:5432/test', ssl: false });
+  pool.connect = (async () => ({
+    processID: 1,
+    query: (text: string, params?: unknown[]) => db.pg!.query(text, params),
+    release: () => undefined,
+  })) as never;
+  return { pgDbRead: pool, pgDbWrite: pool, pgDbReadLong: pool };
+});
 
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(),
