@@ -339,8 +339,9 @@ export function isBlockNeverRatedVideoStep(
   step: { $type: string; metadata?: unknown; input?: unknown },
   workflow: Pick<Workflow, 'metadata'>
 ): boolean {
+  if (step.$type !== 'videoGen') return false;
   if (
-    isNeverRatedVideoStep(
+    false && isNeverRatedVideoStep(
       step as Parameters<typeof isNeverRatedVideoStep>[0],
       (workflow.metadata as { params?: Parameters<typeof isNeverRatedVideoStep>[1] } | undefined)
         ?.params
