@@ -22,7 +22,7 @@ type V1Page struct {
 // resources) with every cache read in ONE pipeline; none depends on another. The lookups are then
 // finished one after another in the order the endpoint used to read them, so a page with several
 // failures reports the same (first) one, and each lookup's misses, staleness and fallbacks are its
-// finish half's (basicUsersFrom, thumbnailsFrom, metricsRead.result, imageResourcesFrom).
+// finish half's (basicUsersFrom, thumbnailsFrom, metricsResult, imageResourcesFrom).
 func (s *Sources) V1Page(ctx context.Context, req V1PageRequest) (*V1Page, error) {
 	users, images, videos := Unique(req.UserIDs), Unique(req.ImageIDs), Unique(req.VideoIDs)
 	b := NewBatch()
@@ -42,7 +42,7 @@ func (s *Sources) V1Page(ctx context.Context, req V1PageRequest) (*V1Page, error
 			return nil, err
 		}
 	}
-	if out.Metrics, err = metrics.result(); err != nil {
+	if out.Metrics, err = s.metricsResult(ctx, metrics); err != nil {
 		return nil, err
 	}
 	if out.Resources, err = imageResourcesFrom(images, resources.Entries()); err != nil {

@@ -16,6 +16,7 @@ internal/dbpool 95
 internal/feed 76
 internal/feedsvc 92
 internal/hydrate 82
+internal/jspack 80
 internal/safe 100
 internal/server 93
 internal/shadow 95

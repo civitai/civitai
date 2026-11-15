@@ -54,6 +54,21 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 	return redis.NewClient(opts), nil
 }
 
+// missCompute is how hydration answers the misses of the caches Node fills on read
+// (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back); the metric
+// hashes' ClickHouse populate only with CLICKHOUSE_HOST and CLICKHOUSE_USERNAME set.
+func missCompute(cfg *config.Config, observe func(cache, result string, n int)) *hydrate.MissCompute {
+	if !cfg.ComputeMisses {
+		return nil
+	}
+	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe}
+	if cfg.ClickHouseURL != "" {
+		c.Metrics = hydrate.NewClickHouse(cfg.ClickHouseURL, cfg.ClickHouseUser, cfg.ClickHousePassword,
+			cfg.ClickHouseTimeout, cfg.ClickHouseMaxConcurrency)
+	}
+	return c
+}
+
 func run(log *slog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -96,6 +111,9 @@ func run(log *slog.Logger) error {
 
 	packed := &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: pool}
+	sources.Compute = missCompute(cfg, metrics.ObserveCacheMiss)
+	log.Info("cache misses", "compute", sources.Compute != nil, "writeback", cfg.CacheWriteBack,
+		"frameNegative", cfg.FrameCacheNegative, "metricsPopulate", sources.Compute != nil && sources.Compute.Metrics != nil)
 	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,

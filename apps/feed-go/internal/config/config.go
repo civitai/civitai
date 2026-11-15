@@ -77,6 +77,28 @@ type Config struct {
 	// good key set is kept while refreshes fail; past it sessions verify as signed out.
 	JWKSMaxStaleness time.Duration
 
+	// ComputeMisses is FEED_GO_COMPUTE_MISSES (default on): answer the misses of the per-entity caches
+	// Node fills on read (user cosmetics, image frames, event decorations, metric hashes) with the Node
+	// lookup's own query instead of falling back. Off restores the fallbacks.
+	ComputeMisses bool
+	// CacheWriteBack is FEED_GO_CACHE_WRITEBACK (default off): write each computed miss back to the
+	// cache cluster exactly as the Node lookup writes it. Off, this service never writes those keys.
+	CacheWriteBack bool
+	// FrameCacheNegative is FEED_GO_FRAME_CACHE_NEGATIVE: the `frame-cache-negative` flag's value
+	// (default off, as Node reads an unknown flag): whether the frame cache's notFound markers are live.
+	FrameCacheNegative bool
+	// ClickHouse is where a metric-hash miss is populated from: CLICKHOUSE_HOST (a URL),
+	// CLICKHOUSE_USERNAME, CLICKHOUSE_PASSWORD, the Node app's variables. Unset host or username = no
+	// populate: those misses fall back.
+	ClickHouseURL      string
+	ClickHouseUser     string
+	ClickHousePassword string
+	// ClickHouseTimeout is CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS (default 3000, as Node's): the bound of
+	// one metrics read.
+	ClickHouseTimeout time.Duration
+	// ClickHouseMaxConcurrency is FEED_GO_CLICKHOUSE_MAX_CONCURRENCY (default 4): metrics reads at once.
+	ClickHouseMaxConcurrency int
+
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
 	AllowedOriginHosts map[string]bool
@@ -134,6 +156,14 @@ func Load() (*Config, error) {
 	if n := intEnv("CIVITAI_MODERATION_USER_ID", 0); n > 0 {
 		c.ModerationAccountID = n
 	}
+	c.ComputeMisses = boolEnv("FEED_GO_COMPUTE_MISSES", true)
+	c.CacheWriteBack = boolEnv("FEED_GO_CACHE_WRITEBACK", false)
+	c.FrameCacheNegative = boolEnv("FEED_GO_FRAME_CACHE_NEGATIVE", false)
+	if h, u := os.Getenv("CLICKHOUSE_HOST"), os.Getenv("CLICKHOUSE_USERNAME"); h != "" && u != "" {
+		c.ClickHouseURL, c.ClickHouseUser, c.ClickHousePassword = h, u, os.Getenv("CLICKHOUSE_PASSWORD")
+	}
+	c.ClickHouseTimeout = time.Duration(positiveIntEnv("CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS", 3000)) * time.Millisecond
+	c.ClickHouseMaxConcurrency = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_CONCURRENCY", 4)
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	rules, err := ParseRegionRules(os.Getenv("REGION_RESTRICTION_CONFIG"))
 	if err != nil {

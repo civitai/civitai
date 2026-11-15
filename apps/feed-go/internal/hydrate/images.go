@@ -11,8 +11,8 @@ import (
 // frameCosmeticIDs is getCosmeticsForEntity({entity: 'Image'})'s first half over the frame cache's
 // answer got for (unique) ids: the cosmetic ids to join (unordered, possibly repeated). The cached value
 // is the raw lookup row `{cosmeticId, equippedToId, userData}`; the cache's appendFn joins it with the
-// cosmetic record on every read, and joinFrames repeats that join. A frame miss falls back: its lookup
-// reads the primary and filters withheld creator cosmetics.
+// cosmetic record on every read, and joinFrames repeats that join. An id got does not answer falls
+// back; with Sources.Compute, fillFrames has computed every miss into got before this runs.
 func frameCosmeticIDs(imageIDs []int, got map[int]Entry) ([]int, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("image-frame-miss", "%d ids", len(miss))
@@ -99,7 +99,7 @@ func truthyJS(v any) bool {
 // VisibleEventDecorations is decorationsForEvents over the event-decoration cache's answer: an entry
 // whose `data.event` is a string naming a visible event (isEventDecorationData), picked field by
 // field so the wearer's `userId` (and any stale extra field) is not sent. An id the cache did not
-// answer falls back.
+// answer falls back (with Sources.Compute, fillEvents has computed the misses into got first).
 func VisibleEventDecorations(imageIDs []int, got map[int]Entry, visibleEvents map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("event-decoration-miss", "%d ids", len(miss))
@@ -176,23 +176,35 @@ func metricHashKey(id int) string { return "metrics:Image:" + strconv.Itoa(id) }
 
 func metricsReadFailed(err error) error { return fallback.Newf("metrics-read-failed", "%v", err) }
 
-// MetricsFromHashes is the per-id half of ImageMetrics: hashes[i] is the `metrics:Image:<ids[i]>`
-// hash as HGETALL returned it. An empty hash (no key) falls back; any other hash is an entry, a
-// `notFound` marker as an entry with no counts.
+// MetricsFromHashes is the per-id half of ImageMetrics without a miss computation: hashes[i] is the
+// `metrics:Image:<ids[i]>` hash as HGETALL returned it. An empty hash (no key) falls back; any other
+// hash is an entry, a `notFound` marker as an entry with no counts.
 func MetricsFromHashes(ids []int, hashes []map[string]string) (map[int]Metrics, error) {
+	out, miss := splitMetricHashes(ids, hashes)
+	if len(miss) > 0 {
+		return nil, fallback.New("metrics-miss")
+	}
+	return out, nil
+}
+
+// splitMetricHashes answers every id whose hash exists (a `notFound` marker as an entry with no
+// counts: known, every count 0, see metricsRead) and returns the ids with no hash, in id order.
+func splitMetricHashes(ids []int, hashes []map[string]string) (map[int]Metrics, []int) {
 	out := make(map[int]Metrics, len(ids))
+	var miss []int
 	for i, id := range ids {
 		hash := hashes[i]
 		if len(hash) == 0 {
-			return nil, fallback.New("metrics-miss")
+			miss = append(miss, id)
+			continue
 		}
 		m, ok := ParseMetricHash(hash)
 		if !ok {
-			m = Metrics{} // notFound: known, every count 0 (see above)
+			m = Metrics{}
 		}
 		out[id] = m
 	}
-	return out, nil
+	return out, miss
 }
 
 // ParseMetricHash is MetricService.parseCachedMetrics: every field but `notFound`/`_populatedAt` is a

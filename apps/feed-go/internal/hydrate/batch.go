@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
 // Batch collects the cache reads of one dependency stage and sends them in ONE Pipelined call per
@@ -78,17 +80,50 @@ func (p *PackedReader) Queue(b *Batch, key string, ids []int, ttl time.Duration)
 
 // Entries decodes the lookup's answer by id, after the batch's Exec (see Get).
 func (r *PackedRead) Entries() map[int]Entry {
+	out, _ := r.read()
+	return out
+}
+
+// read is Entries plus writable: the ids it does not answer whose entry Node's fetch would write
+// once its lookup computes it (no key, or an undecodable value); a debounce marker or a failed read
+// is not writable. With no client queued, every id is absent. writable is nil when every id is an
+// entry (a hit costs no allocation).
+func (r *PackedRead) read() (map[int]Entry, map[int]bool) {
 	out := make(map[int]Entry, len(r.ids))
+	var writable map[int]bool
 	if len(r.cmds) == 0 {
-		return out
+		writable = make(map[int]bool, len(r.ids))
+		for _, id := range r.ids {
+			writable[id] = true
+		}
+		return out, writable
 	}
 	now := time.Now()
 	if r.p.Now != nil {
 		now = r.p.Now()
 	}
 	for i, cmd := range r.cmds {
-		if e, ok := decodeEntry(cmd, r.ttl, now); ok {
+		e, st := entryState(cmd, r.ttl, now)
+		if st == stateEntry {
 			out[r.ids[i]] = e
+			continue
+		}
+		if st == stateAbsent {
+			if writable == nil {
+				writable = map[int]bool{}
+			}
+			writable[r.ids[i]] = true
+		}
+	}
+	return out, writable
+}
+
+// raw is each id's cached bytes, after the batch's Exec, for the ids whose GET answered a value.
+func (r *PackedRead) raw() map[int][]byte {
+	out := map[int][]byte{}
+	for i, cmd := range r.cmds {
+		if b, err := cmd.Bytes(); err == nil {
+			out[r.ids[i]] = b
 		}
 	}
 	return out
@@ -123,12 +158,10 @@ func (s *Sources) queueMetrics(b *Batch, ids []int) *metricsRead {
 	return r
 }
 
-// result is the metrics lookup's answer after Exec. The first command error in command order is the read
-// failure (an HGETALL answers an absent key with an empty hash, never redis.Nil, so every error here is real).
-func (r *metricsRead) result() (map[int]Metrics, error) {
-	if len(r.ids) == 0 {
-		return map[int]Metrics{}, nil
-	}
+// hashes is the metric hashes after Exec, in id order. The first command error in command order is
+// the read failure (an HGETALL answers an absent key with an empty hash, never redis.Nil, so every
+// error here is real).
+func (r *metricsRead) hashes() ([]map[string]string, error) {
 	hashes := make([]map[string]string, len(r.cmds))
 	for i, cmd := range r.cmds {
 		hash, err := cmd.Result()
@@ -137,5 +170,33 @@ func (r *metricsRead) result() (map[int]Metrics, error) {
 		}
 		hashes[i] = hash
 	}
-	return MetricsFromHashes(r.ids, hashes)
+	return hashes, nil
+}
+
+// metricsResult is getImageMetricsObject over the metrics read after Exec: every id whose hash exists
+// is answered from it; the ids with no hash are MetricService.fetch's cold misses, computed from
+// ClickHouse (computeMetrics) when s.Compute has a metrics source, else the `metrics-miss` fallback.
+func (s *Sources) metricsResult(ctx context.Context, r *metricsRead) (map[int]Metrics, error) {
+	if len(r.ids) == 0 {
+		return map[int]Metrics{}, nil
+	}
+	hashes, err := r.hashes()
+	if err != nil {
+		return nil, err
+	}
+	out, miss := splitMetricHashes(r.ids, hashes)
+	if len(miss) == 0 {
+		return out, nil
+	}
+	if s.Compute == nil || s.Compute.Metrics == nil {
+		return nil, fallback.New("metrics-miss")
+	}
+	computed, err := s.Compute.computeMetrics(ctx, s.Cache, miss)
+	if err != nil {
+		return nil, err
+	}
+	for id, m := range computed {
+		out[id] = m
+	}
+	return out, nil
 }
