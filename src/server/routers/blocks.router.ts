@@ -164,6 +164,8 @@ import {
   BLOCK_TRAINING_QUOTE_ID_REGEX,
   blockQuoteGrantConsentInputSchema,
   blockEstimateBatchInputSchema,
+  blockOutputUnlockConfirmInputSchema,
+  blockOutputUnlockInputSchema,
   blockWorkflowBodySchema,
 } from '~/server/schema/blocks/workflow.schema';
 import type {
@@ -175,6 +177,7 @@ import type {
 } from '~/server/schema/blocks/workflow.schema';
 import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import type { Context } from '~/server/createContext';
+import type { OutputUnlockDeps } from '~/server/services/blocks/block-output-unlock.service';
 import {
   allowMatureContentForCeiling,
   getIsSafeBrowsingLevel,
@@ -7202,6 +7205,62 @@ export const blocksRouter = router({
     .input(blockQuoteGrantConsentInputSchema)
     .mutation(async ({ ctx, input }) => {
       return consentQuoteGrantFor(input.kind, ctx, ctx.user.id, input);
+    }),
+
+  /**
+   * ── OUTPUT UNLOCK: the host's own dialog for one restricted workflow output. ──
+   *
+   * `previewOutputUnlock` says what the host may offer for the output at `position`, judged
+   * from the live workflow and the token (never from the block): `pay` (a `'pool'` restriction:
+   * the yellow unlock plus the author share, itemised), `link-out` (the domain keeps it out and
+   * civitai.red would show it; never charged), `unavailable` (with the reason), or
+   * `not-restricted`. It confers nothing. `unlockOutput` runs the unlock the viewer confirmed at
+   * `expectedTotal`. Both are bound to a signed-in session whose user is the token subject. See
+   * `block-output-unlock.service` for the guards.
+   */
+  previewOutputUnlock: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(blockOutputUnlockInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const auth = await authorizeOutputUnlockRequest(input.blockToken, ctx.user.id);
+      const { deps, unlockService } = await outputUnlockDeps({
+        ctx,
+        ...auth,
+        workflowId: input.workflowId,
+        disclosure: true,
+      });
+      return unlockService.previewBlockOutputUnlock(
+        {
+          workflowId: input.workflowId,
+          position: input.position,
+          viewerUserId: auth.userId,
+          claims: auth.claims,
+        },
+        deps
+      );
+    }),
+
+  unlockOutput: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(blockOutputUnlockConfirmInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const auth = await authorizeOutputUnlockRequest(input.blockToken, ctx.user.id);
+      const { deps, unlockService } = await outputUnlockDeps({
+        ctx,
+        ...auth,
+        workflowId: input.workflowId,
+        disclosure: false,
+      });
+      return unlockService.unlockBlockOutput(
+        {
+          workflowId: input.workflowId,
+          position: input.position,
+          viewerUserId: auth.userId,
+          claims: auth.claims,
+          expectedTotal: input.expectedTotal,
+        },
+        deps
+      );
     }),
 
   /**
@@ -14818,6 +14877,127 @@ async function consentQuoteGrantFor(
     });
   }
   return { quoteId: updated.quoteId, total: updated.total, consented: true as const };
+}
+
+/**
+ * The preamble of the two OUTPUT UNLOCK procedures: the bridge token, the spend scope, a real
+ * subject who is the signed-in user the request arrived with (the host's own dialog is the
+ * consent; the block, holding only its token, cannot present the session), App Blocks on for
+ * them, and the catalog rate limit. A development or review session is refused, as for the
+ * viewer-confirmed quotes: it has no consent leg to reserve against.
+ */
+async function authorizeOutputUnlockRequest(blockToken: string, sessionUserId: number) {
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+  }
+  if (claims.dev === true || claims.reviewRunForReal === true) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'unlocking an output is not available from a development or review session',
+    });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'unlocking an output requires an authenticated viewer',
+    });
+  }
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
+  await assertAppBlocksEnabledForTokenUser(userId);
+  const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rate.allowed) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Rate limit exceeded, please retry shortly.',
+    });
+  }
+  const user = await getBlockSessionUser(userId);
+  return { claims, userId, user };
+}
+
+/**
+ * The real-world side of `block-output-unlock.service`, bound to one verified viewer, app and
+ * workflow. Every spend goes through the same reservation the submit paths use
+ * (`reserveBlockBuzzSpendForClaims`: the platform cap and the viewer's per-app daily limit,
+ * atomic INCRBY-then-compare, so two racing spends cannot both pass the limit).
+ */
+async function outputUnlockDeps(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  userId: number;
+  user: SessionUser;
+  workflowId: string;
+  disclosure: boolean;
+}) {
+  const { ctx, claims, userId, user, workflowId, disclosure } = opts;
+  const [unlockService, unlockFee, { acquireOutputUnlockLock }, orchestration, workflows] =
+    await Promise.all([
+      import('~/server/services/blocks/block-output-unlock.service'),
+      import('~/server/services/blocks/block-output-unlock-fee.service'),
+      import('~/server/services/blocks/block-output-unlock-lock'),
+      import('~/server/services/orchestrator/orchestration-new.service'),
+      import('~/server/services/orchestrator/workflows'),
+    ]);
+  let tokenPromise: Promise<string> | undefined;
+  const token = () => (tokenPromise ??= getOrchestratorToken(userId, ctx));
+  let originalPromise: ReturnType<typeof unlockFee.readOriginalAuthorFee> | undefined;
+  const feeContext = async () => ({
+    workflowId,
+    original: await (originalPromise ??= unlockFee.readOriginalAuthorFee(workflowId)),
+    appId: claims.appId,
+    viewerUserId: userId,
+    privateRun: claims.privateRun === true,
+  });
+  const deps: OutputUnlockDeps = {
+    readWorkflow: async () => getWorkflow({ token: await token(), path: { workflowId } }),
+    quoteAuthorFee: async () =>
+      unlockFee.quoteUnlockAuthorFee({ ...(await feeContext()), disclosure }),
+    assertUnlockAllowed: () =>
+      orchestration.assertUnlockAllowed({
+        domain: resolveBlockMaturity(claims).isGreen ? 'green' : 'red',
+        showNsfw: !!user.showNsfw,
+      }),
+    assertUnlockReleasesOutput: async () =>
+      orchestration.assertUnlockReleasesOutput({ token: await token(), workflowId }),
+    reserveSpend: async (cost) => {
+      const reservation = await reserveBlockBuzzSpendForClaims(claims, userId, cost);
+      if (reservation.total > reservation.cap) {
+        await refundBlockBuzzReservation(reservation, cost);
+        return {
+          refused:
+            `daily Buzz cap reached: ${reservation.total - Math.ceil(cost)} already spent ` +
+            `today, this unlock costs ${cost}, daily cap is ${reservation.cap}`,
+        };
+      }
+      if (consentBudgetExceeded(reservation)) {
+        await refundBlockBuzzReservation(reservation, cost);
+        return {
+          refused: consentBudgetRejection(reservation.consent, cost, `this unlock costs ${cost}`),
+          errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
+        };
+      }
+      return { refund: (amount: number) => refundBlockBuzzReservation(reservation, amount) };
+    },
+    liftRestriction: async () => {
+      await workflows.updateWorkflow({
+        token: await token(),
+        workflowId,
+        allowMatureContent: true,
+        throwOnError: true,
+        signal: AbortSignal.timeout(unlockService.OUTPUT_UNLOCK_ORCHESTRATOR_TIMEOUT_MS),
+      });
+    },
+    chargeAuthorFee: async (reservedAuthorFeeBuzz) =>
+      unlockFee.chargeUnlockAuthorFee({
+        ...(await feeContext()),
+        appBlockId: claims.appBlockId,
+        reservedAuthorFeeBuzz,
+      }),
+    acquireLock: () => acquireOutputUnlockLock(workflowId),
+  };
+  return { deps, unlockService };
 }
 
 /** What a kind's arm hands the shared submit once the quote is claimed and checked. */

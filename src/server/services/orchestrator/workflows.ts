@@ -853,6 +853,7 @@ export async function updateWorkflow({
   workflowId,
   token,
   throwOnError,
+  signal,
   ...body
 }: UpdateWorkflowRequest & {
   token: string;
@@ -863,10 +864,17 @@ export async function updateWorkflow({
    * resolves on an HTTP error, and the metadata writers have always treated a failed write as done.
    */
   throwOnError?: boolean;
+  /** Bound the update. Unset leaves it unbounded, as it has always been. */
+  signal?: AbortSignal;
 }) {
   const client = createOrchestratorClient(token);
 
-  const { error, response } = await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  const { error, response } = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body,
+    ...(signal ? { signal } : {}),
+  });
   if (throwOnError && !response?.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
   return await getWorkflow({ token, path: { workflowId } });
