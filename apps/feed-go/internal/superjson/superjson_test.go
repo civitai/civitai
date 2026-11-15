@@ -198,17 +198,17 @@ func TestAppendStringMatchesEncodingJSON(t *testing.T) {
 		"\xed\xa0\x80", "\xed\xbf\xbf", // UTF-8-encoded surrogates: invalid in Go
 		"\xe2\x80", "\xf0\x9f\x98", "\xf4\x90\x80\x80", "\xc0\x80",
 	}
-	rng := rand.New(rand.NewPCG(1, 2))
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // G404: a seeded, reproducible test corpus
 	for n := 0; n < 5000; n++ {
 		var b []byte
 		for l := rng.IntN(24); l > 0; l-- {
 			switch rng.IntN(3) {
 			case 0:
-				b = append(b, byte(rng.IntN(256)))
+				b = append(b, byte(rng.IntN(256))) //nolint:gosec // G115: IntN(256) fits a byte
 			case 1:
 				b = append(b, pieces[rng.IntN(len(pieces))]...)
 			default:
-				b = utf8.AppendRune(b, rune(rng.IntN(0x110000)))
+				b = utf8.AppendRune(b, rune(rng.IntN(0x110000))) //nolint:gosec // G115: IntN(0x110000) fits a rune
 			}
 		}
 		corpus = append(corpus, string(b))
@@ -223,7 +223,7 @@ func TestAppendStringMatchesEncodingJSON(t *testing.T) {
 func TestAppendNumberMatchesFormatNumber(t *testing.T) {
 	floats := []float64{0, math.Copysign(0, -1), 1, -1, 0.5, 1e-6, 9.99e-7, 1e-7, 1.25e-7, 1e20, 1e21,
 		-1e21, 123456.7, 0.1 + 0.2, math.MaxFloat64, math.SmallestNonzeroFloat64, 1e100, 1e-100}
-	rng := rand.New(rand.NewPCG(3, 4))
+	rng := rand.New(rand.NewPCG(3, 4)) //nolint:gosec // G404: a seeded, reproducible test corpus
 	for n := 0; n < 2000; n++ {
 		floats = append(floats, math.Float64frombits(rng.Uint64()))
 	}
@@ -342,5 +342,26 @@ func BenchmarkSerialize(b *testing.B) {
 		if _, err := Serialize(page); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// Plain is JSON.stringify: a Date is its ISO string with no annotation, an undefined member is
+// omitted, an undefined array element is null, and there is no envelope.
+func TestPlainIsJSONStringify(t *testing.T) {
+	v := Object{
+		{Key: "createdAt", Val: time.Date(2024, 3, 1, 10, 0, 0, 123_000_000, time.UTC)},
+		{Key: "tags", Val: Undefined{}},
+		{Key: "list", Val: []any{int64(1), Undefined{}, nil}},
+		{Key: "meta", Val: nil},
+	}
+	got, err := Plain(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"createdAt":"2024-03-01T10:00:00.123Z","list":[1,null,null],"meta":null}` {
+		t.Fatalf("Plain = %s", got)
+	}
+	if _, err := Plain(Undefined{}); err == nil {
+		t.Fatal("an undefined root has no JSON form")
 	}
 }

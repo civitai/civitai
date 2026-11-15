@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,7 +30,7 @@ func TestAcceptableOrigin(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/trpc/"+Procedure, nil)
+			r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/"+Procedure, nil)
 			if c.origin != "" {
 				r.Header.Set("Origin", c.origin)
 			}
@@ -60,14 +61,14 @@ func TestShadowHandlerQueueBeforeBody(t *testing.T) {
 	s.ShadowQueue <- struct{}{}
 	body := &countingReader{}
 	w := httptest.NewRecorder()
-	s.ShadowHandler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/"+Procedure, body))
+	s.ShadowHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, body))
 	if w.Code != http.StatusAccepted || body.n != 0 {
 		t.Fatalf("full queue: code=%d body reads=%d, want 202 and 0", w.Code, body.n)
 	}
 	<-s.ShadowQueue
 	// A bad body releases the slot it took.
 	w = httptest.NewRecorder()
-	s.ShadowHandler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/"+Procedure, &countingReader{}))
+	s.ShadowHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, &countingReader{}))
 	if w.Code != http.StatusBadRequest || len(s.ShadowQueue) != 0 {
 		t.Fatalf("bad body: code=%d queued=%d, want 400 and 0", w.Code, len(s.ShadowQueue))
 	}
@@ -107,12 +108,12 @@ func TestServeHTTPHandsOffOriginsTheAppWouldRefuse(t *testing.T) {
 		Fallback:       http.HandlerFunc(func(http.ResponseWriter, *http.Request) { proxied++ }),
 	}
 	// No Origin/Referer: handed to the app before any compute.
-	s.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/trpc/"+Procedure, nil))
+	s.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/"+Procedure, nil))
 	if proxied != 1 || fallbackCount(t, reg, "origin") != 1 {
 		t.Fatalf("missing origin: proxied=%d origin-fallbacks=%v, want 1 and 1", proxied, fallbackCount(t, reg, "origin"))
 	}
 	// Positive control: an allowed origin reaches compute, which falls back for its own reason (a POST).
-	r := httptest.NewRequest(http.MethodPost, "/api/trpc/"+Procedure, nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/trpc/"+Procedure, nil)
 	r.Header.Set("Origin", "https://site.example")
 	s.ServeHTTP(httptest.NewRecorder(), r)
 	if proxied != 2 || fallbackCount(t, reg, "method") != 1 || fallbackCount(t, reg, "origin") != 1 {

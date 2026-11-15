@@ -4,7 +4,8 @@
 // Postgres then supplies the rows.
 //
 // Map is mapSearchInputToFeedQuery (src/server/services/feed-shadow.service.ts) for the inputs this
-// service accepts, in 'primary' mode on the 'website' route; Client is fetchFeedAnswer +
+// service accepts, in 'primary' mode on the 'website' route (the gallery) or the 'rest' route (the
+// public `/api/v1/images` endpoint, getImagesFromFeedServiceForRest); Client is fetchFeedAnswer +
 // fetchFeedPrimary (src/server/services/feed-primary.service.ts).
 package feedsvc
 
@@ -63,8 +64,15 @@ type Query struct {
 	ViewerID int
 	// PostIDs is set only by the gallery's post completion, which always takes the requested sort.
 	PostIDs []int
-	Sort    string
-	Period  string
+	// Rest is the 'rest' caller (the public images endpoint): a post's media are sorted like any other
+	// page there, so PostID is served.
+	Rest bool
+	// PostID is the input's own `postId` (the REST endpoint's `?postId=`).
+	PostID int
+	// UserID is the creator filter (`userId`, or the id a `username` resolved to), sent as `userIds`.
+	UserID int
+	Sort   string
+	Period string
 	// Limit is the per-call limit (the handler's overscan), before the feed's own clamp.
 	Limit int
 	// The cursor: CursorText when the client sent a string, else CursorNum (0 = none).
@@ -177,13 +185,19 @@ func Map(q Query) (string, *Refusal) {
 	if q.RequiringMeta {
 		return skip("flag:requiringMeta")
 	}
-	postIDs := positive(q.PostIDs)
+	// `[...postIds, postId]`: the completion's list, then the input's own post.
+	postIDs := positive(append(append([]int(nil), q.PostIDs...), q.PostID))
 	if len(postIDs) > 0 {
-		// The completion is the only caller with postIds, and it always takes the requested sort.
+		// postIdsInRequestedSort: the completion (PostIDs) always takes the requested sort; a lone
+		// postId only on the 'rest' caller (the site's own post page keeps the author's order).
+		completion := len(q.PostIDs) > 0
+		if !q.Rest && !completion {
+			return skip("input:postId")
+		}
 		if len(postIDs) > MaxPostIDs {
 			return skip(fmt.Sprintf("postIds>%d", MaxPostIDs))
 		}
-		if q.Limit > MaxLimit {
+		if completion && q.Limit > MaxLimit {
 			return skip(fmt.Sprintf("postIds:limit>%d", MaxLimit))
 		}
 	}
@@ -265,6 +279,9 @@ func Map(q Query) (string, *Refusal) {
 	if versionIDs != "" {
 		p.set("versionIds", versionIDs)
 	}
+	if q.UserID > 0 {
+		p.set("userIds", strconv.Itoa(q.UserID))
+	}
 	if len(q.Types) > 0 {
 		p.set("types", strings.Join(q.Types, ","))
 	}
@@ -317,15 +334,30 @@ type Answer struct {
 	NextCursor string // the feed's own `<a>|<b>`, "" = end
 }
 
-// Shadow-traffic headers. feed-go only re-runs sampled requests, so its calls must not read as the
-// site's served traffic. `x-request-source: shadow` is FeedQueryMode's non-serving value
-// (feed-shadow.service.ts; Node's served reads send `primary`, and the feed service reads neither
-// today). The feed service labels its route, estimate and duration metrics with `x-replay-id`
-// (`replay`, "live" when absent), so this id is what keeps feed-go's load out of the live series.
+// Request-source headers, by mode. A shadow compute only re-runs a sampled request, so its calls must
+// not read as the site's served traffic: `x-request-source: shadow` is FeedQueryMode's non-serving
+// value (feed-shadow.service.ts), and the feed service labels its route, estimate and duration
+// metrics with `x-replay-id` (`replay`, "live" when absent), so ReplayID keeps that load out of the
+// live series. A served request IS the site's traffic: it sends what Node's served reads send
+// (fetchFeedPrimary: `x-request-source: primary`) and no replay id.
 const (
-	RequestSource = "shadow"
-	ReplayID      = "feed-go-shadow"
+	RequestSource       = "shadow"
+	ReplayID            = "feed-go-shadow"
+	ServedRequestSource = "primary"
 )
+
+type shadowKey struct{}
+
+// WithShadow marks ctx as a shadow compute: feed-service calls made under it carry the shadow headers.
+func WithShadow(ctx context.Context) context.Context {
+	return context.WithValue(ctx, shadowKey{}, true)
+}
+
+// IsShadow reports whether ctx was marked by WithShadow.
+func IsShadow(ctx context.Context) bool {
+	v, _ := ctx.Value(shadowKey{}).(bool)
+	return v
+}
 
 // Timeout is FEED_PRIMARY_TIMEOUT_MS.
 const Timeout = 5 * time.Second
@@ -338,7 +370,7 @@ type Client struct {
 }
 
 // Fetch is `GET <base>/v1/feed?<query>`. A transport error or timeout is an error; a non-2xx status
-// is an Answer with that status and no ids.
+// is an Answer with that status and no ids. The request-source headers follow ctx's mode (WithShadow).
 func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	timeout := c.Timeout
 	if timeout == 0 {
@@ -350,8 +382,12 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	if err != nil {
 		return Answer{}, err
 	}
-	req.Header.Set("x-request-source", RequestSource)
-	req.Header.Set("x-replay-id", ReplayID)
+	if IsShadow(ctx) {
+		req.Header.Set("x-request-source", RequestSource)
+		req.Header.Set("x-replay-id", ReplayID)
+	} else {
+		req.Header.Set("x-request-source", ServedRequestSource)
+	}
 	hc := c.HTTP
 	if hc == nil {
 		hc = http.DefaultClient
@@ -360,7 +396,7 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	if err != nil {
 		return Answer{}, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<16))
 		return Answer{Status: res.StatusCode}, nil

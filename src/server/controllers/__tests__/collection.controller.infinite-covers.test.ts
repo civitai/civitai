@@ -43,7 +43,8 @@ vi.mock('~/server/services/collection-collaborator.service', () => ({
   getCollectionRoster: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('~/server/services/collection-cover-visibility', () => ({
+vi.mock('~/server/services/collection-cover-visibility', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   withServableCovers: mockServableCovers,
   getServableCoverCollectionIds: mockServableIds,
 }));

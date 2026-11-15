@@ -41,7 +41,6 @@ import {
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
-  isCoverWithinBrowsingLevel,
   getCollectionItemById,
   createEmptyPermissions,
   getCollectionEntryCount,
@@ -67,6 +66,7 @@ import {
 } from '~/server/services/collection.service';
 import {
   getServableCoverCollectionIds,
+  isCoverWithinBrowsingLevel,
   withServableCovers,
 } from '~/server/services/collection-cover-visibility';
 import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';

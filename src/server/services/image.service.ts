@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ownerHeld } from '~/server/services/legal-hold.service';
 import { canCheckBlockedImageHash, getIsImageBlocked } from '~/server/services/blocked-image-hash';
@@ -52,6 +53,7 @@ import { CacheTTL, constants } from '~/server/common/constants';
 import {
   hasBlockMarker,
   imageReviewedSql,
+  keepPermanentScanFailureSql,
   pendingLevelImageSql,
   pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
@@ -1745,7 +1747,7 @@ async function markImageScanSubmitFailure({
             to_jsonb(${new Date().toISOString()}::text)
           )
         ) ELSE '{}'::jsonb END
-      )
+      ) || ${keepPermanentScanFailureSql()}
     WHERE id = ${imageId}
       -- Submit retries can outlive the callback, so a late failure must not clobber a verdict.
       AND "ingestion" = ANY(ARRAY['Pending','Rescan','Error']::"ImageIngestionStatus"[])
@@ -1854,7 +1856,7 @@ export const ingestImage = async ({
         "scanJobs" = ${scanJobsJson}::jsonb || jsonb_strip_nulls(jsonb_build_object(
           'retryCount', "scanJobs"->'retryCount',
           'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
-        ))
+        )) || ${keepPermanentScanFailureSql()}
       WHERE id = ${id}
     `;
   imageScanSubmittedCounter.inc({ lane, result: 'success' });
@@ -5436,6 +5438,12 @@ export const getEntityCoverImage = async ({
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
   )`;
 
+  // A minor or SFW-only model's image above its gallery level is its owner's and moderators'
+  // alone. Placed before DISTINCT ON, so a held first image falls back to the next one.
+  const withinHeldGallery = heldGalleryImageSql({
+    exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
+  });
+
   // A taken-down model's images are its owner's and moderators' alone. Also true with no model
   // (a NULL mode), so the image and post arms keep images on no model version.
   const modelNotWithheld = Prisma.sql`(
@@ -5511,6 +5519,7 @@ export const getEntityCoverImage = async ({
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
           AND ${modelNotWithheld}
+          AND ${withinHeldGallery}
           -- The version and post rules sit before DISTINCT ON so a hidden first version or post
           -- falls back to the next visible one rather than leaving the model without a cover.
           AND (
@@ -5552,6 +5561,7 @@ export const getEntityCoverImage = async ({
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'ModelVersion'
           AND ${modelNotWithheld}
+          AND ${withinHeldGallery}
           -- canViewModelVersionStatus plus the private-version rule; access grantees are not resolved here.
           AND (
             (
@@ -5590,6 +5600,7 @@ export const getEntityCoverImage = async ({
         WHERE e."entityType" = 'Image'
           AND ${imageVisible}
           AND ${modelNotWithheld}
+          AND ${withinHeldGallery}
 
         UNION
         -- ARTICLES
@@ -5605,7 +5616,12 @@ export const getEntityCoverImage = async ({
           FROM entities e
           JOIN "Article" a ON a.id = e."entityId"
           JOIN "Image" i ON i.id = COALESCE(a."coverId", a."bannerId")
+          LEFT JOIN "Post" p ON p.id = i."postId"
+          LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          LEFT JOIN "Model" m ON m.id = mv."modelId"
           WHERE e."entityType" = 'Article'
+              AND ${modelNotWithheld}
+              AND ${withinHeldGallery}
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
             OR (${signedIn}::boolean AND a."userId" = ${viewerId}) OR ${isModerator}::boolean
@@ -5633,6 +5649,7 @@ export const getEntityCoverImage = async ({
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
             AND ${modelNotWithheld}
+            AND ${withinHeldGallery}
             AND (
               (p."publishedAt" < now() AND p.availability <> 'Private')
               OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean
@@ -5694,9 +5711,14 @@ export const getEntityCoverImage = async ({
             WHEN 'BountyEntry' THEN be."bountyId"
           END
           LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId"
+          -- A linked image can sit on another model's post.
+          LEFT JOIN "Post" p ON p.id = i."postId"
+          LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          LEFT JOIN "Model" m ON m.id = mv."modelId"
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND ${imageNotFlagged}
+            AND ${withinHeldGallery}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (

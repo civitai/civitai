@@ -1,0 +1,6 @@
+go test fuzz v1
+string("key")
+string("value")
+int64(1)
+float64(1.5)
+bool(true)

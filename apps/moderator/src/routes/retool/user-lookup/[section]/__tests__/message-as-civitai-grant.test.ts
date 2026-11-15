@@ -20,7 +20,7 @@ vi.mock('$lib/server/message-as-civitai', async (importOriginal) => ({
 
 const { actions } = await import('../+page.server');
 
-const TARGET = 8675309;
+const TARGET = 990100034;
 const KEY = 'compose-key-0001';
 
 const formEvent = (grants: Record<string, boolean>, fields: Record<string, string>) => {

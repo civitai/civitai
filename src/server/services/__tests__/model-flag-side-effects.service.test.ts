@@ -11,6 +11,7 @@ const {
   mockModelTagRefresh,
   mockModelVotableBust,
   mockModelsQueueUpdate,
+  mockCollectionsReindex,
   mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
   mockPurgeShowcaseEdge,
@@ -19,6 +20,7 @@ const {
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
+  mockCollectionsReindex: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockBustMvCache: vi.fn(),
 }));
@@ -40,6 +42,10 @@ vi.mock('~/server/redis/caches', () => ({
   userModelCountCache: { refresh: vi.fn() },
 }));
 
+vi.mock('~/server/services/collection-index-sync', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueModelCollectionsReindex: mockCollectionsReindex,
+}));
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
@@ -373,6 +379,9 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
     // The search document carries the showcase, so it is rebuilt at the new level.
     expect(mockModelsQueueUpdate).toHaveBeenCalledTimes(1);
     expect(mockModelsQueueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
+    // Collection documents carry covers judged at the gallery level too.
+    expect(mockCollectionsReindex).toHaveBeenCalledTimes(1);
+    expect(mockCollectionsReindex).toHaveBeenCalledWith([42]);
   });
 
   it('does not purge when the gallery level of an unheld model changes', async () => {
@@ -381,6 +390,7 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
       after: { ...baseAfter, gallerySettings: { level: 4 } },
     });
     expect(mockPurgeShowcaseEdge).not.toHaveBeenCalled();
+    expect(mockCollectionsReindex).not.toHaveBeenCalled();
   });
 
   it('does not purge when only poi changes', async () => {

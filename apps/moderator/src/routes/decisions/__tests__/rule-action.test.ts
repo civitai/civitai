@@ -106,7 +106,7 @@ beforeEach(() => {
   resolutionAnswer.mockResolvedValue(null);
   getPublicAgentReplies.mockResolvedValue({
     status: 'found',
-    replies: [{ conversationId: '150003911207', createdAt: null, text: 'Agent reply text.' }],
+    replies: [{ conversationId: '990000000001', createdAt: null, text: 'Agent reply text.' }],
   });
   getSupportGroup.mockResolvedValue(detail());
   listSupportTopics.mockResolvedValue([
@@ -442,7 +442,7 @@ describe('load degrades when the ruling table is absent', () => {
 describe('the resolved ruling', () => {
   const ANSWER = 'Update the app, then sign out and back in.';
   const BOTH = { 'decisions.rule': true, 'decisions.answer': true } as const;
-  const SOURCE = { answerTicketId: '2', answerConversationId: '150003911207' };
+  const SOURCE = { answerTicketId: '2', answerConversationId: '990000000001' };
 
   it('is refused 403 without decisions.answer, even holding decisions.rule — before any read', async () => {
     const out = await post(
@@ -496,9 +496,9 @@ describe('the resolved ruling', () => {
     const arg = recordResolution.mock.calls[0][0];
     expect(arg.answer).toEqual({
       text: ANSWER,
-      source: { ticketId: '2', conversationId: '150003911207' },
+      source: { ticketId: '2', conversationId: '990000000001' },
     });
-    expect(arg.shown.answer_source).toEqual({ ticket_id: '2', conversation_id: '150003911207' });
+    expect(arg.shown.answer_source).toEqual({ ticket_id: '2', conversation_id: '990000000001' });
     expect(JSON.stringify(arg.shown)).not.toContain('Agent reply text.');
   });
 
@@ -516,7 +516,7 @@ describe('the resolved ruling', () => {
   it('refuses a reply that is not among the ticket’s public agent replies', async () => {
     getPublicAgentReplies.mockResolvedValue({
       status: 'found',
-      replies: [{ conversationId: '150003999999', createdAt: null, text: 'other' }],
+      replies: [{ conversationId: '990000000002', createdAt: null, text: 'other' }],
     });
     const out = await post(
       'rule',

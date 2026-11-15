@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const base = "postgres://u:p@db.example:5432/app"
+const base = "postgres://u:p@db.example:5432/app" //nolint:gosec // G101: a fake DSN for a URL-rewrite test
 
 func TestDefaultsApplied(t *testing.T) {
 	cfg, err := Config(base, Settings{})

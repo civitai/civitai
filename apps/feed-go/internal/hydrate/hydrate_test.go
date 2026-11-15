@@ -232,3 +232,13 @@ func TestEventDecorationsNoVisibleEventReadsNothing(t *testing.T) {
 		t.Fatalf("with a visible event the cache is read: reason = %q, want event-decoration-miss", r)
 	}
 }
+
+// A msgpack uint64 above MaxInt is not an id: Int refuses it rather than wrapping it negative.
+func TestIntRefusesAnOutOfRangeUint64(t *testing.T) {
+	if n, ok := Int(uint64(1) << 63); ok {
+		t.Fatalf("Int(1<<63) = %d, true; want not ok", n)
+	}
+	if n, ok := Int(uint64(1)<<63 - 1); !ok || n != 1<<63-1 {
+		t.Fatalf("Int(MaxInt64) = %d, %v", n, ok)
+	}
+}

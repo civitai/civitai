@@ -7,11 +7,9 @@ import {
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
- * The models search document now carries only the showcase images within a minor or SFW-only
- * model's gallery level, but the indexer applies that only to documents it rewrites. A flag or
- * gallery-level change queues the model from now on; this rewrites those set before that.
- *
- * The response is read back from the queue; what `landed` proves is in `queueModelsReindex`.
+ * Backfill: the indexer applies the showcase hold only to documents it rewrites, so models flagged
+ * before the hold need a requeue. The response is read back from the queue; see
+ * `queueModelsReindex` for what `landed` proves.
  */
 
 async function queryHeldModelIds() {

@@ -3,7 +3,15 @@ name: feed-go
 # apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`; see
 # apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
-# This workflow is its only gate: gofmt, vet, the unit tests and a build of the binary.
+# This workflow is its only gate: gofmt, vet, the unit tests with coverage floors, the integration
+# tests and a build of the binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
+# tidiness and module checksums (`mod`); a short run of every fuzz target (`fuzz`); and an allocs/op
+# regression gate on the benchmarks against the merge-base (`bench`). The gate scripts live in
+# apps/feed-go/ci.
+#
+# The integration tier (`-tags integration`, files under that build tag only) runs against a real
+# Redis Cluster (3 masters) and a real Postgres 16 started in this job; the plain unit run never
+# compiles those files, so it stays hermetic.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
 # dispatches this workflow when the label is added. A push to `main` is unfiltered.
@@ -33,7 +41,22 @@ jobs:
     name: feed-go vet + test + build
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
-    timeout-minutes: 15
+    timeout-minutes: 20
+    services:
+      postgres:
+        # postgres:16 (16.16), pinned by its multi-arch index digest.
+        image: postgres:16@sha256:63e83b5a3dc36a917dccb76fe1bd2ac51f1ec9c1deb47ff20d4f04233bf6eae9
+        env:
+          POSTGRES_USER: feedgo
+          POSTGRES_PASSWORD: feedgo-integ
+          POSTGRES_DB: feedgo_integ
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U feedgo -d feedgo_integ"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     defaults:
       run:
         working-directory: apps/feed-go
@@ -56,14 +79,16 @@ jobs:
           fi
 
       - name: go vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags integration ./...
 
       # `-json` so the step below can count the tests that actually ran: a package that silently
-      # compiled to zero tests would otherwise still exit 0.
+      # compiled to zero tests would otherwise still exit 0. The cover profile feeds the floors below.
       - name: go test
         run: |
           status=0
-          go test -race -count=1 -json ./... > test.json || status=$?
+          go test -race -count=1 -covermode=atomic -coverprofile=cover.out -json ./... > test.json || status=$?
           jq -j 'select(.Action=="output") | .Output' test.json
           exit $status
 
@@ -78,8 +103,330 @@ jobs:
           # Positive control: a count below these floors means tests stopped being discovered, not that
           # they passed. Raise the package floor when a package gains its first test.
           [ "$failed" -eq 0 ]
-          [ "$pkgs" -ge 12 ]
-          [ "$passed" -ge 131 ]
+          [ "$pkgs" -ge 16 ]
+          [ "$passed" -ge 430 ]
+
+      # Statement coverage of the unit run (each package's own tests), per package and in total,
+      # against the ratchet floors in ci/coverage-floors.txt. A second instrument prints its own total
+      # (`go tool cover -func`) so the script's arithmetic can be cross-checked in the log.
+      - name: Coverage floors
+        run: |
+          set -euo pipefail
+          python3 ci/coverage_gate.py cover.out ci/coverage-floors.txt test.json
+          go tool cover -func=cover.out | tail -n 1
+
+      - name: Upload the coverage profile
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: feed-go-coverage
+          path: apps/feed-go/cover.out
+          if-no-files-found: warn
+
+      # A cluster on the host network: a cluster node announces its own address to clients, and on the
+      # services bridge network that is a container IP the runner's cluster client cannot always reach.
+      - name: Start Redis Cluster
+        env:
+          # redis:7.4 (7.4.12), pinned by its multi-arch index digest.
+          REDIS_IMAGE: redis:7.4@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+        run: |
+          set -euo pipefail
+          for port in 7000 7001 7002; do
+            docker run -d --name "feedgo-redis-$port" --network host "$REDIS_IMAGE" \
+              redis-server --port "$port" --cluster-enabled yes --cluster-config-file "nodes-$port.conf" \
+              --cluster-node-timeout 5000 --appendonly no --save ''
+          done
+          for port in 7000 7001 7002; do
+            for i in $(seq 1 60); do
+              if docker exec feedgo-redis-7000 redis-cli -p "$port" ping 2>/dev/null | grep -qx PONG; then break; fi
+              [ "$i" -lt 60 ] || { echo "::error::redis :$port never answered"; exit 1; }
+              sleep 1
+            done
+          done
+          docker exec feedgo-redis-7000 redis-cli --cluster create 127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 \
+            --cluster-replicas 0 --cluster-yes
+          for port in 7000 7001 7002; do
+            for i in $(seq 1 60); do
+              if docker exec feedgo-redis-7000 redis-cli -p "$port" cluster info | grep -q '^cluster_state:ok'; then break; fi
+              [ "$i" -lt 60 ] || { echo "::error::redis :$port never reached cluster_state:ok"; exit 1; }
+              sleep 1
+            done
+          done
+          masters=$(docker exec feedgo-redis-7000 redis-cli -p 7000 cluster nodes | grep -c master)
+          echo "cluster masters: $masters"
+          [ "$masters" -eq 3 ]
+
+      - name: Apply the integration schema
+        run: |
+          set -euo pipefail
+          docker exec -i "${{ job.services.postgres.id }}" \
+            psql -v ON_ERROR_STOP=1 -U feedgo -d feedgo_integ < testdata/integration/schema.sql
+
+      # -run 'Integration' keeps the unit tests (already run above) out of this step.
+      - name: go test (integration)
+        env:
+          FEED_GO_TEST_REDIS_CLUSTER: 127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002
+          FEED_GO_TEST_PG_URL: postgres://feedgo:feedgo-integ@127.0.0.1:5432/feedgo_integ?sslmode=disable
+        run: |
+          status=0
+          go test -race -count=1 -tags integration -run 'Integration' -json ./... > integration.json || status=$?
+          jq -j 'select(.Action=="output") | .Output' integration.json
+          exit $status
+
+      - name: Assert the integration tests ran
+        if: always()
+        run: |
+          set -euo pipefail
+          top='select(.Action=="pass" and .Test!=null and (.Test|contains("/")|not))'
+          failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' integration.json | wc -l)
+          hydrate=$(jq -r "$top | select(.Package|endswith(\"/internal/hydrate\")) | .Test" integration.json | wc -l)
+          feed=$(jq -r "$top | select(.Package|endswith(\"/internal/feed\")) | .Test" integration.json | wc -l)
+          passed=$(jq -r "$top | .Test" integration.json | wc -l)
+          echo "passed integration tests: $passed (hydrate $hydrate, feed $feed), failed: $failed"
+          # Positive control: below these floors (the TestIntegration* functions per package) the tests
+          # stopped being discovered — a wrong tag or -run filter runs zero tests and exits 0.
+          [ "$failed" -eq 0 ]
+          [ "$hydrate" -ge 18 ]
+          [ "$feed" -ge 12 ]
 
       - name: go build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go
+
+      - name: Redis Cluster logs
+        if: failure()
+        run: for port in 7000 7001 7002; do docker logs "feedgo-redis-$port" 2>&1 | tail -n 50; done
+
+  lint:
+    name: feed-go golangci-lint
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          cache-dependency-path: apps/feed-go/go.sum
+
+      # Configuration: apps/feed-go/.golangci.yml (v2 format; it also lints the integration tier). Any
+      # finding fails the step.
+      - name: golangci-lint
+        # golangci/golangci-lint-action v9.3.0
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+        with:
+          version: v2.15.0
+          working-directory: apps/feed-go
+
+  vuln:
+    name: feed-go govulncheck
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/feed-go
+    steps:
+      - uses: actions/checkout@v7
+
+      # The newest 1.26 patch, not go.mod's minimum: the standard library govulncheck checks is the
+      # toolchain's, and the image is built on the golang:1.26 line (apps/feed-go/Dockerfile), so a
+      # stdlib advisory fixed in a later 1.26 patch is the Dockerfile digest's to bump, not this scan's.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          check-latest: true
+          cache-dependency-path: apps/feed-go/go.sum
+
+      # Exits non-zero when a vulnerability is REACHABLE from this module's code (symbol-level);
+      # advisories in modules or packages it never calls are listed but do not fail the step.
+      - name: govulncheck
+        run: |
+          go version
+          go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags integration ./...
+
+  mod:
+    name: feed-go go.mod tidy + verify
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/feed-go
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          cache-dependency-path: apps/feed-go/go.sum
+
+      # `go mod tidy -diff` changes nothing and exits non-zero (printing the diff) when go.mod/go.sum
+      # are not tidy; `go mod verify` checks the downloaded modules against go.sum.
+      - name: go mod tidy
+        run: |
+          if ! go mod tidy -diff; then
+            echo "::error::go.mod/go.sum are not tidy (run go mod tidy in apps/feed-go)"
+            exit 1
+          fi
+      - name: go mod verify
+        run: go mod verify
+
+  # Each fuzz target for a short fixed time, one at a time (`-fuzz` takes one target in one package).
+  # Their seed corpora (testdata/fuzz/<Target> in each package, plus the f.Add seeds) also run in the
+  # plain `go test` of job `test`. A crasher is written to the package's testdata/fuzz/<Target>/ and
+  # uploaded; commit it as a regression seed with the fix.
+  fuzz:
+    name: feed-go fuzz
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/feed-go
+    env:
+      FUZZ_TIME: 20s
+      # Minimization of each new interesting input, as a count of executions (`Nx`). The default is
+      # 60s per input, and a worker minimizing reports no executions until it returns (internal/fuzz
+      # worker.minimize; an interrupted one reports none), so within FUZZ_TIME the exec count would
+      # stall at 0/sec once workers begin minimizing.
+      FUZZ_MINIMIZE: 100x
+      # <package dir>:<target>:<min execs>. The first step fails when this list and the Fuzz functions
+      # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
+      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). The Fuzz step fails a
+      # target whose final `execs: N` is below its floor (or missing): a run that fuzzed nothing, or
+      # stalled, is not a pass.
+      # Floors: about half the LOWEST final count observed over a few green runs at FUZZ_TIME with
+      # FUZZ_MINIMIZE=100x. Counts vary between runs on shared runners, so a floor from one run would
+      # flake. To change one: read the "execs" summary line the Fuzz step prints for each target over
+      # a few runs, and set the floor to about half the lowest; scale all floors with FUZZ_TIME.
+      FUZZ_TARGETS: >-
+        internal/auth:FuzzTokenFromCookieHeader:120000
+        internal/auth:FuzzVerify:67000
+        internal/feed:FuzzParse:180000
+        internal/hydrate:FuzzUnpack:180000
+        internal/shadow:FuzzCompare:280000
+        internal/shadow:FuzzCompareJSON:390000
+        internal/superjson:FuzzAppendString:440000
+        internal/superjson:FuzzSerialize:170000
+        internal/trpc:FuzzDecodeEnvelope:150000
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          cache-dependency-path: apps/feed-go/go.sum
+
+      - name: The fuzz targets are the listed set
+        run: |
+          set -euo pipefail
+          go test -list '^Fuzz' -json ./... \
+            | jq -r 'select(.Action=="output" and (.Output|startswith("Fuzz"))) | (.Package|sub(".*/apps/feed-go/";"")) + ":" + (.Output|rtrimstr("\n"))' \
+            | sort > "$RUNNER_TEMP/fuzz-found.txt"
+          printf '%s\n' $FUZZ_TARGETS | cut -d: -f1,2 | sort > "$RUNNER_TEMP/fuzz-listed.txt"
+          echo "found $(wc -l < "$RUNNER_TEMP/fuzz-found.txt") fuzz targets, $(wc -l < "$RUNNER_TEMP/fuzz-listed.txt") listed"
+          if ! diff -u "$RUNNER_TEMP/fuzz-listed.txt" "$RUNNER_TEMP/fuzz-found.txt"; then
+            echo "::error::FUZZ_TARGETS in feed-go.yml and the module's Fuzz functions differ (- listed, + found)"
+            exit 1
+          fi
+          [ -s "$RUNNER_TEMP/fuzz-found.txt" ]
+
+      - name: Fuzz
+        run: |
+          set -o pipefail # the go test status must survive the tee
+          status=0
+          for t in $FUZZ_TARGETS; do
+            IFS=: read -r pkg name floor <<< "$t"
+            echo "::group::$pkg:$name"
+            out="$RUNNER_TEMP/fuzz-$name.log"
+            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "$FUZZ_TIME" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$out"; then
+              echo "::error::$pkg:$name failed; the crasher is in the uploaded artifact ($pkg/testdata/fuzz/$name/)"
+              status=1
+            fi
+            echo "::endgroup::"
+            execs=$(grep -o 'execs: [0-9]*' "$out" | tail -n 1 | cut -d' ' -f2 || true)
+            echo "$pkg:$name execs ${execs:-none} (floor $floor)"
+            if [ -z "$execs" ] || [ "$execs" -lt "$floor" ]; then
+              echo "::error::$pkg:$name ran ${execs:-no} fuzz executions, below its floor of $floor"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: feed-go-fuzz-crashers
+          path: apps/feed-go/internal/*/testdata/fuzz/
+          if-no-files-found: ignore
+
+  # Benchmarks on the PR head and on its merge-base, `-benchmem -count=6`, compared with benchstat
+  # (report only: ns/op on a shared runner is noise). The gate is allocs/op only (deterministic):
+  # ci/allocs_gate.py fails a benchmark whose every head sample exceeds every base sample by > 5%
+  # (complete separation of 6 vs 6, Mann-Whitney p = 0.002 < 0.05). A benchmark with no baseline
+  # (new in the PR) is reported, not gated.
+  bench:
+    name: feed-go benchmarks (allocs/op gate)
+    runs-on: ubuntu-latest
+    # PRs only: the allocs/op compare needs a PR base, and a push to main has none.
+    if: github.event_name == 'pull_request' && (!github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/feed-go
+    env:
+      BENCH_ARGS: -run=^$ -bench=. -benchmem -count=6 -benchtime=200ms
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          cache-dependency-path: apps/feed-go/go.sum
+
+      # The merge-base with the PR's target branch (the parent if HEAD is already the merge-base).
+      - name: Check out the merge-base
+        env:
+          BASE_BRANCH: ${{ github.base_ref || 'main' }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_BRANCH"
+          base=$(git merge-base "origin/$BASE_BRANCH" HEAD)
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then base=$(git rev-parse HEAD^1); fi
+          echo "head $(git rev-parse HEAD), base $base"
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+
+      - name: Benchmarks (base)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/base/apps/feed-go"
+          go test $BENCH_ARGS ./... | tee "$RUNNER_TEMP/base.txt"
+
+      - name: Benchmarks (head)
+        run: |
+          set -euo pipefail
+          go test $BENCH_ARGS ./... | tee "$RUNNER_TEMP/head.txt"
+
+      - name: benchstat (report)
+        run: |
+          set -euo pipefail
+          go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e \
+            base="$RUNNER_TEMP/base.txt" head="$RUNNER_TEMP/head.txt" | tee "$RUNNER_TEMP/benchstat.txt"
+          { echo '### feed-go benchstat (base = merge-base)'; echo '```'; cat "$RUNNER_TEMP/benchstat.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: allocs/op gate
+        run: |
+          set -euo pipefail
+          # Positive control: every benchmark produced its 6 samples (11 benchmarks: superjson Serialize,
+          # SerializeBuffer, SerializeColdStart/page and SerializeColdStart/owned-small, hydrate Unpack,
+          # TagIDs and HydratePage/pipelined, feed BuildImages, shadow Compare/golden, Compare/page50
+          # and CompareJSON). A filter or build change that drops benchmarks would otherwise pass as "no
+          # regression"; raise the count with each new benchmark.
+          samples=$(grep -c ' allocs/op' "$RUNNER_TEMP/head.txt" || true)
+          echo "head samples with allocs/op: $samples"
+          [ "$samples" -ge 66 ]
+          python3 ci/allocs_gate.py "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"

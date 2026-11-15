@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"json\":{\"modelId\":5001,\"modelVersionId\":6001,\"sort\":\"Most Reactions\",\"browsingLevel\":1,\"limit\":3,\"cursor\":\"not-a-cursor\"}}")

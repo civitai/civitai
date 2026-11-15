@@ -88,7 +88,7 @@ const videoWorkflow = {
  * `customComfy` response (2026-09-01).
  */
 const comfyWorkflow = {
-  id: '1637892-20260901071941000',
+  id: '990200015-20260901071941000',
   createdAt: '2026-09-01T07:19:41.782Z',
   status: 'Succeeded',
   metadata: {},

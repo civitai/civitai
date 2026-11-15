@@ -265,9 +265,7 @@ type PrimaryCoverImage = {
  * refused by `getAllImages`' restricted base model condition, and, on a minor or SFW-only model's
  * post, is within that model's gallery level. The restricted condition only refuses an image whose
  * own level has a mature bit, so only those candidates are looked up. A collection whose cover
- * fails any of these falls back to `getFallbackCoverImages`. That applies a minor or SFW-only
- * model's flag limit in SQL and its stored gallery level after the query, so a fallback above the
- * stored level leaves the tile a placeholder rather than trying the next item.
+ * fails any of these falls back to `getFallbackCoverImages`.
  */
 async function getUsablePrimaryCovers(
   collections: { id: number; userId: number; image?: PrimaryCoverImage | null }[],

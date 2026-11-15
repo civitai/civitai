@@ -13,7 +13,7 @@ type StepRow = Parameters<Merge>[1][number];
 type JobRow = Parameters<Merge>[2][number];
 type RefundRow = Parameters<Merge>[3][number];
 
-const refund = (amount: number, workflowId = '11579707-20260529164941242'): RefundRow => ({
+const refund = (amount: number, workflowId = '990100035-20260529164941242'): RefundRow => ({
   workflowId,
   amount,
 });
@@ -21,7 +21,7 @@ const refund = (amount: number, workflowId = '11579707-20260529164941242'): Refu
 const charge = (over: Partial<ChargeRef> = {}): ChargeRef => ({
   id: 'tx',
   date: '2026-05-29 16:49:41',
-  workflowId: '11579707-20260529164941242',
+  workflowId: '990100035-20260529164941242',
   ...over,
 });
 
@@ -32,12 +32,12 @@ const job = (over: Partial<JobRow> = {}): JobRow => ({
   cost: 666,
   provider: 'ValdiAI',
   lastCompletedAt: '2026-05-29 17:57:45.390',
-  resources: [889818],
+  resources: [990100023],
   ...over,
 });
 
 const step = (over: Partial<StepRow> = {}): StepRow => ({
-  workflowId: '11579707-20260529164941242',
+  workflowId: '990100035-20260529164941242',
   type: 'model/ai-toolkit/sdxl',
   status: 'succeeded',
   jobs: 42,
@@ -47,13 +47,13 @@ const step = (over: Partial<StepRow> = {}): StepRow => ({
 });
 
 const base = {
-  modelVersionId: 889818,
-  modelId: 795765,
+  modelVersionId: 990100023,
+  modelId: 990100022,
   modelName: 'Illustrious-XL',
   versionName: 'v0.1',
   baseModel: 'Illustrious',
 };
-const baseModels = new Map([[889818, base]]);
+const baseModels = new Map([[990100023, base]]);
 
 describe('submitSecond', () => {
   it('reads the run instant out of the workflow id', () => {
@@ -154,8 +154,8 @@ describe('mergeOrchestratorRuns', () => {
     // split — reporting 10 epochs against each without saying so would double the account's real usage.
     const runs = mergeOrchestratorRuns(
       [
-        charge({ id: 'a', workflowId: '11579707-20260529164941242' }),
-        charge({ id: 'b', workflowId: '11579707-20260529164941801' }),
+        charge({ id: 'a', workflowId: '990100035-20260529164941242' }),
+        charge({ id: 'b', workflowId: '990100035-20260529164941801' }),
       ],
       [],
       [job()],
@@ -169,8 +169,8 @@ describe('mergeOrchestratorRuns', () => {
   it('does not flag two charges a second apart that each found their own jobs', () => {
     const runs = mergeOrchestratorRuns(
       [
-        charge({ id: 'a', workflowId: '11579707-20260529164941242' }),
-        charge({ id: 'b', workflowId: '11579707-20260529164942242' }),
+        charge({ id: 'a', workflowId: '990100035-20260529164941242' }),
+        charge({ id: 'b', workflowId: '990100035-20260529164942242' }),
       ],
       [],
       [job(), job({ second: '2026-05-29 16:49:42.000' })],
@@ -186,8 +186,8 @@ describe('mergeOrchestratorRuns', () => {
     // looked up" — filling them from a neighbouring bucket would report someone else's run as theirs.
     const runs = mergeOrchestratorRuns(
       [
-        charge({ id: 'looked', workflowId: '11579707-20260529164941242' }),
-        charge({ id: 'skipped', workflowId: '11579707-20260101000000000' }),
+        charge({ id: 'looked', workflowId: '990100035-20260529164941242' }),
+        charge({ id: 'skipped', workflowId: '990100035-20260101000000000' }),
       ],
       [],
       [job()],
@@ -220,7 +220,7 @@ describe('mergeOrchestratorRuns', () => {
       [charge()],
       [],
       [job()],
-      [refund(500, '11579707-20260101000000000')],
+      [refund(500, '990100035-20260101000000000')],
       baseModels
     );
     expect(runs.tx?.refunded).toBe(0);

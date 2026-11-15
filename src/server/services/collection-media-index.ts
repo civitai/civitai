@@ -368,8 +368,8 @@ export async function getCollectionIdsForModelCascade({
 }
 
 /**
- * Collections whose document shows a model's images: its own item, and the items and covers drawn
- * from any post on its versions, whoever posted it. A taken-down model's images leave every
+ * Collections whose document shows a model's images: its own item, and the items, article items and
+ * covers drawn from any post on its versions, whoever posted it. A taken-down model's images leave every
  * collection cover, and a restored model's come back, so entering or leaving TakenDown rebuilds
  * these.
  *
@@ -411,6 +411,12 @@ export async function getCollectionIdsForModelImages({
             WHERE mv."modelId" = ${modelId})
         UNION
         SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."imageId" IN (${modelImagesSql})
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."coverId" IN (${modelImagesSql}))
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."bannerId" IN (${modelImagesSql}))
         ${coverLeg}
       ) x
       LIMIT ${cap + 1}

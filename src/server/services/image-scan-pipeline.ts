@@ -60,6 +60,7 @@ import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import {
   hasBlockMarker,
   ingestionAfterScanErrorSql,
+  keepPermanentScanFailureSql,
   ingestionAfterVerdictSql,
   ingestionKeptAfterVerdict,
 } from '~/server/common/image-visibility';
@@ -313,7 +314,7 @@ export async function markImageScanError({
         ),
         '{error}',
         ${errorJson}::jsonb
-      )
+      ) || ${keepPermanentScanFailureSql()}
     WHERE id = ${imageId}
     RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType",
       "userId"

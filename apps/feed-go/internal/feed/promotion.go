@@ -92,7 +92,7 @@ type GalleryPromotion struct {
 // boolean or null is not).
 func jsPositiveInt(raw json.RawMessage) (int, bool) {
 	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || !(raw[0] == '-' || (raw[0] >= '0' && raw[0] <= '9')) {
+	if len(raw) == 0 || (raw[0] != '-' && (raw[0] < '0' || raw[0] > '9')) {
 		return 0, false
 	}
 	var f float64
