@@ -601,7 +601,6 @@ jobs:
     # blocks nothing. Push runs queue (see `concurrency`), so in a burst a commit whose
     # waiting run was replaced shows `cancelled`; the error shows on the next finished one.
     #
-    # On a full-ci dispatch it skips when the PR run on the same commit passed it (`passed`).
     needs: passed
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') && needs.passed.outputs.typecheck_tests != 'true' }}
     timeout-minutes: 30
@@ -955,7 +954,6 @@ jobs:
     runs-on: ubuntu-latest
     # Skips draft PRs unless they carry the `full-ci` label (see the header). The app typecheck that rode here moved to apps.yml with
     # the app suites, so this job is the package suites plus the install-time asserts below.
-    # On a full-ci dispatch it skips when the PR run on the same commit passed it (`passed`).
     needs: passed
     if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'packages') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && needs.passed.outputs.packages != 'true' }}
     # The `packages/*` suites — 616 tests when this job was added, which until then NO CI job ran.
