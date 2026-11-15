@@ -544,6 +544,24 @@ export const getModelPerformance = createCache({
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
+// Lower bound for the all-time read: nothing a creator earns or is counted for predates their first version, and
+// without a bound the owner-keyed earnings reads would scan from the start of the tables.
+async function fetchFirstVersionDate({ userId }: { userId: number }): Promise<string | null> {
+  const row = await dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .where('m.userId', '=', Number(userId))
+    .select((eb) => eb.fn.min('mv.createdAt').as('first'))
+    .executeTakeFirst();
+  return row?.first ? new Date(row.first).toISOString().slice(0, 10) : null;
+}
+
+export const getFirstVersionDate = createCache({
+  name: 'models:first-version-date',
+  fetch: fetchFirstVersionDate,
+  ttlSeconds: 1800,
+}).get;
+
 // Per-version analytics for a single model (feedback 4.5) — generations / downloads / buzz per version over the
 // selected range, plus the previous equal-length period (for % deltas, like the earnings page). Ownership is
 // enforced from Postgres (the model must belong to the caller); returns null when it doesn't exist or isn't theirs.
