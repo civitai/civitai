@@ -4,7 +4,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { Prisma } from '@prisma/client';
-import { collectionsSearchIndex } from '~/server/search-index';
+import { enqueueCollectionRebuild } from '~/server/services/collection-media-index';
 import { legacyCoverStringAllowedSql } from '~/server/services/collection-cover-visibility';
 
 // The feed index carries `collectionIds` for ACCEPTED membership of non-private
@@ -117,8 +117,6 @@ export async function getCollectionIdsCoveredByModels(modelIds: number[]) {
   return rows.map((row) => Number(row.id));
 }
 
-const COLLECTION_QUEUE_CHUNK = 1000;
-
 /**
  * Rebuild the search documents of the collections whose cover may come from these models, after a
  * change to what a minor or SFW-only model may show: the documents carry covers judged at its
@@ -126,14 +124,11 @@ const COLLECTION_QUEUE_CHUNK = 1000;
  */
 export async function queueModelCollectionsReindex(modelIds: number[]) {
   try {
-    const ids = await getCollectionIdsCoveredByModels(modelIds);
-    for (let i = 0; i < ids.length; i += COLLECTION_QUEUE_CHUNK) {
-      await collectionsSearchIndex.queueUpdate(
-        ids
-          .slice(i, i + COLLECTION_QUEUE_CHUNK)
-          .map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-      );
-    }
+    // Batched, and never throws on its own failure.
+    await enqueueCollectionRebuild({
+      collectionIds: await getCollectionIdsCoveredByModels(modelIds),
+      source: 'held-gallery-level',
+    });
   } catch (error) {
     logToAxiom({
       type: 'error',

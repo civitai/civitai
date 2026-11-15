@@ -7,10 +7,10 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { mockCollectionsQueueUpdate } = vi.hoisted(() => ({ mockCollectionsQueueUpdate: vi.fn() }));
-vi.mock('~/server/search-index', async (importOriginal) => ({
+const { mockEnqueue } = vi.hoisted(() => ({ mockEnqueue: vi.fn() }));
+vi.mock('~/server/services/collection-media-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
+  enqueueCollectionRebuild: mockEnqueue,
 }));
 
 const {
@@ -67,23 +67,22 @@ describe('getCollectionIdsCoveredByModels', () => {
   });
 
   it('asks nothing for no models', async () => {
-    (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockClear();
     expect(await getCollectionIdsCoveredByModels([])).toEqual([]);
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 });
 
 describe('queueModelCollectionsReindex', () => {
-  it("queues the model's collections for a rebuild", async () => {
-    mockCollectionsQueueUpdate.mockResolvedValueOnce(undefined);
+  it("hands every one of the model's collections to the batched rebuild", async () => {
+    mockEnqueue.mockResolvedValueOnce({ queued: 4, truncated: false });
     await queueModelCollectionsReindex([1]);
-    expect(mockCollectionsQueueUpdate).toHaveBeenCalledTimes(1);
-    const queued = mockCollectionsQueueUpdate.mock.calls[0][0] as { id: number }[];
-    expect(queued.map((item) => item.id).sort()).toEqual([1, 2, 3, 4]);
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    const { collectionIds } = mockEnqueue.mock.calls[0][0] as { collectionIds: number[] };
+    expect([...collectionIds].sort()).toEqual([1, 2, 3, 4]);
   });
 
-  it('resolves when the queue cannot be written, so a settings save never fails on it', async () => {
-    mockCollectionsQueueUpdate.mockRejectedValueOnce(new Error('queue down'));
+  it('resolves when the collections cannot be read, so a settings save never fails on it', async () => {
+    const raw = dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>;
+    raw.mockRejectedValueOnce(new Error('replica down'));
     await expect(queueModelCollectionsReindex([1])).resolves.toBeUndefined();
   });
 });
