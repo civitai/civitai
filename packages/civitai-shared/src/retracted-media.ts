@@ -1,9 +1,9 @@
 import { heldImageSql } from './held-media';
 
 /**
- * Blocked images served to moderators from storage, for when the public CDN no longer serves them.
- * Shared by the main app's `/api/mod/retracted-media` and the moderator app's `/api/retracted-media`,
- * so the two routes cannot disagree on what they serve.
+ * Blocked images served to moderators from storage, for when the public CDN no longer serves them,
+ * by the main app's `/api/mod/retracted-media`. In a shared package so a moderator-app route runs the
+ * same rules.
  */
 
 /** The block reasons this path serves. Any other reason is not served. */
@@ -21,7 +21,7 @@ export const RETRACTED_SERVED_ACTIVITY = 'retractedMedia:view';
 /** Per moderator, per minute. */
 export const RETRACTED_MEDIA_RATE_LIMIT = 600;
 
-/** The most bytes one response may carry; a larger object is refused, not streamed. */
+/** The largest object served; a larger one is refused whole, ranges included. */
 export const RETRACTED_MEDIA_MAX_BYTES = 250 * 1024 * 1024;
 
 /** How long one response may stream before it is cut off. */

@@ -197,7 +197,9 @@ describe('/api/mod/retracted-media serving', () => {
     expect(res.body).not.toContain('store.test');
   });
 
-  it('does not audit a mid-file range again', async () => {
+  // Deliberate, unlike held-media: a range from mid-file is audited too, or a moderator could pull a
+  // file's bytes in ranges with no row. Do not "fix" this to skip seeks without the leads' say.
+  it('audits a mid-file range too, so no bytes go out unrecorded', async () => {
     fetchMock.mockImplementation(
       async () =>
         new Response('yt', {
@@ -211,7 +213,32 @@ describe('/api/mod/retracted-media serving', () => {
     );
     const res = await call({ headers: { range: 'bytes=2-3' } });
     expect(res.statusCode).toBe(206);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a range of an object over the cap, and an encoded object', async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response('yt', {
+          status: 206,
+          headers: {
+            'content-type': 'image/png',
+            'content-length': '2',
+            'content-range': `bytes 0-1/${300 * 1024 * 1024}`,
+          },
+        })
+    );
+    expect((await call({ headers: { range: 'bytes=0-1' } })).statusCode).toBe(413);
+    fetchMock.mockImplementation(async () => stored('bytes', { 'content-encoding': 'gzip' }));
+    expect((await call()).statusCode).toBe(413);
     expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('asks the rate limit to fail closed', async () => {
+    await call();
+    expect(checkFixedWindow).toHaveBeenCalledWith(expect.any(String), expect.any(Number), 60, {
+      failOpen: false,
+    });
   });
 
   it('audits a range that starts at byte 0, as a video first loads', async () => {

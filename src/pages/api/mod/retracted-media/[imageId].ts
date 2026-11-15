@@ -10,7 +10,6 @@ import {
   forwardableRange,
   heldMediaContentType,
   heldMediaHeaders,
-  isAuditedServe,
 } from '@civitai/shared/held-media';
 import {
   RETRACTED_MEDIA_MAX_BYTES,
@@ -34,7 +33,7 @@ const query = z.object({ imageId: z.coerce.number().int().positive().max(2_147_4
  * A blocked image or video for a moderator, from storage rather than the public CDN, which stops
  * serving a blocked image's url. The browser names an image id and nothing else: the key comes from
  * the row, and only for an image `retractedImageSql` allows. The bytes come through this server; the
- * storage URL never leaves it. The moderator app's `/api/retracted-media` is the same route.
+ * storage URL never leaves it.
  */
 async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
   if (!(await getFeatureFlagsAsync({ user, req })).modRetractedMedia)
@@ -47,7 +46,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   const limit = await checkFixedWindow(
     prefixCacheKey(`retracted-media:rate-limit:${user.id}`),
     RETRACTED_MEDIA_RATE_LIMIT,
-    60
+    60,
+    { failOpen: false }
   );
   if (!limit.allowed) {
     res.setHeader('retry-after', String(limit.retryAfterSeconds));
@@ -90,9 +90,19 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       .status(502)
       .json({ error: `Storage would not serve this file (${upstream.status})` });
   }
-  // No declared length counts as too large: the cap must hold before the first byte leaves.
+  // Capped by the whole object, so a large one cannot be pulled in ranges, and an unknown or encoded
+  // size counts as too large: the cap must hold before the first byte leaves.
   const length = Number(upstream.headers.get('content-length') ?? NaN);
-  if (!Number.isFinite(length) || length > RETRACTED_MEDIA_MAX_BYTES) {
+  const total =
+    upstream.status === 206
+      ? Number(upstream.headers.get('content-range')?.match(/\/(\d+)$/)?.[1] ?? NaN)
+      : length;
+  if (
+    upstream.headers.get('content-encoding') ||
+    !Number.isFinite(length) ||
+    !Number.isFinite(total) ||
+    total > RETRACTED_MEDIA_MAX_BYTES
+  ) {
     void upstream.body.cancel();
     return void res.status(413).json({ error: 'This file is too large to serve here' });
   }
@@ -106,23 +116,22 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     return void res.status(415).json({ error: 'This video type does not play in a browser' });
   }
 
-  // Awaited and required: no bytes go out without their audit row.
-  if (isAuditedServe(upstream)) {
-    const written = await trackModActivity(user.id, {
-      entityType: 'image',
-      entityId: imageId,
-      activity: RETRACTED_SERVED_ACTIVITY,
-    }).then(
-      () => true,
-      (e) => {
-        console.error('[retracted-media] audit row failed', e);
-        return false;
-      }
-    );
-    if (!written) {
-      void upstream.body.cancel();
-      return void res.status(503).json({ error: 'Could not record this view' });
+  // Every response that carries bytes, ranges included, gets its row, awaited: unlike held-media,
+  // a range is not assumed to belong to a view already recorded.
+  const written = await trackModActivity(user.id, {
+    entityType: 'image',
+    entityId: imageId,
+    activity: RETRACTED_SERVED_ACTIVITY,
+  }).then(
+    () => true,
+    (e) => {
+      console.error('[retracted-media] audit row failed', e);
+      return false;
     }
+  );
+  if (!written) {
+    void upstream.body.cancel();
+    return void res.status(503).json({ error: 'Could not record this view' });
   }
 
   res.writeHead(upstream.status, heldMediaHeaders(contentType, upstream.headers));
