@@ -333,7 +333,7 @@ describe('installApiRouteServerHook delegation', () => {
   it('keeps an emit the prototype itself owned at install time', () => {
     const calls: Call[] = [];
     const parent = {
-      emit(): boolean {
+      emit(..._args: unknown[]): boolean {
         throw new Error('the parent must not be called when the prototype owns emit');
       },
     };
