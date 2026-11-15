@@ -600,7 +600,6 @@ jobs:
     # unmeasured and every later PR inherits the red. On `main` it renders red and
     # blocks nothing. Push runs queue (see `concurrency`), so in a burst a commit whose
     # waiting run was replaced shows `cancelled`; the error shows on the next finished one.
-    #
     needs: passed
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') && needs.passed.outputs.typecheck_tests != 'true' }}
     timeout-minutes: 30

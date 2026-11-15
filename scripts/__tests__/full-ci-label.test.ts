@@ -6,6 +6,7 @@ import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 import { classifyUnitJobs } from '../ci/full-ci-unit-shards.mjs';
+import { SUITES } from '../ci/lint-dispatch-passed.mjs';
 
 // The `full-ci` PR label: lint.yml, apps.yml and moderator-boot.yml read it on every PR run, and
 // full-ci.yml dispatches all three when it is added.
@@ -45,7 +46,10 @@ type Job = {
   if?: string;
   needs?: string | string[];
   permissions?: Record<string, string>;
-  steps?: Step[];
+  outputs?: Record<string, string>;
+  env?: Record<string, string>;
+  strategy?: { matrix?: Record<string, unknown> };
+  steps?: (Step & { id?: string })[];
 };
 type Workflow = {
   on?: Record<string, { types?: string[] } | null>;
@@ -204,6 +208,85 @@ describe('the full-ci label', () => {
     it.each(needsPassed.map(([id]) => id))('%s still runs when `passed` is skipped', (id) => {
       expect(conjuncts(jobs[id]?.if ?? '')[0]).toBe('!cancelled()');
     });
+
+    // Each consumer skips on its own output. A clause dropped from one `if` reruns that suite on
+    // every full-ci dispatch, with nothing red.
+    it.each([
+      ['typecheck-tests', "needs.passed.outputs.typecheck_tests != 'true'"],
+      ['packages', "needs.passed.outputs.packages != 'true'"],
+      ['component-ledger', "needs.passed.outputs.component != 'true'"],
+      // The shard job still runs shard 1 for geometry; it skips only when that is all it had.
+      ['component', "(inputs.only != 'component' || needs.passed.outputs.component != 'true')"],
+    ])('%s skips on its `passed` output', (id, clause) => {
+      expect(conjuncts(jobs[id]?.if ?? ''), `${id}: missing conjunct ${clause}`).toContain(clause);
+    });
+
+    // A passed component suite collapses the shard matrix to shard 1, which runs geometry alone:
+    // the component step is off (SUITE_COMPONENT) and geometry is not (SUITE_GEOMETRY).
+    it('component collapses to shard 1, geometry only, when the component suite passed', () => {
+      const comp = jobs.component ?? {};
+      const expr = norm(String(comp.strategy?.matrix?.shard ?? ''));
+      const [collapse, full] = splitTop(expr, '||').length === 2 ? splitTop(expr, '||') : [];
+      const [cond, value] = splitTop(collapse ?? '', '&&');
+      expect(value, 'the collapsed matrix must be [1]').toBe("fromJSON('[1]')");
+      expect(full, 'the full matrix must be [1, 2, 3]').toBe("fromJSON('[1, 2, 3]')");
+      expect(
+        splitTop(unwrap(cond ?? ''), '||'),
+        'the matrix must collapse when the component suite passed'
+      ).toContain("needs.passed.outputs.component == 'true'");
+      expect(
+        conjuncts(comp.env?.SUITE_COMPONENT ?? ''),
+        'SUITE_COMPONENT must be off when the component suite passed'
+      ).toContain("needs.passed.outputs.component != 'true'");
+      expect(comp.env?.SUITE_GEOMETRY ?? '', 'geometry must not depend on `passed`').not.toMatch(
+        /needs\.passed/
+      );
+    });
+
+    // scripts/ci/lint-dispatch-passed.mjs names the PR run's jobs and the outputs; this file is
+    // what those names refer to. A renamed job or a drifted output never matches, the suite always
+    // runs, and the script's own tests stay green, so the relationship is pinned here.
+    it('`passed` outputs exactly the SUITES keys, each from the script step', () => {
+      const outputs = jobs.passed?.outputs ?? {};
+      expect(Object.keys(outputs).sort(), '`passed` outputs vs SUITES keys').toEqual(
+        Object.keys(SUITES).sort()
+      );
+      for (const k of Object.keys(outputs))
+        expect(outputs[k], `output ${k}`).toBe(`\${{ steps.find.outputs.${k} }}`);
+      const find = (jobs.passed?.steps ?? []).find((s) => s.id === 'find');
+      expect(find?.run).toBe('node scripts/ci/lint-dispatch-passed.mjs');
+    });
+
+    /** A job's check names: `${{ matrix.<k> }}` in its name expanded over the FULL matrix. */
+    function checkNames(job: Job): string[] {
+      const name = job.name ?? '';
+      const m = /\$\{\{\s*matrix\.(\w+)\s*\}\}/.exec(name);
+      if (!m) return [name];
+      const raw = job.strategy?.matrix?.[m[1]];
+      let values: unknown[] = [];
+      if (Array.isArray(raw)) values = raw;
+      else {
+        // An expression: its last `||` alternative is the full list.
+        const parts = splitTop(norm(String(raw ?? '')), '||');
+        const lit = /^fromJSON\('(.*)'\)$/.exec(parts[parts.length - 1] ?? '');
+        if (lit) values = JSON.parse(lit[1]) as unknown[];
+      }
+      return values.map((v) => name.replace(m[0], String(v)));
+    }
+
+    it.each(Object.keys(SUITES))(
+      'SUITES.%s names exactly the check names of the jobs that skip on it',
+      (suite) => {
+        const re = new RegExp(`needs\\.passed\\.outputs\\.${suite}\\b`);
+        const consumers = needsPassed.filter(([, j]) => re.test(JSON.stringify(j)));
+        expect(consumers.length, `no job reads needs.passed.outputs.${suite}`).toBeGreaterThan(0);
+        const names = consumers.flatMap(([, j]) => checkNames(j)).sort();
+        expect(
+          [...SUITES[suite as keyof typeof SUITES]].sort(),
+          `SUITES.${suite} vs lint.yml`
+        ).toEqual(names);
+      }
+    );
   });
 
   describe('full-ci.yml, the dispatcher', () => {
