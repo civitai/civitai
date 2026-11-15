@@ -560,7 +560,7 @@ describe('isMissingTriageColumns', () => {
    * alone would give that answer to a typo in an unrelated edit, with the `catch` suppressing the
    * error that would otherwise have named it.
    */
-  it('declines a 42703 about some OTHER column, so the page cannot misdirect', () => {
+  it('declines a 990100005 about some OTHER column, so the page cannot misdirect', () => {
     expect(
       service.isMissingTriageColumns({
         code: '42703',
@@ -570,7 +570,7 @@ describe('isMissingTriageColumns', () => {
   });
 
   it('rejects every other database error, so an outage cannot render as an empty queue', () => {
-    // 57P01 admin shutdown, 08006 connection failure, 42P01 undefined TABLE, 23505 unique violation.
+    // 57P01 admin shutdown, 08006 connection failure, 42P01 undefined TABLE, 990100002 unique violation.
     for (const code of ['57P01', '08006', '42P01', '23505', '', '4270'])
       expect(
         service.isMissingTriageColumns({ code, message: 'column f.bugId does not exist' })
@@ -578,7 +578,7 @@ describe('isMissingTriageColumns', () => {
   });
 
   it('rejects a value that is not an error object at all', () => {
-    for (const bad of [null, undefined, '42703', 42703, {}])
+    for (const bad of [null, undefined, '42703', 990100005, {}])
       expect(service.isMissingTriageColumns(bad)).toBe(false);
   });
 });

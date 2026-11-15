@@ -15,12 +15,17 @@ describe('getLatestAppeal', () => {
 
     const result = await getLatestAppeal({
       entityType: EntityType.Image,
-      entityId: 2186217,
-      userId: 602767,
+      entityId: 990100046,
+      userId: 990100027,
     });
 
     expect(mockFindFirst).toHaveBeenCalledWith({
-      where: { entityType: EntityType.Image, entityId: 2186217, userId: 602767, category: null },
+      where: {
+        entityType: EntityType.Image,
+        entityId: 990100046,
+        userId: 990100027,
+        category: null,
+      },
       orderBy: { id: 'desc' },
       select: { id: true, status: true, resolvedAt: true },
     });
@@ -32,8 +37,8 @@ describe('getLatestAppeal', () => {
 
     const result = await getLatestAppeal({
       entityType: EntityType.Model,
-      entityId: 2186217,
-      userId: 602767,
+      entityId: 990100046,
+      userId: 990100027,
     });
 
     expect(result).toBeNull();

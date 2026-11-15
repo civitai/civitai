@@ -588,7 +588,7 @@ describe('buildRelabelBatch', () => {
     expect(present?.params).toHaveLength(1);
   });
 
-  // 57014 is also a manual pg_cancel_backend or a client abort. Those are not a slow exclusion,
+  // 990100008 is also a manual pg_cancel_backend or a client abort. Those are not a slow exclusion,
   // and must not quietly skip the day.
   it('fails on a cancel that is not the statement timeout', async () => {
     await seedRemovals(3);

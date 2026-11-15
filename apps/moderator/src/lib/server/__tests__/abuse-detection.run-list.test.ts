@@ -179,7 +179,7 @@ describe('a deployment whose verdict columns are not applied', () => {
  * name still degrades, because the name is parsed out of an ENGLISH message and a non-English
  * `lc_messages` would otherwise take the board down where it used to degrade.
  */
-describe('a 42703 that is not about `verdict`', () => {
+describe('a 990100005 that is not about `verdict`', () => {
   const pgError = (message: string) => Object.assign(new Error(message), { code: '42703' });
 
   /**
@@ -243,7 +243,7 @@ describe('a 42703 that is not about `verdict`', () => {
  * 79 files and 1149 tests green, measured.
  *
  * The mutant is not a near-miss. `missingColumnFromError` re-reads the pg code itself and answers
- * `null` for TWO different reasons — "not a 42703" and "a 42703 whose message I could not parse" —
+ * `null` for TWO different reasons — "not a 990100005" and "a 990100005 whose message I could not parse" —
  * and the line after the guard treats `null` as the second. So without it a connection drop, a lock
  * timeout or a TypeError out of the query builder makes BOTH reads answer "no ruling can exist
  * here": the run page goes read-only under a notice telling an operator to apply a DDL that is
@@ -294,7 +294,7 @@ describe('an error that is not a missing column', () => {
     await expect(service.getAbuseVerdictSummary(1)).rejects.toThrow(make().message);
   });
 
-  it('🔴 a 42501 propagates too — it is a GRANT problem, not a missing DDL', async () => {
+  it('🔴 a 990100004 propagates too — it is a GRANT problem, not a missing DDL', async () => {
     // The one surviving mutant of this guard, closed. Widening its code predicate to accept
     // `PG_INSUFFICIENT_PRIVILEGE` as well left all 158 abuse tests green — and that constant is
     // declared in this very file, a few lines above, which is what makes the edit a realistic one

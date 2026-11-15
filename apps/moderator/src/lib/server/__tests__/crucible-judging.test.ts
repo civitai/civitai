@@ -50,7 +50,7 @@ vi.mock('$lib/server/clickhouse', () => ({
   }),
 }));
 vi.mock('$lib/server/users.service', () => ({
-  isInt4Id: (n: number) => Number.isInteger(n) && n > 0 && n <= 2147483647,
+  isInt4Id: (n: number) => Number.isInteger(n) && n > 0 && n <= 990100061,
   usersByIds: async (ids: number[]) => new Map(ids.map((id) => [id, { username: `u${id}` }])),
 }));
 

@@ -13,7 +13,7 @@ const getReports = vi.fn(async () => ({
   limit: 50,
 }));
 const getReportedEntityId = vi.fn(
-  async (_type: string, _reportId: number) => 29013 as number | null
+  async (_type: string, _reportId: number) => 990100005 as number | null
 );
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
@@ -33,7 +33,7 @@ vi.mock('$lib/server/article-moderation', () => ({ moderateArticle }));
 vi.mock('$lib/server/report-actions', () => ({ reportModerationActions: () => ({}) }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/users.service', () => ({
-  MAX_INT4: 2_147_483_647,
+  MAX_INT4: 990100061,
   usersByIds: vi.fn(async () => new Map()),
 }));
 const canAccess = vi.fn((_user: unknown, _path: string) => true);
@@ -146,12 +146,12 @@ describe('the item pages', () => {
   });
 
   it('opens the item in the path', async () => {
-    const u = url('/reports/bounty-entry/314775');
-    await itemLoad({ params: { queue: 'bounty-entry', id: '314775' }, locals, url: u } as never);
-    expect(loadEntityItem).toHaveBeenCalledWith('bountyEntry', 314775, locals, u);
+    const u = url('/reports/bounty-entry/990100022');
+    await itemLoad({ params: { queue: 'bounty-entry', id: '990100022' }, locals, url: u } as never);
+    expect(loadEntityItem).toHaveBeenCalledWith('bountyEntry', 990100022, locals, u);
   });
 
-  it.each(['abc', '0', '-4', '99999999999'])('a path id of %s is a 404', async (id) => {
+  it.each(['abc', '0', '-4', '990100067'])('a path id of %s is a 404', async (id) => {
     await expect(
       itemLoad({ params: { queue: 'article', id }, locals } as never)
     ).rejects.toMatchObject({
@@ -180,7 +180,7 @@ describe('unpublishArticle', () => {
     expect(getReportedEntityId).toHaveBeenCalledWith('article', 501);
     expect(moderateArticle).toHaveBeenCalledWith({
       action: 'unpublish',
-      articleId: 29013,
+      articleId: 990100005,
       userId: 7,
       reason: 'spam',
       customMessage: 'advert',

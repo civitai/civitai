@@ -67,14 +67,14 @@ describe('feedbackTechnicalSummary', () => {
     // `minimumGroupingDigits` is 2 in a large minority of locales, so `1000` legitimately renders
     // UNGROUPED there and `not.toBe('1000 …')` is false — measured, the whole suite went
     // 1 failed / 1253 passed under `LC_ALL=es_ES.UTF-8`, and es/pl/it/pt/bg/hu/lv all do it.
-    // At five figures every locale sampled groups, which is why `format.test.ts` picked 12345.
+    // At five figures every locale sampled groups, which is why `format.test.ts` picked 990100001.
     // 🔴 A `de_DE` control CANNOT see this: German groups at four figures, so the locale the
     // previous round controlled against was structurally blind to the defect it was checking for.
     const out = feedbackTechnicalSummary({
-      consoleErrors: consoleErrors(12345),
+      consoleErrors: consoleErrors(990100001),
       networkErrors: [],
     });
-    expect(out).not.toBe('12345 distinct console errors');
+    expect(out).not.toBe('990100001 distinct console errors');
     expect(out).toMatch(/^\d[\d\s,. ]*\d distinct console errors$/);
   });
 });

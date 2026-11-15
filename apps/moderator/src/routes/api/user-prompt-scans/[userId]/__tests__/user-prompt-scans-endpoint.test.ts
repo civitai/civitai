@@ -80,7 +80,7 @@ describe('/api/user-prompt-scans', () => {
   });
 
   it('falls back to the default window and cap for values it does not offer', async () => {
-    await call('?days=36500&limit=1000000');
+    await call('?days=990100006&limit=1000000');
     expect(getPromptScans).toHaveBeenCalledWith(
       5,
       expect.objectContaining({ days: 7, limit: 100 })

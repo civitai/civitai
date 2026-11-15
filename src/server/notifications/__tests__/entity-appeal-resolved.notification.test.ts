@@ -16,11 +16,11 @@ describe('entity-appeal-resolved — prepareMessage url', () => {
   it('links a resolved Model appeal to the model', () => {
     const m = prepare({
       entityType: EntityType.Model,
-      entityId: 2186217,
+      entityId: 990100046,
       status: AppealStatus.Rejected,
     });
 
-    expect(m!.url).toBe('/models/2186217');
+    expect(m!.url).toBe('/models/990100046');
   });
 
   it('still links a resolved Image appeal to the image', () => {

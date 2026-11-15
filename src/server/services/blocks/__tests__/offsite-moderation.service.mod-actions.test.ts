@@ -1034,7 +1034,7 @@ describe('claimListing', () => {
     mockWrite.user.findUnique.mockResolvedValueOnce(null);
     await expect(
       claimListing({
-        input: { appListingId: APP_ID, targetUserId: 999999, reason: GOOD_REASON },
+        input: { appListingId: APP_ID, targetUserId: 990100040, reason: GOOD_REASON },
         reviewerUserId: REVIEWER,
       })
     ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'INVALID_TARGET_USER' });
@@ -2056,7 +2056,7 @@ describe('listMyListingModerationEvents', () => {
   });
 
   it('FORBIDDEN (NOT_OWNED) on a listing the caller does NOT own — no events read', async () => {
-    mockRead.appListing.findUnique.mockResolvedValueOnce({ userId: 12345 });
+    mockRead.appListing.findUnique.mockResolvedValueOnce({ userId: 990100001 });
     await expect(
       listMyListingModerationEvents({ input: { appListingId: APP_ID }, userId: OWNER })
     ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'NOT_OWNED' });

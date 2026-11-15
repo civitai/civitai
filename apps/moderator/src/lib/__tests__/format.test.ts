@@ -61,8 +61,8 @@ describe('plural', () => {
     // `12,345` would pin this suite to one machine's locale. Restating `toLocaleString()` in the
     // expectation would be worse — it derives the answer from the implementation and then passes
     // whatever that implementation does.
-    const out = plural(12345, 'finding');
-    expect(out).not.toBe('12345 findings');
+    const out = plural(990100001, 'finding');
+    expect(out).not.toBe('990100001 findings');
     expect(out.endsWith(' findings')).toBe(true);
     expect(out).toMatch(/^\d[\d\s,.  ]*\d findings$/);
   });

@@ -347,7 +347,9 @@ describe('rewardReportReporters multiplier', () => {
     ineligibleRows.mockReturnValue([]);
     reporterIds = [42, 7];
 
-    await expect(rewardReportReporters({ reportId: 91234, reporterIds })).resolves.toBeUndefined();
+    await expect(
+      rewardReportReporters({ reportId: 990100019, reporterIds })
+    ).resolves.toBeUndefined();
 
     expect(axiom).toHaveBeenCalledTimes(1);
     const payload = axiom.mock.calls[0][0];
@@ -356,7 +358,7 @@ describe('rewardReportReporters multiplier', () => {
     // this test exists for.
     expect(payload.type).toBe('error');
     expect(payload.event).toBe('reportAccepted rewards write failed');
-    expect(payload.reportId).toBe(91234);
+    expect(payload.reportId).toBe(990100019);
     expect(payload.reporterIds).toEqual([42, 7]);
     // safeError's fields land alongside the marker rather than instead of it.
     expect(payload.message).toBe('clickhouse unreachable');
