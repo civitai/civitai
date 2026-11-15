@@ -267,7 +267,7 @@ jobs:
   # full-ci.yml dispatches this workflow (`only: all`, `skip_passed: true`) when the label is
   # added to a PR whose own Lint run did not start the unit shards. That PR run usually runs
   # `Typecheck test files`, `Package unit tests` and the three component shards on the same head
-  # commit, so the dispatch ran them a second time. This job reads that run's jobs
+  # commit. This job reads that run's jobs
   # (scripts/ci/lint-dispatch-passed.mjs) and sets an output per suite that PASSED there; those
   # jobs skip here. It waits up to 10 minutes for PR jobs still running, since the label is
   # usually added while they are. A failed, cancelled or unfinished PR job, a lookup error, or

@@ -3,7 +3,8 @@
  * Which suites of a full-ci Lint dispatch has the pull_request Lint run on the SAME COMMIT
  * already passed? `.github/workflows/lint.yml` (the `passed` job, `skip_passed` input) skips
  * those suites in the dispatch, so the dispatch runs only what the PR run does not: the unit
- * shards, the main-push typecheck and geometry as a blocking verdict.
+ * shards, the `Typecheck (main pushes / fork PRs / non-main base)` job and geometry as a blocking
+ * verdict.
  *
  * A suite is skipped only on a SUCCESS that already exists. Per job name, across every
  * pull_request Lint run whose head SHA is the dispatch's (each run's latest attempt):
