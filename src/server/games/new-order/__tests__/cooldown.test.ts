@@ -89,7 +89,9 @@ vi.mock('~/server/common/constants', () => ({
 vi.mock('~/server/common/enums', () => ({
   NewOrderImageRatingStatus: {},
 }));
-vi.mock('~/shared/utils/prisma/enums', () => ({ NewOrderRankType: {} }));
+vi.mock('~/shared/utils/prisma/enums', () => ({
+  NewOrderRankType: { Acolyte: 'Acolyte', Knight: 'Knight', Templar: 'Templar', Paladin: 'Paladin' },
+}));
 vi.mock('dayjs', () => ({ default: () => ({}) }));
 
 // Import AFTER mocks

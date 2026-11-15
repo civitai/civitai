@@ -49,6 +49,9 @@
     "./held-media": "./src/held-media.ts",
     "./review-batch": "./src/review-batch.ts",
     "./report-reward": "./src/report-reward.ts",
+    "./new-order-levels": "./src/new-order-levels.ts",
+    "./new-order": "./src/new-order.ts",
+    "./knights-shop": "./src/knights-shop.ts",
     "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts"
   },
   "scripts": {
