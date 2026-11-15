@@ -1,6 +1,7 @@
 package superjson
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,23 +81,34 @@ func TestSerializeBufferErrorReleasesTheWriter(t *testing.T) {
 	}
 }
 
-// The pool hands out buffers of at least pooledBufSize, and takes back none above maxPooledBufSize;
-// a writer it takes back is reset (no output, path or annotations).
+// The page pool hands out buffers of at least pageBufSize and the owned pool of at least
+// ownedBufSize, each writer going back to the pool it came from; neither takes back a buffer above
+// maxPooledBufSize, and a writer taken back is reset (no output, path or annotations).
 func TestWriterPoolSizes(t *testing.T) {
-	w := getWriter(false)
-	if cap(w.buf) < pooledBufSize {
-		t.Fatalf("pooled buffer cap %d, want >= %d", cap(w.buf), pooledBufSize)
+	for _, c := range []struct {
+		pool *sync.Pool
+		min  int
+	}{{pagePool, pageBufSize}, {ownedPool, ownedBufSize}} {
+		w := getWriter(c.pool, false)
+		if cap(w.buf) < c.min || w.pool != c.pool {
+			t.Fatalf("pooled buffer cap %d (want >= %d), from its own pool %v", cap(w.buf), c.min, w.pool == c.pool)
+		}
+		putWriter(w)
 	}
-	putWriter(w)
 
-	if putWriter(&writer{buf: make([]byte, 0, maxPooledBufSize+1)}) {
+	local := &sync.Pool{}
+	if putWriter(&writer{buf: make([]byte, 0, maxPooledBufSize+1), pool: local}) {
 		t.Fatal("a buffer above maxPooledBufSize went back to the pool")
+	}
+	if putWriter(&writer{buf: make([]byte, 0, 16)}) {
+		t.Fatal("a writer with no pool was pooled")
 	}
 	kept := &writer{
 		buf:   append(make([]byte, 0, maxPooledBufSize), "used"...),
 		path:  []segment{{key: "a", index: -1}},
 		notes: []annotation{{path: "a", typ: "Date"}},
 		plain: true,
+		pool:  local,
 	}
 	notes := kept.notes
 	if !putWriter(kept) {
@@ -154,5 +166,53 @@ func BenchmarkSerializeBuffer(b *testing.B) {
 			b.Fatal(err)
 		}
 		buf.Release()
+	}
+}
+
+// smallBody is an error envelope's body, the smallest output this service writes.
+func smallBody() Object {
+	return Object{{"message", "unavailable"}, {"code", -32603}, {"data", Object{{"code", "INTERNAL_SERVER_ERROR"}, {"httpStatus", 503}, {"path", "image.getImagesAsPostsInfinite"}}}}
+}
+
+// bigPage is feedPage with a ~7.5 KB jsonb member per item: an output of a few hundred KiB, the size
+// of a real feed page.
+func bigPage() Object {
+	page := feedPage()
+	items, _ := page[0].Val.([]any)
+	meta := json.RawMessage(`{"prompt":"` + strings.Repeat("a long prompt ", 540) + `"}`)
+	for i, it := range items {
+		obj, _ := it.(Object)
+		obj = append(obj, Field{"meta", meta})
+		items[i] = obj
+	}
+	return page
+}
+
+// BenchmarkSerializeColdStart is a serialization on a writer fresh from each pool's New (the pools are
+// emptied by every GC cycle): the page pool's on a page-sized output, the owned pool's on the smallest
+// one. Its B/op is what a cold get costs, growth included. (Measured once on a 400 KiB page, from a
+// 16 / 64 / 512 KiB start: 1.86 MiB / 1.94 MiB / 526 KiB allocated; on a 145-byte body 16 / 64 / 512
+// KiB. Hence 512 KiB for pages and 16 KiB for owned output.)
+func BenchmarkSerializeColdStart(b *testing.B) {
+	for _, c := range []struct {
+		name string
+		size int
+		v    any
+	}{{"page", pageBufSize, bigPage()}, {"owned-small", ownedBufSize, smallBody()}} {
+		b.Run(c.name, func(b *testing.B) {
+			w := newWriter(c.size, nil)
+			if err := w.envelope(c.v); err != nil {
+				b.Fatal(err)
+			}
+			out := len(w.buf)
+			b.ReportAllocs()
+			for b.Loop() {
+				w := newWriter(c.size, nil)
+				if err := w.envelope(c.v); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(out), "out-bytes")
+		})
 	}
 }

@@ -8,6 +8,7 @@ package hydrate
 
 import (
 	"context"
+	"net"
 	"reflect"
 	"strconv"
 	"sync/atomic"
@@ -20,8 +21,9 @@ import (
 )
 
 // pipelineCounter is a go-redis hook counting pipelines: on the cluster client one per Pipelined
-// call, on a node client one per run of that node client's pipeline hook chain (see the assertion
-// below: not exactly one per node a pipeline touches).
+// call, on a node client one per run of that node client's pipeline hook chain. The node count is not
+// one per node a pipeline touches: every newly dialed connection first runs a CLIENT SETINFO pipeline
+// (library name and version, go-redis initConn), and the node's hook counts that too.
 type pipelineCounter struct{ n atomic.Int64 }
 
 func (*pipelineCounter) DialHook(next redis.DialHook) redis.DialHook          { return next }
@@ -182,10 +184,10 @@ func TestIntegrationPageMatchesPerLookupInTwoPipelines(t *testing.T) {
 	if pagePipelines != 2 || lookupPipelines != 10 {
 		t.Fatalf("cluster pipelines: Page %d, per-lookup %d; want 2 and 10", pagePipelines, lookupPipelines)
 	}
-	// The node-level hook counts what go-redis runs through each node client's pipeline hook chain.
-	// That is not exactly one per node a pipeline touches (measured: 9 for Page's 2 pipelines on 3
-	// masters, 43 for the per-lookup 10), so only the relation is asserted: fewer for Page, and at
-	// least one per stage.
+	// The node-level hook also counts the CLIENT SETINFO pipeline each newly dialed connection runs
+	// (see pipelineCounter), so its total depends on how many connections a run opens: 9 for Page's 2
+	// pipelines on 3 masters, 43 to 45 for the per-lookup 10, measured. Only the relation is asserted:
+	// fewer for Page, and at least one per stage.
 	if pageNodeTrips < 2 || lookupNodeTrips <= pageNodeTrips {
 		t.Fatalf("node pipeline hook calls: Page %d (want >= 2), per-lookup %d (want more than Page)", pageNodeTrips, lookupNodeTrips)
 	}
@@ -268,6 +270,121 @@ func TestIntegrationPageFallbacksMatchPerLookup(t *testing.T) {
 			integWantReason(t, err, c.reason)
 			_, err = perLookup(ctx, e.src, req)
 			integWantReason(t, err, c.reason)
+		})
+	}
+}
+
+// deadSlotClient is a cluster client of the real cluster in which the one slot holding key is served
+// by a node nobody listens on: every command on that slot fails with a dial error, as when a shard is
+// down, while every other slot answers. The topology comes from ClusterSlots, so no real node is
+// touched (pausing a master instead would stall the other package's integration tests, which share
+// the cluster and run in parallel).
+func deadSlotClient(t *testing.T, e *integEnv, key string, others []string) *redis.ClusterClient {
+	t.Helper()
+	ctx := integtest.Ctx(t)
+	slot, err := e.c.ClusterKeySlot(ctx, key).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range others {
+		if k == key {
+			continue
+		}
+		if s, err := e.c.ClusterKeySlot(ctx, k).Result(); err != nil || s == slot {
+			t.Fatalf("key %s shares slot %d with %s (err %v); the test needs the dead slot to hold one key", k, slot, key, err)
+		}
+	}
+	shards, err := e.c.ClusterShards(ctx).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead := []redis.ClusterNode{{ID: "integ-dead-node", Addr: "127.0.0.1:1"}}
+	var slots []redis.ClusterSlot
+	add := func(start, end int64, nodes []redis.ClusterNode) {
+		if start <= end {
+			slots = append(slots, redis.ClusterSlot{Start: int(start), End: int(end), Nodes: nodes})
+		}
+	}
+	for _, sh := range shards {
+		var nodes []redis.ClusterNode
+		for _, n := range sh.Nodes {
+			if n.Role != "master" {
+				continue
+			}
+			host := n.Endpoint
+			if host == "" || host == "?" {
+				host = n.IP
+			}
+			nodes = append(nodes, redis.ClusterNode{ID: n.ID, Addr: net.JoinHostPort(host, strconv.FormatInt(n.Port, 10))})
+		}
+		if len(nodes) == 0 {
+			t.Fatalf("shard %+v has no master", sh)
+		}
+		for _, r := range sh.Slots {
+			if r.Start > slot || r.End < slot {
+				add(r.Start, r.End, nodes)
+				continue
+			}
+			add(r.Start, slot-1, nodes)
+			add(slot, slot, dead)
+			add(slot+1, r.End, nodes)
+		}
+	}
+	c := redis.NewClusterClient(&redis.ClusterOptions{
+		ClusterSlots: func(context.Context) ([]redis.ClusterSlot, error) { return slots, nil },
+		DialTimeout:  time.Second,
+	})
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
+// One shard down inside the page's shared pipeline (a real cluster, the dead slot holding exactly
+// one key): only that key's lookup notices. A fail-open lookup reads the id from Postgres and the
+// page equals the healthy page but for that id; a lookup with no miss path falls back with its usual
+// reason.
+func TestIntegrationPageOneDeadShard(t *testing.T) {
+	cases := []struct {
+		name   string
+		key    func(e *integEnv) string
+		reason string // "" = the page is served
+	}{
+		{"basic user (fail-open)", func(e *integEnv) string { return e.prefix + KeyBasicUsers + ":" + strconv.Itoa(ipU1) }, ""},
+		{"tag ids (falls back)", func(e *integEnv) string { return e.prefix + KeyTagIDs + ":" + strconv.Itoa(ipI1) }, "tag-ids-miss"},
+		{"metric hash (falls back)", func(*integEnv) string { return metricHashKey(ipI3) }, "metrics-read-failed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := integSetup(t, true)
+			req, keys := integPage(t, e)
+			integtest.Exec(t, e.pool, `INSERT INTO "User" (id, username, image) VALUES (1113001, 'integ-page-db-u1', 'integ-page-db-u1.jpeg');`)
+			ctx := integtest.Ctx(t)
+			healthy, err := e.src.Page(ctx, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := c.key(e)
+			dc := deadSlotClient(t, e, key, keys)
+			src := &Sources{Packed: &PackedReader{Redis: dc, Prefix: e.prefix}, Cache: dc, Replica: e.pool}
+			got, err := src.Page(ctx, req)
+			if c.reason != "" {
+				integWantReason(t, err, c.reason)
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u := got.Basic[ipU1]; u.Username != "integ-page-db-u1" {
+				t.Fatalf("U1 on the dead shard = %+v, want the Postgres row", u)
+			}
+			want := *healthy
+			want.Basic = map[int]BasicUser{}
+			for id, u := range healthy.Basic {
+				want.Basic[id] = u
+			}
+			want.Basic[ipU1] = got.Basic[ipU1]
+			if !reflect.DeepEqual(*got, want) {
+				t.Fatalf("a lookup on a healthy shard changed:\n got %#v\nwant %#v", *got, want)
+			}
 		})
 	}
 }

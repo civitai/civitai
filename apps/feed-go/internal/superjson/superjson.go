@@ -77,17 +77,37 @@ type segment struct {
 	index int
 }
 
-// Output buffers come from writerPool. A pooled writer starts with pooledBufSize of buffer (a feed page
-// is a few hundred KiB, so append rarely grows it); one whose buffer grew past maxPooledBufSize is not
-// put back, so a rare huge page does not pin its memory in the pool.
+// Writers come from two pools, both emptied by every GC cycle, so a get after a cycle allocates a
+// fresh writer:
+//
+//   - pagePool serves SerializeBuffer and PlainBuffer, the served answers (a feed page is a few hundred
+//     KiB). Its writers start at pageBufSize: on a 400 KiB page a cold get allocates 526 KiB in all,
+//     against 1.9 MiB of append growth from a 64 KiB start (BenchmarkSerializeColdStart).
+//   - ownedPool serves Serialize and Plain, whose output is copied out (error bodies, tests). Its
+//     writers start at ownedBufSize, so a tiny body's cold get costs 16 KiB, not a page buffer.
+//
+// A writer whose buffer grew past maxPooledBufSize is put back in neither, so a rare huge page does not
+// pin its memory.
 const (
-	pooledBufSize    = 512 << 10
+	pageBufSize      = 512 << 10
+	ownedBufSize     = 16 << 10
 	maxPooledBufSize = 1 << 20
 )
 
-var writerPool = sync.Pool{New: func() any {
-	return &writer{buf: make([]byte, 0, pooledBufSize), path: make([]segment, 0, 8)}
-}}
+var (
+	pagePool  = &sync.Pool{}
+	ownedPool = &sync.Pool{}
+)
+
+func init() {
+	pagePool.New = func() any { return newWriter(pageBufSize, pagePool) }
+	ownedPool.New = func() any { return newWriter(ownedBufSize, ownedPool) }
+}
+
+// newWriter is a writer whose buffer starts at size bytes, returned to pool when done (nil: never).
+func newWriter(size int, pool *sync.Pool) *writer {
+	return &writer{buf: make([]byte, 0, size), path: make([]segment, 0, 8), pool: pool}
+}
 
 type writer struct {
 	buf []byte
@@ -97,24 +117,26 @@ type writer struct {
 	notes []annotation
 	// plain writes JSON.stringify's output (no envelope, no annotations): see Plain.
 	plain bool
+	// pool is the pool the writer came from and goes back to.
+	pool *sync.Pool
 }
 
-func getWriter(plain bool) *writer {
-	w, _ := writerPool.Get().(*writer)
+func getWriter(pool *sync.Pool, plain bool) *writer {
+	w, _ := pool.Get().(*writer)
 	w.plain = plain
 	return w
 }
 
-// putWriter resets w and returns it to the pool, unless its buffer outgrew maxPooledBufSize (then it
-// is left to the collector). It reports whether w was pooled. The caller must hold no reference to
-// w.buf afterwards: the next writer taken from the pool writes over it.
+// putWriter resets w and returns it to its pool, unless its buffer outgrew maxPooledBufSize (then it
+// is left to the collector) or it has no pool. It reports whether w was pooled. The caller must hold
+// no reference to w.buf afterwards: the next writer taken from the pool writes over it.
 func putWriter(w *writer) bool {
-	if cap(w.buf) > maxPooledBufSize {
+	if w.pool == nil || cap(w.buf) > maxPooledBufSize {
 		return false
 	}
 	clear(w.notes) // the annotations' path strings are not kept alive by the pool
 	w.buf, w.path, w.notes, w.plain = w.buf[:0], w.path[:0], w.notes[:0], false
-	writerPool.Put(w)
+	w.pool.Put(w)
 	return true
 }
 
@@ -148,15 +170,19 @@ func (b *Buffer) Release() {
 // undefined array elements as null. No envelope and no annotations. The result is a copy the caller
 // owns; PlainBuffer avoids the copy.
 func Plain(v any) ([]byte, error) {
-	return owned(PlainBuffer(v))
+	return owned(plainInto(ownedPool, v))
 }
 
 // PlainBuffer is Plain into a pooled Buffer the caller must Release.
 func PlainBuffer(v any) (*Buffer, error) {
+	return plainInto(pagePool, v)
+}
+
+func plainInto(pool *sync.Pool, v any) (*Buffer, error) {
 	if _, isUndef := v.(Undefined); isUndef {
 		return nil, errors.New("superjson: undefined has no JSON form")
 	}
-	w := getWriter(true)
+	w := getWriter(pool, true)
 	if err := w.value(v, false); err != nil {
 		putWriter(w)
 		return nil, err
@@ -168,7 +194,7 @@ func PlainBuffer(v any) (*Buffer, error) {
 // `{"json":…,"meta":{"values":{…},"v":1}}`. The result is a copy the caller owns; SerializeBuffer
 // avoids the copy.
 func Serialize(v any) ([]byte, error) {
-	return owned(SerializeBuffer(v))
+	return owned(serializeInto(ownedPool, v))
 }
 
 // owned copies a Buffer's output out of the pool and releases it.
@@ -184,7 +210,11 @@ func owned(b *Buffer, err error) ([]byte, error) {
 // SerializeBuffer is Serialize into a pooled Buffer the caller must Release. A failed serialization
 // returns no Buffer (its writer is already back in the pool).
 func SerializeBuffer(v any) (*Buffer, error) {
-	w := getWriter(false)
+	return serializeInto(pagePool, v)
+}
+
+func serializeInto(pool *sync.Pool, v any) (*Buffer, error) {
+	w := getWriter(pool, false)
 	if err := w.envelope(v); err != nil {
 		putWriter(w)
 		return nil, err

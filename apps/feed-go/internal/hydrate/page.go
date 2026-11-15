@@ -33,9 +33,10 @@ type Page struct {
 	Reactions     map[int][]any            // Reactions
 }
 
-// Page answers what BasicUsers, UserCosmetics, ProfilePictures, ImageFrames, Thumbnails, ImageMetrics,
-// TagIDs, EventDecorations and Reactions answer for req, with the cache reads in one pipeline per
-// dependency stage instead of one (or two) per lookup:
+// Page answers what the per-lookup reads (BasicUsers, UserCosmetics, ProfilePictures, ImageFrames,
+// Thumbnails, ImageMetrics, TagIDs, EventDecorations: perlookup_test.go keeps them as the reference)
+// and Reactions answer for req, with the cache reads in one pipeline per dependency stage instead of
+// one (or two) per lookup:
 //
 //   - stage 1, one Batch: every per-id GET of the users, profile pictures, user cosmetics, frames, tag
 //     ids, thumbnails and event decorations caches, and every metric hash HGETALL. None depends on
@@ -43,7 +44,7 @@ type Page struct {
 //   - stage 2, one Batch: the cosmetic records both cosmetic joins need (the user cosmetics' and the
 //     frames' cosmetic ids, merged), read once stage 1 has answered both.
 //
-// Everything that is not a cache read is as in the per-lookup methods, which share these halves:
+// Everything that is not a cache read is as in the per-lookup reads, which share these halves:
 // each lookup's misses, markers and staleness (decodeEntry), its fallback reasons, and its replica
 // queries, which run after the pipeline, concurrently, one per lookup that has misses. The reactions
 // query reads no cache and starts with stage 1. A lookup's error (the first, as with errgroup) is
@@ -61,7 +62,7 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	frames := s.Packed.Queue(stage1, KeyImageFrames, images, 0)
 	thumbs := s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)
 	tags := s.Packed.Queue(stage1, KeyTagIDs, images, 0)
-	// No visible event: no decoration read at all (EventDecorations).
+	// No visible event: no decoration read at all (decorationsForEvents returns before its fetch).
 	readEvents := len(images) > 0 && len(req.VisibleEvents) > 0
 	var events *PackedRead
 	if readEvents {

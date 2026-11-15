@@ -96,13 +96,21 @@ func (r *PackedRead) Entries() map[int]Entry {
 	return out
 }
 
-// metricsRead is one queued ImageMetrics lookup: the HGETALL of each id's metric hash.
+// metricsRead is one queued getImageMetricsObject lookup over the watcher-fed metric hashes: the
+// HGETALL of each id's `metrics:Image:<id>`. An image with no hash at all is a miss and falls back
+// (the Node path populates it from ClickHouse). Every image whose hash exists is KNOWN, a `notFound`
+// marker included: on the direct read getImageMetricsObjectDirect writes `shapeImageMetrics(id,
+// metrics[id])` for every requested id, so the id MetricService.fetch skips for the marker gets an
+// all-null entry; on the image-metrics-swr read shapeCachedMetricHash shapes the marker hash to nulls.
+// Either way toImageV2Stats sees an entry: zero counts, statsUnknown false. (Node reports statsUnknown
+// only when the ClickHouse read failed or timed out and the cache held no hash; an image with no hash
+// falls back here, so this service never answers statsUnknown true.)
 type metricsRead struct {
 	ids  []int
 	cmds []*redis.MapStringStringCmd
 }
 
-// queueMetrics adds ImageMetrics' HGETALLs of (unique) ids to b, on s.Cache.
+// queueMetrics adds the metric HGETALLs of (unique) ids to b, on s.Cache.
 func (s *Sources) queueMetrics(b *Batch, ids []int) *metricsRead {
 	r := &metricsRead{ids: ids}
 	if len(ids) == 0 {
@@ -117,7 +125,7 @@ func (s *Sources) queueMetrics(b *Batch, ids []int) *metricsRead {
 	return r
 }
 
-// result is ImageMetrics' answer after Exec. Any command error is a read failure: the first one in
+// result is the metrics lookup's answer after Exec. Any command error is a read failure: the first one in
 // command order names it, as the separate pipeline's first-command error did (an HGETALL answers an
 // absent key with an empty hash, never redis.Nil, so every error here is a real failure).
 func (r *metricsRead) result() (map[int]Metrics, error) {
