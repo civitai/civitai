@@ -4,7 +4,10 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { Prisma } from '@prisma/client';
-import { enqueueCollectionRebuild } from '~/server/services/collection-media-index';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForModelImages,
+} from '~/server/services/collection-media-index';
 import { legacyCoverStringAllowedSql } from '~/server/services/collection-cover-visibility';
 
 // The feed index carries `collectionIds` for ACCEPTED membership of non-private
@@ -123,19 +126,10 @@ export async function getCollectionIdsCoveredByModels(modelIds: number[]) {
  * gallery level. Never throws; a failure is logged and the documents catch up on their next update.
  */
 export async function queueModelCollectionsReindex(modelIds: number[]) {
-  try {
-    // Batched, and never throws on its own failure.
-    await enqueueCollectionRebuild({
-      collectionIds: await getCollectionIdsCoveredByModels(modelIds),
-      source: 'held-gallery-level',
-    });
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'model-collections-index-enqueue-failed',
-      message: error instanceof Error ? error.message : 'unknown',
-      modelIds,
-    }).catch(() => undefined);
+  const source = 'held-gallery-level';
+  for (const modelId of modelIds) {
+    const { collectionIds, truncated } = await getCollectionIdsForModelImages({ modelId, source });
+    await enqueueCollectionRebuild({ collectionIds, truncated, source });
   }
 }
 

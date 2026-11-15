@@ -37,6 +37,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, cover text, "coverId" int, "bannerId" int, "nsfwLevel" int NOT NULL DEFAULT 1
     );
     CREATE TABLE "Collection" (id int PRIMARY KEY, "imageId" int);
+    CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId");
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY, "collectionId" int NOT NULL, "modelId" int, "postId" int, "imageId" int, "articleId" int
     );
@@ -68,9 +69,10 @@ beforeAll(async () => {
     INSERT INTO "Article" (id, cover, "coverId", "nsfwLevel") VALUES (46, 'held', 4600, 2);
     INSERT INTO "CollectionItem" ("collectionId", "articleId") VALUES (17, 46);
   `);
-  (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-    pgliteRaw(db).queryRaw
-  );
+  for (const client of [dbMock.dbRead, dbMock.dbWrite])
+    (client.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      pgliteRaw(db).queryRaw
+    );
 });
 
 describe('getCollectionIdsCoveredByModels', () => {
