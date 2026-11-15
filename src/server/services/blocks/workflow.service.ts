@@ -389,14 +389,14 @@ function meshRatingOf(
   }
   for (const preview of workflow.steps ?? []) {
     if (preview?.$type !== 'model3DPreview') continue;
-    if (!FINISHED_STEP_STATUSES.has(preview.status)) return { kind: 'pending' };
+    if (!FINISHED_STEP_STATUSES.has(preview.status)) continue;
     const images =
       (preview as { output?: { images?: Array<{ nsfwLevel?: unknown } | null> } }).output?.images ??
       [];
     for (const image of images) {
       sources += 1;
       const level = image?.nsfwLevel;
-      if (typeof level !== 'string' || level === '') return { kind: 'pending' };
+      if (typeof level !== 'string' || level === '') continue;
       ratings.push(level as Parameters<typeof maxNsfwLevel>[0][number]);
     }
   }
