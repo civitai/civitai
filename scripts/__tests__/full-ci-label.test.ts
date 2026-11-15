@@ -40,7 +40,13 @@ type Step = {
   with?: Record<string, string | boolean>;
   env?: Record<string, string>;
 };
-type Job = { name?: string; if?: string; permissions?: Record<string, string>; steps?: Step[] };
+type Job = {
+  name?: string;
+  if?: string;
+  needs?: string | string[];
+  permissions?: Record<string, string>;
+  steps?: Step[];
+};
 type Workflow = {
   on?: Record<string, { types?: string[] } | null>;
   jobs?: Record<string, Job>;
@@ -143,6 +149,7 @@ describe('the full-ci label', () => {
         'component-ledger',
         'eslint',
         'packages',
+        'passed',
         'typecheck',
         'typecheck-tests',
         'unit',
@@ -161,9 +168,43 @@ describe('the full-ci label', () => {
     const doc = load('lint.yml');
     expect((doc.on?.push as { branches?: string[] } | null)?.branches).toContain('main');
     expect(conjuncts(doc.jobs?.['typecheck-tests']?.if ?? '')).toEqual([
+      '!cancelled()',
       DRAFT_GATE,
       "(!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests')",
+      "needs.passed.outputs.typecheck_tests != 'true'",
     ]);
+  });
+
+  // The `passed` job runs only on a full-ci dispatch, so on every PR and push it is SKIPPED, and
+  // a job that needs a skipped job is skipped too unless its `if` has a status function. Drop
+  // `!cancelled()` from one of these and that suite silently stops running on every PR and on
+  // `main`, with nothing red.
+  describe('lint.yml, jobs gated on `passed`', () => {
+    const jobs = load('lint.yml').jobs ?? {};
+    const needsPassed = Object.entries(jobs).filter(([, j]) =>
+      ([] as string[]).concat(j.needs ?? []).includes('passed')
+    );
+
+    it('`passed` itself runs only on a skip_passed dispatch', () => {
+      expect(conjuncts(jobs.passed?.if ?? '')).toEqual([
+        "github.event_name == 'workflow_dispatch'",
+        'inputs.skip_passed',
+        "(!inputs.only || inputs.only == 'all')",
+      ]);
+    });
+
+    it('is exactly the suites the PR run also runs', () => {
+      expect(needsPassed.map(([id]) => id).sort()).toEqual([
+        'component',
+        'component-ledger',
+        'packages',
+        'typecheck-tests',
+      ]);
+    });
+
+    it.each(needsPassed.map(([id]) => id))('%s still runs when `passed` is skipped', (id) => {
+      expect(conjuncts(jobs[id]?.if ?? '')[0]).toBe('!cancelled()');
+    });
   });
 
   describe('full-ci.yml, the dispatcher', () => {
@@ -195,7 +236,7 @@ describe('the full-ci label', () => {
       const step = dispatching[0];
       expect(step.env?.HEAD_REF).toBe('${{ github.event.pull_request.head.ref }}');
       expect(step.run).toContain(
-        'gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all'
+        'gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true'
       );
       expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
       expect(step.run).toContain('gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"');

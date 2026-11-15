@@ -148,6 +148,18 @@ Over 2026-10-30..11-13 the dispatcher started 1,388 Lint runs. A skipped `unit` 
 plain `Unit tests`, and a run one as `Unit tests (<n>)`: no exception among the 1,931 `unit` jobs
 (78 of them skipped) of the 552 Lint runs read for those two days.
 
+**Suites a `full-ci` Lint dispatch ran that the PR run had passed** (`skip_passed`, the `passed`
+job in lint.yml). The dispatcher's 19 Lint dispatches in the 24 h after the change above
+(2026-11-14 04:03 to 11-15 04:03 UTC) all had a pull_request Lint run on the same head SHA. On 11
+of them that run passed `Typecheck test files`, `Package unit tests` or the component shards
+(on 9, all of them), but only one had finished when the dispatch started: the label is usually
+added while the PR run is going. Replaying those job lists with a 10-minute wait for unfinished
+PR jobs, polled every 30 s: ~219 dispatch job-minutes skipped (~22-24 per dispatch where every
+suite passed, ~5 where only the two short ones did), against ~100 minutes the waiting job spends,
+so ~119 job-minutes a day net. A non-draft PR run's green shard 1 does not cover geometry, which
+is report-only there; the 24 h held one dispatch where geometry was red with the PR's shard green,
+so the dispatch still runs geometry.
+
 **Push runs on `main`: cancel vs queue** (`concurrency` in lint.yml, apps.yml, moderator-boot.yml).
 Push runs on `main` over 2026-10-30..11-13, and a replay of the same push times with one run in
 progress plus one pending (the newest replacing an older pending one), each run taking the
