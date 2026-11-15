@@ -388,8 +388,8 @@ func (r *Redis) del(key string) int64 {
 	return n
 }
 
-// Exists reports whether key holds a value of any type.
-func (r *Redis) Exists(key string) bool {
+// Has reports whether key holds a value of any type.
+func (r *Redis) Has(key string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, s := r.strings[key]
@@ -439,7 +439,7 @@ func HReplaceStampedEx(r *Redis, keys []string, args []any) (any, error) {
 		return nil, err
 	}
 	stamp := str(args[2])
-	if r.Exists(keys[1]) {
+	if r.Has(keys[1]) {
 		stamp = str(args[3])
 	}
 	fields := map[string]string{str(args[1]): stamp}

@@ -154,7 +154,7 @@ func wantPacked(t *testing.T, r *testkit.Redis, key, wantHex string, ttl time.Du
 func wantAbsent(t *testing.T, r *testkit.Redis, keys ...string) {
 	t.Helper()
 	for _, k := range keys {
-		if r.Exists(k) {
+		if r.Has(k) {
 			t.Fatalf("%s written; want nothing written there", k)
 		}
 	}
@@ -494,7 +494,7 @@ func TestMetricsMissLockedElsewhere(t *testing.T) {
 		t.Fatalf("metrics 13 = %v", got.Metrics[13])
 	}
 	wantAbsent(t, r, "metrics:Image:13")
-	if !r.Exists("metrics:lock:Image:13") {
+	if !r.Has("metrics:lock:Image:13") {
 		t.Fatal("another holder's lock was released")
 	}
 }
@@ -522,8 +522,8 @@ func TestMetricsMissFailure(t *testing.T) {
 			if obs.get()["image-metrics/error"] != 1 {
 				t.Fatalf("observed %v", obs.get())
 			}
-			if r.Exists("metrics:lock:Image:13") != c.keepLock {
-				t.Fatalf("lock held = %v, want %v", r.Exists("metrics:lock:Image:13"), c.keepLock)
+			if r.Has("metrics:lock:Image:13") != c.keepLock {
+				t.Fatalf("lock held = %v, want %v", r.Has("metrics:lock:Image:13"), c.keepLock)
 			}
 		})
 	}
