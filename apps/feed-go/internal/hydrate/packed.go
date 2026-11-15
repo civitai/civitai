@@ -1,19 +1,22 @@
-// Package hydrate reads the main app's per-id Redis caches READ-ONLY and falls through to Postgres on a
-// miss, producing the same values the Node hydration step attaches to each image.
+// Package hydrate reads the main app's per-id Redis caches and, on a miss, computes the entry as the
+// Node lookup would, producing the same values the Node hydration step attaches to each image.
 //
 // The caches are `createCachedObject` instances (packages/civitai-redis/src/cached-array.ts): one key per
 // id, `${key}:${id}`, holding a msgpackr-packed map (module-level `pack`, i.e. `useRecords: false`: plain
 // msgpack maps with string keys, Dates as the timestamp extension -1). Two marker shapes are not data:
 // `{notFound: true}` ("no row", skip the lookup) and `{debounce: true}` (a bust marker, treat as a miss).
 //
-// This service NEVER writes these keys. A miss is answered from Postgres and not written back, so a Go
-// bug can never poison a cache the Node app reads. The cost is that Go-only misses stay misses; see
-// DESIGN.md "Caches".
+// A miss is answered from Postgres with the Node lookup's own query (a metric-hash miss, which Node
+// populates from ClickHouse, falls back). This service writes those keys back only with
+// FEED_GO_CACHE_WRITEBACK on (default off), and then exactly what the Node lookup writes (misses.go);
+// with it off a Go bug can never poison a cache the Node app reads, at the cost that a Go-only miss
+// stays a miss. See DESIGN.md §3.1.
 package hydrate
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -146,20 +149,51 @@ func (p *PackedReader) key(key string, id int) string {
 // is data, Stale when ttl > 0 and its `cachedAt` is older than ttl before now. `cachedAt` is removed
 // from the value either way.
 func decodeEntry(cmd *redis.StringCmd, ttl time.Duration, now time.Time) (Entry, bool) {
+	e, st := entryState(cmd, ttl, now)
+	return e, st == stateEntry
+}
+
+// readState is what one GET's answer means for a miss computation.
+type readState int
+
+const (
+	// stateEntry is an entry (data or a notFound marker).
+	stateEntry readState = iota
+	// stateAbsent is a miss Node's fetch would look up and write back: no key, or a value that does
+	// not decode (Node's packed read evicts it and answers null).
+	stateAbsent
+	// stateHeld is a miss Node looks up but does NOT write back: a `{debounce: true}` marker (a bust's
+	// window), or a read that failed (Node's degraded path writes nothing).
+	stateHeld
+)
+
+// entryState is decodeEntry with the reason for a miss (readState).
+func entryState(cmd *redis.StringCmd, ttl time.Duration, now time.Time) (Entry, readState) {
 	b, err := cmd.Bytes()
-	if err != nil || len(b) == 0 {
-		return Entry{}, false
+	if errors.Is(err, redis.Nil) {
+		return Entry{}, stateAbsent
+	}
+	if err != nil {
+		return Entry{}, stateHeld
+	}
+	return decodeBytes(b, ttl, now)
+}
+
+// decodeBytes is one cached value as an Entry (see decodeEntry).
+func decodeBytes(b []byte, ttl time.Duration, now time.Time) (Entry, readState) {
+	if len(b) == 0 {
+		return Entry{}, stateAbsent
 	}
 	v, err := Unpack(b)
 	if err != nil {
-		return Entry{}, false
+		return Entry{}, stateAbsent
 	}
 	m, ok := v.(map[string]any)
 	if !ok {
-		return Entry{}, false
+		return Entry{}, stateAbsent
 	}
 	if truthy(m["debounce"]) {
-		return Entry{}, false
+		return Entry{}, stateHeld
 	}
 	e := Entry{Value: m}
 	if truthy(m["notFound"]) {
@@ -170,7 +204,7 @@ func decodeEntry(cmd *redis.StringCmd, ttl time.Duration, now time.Time) (Entry,
 		}
 	}
 	delete(m, "cachedAt")
-	return e, true
+	return e, stateEntry
 }
 
 func truthy(v any) bool {
