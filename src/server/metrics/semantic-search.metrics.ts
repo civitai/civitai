@@ -1,4 +1,4 @@
-import client, { type Counter, type Histogram, type Registry } from 'prom-client';
+import client, { type Counter, type Gauge, type Histogram, type Registry } from 'prom-client';
 import { middleware } from '~/server/trpc';
 
 const NAME = 'semantic_search_request_seconds';
@@ -41,6 +41,74 @@ export function ensureRegisterQueryVerdictCounter(reg: Registry = client.registe
 
 export function countQueryVerdict(index: string, verdict: string, stage: string, reg?: Registry) {
   ensureRegisterQueryVerdictCounter(reg).inc({ index, verdict, stage });
+}
+
+const RULE_READS = 'semantic_search_query_rule_reads_total';
+
+/** Labels carry the rule type and where it was read from, never a term. */
+export function countQueryRuleRead(type: string, source: string, reg: Registry = client.register) {
+  const counter =
+    (reg.getSingleMetric(RULE_READS) as Counter<string> | undefined) ??
+    new client.Counter({
+      name: RULE_READS,
+      help: 'Semantic search query rule reads by rule type and source (db, cache, stale or fallback)',
+      labelNames: ['type', 'source'],
+      registers: [reg],
+    });
+  counter.inc({ type, source });
+}
+
+const RULE_STALE = 'semantic_search_query_rule_stale_seconds';
+
+/** Age of the last good rules copy this pod is serving while the blocklist is unreadable; 0 when fresh. */
+export function setQueryRuleStaleAge(
+  type: string,
+  seconds: number,
+  reg: Registry = client.register
+) {
+  const gauge =
+    (reg.getSingleMetric(RULE_STALE) as Gauge<string> | undefined) ??
+    new client.Gauge({
+      name: RULE_STALE,
+      help: 'Age in seconds of the semantic search query rules copy served while the blocklist is unreadable (0 when read fresh)',
+      labelNames: ['type'],
+      registers: [reg],
+    });
+  gauge.set({ type }, seconds);
+}
+
+const RULE_FALLBACK = 'semantic_search_query_rule_fallback';
+
+/** 1 while this pod's query rules come from the fallback file, having never read the blocklist. */
+export function setQueryRuleFallback(type: string, on: boolean, reg: Registry = client.register) {
+  const gauge =
+    (reg.getSingleMetric(RULE_FALLBACK) as Gauge<string> | undefined) ??
+    new client.Gauge({
+      name: RULE_FALLBACK,
+      help: 'Whether the semantic search query rules of this type are served from the fallback file (1) or not (0)',
+      labelNames: ['type'],
+      registers: [reg],
+    });
+  gauge.set({ type }, on ? 1 : 0);
+}
+
+const RULE_INERT = 'semantic_search_query_rule_inert_terms';
+
+/** Rule terms dropped because matching would strip them to nothing. */
+export function setQueryRuleInertTerms(
+  type: string,
+  count: number,
+  reg: Registry = client.register
+) {
+  const gauge =
+    (reg.getSingleMetric(RULE_INERT) as Gauge<string> | undefined) ??
+    new client.Gauge({
+      name: RULE_INERT,
+      help: 'Semantic search query rule terms ignored because matching strips them to nothing',
+      labelNames: ['type'],
+      registers: [reg],
+    });
+  gauge.set({ type }, count);
 }
 
 const CACHE_NAME = 'semantic_search_candidate_cache_total';

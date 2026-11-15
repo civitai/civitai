@@ -78,12 +78,17 @@ function remember(type: string, dto: BlocklistDTO) {
   lastKnown.set(type, { dto, at: Date.now() });
 }
 
-async function readBlocklistCacheUnavailable(type: BlocklistType): Promise<BlocklistDTO> {
+/** Where a read was answered from: the database row, or a cached copy (Redis or last-known). */
+export type BlocklistReadSource = 'db' | 'cache';
+type SourcedBlocklist = { dto: BlocklistDTO; source: BlocklistReadSource };
+
+async function readBlocklistCacheUnavailable(type: BlocklistType): Promise<SourcedBlocklist> {
   const known = lastKnown.get(type);
-  if (known && Date.now() - known.at < BLOCKLIST_CACHE_TTL * 1000) return known.dto;
+  if (known && Date.now() - known.at < BLOCKLIST_CACHE_TTL * 1000)
+    return { dto: known.dto, source: 'cache' };
   const row = await readBlocklistRow(type);
   remember(type, row);
-  return row;
+  return { dto: row, source: 'db' };
 }
 
 /**
@@ -265,6 +270,10 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
 }
 
 export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
+  return (await readBlocklistWithSource(type)).dto;
+}
+
+export async function readBlocklistWithSource(type: BlocklistType): Promise<SourcedBlocklist> {
   let cached: string | null;
   try {
     cached = await clusterCacheGuard.call('blocklist.getBlocklistDTO', () =>
@@ -283,14 +292,14 @@ export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
     const parsed = JSON.parse(cached) as BlocklistDTO;
     const dto = { ...parsed, data: parsed.data ?? [] };
     remember(type, dto);
-    return dto;
+    return { dto, source: 'cache' };
   }
 
   const result = await readBlocklistRow(type);
   remember(type, result);
 
   await setCache({ type: result.type, data: result });
-  return result;
+  return { dto: result, source: 'db' };
 }
 
 export async function getBlocklistData(type: BlocklistType) {

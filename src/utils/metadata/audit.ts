@@ -876,6 +876,12 @@ function inPromptEdit(prompt: string, { regex }: Checkable) {
   return wrapped;
 }
 
+/** How POI names are matched; shared with the search query rules that add to them. */
+export const poiCheckOptions: Parameters<typeof checkable>[1] = {
+  leet: false,
+  preprocessor: (word) => word.replace(/[^\w\s\|\:\[\],]/g, ''),
+};
+
 const words = {
   nsfw: checkable(nsfwWords),
   young: {
@@ -886,10 +892,7 @@ const words = {
       pluralize: true,
     }),
   },
-  poi: checkable(poiWords, {
-    leet: false,
-    preprocessor: (word) => word.replace(/[^\w\s\|\:\[\],]/g, ''),
-  }),
+  poi: checkable(poiWords, poiCheckOptions),
   tags: Object.entries(promptTags).map(([tag, words]) => ({ tag, words: checkable(words) })),
 };
 

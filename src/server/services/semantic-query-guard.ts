@@ -1,7 +1,9 @@
 import { BlocklistType } from '~/server/common/enums';
 import type { Tracker } from '~/server/clickhouse/tracker';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import { matchesQueryRule } from '~/server/services/search-query-rules';
 import {
+  allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -14,7 +16,7 @@ import {
 } from '~/server/flipt/client';
 import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
 import {
-  IDS_WITHHELD_VERDICTS,
+  verdictKeepsServedIds,
   recordSemanticAudit,
   type SemanticAuditEntry,
 } from '~/server/services/semantic-search-audit.service';
@@ -29,7 +31,14 @@ import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metad
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 
 export type QueryTracker = Pick<Tracker, 'action'>;
-export type QueryRefusal = 'minor' | 'poi' | 'poi-minor' | 'blocked' | 'error' | false;
+export type QueryRefusal =
+  | 'minor'
+  | 'minor-safe'
+  | 'poi'
+  | 'poi-minor'
+  | 'blocked'
+  | 'error'
+  | false;
 
 /**
  * The viewer's own level; while `clamp` (the containment switch) is on, non-moderators get the safe
@@ -106,6 +115,14 @@ export async function semanticQueryRefusal(
     // Mirrors the search boxes, which a request can skip: raw text, since the benign phrases do not
     // carve out this list, and moderators exempt.
     if (!isModerator && getBlockedNsfwWords(query).length) return 'blocked';
+    // Mods are exempt from the POI additions even with `disablePoi`, by design. A minor addition is
+    // its own verdict, so the help event and its counts stay the minor list's.
+    const [poiRule, minorRule] = await Promise.all([
+      !isModerator && matchesQueryRule(audited, BlocklistType.SemanticSearchPoiRefuse),
+      matchesQueryRule(audited, BlocklistType.SemanticSearchMinorSafe),
+    ]);
+    if (poiRule) return 'poi';
+    if (minorRule) return 'minor-safe';
     return false;
   } catch {
     return 'error';
@@ -122,9 +139,30 @@ export function queryVerdictLevel(
   isModerator?: boolean
 ): number | 'refuse' {
   if (!refusal) return level;
-  if (refusal === 'minor' && !isModerator)
+  if ((refusal === 'minor' || refusal === 'minor-safe') && !isModerator)
     return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
   return 'refuse';
+}
+
+export type DryRunOutcome = { verdict: QueryRefusal; result: 'allow' | 'narrow' | 'refuse' };
+
+/**
+ * What the query audit would do to `query` for a non-moderator and for a moderator, at every
+ * browsing level. The verdict only: never which list or term matched.
+ */
+export async function dryRunSemanticQuery(query: string) {
+  const outcome = async (isModerator: boolean): Promise<DryRunOutcome> => {
+    const verdict = await semanticQueryRefusal(query, {
+      browsingLevel: allBrowsingLevelsFlag,
+      disablePoi: false,
+      isModerator,
+    });
+    const level = queryVerdictLevel(verdict, allBrowsingLevelsFlag, isModerator);
+    const result =
+      level === 'refuse' ? 'refuse' : level === allBrowsingLevelsFlag ? 'allow' : 'narrow';
+    return { verdict, result };
+  };
+  return { nonModerator: await outcome(false), moderator: await outcome(true) };
 }
 
 export type QueryStage = 'query' | 'correction';
@@ -164,7 +202,7 @@ export function beginSemanticAudit({
     verdict(refusal: QueryRefusal) {
       if (!refusal) return;
       wordVerdict ||= refusal;
-      if (IDS_WITHHELD_VERDICTS.has(refusal)) withholdIds = true;
+      if (!verdictKeepsServedIds(refusal)) withholdIds = true;
     },
     candidates(result: { guard?: GuardRead; cacheHit?: boolean } | undefined) {
       candidates ??= result;
