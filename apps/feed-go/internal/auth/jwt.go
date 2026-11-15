@@ -10,6 +10,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -219,7 +220,7 @@ func jitter(d time.Duration) time.Duration {
 	if spread <= 0 {
 		return d
 	}
-	return d - d/10 + time.Duration(rand.Int64N(spread))
+	return d - d/10 + time.Duration(rand.Int64N(spread)) //nolint:gosec // G404: refresh-timing jitter, not a secret
 }
 
 // ErrInvalid is returned for any token that is not a valid session.
@@ -376,7 +377,7 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("jwks: status %d", res.StatusCode)
 	}
@@ -411,13 +412,31 @@ func ParseJWKS(keys []jwk) map[string]*ecdsa.PublicKey {
 		if err1 != nil || err2 != nil {
 			continue
 		}
-		pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(xb), Y: new(big.Int).SetBytes(yb)}
-		if !pub.Curve.IsOnCurve(pub.X, pub.Y) {
+		pub, err := p256PublicKey(xb, yb)
+		if err != nil {
 			continue
 		}
 		out[k.Kid] = pub
 	}
 	return out
+}
+
+// p256PublicKey builds a P-256 public key from a JWK's big-endian x and y coordinates, refusing a
+// point that is not on the curve. A coordinate is read as an integer, as before: a shorter one is
+// left-padded, and leading zero bytes beyond 32 are dropped.
+func p256PublicKey(x, y []byte) (*ecdsa.PublicKey, error) {
+	const size = 32
+	point := make([]byte, 1, 1+2*size)
+	point[0] = 4 // SEC 1 uncompressed form: 0x04 || x || y
+	for _, c := range [][]byte{x, y} {
+		c = bytes.TrimLeft(c, "\x00")
+		if len(c) > size {
+			return nil, errors.New("jwk: coordinate longer than 32 bytes")
+		}
+		point = append(point, make([]byte, size-len(c))...)
+		point = append(point, c...)
+	}
+	return ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 }
 
 // TokenFromCookieHeader extracts a cookie's value from a raw Cookie header, URL-decoding it as

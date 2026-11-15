@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -345,7 +346,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	minorAll := strings.Contains(sql, `(i."minor" != TRUE)`)
 	published := strings.Contains(sql, `(p."publishedAt" < now())`)
 	if !hasLevel {
-		return nil, fmt.Errorf("golden: image query without a level clause")
+		return nil, errors.New("golden: image query without a level clause")
 	}
 	var out [][]any
 	var kept []goldenImage
@@ -508,7 +509,7 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 					continue
 				}
 				if r.PostID != nil {
-					return nil, fmt.Errorf("golden: a review on a post is not modelled")
+					return nil, errors.New("golden: a review on a post is not modelled")
 				}
 				list = append(list, review{r.UserID, r.Rating, r.ID, r.Details, r.Recommended})
 			}
@@ -778,7 +779,7 @@ func goldenFiles(t *testing.T, sub string, min int) []string {
 
 func goldenLoad(t *testing.T, path string) *goldenFixture {
 	t.Helper()
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: path is a fixture from the testdata glob
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -987,7 +988,7 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 		f := &goldenFeed{replies: map[string]goldenFeedReply{"a=1": {Query: "a=1"}}, hits: map[string]int{}}
 		srv := httptest.NewServer(f)
 		t.Cleanup(srv.Close)
-		res, err := srv.Client().Get(srv.URL + "/v1/feed?a=2")
+		res, err := getURL(srv.Client(), srv.URL+"/v1/feed?a=2")
 		if err != nil {
 			t.Fatal(err)
 		}

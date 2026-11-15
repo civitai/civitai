@@ -23,7 +23,7 @@ func postV1(t *testing.T, s *Server, node string) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	s.ShadowV1Handler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/api/v1/images", strings.NewReader(string(b))))
+	s.ShadowV1Handler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/api/v1/images", strings.NewReader(string(b))))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("code %d, want 202", w.Code)
 	}

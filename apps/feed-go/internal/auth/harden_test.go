@@ -367,7 +367,7 @@ func (f *resolveFixture) token(t *testing.T, mut func(map[string]any)) string {
 }
 
 func request(headers map[string]string, target string) *http.Request {
-	r := httptest.NewRequest(http.MethodGet, target, nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}

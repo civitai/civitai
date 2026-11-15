@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -77,7 +76,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 	// The system redis is a primary/replica set, never a cluster: through its Sentinels when
 	// REDIS_SYS_SENTINELS is set, else the single REDIS_SYS_URL connection (internal/sysredis).
 	sys, err := sysredis.New(sysredis.Settings{
@@ -89,7 +88,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer sys.Close()
+	defer func() { _ = sys.Close() }()
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -179,15 +178,7 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		proxy := httputil.NewSingleHostReverseProxy(target)
-		// Keep the original Host: the Node app derives the domain color and cookies from it.
-		director := proxy.Director
-		proxy.Director = func(r *http.Request) {
-			host := r.Host
-			director(r)
-			r.Host = host
-		}
-		srv.Fallback = proxy
+		srv.Fallback = fallbackProxy(target)
 	}
 
 	public := server.PublicMux(srv)

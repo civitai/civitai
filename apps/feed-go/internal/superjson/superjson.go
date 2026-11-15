@@ -21,6 +21,7 @@ package superjson
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -93,7 +94,7 @@ type writer struct {
 func Plain(v any) ([]byte, error) {
 	w := &writer{buf: make([]byte, 0, initialBufSize), plain: true}
 	if _, isUndef := v.(Undefined); isUndef {
-		return nil, fmt.Errorf("superjson: undefined has no JSON form")
+		return nil, errors.New("superjson: undefined has no JSON form")
 	}
 	if err := w.value(v, false); err != nil {
 		return nil, err

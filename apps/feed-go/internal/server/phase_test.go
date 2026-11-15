@@ -64,7 +64,7 @@ func shadowBody(t *testing.T, input string) io.Reader {
 func post(t *testing.T, s *Server, input string) {
 	t.Helper()
 	w := httptest.NewRecorder()
-	s.ShadowHandler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/"+Procedure, shadowBody(t, input)))
+	s.ShadowHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, shadowBody(t, input)))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("post %q: code %d, want 202", input, w.Code)
 	}
@@ -202,7 +202,7 @@ func TestShadowPhaseCPUExcludesSampleAdmittedAndReleasedDuringPhase(t *testing.T
 	post(t, s, "A")
 	<-entered // A's compute started alone.
 	w := httptest.NewRecorder()
-	s.ShadowHandler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/"+Procedure, strings.NewReader("not json")))
+	s.ShadowHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, strings.NewReader("not json")))
 	if w.Code != http.StatusBadRequest || len(s.ShadowQueue) != 1 {
 		t.Fatalf("bad body: code=%d queued=%d, want 400 and 1 (only A)", w.Code, len(s.ShadowQueue))
 	}
@@ -223,7 +223,7 @@ func TestShadowPhaseRecordedForBadBody(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s := newPhaseServer(reg, 1, nil)
 	w := httptest.NewRecorder()
-	s.ShadowHandler(w, httptest.NewRequest(http.MethodPost, "/internal/shadow/"+Procedure, strings.NewReader("not json")))
+	s.ShadowHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+Procedure, strings.NewReader("not json")))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("code %d, want 400", w.Code)
 	}

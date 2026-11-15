@@ -396,7 +396,7 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	if err != nil {
 		return Answer{}, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<16))
 		return Answer{Status: res.StatusCode}, nil

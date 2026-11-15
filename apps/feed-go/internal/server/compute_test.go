@@ -137,7 +137,7 @@ func (f *computeFixture) token(t *testing.T, sub int) string {
 const computeInput = `{"json":{"browsingLevel":31,"sort":"Newest","limit":10,"disablePoi":true}}`
 
 func computeRequest(host, input string, headers map[string]string) *http.Request {
-	r := httptest.NewRequest(http.MethodGet, "/api/trpc/"+Procedure+"?input="+url.QueryEscape(input), nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/"+Procedure+"?input="+url.QueryEscape(input), nil)
 	r.Host = host
 	for k, v := range headers {
 		r.Header.Set(k, v)

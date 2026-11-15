@@ -12,7 +12,7 @@ import (
 func TestCallReturnsResultsWhenNothingPanics(t *testing.T) {
 	want := errors.New("plain error")
 	n, err := Call(func() (int, error) { return 7, want })
-	if n != 7 || err != want {
+	if n != 7 || !errors.Is(err, want) {
 		t.Fatalf("Call = %d, %v; want 7, %v", n, err, want)
 	}
 }

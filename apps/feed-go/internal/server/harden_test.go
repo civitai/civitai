@@ -46,8 +46,17 @@ func (p *proxyRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusTeapot) // marks the answer as the proxy's
 }
 
+// getURL is Client.Get with an explicit context (the background one Get uses).
+func getURL(c *http.Client, target string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.Do(req)
+}
+
 func publicRequest() *http.Request {
-	r := httptest.NewRequest(http.MethodGet, "/api/trpc/"+Procedure+"?input=%7B%7D", nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/"+Procedure+"?input=%7B%7D", nil)
 	r.Header.Set("Origin", "https://site.example")
 	return r
 }
@@ -229,7 +238,7 @@ func TestServeHTTPPanicFallsBack(t *testing.T) {
 	var logs bytes.Buffer
 	s := serveServer(reg, func(context.Context, *http.Request) (*computed, error) {
 		var m map[string]int
-		m["x"] = 1
+		m["x"] = 1 //nolint:govet // nilness: the nil-map write is deliberate, the test needs a runtime panic
 		return nil, nil
 	}, fb)
 	s.Log = slog.New(slog.NewJSONHandler(&logs, nil))
@@ -497,11 +506,11 @@ func TestPprofCaptureOutlivesTheInternalWriteTimeout(t *testing.T) {
 	defer ts.Close()
 	get := func(path string) (int, []byte, time.Duration) {
 		t0 := time.Now()
-		res, err := ts.Client().Get(ts.URL + path)
+		res, err := getURL(ts.Client(), ts.URL+path)
 		if err != nil {
 			t.Fatalf("%s: %v (connection cut by the write timeout?)", path, err)
 		}
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		b, err := io.ReadAll(res.Body)
 		if err != nil {
 			t.Fatalf("%s: body: %v (connection cut by the write timeout?)", path, err)
@@ -521,10 +530,10 @@ func TestPprofCaptureOutlivesTheInternalWriteTimeout(t *testing.T) {
 	slow.Config.WriteTimeout = 300 * time.Millisecond
 	slow.Start()
 	defer slow.Close()
-	res, err := slow.Client().Get(slow.URL)
+	res, err := getURL(slow.Client(), slow.URL)
 	if err == nil {
 		_, err = io.ReadAll(res.Body)
-		res.Body.Close()
+		_ = res.Body.Close()
 	}
 	if err == nil {
 		t.Fatal("control: a write past WriteTimeout was not cut, so this test cannot see the exemption")

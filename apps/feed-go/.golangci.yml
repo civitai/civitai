@@ -35,6 +35,18 @@ linters:
         # what a reader cross-checks against the Node code; reordering for padding would trade that
         # for bytes on structs that are never held in bulk.
         - fieldalignment
+        # Measured on the first run: 15 findings, every one an `err` (or `got`/`in`/`s`) redeclared
+        # in an inner scope with the outer value never read again — the idiomatic Go form, no bug.
+        - shadow
+  exclusions:
+    rules:
+      # integtest's msgpack encoder writes length and integer fields as wire bytes: each int->byte /
+      # uint16 / uint32 conversion is a deliberate truncation inside a branch that bounds the value
+      # (it mirrors msgpackr's own encoder). Test-only code, behind the integration build tag.
+      - path: internal/integtest/msgpackr\.go
+        linters:
+          - gosec
+        text: G115
 
 issues:
   # Report everything: a capped report hides findings behind the first few.

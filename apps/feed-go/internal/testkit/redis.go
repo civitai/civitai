@@ -97,7 +97,7 @@ func (r *Redis) Members(key string) []string {
 func (r *Redis) AllKeys() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var out []string
+	out := make([]string, 0, len(r.strings)+len(r.hashes)+len(r.sets))
 	for k := range r.strings {
 		out = append(out, k)
 	}

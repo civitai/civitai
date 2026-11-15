@@ -266,7 +266,7 @@ func wireKeys(o superjson.Object) []string {
 
 func TestBuildPostLazySlice(t *testing.T) {
 	// Eight images fetched out of index order; image 8 (index 7) carries the only R bit.
-	var images []Image
+	images := make([]Image, 0, 8)
 	for i, idx := range []int{7, 0, 1, 2, 3, 4, 5, 6} {
 		nsfw := 1
 		if idx == 7 {
@@ -283,8 +283,9 @@ func TestBuildPostLazySlice(t *testing.T) {
 		t.Fatalf("imageCount = %v, want 8 (the whole post, before the slice)", n)
 	}
 	got, _ := p.wire.Get("images")
-	var ids []int64
-	for _, w := range got.([]any) {
+	list := got.([]any)
+	ids := make([]int64, 0, len(list))
+	for _, w := range list {
 		v, _ := w.(superjson.Object).Get("id")
 		ids = append(ids, v.(int64))
 	}

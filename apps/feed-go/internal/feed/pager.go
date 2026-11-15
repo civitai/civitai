@@ -183,14 +183,14 @@ const DefaultCompletionConcurrency = 4
 // and completionRowsPerFetch rows, in order; a post larger than one fetch goes alone.
 func packPostCompletions(postIDs []int, rowsOf func(int) int) [][]int {
 	var batches [][]int
-	var batch []int
+	batch := make([]int, 0, completionPostsPerFetch)
 	rows := 0
 	for _, id := range postIDs {
 		r := rowsOf(id)
 		full := len(batch) >= completionPostsPerFetch || rows+r > completionRowsPerFetch
 		if len(batch) > 0 && full {
 			batches = append(batches, batch)
-			batch, rows = nil, 0
+			batch, rows = make([]int, 0, completionPostsPerFetch), 0
 		}
 		batch = append(batch, id)
 		rows += r
