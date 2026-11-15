@@ -179,7 +179,7 @@ export function reportsComplete(reports, shards) {
 
 /** The sha `git bisect run` printed as the first bad commit, or null. */
 export function parseFirstBad(output) {
-  // git 2.56 quotes the term (`is the first 'bad' commit`); older releases did not.
+  // Newer git quotes the term (`is the first 'bad' commit`); older git does not. Accept both.
   return /^([0-9a-f]{40}) is the first '?bad'? commit/m.exec(output)?.[1] ?? null;
 }
 

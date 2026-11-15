@@ -7,11 +7,9 @@ name: Unit tests (main batch)
 # status, bisecting a red to the first bad merge commit. See lint.yml's header ("THE UNIT SUITE IS
 # THE EXCEPTION") and scripts/ci/unit-batched.mjs.
 #
-# THE CADENCE IS THIS CRON LINE AND NOTHING ELSE: every 2 hours (operator decision, 2026-11-15),
-# at :41, off the top of the hour, where scheduled jobs pile up. Measured on 7 days of `main`
-# pushes, it runs the unit suite about 12 times a day instead of ~27.6 (~57% fewer unit
-# job-minutes), and the worst case from a bad merge to its red status is about 3 hours.
-# scripts/__tests__/main-branch-ci-coverage.test.ts pins the interval at 2 hours or less; going
+# THE CADENCE IS THIS CRON LINE AND NOTHING ELSE. :41 keeps it off the top of the hour, where
+# scheduled jobs pile up. scripts/__tests__/main-branch-ci-coverage.test.ts pins the interval at
+# 2 hours or less; going
 # wider is a contract change, so it fails until that guard is changed too.
 on:
   schedule:

@@ -93,10 +93,10 @@ name: Lint
 # commits — every open PR going red at once, which reads as a CI outage rather
 # than as one bad commit.
 #
-# 🔴 THE UNIT SUITE IS THE EXCEPTION: it is verified in BATCHES, not per push (2026-11). A push
+# 🔴 THE UNIT SUITE IS THE EXCEPTION: it is verified in BATCHES, not per push. A push
 # to `main` runs typecheck, typecheck-tests, packages and component; `unit` is skipped there.
-# unit-batched.yml dispatches this workflow (`only: unit`) on `main` on a schedule (every 2 hours
-# as of 2026-11; its cron is the one place that sets the cadence) when `main`'s head has moved
+# unit-batched.yml dispatches this workflow (`only: unit`) on `main` on a schedule (the cron in
+# unit-batched.yml is the one place that sets the cadence) when `main`'s head has moved
 # since the last batch run, and on red the `unit-verify` job re-runs the failed
 # files, bisects to the first bad merge commit and posts a failing `Unit tests (main batch)` commit
 # status ON THAT COMMIT. So a unit regression still renders red on the commit that caused it,
@@ -630,10 +630,8 @@ jobs:
     # unit-batched.yml, after which `unit-verify` posts the verdict as a commit status
     # (on the first bad commit when red). See "THE UNIT SUITE IS THE EXCEPTION" in the header.
     #
-    # Why not per push, measured over 7 days of `main` (2026-11-08..15): the push runs'
-    # four shards were the biggest single cost on `main` (the PR body has the figures),
-    # and batching runs them at most once per cadence interval (12 a day at 2 hours)
-    # whatever the push rate.
+    # Why not per push: these four shards were the biggest single cost on `main`, and
+    # batching runs them at most once per cadence interval whatever the push rate.
     #
     # Why, measured over 24h (448 Lint runs, 2026-10): these four shards were 59% of
     # all Lint job-minutes, ~12,400 of ~21,000, ~10,000 of it on PRs. The plan's
