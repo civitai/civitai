@@ -203,7 +203,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	if addonLevel == 0 {
 		addonLevel = browsing.PublicLevels
 	}
-	ownScoped := viewer.ID != 0 && in.UserID != 0 && viewer.ID == in.UserID
+	ownScoped := ownScope(viewer.ID, "", in.UserID, in.Username)
 	if resolved := browsing.ResolveAddons(d.Addons(ctx), addonLevel, viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
 		excluded = unionInts(nil, resolved.ExcludedTagIDs)
 	}
