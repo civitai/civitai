@@ -143,10 +143,5 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     .finally(() => clearTimeout(deadline));
 }
 
-const modOnly = ModEndpoint(handler);
-
-/** `no-store` on every answer, refusals included, before `ModEndpoint` can answer one. */
-export default async function retractedMedia(req: NextApiRequest, res: NextApiResponse) {
-  res.setHeader('cache-control', 'private, no-store');
-  return modOnly(req, res);
-}
+/** `noStore`: every answer, refusals included, so no shared cache keeps one. */
+export default ModEndpoint(handler, ['GET'], { noStore: true });

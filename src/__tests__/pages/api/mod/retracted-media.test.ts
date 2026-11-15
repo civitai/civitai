@@ -21,12 +21,20 @@ const checkFixedWindow = vi.hoisted(() => vi.fn());
 const flags = vi.hoisted(() => ({ modRetractedMedia: true }));
 const getFeatureFlagsAsync = vi.hoisted(() => vi.fn());
 
-// The moderator check itself runs for real in `retracted-media.mod-only.test.ts`.
+// The moderator check, and what `noStore` does there, run for real in
+// `retracted-media.mod-only.test.ts`; here `noStore` is honoured so each status's no-store check
+// fails if the route stops asking for it.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   ModEndpoint:
-    (handler: (req: NextApiRequest, res: NextApiResponse, user: unknown) => unknown) =>
-    (req: NextApiRequest, res: NextApiResponse) =>
-      handler(req, res, { id: 42, isModerator: true }),
+    (
+      handler: (req: NextApiRequest, res: NextApiResponse, user: unknown) => unknown,
+      _methods?: string[],
+      opts?: { noStore?: boolean }
+    ) =>
+    (req: NextApiRequest, res: NextApiResponse) => {
+      if (opts?.noStore) res.setHeader('cache-control', 'private, no-store');
+      return handler(req, res, { id: 42, isModerator: true });
+    },
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlagsAsync,
@@ -231,6 +239,22 @@ describe('/api/mod/retracted-media serving', () => {
     expect((await call({ headers: { range: 'bytes=0-1' } })).statusCode).toBe(413);
     fetchMock.mockImplementation(async () => stored('bytes', { 'content-encoding': 'gzip' }));
     expect((await call()).statusCode).toBe(413);
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('refuses a range whose total size storage does not state', async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response('yt', {
+          status: 206,
+          headers: {
+            'content-type': 'image/png',
+            'content-length': '2',
+            'content-range': 'bytes 0-1/*',
+          },
+        })
+    );
+    expect((await call({ headers: { range: 'bytes=0-1' } })).statusCode).toBe(413);
     expect(trackModActivity).not.toHaveBeenCalled();
   });
 
