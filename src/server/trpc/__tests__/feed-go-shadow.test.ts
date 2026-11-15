@@ -645,26 +645,42 @@ describe('createFeedGoShadow — GET /api/v1/images', () => {
     expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
   });
 
-  it('a non-200 answer is skipped and frees the slot', async () => {
+  it('a non-200 answer is skipped and nothing is sent', async () => {
     const h = harness();
     serveRest(h, restRequest(), { status: 503 });
     await h.flush();
     expect(h.fetchMock).not.toHaveBeenCalled();
     expect(h.outcomes).toEqual(['skipped_status']);
-    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a capture after a non-200 finish is ignored', async () => {
+    const h = harness();
+    const sample = h.shadow.beginV1Images(restRequest())!;
+    h.shadow.finish(sample, 503);
+    h.shadow.captureV1Images(sample, { items: [{ id: 1 }], metadata: {} });
+    expect(sample.captured).toBeUndefined();
+    // A second finish of the same sample does nothing either.
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status']);
   });
 
   it('each route captures only its own response', async () => {
     const h = harness();
+    // A gallery sample held open keeps inFlight > 0, so the transformer's capture gets past its
+    // "nothing in flight" shortcut and only the endpoint guard can refuse the REST sample.
+    const g = h.shadow.begin(request())!;
+    expect(h.shadow.inFlight()).toBe(1);
     const sample = h.shadow.beginV1Images(restRequest())!;
     h.shadow.run(sample, () =>
       h.shadow.capture({ items: [] }, superjson.serialize({ items: [] }), false)
     );
+    expect(sample.captured).toBeUndefined();
     h.shadow.finish(sample, 200);
     await h.flush();
     expect(h.outcomes).toEqual(['skipped_no_capture']);
     // And the other way round: a gallery sample ignores the REST capture.
-    const g = h.shadow.begin(request())!;
     h.shadow.captureV1Images(g, { items: [] });
     h.shadow.finish(g, 200);
     await h.flush();

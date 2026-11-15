@@ -7853,6 +7853,7 @@ model VaultItem {
 
   @@index([vaultId], type: Hash)
   @@index([modelVersionId], type: Hash)
+  @@index([files(ops: JsonbPathOps)], type: Gin)
 }
 
 model Vault {
