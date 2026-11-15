@@ -5,8 +5,15 @@ import {
 import { TRPCError } from '@trpc/server';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
-/** A granted permission (see `retool*` in feature-flags.service.ts): putPrompt changes what production scans. */
+/** A granted permission (see `retool*` in feature-flags.service.ts) for the actions that change what
+ *  production scans: its prompts, its model config and its rollouts. */
 const TEXT_SCAN_PROMPT_PUBLISH_PERMISSION = 'textScanPromptPublish';
+const PUBLISH_ACTIONS: ReadonlySet<string> = new Set([
+  'putPrompt',
+  'putConfig',
+  'putModes',
+  'putWebSearchModes',
+]);
 
 // The harness's own caps bound a request at ~1M characters, which multibyte text can take past the
 // 1mb default.
@@ -18,7 +25,7 @@ export default defineModeratorEndpoint('textScan.harness', {
   returns: "the action's JSON; a CSV sample as { csv }",
   notes: [
     'putPrompt/putConfig/putModes/putWebSearchModes are attributed to the signed-in moderator; ids in the body are ignored.',
-    'putPrompt requires the textScanPromptPublish permission.',
+    'putPrompt, putConfig, putModes and putWebSearchModes require the textScanPromptPublish permission.',
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
     'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
@@ -32,12 +39,12 @@ export default defineModeratorEndpoint('textScan.harness', {
   auditExclude: ['content', 'promptOverrides', 'ruleOverrides', 'texts'],
   async handler(input, ctx) {
     if (
-      input.action === 'putPrompt' &&
+      PUBLISH_ACTIONS.has(input.action) &&
       !ctx.actor.permissions?.includes(TEXT_SCAN_PROMPT_PUBLISH_PERMISSION)
     )
       throw new TRPCError({
         code: 'FORBIDDEN',
-        message: `Permission "${TEXT_SCAN_PROMPT_PUBLISH_PERMISSION}" required to publish a prompt`,
+        message: `Permission "${TEXT_SCAN_PROMPT_PUBLISH_PERMISSION}" required for ${input.action}`,
       });
     const result = await runTextScanHarnessAction(input, { moderatorId: ctx.actor.id });
     return result.kind === 'csv' ? { csv: result.body } : (result.body as Record<string, unknown>);
