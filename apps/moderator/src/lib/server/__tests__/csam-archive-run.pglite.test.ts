@@ -50,7 +50,13 @@ async function asArchiver<T>(fn: () => Promise<T>): Promise<T> {
 
 async function startRun(): Promise<string> {
   const r = await db.query<{ id: string }>(START, [
-    'report', 953, null, 13313589, 'write', [1, 2, 6], 'v0.2.10',
+    'report',
+    953,
+    null,
+    13313589,
+    'write',
+    [1, 2, 6],
+    'v0.2.10',
   ]);
   return String(r.rows[0].id);
 }
@@ -81,16 +87,19 @@ describe('csam_archive_run under the archiver login', () => {
       return id;
     });
 
-    const row = await db.query<{ error: string }>(`SELECT error FROM csam_archive_run WHERE id = $1`, [id]);
+    const row = await db.query<{ error: string }>(
+      `SELECT error FROM csam_archive_run WHERE id = $1`,
+      [id]
+    );
     expect(row.rows[0].error).toBe('StoreError; AlertNotDelivered');
   });
 
   it('cannot read what a run recorded', async () => {
     await asArchiver(async () => {
       const id = await startRun();
-      await expect(db.query(`SELECT summary FROM csam_archive_run WHERE id = $1`, [id])).rejects.toThrow(
-        /permission denied/
-      );
+      await expect(
+        db.query(`SELECT summary FROM csam_archive_run WHERE id = $1`, [id])
+      ).rejects.toThrow(/permission denied/);
       await expect(db.query(`DELETE FROM csam_archive_run WHERE id = $1`, [id])).rejects.toThrow(
         /permission denied/
       );
