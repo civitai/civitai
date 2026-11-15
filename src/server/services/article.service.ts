@@ -861,11 +861,6 @@ export const getArticleById = async ({
     const coverImage = viewableArticleImage(article.coverImage, isOwnerOrMod);
     const bannerImage = viewableArticleImage(article.bannerImage, isOwnerOrMod);
 
-    // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
-    // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
-    // branch let any author store a doc with node types the renderer has no schema entry for
-    // (blank page for every reader) or malformed JSON (500 → NotFound for everyone, owner
-    // included). `generateJSON` is total over arbitrary text.
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.
     const bodyImages = imageConnections.map((conn) => conn.image);
@@ -885,6 +880,11 @@ export const getArticleById = async ({
             withheld,
             keepEdgeMedia: nonOwner ? new Set(contentImages.map((image) => image.url)) : undefined,
           });
+    // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
+    // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
+    // branch let any author store a doc with node types the renderer has no schema entry for
+    // (blank page for every reader) or malformed JSON (500 → NotFound for everyone, owner
+    // included). `generateJSON` is total over arbitrary text.
     let contentJson: MixedObject | undefined;
     if (content) {
       contentJson = articleContentJson(content);

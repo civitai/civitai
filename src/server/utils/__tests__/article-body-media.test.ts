@@ -99,6 +99,25 @@ describe('removeBodyMedia', () => {
     expect(out).toBe(`${img}<edge-media url="${KEPT}"></edge-media>`);
   });
 
+  it('🔴 still reads an edge-media the quick check cannot', () => {
+    for (const tag of [
+      `<edge-media type="a>b" url="not-a-uuid"></edge-media>`,
+      `<edge-media url='not-a-uuid'></edge-media>`,
+      `<edge-media data-url="${KEPT}" url="not-a-uuid"></edge-media>`,
+    ])
+      expect(
+        removeBodyMedia(`<p>a</p>${tag}`, { keepEdgeMedia: new Set([KEPT]), withheld: [] })
+      ).toBe('<p>a</p>');
+  });
+
+  it('returns a body with nothing to remove as stored', () => {
+    const html = `<p>a<br></p><edge-media url="${KEPT}" type="video"></edge-media><img src="${cdn(
+      `${HELD}/x.jpeg`
+    )}">`;
+
+    expect(removeBodyMedia(html, { keepEdgeMedia: new Set([KEPT]), withheld: [] })).toBe(html);
+  });
+
   it('changes nothing when nothing is withheld and nothing is kept', () => {
     const html = `<img src="${cdn(`${HELD}/x.jpeg`)}">`;
 

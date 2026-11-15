@@ -6,7 +6,7 @@ import { getArticleById } from '~/server/services/article.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
 import { removeBodyMedia, servableBodyImageUrls } from '~/server/utils/article-body-media';
-import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
+import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
 import {
@@ -149,15 +149,7 @@ function bodyBrowsingLevel(
   user: Session['user'] | undefined,
   restricted: boolean
 ) {
-  let level = publicBrowsingLevelsFlag;
-  if (user) {
-    const levels: { browsingLevel?: number } = {};
-    resolveRequestBrowsingLevels(levels, {
-      user,
-      req,
-      features: getFeatureFlagsLazy({ user, req }),
-    });
-    level = levels.browsingLevel ?? publicBrowsingLevelsFlag;
-  }
+  const features = getFeatureFlagsLazy({ user, req });
+  const level = relatedPostsBrowsingLevel({ user, req, features }, undefined);
   return restricted ? level & sfwBrowsingLevelsFlag : level;
 }

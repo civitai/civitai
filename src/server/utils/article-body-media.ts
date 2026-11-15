@@ -51,7 +51,7 @@ export function removeBodyMedia(
 ) {
   const held = withheld.filter(Boolean).map((uuid) => uuid.toLowerCase());
   if (!html || !/<(img|edge-media|a)\b/i.test(html)) return html;
-  if (!keep && !keepEdgeMedia && !held.length && !/<edge-media\b/i.test(html)) return html;
+  if (!keep && !held.length && edgeMediaAllKept(html, keepEdgeMedia)) return html;
   const heldKeys = new Set(held);
   // keysIn reads the uuid however the url spells it, as the browser would resolve it.
   const namesWithheld = (value: string | undefined) => {
@@ -85,4 +85,21 @@ export function removeBodyMedia(
       },
     },
   });
+}
+
+const EDGE_MEDIA_TAG = /<edge-media\b[^>]*>/gi;
+const URL_ATTRIBUTE = /\burl\s*=/gi;
+const BARE_UUID_URL = /\surl="([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/i;
+
+/**
+ * Whether every `edge-media` plainly names one bare uuid that `keepEdgeMedia` (if given) holds, so
+ * the parse can be skipped. Anything it cannot read that way answers false and gets the full parse.
+ */
+function edgeMediaAllKept(html: string, keepEdgeMedia: ReadonlySet<string> | undefined) {
+  for (const [tag] of html.matchAll(EDGE_MEDIA_TAG)) {
+    const uuid = BARE_UUID_URL.exec(tag)?.[1];
+    if (!uuid || tag.match(URL_ATTRIBUTE)?.length !== 1) return false;
+    if (keepEdgeMedia && !keepEdgeMedia.has(uuid)) return false;
+  }
+  return true;
 }
