@@ -51,6 +51,7 @@ beforeAll(async () => {
     CREATE TYPE "CommentEntityType" AS ENUM ('review', 'challenge');
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Private', 'Unsearchable', 'EarlyAccess');
+    CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp);
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -104,7 +105,9 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 
 beforeEach(async () => {
-  await pg.exec(`TRUNCATE "Post", "ResourceReview", "Image", "ImageResourceNew", "CommentV3";`);
+  await pg.exec(
+    `TRUNCATE "User", "Post", "ResourceReview", "Image", "ImageResourceNew", "CommentV3";`
+  );
   blockedBy.ids = [];
   dbMock.dbRead.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
@@ -588,6 +591,13 @@ describe('getRecommendedBy', () => {
       input: { modelId: MODEL, modelVersionId: V1, limit: 10, cursor: 1, ...input },
       userId,
     });
+  beforeEach(() =>
+    pg.exec(`
+      INSERT INTO "User" (id, "deletedAt")
+      SELECT n, NULL FROM generate_series(1, 20) n;
+      INSERT INTO "User" (id, "deletedAt") VALUES (9001, now());
+    `)
+  );
   const userIds = async (...args: Parameters<typeof recommendedBy>) =>
     (await recommendedBy(...args)).items.map((item) => item.user.id);
 
@@ -650,6 +660,25 @@ describe('getRecommendedBy', () => {
     const last = await recommendedBy({ limit: 2, cursor: 3 });
     expect(last.items.map((i) => i.user.id)).toEqual([1]);
     expect(last.nextCursor).toBeUndefined();
+  });
+
+  it('skips deleted users and reviewers with no user row', async () => {
+    await insertReviews([
+      { id: 1, daysAgo: 3 },
+      { id: 2, userId: 9001, daysAgo: 2 },
+      { id: 3, userId: 9002, daysAgo: 1 },
+    ]);
+    expect(await userIds()).toEqual([1]);
+  });
+
+  it('fills a page past deleted users instead of returning it short', async () => {
+    await insertReviews([
+      { id: 1, daysAgo: 5 },
+      { id: 2, userId: 9001, daysAgo: 1 },
+      { id: 3, userId: 9001, daysAgo: 2 },
+    ]);
+    // two newest reviews are the deleted user's; limit 1 must still return the live one
+    expect((await recommendedBy({ limit: 1 })).items.map((i) => i.user.id)).toEqual([1]);
   });
 
   it('is empty when the version has no thumbs-only reviews', async () => {

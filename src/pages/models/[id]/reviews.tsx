@@ -41,6 +41,7 @@ import {
   getReviewsFilterInput,
   parseReviewsFilter,
   resolveReviewsVersion,
+  shouldShowRecommendedBy,
 } from '~/components/ResourceReview/model-reviews-url';
 import { RecommendedBy } from '~/components/ResourceReview/RecommendedBy';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
@@ -433,12 +434,14 @@ export default function ModelReviews() {
                 )}
               </Stack>
             )}
-            {/* Under the last page of written reviews; the With images and Doesn’t views do not apply to thumbs-up. */}
             {modelVersionId &&
-              (!filter || filter === 'up') &&
-              !(resourceReviews && 'hasMore' in resourceReviews && resourceReviews.hasMore) && (
-                <RecommendedBy modelId={modelId} modelVersionId={modelVersionId} />
-              )}
+              shouldShowRecommendedBy({
+                filter,
+                modelVersionId,
+                listLoaded: !!resourceReviews,
+                hasMoreWritten:
+                  !!resourceReviews && 'hasMore' in resourceReviews && !!resourceReviews.hasMore,
+              }) && <RecommendedBy modelId={modelId} modelVersionId={modelVersionId} />}
           </div>
         </div>
       </Container>

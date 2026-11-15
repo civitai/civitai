@@ -6,6 +6,7 @@ import {
   getReviewsFilterInput,
   parseReviewsFilter,
   resolveReviewsVersion,
+  shouldShowRecommendedBy,
 } from '~/components/ResourceReview/model-reviews-url';
 
 describe('getModelReviewsCanonical', () => {
@@ -187,5 +188,27 @@ describe('resolveReviewsVersion', () => {
         loadFallback: async () => null,
       })
     ).resolves.toEqual({ type: 'notFound' });
+  });
+});
+
+describe('shouldShowRecommendedBy', () => {
+  const base = {
+    filter: undefined,
+    modelVersionId: 2,
+    listLoaded: true,
+    hasMoreWritten: false,
+  } as const;
+
+  it('shows under the last page of written reviews for All and Recommends', () => {
+    expect(shouldShowRecommendedBy(base)).toBe(true);
+    expect(shouldShowRecommendedBy({ ...base, filter: 'up' })).toBe(true);
+  });
+
+  it('stays hidden for With images and Doesn’t, with no version, while loading, and above more written pages', () => {
+    expect(shouldShowRecommendedBy({ ...base, filter: 'images' })).toBe(false);
+    expect(shouldShowRecommendedBy({ ...base, filter: 'down' })).toBe(false);
+    expect(shouldShowRecommendedBy({ ...base, modelVersionId: undefined })).toBe(false);
+    expect(shouldShowRecommendedBy({ ...base, listLoaded: false })).toBe(false);
+    expect(shouldShowRecommendedBy({ ...base, hasMoreWritten: true })).toBe(false);
   });
 });

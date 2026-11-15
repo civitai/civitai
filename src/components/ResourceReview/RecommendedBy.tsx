@@ -18,7 +18,14 @@ export function RecommendedBy({
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
 
-  const users = data?.pages.flatMap((page) => page.items.map((item) => item.user)) ?? [];
+  // A thumbs-up landing between pages shifts the offset, so one user can arrive twice.
+  const users = [
+    ...new Map(
+      (data?.pages ?? []).flatMap((page) =>
+        page.items.map((item) => [item.user.id, item.user] as const)
+      )
+    ).values(),
+  ];
   if (!users.length) return null;
 
   return (

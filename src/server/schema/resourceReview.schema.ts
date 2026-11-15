@@ -97,7 +97,7 @@ export const getRecommendedBySchema = z.object({
   modelId: numericString(),
   modelVersionId: numericString(),
   limit: z.coerce.number().int().min(1).max(50).default(24),
-  cursor: z.coerce.number().int().min(1).default(1),
+  cursor: z.coerce.number().int().min(1).max(200).default(1),
 });
 
 export type GetResourceReviewPagedInput = z.infer<typeof getResourceReviewPagedSchema>;

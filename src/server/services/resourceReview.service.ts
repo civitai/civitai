@@ -880,6 +880,7 @@ export const getRecommendedBy = async ({
     Prisma.sql`rr."modelVersionId" = ${modelVersionId}`,
     visibleReviewForViewerSql('rr', userId),
     thumbsOnlyRecommendSql,
+    Prisma.sql`EXISTS (SELECT 1 FROM "User" u WHERE u.id = rr."userId" AND u."deletedAt" IS NULL)`,
   ];
   const excludedUserIds = await getExcludedReviewerIds({ userId, modelId, modelVersionId });
   if (excludedUserIds.length) {
@@ -906,7 +907,7 @@ export const getRecommendedBy = async ({
   ]);
   const items = pageRows.flatMap(({ userId: id, createdAt }) => {
     const user = users[id];
-    if (!user || user.deletedAt) return [];
+    if (!user) return [];
     return [
       {
         createdAt,

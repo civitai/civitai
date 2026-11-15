@@ -49,10 +49,13 @@ describe('RecommendedBy', () => {
     await expect.element(screen.getByRole('heading', { name: 'Recommended by' })).toBeVisible();
     await expect.element(screen.getByText('fan1')).toBeVisible();
     await expect.element(screen.getByText('fan2')).toBeVisible();
-    expect(state.useInfiniteQuery).toHaveBeenCalledWith(
-      { modelId: 1, modelVersionId: 2 },
-      expect.anything()
-    );
+    const [input, options] = state.useInfiniteQuery.mock.calls[0] as [
+      unknown,
+      { getNextPageParam: (page: { nextCursor?: number }) => number | undefined }
+    ];
+    expect(input).toEqual({ modelId: 1, modelVersionId: 2 });
+    expect(options.getNextPageParam({ nextCursor: 3 })).toBe(3);
+    expect(options.getNextPageParam({})).toBeUndefined();
 
     await screen.getByRole('button', { name: 'Show more' }).click();
     expect(state.fetchNextPage).toHaveBeenCalledTimes(1);
