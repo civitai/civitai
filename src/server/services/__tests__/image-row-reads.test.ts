@@ -19,9 +19,7 @@ vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => {
   };
 });
 
-const { getUserCollectionsWithPermissions } = await import(
-  '~/server/services/collection.service'
-);
+const { getUserCollectionsWithPermissions } = await import('~/server/services/collection.service');
 const { updateImageAcceptableMinor } = await import('~/server/services/image.service');
 
 const IMAGE = {
@@ -32,6 +30,9 @@ const IMAGE = {
   nsfwLevel: 1,
   ingestion: 'Scanned',
   acceptableMinor: false,
+  poi: true,
+  minor: true,
+  tosViolation: true,
   scanJobs: { workflowId: 'wf', lastFailure: { reason: 'x' } },
   pHash: BigInt(1),
 };
@@ -50,7 +51,7 @@ beforeEach(() => {
 });
 
 describe('image rows returned to non-moderators', () => {
-  it("a collection's cover image carries no scanJobs", async () => {
+  it("a collection's cover image keeps the cover gate flags and carries no scanJobs", async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValueOnce([
       { id: 1, name: 'c', userId: 5, imageId: IMAGE.id, read: 'Public', write: 'Public' },
     ] as never);
@@ -59,7 +60,14 @@ describe('image rows returned to non-moderators', () => {
       input: { userId: 1, permissions: [] } as never,
     });
 
-    expect(collection.image?.id).toBe(IMAGE.id);
+    expect(collection.image).toMatchObject({
+      id: IMAGE.id,
+      // The blocks collections route gates covers on these.
+      poi: true,
+      minor: true,
+      acceptableMinor: false,
+      tosViolation: true,
+    });
     expect(collection.image).not.toHaveProperty('scanJobs');
   });
 
