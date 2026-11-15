@@ -260,6 +260,18 @@ export function isFlaky(failed, { exists = existsSync, runner = runFiles } = {})
   return runner(failed) === 0;
 }
 
+/**
+ * What verify does with a batch red: 'incomplete' (error on HEAD, no re-run), 'flaky' (success on
+ * HEAD with the note), or 'bisect'. A green or unfinished unit result is 'none'. verify() acts on
+ * exactly this value, so the decision it makes is the one tested here.
+ */
+export function classifyRed({ unitResult, failed, incomplete, flaky = isFlaky }) {
+  if (unitResult !== 'failure') return 'none';
+  if (incomplete) return 'incomplete';
+  if (!failed.length) return 'none';
+  return flaky(failed) ? 'flaky' : 'bisect';
+}
+
 /** Runs the failed files at the current checkout. 0 = all pass. */
 function runFiles(files) {
   const present = files.filter((f) => existsSync(f));
@@ -360,7 +372,6 @@ function verify(unitResult, reportsDir, shards) {
   const failed = failedFiles(reports, root);
   const incomplete = unitResult === 'failure' && !reportsComplete(reports, Number(shards));
   const lines = [];
-  let flaky = false;
   let firstBad = null;
   if (incomplete)
     lines.push(
@@ -369,8 +380,10 @@ function verify(unitResult, reportsDir, shards) {
   if (failed.length && !incomplete) {
     lines.push(`${failed.length} failed file(s):`, ...failed.map((f) => `- \`${f}\``), '');
     console.log('Re-running the failed files at HEAD first.');
-    // Every failed file must exist and pass: a re-run of nothing is not a pass.
-    flaky = isFlaky(failed);
+  }
+  const kind = classifyRed({ unitResult, failed, incomplete });
+  const flaky = kind === 'flaky';
+  if (kind === 'flaky' || kind === 'bisect') {
     if (flaky) {
       lines.push(
         `**Flaky:** they pass on a re-run at HEAD, so this is not bisected: ${failed.join(', ')}`

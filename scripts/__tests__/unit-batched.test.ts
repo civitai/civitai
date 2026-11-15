@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   decideRun,
   headVerdict,
+  classifyRed,
   isFlaky,
   statusTargets,
   failedFiles,
@@ -225,7 +226,8 @@ describe('statusTargets: every status a verdict posts', () => {
   });
 });
 
-// The one place a red becomes a success, so every input that could fake a pass is pinned.
+// The rule by which a red becomes a success. Its inputs are pinned here; verify() acts on
+// classifyRed below, which calls it.
 describe('isFlaky: did every failed file pass on the re-run at HEAD?', () => {
   const all = () => true;
   const pass = () => 0;
@@ -252,6 +254,53 @@ describe('isFlaky: did every failed file pass on the re-run at HEAD?', () => {
   // Nothing re-run is no evidence of a pass (verify never reached the re-run with no files).
   it('an empty failed list is not flaky', () => {
     expect(isFlaky([], { exists: all, runner: pass })).toBe(false);
+  });
+});
+
+// What verify() does with a red: it branches on exactly this value.
+describe('classifyRed: what verify does with a batch red', () => {
+  const yes = () => true;
+  const no = () => false;
+  const f = ['src/a.test.ts'];
+
+  it('a green or unfinished unit result is none, whatever else is true', () => {
+    for (const unitResult of ['success', 'cancelled', 'skipped'])
+      expect(classifyRed({ unitResult, failed: f, incomplete: false, flaky: yes })).toBe('none');
+  });
+
+  it('incomplete wins over a flaky re-run, and never re-runs', () => {
+    let called = false;
+    const spy = () => ((called = true), true);
+    expect(classifyRed({ unitResult: 'failure', failed: f, incomplete: true, flaky: spy })).toBe(
+      'incomplete'
+    );
+    expect(called).toBe(false);
+  });
+
+  it('flaky only when the flake rule says so; otherwise bisect', () => {
+    expect(classifyRed({ unitResult: 'failure', failed: f, incomplete: false, flaky: yes })).toBe(
+      'flaky'
+    );
+    expect(classifyRed({ unitResult: 'failure', failed: f, incomplete: false, flaky: no })).toBe(
+      'bisect'
+    );
+  });
+
+  it('a complete red with no failed file is none (failure on HEAD via statusTarget)', () => {
+    expect(classifyRed({ unitResult: 'failure', failed: [], incomplete: false, flaky: yes })).toBe(
+      'none'
+    );
+  });
+
+  it('defaults to the real flake rule', () => {
+    // A file that does not exist can never be flaky under isFlaky, so no re-run is attempted.
+    expect(
+      classifyRed({
+        unitResult: 'failure',
+        failed: ['src/no-such-file.test.ts'],
+        incomplete: false,
+      })
+    ).toBe('bisect');
   });
 });
 
