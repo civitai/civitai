@@ -1,7 +1,7 @@
 import type { GetServerSidePropsContext } from 'next';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { Session } from '~/types/session';
-import { isNextDataRequest } from '~/server/prom/ssr-cpu.metrics';
+import { isNextDataRequest } from '~/server/utils/next-data-request';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
 import type { SsrPrefetchCohort } from '~/shared/constants/ssr-prefetch-cohort.constants';
@@ -38,7 +38,7 @@ export function resolveSsrPrefetchCohort({
 }): SsrPrefetchCohort | null {
   const req = ctx.req as CohortRequest;
   if (!session?.user) return null;
-  if (isNextDataRequest(req)) return null;
+  if (isNextDataRequest(req as never)) return null;
   if (parseVerifiedBotHeader(req.headers[VERIFIED_BOT_HEADER])) return null;
   if (req[BOT_CACHE_REQ_KEY]) return null;
   const cohort: SsrPrefetchCohort = features?.ssrSignedInSkipPrefetch ? 'skip' : 'full';

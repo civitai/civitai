@@ -1,11 +1,9 @@
 // @vitest-environment happy-dom
-import * as React from 'react';
-import { createElement } from 'react';
+import { act, createElement } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { renderToStaticMarkup, renderToString } from 'react-dom/server';
 import { hydrateRoot } from 'react-dom/client';
 import type { Root } from 'react-dom/client';
-import type { act as actType } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlagsProviderModule from '~/providers/FeatureFlagsProvider';
@@ -33,29 +31,29 @@ import * as F from './model-page-fixture';
  * The `<head>` the page emits is read through `next/head`'s head manager, and carries the data.
  */
 
-const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const m = vi.hoisted(() => ({
   /** `model.getById` in the client cache (`cached`), or still loading (`pending`). */
   getById: 'cached' as 'cached' | 'pending',
   flags: {} as Record<string, boolean>,
+  // ONE router object, as Next's is: a fresh `query` per render reads to `BrowserRouterProvider` as
+  // a navigation on every render, which loops once effects run.
+  router: {
+    query: { id: '4201', slug: ['lantern-glow-portrait-lora'], modelVersionId: '9301' },
+    asPath: '/models/4201/lantern-glow-portrait-lora?modelVersionId=9301',
+    pathname: '/models/[id]/[[...slug]]',
+    replace: async () => true,
+    push: async () => true,
+    events: { on: () => undefined, off: () => undefined },
+    isReady: true,
+  },
 }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
   createServerSideProps: () => async () => ({ props: {} }),
 }));
-vi.mock('next/router', () => ({
-  useRouter: () => ({
-    query: { id: '4201', slug: ['lantern-glow-portrait-lora'], modelVersionId: '9301' },
-    asPath: '/models/4201/lantern-glow-portrait-lora?modelVersionId=9301',
-    pathname: '/models/[id]/[[...slug]]',
-    replace: vi.fn(async () => true),
-    push: vi.fn(async () => true),
-    events: { on: vi.fn(), off: vi.fn() },
-    isReady: true,
-  }),
-}));
+vi.mock('next/router', () => ({ useRouter: () => m.router }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({
     id: 5,
@@ -220,24 +218,29 @@ const hydrationErrors = () => [
   ...consoleErrors.filter((e) => HYDRATION_RE.test(e)),
 ];
 
+// Captured once: a spy left over from a failed test must never become the next test's "original".
+const originalConsoleError = console.error.bind(console);
+
 beforeEach(() => {
   m.getById = 'cached';
   head = null;
   consoleErrors = [];
   recoverable = [];
-  const original = console.error;
   vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
     consoleErrors.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
-    original.apply(console, args as []);
+    originalConsoleError(...args);
   });
 });
 
 afterEach(() => {
-  act(() => {
-    for (const root of roots.splice(0)) root.unmount();
-  });
-  for (const container of containers.splice(0)) container.remove();
-  vi.restoreAllMocks();
+  try {
+    act(() => {
+      for (const root of roots.splice(0)) root.unmount();
+    });
+  } finally {
+    for (const container of containers.splice(0)) container.remove();
+    vi.restoreAllMocks();
+  }
 });
 
 async function flush() {

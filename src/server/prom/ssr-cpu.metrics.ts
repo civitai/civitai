@@ -7,11 +7,15 @@ import {
 } from '@civitai/telemetry/client';
 import { pageRouteLabel } from '~/server/utils/page-routes';
 import { SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import { isNextDataRequest } from '~/server/utils/next-data-request';
 import type { SsrPrefetchCohort } from '~/shared/constants/ssr-prefetch-cohort.constants';
 import {
   isSsrPrefetchCohort,
   SSR_PREFETCH_COHORT_REQ_KEY,
 } from '~/shared/constants/ssr-prefetch-cohort.constants';
+
+// Re-exported for its existing importers; it lives apart so page code can import it without prom-client.
+export { isNextDataRequest };
 
 export const SSR_CPU_METRIC = PROM_PREFIX + 'ssr_cpu_seconds_total';
 export const SSR_PREFETCH_COHORT_CPU_METRIC =
@@ -87,15 +91,6 @@ type RequestLike = {
   headers: Record<string, string | string[] | undefined>;
   [SHELL_REQ_KEY]?: string;
 };
-
-/**
- * A page without getServerSideProps still renders a full document for a `/_next/data` request.
- * Next sets `x-nextjs-data` on such requests when the app has a proxy and leaves `req.url` as the
- * data URL; either marks the request.
- */
-export function isNextDataRequest(req: Omit<RequestLike, typeof SHELL_REQ_KEY>): boolean {
-  return req.headers['x-nextjs-data'] === '1' || !!req.url?.startsWith('/_next/data');
-}
 
 /** `shell` for a static shell render (`_app` marks the request), so its CPU reads apart from full renders. */
 export function ssrRequestKind(req: RequestLike): SsrRequestKind {

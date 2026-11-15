@@ -101,7 +101,8 @@ async function run({
 }: {
   flag: boolean;
   viewer?: Viewer;
-  slug?: string[] | undefined;
+  /** `null`: the bare-id URL, with no slug segment. */
+  slug?: string[] | null;
   query?: Record<string, string>;
   headers?: Record<string, string>;
   url?: string;
@@ -114,7 +115,7 @@ async function run({
   const result = await resolver({
     ssg: recordingSsg(calls, getById),
     ctx: {
-      params: { id, slug },
+      params: { id, slug: slug ?? undefined },
       query: { id, ...(slug ? { slug } : {}), ...query },
       req,
       res: {},
@@ -251,7 +252,7 @@ describe.each(ARMS)('model page 404 and redirect outcomes — $name', ({ flag, v
   });
 
   it('a bare id redirects permanently to the canonical slug', async () => {
-    const { result, procs, cohort } = await run({ flag, viewer, slug: undefined });
+    const { result, procs, cohort } = await run({ flag, viewer, slug: null });
 
     expect(result).toEqual({
       redirect: { destination: `/models/${F.MODEL_ID}/${SLUG}`, permanent: true },
