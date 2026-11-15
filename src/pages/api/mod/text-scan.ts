@@ -25,7 +25,7 @@ export default defineModeratorEndpoint('textScan.harness', {
     'Text-scan operator actions: prompts, config, rollout modes, dry-run scans, shadow samples, quotes.',
   returns: "the action's JSON; a CSV sample as { csv }",
   notes: [
-    'putPrompt/putConfig/putModes/putWebSearchModes are attributed to the signed-in moderator; ids in the body are ignored.',
+    'putPrompt/putConfig/putModes/putWebSearchModes/putLabelModes are attributed to the signed-in moderator; ids in the body are ignored.',
     'putPrompt, putConfig, putModes, putWebSearchModes and putLabelModes require the textScanPromptPublish permission.',
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
     'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
