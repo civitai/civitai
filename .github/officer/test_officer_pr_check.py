@@ -29,6 +29,7 @@ import officer_pr_check as opc  # noqa: E402
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 CHECKER = os.path.join(HERE, "officer_pr_check.py")
 REAL_LIST = os.path.join(HERE, "forbidden-paths.txt")
+REAL_MONEY = os.path.join(HERE, "money-paths.txt")
 
 
 class GlobGrammar(unittest.TestCase):
@@ -77,11 +78,15 @@ class GlobGrammar(unittest.TestCase):
 
 class Fixture(unittest.TestCase):
     LIST = "package.json\npnpm-lock.yaml\npackages/civitai-db-schema/prisma/\n**/migrations/**\n.github\n.env*\nDockerfile*\nscripts\n"
+    MONEY = "# money\n*buzz*\n*stripe*\n"
 
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="officer-pr-check-")
         self.g("init", "-q", "-b", "main")
         self.write(".github/officer/forbidden-paths.txt", self.LIST)
+        self.write(".github/officer/money-paths.txt", self.MONEY)
+        self.write("src/server/services/buzz.service.ts", "export const buzz = 1;\n")
+        self.write("src/components/BuzzButton.test.tsx", "expect(1).toBe(1);\n")
         self.write(".github/officer/bot-logins.txt", "# bots\n# placeholder[bot]\nCivitai-Officer-X[bot]   # x\r\n")
         self.write("src/app.ts", "export const a = 1;\n")
         self.write("src/old/keep.ts", "x\n")
@@ -262,6 +267,71 @@ class Fixture(unittest.TestCase):
         self.g("rm", "-q", "package.json")
         self.commit()
         self.assert_refused("package.json", "matches forbidden pattern package.json")
+
+    # ── money, auth and gating code: tests only ──
+    MONEY_WHY = "is money, auth or gating code (matches"
+
+    def test_a_non_test_money_change_fails_at_every_depth_case_insensitively(self):
+        paths = ["src/components/BuzzButton.tsx",                   # case-insensitive, file name
+                 "src/server/services/buzz/x.ts",                   # a directory segment
+                 "packages/civitai-ui/src/a/b/c/Stripe-Checkout.ts"]  # deep, in a package
+        for p in paths:
+            self.write(p, "export const x = 1;\n")
+        self.commit()
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        for p in paths:
+            with self.subTest(path=p):
+                self.assertIn(f"{p!r} [A]: {self.MONEY_WHY}", out)
+
+    def test_a_money_test_file_is_allowed(self):
+        self.write("src/components/BuzzButton.test.tsx", "expect(1).toBe(1);\nexpect(2).toBe(2);\n")
+        self.write("src/server/services/buzz.spec.ts", "expect(1).toBe(1);\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("2 test file(s) added or modified", out)
+
+    def test_modifying_a_money_file_fails(self):
+        self.write("src/server/services/buzz.service.ts", "export const buzz = 2;\n")
+        self.commit()
+        self.assert_refused("src/server/services/buzz.service.ts", self.MONEY_WHY + " *buzz*")
+
+    def test_deleting_or_renaming_away_a_money_file_fails(self):
+        self.g("mv", "src/server/services/buzz.service.ts", "src/server/services/tokens.service.ts")
+        self.commit()
+        self.assert_refused("src/server/services/buzz.service.ts", self.MONEY_WHY)
+        self.assertIn("'src/server/services/buzz.service.ts' [D]", self.check()[1])
+
+    def test_the_base_money_list_is_used_not_the_prs(self):
+        self.write(".github/officer/money-paths.txt", "# nothing\n")
+        self.write("src/components/BuzzButton.tsx", "export const x = 1;\n")
+        self.commit()
+        self.assert_refused("src/components/BuzzButton.tsx", self.MONEY_WHY)
+
+    def test_fail_closed_when_the_base_lacks_the_money_list(self):
+        self.g("checkout", "-q", "--detach", "base")
+        self.g("rm", "-q", ".github/officer/money-paths.txt")
+        self.g("commit", "-q", "-m", "no money list")
+        self.g("branch", "-f", "base", "HEAD")
+        self.g("checkout", "-q", "-b", "officer/x/4-y")
+        self.write("src/app.ts", "export const a = 3;\n")
+        self.commit()
+        rc, out = self.check()
+        self.assertEqual(rc, 2, out)
+        self.assertIn("money-paths.txt is not on the base revision", out)
+
+    def test_fail_closed_on_an_empty_base_money_list(self):
+        self.g("checkout", "-q", "--detach", "base")
+        self.write(".github/officer/money-paths.txt", "# every pattern removed\n\n")
+        self.g("commit", "-q", "-am", "empty money list")
+        self.g("branch", "-f", "base", "HEAD")
+        self.g("checkout", "-q", "-b", "officer/x/5-y")
+        self.write("src/components/BuzzButton.tsx", "export const x = 1;\n")
+        self.commit()
+        rc, out = self.check()
+        self.assertEqual(rc, 2, out)
+        self.assertIn("money-paths.txt on base holds no patterns", out)
 
     def test_symlink_in_src_fails(self):
         os.symlink("../.github/officer/forbidden-paths.txt", os.path.join(self.d, "src/link.ts"))
@@ -481,7 +551,7 @@ class RealList(unittest.TestCase):
                   "packages/civitai-db-schema/prisma/schema.prisma", "prisma/migrations/x/migration.sql",
                   "src/server/clickhouse/migrations/2026-01-01-x.sql", "src/server/services/apps/migrations/1_x.sql",
                   ".github/workflows/x.yml", ".github/officer/forbidden-paths.txt", ".github/officer/bot-logins.txt",
-                  ".github/officer/officer_pr_check.py", "scripts/ci/x.mjs", "packages/civitai-ui/scripts/x.mjs",
+                  ".github/officer/officer_pr_check.py", ".github/officer/money-paths.txt", "scripts/ci/x.mjs", "packages/civitai-ui/scripts/x.mjs",
                   ".env", ".env.production", "src/.env.local", "Dockerfile", "packages/x/Dockerfile.dev",
                   "docker-compose.yml", ".husky/pre-commit", "CLAUDE.md", "src/AGENTS.md", ".gitattributes",
                   "src/x/.gitattributes", "event-engine-common", "apps/moderator/src/x.ts"]:
@@ -534,6 +604,33 @@ class RealList(unittest.TestCase):
             for p in probes:
                 with self.subTest(entry=entry, path=p):
                     self.assertTrue(self.forbidden(p), f"charter floor {entry!r}: {p} is not forbidden by {REAL_LIST}")
+
+    # The charter's money, auth and gating sentence: `*buzz*`, `*stripe*`, `*paddle*`,
+    # `*payment*` services and the hosted review gate's sensitive-path topics. Pinned whole, so a
+    # dropped or added pattern is a visible change here.
+    MONEY_PATTERNS = {"*auth*", "*session*", "*permission*", "*buzz*", "*payment*", "*stripe*", "*paddle*",
+                      "*billing*", "*purchase*", "*payout*", "*withdraw*", "*subscription*", "*email*", "*pii*",
+                      "*nsfw*", "*browsing-level*", "*browsinglevel*", "*moderat*"}
+
+    def test_the_money_list_is_the_charter_set(self):
+        with open(REAL_MONEY) as f:
+            self.assertEqual(set(opc.parse_list(f.read(), REAL_MONEY)), self.MONEY_PATTERNS)
+
+    def test_the_money_list_matches_real_money_auth_and_gating_paths(self):
+        with open(REAL_MONEY) as f:
+            money = opc.parse_list(f.read(), REAL_MONEY)
+        for p in ["src/components/BuzzButton.tsx", "src/server/services/buzz.service.ts",
+                  "src/server/services/stripe.service.ts", "src/server/routers/paddle.router.ts",
+                  "src/components/Account/UserPaymentConfigurationCard.tsx", "src/providers/SessionProvider.tsx",
+                  "src/server/utils/browsingLevel.ts", "src/server/services/moderation/x.ts",
+                  "src/server/services/subscriptions.service.ts", "src/server/email/templates/x.ts",
+                  "src/components/BrowsingLevel/x.tsx", "src/server/services/nsfwLevels.ts"]:
+            with self.subTest(path=p):
+                self.assertTrue(opc.money_hit(money, p), f"{p} is not matched by {REAL_MONEY}")
+        for p in ["src/pages/index.tsx", "src/components/Image/x.tsx", "src/server/services/model.service.ts",
+                  "packages/civitai-ui/src/button.tsx"]:
+            with self.subTest(path=p):
+                self.assertIsNone(opc.money_hit(money, p), f"{p} (not money code) is matched by {REAL_MONEY}")
 
     def test_leaves_application_code_alone(self):
         # Positive control: the list must not forbid what an officer PR is FOR.

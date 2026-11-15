@@ -33,13 +33,16 @@ rename, deletions included):
   4. REGRESSION TEST: at least one added or modified file is a test (TEST_GLOBS: a file
      whose name matches `*.test.*` or `*.spec.*`). Every officer PR must carry a regression
      test for the fault it fixes (operator decision 2026-11-09); a deleted test does not count.
-  5. NO DELETED TEST: no test file may be deleted (a rename is a deletion here).
-  6. NO LOST ASSERTIONS: no modified test file may have fewer `expect(` calls at <head-rev>
+  5. MONEY, AUTH AND GATING: a changed, added, deleted or renamed-away path that is not a test
+     file must match no glob of the BASE revision's .github/officer/money-paths.txt (same
+     grammar, but CASE-INSENSITIVE, so `*buzz*` matches BuzzButton.tsx). Its tests may change.
+  6. NO DELETED TEST: no test file may be deleted (a rename is a deletion here).
+  7. NO LOST ASSERTIONS: no modified test file may have fewer `expect(` calls at <head-rev>
      than at <base-rev>, counted per file (a gain in another file does not offset a loss).
 An empty diff FAILS: an officer PR always changes something, and "nothing changed" more
 often means wrong revisions than a clean PR.
 
-🔴 FAIL CLOSED: the list and the logins are read from <base-rev> with `git show` and from
+🔴 FAIL CLOSED: the lists and the logins are read from <base-rev> with `git show` and from
 nowhere else. The workflow also runs THIS FILE from the base, never the PR's copy.
 
 Exit status: 0 pass, 1 a check failed, 2 usage, environment or missing-input error.
@@ -50,6 +53,7 @@ import subprocess
 import sys
 
 LIST = ".github/officer/forbidden-paths.txt"
+MONEY = ".github/officer/money-paths.txt"
 LOGINS = ".github/officer/bot-logins.txt"
 ALLOWED_ROOTS = ("src/", "packages/")
 BRANCH_PREFIX = "officer/"
@@ -96,7 +100,7 @@ def _segment_regex(seg):
     return "".join(out)
 
 
-def compile_glob(pat):
+def compile_glob(pat, flags=0):
     """The pattern as an anchored regexp; ValueError when the push gate would refuse it."""
     if pat == "" or pat.startswith("/"):
         raise ValueError("must be a non-empty repository-relative pattern")
@@ -121,7 +125,7 @@ def compile_glob(pat):
     out.append("$")
     # DOTALL and fullmatch: a newline in a path is matched like any other character (Go's
     # `.` would not match it), so this side is never the laxer one.
-    return re.compile("".join(out), re.DOTALL)
+    return re.compile("".join(out), re.DOTALL | flags)
 
 
 def match_forbidden(pat, path):
@@ -135,7 +139,20 @@ def match_forbidden(pat, path):
     return bool(rx.fullmatch(path))
 
 
-def parse_list(content):
+def money_hit(globs, path):
+    """The first money-paths glob `path` matches, case-insensitively, else None. Same segment
+    rule as match_forbidden: a pattern with no '/' is tried against every segment."""
+    for pat in globs:
+        rx = compile_glob(pat, re.IGNORECASE)
+        if "/" in pat:
+            if rx.fullmatch(path):
+                return pat
+        elif any(rx.fullmatch(seg) for seg in path.split("/")):
+            return pat
+    return None
+
+
+def parse_list(content, name=LIST):
     """One glob per line; blank and `#` lines skipped. Any invalid line is an error."""
     out = []
     for n, line in enumerate(content.replace("\r\n", "\n").split("\n"), 1):
@@ -145,7 +162,7 @@ def parse_list(content):
         try:
             compile_glob(line)
         except ValueError as e:
-            raise Fatal(f"{LIST} line {n} {line!r}: {e}")
+            raise Fatal(f"{name} line {n} {line!r}: {e}")
         out.append(line)
     return out
 
@@ -294,6 +311,9 @@ def cmd_check(base, head):
     globs = parse_list(from_base(base_c, LIST))
     if not globs:
         raise Fatal(f"{LIST} on {base} holds no patterns")
+    money = parse_list(from_base(base_c, MONEY), MONEY)
+    if not money:
+        raise Fatal(f"{MONEY} on {base} holds no patterns")
     entries = changed_entries(base_c, head_c)
     print(f"== officer PR check: {len(entries)} changed path(s), base {base_c[:12]}, head {head_c[:12]}, "
           f"{len(globs)} forbidden pattern(s) from the base, allowed roots {', '.join(ALLOWED_ROOTS)}")
@@ -317,6 +337,9 @@ def cmd_check(base, head):
         hit = next((g for g in globs if match_forbidden(g, path)), None)
         if hit:
             why.append(f"matches forbidden pattern {hit}")
+        mhit = None if is_test(path) else money_hit(money, path)
+        if mhit:
+            why.append(f"is money, auth or gating code (matches {mhit} in {MONEY}); only its tests may change")
         if status != "D" and new_mode in BAD_MODES:
             why.append(f"is {BAD_MODES[new_mode]}")
         if why:

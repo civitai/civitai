@@ -19,7 +19,10 @@ name: officer-pr-check
 #   3. it is not a symlink or a submodule gitlink;
 #   4. the PR adds or modifies at least one test file (`*.test.*` or `*.spec.*`): every
 #      officer PR carries a regression test for what it fixes;
-#   5. it deletes no test file, and no modified test file has fewer `expect(` calls.
+#   5. a path that is not a test file matches no glob of the BASE's
+#      .github/officer/money-paths.txt (money, auth and gating code, case-insensitive): only
+#      those files' tests may change;
+#   6. it deletes no test file, and no modified test file has fewer `expect(` calls.
 # An empty diff fails. Tests under src/ and packages/ are application code here.
 #
 # The self-test (.github/officer/test_officer_pr_check.py, the PR's own copy) runs only on a
@@ -28,7 +31,7 @@ name: officer-pr-check
 # and fails when a new top-level file or directory is not yet in forbidden-paths.txt (the
 # push gate has no allowlist). Any other PR cannot change what it checks.
 #
-# 🔴 FAIL CLOSED: when armed, the checker, the list and the logins all come from the BASE
+# 🔴 FAIL CLOSED: when armed, the checker, both lists and the logins all come from the BASE
 # commit. If the base lacks one, the job fails; it never runs the PR's own copy. Before this
 # file is on the base, arming falls back to the `officer/` prefix and the check fails closed.
 #
