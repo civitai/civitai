@@ -284,7 +284,9 @@ describe('/api/v1/images?ids= — batch by id', () => {
 
       expect(res._getStatusCode()).toBe(200);
       expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([1, 3]);
-      expect(mockHeldLevelsByPost).toHaveBeenCalledWith([HELD_POST, HELD_POST, OTHER_POST]);
+      expect(mockHeldLevelsByPost).toHaveBeenCalledWith([HELD_POST, HELD_POST, OTHER_POST], {
+        withOwners: false,
+      });
     });
 
     it('leaves out an image on a held post that is not yet rated', async () => {

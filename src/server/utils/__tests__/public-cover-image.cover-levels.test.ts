@@ -24,7 +24,9 @@ describe('getCoverBrowsingLevels', () => {
     expect(levelOf({ postId: UNHELD_POST })).toBe(MATURE);
     expect(levelOf({ postId: null })).toBe(MATURE);
     expect(levelOf(null)).toBe(MATURE);
-    expect(mockHeldLevelsByPost).toHaveBeenCalledWith([HELD_POST, UNHELD_POST]);
+    expect(mockHeldLevelsByPost).toHaveBeenCalledWith([HELD_POST, UNHELD_POST], {
+      withOwners: false,
+    });
   });
 
   it('allows nothing when the gallery level and the viewer level share no rating', async () => {

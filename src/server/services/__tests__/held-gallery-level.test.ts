@@ -257,6 +257,16 @@ describe('getHeldLevelsByPost', () => {
     });
   });
 
+  it('holds the same posts without reading owners when asked not to', async () => {
+    expect(
+      Object.fromEntries(await getHeldLevelsByPost([100, 200], { withOwners: false }))
+    ).toEqual({
+      100: { level: 1, ownerId: undefined },
+      200: { level: 2, ownerId: undefined },
+    });
+    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+  });
+
   it('asks nothing for no posts, or for posts on no held model', async () => {
     expect((await getHeldLevelsByPost([])).size).toBe(0);
     expect((await getHeldLevelsByPost([300, 7])).size).toBe(0);

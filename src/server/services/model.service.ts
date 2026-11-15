@@ -6557,7 +6557,10 @@ export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?
  * For each post on a minor or SFW-only model, the level its images may be served at and the model's
  * owner, who sees them whole. A post on no held model, or not yet on the replica, is absent.
  */
-export async function getHeldLevelsByPost(postIds: number[]) {
+export async function getHeldLevelsByPost(
+  postIds: number[],
+  { withOwners = true }: { withOwners?: boolean } = {}
+) {
   const held = new Map<number, { level: number; ownerId?: number }>();
   const ids = uniq(postIds);
   if (!ids.length) return held;
@@ -6572,10 +6575,13 @@ export async function getHeldLevelsByPost(postIds: number[]) {
     Object.values(versions).map((version) => ({ modelId: version.modelId }))
   );
   if (!levels.size) return held;
-  const owners = await dbRead.model.findMany({
-    where: { id: { in: [...levels.keys()] } },
-    select: { id: true, userId: true },
-  });
+  // Readers that exempt no one skip the owner read.
+  const owners = withOwners
+    ? await dbRead.model.findMany({
+        where: { id: { in: [...levels.keys()] } },
+        select: { id: true, userId: true },
+      })
+    : [];
   const ownerOf = new Map(owners.map((model) => [model.id, model.userId]));
 
   for (const id of ids) {
