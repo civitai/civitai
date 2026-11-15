@@ -5,6 +5,7 @@ import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { Prisma } from '@prisma/client';
 import { collectionsSearchIndex } from '~/server/search-index';
+import { legacyCoverStringAllowedSql } from '~/server/services/collection-cover-visibility';
 
 // The feed index carries `collectionIds` for ACCEPTED membership of non-private
 // collections, and nothing about a CollectionItem write reaches the index on its
@@ -141,4 +142,28 @@ export async function queueModelCollectionsReindex(modelIds: number[]) {
       modelIds,
     }).catch(() => undefined);
   }
+}
+
+/**
+ * One page, by collection id after `cursor`, of the collections with an article item whose legacy
+ * cover string the search index may no longer carry: the backfill for that rule.
+ */
+export async function getCollectionIdsWithWithheldLegacyCover({
+  cursor,
+  limit,
+}: {
+  cursor: number;
+  limit: number;
+}) {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT DISTINCT ci."collectionId" id
+    FROM "CollectionItem" ci
+    JOIN "Article" a ON a.id = ci."articleId"
+    WHERE ci."collectionId" > ${cursor}
+      AND a.cover IS NOT NULL
+      AND NOT ${legacyCoverStringAllowedSql()}
+    ORDER BY ci."collectionId"
+    LIMIT ${limit}
+  `;
+  return rows.map((row) => Number(row.id));
 }

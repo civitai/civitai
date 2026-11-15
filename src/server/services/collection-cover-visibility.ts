@@ -115,6 +115,25 @@ export const publishedArticleSql = Prisma.sql`(
 )`;
 
 /**
+ * Whether article `"Article" a`'s legacy cover string may be served: beside a servable cover or
+ * banner image within `imageLevels`, or, with neither, for an article at an SFW level.
+ */
+export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLevelsFlag) {
+  return Prisma.sql`CASE
+    WHEN a."coverId" IS NULL AND a."bannerId" IS NULL THEN
+      (a."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
+      AND (a."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
+    ELSE EXISTS (
+      SELECT 1 FROM "Image" i
+      WHERE i.id = COALESCE(a."coverId", a."bannerId")
+        AND ${servableImageSql}
+        AND (i."nsfwLevel" & ${imageLevels}::int) <> 0
+        AND (i."nsfwLevel" & ~${imageLevels}::int) = 0
+    )
+  END`;
+}
+
+/**
  * For each collection, a cover drawn from its first `itemsPerCollection` accepted items: one row
  * per item, `image` projected by `imageSql` over `"Image" i` (null when no item yields a servable
  * image) and `src` for an article's external cover.
@@ -216,18 +235,7 @@ export function collectionItemCoversSql({
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${publishedArticleSql}
-          AND CASE
-            WHEN a."coverId" IS NULL AND a."bannerId" IS NULL THEN
-              (a."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
-              AND (a."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
-            ELSE EXISTS (
-              SELECT 1 FROM "Image" i
-              WHERE i.id = COALESCE(a."coverId", a."bannerId")
-                AND ${servableImageSql}
-                AND (i."nsfwLevel" & ${srcImageLevels}::int) <> 0
-                AND (i."nsfwLevel" & ~${srcImageLevels}::int) = 0
-            )
-          END
+          AND ${legacyCoverStringAllowedSql(srcImageLevels)}
     ), model3dItemImage AS MATERIALIZED (
         SELECT
           m3.id,

@@ -13,19 +13,28 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
 }));
 
-const { getCollectionIdsCoveredByModels, queueModelCollectionsReindex } = await import(
-  '~/server/services/collection-index-sync'
-);
+const {
+  getCollectionIdsCoveredByModels,
+  getCollectionIdsWithWithheldLegacyCover,
+  queueModelCollectionsReindex,
+} = await import('~/server/services/collection-index-sync');
 
 beforeAll(async () => {
   const db = new PGlite();
   await db.exec(`
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
-    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "postId" int, ingestion text NOT NULL DEFAULT 'Scanned',
+      "needsReview" text, "blockedFor" text, "tosViolation" boolean NOT NULL DEFAULT false,
+      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false
+    );
+    CREATE TABLE "Article" (
+      id int PRIMARY KEY, cover text, "coverId" int, "bannerId" int, "nsfwLevel" int NOT NULL DEFAULT 1
+    );
     CREATE TABLE "Collection" (id int PRIMARY KEY, "imageId" int);
     CREATE TABLE "CollectionItem" (
-      id serial PRIMARY KEY, "collectionId" int NOT NULL, "modelId" int, "postId" int, "imageId" int
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "modelId" int, "postId" int, "imageId" int, "articleId" int
     );
     -- Model 1 has version 10, post 100 and image 1000; model 2 has version 20, post 200, image 2000.
     INSERT INTO "ModelVersion" VALUES (10, 1), (20, 2);
@@ -36,6 +45,16 @@ beforeAll(async () => {
     INSERT INTO "CollectionItem" ("collectionId", "modelId", "postId", "imageId") VALUES
       (1, 1, NULL, NULL), (2, NULL, 100, NULL), (3, NULL, NULL, 1000),
       (5, 2, NULL, NULL), (5, NULL, 200, 2000), (6, NULL, 300, 3000);
+    -- Articles with a legacy cover string: 40 beside a servable PG cover, 41 beside a cover
+    -- awaiting review, 42 beside an X cover, 43 with no image at R, 44 with no image at PG; 45 has
+    -- no string. Collections 11-16 hold one each.
+    INSERT INTO "Image" (id, "needsReview", "nsfwLevel") VALUES
+      (4000, NULL, 1), (4100, 'minor', 1), (4200, NULL, 16);
+    INSERT INTO "Article" (id, cover, "coverId", "nsfwLevel") VALUES
+      (40, 'ok', 4000, 1), (41, 'pending', 4100, 1), (42, 'x', 4200, 1),
+      (43, 'r', NULL, 4), (44, 'pg', NULL, 1), (45, NULL, 4100, 1);
+    INSERT INTO "CollectionItem" ("collectionId", "articleId") VALUES
+      (11, 40), (12, 41), (13, 42), (14, 43), (15, 44), (16, 45);
   `);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
     pgliteRaw(db).queryRaw
@@ -66,5 +85,20 @@ describe('queueModelCollectionsReindex', () => {
   it('resolves when the queue cannot be written, so a settings save never fails on it', async () => {
     mockCollectionsQueueUpdate.mockRejectedValueOnce(new Error('queue down'));
     await expect(queueModelCollectionsReindex([1])).resolves.toBeUndefined();
+  });
+});
+
+describe('getCollectionIdsWithWithheldLegacyCover', () => {
+  it('finds the collections whose legacy cover string is now withheld, and not one still served', async () => {
+    expect(await getCollectionIdsWithWithheldLegacyCover({ cursor: 0, limit: 100 })).toEqual([
+      12, 13, 14,
+    ]);
+  });
+
+  it('pages by collection id', async () => {
+    expect(await getCollectionIdsWithWithheldLegacyCover({ cursor: 0, limit: 2 })).toEqual([
+      12, 13,
+    ]);
+    expect(await getCollectionIdsWithWithheldLegacyCover({ cursor: 13, limit: 2 })).toEqual([14]);
   });
 });
