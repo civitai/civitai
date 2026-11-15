@@ -270,6 +270,7 @@ import {
 } from '~/server/services/blocks/workflow.service';
 import {
   blockOutputCeilingFromClaims,
+  pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
 import {
@@ -6076,24 +6077,36 @@ export const blocksRouter = router({
         workflow,
         blockOutputCeilingFromClaims(claims)
       );
-      const isRestricted = (idx: number) => {
+      const shape = (idx: number) => {
         const output = positions[idx]?.output;
-        return !!output && 'restricted' in output && output.restricted === true;
+        if (!output) return 'missing';
+        if ('restricted' in output) return 'restricted';
+        if ('pending' in output) return 'pending';
+        if ('blocked' in output) return 'blocked';
+        return 'usable';
       };
-      const publishable = positions.map((_, i) => i).filter((i) => !isRestricted(i));
+      const refuse = (message: string): never => {
+        throw new TRPCError({ code: 'BAD_REQUEST', message });
+      };
+      const publishable = positions.map((_, i) => i).filter((i) => shape(i) === 'usable');
+      if (input.imageIndexes === undefined) {
+        // "Every available output" is not knowable while one is still being rated.
+        const pending = positions.findIndex((_, i) => shape(i) === 'pending');
+        if (pending !== -1) refuse(pendingOutputMessage(pending));
+      }
       if (
         positions.length === 0 ||
         (input.imageIndexes === undefined && publishable.length === 0)
       ) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'workflow has no available outputs to publish',
-        });
+        refuse('workflow has no available outputs to publish');
       }
+      // A NAMED position that is not usable is refused before anything is fetched —
+      // never skipped past to the next output.
       for (const idx of input.imageIndexes ?? []) {
-        if (idx >= 0 && idx < positions.length && isRestricted(idx)) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: restrictedOutputMessage(idx) });
-        }
+        const kind = shape(idx);
+        if (kind === 'restricted') refuse(restrictedOutputMessage(idx));
+        if (kind === 'pending') refuse(pendingOutputMessage(idx));
+        if (kind === 'blocked') refuse(`output ${idx} is not available`);
       }
       // Resolve the selection: given indexes (validated in-range) or all outputs.
       // Dedupe + cap so a block can't drive an unbounded fetch/upload fan-out.

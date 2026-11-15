@@ -1153,13 +1153,33 @@ export type BlockWorkflowSnapshot = {
    * keeps its slot, so an index never moves when a rating lands late. Naming a
    * restricted position is refused (`output N is restricted`, BAD_REQUEST), never
    * replaced by another output. `imageUrls` / `AppWorkflow.images` /
-   * `steps[].imageUrls` drop restricted outputs and are NOT index spaces. Restriction
+   * `steps[].imageUrls` drop restricted outputs and are NOT index spaces.
+   * ⚠️ MIGRATION: an app that built indexes from `images` / `imageUrls` positions
+   * (e.g. `images.map((_, i) => i)`) now names a DIFFERENT output whenever an earlier
+   * one is restricted, pending or blocked — and is refused or publishes the wrong
+   * one. Build indexes from `outputs` positions, or omit `imageIndexes`. Restriction
    * is decided by `classifyBlockOutput` (`services/blocks/block-output-restriction`).
    *
-   * OMITTED when `imageUrls` would hold nothing and no output is restricted.
+   * Two more entry shapes, each with NO url and NO rating, each keeping its position:
+   *   - `{ pending: true }` — not rated yet, and its rating could still restrict it
+   *     (`ratingCouldRestrict`). The orchestrator marks a workflow succeeded seconds
+   *     before rating its last output, so poll again: see {@link ratingPending}.
+   *   - `{ blocked: true }` — blocked by moderation. A `MatureContent` block reads as
+   *     `{ restricted: true, reason: 'ceiling' }` instead.
+   * Naming a pending, blocked or restricted position on publish / post / persist is
+   * refused (`output N is still being rated, try again shortly`, or the existing
+   * not-available / restricted refusal).
+   *
+   * OMITTED when `outputs` would be empty.
    * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
    */
   outputs?: BlockWorkflowOutput[];
+  /**
+   * `true` while any entry of {@link outputs} is `{ pending: true }`: the workflow may
+   * be terminal and still gain a rating, so poll again until this is absent. OMITTED
+   * otherwise. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  ratingPending?: true;
   error?: string;
   /**
    * A stable, machine-readable companion to `error`, for a block to branch on.
@@ -1621,7 +1641,11 @@ export type BlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
 /** One entry of `BlockWorkflowSnapshot.outputs` / `AppWorkflow.outputs`. */
 export type BlockWorkflowOutput =
   | { url: string; nsfwLevel?: BlockWorkflowOutputRating }
-  | { restricted: true; reason: 'pool' | 'ceiling' };
+  | { restricted: true; reason: 'pool' | 'ceiling' }
+  /** Not rated yet, and its rating could still restrict it: no url until it lands. */
+  | { pending: true }
+  /** Blocked by moderation: keeps its position, no url, never available. */
+  | { blocked: true };
 
 export type BlockWorkflowEta = {
   stepName: string;
@@ -1658,6 +1682,8 @@ export type BlockWorkflowStepSnapshot = {
    * an output is restricted. Omitted for a step submitted with `suppressOutput`.
    */
   outputs?: BlockWorkflowOutput[];
+  /** `true` while any of this step's `outputs` is pending — see the snapshot field. */
+  ratingPending?: true;
   output?: unknown;
   error?: string;
   /**

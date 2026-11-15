@@ -460,7 +460,9 @@ describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
           name: 's',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/i.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
     });

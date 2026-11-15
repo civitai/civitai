@@ -4,7 +4,10 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbWrite } from '~/server/db/client';
 import { civitaiHostedImageUrlSchema } from '~/server/schema/blocks/civitai-image-url';
 import { resolveOwnedWorkflowOutputs } from '~/server/services/blocks/block-post.service';
-import { restrictedOutputMessage } from '~/server/services/blocks/block-output-restriction';
+import {
+  pendingOutputMessage,
+  restrictedOutputMessage,
+} from '~/server/services/blocks/block-output-restriction';
 import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
 import {
   BLOCK_GENERATION_SOURCE_APP_ID_META_KEY,
@@ -194,6 +197,17 @@ async function persistWithin(input: {
     });
   }
   const output = slots[input.imageIndex];
+  // 🔴 Every refusal here runs BEFORE anything is fetched or looked up, so an output
+  // that is restricted, blocked or still being rated is never copied to storage.
+  if (output && 'pending' in output) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: pendingOutputMessage(input.imageIndex) });
+  }
+  if (output && 'blocked' in output) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: GENERATION_SOURCE_OUTPUT_UNAVAILABLE_MESSAGE,
+    });
+  }
   // A restricted position is refused by name, never swapped for another output.
   if (output && 'restricted' in output) {
     throw new TRPCError({

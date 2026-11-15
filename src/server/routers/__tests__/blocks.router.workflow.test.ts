@@ -996,7 +996,9 @@ describe('blocks.pollWorkflow', () => {
           name: 's',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/i.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
     });
@@ -10136,7 +10138,9 @@ describe('blocks — #3520 model substitution observability', () => {
             name: 's',
             status: 'succeeded',
             metadata: {},
-            output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+            output: {
+              images: [{ id: 'b', url: 'https://cdn/i.png', available: true, nsfwLevel: 'pg' }],
+            },
           },
         ],
       });
@@ -10585,14 +10589,16 @@ describe('blocks — #3520 model substitution observability', () => {
       $type: 'convertImage',
       name: 'block-step',
       status: 'succeeded',
-      output: { blob: { id: 'b1', url, available: true, width: 797, height: 1024 } },
+      output: {
+        blob: { id: 'b1', url, available: true, width: 797, height: 1024, nsfwLevel: 'pg' },
+      },
     });
     const textToImageStep = (url: string) => ({
       $type: 'textToImage',
       name: 's1',
       status: 'succeeded',
       metadata: {},
-      output: { images: [{ id: 'i1', url, available: true }] },
+      output: { images: [{ id: 'i1', url, available: true, nsfwLevel: 'pg' }] },
     });
     const isWhatIf = (c: unknown[]) =>
       (c[0] as { query?: { whatif?: boolean } } | undefined)?.query?.whatif === true;
@@ -10789,7 +10795,10 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
             {
               $type: opts.body.steps[0].$type,
               name: opts.body.steps[0].name,
-              output: { blobs: [{ url: PT_BLOB_URL, available: true }], note: 'kept' },
+              output: {
+                blobs: [{ url: PT_BLOB_URL, available: true, nsfwLevel: 'pg' }],
+                note: 'kept',
+              },
             },
           ],
           cost: { total: realizedCost },

@@ -256,6 +256,7 @@ describe('splitPassThroughStepOutput', () => {
       media: [],
       rest: { capacity },
       model3d: [],
+      slots: [],
     });
   });
 
@@ -316,11 +317,12 @@ describe('splitPassThroughStepOutput', () => {
   it('strips a whole-value blob that produced NO media', () => {
     expect(
       splitPassThroughStepOutput({ id: 'b', available: false, url: BLOB_URL, tier: 'm' })
-    ).toEqual({ media: [], rest: {}, model3d: [] });
+    ).toEqual({ media: [], rest: {}, model3d: [], slots: [] });
     expect(splitPassThroughStepOutput([{ url: BLOB_URL, available: false }])).toEqual({
       media: [],
       rest: [],
       model3d: [],
+      slots: [],
     });
   });
 
@@ -330,12 +332,28 @@ describe('splitPassThroughStepOutput', () => {
   // "a dropped blob cannot ride out through `rest`" claim was false.
   it('strips a blob whose `url` key is ABSENT', () => {
     const blocked = { type: 'image', id: 'b', available: false, blockedReason: 'csam-policy' };
+    // A blocked blob keeps its POSITION in `slots` (no media, no url) — F3.
+    const blockedSlot = {
+      url: '',
+      width: null,
+      height: null,
+      nsfwLevel: null,
+      type: 'image',
+      format: null,
+      blockedReason: 'csam-policy',
+    };
     expect(splitPassThroughStepOutput({ blob: blocked })).toEqual({
       media: [],
       rest: {},
       model3d: [],
+      slots: [blockedSlot],
     });
-    expect(splitPassThroughStepOutput(blocked)).toEqual({ media: [], rest: {}, model3d: [] });
+    expect(splitPassThroughStepOutput(blocked)).toEqual({
+      media: [],
+      rest: {},
+      model3d: [],
+      slots: [blockedSlot],
+    });
     expect(JSON.stringify(splitPassThroughStepOutput({ blob: blocked }).rest)).not.toContain(
       'csam-policy'
     );
@@ -349,11 +367,13 @@ describe('splitPassThroughStepOutput', () => {
       media: [],
       rest: 'just text',
       model3d: [],
+      slots: [],
     });
     expect(splitPassThroughStepOutput(undefined)).toEqual({
       media: [],
       rest: undefined,
       model3d: [],
+      slots: [],
     });
   });
 });

@@ -15,7 +15,10 @@ import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gate
 import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
 import { projectAppWorkflowWithPositions } from '~/server/services/blocks/workflow.service';
-import { restrictedOutputMessage } from '~/server/services/blocks/block-output-restriction';
+import {
+  pendingOutputMessage,
+  restrictedOutputMessage,
+} from '~/server/services/blocks/block-output-restriction';
 import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
 import {
   BLOCK_POST_APP_ID_META_KEY,
@@ -515,13 +518,15 @@ export async function resolveOwnedWorkflowOutputs(input: {
   // `images`. A RESTRICTED position keeps its slot as a marker with NO url, so a
   // rating that lands after the block read the list never moves an index, and the
   // caller refuses the position rather than reaching the next output.
-  return positions.map(({ image, output }) =>
-    'restricted' in output && output.restricted === true
-      ? { restricted: true as const }
-      : isAllowedOutputHost(image.url)
-      ? image
-      : null
-  );
+  //
+  // A PENDING position (not rated yet, and its rating could still restrict it) and a
+  // BLOCKED one are markers with no url too — refused by name, never skipped past.
+  return positions.map(({ image, output }): OwnedWorkflowOutputSlot => {
+    if ('restricted' in output) return { restricted: true };
+    if ('pending' in output) return { pending: true };
+    if ('blocked' in output) return { blocked: true };
+    return isAllowedOutputHost(image.url) ? image : null;
+  });
 }
 
 /**
@@ -532,13 +537,15 @@ export async function resolveOwnedWorkflowOutputs(input: {
 export type OwnedWorkflowOutputSlot =
   | { url: string; width: number | null; height: number | null }
   | { restricted: true }
+  | { pending: true }
+  | { blocked: true }
   | null;
 
 /** True for a slot that carries media a block may use. */
 export function isUsableOutputSlot(
   slot: OwnedWorkflowOutputSlot
 ): slot is { url: string; width: number | null; height: number | null } {
-  return slot !== null && !('restricted' in slot);
+  return slot !== null && 'url' in slot;
 }
 
 /** The gated edge-url width used for consent thumbnails + the published-image read. */
@@ -757,7 +764,13 @@ export async function resolveBlockPostSources(input: {
       if (outputs.length === 0 || outputs.every((o) => o == null)) {
         badRequest('workflow has no available outputs to post');
       }
-      // Every position restricted, and the block named none: nothing to post.
+      // "Every available output" is not knowable while one is still being rated, so
+      // an omitted `imageIndexes` waits for the ratings rather than posting a subset.
+      if (!namedIndexes) {
+        const pending = outputs.findIndex((o) => o !== null && 'pending' in o);
+        if (pending !== -1) badRequest(pendingOutputMessage(pending));
+      }
+      // Every position unusable, and the block named none: nothing to post.
       if (!namedIndexes && !outputs.some(isUsableOutputSlot)) {
         badRequest('workflow has no available outputs to post');
       }
@@ -777,6 +790,12 @@ export async function resolveBlockPostSources(input: {
           // An omitted `imageIndexes` means "every available output", which a
           // restricted one is not, so it is skipped.
           if (namedIndexes) badRequest(restrictedOutputMessage(idx));
+          continue;
+        }
+        if (o && 'pending' in o) badRequest(pendingOutputMessage(idx));
+        if (o && 'blocked' in o) {
+          // Blocked keeps its slot and the refusal a missing output always had.
+          if (namedIndexes) badRequest('workflow has no available outputs to post');
           continue;
         }
         if (!o) {

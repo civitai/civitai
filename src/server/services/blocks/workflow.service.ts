@@ -10,14 +10,17 @@ import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } fr
 import {
   getStepByOrchestratorType,
   isTrainingStepType,
-  mediaFromBlobs,
   NATIVE_STEP_OUTPUT_KEY,
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
   splitPassThroughStep,
   withEveryBlobSurfaceable,
 } from './steps';
-import type { OrchestratorBlobLike, StepOutputMedia, TrainedEpoch } from './steps';
+import { mediaSlotsFromBlobs, slotFromMedia } from './steps';
+import type { OrchestratorBlobLike, StepOutputSlot, TrainedEpoch } from './steps';
+import { getModel3DPreviewNsfwLevel } from '~/shared/orchestrator/model3d-output';
+import { isNeverRatedVideoStep } from '~/shared/orchestrator/workflow-data';
+import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restriction';
 import type { BlockOutputCeiling, BlockOutputWorkflowFacts } from './block-output-restriction';
 import { isRepeatStepType } from './workflow-graph';
@@ -169,7 +172,7 @@ export function snapshotFromWorkflow(
       const extracted = isRepeatStepType(step.$type)
         ? EMPTY_STEP_EXTRACT
         : extractSnapshotStep(step, true);
-      const stepOutputList = classifyOutputs(extracted.media, workflow, ceiling);
+      const stepOutputList = classifyOutputs(extracted.media, step, workflow, ceiling);
       const stepUrls = unrestrictedUrls(stepOutputList);
       if (!member.suppressOutput) {
         imageUrls.push(...stepUrls);
@@ -186,6 +189,9 @@ export function snapshotFromWorkflow(
         status: ORCH_STATUS_MAP[step.status] ?? 'pending',
         ...(!member.suppressOutput && stepUrls.length > 0 ? { imageUrls: stepUrls } : {}),
         ...(!member.suppressOutput && stepOutputList.length > 0 ? { outputs: stepOutputList } : {}),
+        ...(!member.suppressOutput && anyPending(stepOutputList)
+          ? { ratingPending: true as const }
+          : {}),
         ...(extracted.rest !== undefined ? { output: extracted.rest } : {}),
         ...(error ? { error } : {}),
         // Each omitted when there is nothing to report — see the fields' docs.
@@ -197,7 +203,7 @@ export function snapshotFromWorkflow(
       continue;
     }
     const extracted = extractSnapshotStep(step, step.name === BLOCK_STEP_NAME);
-    const stepOutputList = classifyOutputs(extracted.media, workflow, ceiling);
+    const stepOutputList = classifyOutputs(extracted.media, step, workflow, ceiling);
     const stepUrls = unrestrictedUrls(stepOutputList);
     imageUrls.push(...stepUrls);
     outputs.push(...stepOutputList);
@@ -269,6 +275,8 @@ export function snapshotFromWorkflow(
     ...(imageUrls.length > 0 ? { imageUrls } : {}),
     // See the field's own doc in `schema/blocks/workflow.schema`. Omitted when empty.
     ...(outputs.length > 0 ? { outputs } : {}),
+    // See the field's own doc in `schema/blocks/workflow.schema`. Omitted when false.
+    ...(anyPending(outputs) ? { ratingPending: true as const } : {}),
     // See the field's own doc in `schema/blocks/workflow.schema`.
     ...(stepOutputs.length > 0 ? { stepOutputs } : {}),
     // Surface the realized spent account (money page blocks). Additive +
@@ -289,13 +297,65 @@ export function snapshotFromWorkflow(
   };
 }
 
-/** Each available output of one step, through the restriction rule, in order. */
+/**
+ * Each output position of ONE step, through the restriction rule, in order — the one
+ * classification both producers run, so the snapshot and the listing cannot disagree.
+ * A 3D mesh first takes its rating from the step's thumbnail and the workflow's
+ * `model3DPreview` renders ({@link propagateMeshRating}).
+ */
 function classifyOutputs(
-  media: readonly StepOutputMedia[],
-  workflow: BlockOutputWorkflowFacts,
+  slots: readonly StepOutputSlot[],
+  step: { $type: string; output?: unknown; metadata?: unknown },
+  workflow: Workflow,
   ceiling: BlockOutputCeiling
 ): BlockWorkflowOutput[] {
-  return media.map((m) => classifyBlockOutput(m, workflow, ceiling));
+  const neverRatedVideoStep = isNeverRatedVideoStep(
+    step as Parameters<typeof isNeverRatedVideoStep>[0],
+    (workflow.metadata as { params?: Parameters<typeof isNeverRatedVideoStep>[1] } | undefined)
+      ?.params
+  );
+  return propagateMeshRating(slots, step, workflow).map((m) =>
+    classifyBlockOutput(m, workflow as BlockOutputWorkflowFacts, ceiling, { neverRatedVideoStep })
+  );
+}
+
+/**
+ * 🔴 THE ORCHESTRATOR NEVER RATES A 3D MESH (`nsfwLevel: null` on every `model3d` blob —
+ * `model`, `fbxModel`, rigged and animated variants alike). The on-site formatter
+ * (`formatStepOutputs`) copies the most severe of the step's auto-`thumbnail` rating and
+ * the workflow's `model3DPreview` render rating onto it; this is that rule for App
+ * Blocks. Without it a mature mesh reads as unrated. Non-mesh slots are untouched.
+ */
+export function propagateMeshRating(
+  slots: readonly StepOutputSlot[],
+  step: { output?: unknown },
+  workflow: Pick<Workflow, 'steps'>
+): StepOutputSlot[] {
+  if (!slots.some((s) => s.type === 'model3d')) return [...slots];
+  const thumbnail = (step.output as { thumbnail?: { nsfwLevel?: unknown } | null } | undefined)
+    ?.thumbnail?.nsfwLevel;
+  const meshRating = maxNsfwLevel([
+    typeof thumbnail === 'string'
+      ? (thumbnail as Parameters<typeof maxNsfwLevel>[0][number])
+      : null,
+    getModel3DPreviewNsfwLevel(workflow.steps as Parameters<typeof getModel3DPreviewNsfwLevel>[0]),
+  ]);
+  if (!meshRating) return [...slots];
+  return slots.map((s) =>
+    s.type === 'model3d'
+      ? {
+          ...s,
+          nsfwLevel:
+            maxNsfwLevel([s.nsfwLevel as Parameters<typeof maxNsfwLevel>[0][number], meshRating]) ??
+            null,
+        }
+      : s
+  );
+}
+
+/** True when any entry is held for its rating — what sets `ratingPending`. */
+function anyPending(outputs: readonly BlockWorkflowOutput[]): boolean {
+  return outputs.some((o) => 'pending' in o && o.pending === true);
 }
 
 /** The urls of the unrestricted entries, in order — what `imageUrls` carries. */
@@ -521,8 +581,8 @@ function stepFailureReason(step: NonNullable<Workflow['steps']>[number]): string
 }
 
 type SnapshotStepExtract = {
-  /** Available media, in the order the step produced them. */
-  media: StepOutputMedia[];
+  /** Output positions (surfaceable and blocked), in the order the step produced them. */
+  media: StepOutputSlot[];
   /** A pass-through step's non-blob output; `undefined` for every other step. */
   rest?: unknown;
   trainedEpochs: TrainedEpoch[];
@@ -541,7 +601,7 @@ function extractSnapshotStep(
   step: NonNullable<Workflow['steps']>[number],
   bridgeSubmitted: boolean
 ): SnapshotStepExtract {
-  const media: StepOutputMedia[] = [];
+  const media: StepOutputSlot[] = [];
   const trainedEpochs: TrainedEpoch[] = [];
   // A REGISTERED step type (`kind: 'step'`) declares its OWN output extraction
   // in its registry entry, because the output key is step-type-specific —
@@ -568,7 +628,7 @@ function extractSnapshotStep(
     // means this holds even if a future cast puts one there.
     if (postureProducesMedia(registeredStep.moderationPosture)) {
       for (const entry of registeredStep.extractOutput?.(step) ?? []) {
-        media.push(entry);
+        media.push(slotFromMedia(entry));
       }
     }
     return { media, trainedEpochs, model3d: [] };
@@ -606,7 +666,7 @@ function extractSnapshotStep(
       step.$type,
       (step as unknown as { output?: unknown }).output
     );
-    for (const m of split.media) media.push(m);
+    for (const m of split.slots) media.push(m);
     return {
       media,
       rest: split.rest,
@@ -629,7 +689,7 @@ function extractSnapshotStep(
  * registry entries use, so a blob the orchestrator has not made available
  * (pending, or blocked by its moderation) is dropped identically on every path.
  */
-function nativeStepOutputMedia(step: { $type: string; output?: unknown }): StepOutputMedia[] {
+function nativeStepOutputMedia(step: { $type: string; output?: unknown }): StepOutputSlot[] {
   const key = (NATIVE_STEP_OUTPUT_KEY as Record<string, 'images' | 'blobs' | undefined>)[
     step.$type
   ];
@@ -638,7 +698,7 @@ function nativeStepOutputMedia(step: { $type: string; output?: unknown }): StepO
     | Partial<Record<'images' | 'blobs', OrchestratorBlobLike[] | null>>
     | null
     | undefined;
-  return mediaFromBlobs(output?.[key]);
+  return mediaSlotsFromBlobs(output?.[key]);
 }
 
 /** `step_type` label for a pass-through step: its `$type` is app-supplied, an open set. */
@@ -715,7 +775,7 @@ export function classifySucceededWithoutMedia(
     }
     const own = extractSnapshotStep(step, true);
     const delivered =
-      own.media.length > 0 ||
+      own.media.some((m) => m.blockedReason === null) ||
       (label === SUCCEEDED_WITHOUT_MEDIA_PASSTHROUGH_LABEL && own.rest !== undefined);
     if (delivered) continue;
     labels.add(label);
@@ -728,7 +788,7 @@ export function classifySucceededWithoutMedia(
       } as typeof step,
       true
     );
-    if (probed.media.length === 0) anyAbsent = true;
+    if (!probed.media.some((m) => m.blockedReason === null)) anyAbsent = true;
   }
   if (labels.size === 0) return null;
   return {
@@ -846,6 +906,8 @@ export type AppWorkflow = {
   publishedModel?: BlockPublishedModel;
   model3dOutputs?: BlockModel3dOutput[];
   outputs?: BlockWorkflowOutput[];
+  /** Same value and rule as `BlockWorkflowSnapshot.ratingPending`. */
+  ratingPending?: true;
 };
 
 /**
@@ -885,8 +947,14 @@ export function projectAppWorkflowWithPositions(
   ceiling: BlockOutputCeiling
 ): { workflow: AppWorkflow; positions: AppWorkflowOutputPosition[] } {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
-  // Every available output, in order, before the restriction rule.
-  const available: StepOutputMedia[] = [];
+  // Every output position (surfaceable and blocked), in order, and its verdict —
+  // classified PER STEP, the same call `snapshotFromWorkflow` makes.
+  const available: StepOutputSlot[] = [];
+  const outputs: BlockWorkflowOutput[] = [];
+  const add = (step: Parameters<typeof classifyOutputs>[1], slots: readonly StepOutputSlot[]) => {
+    available.push(...slots);
+    outputs.push(...classifyOutputs(slots, step, workflow, ceiling));
+  };
   const trainedEpochs: TrainedEpoch[] = [];
   const model3dOutputs: BlockModel3dOutput[] = [];
   // Mirrors `snapshotFromWorkflow`'s member-step handling.
@@ -920,7 +988,7 @@ export function projectAppWorkflowWithPositions(
       if (!postureProducesMedia(registeredStep.moderationPosture)) continue;
       // The registry hands over the RAW rating string, never a bitflag, so the
       // mapping stays in one place (`toAppWorkflowImage`).
-      available.push(...(registeredStep.extractOutput?.(step) ?? []));
+      add(step, (registeredStep.extractOutput?.(step) ?? []).map(slotFromMedia));
       continue;
     }
     if (!NATIVELY_EXTRACTED_STEP_TYPES.includes(step.$type)) {
@@ -945,16 +1013,14 @@ export function projectAppWorkflowWithPositions(
       );
       trainedEpochs.push(...split.trainedEpochs);
       model3dOutputs.push(...split.model3d);
-      available.push(...split.media);
+      add(step, split.slots);
       continue;
     }
     // A NATIVE `$type` — `output.images` or `output.blobs` per `$type`; see
     // `nativeStepOutputMedia`.
-    available.push(...nativeStepOutputMedia(step));
+    add(step, nativeStepOutputMedia(step));
   }
-  // One verdict per output, in order: `outputs` keeps every position, `images` only
-  // the unrestricted ones.
-  const outputs = classifyOutputs(available, workflow, ceiling);
+  // `outputs` keeps every position, `images` only the unrestricted ones.
   const unrestricted = available.filter((_, i) => isUnrestrictedOutput(outputs[i]));
   const total = workflow.cost?.total;
   const publishedModel = readBlockPublishedModel(workflow);
@@ -975,12 +1041,13 @@ export function projectAppWorkflowWithPositions(
       ...(publishedModel ? { publishedModel } : {}),
       ...(labels.length > 0 ? { model3dOutputs: labels } : {}),
       ...(outputs.length > 0 ? { outputs } : {}),
+      ...(anyPending(outputs) ? { ratingPending: true as const } : {}),
     },
     positions: available.map((m, i) => ({ image: toAppWorkflowImage(m), output: outputs[i] })),
   };
 }
 
-function toAppWorkflowImage(media: StepOutputMedia): AppWorkflowImage {
+function toAppWorkflowImage(media: StepOutputSlot): AppWorkflowImage {
   return {
     url: media.url,
     width: media.width,

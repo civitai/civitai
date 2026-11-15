@@ -68,19 +68,56 @@ export function mediaFromBlobs(
     | null
     | undefined
 ): StepOutputMedia[] {
+  return mediaSlotsFromBlobs(blobs)
+    .filter((slot) => slot.blockedReason === null)
+    .map(({ url, width, height, nsfwLevel }) => ({ url, width, height, nsfwLevel }));
+}
+
+/**
+ * One output POSITION of a step, as the App Blocks producers classify it: a surfaceable
+ * blob ({@link StepOutputMedia} plus its blob `type` / `format`), OR a BLOCKED blob,
+ * which keeps its position (`blockedReason` set; its `url` — `''` when it has none —
+ * is never handed to a block). A pending blob (not available, not blocked) has no
+ * position yet and is not listed.
+ */
+export type StepOutputSlot = StepOutputMedia & {
+  type: string | null;
+  format: string | null;
+  blockedReason: string | null;
+};
+
+/** {@link mediaFromBlobs}, with BLOCKED blobs kept in position — see {@link StepOutputSlot}. */
+export function mediaSlotsFromBlobs(
+  blobs:
+    | OrchestratorBlobLike
+    | readonly (OrchestratorBlobLike | null | undefined)[]
+    | null
+    | undefined
+): StepOutputSlot[] {
   const list: readonly (OrchestratorBlobLike | null | undefined)[] =
     blobs == null ? [] : Array.isArray(blobs) ? blobs : [blobs as OrchestratorBlobLike];
-  const media: StepOutputMedia[] = [];
+  const slots: StepOutputSlot[] = [];
   for (const blob of list) {
-    if (!isSurfaceableBlob(blob) || isBlockedBlob(blob)) continue;
-    media.push({
-      url: blob.url,
+    if (!blob) continue;
+    const blocked = isBlockedBlob(blob);
+    if (!blocked && !isSurfaceableBlob(blob)) continue;
+    const typed = blob as OrchestratorBlobLike & { type?: unknown; format?: unknown };
+    slots.push({
+      url: typeof blob.url === 'string' ? blob.url : '',
       width: typeof blob.width === 'number' ? blob.width : null,
       height: typeof blob.height === 'number' ? blob.height : null,
       nsfwLevel: typeof blob.nsfwLevel === 'string' ? blob.nsfwLevel : null,
+      type: typeof typed.type === 'string' ? typed.type : null,
+      format: typeof typed.format === 'string' ? typed.format : null,
+      blockedReason: blocked ? (blob.blockedReason as string) : null,
     });
   }
-  return media;
+  return slots;
+}
+
+/** A surfaceable entry as an output position (no blob type known — a registry entry's). */
+export function slotFromMedia(media: StepOutputMedia): StepOutputSlot {
+  return { ...media, type: null, format: null, blockedReason: null };
 }
 
 /**
@@ -253,11 +290,14 @@ export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
   rest: unknown;
   model3d: Model3dOutputLabel[];
+  /** Every output position, blocked ones included — see {@link StepOutputSlot}. */
+  slots: StepOutputSlot[];
 } {
   const media: StepOutputMedia[] = [];
   const model3d: Model3dOutputLabel[] = [];
-  const rest = walkPassThroughOutput(output, { media, model3d }, 0, []);
-  return { media, rest, model3d };
+  const slots: StepOutputSlot[] = [];
+  const rest = walkPassThroughOutput(output, { media, model3d, slots }, 0, []);
+  return { media, rest, model3d, slots };
 }
 
 /**
@@ -282,10 +322,15 @@ export type Model3dOutputLabel = { url: string; format: string; variant: string 
 /** The `Model3dBlob` discriminator, from `@civitai/orchestration-client`'s generated types. */
 const MODEL3D_BLOB_TYPE = 'model3d';
 
-type PassThroughOutputSink = { media: StepOutputMedia[]; model3d: Model3dOutputLabel[] };
+type PassThroughOutputSink = {
+  media: StepOutputMedia[];
+  model3d: Model3dOutputLabel[];
+  slots: StepOutputSlot[];
+};
 
 /** Lift one blob-shaped value into the sink: its media, and its 3D label if it is one. */
 function liftBlob(value: OrchestratorBlobLike, sink: PassThroughOutputSink, path: string[]) {
+  sink.slots.push(...mediaSlotsFromBlobs(value));
   const lifted = mediaFromBlobs(value);
   sink.media.push(...lifted);
   const blob = value as OrchestratorBlobLike & { type?: unknown; format?: unknown };
@@ -342,6 +387,7 @@ export function splitPassThroughStep(
   rest: unknown;
   trainedEpochs: TrainedEpoch[];
   model3d: Model3dOutputLabel[];
+  slots: StepOutputSlot[];
 } {
   if (!isTrainingStepType(stepType)) {
     return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
@@ -349,13 +395,27 @@ export function splitPassThroughStep(
   const trainedEpochs: TrainedEpoch[] = [];
   const sampleUrls: string[] = [];
   const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
-  const { media, rest, model3d } = splitPassThroughStepOutput(stripped);
-  for (const url of sampleUrls) media.push({ url, width: null, height: null, nsfwLevel: null });
+  const { media, rest, model3d, slots } = splitPassThroughStepOutput(stripped);
+  // 🔴 These plain-string samples carry NO rating the orchestrator reports, so as
+  // output positions they are unrated images: held (`pending`) wherever a rating could
+  // still restrict them (`classifyBlockOutput`).
+  for (const url of sampleUrls) {
+    media.push({ url, width: null, height: null, nsfwLevel: null });
+    slots.push({
+      url,
+      width: null,
+      height: null,
+      nsfwLevel: null,
+      type: 'image',
+      format: null,
+      blockedReason: null,
+    });
+  }
   const approved =
     output !== null &&
     typeof output === 'object' &&
     (output as Record<string, unknown>).moderationStatus === 'approved';
-  return { media, rest, trainedEpochs: approved ? trainedEpochs : [], model3d };
+  return { media, rest, trainedEpochs: approved ? trainedEpochs : [], model3d, slots };
 }
 
 /**
