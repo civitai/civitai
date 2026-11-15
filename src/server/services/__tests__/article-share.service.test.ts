@@ -411,6 +411,36 @@ describe('getArticleByShareToken: body images', () => {
       })
     );
   });
+
+  it('🔴 leaves out body images only their owner and moderators may get', async () => {
+    const row = (id: number, extra: Record<string, unknown>) => ({
+      image: {
+        id,
+        url: `uuid-${id}`,
+        nsfwLevel: 1,
+        userId: AUTHOR,
+        hash: 'h',
+        width: 8,
+        height: 10,
+        ingestion: 'Scanned',
+        needsReview: null,
+        tosViolation: false,
+        ...extra,
+      },
+    });
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([
+      row(1, {}),
+      row(2, { ingestion: 'Pending' }),
+      row(3, { ingestion: 'Blocked' }),
+      row(4, { needsReview: 'csam' }),
+      row(5, { tosViolation: true }),
+    ] as never);
+
+    const result = await read(STRANGER);
+
+    expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1]);
+    expect(JSON.stringify(result)).not.toContain('csam');
+  });
 });
 
 describe('createArticleShareLink', () => {

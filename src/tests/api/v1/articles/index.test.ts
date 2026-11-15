@@ -23,9 +23,6 @@ const {
 vi.mock('~/server/services/article.service', () => ({
   getArticles: mockGetArticles,
   getArticleById: mockGetArticleById,
-  getArticleBodyImageStates: async () => [
-    { url: 'u', nsfwLevel: 1, ingestion: 'Scanned', needsReview: null, tosViolation: false },
-  ],
 }));
 
 vi.mock('~/server/utils/public-api-rate-limit', () => ({

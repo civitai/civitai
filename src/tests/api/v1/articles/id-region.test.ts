@@ -8,7 +8,6 @@ const { mockGetArticleById, mockIsRegionRestricted } = vi.hoisted(() => ({
 
 vi.mock('~/server/services/article.service', () => ({
   getArticleById: mockGetArticleById,
-  getArticleBodyImageStates: async () => [],
 }));
 vi.mock('~/server/utils/public-api-rate-limit', () => ({
   checkPublicApiRateLimit: async () => ({ allowed: true }),

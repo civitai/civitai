@@ -2,19 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type { ArticleBodyImageState } from '~/server/utils/article-body-media';
 
-const { mockGetArticleById, mockGetBodyImageStates, mockSession, mockCanViewNsfw, mockRestricted } =
-  vi.hoisted(() => ({
-    mockGetArticleById: vi.fn(),
-    mockGetBodyImageStates: vi.fn(),
-    mockSession: vi.fn(),
-    mockCanViewNsfw: vi.fn(),
-    mockRestricted: vi.fn(),
-  }));
-
-vi.mock('~/server/services/article.service', () => ({
-  getArticleById: mockGetArticleById,
-  getArticleBodyImageStates: mockGetBodyImageStates,
+const { mockGetArticleById, mockSession, mockCanViewNsfw, mockRestricted } = vi.hoisted(() => ({
+  mockGetArticleById: vi.fn(),
+  mockSession: vi.fn(),
+  mockCanViewNsfw: vi.fn(),
+  mockRestricted: vi.fn(),
 }));
+
+vi.mock('~/server/services/article.service', () => ({ getArticleById: mockGetArticleById }));
+// A restricted region 404s an article with any above-SFW image (id-region.test.ts); this file
+// pins the body cap behind it.
+vi.mock('~/server/utils/article-region', () => ({ isArticleServableWhenRestricted: () => true }));
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlagsLazy: () => ({ canViewNsfw: mockCanViewNsfw() }),
 }));
@@ -38,6 +36,7 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 
 import '~/__tests__/mocks/db.mock';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
+import { articleContentJson } from '~/server/utils/article-content-json';
 import handler from '~/pages/api/v1/articles/[id]';
 
 const { PG, PG13, R } = NsfwLevel;
@@ -54,27 +53,21 @@ function state(url: string, nsfwLevel: number, extra: Partial<ArticleBodyImageSt
 }
 
 /**
- * A PG article whose body holds two images, a video and an off-site image, rated by `images`.
- * `listed` is what the article read saw, when a rating changed between the two reads.
+ * A PG article whose body holds two images, a video and an off-site image, rated by `images`,
+ * as the service returns it: `contentJson` built from the whole body.
  */
-function serve(images: ArticleBodyImageState[], listed = images) {
-  mockGetBodyImageStates.mockResolvedValue(images);
+function serve(images: ArticleBodyImageState[]) {
+  const content =
+    `<p>intro</p><img src="${imageUrl(PG_UUID)}" alt="a"><p>middle</p>` +
+    `<img src="${imageUrl(R_UUID)}" alt="b"><edge-media url="${VIDEO_UUID}" type="video">` +
+    `</edge-media><img src="https://example.com/${R_UUID}.png">`;
   mockGetArticleById.mockResolvedValue({
     id: 7,
     userId: AUTHOR,
     nsfwLevel: PG,
-    content:
-      `<p>intro</p><img src="${imageUrl(PG_UUID)}" alt="a"><p>middle</p>` +
-      `<img src="${imageUrl(
-        R_UUID
-      )}" alt="b"><edge-media url="${VIDEO_UUID}" type="video"></edge-media>` +
-      `<img src="https://example.com/${R_UUID}.png">`,
-    contentImages: listed.map(({ url, nsfwLevel, ingestion }, i) => ({
-      id: i + 1,
-      url,
-      nsfwLevel,
-      ingestion,
-    })),
+    content,
+    contentJson: articleContentJson(content),
+    contentImages: images.map((image, i) => ({ id: i + 1, ...image })),
   });
 }
 
@@ -167,10 +160,9 @@ describe('GET /api/v1/articles/[id] body media', () => {
     expect(body).toContain(PG_UUID);
   });
 
-  it('🔴 in a restricted region a key holder is held to SFW, even if the article read saw less', async () => {
+  it('🔴 in a restricted region a key holder is held to SFW', async () => {
     mockRestricted.mockReturnValue(true);
-    const pgImage = state(PG_UUID, PG);
-    serve([pgImage, state(R_UUID, R), state(VIDEO_UUID, PG13)], [pgImage]);
+    serve([state(PG_UUID, PG), state(R_UUID, R), state(VIDEO_UUID, PG13)]);
 
     const { body } = await call(keyHolder(PG | PG13 | R));
 

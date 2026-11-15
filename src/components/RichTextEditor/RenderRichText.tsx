@@ -220,8 +220,9 @@ export function RenderRichText({
     } catch {
       // A node or mark type outside `renderExtensions` throws while the doc is built, before
       // `nodeMapping` is ever consulted — so an extra mapping entry cannot absorb it, and
-      // with no ErrorBoundary in the tree it blanks the whole page. Unreachable for stored
-      // bodies while the schema test holds; the fallback does not apply `imageGuard`.
+      // with no ErrorBoundary in the tree it blanks the whole page. The schema test keeps stored
+      // node types out of here; a throw inside a `nodeMapping` entry still lands here, and the
+      // fallback does not apply `imageGuard`.
       return { ok: false as const };
     }
   }, [content, allowed, toCurrentDomain, host, imagesByUrl, guardNsfwLevel]);

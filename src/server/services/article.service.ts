@@ -12,6 +12,11 @@ import { ImageConnectionType, NotificationCategory } from '~/server/common/enums
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  isCsamHeldBodyImage,
+  isServableBodyImage,
+  removeBodyMedia,
+} from '~/server/utils/article-body-media';
 import { eventEngine } from '~/server/events';
 import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
@@ -795,26 +800,9 @@ export const articleContentImageSelect = {
   hash: true,
   width: true,
   height: true,
+  needsReview: true,
+  tosViolation: true,
 } satisfies Prisma.ImageSelect;
-
-/** What deciding whether to serve each body image takes; kept out of the page payload. */
-export async function getArticleBodyImageStates(articleId: number) {
-  const connections = await dbRead.imageConnection.findMany({
-    where: { entityId: articleId, entityType: ImageConnectionType.Article },
-    select: {
-      image: {
-        select: {
-          url: true,
-          nsfwLevel: true,
-          ingestion: true,
-          needsReview: true,
-          tosViolation: true,
-        },
-      },
-    },
-  });
-  return connections.map((connection) => connection.image);
-}
 
 export const getArticleById = async ({
   id,
@@ -878,9 +866,21 @@ export const getArticleById = async ({
     // branch let any author store a doc with node types the renderer has no schema entry for
     // (blank page for every reader) or malformed JSON (500 → NotFound for everyone, owner
     // included). `generateJSON` is total over arbitrary text.
+    // Media nobody but its owner and moderators may get leaves the body, and csam-held media
+    // leaves it for the owner too.
+    const bodyImages = imageConnections.map((conn) => conn.image);
+    const contentImages = isModerator
+      ? bodyImages
+      : bodyImages.filter((image) =>
+          userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)
+        );
+    const withheld = bodyImages
+      .filter((image) => !contentImages.includes(image))
+      .map((image) => image.url);
+    const content = article.content && removeBodyMedia(article.content, { withheld });
     let contentJson: MixedObject | undefined;
-    if (article.content) {
-      contentJson = articleContentJson(article.content);
+    if (content) {
+      contentJson = articleContentJson(content);
     }
 
     return {
@@ -893,8 +893,9 @@ export const getArticleById = async ({
       })),
       coverImage,
       bannerImage,
+      content,
       contentJson,
-      contentImages: imageConnections.map((conn) => conn.image),
+      contentImages,
       metadata: (article.metadata as ArticleMetadata) ?? null,
     };
   } catch (error) {

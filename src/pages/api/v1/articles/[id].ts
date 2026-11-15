@@ -2,10 +2,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import * as z from 'zod';
 
-import { getArticleBodyImageStates, getArticleById } from '~/server/services/article.service';
+import { getArticleById } from '~/server/services/article.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
-import { removeBodyMediaExcept, servableBodyImageUrls } from '~/server/utils/article-body-media';
+import { removeBodyMedia, servableBodyImageUrls } from '~/server/utils/article-body-media';
 import { resolveRequestBrowsingLevels } from '~/server/utils/browsing-level';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -120,8 +120,11 @@ export default MixedAuthEndpoint(async function handler(
     }
 
     const bodyLevel = bodyBrowsingLevel(req, user, restricted);
-    const servable = servableBodyImageUrls(await getArticleBodyImageStates(id), bodyLevel);
-    const content = publicArticle.content && removeBodyMediaExcept(publicArticle.content, servable);
+    const bodyImages = publicArticle.contentImages ?? [];
+    const servable = servableBodyImageUrls(bodyImages, bodyLevel);
+    const withheld = bodyImages.map(({ url }) => url).filter((url) => !servable.has(url));
+    const content =
+      publicArticle.content && removeBodyMedia(publicArticle.content, { keep: servable, withheld });
     const contentJson = content ? articleContentJson(content) : undefined;
     // The page reads more of each content image to guard it; the documented payload keeps these three.
     const contentImages = publicArticle.contentImages
