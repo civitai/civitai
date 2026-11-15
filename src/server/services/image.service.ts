@@ -53,6 +53,7 @@ import { CacheTTL, constants } from '~/server/common/constants';
 import {
   hasBlockMarker,
   imageReviewedSql,
+  keepPermanentScanFailureSql,
   pendingLevelImageSql,
   pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
@@ -1855,7 +1856,7 @@ export const ingestImage = async ({
         "scanJobs" = ${scanJobsJson}::jsonb || jsonb_strip_nulls(jsonb_build_object(
           'retryCount', "scanJobs"->'retryCount',
           'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
-        ))
+        )) || ${keepPermanentScanFailureSql()}
       WHERE id = ${id}
     `;
   imageScanSubmittedCounter.inc({ lane, result: 'success' });

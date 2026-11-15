@@ -24,7 +24,8 @@ describe('imageReviewedSql', () => {
         'AND NOT ( "i"."ingestion" = Error::"ImageIngestionStatus" ' +
         `AND ( COALESCE("i"."metadata"->>'nsfwLevelReason', '') = Knights Vote ` +
         `OR ( COALESCE("i"."scanJobs"->'error'->>'failureClass', '') = permanent ` +
-        `OR COALESCE("i"."scanJobs"->'lastFailure'->>'failureClass', '') = permanent ) ) ) ) )`
+        `OR COALESCE("i"."scanJobs"->'lastFailure'->>'failureClass', '') = permanent ` +
+        `OR COALESCE("i"."scanJobs"->'permanentFailure' = 'true'::jsonb, FALSE) ) ) ) ) )`
     );
   });
 
@@ -76,6 +77,15 @@ describe('isImageReviewed', () => {
           error: { failureClass: 'transient' },
           lastFailure: { failureClass: 'permanent' },
         },
+      },
+      false,
+    ],
+    [
+      'a mod lock on an errored scan once kept as a permanent failure',
+      {
+        ingestion: 'Error',
+        ...locked,
+        scanJobs: { error: { failureClass: 'transient' }, permanentFailure: true },
       },
       false,
     ],
