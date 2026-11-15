@@ -867,8 +867,9 @@ export const getArticleById = async ({
     });
 
     const isOwnerOrMod = isModerator || userId === article.userId;
-    // A cover or banner its model withholds is the moderators' alone, as on the entity cover read.
-    const withheldByModel = isModerator
+    // A cover or banner its model withholds is shown only to moderators and the article's owner:
+    // the edit form reads this, and a cover hidden from it would be saved back as cleared.
+    const withheldByModel = isOwnerOrMod
       ? new Set<number>()
       : await getModelWithheldImageIds(
           [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)

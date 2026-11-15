@@ -317,15 +317,16 @@ describe('getArticleById and a banner its model withholds', () => {
     return (await getArticleById({ id: ARTICLE_ID, ...viewer })).bannerImage;
   };
 
-  it.each([
-    ['a reader', { userId: READER }],
-    ['the article owner', { userId: OWNER }],
-  ])('🔴 hides it from %s', async (_, viewer) => {
-    expect(await read(viewer, true)).toBeUndefined();
+  it('🔴 hides it from a reader', async () => {
+    expect(await read({ userId: READER }, true)).toBeUndefined();
   });
 
-  it('shows it to a moderator', async () => {
-    expect(await read({ userId: READER, isModerator: true }, true)).toMatchObject({ id: BANNER });
+  // The edit form reads this: a banner hidden from the owner would be saved back as cleared.
+  it.each([
+    ['a moderator', { userId: READER, isModerator: true }],
+    ['the article owner', { userId: OWNER }],
+  ])('shows it to %s', async (_, viewer) => {
+    expect(await read(viewer, true)).toMatchObject({ id: BANNER });
   });
 
   it('shows a reader a banner its model does not withhold', async () => {
