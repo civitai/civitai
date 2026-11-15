@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ownerHeld } from '~/server/services/legal-hold.service';
 import { canCheckBlockedImageHash, getIsImageBlocked } from '~/server/services/blocked-image-hash';
@@ -5438,6 +5439,12 @@ export const getEntityCoverImage = async ({
 
   // A taken-down model's images are its owner's and moderators' alone. Also true with no model
   // (a NULL mode), so the image and post arms keep images on no model version.
+  // A minor or SFW-only model's image above its gallery level is its owner's and moderators'
+  // alone. Placed before DISTINCT ON, so a held first image falls back to the next one.
+  const withinHeldGallery = heldGalleryImageSql({
+    exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
+  });
+
   const modelNotWithheld = Prisma.sql`(
     m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
     OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
@@ -5511,6 +5518,7 @@ export const getEntityCoverImage = async ({
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
           AND ${modelNotWithheld}
+          AND ${withinHeldGallery}
           -- The version and post rules sit before DISTINCT ON so a hidden first version or post
           -- falls back to the next visible one rather than leaving the model without a cover.
           AND (
@@ -5552,6 +5560,7 @@ export const getEntityCoverImage = async ({
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'ModelVersion'
           AND ${modelNotWithheld}
+          AND ${withinHeldGallery}
           -- canViewModelVersionStatus plus the private-version rule; access grantees are not resolved here.
           AND (
             (
@@ -5590,6 +5599,7 @@ export const getEntityCoverImage = async ({
         WHERE e."entityType" = 'Image'
           AND ${imageVisible}
           AND ${modelNotWithheld}
+          AND ${withinHeldGallery}
 
         UNION
         -- ARTICLES
@@ -5633,6 +5643,8 @@ export const getEntityCoverImage = async ({
           JOIN "Image" i ON i."postId" = p.id
           WHERE e."entityType" = 'Post'
             AND ${modelNotWithheld}
+            AND ${withinHeldGallery}
+          AND ${withinHeldGallery}
             AND (
               (p."publishedAt" < now() AND p.availability <> 'Private')
               OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean

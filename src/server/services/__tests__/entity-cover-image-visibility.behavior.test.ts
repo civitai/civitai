@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
@@ -62,7 +63,9 @@ beforeAll(async () => {
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, status text,
-      availability "Availability" DEFAULT 'Public', mode "ModelModifier"
+      availability "Availability" DEFAULT 'Public', mode "ModelModifier",
+      minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false,
+      "gallerySettings" jsonb
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, index int DEFAULT 0, status text, "publishedAt" timestamp,
@@ -258,6 +261,18 @@ beforeAll(async () => {
     INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
       (1621, 1611, now() - interval '1 day'), (1622, 1612, now() - interval '1 day');
     INSERT INTO "Image" (id, "postId") VALUES (1631, 1621), (1632, 1622);
+    -- Held models, each leading its owner post with an image above its gallery level:
+    -- 2001 minor (PG stored), 2101 SFW-only with PG stored, so its PG-13 lead is above it too.
+    INSERT INTO "Model" (id, status, minor, "sfwOnly", "gallerySettings") VALUES
+      (2001, 'Published', true, false, '{"level": 1}'),
+      (2101, 'Published', false, true, '{"level": 1}');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+      (2011, 2001, 'Published'), (2111, 2101, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (2021, 2011, now() - interval '1 day'), (2121, 2111, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "nsfwLevel") VALUES
+      (2031, 2021, 0, ${NsfwLevel.X}), (2032, 2021, 1, ${NsfwLevel.PG}),
+      (2131, 2121, 0, ${NsfwLevel.PG13}), (2132, 2121, 1, ${NsfwLevel.PG});
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -426,6 +441,40 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       expect(await coverOf('ModelVersion', 1612, viewers[who])).toBe(1632);
       expect(await coverOf('Image', 1632, viewers[who])).toBe(1632);
       expect(await coverOf('Post', 1622, viewers[who])).toBe(1632);
+    }
+  );
+
+  // A held first image falls back to the next one within the gallery level; the owner and
+  // moderators see the first.
+  describe.each([
+    ['a minor model', 'Model', 2001, 2031, 2032],
+    ["a minor model's version", 'ModelVersion', 2011, 2031, 2032],
+    ["a post on a minor model's version", 'Post', 2021, 2031, 2032],
+    ['an SFW-only model held to PG', 'Model', 2101, 2131, 2132],
+  ] as const)('%s', (_, entityType, entityId, heldImage, withinImage) => {
+    it.each(['anonymous', 'stranger'] as const)(
+      'falls back to the image within its gallery level for a %s viewer',
+      async (who) => {
+        expect(await coverOf(entityType, entityId, viewers[who])).toBe(withinImage);
+      }
+    );
+    it.each(['owner', 'moderator'] as const)('keeps the first image for the %s', async (who) => {
+      expect(await coverOf(entityType, entityId, viewers[who])).toBe(heldImage);
+    });
+  });
+
+  it.each(['anonymous', 'stranger'] as const)(
+    "has no cover for a minor model's image above its gallery level, for a %s viewer",
+    async (who) => {
+      expect(await coverOf('Image', 2031, viewers[who])).toBeNull();
+      expect(await coverOf('Image', 2032, viewers[who])).toBe(2032);
+    }
+  );
+
+  it.each(['owner', 'moderator'] as const)(
+    "keeps a minor model's image above its gallery level for the %s",
+    async (who) => {
+      expect(await coverOf('Image', 2031, viewers[who])).toBe(2031);
     }
   );
 
