@@ -16,7 +16,7 @@ const saved = { key: process.env.FRESHDESK_API_KEY, domain: process.env.FRESHDES
 let fetchMock: ReturnType<typeof vi.fn>;
 
 const convo = (over: Record<string, unknown>) => ({
-  id: 150003911207,
+  id: 990000000001,
   incoming: false,
   private: false,
   body_text: 'Clear the cache and sign in again.',

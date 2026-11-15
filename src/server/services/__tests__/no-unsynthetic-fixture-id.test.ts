@@ -7,7 +7,9 @@ import path from 'path';
  * number outside the synthetic range. Ids in these fixtures come from `SYNTHETIC_MIN`..`SYNTHETIC_MAX`,
  * so a fixture never carries the id of a real account or record. Small ids (under 10 000), round
  * numbers (durations, sizes), values past int4 and UUID segments pass; a genuine non-id constant
- * goes in `BASELINE` with its file. Control values sit above any live id range.
+ * goes in `BASELINE` with its file. Support-desk ids (`conversationId`, `group_id`, `ticketId`) are
+ * past int4, so under those keys a value must come from `DESK_MIN`..`DESK_MAX`. Control values sit
+ * above any live id range.
  */
 
 const REPO = path.resolve(__dirname, '../../../..');
@@ -16,6 +18,9 @@ const ROOTS = ['src', 'scripts', 'apps', 'packages'].map((dir) => path.join(REPO
 const SYNTHETIC_MIN = 990_000_000;
 const SYNTHETIC_MAX = 990_999_999;
 const INT4_MAX = 2_147_483_647;
+const DESK_MIN = 990_000_000_000;
+const DESK_MAX = 990_999_999_999;
+const DESK_KEY = /(?:conversation|group|ticket)_?id['"`]?\s*[:=]\s*$/i;
 
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.mts', '.mjs', '.svelte', '.sql', '.json']);
 const SKIP_DIRS = new Set(['node_modules', '.svelte-kit', '.next', 'build', 'dist', '.turbo']);
@@ -108,6 +113,10 @@ function unsyntheticIds(source: string): string[] {
     if (!/^\d+$/.test(digits) || digits.length > 12) continue;
     if (match[1] && digits.length < 6) continue; // quoted codes such as SQLSTATE '23505'
     const n = Number(digits);
+    if (n >= INT4_MAX && DESK_KEY.test(source.slice(Math.max(0, match.index - 40), match.index))) {
+      if (n < DESK_MIN || n > DESK_MAX) found.push(digits);
+      continue;
+    }
     // Under 10 000, round, or past int4 (no row id is that large).
     if (n < 10_000 || n % 1000 === 0 || n >= INT4_MAX) continue;
     if (n >= SYNTHETIC_MIN && n <= SYNTHETIC_MAX) continue;
@@ -152,6 +161,9 @@ describe('🔴 moderation test fixtures use synthetic ids', () => {
     ['an unspaced key', `{id:2100000017}`],
     ['a negative literal', `const x = -2100000017;`],
     ['a bigint', `const id = 2100000017n;`],
+    ['a support-desk conversation id', `{ conversationId: '210000000017' }`],
+    ['a support-desk group id', `{ group_id: 210000000017 }`],
+    ['a support-desk ticket id', `answer_ticket_id: '210000000017',`],
   ])('flags %s', (_, source) => {
     expect(unsyntheticIds(source).length).toBeGreaterThan(0);
   });
@@ -165,6 +177,10 @@ describe('🔴 moderation test fixtures use synthetic ids', () => {
     ['dates and SQLSTATE strings', `'2026-11-14'; code === '23505';`],
     ['UUIDs', `const KEY = '11112222-3333-4444-8555-666677778888';`],
     ['int4 bounds and values past them', `n <= 2_147_483_647; const big = 10_000_000_019;`],
+    [
+      'support-desk ids from the fake range',
+      `{ conversationId: '990000000001', group_id: 990000000003 }`,
+    ],
     [
       'times, casts and dashed tokens',
       `'23:59:59.123456'; x::int8; 'run-2100000017'; 'abc-123456'`,

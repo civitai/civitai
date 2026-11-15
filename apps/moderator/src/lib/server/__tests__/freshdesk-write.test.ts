@@ -68,7 +68,7 @@ describe('freshdesk write calls', () => {
 
   it('updates fields with PUT /tickets/{id}, sending the tags array as given', async () => {
     fetchMock.mockResolvedValue(json({ id: 990100003 }));
-    const fields = { tags: ['a', 'sent-to-support'], group_id: 154000246097, status: 2 };
+    const fields = { tags: ['a', 'sent-to-support'], group_id: 990000000003, status: 2 };
     expect(await updateTicket('990100003', fields)).toEqual({ status: 'ok' });
     const { url, init, body } = sent();
     expect(url).toBe('https://help.example.test/api/v2/tickets/990100003');
