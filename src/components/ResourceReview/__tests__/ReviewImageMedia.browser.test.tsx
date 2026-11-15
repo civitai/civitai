@@ -14,7 +14,7 @@ const IMAGE_URL = URL.createObjectURL(
 );
 
 // The slide as ReviewImage sizes it on desktop: fixed height, the image's own ratio, clipped.
-function Slide({ width, height, hiDpi }: { width: number; height: number; hiDpi: boolean }) {
+function Slide({ width, height }: { width: number; height: number; hiDpi: boolean }) {
   return (
     <div style={{ width: 3000 }}>
       <div
@@ -23,7 +23,6 @@ function Slide({ width, height, hiDpi }: { width: number; height: number; hiDpi:
         style={{ aspectRatio: width / height, height: SLIDE_HEIGHT, maxWidth: '100%' }}
       >
         <ReviewImageMedia
-          hiDpi={hiDpi}
           image={{
             id: 1,
             name: 'a.png',
@@ -45,16 +44,16 @@ async function widths() {
   return { slide, img };
 }
 
-describe.each([false, true])('ReviewImageMedia (hiDpi %s)', (hiDpi) => {
+describe('ReviewImageMedia', () => {
   test('a 2.34:1 image fills its slide, not the default 800px', async () => {
-    renderWithProviders(<Slide width={2712} height={1160} hiDpi={hiDpi} />);
+    renderWithProviders(<Slide width={2712} height={1160} />);
     const { slide, img } = await widths();
     expect(slide).toBeGreaterThan(900);
     expect(img).toBeCloseTo(slide, 0);
   });
 
   test('a portrait image still fills its slide', async () => {
-    renderWithProviders(<Slide width={1160} height={2712} hiDpi={hiDpi} />);
+    renderWithProviders(<Slide width={1160} height={2712} />);
     const { slide, img } = await widths();
     expect(slide).toBeLessThan(800);
     expect(img).toBeCloseTo(slide, 0);

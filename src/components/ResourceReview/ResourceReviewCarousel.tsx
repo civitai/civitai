@@ -23,14 +23,13 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import classes from './ResourceReviewCarousel.module.css';
+import { getReviewImageWidth } from './review-image-width';
 
 const MAX_IMAGES = 8;
 const MOBILE_MAX_IMAGE_HEIGHT = '60vh';
 // Desktop slides share one height and take their width from the image, so as many as fit show.
 const DESKTOP_IMAGE_HEIGHT = '55vh';
 const SIDE_SLIDE_WIDTH = 240;
-const DEFAULT_IMAGE_WIDTH = 800;
-const WIDE_IMAGE_MAX_WIDTH = 1600;
 const SLIDE_CLASS =
   'flex max-w-full flex-[0_0_100%] items-center justify-center pl-2 md:flex-none md:justify-start';
 
@@ -181,28 +180,14 @@ function NoReviewImages() {
   );
 }
 
-/**
- * A landscape slide is wider than the default request: its slot is the image's ratio times the
- * slide height, which can pass 1500px. Ask for that much, never past the source, and let the
- * image fill the slot (`maxWidth: 100%` beats the inline cap EdgeImage derives from `width`).
- */
-export function getReviewImageWidth({
-  width,
-  height,
-}: {
-  width?: number | null;
-  height?: number | null;
-}) {
-  if (width && height && width > height) return Math.min(width, WIDE_IMAGE_MAX_WIDTH);
-  return DEFAULT_IMAGE_WIDTH;
-}
-
 export function ReviewImageMedia({
   image,
   hiDpi,
+  mobile,
 }: {
   image: Pick<ImagesInfiniteModel, 'url' | 'name' | 'id' | 'type' | 'width' | 'height'>;
   hiDpi?: boolean;
+  mobile?: boolean;
 }) {
   return (
     <EdgeMedia
@@ -210,7 +195,7 @@ export function ReviewImageMedia({
       name={image.name ?? image.id.toString()}
       alt={image.name ?? undefined}
       type={image.type}
-      width={getReviewImageWidth(image)}
+      width={getReviewImageWidth(image, mobile)}
       hiDpi={hiDpi}
       sourceWidth={image.width}
       placeholder="empty"
@@ -270,7 +255,7 @@ function ReviewImage({
               {!safe ? (
                 <MediaHash {...image} />
               ) : (
-                <ReviewImageMedia image={image} hiDpi={features.hiDpiPreviews} />
+                <ReviewImageMedia image={image} hiDpi={features.hiDpiPreviews} mobile={mobile} />
               )}
             </RoutedDialogLink>
             <Reactions
