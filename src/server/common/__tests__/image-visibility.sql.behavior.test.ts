@@ -1,4 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { imageReviewedSql, isImageReviewed } from '~/server/common/image-visibility';
 import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -8,6 +10,22 @@ type Row = {
   nsfwLevelLocked: boolean;
   scanJobs: Record<string, unknown> | null;
 };
+
+/**
+ * feed-go's `ImageReviewedSQL("i")`, the Go copy of `imageReviewedSql`, rendered from its source:
+ * the raw-string literals of its return expression, with each `a` (the quoted alias) between them.
+ */
+const feedGoImageReviewedSql = (() => {
+  const source = readFileSync(
+    join(process.cwd(), 'apps/feed-go/internal/hydrate/users.go'),
+    'utf8'
+  );
+  const fn = source.slice(source.indexOf('func ImageReviewedSQL('));
+  const body = fn.slice(fn.indexOf('return '), fn.indexOf('\n}'));
+  return [...body.matchAll(/`([^`]*)`|\ba\b/g)]
+    .map(([token, literal]) => (token === 'a' ? '"i"' : literal))
+    .join('');
+})();
 
 let db: PGlite;
 beforeAll(async () => {
@@ -30,17 +48,19 @@ const insert = (row: Row) =>
     [row.ingestion, row.nsfwLevelLocked, row.scanJobs ? JSON.stringify(row.scanJobs) : null]
   );
 
-/** Both encodings' verdict on the stored row; they must agree. */
+/** All three encodings' verdict on the stored row; they must agree. */
 const storedReviewed = async () => {
   const sql = imageReviewedSql();
-  const { rows } = await db.query<Row & { reviewed: boolean }>(
-    `SELECT ingestion, "nsfwLevelLocked", "scanJobs", ${sql.text} AS reviewed
+  const { rows } = await db.query<Row & { reviewed: boolean; feedGo: boolean }>(
+    `SELECT ingestion, "nsfwLevelLocked", "scanJobs", ${sql.text} AS reviewed,
+       ${feedGoImageReviewedSql} AS "feedGo"
      FROM "Image" i WHERE i.id = 1`,
     sql.values
   );
-  const { reviewed, ...row } = rows[0];
+  const { reviewed, feedGo, ...row } = rows[0];
   const ts = isImageReviewed({ ...row, nsfwLevelReason: null });
   expect(ts, 'isImageReviewed agrees with imageReviewedSql').toBe(reviewed);
+  expect(feedGo, "feed-go's ImageReviewedSQL agrees with imageReviewedSql").toBe(reviewed);
   return reviewed;
 };
 
@@ -98,5 +118,33 @@ describe('a completed scan', () => {
         scanJobs: { lastFailure: { failureClass: 'permanent' } },
       })
     ).toBe(true);
+  });
+});
+
+describe("feed-go's ImageReviewedSQL", () => {
+  it.each([
+    [
+      'a transient error after a permanent lastFailure',
+      { error: { failureClass: 'transient' }, lastFailure: { failureClass: 'permanent' } },
+      'Error',
+      false,
+    ],
+    ['a permanent error', { error: { failureClass: 'permanent' } }, 'Error', false],
+    [
+      'a completed scan after a permanent lastFailure',
+      { lastFailure: { failureClass: 'permanent' } },
+      'Scanned',
+      true,
+    ],
+    [
+      'a kept permanent failure',
+      { error: { failureClass: 'transient' }, permanentFailure: true },
+      'Error',
+      false,
+    ],
+    ['a transient error', { error: { failureClass: 'transient' } }, 'Error', true],
+    ['no scanJobs', null, 'Error', true],
+  ] as const)('decides %s like the TS encodings', async (_label, scanJobs, ingestion, expected) => {
+    expect(await reviewed({ ingestion, ...locked, scanJobs })).toBe(expected);
   });
 });
