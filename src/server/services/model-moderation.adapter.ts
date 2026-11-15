@@ -266,6 +266,8 @@ export const modelModerationAdapter: ModerationAdapter = {
         poi: true,
         sfwOnly: true,
         availability: true,
+        sfwName: true,
+        sfwCoverImageId: true,
       },
     });
     // Deleted between submit and callback — a bare update would throw P2025 and fail the

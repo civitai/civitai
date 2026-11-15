@@ -352,6 +352,20 @@ export async function getCreatorJourney(userId: number) {
     })),
     activity,
     secrets,
+    // Silent grants are stamped seen as they are made, so only an observed crossing reveals.
+    reveals: achievements
+      .filter((achievement) => achievement.seenAt === null)
+      .map(({ milestone }) => ({
+        key: milestone.key,
+        track: milestone.track,
+        threshold: milestone.threshold,
+        name: milestone.name,
+        description: milestone.description,
+        hint: milestone.hidden ? milestone.hint : null,
+        badgeUrl: badgeUrlByKey.get(milestone.key) ?? null,
+        special: milestone.hidden,
+        rarity: milestoneRarityPercent(rarity, milestone),
+      })),
   };
 }
 

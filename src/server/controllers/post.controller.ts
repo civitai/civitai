@@ -1,4 +1,5 @@
 import { getPostTextsForViewer } from '~/server/services/post-text.service';
+import { assertPostVisibleToViewer } from '~/server/services/post-viewer-visibility.service';
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
@@ -32,7 +33,6 @@ import {
   viewerBrowsingLevel,
 } from '~/server/utils/browsing-level';
 import { publishModel3D } from '~/server/services/model3d.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   handleLogError,
@@ -72,7 +72,6 @@ import {
   createPost,
   deletePost,
   getPostContestCollectionDetails,
-  getPostDetail,
   getPostResources,
   getPostResourceCovers,
   getPostsInfinite,
@@ -623,20 +622,6 @@ export const updatePostHandler = async ({
     else throw throwDbError(error);
   }
 };
-
-/**
- * The post as `post.get` serves it, or NOT_FOUND unless the viewer may see it: `getPostDetail`'s
- * visibility plus the owner's block of a non-moderator viewer.
- */
-async function assertPostVisibleToViewer({ id, user }: GetByIdInput & { user?: Context['user'] }) {
-  const post = await getPostDetail({ id, user });
-  if (!post) throw throwNotFoundError();
-  if (user && !user.isModerator) {
-    const blocked = await amIBlockedByUser({ userId: user.id, targetUserId: post.user.id });
-    if (blocked) throw throwNotFoundError();
-  }
-  return post;
-}
 
 export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {

@@ -68,7 +68,7 @@ beforeEach(() => {
   h.checkOAuthRateLimit.mockResolvedValue(true);
   h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
   h.rows = {
-    OauthClient: { allowedScopes: REQUESTED, accessMode: 'open' },
+    OauthClient: { allowedScopes: REQUESTED, accessMode: 'open', grants: [] },
     OauthConsent: { scope: REQUESTED },
     User: { muted: false, bannedAt: null },
   };
@@ -77,7 +77,7 @@ beforeEach(() => {
 describe('oauth/app-token +server', () => {
   it('mints nothing for the remix apps client, whose row the seed migration inserts', async () => {
     // Even with a consent row: each of its two guards refuses on its own.
-    const remixClient = { allowedScopes: 0, accessMode: 'disabled' };
+    const remixClient = { allowedScopes: 0, accessMode: 'disabled', grants: [] };
     h.rows.OauthClient = remixClient;
     expect((await call({ ...body, clientId: 'civitai-remix-apps' })).status).toBe(403);
     h.rows.OauthClient = { ...remixClient, accessMode: 'open' };
@@ -85,8 +85,23 @@ describe('oauth/app-token +server', () => {
     expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
     expect(h.inserts).toHaveLength(0);
     // POSITIVE CONTROL: with scopes and access, the same request mints.
-    h.rows.OauthClient = { allowedScopes: REQUESTED, accessMode: 'open' };
+    h.rows.OauthClient = { allowedScopes: REQUESTED, accessMode: 'open', grants: [] };
     expect((await call({ ...body, clientId: 'civitai-remix-apps' })).status).toBe(200);
+  });
+
+  it('mints nothing for a service client, which acts only as itself', async () => {
+    h.rows.OauthClient = {
+      allowedScopes: REQUESTED,
+      accessMode: 'open',
+      grants: ['urn:civitai:grant:service'],
+    };
+    const res = await call(body);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_client');
+    expect(h.inserts).toHaveLength(0);
+    // Control: the same row without the service grant mints.
+    h.rows.OauthClient = { allowedScopes: REQUESTED, accessMode: 'open', grants: [] };
+    expect((await call(body)).status).toBe(200);
   });
 
   it('requires the internal token', async () => {
@@ -162,7 +177,7 @@ describe('oauth/app-token +server — client_credentials-only scopes', () => {
   it('400 invalid_scope for AppStoreCatalogWrite, even with a ceiling and consent carrying it', async () => {
     const scope = TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
     h.rows = {
-      OauthClient: { allowedScopes: scope, accessMode: 'open' },
+      OauthClient: { allowedScopes: scope, accessMode: 'open', grants: [] },
       OauthConsent: { scope },
     };
     const res = await call({ ...body, scope });

@@ -203,6 +203,13 @@ describe('model.getAll card images and browsing-settings tag exclusions', () => 
       1, 2, 3,
     ]);
   });
+
+  it("keeps the owner's own card images in a general feed, as the model query does", async () => {
+    const owner = { id: OWNER, username: 'owner' };
+    expect(await feedImages(owner)).toEqual([1, 2, 3]);
+    expect(await feedImages(owner, { excludedTagIds: [OTHER_TAG] })).toEqual([1, 2, 3]);
+    expect(await feedImages({ ...VIEWER }, { excludedTagIds: [OTHER_TAG] })).toEqual([1]);
+  });
 });
 
 describe('featured models home block and browsing-settings tag exclusions', () => {

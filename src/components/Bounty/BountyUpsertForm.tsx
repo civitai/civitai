@@ -28,6 +28,11 @@ import React, { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import {
+  paymentIntentKeyMintedAt,
+  submissionIntent,
+  withPaymentIntentKey,
+} from '~/components/Buzz/payment-intent-keys';
 
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -271,14 +276,27 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
     const performTransaction = async () => {
       try {
-        const result = await upsertBounty({
+        const payload = {
           ...bounty,
           ...rest,
           buzzType: mainBuzzType as 'green' | 'yellow',
           startsAt: stripTime(startsAt),
           expiresAt: stripTime(expiresAt),
           images: filteredImages,
-        });
+        };
+        // A new Buzz bounty: one key per submission (its content), held across a failure that
+        // may have charged, so submitting it again is the same bounty, charged once. The key's
+        // mint time goes with it: the server files the charge under both.
+        const result =
+          currency === Currency.BUZZ && !bounty
+            ? await withPaymentIntentKey(submissionIntent('bounty-create', payload), (key) =>
+                upsertBounty({
+                  ...payload,
+                  idempotencyKey: key,
+                  chargedAt: paymentIntentKeyMintedAt(key) ?? Date.now(),
+                })
+              )
+            : await upsertBounty(payload);
 
         await router.push(`/bounties/${result?.id}`);
 

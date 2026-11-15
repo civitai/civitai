@@ -70,6 +70,10 @@ import {
   submitMysteryPack,
   withdrawMysteryPackRevision,
 } from '~/server/services/creator-mystery-pack.service';
+import {
+  getMyMysteryPacks,
+  getMysteryPackCandidates,
+} from '~/server/services/creator-mystery-pack-read.service';
 import { getMysteryPackReview } from '~/server/services/creator-mystery-pack-review.service';
 import { getRegion } from '~/server/utils/region-blocking';
 import { servicesCountForPublish } from '~/server/services/creator-service.service';
@@ -185,6 +189,22 @@ export const creatorShopRouter = router({
     .mutation(({ input, ctx }) => {
       assertMysteryPacksEnabled(ctx.features);
       return withdrawMysteryPackRevision({ ...input, userId: ctx.user.id });
+    }),
+  getMysteryPackCandidates: creatorShopProcedure.query(({ ctx }) => {
+    assertMysteryPacksEnabled(ctx.features);
+    return getMysteryPackCandidates({
+      creatorId: ctx.user.id,
+      stickersEnabled: ctx.features.stickers,
+    });
+  }),
+  getMyMysteryPacks: creatorShopProcedure
+    .input(z.object({ userId: z.number().int().positive().optional() }))
+    .query(({ input, ctx }) => {
+      assertMysteryPacksEnabled(ctx.features);
+      return getMyMysteryPacks({
+        ownerId: input.userId ?? ctx.user.id,
+        viewer: { id: ctx.user.id, isModerator: ctx.user.isModerator },
+      });
     }),
   lowerMysteryPackPrice: guardedProcedure
     .input(lowerMysteryPackPriceSchema)

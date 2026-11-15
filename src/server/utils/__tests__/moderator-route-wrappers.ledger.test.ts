@@ -200,6 +200,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'party access check: the seller, the paid buyer, or a moderator for dispute review',
   'training-studio/check-text':
     'passed to the edit-prompt audit, the same flag the generator gives auditPromptServer',
+  'training-studio/model-status':
+    'moderators are answered with no withheld runs: they may see a taken-down run in full',
   'v1/announcements/index': 'owner-or-moderator edit of a creator announcement',
   'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',

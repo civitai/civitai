@@ -27,6 +27,10 @@ export const POST: RequestHandler = async ({ request }) => {
     // A draft can run the intent check, two chat completions and two text checks in series.
     timeoutMs: 150_000,
   });
-  if (!result.ok) return json({ error: result.error }, { status: result.status });
+  if (!result.ok)
+    return json(
+      { error: result.error, ...(result.code && { code: result.code }) },
+      { status: result.status }
+    );
   return json(result.data);
 };

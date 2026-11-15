@@ -21,6 +21,11 @@ export const milestoneShareSchema = z.object({
   milestone: z.string().refine((value) => parseMilestoneShareToken(value) !== null),
 });
 
+export type MarkRevealsSeenInput = z.infer<typeof markRevealsSeenSchema>;
+export const markRevealsSeenSchema = z.object({
+  keys: z.array(z.string().min(1).max(100)).min(1).max(500),
+});
+
 export type FirstPublishCardInput = z.infer<typeof firstPublishCardSchema>;
 export const firstPublishCardSchema = z.object({
   entityType: z.enum(['model', 'article']),

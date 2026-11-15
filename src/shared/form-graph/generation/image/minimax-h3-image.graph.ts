@@ -13,7 +13,6 @@ import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 export const minimaxH3ImageVersionId = 3463368;
 
 export const MINIMAX_H3_IMAGE_IMAGES_LIMIT = 16;
-export const MINIMAX_H3_IMAGE_MAX_QUANTITY = 4;
 
 /**
  * Dims at 2K: the smallest multiples of 32 at each ratio that clear the engine's 4 MP floor.

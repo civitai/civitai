@@ -5,6 +5,7 @@ import { eventTurfTopic, turfKeys, type TurfCounts } from '~/server/events/turf/
 import type { FeedSticker } from '~/server/events/turf/turf.service';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
+import { MAX_TURF_IMAGES_PER_MARK } from '~/server/schema/turf.schema';
 import { signalClient } from '~/utils/signal-client';
 
 // Live turf counts on feed cards and image pages: a client marks the images it has on screen, and
@@ -15,7 +16,6 @@ import { signalClient } from '~/utils/signal-client';
 // images can never crowd out hat and team totals.
 export const TURF_WATCH_TTL_MS = 90_000;
 export const MAX_TURF_WATCHED = 20_000;
-export const MAX_TURF_IMAGES_PER_MARK = 50;
 const PUSH_CONCURRENCY = 20;
 
 export type TurfWatchRedis = Pick<

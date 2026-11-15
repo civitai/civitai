@@ -59,6 +59,14 @@ const PROXY_POLICY_PREFIXES = Object.freeze(['/api/v1/']);
 /** The `globalThis` key (via `Symbol.for`) instrumentation registers `applyApiRequestPolicy` under. */
 const API_POLICY_GLOBAL_KEY = 'civitai.standalone.applyApiRequestPolicy';
 
+/**
+ * The `req` key (via `Symbol.for`) under which this server stores the page it matched, so the
+ * per-route request counter (`src/server/prom/api-route.metrics.ts`, which reads it as
+ * `STANDALONE_API_ROUTE_PAGE_KEY`) can label the request: this server calls route modules without
+ * Next's router, so Next's own route match is never set on the request.
+ */
+const API_ROUTE_PAGE_REQ_KEY = 'civitai.standalone.apiRoutePage';
+
 const PROFILES = Object.freeze(['trpc', 'api']);
 const DEFAULT_PROFILE = 'trpc';
 
@@ -66,6 +74,18 @@ const DEFAULT_PROFILE = 'trpc';
 function resolveProfile(value) {
   const name = value === undefined || value === '' ? DEFAULT_PROFILE : value;
   return PROFILES.includes(name) ? name : null;
+}
+
+/**
+ * Matches `req`'s path with `matchPage` (`createPageMatcher` in `./next-compat.cjs`) and returns the
+ * result. A matched page is also stored on `req` under `API_ROUTE_PAGE_REQ_KEY`, for the per-route
+ * request counter; an unmatched or undecodable path stores nothing.
+ */
+function matchRequestPage(matchPage, req) {
+  const pathname = (req.url || '/').split('?', 1)[0];
+  const matched = matchPage(pathname);
+  if (typeof matched.page === 'string') req[Symbol.for(API_ROUTE_PAGE_REQ_KEY)] = matched.page;
+  return matched;
 }
 
 /** Whether this server must apply the proxy's API policy before `page`'s route runs. */
@@ -93,9 +113,11 @@ module.exports = Object.freeze({
   API_PROFILE_PREFIXES,
   PROXY_POLICY_PREFIXES,
   API_POLICY_GLOBAL_KEY,
+  API_ROUTE_PAGE_REQ_KEY,
   PROFILES,
   DEFAULT_PROFILE,
   resolveProfile,
   needsApiPolicy,
+  matchRequestPage,
   servedPages,
 });

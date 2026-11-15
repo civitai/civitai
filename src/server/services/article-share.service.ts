@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isServableBodyImage, removeBodyMedia } from '~/server/utils/article-body-media';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { dbWrite } from '~/server/db/client';
 import { sysRedis } from '~/server/redis/client';
@@ -23,6 +24,7 @@ import {
 } from '~/server/services/article.service';
 import { sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { shareTokenSchema } from '~/server/schema/article.schema';
+import { csamHoldBars } from '~/server/services/text-scan/csam-hold-bars';
 import { isShareableArticleStatus } from '~/server/services/text-scan/public-content';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { articleContentJson } from '~/server/utils/article-content-json';
@@ -204,7 +206,7 @@ export async function getArticleByShareToken({
   // One read, so the text shown is the text whose state was checked.
   const { article, check, required, holds } = await readSharedArticle(row.resourceId);
   if (!article) return UNAVAILABLE;
-  if (holdBarsRead(check, holds)) {
+  if (csamHoldBars(check, holds)) {
     // A failed check (its hold write failed, or a partial result) clears only by a rescan.
     if (check?.status === EntityModerationStatus.Failed) await recheckSharedArticle(article.id);
     return UNAVAILABLE;
@@ -285,26 +287,6 @@ async function readSharedArticle(id: number) {
   return { article, check, required, holds };
 }
 
-/**
- * A hold awaiting a moderator bars the read. So does a verdict that raises one, until a moderator
- * dismisses the hold for that text: the verdict is recorded before its hold is written.
- */
-function holdBarsRead(
-  check: { triggeredLabels: string[]; result: Prisma.JsonValue } | null,
-  holds: { status: string; textHash: string; meta: Prisma.JsonValue }[]
-) {
-  if (holds.some((hold) => hold.status === 'Pending')) return true;
-  if (!check?.triggeredLabels.includes('csam')) return false;
-  const textHash = (check.result as { textHash?: unknown } | null)?.textHash;
-  // A superseded hold was closed without a ruling.
-  return !holds.some(
-    (hold) =>
-      hold.status === 'Dismissed' &&
-      hold.textHash === textHash &&
-      (hold.meta as { decision?: unknown } | null)?.decision !== 'superseded'
-  );
-}
-
 function readSharedArticleRow(id: number) {
   return dbWrite.article.findUnique({
     where: { id },
@@ -329,7 +311,18 @@ function toSharedArticle(
   article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>,
   contentImages: Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }>[]
 ) {
-  const { id, title, content, nsfwLevel, updatedAt } = article;
+  const { id, title, nsfwLevel, updatedAt } = article;
+  // A link holder is a reader: media only its owner and moderators may get leaves the body.
+  const servable = contentImages.filter(isServableBodyImage);
+  const withheld = contentImages
+    .filter((image) => !servable.includes(image))
+    .map((image) => image.url);
+  const content =
+    article.content &&
+    removeBodyMedia(article.content, {
+      withheld,
+      keepEdgeMedia: new Set(servable.map((image) => image.url)),
+    });
   // The banner stands in for a missing cover.
   const coverImage = article.coverImage ?? article.bannerImage;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
@@ -342,7 +335,14 @@ function toSharedArticle(
     user,
     nsfwLevel: nsfwLevel as NsfwLevel,
     contentJson: content ? articleContentJson(content) : undefined,
-    contentImages: contentImages.map(({ ingestion: _ingestion, ...image }) => image),
+    contentImages: servable.map(
+      ({
+        ingestion: _ingestion,
+        needsReview: _needsReview,
+        tosViolation: _tosViolation,
+        ...image
+      }) => image
+    ),
     coverImage:
       showCover && coverImage
         ? {

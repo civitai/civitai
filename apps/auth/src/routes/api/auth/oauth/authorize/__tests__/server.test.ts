@@ -372,4 +372,10 @@ describe('authorize — during impersonation', () => {
     expect(res.location).toContain('error=access_denied');
     expect(h.authorize).not.toHaveBeenCalled();
   });
+
+  it('control: the same registered app outside impersonation reaches code issuance', async () => {
+    h.skipConsent = true;
+    await start({}, { user: { id: 7 } });
+    expect(h.authorize).toHaveBeenCalled();
+  });
 });

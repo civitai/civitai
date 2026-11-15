@@ -64,4 +64,17 @@ describe('donating to an event', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'This event has ended' });
     expect(createBuzzTransaction).not.toHaveBeenCalled();
   });
+
+  // Negative control: the same event, one instant before its end, still charges the donor, so
+  // the refusals above come from the event's state and not from this fixture.
+  it('charges a donation to an event that is still running', async () => {
+    const beforeEnd = new Date(holiday2024.endDate.getTime() - 1);
+
+    await eventEngine.donate(holiday2024.name, { userId: DONOR, amount: 100 }, beforeEnd);
+
+    expect(createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ fromAccountId: DONOR, toAccountId: -110, amount: 100 })
+    );
+  });
 });

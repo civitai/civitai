@@ -1,0 +1,4 @@
+go test fuzz v1
+string(";;=;  civ-token =  v ;")
+string("civ-token")
+string("a;b c")

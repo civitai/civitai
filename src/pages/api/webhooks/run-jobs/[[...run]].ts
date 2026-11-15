@@ -11,6 +11,7 @@ import {
 } from '~/server/jobs/appeal-decision-records';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { scanLabelControlSampleJob } from '~/server/jobs/scan-label-control-sample';
+import { reviewBatchRoutingMissJob } from '~/server/jobs/review-batch-routing-miss';
 import { scanLabelCopyJob } from '~/server/jobs/scan-label-copy';
 import { scanLabelCopySweepJob } from '~/server/jobs/scan-label-copy-sweep';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
@@ -155,6 +156,7 @@ import { trainingDataScanHealJob } from '~/server/jobs/training-data-scan-heal';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
+import { comFaceIntentDisputesJob } from '~/server/jobs/com-face-intent-disputes';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
@@ -166,6 +168,7 @@ import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
+import { serviceOfferingIngestionReconcile } from '~/server/jobs/service-offering-ingestion-reconcile';
 import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
@@ -242,6 +245,7 @@ export const jobs: Job[] = [
   searchIndexCleanupJob,
   searchIndexQueueDrainJob,
   comFaceRecheckJob,
+  comFaceIntentDisputesJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,
@@ -349,6 +353,7 @@ export const jobs: Job[] = [
   textScanChatWindowsJob,
   textScanNewUsersJob,
   articleIngestionReconcile,
+  serviceOfferingIngestionReconcile,
   articleContentLinkHold,
   expireStrikesJob,
   processTimedUnmutesJob,
@@ -364,6 +369,7 @@ export const jobs: Job[] = [
   appealTrainingCopyJob,
   scanLabelCopyJob,
   scanLabelControlSampleJob,
+  reviewBatchRoutingMissJob,
   scanLabelCopySweepJob,
   announcementMediaCheckJob,
   blurbFanoutJob,

@@ -9,20 +9,28 @@ import { trpc } from '~/utils/trpc';
 
 const MIN_REASON_LENGTH = 10;
 
-export function LockReviewDialog({ modelId }: { modelId: number }) {
+/** `dispute`: the owner disputes the nsfw lock the listing intent check added, which is all it asks
+ *  about and is re-checked automatically before a moderator sees it. */
+export function LockReviewDialog({ modelId, dispute }: { modelId: number; dispute?: boolean }) {
   const dialog = useDialogContext();
   const queryUtils = trpc.useUtils();
   const { data, isLoading } = trpc.report.getLockReviewState.useQuery({ id: modelId });
   const requestable = data?.requestable ?? [];
   const [picked, setPicked] = useState<RequestableLock[]>([]);
   const [message, setMessage] = useState('');
-  const locks = requestable.length === 1 ? requestable : picked;
+  const locks: RequestableLock[] = dispute
+    ? requestable.filter((key) => key === 'nsfw')
+    : requestable.length === 1
+    ? requestable
+    : picked;
 
   const createAppeal = trpc.report.createAppeal.useMutation({
     async onSuccess() {
       showSuccessNotification({
-        title: 'Review requested',
-        message: 'A moderator will look at it; the current settings stay in place until then.',
+        title: dispute ? 'Dispute sent' : 'Review requested',
+        message: dispute
+          ? "We'll check again and let you know; the current settings stay in place until then."
+          : 'A moderator will look at it; the current settings stay in place until then.',
       });
       dialog.onClose();
       await queryUtils.report.getLockReviewState.invalidate({ id: modelId });
@@ -38,14 +46,22 @@ export function LockReviewDialog({ modelId }: { modelId: number }) {
   const canSubmit = locks.length > 0 && message.trim().length >= MIN_REASON_LENGTH;
 
   return (
-    <Modal {...dialog} title="Request a review" size="lg" centered>
+    <Modal {...dialog} title={dispute ? 'Dispute' : 'Request a review'} size="lg" centered>
       <Stack gap="md">
-        <Text size="sm">
-          A moderator has locked some of this model&apos;s settings, so you can&apos;t change them
-          yourself. If you think one is wrong, tell us which and why, and a moderator will take
-          another look.
-        </Text>
-        {isLoading ? (
+        {dispute ? (
+          <Text size="sm">
+            We read this model&apos;s civitai.red listing as made for sexual content, so it
+            can&apos;t have a civitai.com version. If that&apos;s wrong, tell us what the model is
+            for. We check again, and a moderator looks if we&apos;re still not sure.
+          </Text>
+        ) : (
+          <Text size="sm">
+            A moderator has locked some of this model&apos;s settings, so you can&apos;t change them
+            yourself. If you think one is wrong, tell us which and why, and a moderator will take
+            another look.
+          </Text>
+        )}
+        {dispute ? null : isLoading ? (
           <Loader size="sm" />
         ) : (
           <Checkbox.Group
@@ -87,7 +103,7 @@ export function LockReviewDialog({ modelId }: { modelId: number }) {
               })
             }
           >
-            Send request
+            {dispute ? 'Send dispute' : 'Send request'}
           </Button>
         </Group>
       </Stack>

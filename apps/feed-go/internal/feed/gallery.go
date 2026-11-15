@@ -40,6 +40,37 @@ func (g *GalleryStore) Settings(ctx context.Context, modelID int) (*GallerySetti
 	return ParseGallerySettings(raw)
 }
 
+// SettingsMany is Settings for several models in one pipelined round trip (getShowcaseHeldLevels'
+// mGet). The first model whose key Node would rebuild falls back, as Settings does.
+func (g *GalleryStore) SettingsMany(ctx context.Context, modelIDs []int) (map[int]*GallerySettings, error) {
+	out := make(map[int]*GallerySettings, len(modelIDs))
+	if len(modelIDs) == 0 {
+		return out, nil
+	}
+	cmds := make([]*redis.StringCmd, len(modelIDs))
+	_, _ = g.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, id := range modelIDs {
+			cmds[i] = p.Get(ctx, g.Prefix+"model:gallery-settings:"+strconv.Itoa(id))
+		}
+		return nil
+	})
+	for i, cmd := range cmds {
+		raw, err := cmd.Bytes()
+		if errors.Is(err, redis.Nil) {
+			return nil, fallback.New("gallery-settings-miss")
+		}
+		if err != nil {
+			return nil, fallback.Newf("gallery-settings-read-failed", "%v", err)
+		}
+		s, err := ParseGallerySettings(raw)
+		if err != nil {
+			return nil, err
+		}
+		out[modelIDs[i]] = s
+	}
+	return out, nil
+}
+
 // ParseGallerySettings applies getGallerySettingsByModelId's reading of a cached value.
 func ParseGallerySettings(raw []byte) (*GallerySettings, error) {
 	if string(raw) == "null" {

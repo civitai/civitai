@@ -15,6 +15,31 @@ export const postHoldsHeldTextSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
   WHERE ht."postId" = ${postId} AND post_text_held(ht.id, ht."csamHeld", ht."postId", ht."userId")
 )`;
 
+/**
+ * Whether text `t` is hidden from every reader: refused, `csamHeld`, or under a Pending or Confirmed
+ * csam hold. Read on the primary, row and hold together, so one snapshot decides it through a
+ * detect, a confirm or a release, whatever the order of their writes.
+ */
+const postTextHiddenText = (t: string) =>
+  `(${t}.refused OR ${t}."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th
+    WHERE th."entityType" = 'PostText' AND th."entityId" = ${t}.id AND th.label = 'csam'
+      AND th.status IN ('Pending', 'Confirmed')))`;
+
+/** One text's post, rating and hidden decision, in one primary statement (the thread gate). */
+export const postTextGateRowSql = (textId: number) =>
+  Prisma.sql`SELECT t."postId", t."nsfwLevel", ${Prisma.raw(postTextHiddenText('t'))} AS hidden
+    FROM "PostText" t WHERE t.id = ${textId}`;
+
+/** The texts among these hidden from every reader (`postTextHiddenText`), read on the primary. */
+export async function hiddenPostTextIds(textIds: number[]) {
+  if (!textIds.length) return new Set<number>();
+  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT t.id FROM "PostText" t
+    WHERE t.id IN (${Prisma.join(textIds)}) AND ${Prisma.raw(postTextHiddenText('t'))}
+  `;
+  return new Set(rows.map((row) => row.id));
+}
+
 /** The posts among these holding held text, or holding these texts when they are held. */
 export async function heldPostTextPostIds({
   postIds,

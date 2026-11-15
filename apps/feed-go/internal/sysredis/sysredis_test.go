@@ -9,8 +9,8 @@ import (
 // Fixture values are pairwise distinct (and distinct from DefaultSentinelPort) so a mutant that
 // copies one field into another, or hardcodes a default, shows up.
 const (
-	masterPass   = "master-pw-7f3a"
-	sentinelPass = "sentinel-pw-91c2"
+	masterPass   = "master-pw-7f3a"   //nolint:gosec // G101: a fake test password
+	sentinelPass = "sentinel-pw-91c2" //nolint:gosec // G101: a fake test password
 	groupName    = "group-q8"
 )
 

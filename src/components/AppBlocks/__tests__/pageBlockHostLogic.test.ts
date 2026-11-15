@@ -16,6 +16,10 @@ import {
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
   resolveNavigateRequest,
+  resolvePersistGenerationSourceRequest,
+  PERSIST_SOURCE_INVALID_ERROR,
+  PERSIST_SOURCE_NOT_READY_ERROR,
+  PERSIST_SOURCE_REVIEW_ERROR,
   resolveResourcePickerMultiple,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
@@ -2237,5 +2241,73 @@ describe('resolveNavigateRequest — launch origin survives in-app navigation', 
         { ...RUN, launchOrigin: 'store' }
       )?.href
     ).toBe('/apps/run/other-app');
+  });
+});
+
+describe('resolvePersistGenerationSourceRequest', () => {
+  const ok = { requestId: 'rq_1', workflowId: 'wf_1', imageIndex: 0 };
+  const gate = (raw: unknown, over: { ready?: boolean; reviewMode?: boolean } = {}) =>
+    resolvePersistGenerationSourceRequest({ raw, ready: true, reviewMode: false, ...over });
+
+  it('proceeds with exactly the three fields, whatever else the payload carries', () => {
+    expect(gate({ ...ok, imageIndex: 4, url: 'https://evil.example/x.png', appId: 'x' })).toEqual({
+      kind: 'proceed',
+      request: { requestId: 'rq_1', workflowId: 'wf_1', imageIndex: 4 },
+    });
+  });
+
+  it.each([
+    ['no payload', undefined],
+    ['a non-object payload', 'rq_1'],
+    ['no requestId', { workflowId: 'wf_1', imageIndex: 0 }],
+    ['an empty requestId', { ...ok, requestId: '' }],
+    ['a non-string requestId', { ...ok, requestId: 7 }],
+  ])('drops %s (nothing to reply on)', (_label, raw) => {
+    expect(gate(raw)).toEqual({ kind: 'drop' });
+  });
+
+  it('refuses review mode first — even a valid request on a ready block', () => {
+    expect(gate(ok, { reviewMode: true })).toEqual({
+      kind: 'refuse',
+      requestId: 'rq_1',
+      error: PERSIST_SOURCE_REVIEW_ERROR,
+    });
+    // Review is checked before readiness and before the payload.
+    expect(gate({ requestId: 'rq_1' }, { reviewMode: true, ready: false })).toMatchObject({
+      error: PERSIST_SOURCE_REVIEW_ERROR,
+    });
+  });
+
+  it('refuses a block that has not finished its handshake, before reading the payload', () => {
+    expect(gate(ok, { ready: false })).toEqual({
+      kind: 'refuse',
+      requestId: 'rq_1',
+      error: PERSIST_SOURCE_NOT_READY_ERROR,
+    });
+    expect(gate({ requestId: 'rq_1' }, { ready: false })).toMatchObject({
+      error: PERSIST_SOURCE_NOT_READY_ERROR,
+    });
+  });
+
+  it.each([
+    ['a missing workflowId', { requestId: 'rq_1', imageIndex: 0 }],
+    ['an empty workflowId', { ...ok, workflowId: '' }],
+    ['a workflowId over 64 characters', { ...ok, workflowId: 'w'.repeat(65) }],
+    ['a non-string workflowId', { ...ok, workflowId: 12 }],
+    ['a missing imageIndex', { requestId: 'rq_1', workflowId: 'wf_1' }],
+    ['a negative imageIndex', { ...ok, imageIndex: -1 }],
+    ['a fractional imageIndex', { ...ok, imageIndex: 0.5 }],
+    ['a string imageIndex', { ...ok, imageIndex: '0' }],
+    ['a NaN imageIndex', { ...ok, imageIndex: Number.NaN }],
+  ])('refuses %s with the invalid-request error, keeping the requestId', (_label, raw) => {
+    expect(gate(raw)).toEqual({
+      kind: 'refuse',
+      requestId: 'rq_1',
+      error: PERSIST_SOURCE_INVALID_ERROR,
+    });
+  });
+
+  it('accepts the boundary values: a 64-character workflowId and index 0', () => {
+    expect(gate({ ...ok, workflowId: 'w'.repeat(64) })).toMatchObject({ kind: 'proceed' });
   });
 });

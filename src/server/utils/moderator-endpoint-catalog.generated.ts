@@ -80,8 +80,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/poi-flag/flag-match': () => import('~/pages/api/mod/poi-flag/flag-match'),
   '/api/mod/poi-flag/revert': () => import('~/pages/api/mod/poi-flag/revert'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
+  '/api/mod/review-batches': () => import('~/pages/api/mod/review-batches'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
   '/api/mod/review/set-exclude': () => import('~/pages/api/mod/review/set-exclude'),
+  '/api/mod/search-query-rule-dry-run': () => import('~/pages/api/mod/search-query-rule-dry-run'),
   '/api/mod/storyline/lift-title-takedown': () =>
     import('~/pages/api/mod/storyline/lift-title-takedown'),
   '/api/mod/storyline/resolve-title-appeal': () =>
@@ -94,6 +96,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/text-scan/csam-hold/resolve'),
   '/api/mod/text-scan/model-rules-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
+  '/api/mod/tipalti-resync-payee': () => import('~/pages/api/mod/tipalti-resync-payee'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/buzz-membership-end': () => import('~/pages/api/mod/user/buzz-membership-end'),
   '/api/mod/user/cancel-pending-workflows': () =>

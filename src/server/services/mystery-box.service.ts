@@ -429,6 +429,9 @@ export const clearBoxCatalogDisplayCache = () => {
   servedVersions.clear();
 };
 
+/** Who sells a creator's pack. */
+export type BoxSeller = { id: number; username: string | null };
+
 export type MysteryBoxView = {
   boxDefinitionId: number;
   name: string;
@@ -478,6 +481,7 @@ export type MysteryBoxView = {
   }[];
   /** The viewer's unopened boxes of it, as `Item.id` strings. */
   heldBoxItemIds: string[];
+  seller?: BoxSeller;
 };
 
 // Archived boxes too: one still held still opens.
@@ -644,6 +648,52 @@ export type MysteryBoxCatalogEntry = {
 };
 
 /**
+ * The catalog entries for boxes on sale: each box with its tiers and display contents. A box with no
+ * live listing is skipped. `withPack` adds the bundle listing; creator packs have none.
+ */
+export async function buildCatalogEntries(
+  boxes: BoxDefinitionRow[],
+  { teams, withPack }: { teams: string[]; withPack: boolean }
+): Promise<MysteryBoxCatalogEntry[]> {
+  const boxIds = boxes.map((box) => box.id);
+  const [{ onSale, packOnSale }, tiers] = await Promise.all([
+    readBoxListings(boxIds),
+    getBoxTiers(boxIds),
+  ]);
+  const entries = await Promise.all(
+    boxes.map(async (box): Promise<MysteryBoxCatalogEntry | null> => {
+      const listing = onSale(box.id);
+      if (!listing) return null;
+      const catalog = await getBoxCatalogForDisplay(box);
+      const pack = withPack ? packOnSale(box.id) : undefined;
+      return {
+        boxDefinitionId: box.id,
+        name: box.name,
+        description: box.description,
+        unitAmount: listing.unitAmount,
+        pack: pack
+          ? {
+              unitAmount: pack.unitAmount,
+              size: pack.pack.size,
+              guaranteedTierIds: pack.pack.guaranteedTierIds,
+            }
+          : null,
+        tiers: tiers
+          .filter((tier) => tier.boxDefinitionId === box.id)
+          .map(({ boxDefinitionId: _box, ...tier }) => tier),
+        contents: catalog.map(({ contentId, tierId, team }) => ({
+          contentId,
+          tierId,
+          team: team ?? null,
+        })),
+        teams,
+      };
+    })
+  );
+  return entries.filter((entry): entry is MysteryBoxCatalogEntry => entry !== null);
+}
+
+/**
  * An event's mystery boxes on sale now, for a viewer not on a team (signed out, or not joined): the
  * box and its contents by tier, for base odds. It reads no team, so it places no one and shows no
  * pool of anyone's; the odds page's gates apply (flag, country, the event open to them), and the
@@ -666,73 +716,23 @@ export async function getMysteryBoxCatalogForEvent({
 
   const boxes = await readEventBoxes(event, [ITEM_DEFINITION_STATUS.published]);
   if (!boxes.length) return [];
-  const boxIds = boxes.map((box) => box.id);
-  const [{ onSale, packOnSale }, tiers] = await Promise.all([
-    readBoxListings(boxIds),
-    getBoxTiers(boxIds),
-  ]);
-
-  const views = await Promise.all(
-    boxes.map(async (box): Promise<MysteryBoxCatalogEntry | null> => {
-      const listing = onSale(box.id);
-      if (!listing) return null;
-      const catalog = await getBoxCatalogForDisplay(box);
-      const pack = packOnSale(box.id);
-      return {
-        boxDefinitionId: box.id,
-        name: box.name,
-        description: box.description,
-        unitAmount: listing.unitAmount,
-        pack: pack
-          ? {
-              unitAmount: pack.unitAmount,
-              size: pack.pack.size,
-              guaranteedTierIds: pack.pack.guaranteedTierIds,
-            }
-          : null,
-        tiers: tiers
-          .filter((tier) => tier.boxDefinitionId === box.id)
-          .map(({ boxDefinitionId: _box, ...tier }) => tier),
-        contents: catalog.map(({ contentId, tierId, team }) => ({
-          contentId,
-          tierId,
-          team: team ?? null,
-        })),
-        teams: [...access.teams],
-      };
-    })
-  );
-  return views.filter((view): view is MysteryBoxCatalogEntry => view !== null);
+  return buildCatalogEntries(boxes, { teams: [...access.teams], withPack: true });
 }
 
 /**
- * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
- * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
- * the event is closed to them; once it ends, only the boxes they hold.
+ * The viewer's view of each box: on sale (only while `playable` and published), or held. A box that
+ * is neither is skipped. `withPack` adds the bundle listing; creator packs have none.
  */
-export async function getMysteryBoxesForEvent({
-  userId,
-  isModerator,
-  event,
-  mysteryBoxEnabled,
-  countryCode,
-}: {
-  userId: number;
-  isModerator?: boolean;
-  event: string;
-  mysteryBoxEnabled: boolean | undefined;
-  countryCode: string | null | undefined;
-}): Promise<MysteryBoxView[]> {
-  if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
-  // The event's own gate first: a box's contents are not shown before the event is open to them.
-  const viewer = await getEventBoxViewer(event, { id: userId, isModerator });
-  if (!viewer) return [];
-  const { team, playable } = viewer;
-
-  const boxes = await readEventBoxes(event, SHOWN_BOX_STATUSES);
-  if (!boxes.length) return [];
+export async function buildBoxViews(
+  boxes: BoxDefinitionRow[],
+  {
+    userId,
+    team,
+    playable,
+    withPack,
+  }: { userId: number; team: string | undefined; playable: boolean; withPack: boolean }
+): Promise<MysteryBoxView[]> {
   const boxIds = boxes.map((box) => box.id);
-
   const [{ onSale, packOnSale }, held, tiers] = await Promise.all([
     readBoxListings(boxIds),
     listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
@@ -743,7 +743,7 @@ export async function getMysteryBoxesForEvent({
     boxes.map(async (box): Promise<MysteryBoxView | null> => {
       const sold = playable && box.status === ITEM_DEFINITION_STATUS.published;
       const listing = sold ? onSale(box.id) : undefined;
-      const pack = sold ? packOnSale(box.id) : undefined;
+      const pack = sold && withPack ? packOnSale(box.id) : undefined;
       const heldBoxItemIds = held
         .filter((item) => item.itemDefinitionId === box.id)
         .map((item) => item.id.toString());
@@ -776,6 +776,35 @@ export async function getMysteryBoxesForEvent({
     })
   );
   return views.filter((view): view is MysteryBoxView => view !== null);
+}
+
+/**
+ * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
+ * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
+ * the event is closed to them; once it ends, only the boxes they hold.
+ */
+export async function getMysteryBoxesForEvent({
+  userId,
+  isModerator,
+  event,
+  mysteryBoxEnabled,
+  countryCode,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  event: string;
+  mysteryBoxEnabled: boolean | undefined;
+  countryCode: string | null | undefined;
+}): Promise<MysteryBoxView[]> {
+  if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
+  // The event's own gate first: a box's contents are not shown before the event is open to them.
+  const viewer = await getEventBoxViewer(event, { id: userId, isModerator });
+  if (!viewer) return [];
+  const { team, playable } = viewer;
+
+  const boxes = await readEventBoxes(event, SHOWN_BOX_STATUSES);
+  if (!boxes.length) return [];
+  return buildBoxViews(boxes, { userId, team, playable, withPack: true });
 }
 
 // How long a purchase still settling counts against what is left for its buyer, from its last

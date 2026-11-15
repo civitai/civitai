@@ -744,6 +744,8 @@ jobs:
       KYSELY_HOT_READS_10_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-11 suite (its own `hot_reads_11_parity` schema).
       KYSELY_HOT_READS_11_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-12 suite (its own `hot_reads_12_parity` schema).
+      KYSELY_HOT_READS_12_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # The image_delivery_lookup(url) parity suite: creates and drops its own database and roles
       # on this server, so it needs the superuser URL.
       IMAGE_DELIVERY_LOOKUP_FN_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
@@ -857,6 +859,13 @@ jobs:
         # of the run that shipped the `--` bug.
         if: ${{ !cancelled() }}
         run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
+
+      # The registry adapter's bundle, and its check that every external it loads loads under
+      # this Node (`scripts/build-registry-adapter.mjs`), which no other job builds. It takes
+      # seconds, so one shard pays it.
+      - name: Registry adapter bundle loads its externals
+        if: ${{ !cancelled() && matrix.shard == 1 }}
+        run: pnpm run build:registry-adapter
 
       # See the restore step for why this is push-only. Three further details:
       #

@@ -157,6 +157,7 @@ import type {
 } from './../schema/post.schema';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
@@ -776,12 +777,16 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
 export type PostDetailEditable = AsyncReturnType<typeof getPostEditDetail>;
 export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
+export type PostEditTextDetail = PostDetailEditable['texts'][number];
 export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 
 export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
-  const editImages = await getPostEditImages({ id, user });
+  const [editImages, texts] = await Promise.all([
+    getPostEditImages({ id, user }),
+    getPostEditTexts(id),
+  ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
 
   let collectionTagId: null | number = null;
@@ -808,6 +813,7 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     parentModelName: model?.name ?? null,
     collectionTagId,
     images,
+    texts,
     collectionItemExists,
     ownModelId: model?.userId === post.user.id ? model.id : null,
   };
@@ -923,6 +929,19 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
 }
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
+/**
+ * The post's storyline text items for its editor, whatever the `storylineText` flag: the editor
+ * places new items by index among them, so it needs every row the author has.
+ */
+async function getPostEditTexts(postId: number) {
+  const db = await getDbWithoutLag('postImages', postId);
+  return db.postText.findMany({
+    where: { postId },
+    select: { id: true, index: true, content: true },
+    orderBy: [{ index: 'asc' }, { id: 'asc' }],
+  });
+}
+
 export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
@@ -1071,6 +1090,7 @@ export const createPost = async ({
     collectionTagId,
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
+    texts: [] as PostDetailEditable['texts'],
     collectionItemExists,
     // A fresh post has never been unpublished — supply the
     // PostUnpublishContext defaults so the type matches getPostEditDetail
@@ -2037,6 +2057,10 @@ export async function creditResourcesToImages({
   });
 
   if (createdResources.length > 0) {
+    await flagImagesOnRestrictedVersions({
+      modelVersionIds: uniq(createdResources.map((x) => x.modelVersionId)),
+      imageIds: uniq(createdResources.map((x) => x.imageId)),
+    });
     await queueImageSearchIndexUpdate({
       ids: uniq(createdResources.map((x) => x.imageId)),
       action: SearchIndexUpdateQueueAction.Update,

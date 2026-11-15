@@ -844,6 +844,7 @@ export const creatorShopSectionKeys = [
   'services',
   'merch',
   'models',
+  'mysteryPacks',
 ] as const;
 export type CreatorShopSectionKey = (typeof creatorShopSectionKeys)[number];
 export const creatorShopSectionSchema = z.object({

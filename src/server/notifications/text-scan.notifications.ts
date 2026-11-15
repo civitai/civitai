@@ -27,6 +27,11 @@ export const textScanNotifications = createNotificationProcessor({
       const noun = entityNoun[entityType] ?? 'content';
       const label = browsingLevelLabels[level as keyof typeof browsingLevelLabels] ?? '?';
       const named = title ? `${noun} "${title}"` : noun;
+      if (entityType === 'Model')
+        return {
+          message: `Your ${named} is now marked mature based on its text, so it lists on civitai.red. To list it on civitai.com too, add a civitai.com title and cover in its editor.`,
+          url,
+        };
       return {
         message: `Your ${named} is now rated ${label} based on its text. If you believe this is a mistake, you can dispute the rating on its page.`,
         url,

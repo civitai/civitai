@@ -2,22 +2,18 @@ package hydrate
 
 import (
 	"context"
-	"errors"
 	"strconv"
-
-	"github.com/redis/go-redis/v9"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
-// ImageFrames is getCosmeticsForEntity({entity: 'Image'}): the content-decoration cosmetic each image
-// wears. The cached value is the raw lookup row `{cosmeticId, equippedToId, userData}`; the cache's
-// appendFn joins it with the cosmetic record on every read, and that join is repeated here.
-// A frame miss falls back: its lookup reads the primary and filters withheld creator cosmetics.
-func (s *Sources) ImageFrames(ctx context.Context, imageIDs []int) (map[int]superjson.Object, error) {
-	imageIDs = Unique(imageIDs)
-	got := s.Packed.Get(ctx, KeyImageFrames, imageIDs, 0)
+// frameCosmeticIDs is getCosmeticsForEntity({entity: 'Image'})'s first half over the frame cache's
+// answer got for (unique) ids: the cosmetic ids to join (unordered, possibly repeated). The cached value
+// is the raw lookup row `{cosmeticId, equippedToId, userData}`; the cache's appendFn joins it with the
+// cosmetic record on every read, and joinFrames repeats that join. A frame miss falls back: its lookup
+// reads the primary and filters withheld creator cosmetics.
+func frameCosmeticIDs(imageIDs []int, got map[int]Entry) ([]int, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("image-frame-miss", "%d ids", len(miss))
 	}
@@ -30,10 +26,13 @@ func (s *Sources) ImageFrames(ctx context.Context, imageIDs []int) (map[int]supe
 			cosmeticIDs = append(cosmeticIDs, cid)
 		}
 	}
-	cosmetics, err := s.Cosmetics(ctx, cosmeticIDs)
-	if err != nil {
-		return nil, err
-	}
+	return cosmeticIDs, nil
+}
+
+// joinFrames is the frame lookup's second half: each frame joined with its cosmetic record. cosmetics
+// is cosmeticsFrom's answer for (at least) the ids frameCosmeticIDs returned; a record is a pure
+// function of its id, so extra ids change nothing.
+func joinFrames(got map[int]Entry, cosmetics map[int]superjson.Object) (map[int]superjson.Object, error) {
 	out := map[int]superjson.Object{}
 	for id, e := range got {
 		if e.NotFound {
@@ -97,26 +96,22 @@ func truthyJS(v any) bool {
 	return true // objects and arrays
 }
 
-// EventDecorations is getEventDecorationsForEntity for the events visible to every viewer (see
-// DESIGN.md: per-viewer event access is not ported; the visible set is configuration). Empty when no
-// event is visible, as in Node. A miss falls back (its lookup reads the primary).
-func (s *Sources) EventDecorations(ctx context.Context, imageIDs []int, visibleEvents map[string]bool) (map[int]superjson.Object, error) {
-	out := map[int]superjson.Object{}
-	imageIDs = Unique(imageIDs)
-	if len(imageIDs) == 0 || len(visibleEvents) == 0 {
-		return out, nil
-	}
-	got := s.Packed.Get(ctx, KeyImageEvents, imageIDs, 0)
+// VisibleEventDecorations is decorationsForEvents over the event-decoration cache's answer: an entry
+// whose `data.event` is a string naming a visible event (isEventDecorationData), picked field by
+// field so the wearer's `userId` (and any stale extra field) is not sent. An id the cache did not
+// answer falls back.
+func VisibleEventDecorations(imageIDs []int, got map[int]Entry, visibleEvents map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("event-decoration-miss", "%d ids", len(miss))
 	}
+	out := map[int]superjson.Object{}
 	for id, e := range got {
 		if e.NotFound {
 			continue
 		}
 		data, _ := e.Value["data"].(map[string]any)
-		event, _ := data["event"].(string)
-		if event == "" || !visibleEvents[event] {
+		event, ok := data["event"].(string)
+		if !ok || !visibleEvents[event] {
 			continue
 		}
 		out[id] = Pick(e.Value, "id", "name", "type", "source", "data", "equippedToId", "equippedToType")
@@ -129,16 +124,15 @@ type Thumbnail struct {
 	URL        any
 	NsfwLevel  int
 	HasNsfwKey bool
+	// Width and Height are the thumbnail's own dimensions (the public images endpoint publishes them).
+	Width  any
+	Height any
 }
 
-// Thumbnails is getThumbnailsForImages(videoIds). The miss path is the cache's own two queries.
-func (s *Sources) Thumbnails(ctx context.Context, videoIDs []int) (map[int]Thumbnail, error) {
-	videoIDs = Unique(videoIDs)
+// thumbnailsFrom is getThumbnailsForImages(videoIds) over the cache's answer got for (unique) video ids
+// (stale entries served). The miss path is the cache's own two queries, on the replica.
+func (s *Sources) thumbnailsFrom(ctx context.Context, videoIDs []int, got map[int]Entry) (map[int]Thumbnail, error) {
 	out := map[int]Thumbnail{}
-	if len(videoIDs) == 0 {
-		return out, nil
-	}
-	got := s.Packed.Get(ctx, KeyThumbnails, videoIDs, ttlDay)
 	for id, e := range got {
 		if !e.NotFound {
 			out[id] = thumbFrom(e.Value)
@@ -171,7 +165,7 @@ func (s *Sources) Thumbnails(ctx context.Context, videoIDs []int) (map[int]Thumb
 
 func thumbFrom(m map[string]any) Thumbnail {
 	n, ok := Int(m["nsfwLevel"])
-	return Thumbnail{URL: m["url"], NsfwLevel: n, HasNsfwKey: ok}
+	return Thumbnail{URL: m["url"], NsfwLevel: n, HasNsfwKey: ok, Width: Wire(m["width"]), Height: Wire(m["height"])}
 }
 
 // Metrics is one image's metric counts (MetricService over `metrics:Image:<id>` hashes).
@@ -180,36 +174,23 @@ type Metrics map[string]int
 // metricHashKey is cacheKeys.metric (event-engine-common/utils/cache-keys.ts); never namespace-prefixed.
 func metricHashKey(id int) string { return "metrics:Image:" + strconv.Itoa(id) }
 
-// ImageMetrics reads the watcher-fed metric hashes. An image with no hash at all is a miss and falls
-// back (the Node path populates it from ClickHouse); a `notFound` marker means "no metrics", which is
-// absent from the result exactly as in MetricService.parseCachedMetrics.
-func (s *Sources) ImageMetrics(ctx context.Context, imageIDs []int) (map[int]Metrics, error) {
-	imageIDs = Unique(imageIDs)
-	out := map[int]Metrics{}
-	if len(imageIDs) == 0 {
-		return out, nil
-	}
-	cmds := make([]*redis.MapStringStringCmd, len(imageIDs))
-	_, err := s.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
-		for i, id := range imageIDs {
-			cmds[i] = p.HGetAll(ctx, metricHashKey(id))
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fallback.Newf("metrics-read-failed", "%v", err)
-	}
-	for i, cmd := range cmds {
-		hash, err := cmd.Result()
-		if err != nil {
-			return nil, fallback.Newf("metrics-read-failed", "%v", err)
-		}
+func metricsReadFailed(err error) error { return fallback.Newf("metrics-read-failed", "%v", err) }
+
+// MetricsFromHashes is the per-id half of ImageMetrics: hashes[i] is the `metrics:Image:<ids[i]>`
+// hash as HGETALL returned it. An empty hash (no key) falls back; any other hash is an entry, a
+// `notFound` marker as an entry with no counts.
+func MetricsFromHashes(ids []int, hashes []map[string]string) (map[int]Metrics, error) {
+	out := make(map[int]Metrics, len(ids))
+	for i, id := range ids {
+		hash := hashes[i]
 		if len(hash) == 0 {
 			return nil, fallback.New("metrics-miss")
 		}
-		if m, ok := ParseMetricHash(hash); ok {
-			out[imageIDs[i]] = m
+		m, ok := ParseMetricHash(hash)
+		if !ok {
+			m = Metrics{} // notFound: known, every count 0 (see above)
 		}
+		out[id] = m
 	}
 	return out, nil
 }
@@ -269,12 +250,10 @@ func Stats(m Metrics, ok bool) superjson.Object {
 	}
 }
 
-// TagIDs is tagIdsForImagesCache.fetch: per image, the `tags` id array. A miss falls back (the lookup
-// joins the tag cache and drops some Rekognition tags; not ported). Read with ttl 0: entries are served
-// regardless of age.
-func (s *Sources) TagIDs(ctx context.Context, imageIDs []int) (map[int]any, error) {
-	imageIDs = Unique(imageIDs)
-	got := s.Packed.Get(ctx, KeyTagIDs, imageIDs, 0)
+// tagIDsFrom is tagIdsForImagesCache.fetch over the cache's answer got for (unique) image ids: per
+// image, the `tags` id array. A miss falls back (the lookup joins the tag cache and drops some
+// Rekognition tags; not ported). Read with ttl 0: entries are served regardless of age.
+func tagIDsFrom(imageIDs []int, got map[int]Entry) (map[int]any, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("tag-ids-miss", "%d ids", len(miss))
 	}

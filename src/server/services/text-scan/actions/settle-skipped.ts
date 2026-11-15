@@ -11,7 +11,7 @@ type ApplySkippedVerdict = (level: number, opts: { stored: boolean }) => Promise
 
 // For entities hidden until Scanned: every skip must settle them or say why not.
 export async function settleSkippedScan(
-  entityType: 'Challenge' | 'Crucible',
+  entityType: 'Challenge' | 'Crucible' | 'ServiceOffering',
   entityId: number,
   reason: SkipReason,
   apply: ApplySkippedVerdict,
