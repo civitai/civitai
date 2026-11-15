@@ -94,7 +94,8 @@ export async function queueCollectionReadConfigChange({
 
 /**
  * The collections whose cover may come from these models' posts: by a model item, a post or image
- * item on one of their posts, or a stored cover image on one.
+ * item on one of their posts, an article item whose cover or banner is on one, or a stored cover
+ * image on one.
  */
 export async function getCollectionIdsCoveredByModels(modelIds: number[]) {
   if (!modelIds.length) return [];
@@ -115,6 +116,16 @@ export async function getCollectionIdsCoveredByModels(modelIds: number[]) {
     UNION
     SELECT c.id FROM "Collection" c
     JOIN "Image" i ON i.id = c."imageId"
+    WHERE i."postId" IN (SELECT id FROM posts)
+    UNION
+    SELECT ci."collectionId" FROM "CollectionItem" ci
+    JOIN "Article" a ON a.id = ci."articleId"
+    JOIN "Image" i ON i.id = a."coverId"
+    WHERE i."postId" IN (SELECT id FROM posts)
+    UNION
+    SELECT ci."collectionId" FROM "CollectionItem" ci
+    JOIN "Article" a ON a.id = ci."articleId"
+    JOIN "Image" i ON i.id = a."bannerId"
     WHERE i."postId" IN (SELECT id FROM posts)
   `;
   return rows.map((row) => Number(row.id));

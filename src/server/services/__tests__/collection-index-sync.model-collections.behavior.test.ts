@@ -68,6 +68,10 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES (4600, 400, 2);
     INSERT INTO "Article" (id, cover, "coverId", "nsfwLevel") VALUES (46, 'held', 4600, 2);
     INSERT INTO "CollectionItem" ("collectionId", "articleId") VALUES (17, 46);
+    -- Collections 18 and 19 reach model 1 by an article item whose cover, or banner, is its image.
+    INSERT INTO "Image" (id, "postId") VALUES (1001, 100);
+    INSERT INTO "Article" (id, "coverId", "bannerId") VALUES (47, 1000, NULL), (48, NULL, 1001);
+    INSERT INTO "CollectionItem" ("collectionId", "articleId") VALUES (18, 47), (19, 48);
   `);
   for (const client of [dbMock.dbRead, dbMock.dbWrite])
     (client.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
@@ -77,7 +81,7 @@ beforeAll(async () => {
 
 describe('getCollectionIdsCoveredByModels', () => {
   it("finds every collection whose cover may come from the model's posts, and no other", async () => {
-    expect((await getCollectionIdsCoveredByModels([1])).sort()).toEqual([1, 2, 3, 4]);
+    expect((await getCollectionIdsCoveredByModels([1])).sort()).toEqual([1, 18, 19, 2, 3, 4]);
   });
 
   it('asks nothing for no models', async () => {
@@ -91,7 +95,7 @@ describe('queueModelCollectionsReindex', () => {
     await queueModelCollectionsReindex([1]);
     expect(mockEnqueue).toHaveBeenCalledTimes(1);
     const { collectionIds } = mockEnqueue.mock.calls[0][0] as { collectionIds: number[] };
-    expect([...collectionIds].sort()).toEqual([1, 2, 3, 4]);
+    expect([...collectionIds].sort()).toEqual([1, 18, 19, 2, 3, 4]);
   });
 
   it('resolves when the collections cannot be read, so a settings save never fails on it', async () => {
