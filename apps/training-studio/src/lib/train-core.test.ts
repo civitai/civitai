@@ -926,6 +926,22 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect(headBlob.mock.calls.map(([a]) => a.path.blobId).sort()).toEqual(['safe-1', 'spicy-2']);
     });
 
+    it('counts a repeated mature image once when re-rating a run trained with repeats', async () => {
+      const source = matureSource('wf-rep1');
+      const spicy = 'urn:air:other:blob:civitai:blob@spicy-2';
+      source.data.steps[0]!.input.trainingData.items = [
+        { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
+        ...[1, 2, 3].map((k) => ({ air: spicy, caption: 'b', path: `repeat_0002_${k}.png` })),
+      ];
+      getWorkflow.mockResolvedValue(source);
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      const quote = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-rep1' });
+      expect(quote.matureCount).toBe(1);
+      expect(headBlob.mock.calls.map(([a]) => a.path.blobId).sort()).toEqual(['safe-1', 'spicy-2']);
+    });
+
     it('rates a source once per page: the quote and the submit share the probe', async () => {
       getWorkflow.mockResolvedValue(matureSource('wf-c1'));
       headBlob.mockReset();

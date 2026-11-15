@@ -54,6 +54,7 @@ import {
   blockedSelectionMessage,
   cardUnavailability,
   repeatExt,
+  clampRepeats,
 } from './trainingFlow';
 
 const rows = (texts: string[]): SamplePrompt[] => texts.map((text, id) => ({ id, text }));
@@ -973,6 +974,16 @@ describe('per-image repeats on the submit', () => {
   it('sends an image set back to 1 repeat as a plain item', () => {
     const out = build(run('sdxl'), [{ ...image(1, ['ohwx']), repeats: 1 }]);
     expect(out.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
+  it('clamps a typed repeat count to a whole number from 1 to 20', () => {
+    expect(clampRepeats(2.4)).toBe(2);
+    expect(clampRepeats(2.6)).toBe(3);
+    expect(clampRepeats(Number.NaN)).toBe(1);
+    expect(clampRepeats(0)).toBe(1);
+    expect(clampRepeats(-5)).toBe(1);
+    expect(clampRepeats(21)).toBe(20);
+    expect(clampRepeats(Number.POSITIVE_INFINITY)).toBe(1);
   });
 
   it("stages a copy under the file's own media extension, else its blob's, else the media default", () => {
