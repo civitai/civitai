@@ -309,7 +309,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
       expect(res._getJSONData().items).toEqual([]);
     });
 
-    it.each([
+    it.each<Record<string, string>>([
       { username: 'someone' },
       {},
       // A model or version search selects by resource, so its images can sit on another model's post.

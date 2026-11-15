@@ -175,13 +175,14 @@ describe("a held model's showcase on paths that read it from the shared cache", 
   );
 
   it('exempts the owner of a held model whose owner the caller did not name', async () => {
-    const showcase = await fetchShowcase();
+    const showcase: Record<number, { images: { id: number; nsfwLevel: number }[] }> =
+      await fetchShowcase();
     const held = await holdShowcaseImages(
       showcase,
       new Map([[VERSION, { modelId: HELD_MODEL, minor: true, sfwOnly: false }]]),
       { id: OWNER, isModerator: false }
     );
-    expect(held[VERSION].images.map((i: { id: number }) => i.id)).toEqual([ABOVE, WITHIN]);
+    expect(held[VERSION].images.map((i) => i.id)).toEqual([ABOVE, WITHIN]);
   });
 
   it('serves none of the images of a version with no model', async () => {
