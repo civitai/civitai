@@ -104,6 +104,7 @@ describe('mod/text-scan', () => {
       'putWebSearchModes',
       { action: 'putWebSearchModes', entityType: 'Model', rollout: { shadow: 10 } },
     ],
+    ['putLabelModes', { action: 'putLabelModes', label: 'poi', mode: 'review' }],
   ])(
     'refuses %s to a moderator without the publish permission, reaching no harness',
     async (_, body) => {

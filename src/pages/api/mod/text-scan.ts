@@ -13,6 +13,7 @@ const PUBLISH_ACTIONS: ReadonlySet<string> = new Set([
   'putConfig',
   'putModes',
   'putWebSearchModes',
+  'putLabelModes',
 ]);
 
 // The harness's own caps bound a request at ~1M characters, which multibyte text can take past the
@@ -25,7 +26,7 @@ export default defineModeratorEndpoint('textScan.harness', {
   returns: "the action's JSON; a CSV sample as { csv }",
   notes: [
     'putPrompt/putConfig/putModes/putWebSearchModes are attributed to the signed-in moderator; ids in the body are ignored.',
-    'putPrompt, putConfig, putModes and putWebSearchModes require the textScanPromptPublish permission.',
+    'putPrompt, putConfig, putModes, putWebSearchModes and putLabelModes require the textScanPromptPublish permission.',
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
     'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
