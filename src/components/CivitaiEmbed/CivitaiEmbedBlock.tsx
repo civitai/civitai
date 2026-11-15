@@ -131,6 +131,7 @@ function EmbedCard({ item, full }: { item: CivitaiEmbedItem; full?: boolean }) {
 }
 
 const FULL_WIDTH = 1200;
+const MAX_HEIGHT = '80vh';
 
 /**
  * One image or video at the article's column width. Gated by the same ImageGuard2 the image card
@@ -142,7 +143,15 @@ export function FullWidthMedia({ data }: EntityProps) {
   const features = useFeatureFlags();
   const ref = useTrackImpression([{ entityType: 'Image', entityId: image.id }]);
   const isVideo = image.type === 'video';
-  const aspectRatio = image.width && image.height ? `${image.width} / ${image.height}` : undefined;
+  const sized = !!image.width && !!image.height;
+  // Column width, unless that would run taller than the screen: a portrait video would put its
+  // controls below the fold.
+  const box = sized
+    ? {
+        aspectRatio: `${image.width} / ${image.height}`,
+        width: `min(100%, calc(${MAX_HEIGHT} * ${image.width} / ${image.height}))`,
+      }
+    : undefined;
   const routedDialog = {
     name: 'imageDetail' as const,
     state: { imageId: image.id, images: getImages(), ...context },
@@ -152,8 +161,11 @@ export function FullWidthMedia({ data }: EntityProps) {
     <div
       ref={ref}
       data-testid="civitai-embed-full"
-      className="relative w-full overflow-hidden rounded-md bg-gray-1 dark:bg-dark-6"
-      style={{ aspectRatio }}
+      className={clsx(
+        'relative mx-auto overflow-hidden rounded-md bg-gray-1 dark:bg-dark-6',
+        !sized && 'w-full'
+      )}
+      style={box}
     >
       <ImageGuard2 image={image}>
         {(safe) => {
@@ -174,7 +186,14 @@ export function FullWidthMedia({ data }: EntityProps) {
               html5Controls={isVideo}
               muted={isVideo || undefined}
               placeholder="empty"
-              style={{ width: '100%', height: '100%', objectFit: 'contain', maxWidth: '100%' }}
+              // The article body caps images at 800px tall; the box above already sizes this one.
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                maxWidth: '100%',
+                maxHeight: sized ? '100%' : MAX_HEIGHT,
+              }}
               wrapperProps={{ className: 'size-full' }}
             />
           );
