@@ -22,3 +22,4 @@ internal/shadow 95
 internal/superjson 97
 internal/sysredis 88
 internal/trpc 89
+internal/v1models 60

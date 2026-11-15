@@ -74,6 +74,9 @@ type Server struct {
 	shadowStarts atomic.Uint64
 	// V1 serves the REST `/api/v1/images` shadow; nil = every such sample falls back.
 	V1 *feed.V1Deps
+	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go); nil =
+	// every such sample falls back.
+	V1Models *V1ModelsDeps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 
@@ -89,6 +92,8 @@ type Server struct {
 	// production).
 	computeFn   func(context.Context, *http.Request) (*computed, error)
 	computeV1Fn func(context.Context, *http.Request) (*computed, error)
+	// computeV1ModelsFn replaces both model computes (tests only).
+	computeV1ModelsFn func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -140,6 +145,9 @@ type computed struct {
 	// served_empty and result match_empty, so the per-served-call CPU and the match rate cover only
 	// answers that did the work.
 	trivial bool
+	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
+	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
+	cached bool
 }
 
 // compute answers a request, or returns a fallback/other error.
@@ -519,6 +527,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			computeFn = s.computeV1Fn
 		}
 	}
+	if b, c, cl, ok := s.v1ModelsRoute(endpoint); ok {
+		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	}
 	r, err := build(ctx, req)
 	if err != nil {
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
@@ -551,8 +562,11 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	// Released once the comparison and its classification (the last readers of payload) are done.
 	defer c.release()
 	served := "served"
-	if c.trivial {
+	switch {
+	case c.trivial:
 		served = "served_empty"
+	case c.cached:
+		served = "served_cached"
 	}
 	s.endPhase(phase, endpoint, "compute", served)
 	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", served).Inc()
@@ -568,6 +582,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	if c.trivial && result == "match" {
 		// A trivial answer that differs is still counted as the diff it is (fields, membership, …).
 		result = "match_empty"
+	}
+	if c.cached && result == "match" {
+		result = "match_cached"
 	}
 	s.endPhase(phase, endpoint, "compare", "ok")
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()

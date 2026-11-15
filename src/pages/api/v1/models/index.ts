@@ -19,6 +19,11 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { getUserBookmarkCollections } from '~/server/services/user.service';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import {
+  beginFeedGoShadowV1Models,
+  captureFeedGoShadowRest,
+  finishFeedGoShadow,
+} from '~/server/trpc/feed-go-shadow';
 
 type Metadata = {
   currentPage?: number;
@@ -86,6 +91,13 @@ export default MixedAuthEndpoint(async function handler(
       .status(400)
       .json({ error: 'Cannot use page param with query search. Use cursor-based pagination.' });
   }
+
+  // feed-go shadow (flag `feed-go-shadow-v1-models`, default off): decided after the cheap rejects.
+  // A sampled 200 keeps a reference to the body it writes, and after it its query string, the
+  // headers the answer depends on and that body are POSTed to feed-go's internal compare endpoint
+  // from `setImmediate`, never awaited. A sample holds nothing until `finish`, so one that ends in an
+  // error is simply dropped. Never throws. See `~/server/trpc/feed-go-shadow`.
+  const shadow = beginFeedGoShadowV1Models(req, 'list');
 
   // The query cursor is an opaque numeric OFFSET, not a model id: Meili's order
   // (relevance, or the caller's sort) is not monotonic in id.
@@ -171,7 +183,11 @@ export default MixedAuthEndpoint(async function handler(
       metadata.pageSize = limit;
     }
 
-    return res.status(200).json({ items, metadata: { ...metadata } });
+    const body = { items, metadata: { ...metadata } };
+    if (!shadow) return res.status(200).json(body);
+    captureFeedGoShadowRest(shadow, body);
+    res.status(200).json(body);
+    return finishFeedGoShadow(shadow, res.statusCode);
   } catch (e) {
     return handleEndpointError(res, e);
   }

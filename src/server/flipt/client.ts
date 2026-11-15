@@ -280,6 +280,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // process; also needs BEACON_GO_SHADOW_URL and BEACON_GO_SHADOW_SAMPLE_RATE > 0. See
   // `src/server/beacon/beacon-go-shadow.ts`.
   BEACON_GO_SHADOW = 'beacon-go-shadow',
+  // The same mirror for the public REST `GET /api/v1/models` and `GET /api/v1/models/[id]`, to
+  // feed-go's `/internal/shadow/api/v1/models` and `/internal/shadow/api/v1/models/id`. One flag for
+  // both routes. DEFAULT-OFF. Global boolean, read at most once per 5s per process; shares
+  // FEED_GO_SHADOW_URL and the rate / in-flight knobs with FEED_GO_SHADOW, with a per-second bucket
+  // per route. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_V1_MODELS = 'feed-go-shadow-v1-models',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the

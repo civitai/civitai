@@ -1,7 +1,8 @@
 # Golden fixtures
 
 One JSON file per request shape: `as-posts/` for `image.getImagesAsPostsInfinite`, `v1-images/` for
-`GET /api/v1/images`. `internal/server/golden_test.go` loads every file, builds a real `*Server`
+`GET /api/v1/images`, `v1-models/` for `GET /api/v1/models` and `/api/v1/models/[id]` (that directory
+has its own format and harness: see "v1-models" below). `internal/server/golden_test.go` loads every file, builds a real `*Server`
 over in-memory fakes (`internal/testkit`) holding exactly what the fixture records, computes the
 request, and compares the answer with the Node answer the fixture expects (`shadow.Compare` for the
 superjson envelope, `shadow.CompareJSON` for the REST body). All data is synthetic: invented ids
@@ -61,3 +62,17 @@ hand (or add a spec to `gen.mjs`):
 
 Replace every id, name, URL and hash with synthetic values before committing: this repository is
 public.
+
+## v1-models
+
+`gen-v1-models.mjs` writes each fixture's request and `world` (the model statement's rows, every cache
+value, every replica row) and packs the cache values under their real keys (`redis`). It does NOT write
+the expected answer: `src/server/__tests__/feed-go-v1-models.golden.test.ts` runs the real Node route
+handlers over the world and requires `expect.body` (the bytes `res.json` writes) and `expect.sql` (the
+model statement) to equal what that code produces. A new fixture starts with `expect: {body: null}`;
+that test fails with `GOLDEN-ACTUAL <file> <json>`, the real answer, which is copied into the fixture.
+`internal/v1models/golden_test.go` then requires the same bytes and statement from Go.
+
+```bash
+GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-v1-models.mjs
+```

@@ -12,8 +12,9 @@ const EndpointLabel = "feed_endpoint"
 // Metrics are this service's Prometheus series. The Go and process collectors (registered in main)
 // add `process_cpu_seconds_total` and the GC series the CPU-per-call measurement reads.
 //
-// Every feed_go_* series carries EndpointLabel (`feed_endpoint`: EndpointAsPosts | EndpointV1Images):
-// two values, so the label multiplies each family's cardinality by two at most.
+// Every feed_go_* series carries EndpointLabel (`feed_endpoint`: EndpointAsPosts | EndpointV1Images |
+// EndpointV1Models | EndpointV1ModelsID): four values, so the label multiplies each family's
+// cardinality by four at most.
 type Metrics struct {
 	Requests      *prometheus.CounterVec   // endpoint, mode, outcome
 	Fallbacks     *prometheus.CounterVec   // endpoint, mode, reason
@@ -47,7 +48,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		Requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_requests_total",
-			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|fallback|error).",
+			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error).",
 		}, []string{EndpointLabel, "mode", "outcome"}),
 		Fallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_total",
@@ -60,7 +61,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{EndpointLabel, "mode", "outcome"}),
 		ShadowResults: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_compare_total",
-			Help: "Shadow comparisons by result: match, match_empty, fields, order, membership, unsupported, deadline, go_error, bad_request.",
+			Help: "Shadow comparisons by result: match, match_empty, match_cached, fields, order, membership, unsupported, deadline, go_error, bad_request.",
 		}, []string{EndpointLabel, "result"}),
 		ShadowDiffs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_field_diffs_total",
@@ -106,7 +107,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
 	// rather than an absent series.
-	for _, e := range []string{EndpointAsPosts, EndpointV1Images} {
+	for _, e := range []string{EndpointAsPosts, EndpointV1Images, EndpointV1Models, EndpointV1ModelsID} {
 		m.ShadowDropped.WithLabelValues(e)
 		m.ShadowResults.WithLabelValues(e, "deadline")
 	}

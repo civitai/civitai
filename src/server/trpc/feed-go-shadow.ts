@@ -16,18 +16,20 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
  * request, mirror what Node saw and what it answered to that service's internal compare endpoint.
- * Node keeps serving every request. Two routes are mirrored, each behind its own flag:
+ * Node keeps serving every request. These routes are mirrored, each behind its flag:
  *
  * - `image.getImagesAsPostsInfinite` (tRPC; flag `feed-go-shadow`): the raw `input` and the
  *   superjson envelope the transformer wrote, captured in an AsyncLocalStorage scope;
- * - `GET /api/v1/images` (REST; flag `feed-go-shadow-v1-images`): the raw query string, the path
- *   and the JSON body the handler passed to `res.json`, captured by the handler itself. A request
- *   carrying an API credential is not mirrored (`skipped_credential`): the body can echo it.
+ * - the REST routes, `GET /api/v1/images` (flag `feed-go-shadow-v1-images`) and
+ *   `GET /api/v1/models` + `GET /api/v1/models/[id]` (one flag, `feed-go-shadow-v1-models`): the raw
+ *   query string, the path and the JSON body the handler passed to `res.json`, captured by the
+ *   handler itself. A request carrying an API credential is not mirrored (`skipped_credential`):
+ *   the body can echo it.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
- * the route's Flipt flag is on (unknown or uninitialized reads as off). Both routes share the
+ * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
  * sample rate and the in-flight cap; each has its own per-second bucket of the same size, so one
- * route cannot drain the other's tokens. A REST sample takes its in-flight slot and its token
+ * route cannot drain another's tokens. A REST sample takes its in-flight slot and its token
  * only once the handler has answered 200 (in `finish`): it holds nothing while it runs.
  *
  * Why the per-second token bucket (`FEED_GO_SHADOW_MAX_PER_SECOND`): the send happens after the
@@ -48,6 +50,10 @@ export const FEED_GO_SHADOW_PATH = `/internal/shadow/${FEED_GO_SHADOW_PROCEDURE}
 /** The REST route mirrored under its own flag, and feed-go's compare path for it. */
 export const FEED_GO_SHADOW_V1_IMAGES_ROUTE = '/api/v1/images';
 export const FEED_GO_SHADOW_V1_IMAGES_PATH = `/internal/shadow${FEED_GO_SHADOW_V1_IMAGES_ROUTE}`;
+/** The REST model routes (one flag), and feed-go's compare paths for them. */
+export const FEED_GO_SHADOW_V1_MODELS_ROUTE = '/api/v1/models';
+export const FEED_GO_SHADOW_V1_MODELS_PATH = `/internal/shadow${FEED_GO_SHADOW_V1_MODELS_ROUTE}`;
+export const FEED_GO_SHADOW_V1_MODELS_ID_PATH = `${FEED_GO_SHADOW_V1_MODELS_PATH}/id`;
 
 export const SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const SHADOW_MAX_TIMEOUT_MS = 10_000;
@@ -71,6 +77,9 @@ export type FeedGoShadowConfig = {
   url: string | undefined;
   /** Full compare endpoint URL for `/api/v1/images`, or undefined (disabled). */
   v1ImagesUrl: string | undefined;
+  /** Full compare endpoint URLs for `/api/v1/models` and `/api/v1/models/[id]`. */
+  v1ModelsUrl: string | undefined;
+  v1ModelsIdUrl: string | undefined;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
@@ -87,6 +96,8 @@ type Env = Record<string, string | undefined>;
 export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConfig {
   let url: string | undefined;
   let v1ImagesUrl: string | undefined;
+  let v1ModelsUrl: string | undefined;
+  let v1ModelsIdUrl: string | undefined;
   const base = env.FEED_GO_SHADOW_URL?.trim();
   if (base) {
     try {
@@ -94,15 +105,21 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
         url = new URL(FEED_GO_SHADOW_PATH, parsed).toString();
         v1ImagesUrl = new URL(FEED_GO_SHADOW_V1_IMAGES_PATH, parsed).toString();
+        v1ModelsUrl = new URL(FEED_GO_SHADOW_V1_MODELS_PATH, parsed).toString();
+        v1ModelsIdUrl = new URL(FEED_GO_SHADOW_V1_MODELS_ID_PATH, parsed).toString();
       }
     } catch {
       url = undefined;
       v1ImagesUrl = undefined;
+      v1ModelsUrl = undefined;
+      v1ModelsIdUrl = undefined;
     }
   }
   return {
     url,
     v1ImagesUrl,
+    v1ModelsUrl,
+    v1ModelsIdUrl,
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(env.FEED_GO_SHADOW_TIMEOUT_MS, SHADOW_DEFAULT_TIMEOUT_MS, 1, SHADOW_MAX_TIMEOUT_MS)
@@ -170,6 +187,17 @@ export function pickShadowHeaders(req: ShadowRequestLike): Record<string, string
 
 type Captured = { envelope: unknown } | { data: unknown };
 
+/** The REST routes: their samples carry a path and capture their own JSON body. */
+type RestEndpoint = Exclude<FeedGoShadowEndpoint, 'as-posts'>;
+const REST_ENDPOINTS: ReadonlySet<FeedGoShadowEndpoint> = new Set<FeedGoShadowEndpoint>([
+  'v1-images',
+  'v1-models',
+  'v1-models-id',
+]);
+function isRestEndpoint(endpoint: FeedGoShadowEndpoint): endpoint is RestEndpoint {
+  return REST_ENDPOINTS.has(endpoint);
+}
+
 export type FeedGoShadowSample = {
   endpoint: FeedGoShadowEndpoint;
   /** Whether this sample holds an in-flight slot (a REST sample takes it in `finish`). */
@@ -189,6 +217,8 @@ export type FeedGoShadowDeps = {
   enabled: () => boolean;
   /** The `feed-go-shadow-v1-images` flag (absent: the REST route is never sampled). */
   enabledV1Images?: () => boolean;
+  /** The `feed-go-shadow-v1-models` flag (absent: neither model route is sampled). */
+  enabledV1Models?: () => boolean;
   random?: () => number;
   fetch?: typeof fetch;
   record?: (outcome: FeedGoShadowOutcome, endpoint: FeedGoShadowEndpoint) => void;
@@ -204,6 +234,7 @@ export type FeedGoShadowDeps = {
 export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const { config, enabled } = deps;
   const enabledV1Images = deps.enabledV1Images ?? (() => false);
+  const enabledV1Models = deps.enabledV1Models ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
@@ -214,8 +245,15 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   let inFlight = 0;
   // A local bucket rather than `createBlockEventRateLimiter`: that one is a keyed, LRU-bounded
   // limiter for App Blocks events defaulting to Date.now; this needs one bucket on a monotonic clock.
-  // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve the other.
+  // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve another.
   const buckets = createPerSecondBuckets(FEED_GO_SHADOW_ENDPOINTS, config.maxPerSecond, now);
+
+  /** The mirrored REST routes: each one's compare URL and flag. */
+  const restRoutes: Record<RestEndpoint, { url: string | undefined; enabled: () => boolean }> = {
+    'v1-images': { url: config.v1ImagesUrl, enabled: enabledV1Images },
+    'v1-models': { url: config.v1ModelsUrl, enabled: enabledV1Models },
+    'v1-models-id': { url: config.v1ModelsIdUrl, enabled: enabledV1Models },
+  };
 
   function release(sample: FeedGoShadowSample) {
     if (sample.done) return;
@@ -264,20 +302,24 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * `begin` for `GET /api/v1/images`: whether this REST request is sampled. The handler calls it
-   * after its cheap rejects and its bulkhead slot, captures its own JSON body (`captureV1Images`)
+   * `begin` for a REST route: whether this request is sampled. The handler calls it after its cheap
+   * rejects (and its bulkhead slot, where it has one), captures its own JSON body (`captureRest`)
    * and calls `finish`, which is where the in-flight slot and the token are taken. Never throws.
    */
-  function beginV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
+  function beginRest(
+    endpoint: RestEndpoint,
+    req: ShadowRequestLike
+  ): FeedGoShadowSample | undefined {
     try {
-      if (!config.v1ImagesUrl || config.rate <= 0) return undefined;
+      const route = restRoutes[endpoint];
+      if (!route.url || config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
-      if (!enabledV1Images()) return undefined;
+      if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
       // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`), and feed-go
       // falls back on any credential: never mirrored, only counted.
       if (hasApiCredential(req)) {
-        record('skipped_credential', 'v1-images');
+        record('skipped_credential', endpoint);
         return undefined;
       }
       const target = req.url ?? '';
@@ -286,7 +328,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const input = q < 0 ? '' : target.slice(q + 1);
       const headers = pickShadowHeaders(req);
       return {
-        endpoint: 'v1-images',
+        endpoint,
         holdsSlot: false,
         input,
         path: path || undefined,
@@ -298,13 +340,18 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
   }
 
+  /** `beginRest` for `GET /api/v1/images`. */
+  function beginV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
+    return beginRest('v1-images', req);
+  }
+
   /**
    * The REST handler's capture: keeps a REFERENCE to the body it is about to `res.json`, encoded
    * later, off the request path. First call wins. Never throws.
    */
-  function captureV1Images(sample: FeedGoShadowSample, body: unknown): void {
+  function captureRest(sample: FeedGoShadowSample, body: unknown): void {
     try {
-      if (sample.endpoint !== 'v1-images' || sample.captured || sample.done) return;
+      if (!isRestEndpoint(sample.endpoint) || sample.captured || sample.done) return;
       sample.captured = { envelope: body };
     } catch {
       /* never throw from the handler */
@@ -341,7 +388,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const captured = sample.captured!;
       const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
       body = JSON.stringify(
-        endpoint === 'v1-images'
+        isRestEndpoint(endpoint)
           ? { input: sample.input, path: sample.path, headers: sample.headers, node }
           : { input: sample.input, headers: sample.headers, node }
       );
@@ -356,7 +403,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
     let pending: Promise<Response>;
     try {
-      pending = doFetch((endpoint === 'v1-images' ? config.v1ImagesUrl : config.url)!, {
+      pending = doFetch((isRestEndpoint(endpoint) ? restRoutes[endpoint].url : config.url)!, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body,
@@ -418,10 +465,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
 
   return {
     begin,
+    beginRest,
     beginV1Images,
     run,
     capture,
-    captureV1Images,
+    captureRest,
+    captureV1Images: captureRest,
     finish,
     inFlight: () => inFlight,
   };
@@ -437,6 +486,9 @@ function getInstance(): FeedGoShadow {
     enabled: createCachedFlagGate(readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW)),
     enabledV1Images: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_V1_IMAGES)
+    ),
+    enabledV1Models: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_V1_MODELS)
     ),
   });
   return instance;
@@ -469,14 +521,35 @@ export function beginFeedGoShadowV1Images(req: ShadowRequestLike): FeedGoShadowS
   }
 }
 
-/** `GET /api/v1/images`: keep a reference to the 200 body the handler is about to write. */
-export function captureFeedGoShadowV1Images(sample: FeedGoShadowSample, body: unknown): void {
+/**
+ * `GET /api/v1/models` (`kind: 'list'`) or `GET /api/v1/models/[id]` (`kind: 'id'`): whether this
+ * request is sampled (see `beginRest`). Never throws.
+ */
+export function beginFeedGoShadowV1Models(
+  req: ShadowRequestLike,
+  kind: 'list' | 'id'
+): FeedGoShadowSample | undefined {
   try {
-    (owners.get(sample) ?? getInstance()).captureV1Images(sample, body);
+    const owner = getInstance();
+    const sample = owner.beginRest(kind === 'list' ? 'v1-models' : 'v1-models-id', req);
+    if (sample) owners.set(sample, owner);
+    return sample;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A REST route: keep a reference to the 200 body the handler is about to write. */
+export function captureFeedGoShadowRest(sample: FeedGoShadowSample, body: unknown): void {
+  try {
+    (owners.get(sample) ?? getInstance()).captureRest(sample, body);
   } catch {
     /* never throw from the handler */
   }
 }
+
+/** `GET /api/v1/images`: `captureFeedGoShadowRest` under its original name. */
+export const captureFeedGoShadowV1Images = captureFeedGoShadowRest;
 
 /** The `/api/v1/images` request shapes, by what feed-go can port (see FEED_GO_V1_SHAPE_CLASSES). */
 export type FeedGoV1ShapeInput = {

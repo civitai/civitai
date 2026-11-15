@@ -495,26 +495,48 @@ func ShapeV1Image(r RawImage, h V1Hydrated, level int, location string) (v1Item,
 
 func boolPtr(b bool) *bool { return &b }
 
-// EdgeOptions are the getEdgeUrl options this endpoint passes.
+// EdgeOptions are the getEdgeUrl options the REST ports pass.
 type EdgeOptions struct {
 	Type      string
 	Anim      *bool
 	Transcode bool
+	// Width is the requested width (0 = none), snapped up to the cacher's ladder and capped at 1800.
+	Width     int
 	Original  *bool
 	Optimized *bool
 	Skip      *float64
+	// Name is the file name segment's source (nil = undefined: the src is used).
+	Name *string
+}
+
+// edgeWidthLadder is COMMON_IMAGE_WIDTHS (src/client-utils/edge-url.ts).
+var edgeWidthLadder = []int{96, 320, 450, 512, 800, 1200, 1600, 2200}
+
+// snapEdgeWidth is clampEdgeWidth(snapWidthToCommonSize(width)).
+func snapEdgeWidth(width int) int {
+	for _, size := range edgeWidthLadder {
+		if size >= width {
+			width = size
+			break
+		}
+	}
+	return min(width, 1800)
 }
 
 var edgeExtensions = map[string]string{"image": ".jpeg", "video": ".mp4", "audio": ".mp3"}
 
-// EdgeURL is getEdgeUrl (src/client-utils/edge-url.ts) for options without width, height or name.
+// EdgeURL is getEdgeUrl (src/client-utils/edge-url.ts) for options without a height.
 func EdgeURL(location, src string, o EdgeOptions) string {
 	if src == "" || strings.HasPrefix(src, "http") || strings.HasPrefix(src, "blob") {
 		return src // isEdgeUrlPassthrough
 	}
 	original := o.Original
-	if original == nil {
+	if original == nil && o.Width == 0 {
 		original = boolPtr(true) // no width, no height, original undefined
+	}
+	width := o.Width
+	if original != nil && *original {
+		width = 0
 	}
 	var params []string
 	if o.Anim != nil && !*o.Anim {
@@ -523,7 +545,12 @@ func EdgeURL(location, src string, o EdgeOptions) string {
 	if o.Transcode {
 		params = append(params, "transcode=true")
 	}
-	params = append(params, "original="+strconv.FormatBool(*original))
+	if width > 0 {
+		params = append(params, "width="+strconv.Itoa(snapEdgeWidth(width)))
+	}
+	if original != nil {
+		params = append(params, "original="+strconv.FormatBool(*original))
+	}
 	if o.Optimized != nil {
 		params = append(params, "optimized="+strconv.FormatBool(*o.Optimized))
 	}
@@ -534,7 +561,11 @@ func EdgeURL(location, src string, o EdgeOptions) string {
 	if !ok {
 		ext = edgeExtensions["image"]
 	}
-	name := strings.ReplaceAll(src, "%", "")
+	name := src
+	if o.Name != nil {
+		name = *o.Name
+	}
+	name = strings.ReplaceAll(name, "%", "")
 	if i := strings.LastIndex(name, "."); i >= 0 {
 		name = name[:i] + ext
 	} else {

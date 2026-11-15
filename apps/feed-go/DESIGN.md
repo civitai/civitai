@@ -17,7 +17,8 @@ reaches it, how parity is proven before it serves anyone, and how the CPU compar
 last sections list what is **not** at parity and what a deployment needs.
 
 A second port, the public REST endpoint `GET /api/v1/images`, runs in **shadow only** (nothing routes
-public traffic to it): §13. It shares the feed-service client, the hydration readers, the caches, the
+public traffic to it): §13. The REST model endpoints, `GET /api/v1/models` and `GET /api/v1/models/[id]`,
+are shadowed the same way: §14. The images port shares the feed-service client, the hydration readers, the caches, the
 shadow queue and the metric families, told apart by a `feed_endpoint` label (not `endpoint`: that is a
 reserved scrape target label, which would overwrite ours).
 
@@ -342,8 +343,9 @@ path as serving, and compares decoded values:
 - each differing path is counted by **category** — the path with indices folded to `*`, truncated at
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
-- every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13):
-  two values, so the label at most doubles a family's cardinality;
+- every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
+  `v1-models` / `v1-models-id` for §14): four values, so the label at most quadruples a family's
+  cardinality;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field.
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
@@ -790,3 +792,106 @@ the per-route CPU attribution over the same window.
   falls back rather than guess;
 - milliseconds between Node's feed call and this one: `membership` / `order` diffs on busy Newest
   pages, `stats.*` value diffs, as in §7.
+
+## 14. `GET /api/v1/models` and `GET /api/v1/models/[id]` (REST, shadow only)
+
+The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`) → `runModelSearch`
+(`src/server/services/model-search.service.ts`), and `src/pages/api/v1/models/[id].ts` (a
+`PublicEndpoint` behind `withBlockScope`) → `buildPublicModelResponse`. Both build on
+`getModelsWithVersions` over `getModelsRaw` (`src/server/services/model.service.ts`). Ported in
+`internal/v1models`; compared at `POST /internal/shadow/api/v1/models` and
+`POST /internal/shadow/api/v1/models/id`. Nothing serves them publicly.
+
+### 14.1 What the Node path does
+
+1. **Query.** The list parses `modelsEndpointSchema` off `req.query` (`limit` 0–100, default 100;
+   `page`; `cursor`; `query`; `types`; `sort`, default Highest Rated; `period`, default AllTime;
+   `periodMode`; `baseModels`; `username` through `postgresSlugify`; `nsfw`, `primaryFileOnly` and the
+   other `booleanString()`s; `ids`; …). A signed-out caller naming `favorites` or `hidden` is a 401;
+   `page * limit > 1000` without a cursor a 429; `query` with `page` a 400. `[id]` parses only the path
+   id (`z.coerce.number().int().gt(0).lte(INT4_MAX)`).
+2. **Viewer and level.** The list reads a session or an API key; `[id]` reads neither (a block JWT
+   only skips the origin cache). The level is `nsfw ? all : PG` on the list, all on `[id]`, PG/PG-13
+   in a restricted region on both. No domain cap.
+3. **Text search.** A `query` asks Meilisearch for the page's ids (`resolveModelSearchIds`).
+4. **The model statement.** `getModelsRaw` resolves the browsing-settings addons at the level
+   (`enforceBlockedBrowsingTagsForModels`; `[id]` keeps only `disablePoi`), then one statement on the
+   replica: `ModelMetric` × `Model` (or one of the three `ModelBaseModelMetric` forms when
+   `baseModels` is set and `base-model-feed-metrics` is on), the filters, the sort's ORDER BY and the
+   keyset cursor (`getCursorClauses`: a UNION ALL of the equality and the tuple branch for a
+   DESC-headed sort, else the OR-chain), `LIMIT take + 1`. The lookahead row's `cursorId` is
+   `nextCursor`.
+5. **Per model.** Creators (`userBasicCache`, profile pictures), the model data cache (versions,
+   their tags from `modelTagCache` → `tagCache`), live paid-access gates; the versions filtered
+   (Published, mature versions on a mature-restricted base model, Public only without `ids` or
+   `username`, the requested base models), the .com face at an SFW-only level, the addon tags.
+6. **Per version.** Paid access (the paid-access cache), showcase images (the images-for-version
+   cache, held to a minor/SFW-only model's gallery level, then the showcase filter: the addons' POI,
+   minor and tag exclusions), files (the files-for-version cache) plus a linked VAE's primary files
+   (replica), model and version metrics and version meta (replica), and the creator's metric
+   privacy (cache, then replica) gated on a valid Creator Program membership (cache).
+7. **Shaping.** The list (`runModelSearch`) and `[id]` (`buildPublicModelResponse`) differ: `[id]`
+   applies `removeEmpty` to each version and file metadata, pins each owned file's download URL with
+   `fileId`, drops image `id`s and uses `getBaseUrl()` for download URLs; the list keeps nulls and
+   empty arrays, uses the request origin, and passes every image through on `nsfw=true`. Both pick the
+   primary file by the default preferences (a version without one is dropped), name each file
+   (`resolveModelFileName`), build edge URLs, and leave Training Data files to
+   `trainingDataListing`.
+8. **Body.** `res.json`: the list `{ items, metadata: { nextCursor, nextPage, currentPage?, pageSize? } }`
+   (`nextPage` is the request's query with `cursor` set, on `https://<host>` in production — `page`
+   never advances); `[id]` the model object, from the origin response cache
+   (`packed:caches:public-model-response:v2:<id>:<level>`, 180 s) when fresh.
+
+### 14.2 What is ported, and what falls back
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Query | every key above except those on the right; unknown keys ignored and kept for `nextPage` | `query` (`v1-models-query`: Meilisearch), every other schema key (`v1-models-<key>`: `tag`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
+| Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
+| Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, ids, earlyAccess, archived, the addons' POI/minor/tag clauses | the `base-model-feed-metrics` mirror unset on a `baseModels` request (`v1-models-base-model-flag`); a username the replica does not hold (`v1-models-username-miss`) |
+| Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads) | a model-data, model-tags, tag-name, images, files or membership miss (`v1-models-*-miss`), a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
+| Shaping | both shapers, the file naming over ASCII model names | a Public Training Data file (`v1-models-training-data`), a name the scheme strips non-ASCII text from (`v1-models-filename`) |
+| Config | | the `generation-coverage-next` mirror unset (`v1-models-coverage-flag`: it decides every model's `supportsGeneration`); no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
+
+### 14.3 Flags and settings
+
+| Flag / setting | Node effect | Here |
+|---|---|---|
+| `generation-coverage-next` | which coverage column `supportsGeneration` reads | `FEED_GO_GENERATION_COVERAGE_NEXT` (unset = fall back) |
+| `base-model-feed-metrics` | the base-model statement forms | `FEED_GO_BASE_MODEL_FEED_METRICS` (unset = a `baseModels` request falls back) |
+| `IS_DATAPACKET` | the `[id]` origin cache (180 s) | `FEED_GO_MODEL_RESPONSE_CACHE` (default on): read, never written |
+| `kysely-hot-reads-11`, `model-version-images-skip-tags` | the same rows by another route; an entry-level field no consumer reads | nothing to do |
+| `NEXTAUTH_URL`, `NEXT_PUBLIC_IMAGE_LOCATION` | download and edge URL prefixes | the same variables |
+
+### 14.4 The Node sampler (flag `feed-go-shadow-v1-models`, default OFF)
+
+One flag for both routes, sampled through the REST sampler of §13.4 (`beginFeedGoShadowV1Models`,
+`captureFeedGoShadowRest`), with its own per-second bucket per route and the shared rate and
+in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent.
+Outcomes are `civitai_app_feed_go_shadow_samples_total{feed_endpoint="v1-models"|"v1-models-id"}`.
+
+### 14.5 Comparison and measurement
+
+`shadow.CompareJSON` as in §13.5. The list classifies by `items[].id` (models); `[id]` has one model,
+so a difference is `fields`, and a not-found answer against Node's 200 is `membership`. A `[id]`
+answer read from the origin cache is compute outcome `served_cached` and result `match_cached`, kept
+apart from `served`/`match` like a trivial answer (§13.6): it costs a cache read on both sides. Read
+the go/no-go per endpoint with §13.6's queries and `feed_endpoint="v1-models"` or `"v1-models-id"`.
+
+### 14.6 Parity evidence
+
+The golden fixtures (`testdata/golden/v1-models`, written by `gen-v1-models.mjs`) hold a request and
+the world it reads. `src/server/__tests__/feed-go-v1-models.golden.test.ts` runs the REAL route
+handlers over each world (only I/O mocked: the model statement, the caches' fetch, the small replica
+reads) and requires the fixture's `expect.body` to be the exact bytes `res.json` writes and
+`expect.sql` the statement it builds; `internal/v1models/golden_test.go` requires the same bytes and
+the same statement (text and bound values) from Go.
+
+### 14.7 Known divergences
+
+- `superjson.Plain` escapes U+2028/U+2029 where `JSON.stringify` writes them raw (same decoded
+  value; the comparator decodes);
+- a cursor's fraction is read as dayjs reads it — `.25` is 25 ms, not 250 — which is Node's own
+  behaviour, ported as it is;
+- the caches are read, never refilled or revalidated: a miss falls back, and the answer serves what
+  Node's cache held milliseconds earlier (`stats.*` and `nextCursor` noise on busy lists).

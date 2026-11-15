@@ -1,6 +1,6 @@
 // Command feed-go serves `image.getImagesAsPostsInfinite` for the request shapes it has ported and
 // proxies everything else to the Node app, and shadow-compares that procedure and the REST
-// `GET /api/v1/images`. See apps/feed-go/DESIGN.md.
+// `GET /api/v1/images`, `GET /api/v1/models` and `GET /api/v1/models/[id]`. See apps/feed-go/DESIGN.md.
 package main
 
 import (
@@ -28,6 +28,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
+	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
 func main() {
@@ -161,6 +162,26 @@ func run(log *slog.Logger) error {
 		// The Node app this service shadows is the production build (isProd): nextPage on https://<host>.
 		NodeProduction: true,
 	}
+	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
+	mc := config.LoadV1Models()
+	models := &server.V1ModelsDeps{
+		Deps: &v1models.Deps{
+			DB:      pool,
+			Packed:  packed,
+			Sources: sources,
+			Gallery: deps.Gallery,
+			Addons:  deps.Addons.Addons,
+			Config: v1models.Config{
+				ImageLocation:        cfg.ImageLocation,
+				BaseURL:              mc.BaseURL,
+				CoverageNext:         mc.CoverageNext,
+				BaseModelFeedMetrics: mc.BaseModelFeedMetrics,
+				ResponseCacheTTL:     mc.ResponseCacheTTL,
+				Production:           true,
+			},
+		},
+		Users: sources,
+	}
 	srv := &server.Server{
 		Resolver:       resolver,
 		Deps:           deps,
@@ -171,6 +192,7 @@ func run(log *slog.Logger) error {
 		ShadowQueue:    make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
+		V1Models:       models,
 		RequestBudget:  cfg.RequestBudget,
 	}
 	if cfg.FallbackURL != "" {
