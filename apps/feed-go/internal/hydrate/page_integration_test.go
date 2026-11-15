@@ -8,6 +8,7 @@ package hydrate
 
 import (
 	"context"
+	"net"
 	"reflect"
 	"strconv"
 	"sync/atomic"
@@ -293,23 +294,40 @@ func deadSlotClient(t *testing.T, e *integEnv, key string, others []string) *red
 			t.Fatalf("key %s shares slot %d with %s (err %v); the test needs the dead slot to hold one key", k, slot, key, err)
 		}
 	}
-	topo, err := e.c.ClusterSlots(ctx).Result()
+	shards, err := e.c.ClusterShards(ctx).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
 	dead := []redis.ClusterNode{{ID: "integ-dead-node", Addr: "127.0.0.1:1"}}
 	var slots []redis.ClusterSlot
-	for _, s := range topo {
-		if int64(s.Start) > slot || int64(s.End) < slot {
-			slots = append(slots, s)
-			continue
+	add := func(start, end int64, nodes []redis.ClusterNode) {
+		if start <= end {
+			slots = append(slots, redis.ClusterSlot{Start: int(start), End: int(end), Nodes: nodes})
 		}
-		if int64(s.Start) < slot {
-			slots = append(slots, redis.ClusterSlot{Start: s.Start, End: int(slot) - 1, Nodes: s.Nodes})
+	}
+	for _, sh := range shards {
+		var nodes []redis.ClusterNode
+		for _, n := range sh.Nodes {
+			if n.Role != "master" {
+				continue
+			}
+			host := n.Endpoint
+			if host == "" || host == "?" {
+				host = n.IP
+			}
+			nodes = append(nodes, redis.ClusterNode{ID: n.ID, Addr: net.JoinHostPort(host, strconv.FormatInt(n.Port, 10))})
 		}
-		slots = append(slots, redis.ClusterSlot{Start: int(slot), End: int(slot), Nodes: dead})
-		if int64(s.End) > slot {
-			slots = append(slots, redis.ClusterSlot{Start: int(slot) + 1, End: s.End, Nodes: s.Nodes})
+		if len(nodes) == 0 {
+			t.Fatalf("shard %+v has no master", sh)
+		}
+		for _, r := range sh.Slots {
+			if r.Start > slot || r.End < slot {
+				add(r.Start, r.End, nodes)
+				continue
+			}
+			add(r.Start, slot-1, nodes)
+			add(slot, slot, dead)
+			add(slot+1, r.End, nodes)
 		}
 	}
 	c := redis.NewClusterClient(&redis.ClusterOptions{

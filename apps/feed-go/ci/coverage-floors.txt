@@ -9,7 +9,8 @@
 # the same change that removes it. Packages without tests (fallback, testkit) are not listed.
 #
 # Set from feed-go.yml run 43686825094 (2026-11-15); total, internal/hydrate and internal/server raised
-# from run 43691426021 (2026-11-15, the one-pipeline-per-stage hydration and its tests).
+# from run 43691426021 (2026-11-15, the one-pipeline-per-stage hydration and its tests); internal/hydrate
+# again from run 43696056937 (the shard-failure and V1Page tests).
 total 76
 cmd/feed-go 13
 internal/auth 94
@@ -18,7 +19,7 @@ internal/config 77
 internal/dbpool 95
 internal/feed 76
 internal/feedsvc 92
-internal/hydrate 79
+internal/hydrate 82
 internal/safe 100
 internal/server 93
 internal/shadow 95
