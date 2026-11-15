@@ -97,6 +97,26 @@ describe('createTtlMemo', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it('clear() during a pending fetch starts a new one, but the stale load can still write the cache when it settles', async () => {
+    const clock = makeClock();
+    const releases: ((v: string) => void)[] = [];
+    const fetcher = vi.fn(() => new Promise<string>((r) => releases.push(r)));
+    const memo = createTtlMemo(fetcher, 30_000, clock.now);
+
+    const stale = memo();
+    memo.clear();
+    const fresh = memo();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    releases[1]('fresh');
+    expect(await fresh).toBe('fresh');
+    releases[0]('stale');
+    expect(await stale).toBe('stale');
+    // Current behaviour: clear() does not cancel the older load, which settles last and wins.
+    expect(await memo()).toBe('stale');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('single-flight: concurrent callers on a cold or expired memo share one fetch', async () => {
     const clock = makeClock();
     let n = 0;

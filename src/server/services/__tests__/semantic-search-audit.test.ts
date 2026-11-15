@@ -3,6 +3,7 @@ import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 import type { CaptureConfig } from '~/server/clickhouse/sampled-row-buffer';
 import type { QueryRefusal } from '~/server/services/semantic-query-guard';
+import { GUARD_UNKNOWN } from '~/server/services/semantic-search-client';
 import {
   buildSemanticAuditRow,
   createSemanticSearchAudit,
@@ -27,6 +28,7 @@ const entry = (over: Partial<SemanticAuditEntry> = {}): SemanticAuditEntry => ({
   resultIds: SERVED,
   ...over,
 });
+const PASS = { outcome: 'pass' as const, rules: [], mode: 'shadow', version: 'v1' };
 const flag = (rules: string[]) => ({
   outcome: 'flag' as const,
   rules,
@@ -106,6 +108,18 @@ describe('buildSemanticAuditRow', () => {
     it("stores no ids for a rule on the guard's withheld list", () => {
       const r = row(computed({ wordVerdict: 'blocked', guard: flag(['c:rule_a']) }), ['c:rule_a']);
       expect(r.resultIds).toEqual([]);
+    });
+
+    it('stores no ids when the guard result is missing or unknown', () => {
+      expect(row(computed({ wordVerdict: 'blocked', guard: GUARD_UNKNOWN })).resultIds).toEqual([]);
+    });
+
+    it('stores the ids past a known guard with no rule hit', () => {
+      expect(row(computed({ wordVerdict: 'blocked' })).resultIds).toEqual(SERVED.slice(0, 20));
+    });
+
+    it('leaves a served row with an unknown guard as it was', () => {
+      expect(row(entry({ guard: GUARD_UNKNOWN })).resultIds).toEqual(SERVED.slice(0, 20));
     });
 
     it('sends no resultsServed key on a served row, so it works before the column exists', () => {
@@ -191,17 +205,18 @@ describe('createSemanticSearchAudit', () => {
     });
 
     it.each([
-      ['a minor verdict', refused({ wordVerdict: 'minor' }), ON],
-      ['a search with another verdict never run', refused({ withholdComputedIds: true }), ON],
-      ['refusalCandidates off', refused(), { ...ON, refusalCandidates: false }],
-      ['capture off', refused(), { ...ON, sampleRate: 0 }],
-      ['capture past until', refused(), { ...ON, until: T0 - 1 }],
-    ])('never runs the search for %s', async (_, e, config) => {
+      ['a minor verdict', refused({ wordVerdict: 'minor' }), ON, 1],
+      ['a search with another verdict never run', refused({ withholdComputedIds: true }), ON, 1],
+      ['refusalCandidates off', refused(), { ...ON, refusalCandidates: false }, 1],
+      ['capture off', refused(), { ...ON, sampleRate: 0 }, 0],
+      ['capture past until', refused(), { ...ON, until: T0 - 1 }, 0],
+    ])('never runs the search for %s', async (_, e, config, rowsWritten) => {
       const { audit, batches } = harness(config);
       const run = compute();
       await audit.recordRefused(e, run);
       await audit.flush();
       expect(run).not.toHaveBeenCalled();
+      expect(batches.flat()).toHaveLength(rowsWritten);
       expect(batches.flat().every((r) => r.resultIds.length === 0 && !('resultsServed' in r))).toBe(
         true
       );
@@ -220,7 +235,7 @@ describe('createSemanticSearchAudit', () => {
         flushIntervalMs: 60_000,
         refusedRunsPerMinute: 2,
       });
-      const run = vi.fn(async () => ({ ids: [5, 6] }));
+      const run = vi.fn(async () => ({ ids: [5, 6], guard: PASS }));
       for (let i = 0; i < 4; i++) await audit.recordRefused(refused(), run);
       expect(run).toHaveBeenCalledTimes(2);
       at += 60_000;

@@ -105,7 +105,9 @@ export function buildSemanticAuditRow(
   const idsAllowed = entry.resultsServed
     ? !entry.withholdIds && verdictKeepsServedIds(entry.wordVerdict)
     : !entry.withholdComputedIds && verdictComputesRefusedIds(entry.wordVerdict);
-  const withhold = !idsAllowed || withheldByGuard;
+  // A refused search's ids are stored only past a guard read it can check rules against.
+  const refusedUnchecked = !entry.resultsServed && guard.outcome === 'unknown';
+  const withhold = !idsAllowed || withheldByGuard || refusedUnchecked;
   const userId = entry.viewer?.id;
   return {
     time: formatClickhouseDateTime64(at),
