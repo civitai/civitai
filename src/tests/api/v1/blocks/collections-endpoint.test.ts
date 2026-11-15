@@ -244,6 +244,7 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  heldCoverPosts.clear();
   claimsBox.claims = fakeClaims();
   mockRate.mockResolvedValue({ allowed: true });
   mockMaturity.mockReturnValue({ browsingLevel: 3, isSfwCeiling: true });
@@ -1380,7 +1381,6 @@ describe('cover moderation and scan gate', () => {
     );
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
-    heldCoverPosts.clear();
     expect(mockFallbackCovers).toHaveBeenCalledWith([10], 3);
     expect((res._json() as any).items[0].coverImageUrl).toBe('edge:fallback-10');
   });
@@ -1393,7 +1393,6 @@ describe('cover moderation and scan gate', () => {
     );
     const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
     await handler(req as never, res as never);
-    heldCoverPosts.clear();
     expect((res._json() as any).items[0].coverImageUrl).toBe('edge:fallback-20');
   });
 
