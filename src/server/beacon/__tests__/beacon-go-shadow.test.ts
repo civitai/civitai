@@ -63,8 +63,8 @@ function harness(
   } = {}
 ) {
   const record = vi.fn();
-  const fetchMock = vi.fn(
-    async (_url: string, _init: RequestInit) => new Response(null, { status: 202 })
+  const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+    async () => new Response(null, { status: 202 })
   );
   let clock = 0;
   const shadow = createBeaconGoShadow({
