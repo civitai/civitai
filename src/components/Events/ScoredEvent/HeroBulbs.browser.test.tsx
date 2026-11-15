@@ -19,8 +19,11 @@ describe('HeroBulbs', () => {
     await expect.element(page.getByTestId('hero-bulbs')).toBeInTheDocument();
     const el = page.getByTestId('hero-bulbs').element();
     await expect.poll(() => el.getAttribute('data-offscreen')).toBe('true');
+    const bulb = el.firstElementChild as HTMLElement;
+    expect(getComputedStyle(bulb).animationPlayState).toBe('paused');
     el.scrollIntoView();
     await expect.poll(() => el.getAttribute('data-offscreen')).toBe('false');
+    expect(getComputedStyle(bulb).animationPlayState).toBe('running');
   });
 
   // On a phone the odd-numbered children are hidden, so the bulbs that stay must still cycle

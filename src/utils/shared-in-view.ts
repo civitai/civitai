@@ -5,7 +5,8 @@ let observer: IntersectionObserver | undefined;
 
 /**
  * Reports whether `el` intersects the viewport, through one IntersectionObserver shared by every
- * caller. Unlike `useInView`, it needs no provider and never re-renders. Returns the unobserve.
+ * caller, one listener per element (a second call for the same element replaces the first). Unlike
+ * `useInView`, it needs no provider and never re-renders. Returns the unobserve.
  */
 export function observeInView(el: Element, listener: Listener): () => void {
   if (typeof IntersectionObserver === 'undefined') return () => undefined;

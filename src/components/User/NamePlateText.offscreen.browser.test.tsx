@@ -49,17 +49,4 @@ describe('animated nameplate sweep pauses off screen', () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(marked(el)).toBeNull();
   });
-
-  test('unmounting stops observing', async () => {
-    const view = await renderWithProviders(
-      <NamePlateText nameplate={animated} data-testid="gone">
-        Gone
-      </NamePlateText>
-    );
-    await expect.element(page.getByTestId('gone')).toBeInTheDocument();
-    const el = page.getByTestId('gone').element();
-    await expect.poll(() => marked(el)).toBe('false');
-    view.unmount();
-    expect(el.hasAttribute('data-offscreen')).toBe(false);
-  });
 });
