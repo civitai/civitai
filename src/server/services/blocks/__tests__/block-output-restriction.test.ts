@@ -648,6 +648,84 @@ describe('🔴 round 3 — a never-rated video engine is DELIVERED, as on the si
   });
 });
 
+describe('🔴 round 4 — never-rated delivery is gated on exactly what it claims', () => {
+  /** A bridge-submitted step, as the orchestrator echoes it, with any `$type` / `input`. */
+  const step = (
+    $type: string,
+    input: Record<string, unknown>,
+    output: Record<string, unknown>,
+    over: Record<string, unknown> = {}
+  ) =>
+    wf([], {
+      steps: [{ $type, name: BLOCK_STEP_NAME, status: 'succeeded', input, output }],
+      ...over,
+    });
+  const video = { id: 'tv', type: 'video', available: true, url: 'https://cdn/tv.mp4' };
+
+  it.each([
+    ['a re-cased twin beside the engine', { engine: 'kling', Engine: 'wan' }],
+    ['a re-cased engine key alone', { Engine: 'kling' }],
+  ])('%s: the engine is unknown, so the unrated video is HELD on an SFW token', (_label, input) => {
+    const snap = snapshotFromWorkflow(step('videoGen', input, { video }), SFW);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(JSON.stringify(snap)).not.toContain('tv.mp4');
+  });
+
+  it('only a VIDEO is delivered: an unrated image from a kling videoGen step is held', () => {
+    const snap = snapshotFromWorkflow(
+      step('videoGen', { engine: 'kling' }, { images: [image('ki', null)] }),
+      SFW
+    );
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(JSON.stringify(snap)).not.toContain('ki.png');
+  });
+
+  it('only a videoGen step is delivered: another $type naming engine kling is held', () => {
+    const snap = snapshotFromWorkflow(step('videoUpscaler', { engine: 'kling' }, { video }), SFW);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+  });
+
+  it('the site ecosystem rule alone delivers: a rated engine (wan) under ecosystem Kling', () => {
+    const snap = snapshotFromWorkflow(
+      step(
+        'videoGen',
+        { engine: 'wan' },
+        { video },
+        { metadata: { params: { ecosystem: 'Kling' } } }
+      ),
+      SFW
+    );
+    expect(snap.outputs).toStrictEqual([{ url: 'https://cdn/tv.mp4' }]);
+    // CONTROL: the same step without the ecosystem is held.
+    expect(
+      snapshotFromWorkflow(step('videoGen', { engine: 'wan' }, { video }), SFW).outputs
+    ).toStrictEqual([{ pending: true }]);
+  });
+
+  it("a mesh's own 'na' gives way to a source value it does not know, which fails closed", () => {
+    const snap = snapshotFromWorkflow(
+      step(
+        'polyGen',
+        {},
+        {
+          model: {
+            id: 'wm',
+            type: 'model3d',
+            url: 'https://cdn/wm.glb',
+            available: true,
+            format: 'glb',
+            nsfwLevel: 'na',
+          },
+          thumbnail: image('wt', 'weird'),
+        }
+      ),
+      MATURE
+    );
+    expect(snap.outputs![0]).toStrictEqual({ restricted: true, reason: 'ceiling' });
+    expect(JSON.stringify(snap)).not.toContain('wm.glb');
+  });
+});
+
 describe("round 3 — a mesh whose sources read 'na' is delivered", () => {
   const mesh = {
     id: 'nm',
