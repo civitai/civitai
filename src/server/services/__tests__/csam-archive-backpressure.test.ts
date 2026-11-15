@@ -369,7 +369,7 @@ describe('getCsamsToArchive', () => {
   it('leaves reports it cannot archive unstamped and counts them, while the rest archive', async () => {
     const generatorEvidence = {
       id: 11,
-      userId: 707070,
+      userId: 990200007,
       reportedById: 5,
       type: 'GeneratedImage',
       reportSentAt: new Date(),
@@ -383,13 +383,19 @@ describe('getCsamsToArchive', () => {
     };
     const control = {
       id: 12,
-      userId: 717171,
+      userId: 990200008,
       reportedById: 5,
       type: 'Image',
       details: {},
       images: [],
     };
-    const namesNoUrl = { id: 13, userId: 727272, type: 'GeneratedImage', details: {}, images: [] };
+    const namesNoUrl = {
+      id: 13,
+      userId: 990200009,
+      type: 'GeneratedImage',
+      details: {},
+      images: [],
+    };
     dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
       generatorEvidence,
       control,
@@ -424,7 +430,7 @@ describe('getCsamsToArchive', () => {
 describe('archiveCsamDataForReport (TrainingData report, training data missing)', () => {
   const report = {
     id: 4545,
-    userId: 919191,
+    userId: 990200012,
     reportedById: 5,
     reportId: 79,
     type: 'TrainingData',
@@ -454,7 +460,7 @@ describe('archiveCsamDataForReport (TrainingData report, training data missing)'
 describe('archiveCsamDataForReport (Image report)', () => {
   const report = {
     id: 4242,
-    userId: 909090,
+    userId: 990200011,
     reportedById: 5,
     reportId: 77,
     type: 'Image',
@@ -748,7 +754,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
   // The generated-image path had the identical unbounded-append shape and must be bounded too.
   const report = {
     id: 4343,
-    userId: 808080,
+    userId: 990200010,
     reportedById: 5,
     reportId: 78,
     type: 'GeneratedImage',
@@ -996,7 +1002,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
 
   const report = {
     id: 4444,
-    userId: 707070,
+    userId: 990200007,
     reportedById: 5,
     reportId: 79,
     // ExternalLink archives the base bundle and nothing else, which isolates this path.
@@ -1220,7 +1226,7 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
 describe('archiveCsamDataForReport (upload failure)', () => {
   const report = {
     id: 4545,
-    userId: 606060,
+    userId: 990200006,
     reportedById: 5,
     reportId: 80,
     type: 'ExternalLink',
@@ -1258,7 +1264,7 @@ describe('archiveCsamDataForReport (upload failure)', () => {
 describe('archiveCsamDataForReport (generated-image report as sent)', () => {
   const report = {
     id: 4747,
-    userId: 606060,
+    userId: 990200006,
     reportedById: 5,
     reportId: 82,
     type: 'GeneratedImage',
@@ -1295,7 +1301,7 @@ describe('archiveCsamDataForReport (generated-image report as sent)', () => {
 describe('archiveCsamDataForReport (unnameable generated-image URL)', () => {
   const report = {
     id: 4646,
-    userId: 505050,
+    userId: 990200005,
     reportedById: 5,
     reportId: 81,
     type: 'GeneratedImage',
@@ -1345,7 +1351,7 @@ describe('archiveCsamDataForReport (Image report, byte budget)', () => {
   const MiB = 1024 * 1024;
   const report = {
     id: 4848,
-    userId: 303030,
+    userId: 990200003,
     reportedById: 5,
     reportId: 83,
     type: 'Image',
@@ -1532,7 +1538,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
       async (args: { where?: { id?: { gt?: number } } } = {}) =>
         rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
     );
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 202020 });
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 990200002 });
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     mockGetObject = async (key) => {
@@ -1545,7 +1551,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
     await expect(
       archiveCsamDataForReport({
         id: 4949,
-        userId: 202020,
+        userId: 990200002,
         reportedById: 5,
         reportId: 84,
         type: 'Image',
@@ -1565,7 +1571,7 @@ describe('archiveCsamDataForReport (Image report, failed read)', () => {
 describe('archiveCsamDataForReport (Image report, stored originals)', () => {
   const report = {
     id: 4747,
-    userId: 404040,
+    userId: 990200004,
     reportedById: 5,
     reportId: 82,
     type: 'Image',

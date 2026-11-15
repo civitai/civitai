@@ -5463,6 +5463,24 @@ export const getEntityCoverImage = async ({
     exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
   });
 
+  // A blocked or ToS-violating cover is its owner's and moderators' alone.
+  const coverNotBlocked = Prisma.join(
+    [
+      Prisma.sql`(i."tosViolation" IS NOT TRUE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean)`,
+      ...imageBlockedForConditions({
+        userId: signedIn ? viewerId ?? undefined : undefined,
+        isModerator,
+      }),
+    ],
+    ' AND '
+  );
+
+  // An image on a restricted base model is not shown at R or above.
+  const baseModelAllowed = Prisma.sql`(
+    (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
+    OR NOT i."modelRestricted"
+  )`;
+
   // A taken-down model's images are its owner's and moderators' alone. Also true with no model
   // (a NULL mode), so the image and post arms keep images on no model version.
   const modelNotWithheld = Prisma.sql`(
@@ -5553,10 +5571,7 @@ export const getEntityCoverImage = async ({
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND ${imageNotFlagged}
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
+          AND ${baseModelAllowed}
           ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
 
@@ -5594,10 +5609,7 @@ export const getEntityCoverImage = async ({
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND ${imageNotFlagged}
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
+          AND ${baseModelAllowed}
           ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
 
@@ -5641,6 +5653,8 @@ export const getEntityCoverImage = async ({
           WHERE e."entityType" = 'Article'
               AND ${modelNotWithheld}
               AND ${withinHeldGallery}
+              AND ${baseModelAllowed}
+              AND ${coverNotBlocked}
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
             OR (${signedIn}::boolean AND a."userId" = ${viewerId}) OR ${isModerator}::boolean
@@ -5676,10 +5690,7 @@ export const getEntityCoverImage = async ({
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND ${imageNotFlagged}
-            AND (
-              (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-              OR NOT i."modelRestricted"
-            )
+            AND ${baseModelAllowed}
           ORDER BY e."entityId", i."postId", i.index, i.id
         ) t
 

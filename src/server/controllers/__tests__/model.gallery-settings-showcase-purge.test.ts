@@ -1,12 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockUpdateModelById, mockPurgeHeldShowcase, mockQueueUpdate, mockCollectionsReindex } =
-  vi.hoisted(() => ({
-    mockUpdateModelById: vi.fn(),
-    mockPurgeHeldShowcase: vi.fn(),
-    mockQueueUpdate: vi.fn(async () => undefined),
-    mockCollectionsReindex: vi.fn(async () => undefined),
-  }));
+const {
+  mockUpdateModelById,
+  mockPurgeHeldShowcase,
+  mockQueueUpdate,
+  mockCollectionsReindex,
+  mockArticlesReindex,
+} = vi.hoisted(() => ({
+  mockUpdateModelById: vi.fn(),
+  mockPurgeHeldShowcase: vi.fn(),
+  mockQueueUpdate: vi.fn(async () => undefined),
+  mockCollectionsReindex: vi.fn(async () => undefined),
+  mockArticlesReindex: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/article-cover-reindex', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueModelArticlesReindex: mockArticlesReindex,
+}));
 vi.mock('~/server/services/collection-index-sync', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   queueModelCollectionsReindex: mockCollectionsReindex,
@@ -68,6 +78,7 @@ describe('updateGallerySettingsHandler — public showcase caches and search doc
     expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: MODEL, action: 'Update' }]);
     expect(mockCollectionsReindex).toHaveBeenCalledTimes(1);
     expect(mockCollectionsReindex).toHaveBeenCalledWith([MODEL]);
+    expect(mockArticlesReindex).toHaveBeenCalledWith(MODEL);
   });
 
   it('leaves them when the level of a held model is unchanged', async () => {
@@ -75,6 +86,7 @@ describe('updateGallerySettingsHandler — public showcase caches and search doc
     expect(mockPurgeHeldShowcase).not.toHaveBeenCalled();
     expect(mockQueueUpdate).not.toHaveBeenCalled();
     expect(mockCollectionsReindex).not.toHaveBeenCalled();
+    expect(mockArticlesReindex).not.toHaveBeenCalled();
   });
 
   it('leaves them when the model is not held', async () => {
@@ -82,5 +94,6 @@ describe('updateGallerySettingsHandler — public showcase caches and search doc
     expect(mockPurgeHeldShowcase).not.toHaveBeenCalled();
     expect(mockQueueUpdate).not.toHaveBeenCalled();
     expect(mockCollectionsReindex).not.toHaveBeenCalled();
+    expect(mockArticlesReindex).not.toHaveBeenCalled();
   });
 });
