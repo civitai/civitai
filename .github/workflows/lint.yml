@@ -549,8 +549,18 @@ jobs:
       # classifies the outcome: a `tsc` that dies of heap exhaustion emits zero
       # diagnostics, so a raw invocation produces an empty log that reads as a
       # clean pass to anyone scanning it. The wrapper says CRASHED instead.
+      #
+      # The matcher turns each `error TS` line into a file annotation, so the type
+      # errors are readable from the check run without opening the log.
+      # `--pretty false` pins the plain `path(line,col): error TS####: msg` form
+      # the matcher parses; tsc already picks it when stdout is a pipe, which it is
+      # under the wrapper, so this changes no output today. It only stops a future
+      # TTY or tsconfig `pretty` from silently breaking the annotations.
+      - name: Register tsc problem matcher
+        run: echo "::add-matcher::.github/problem-matchers/tsc.json"
+
       - name: Typecheck
-        run: pnpm run typecheck
+        run: pnpm run typecheck --pretty false
 
   typecheck-tests:
     name: Typecheck test files (ratchet)
@@ -868,8 +878,14 @@ jobs:
       #
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
+      #
+      # `--reporter=github-actions` is listed explicitly because vitest adds it on
+      # its own only when NO reporter is given; naming `default` and `json` drops it,
+      # and a failing shard then annotates nothing but the exit code. It writes
+      # `::error` commands to stdout (plus a short job summary) and ignores
+      # `--outputFile`, so the json report the assert step reads is unchanged.
       - name: Unit tests
-        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --reporter=github-actions --outputFile=unit-report.json
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been

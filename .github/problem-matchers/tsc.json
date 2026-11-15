@@ -1,0 +1,19 @@
+{
+  "__comment": "Turns `tsc --pretty false` diagnostics into GitHub file annotations. Line shape: src/foo.ts(12,5): error TS2322: message. Paths are relative to the repo root because tsc runs there. The first character must not be whitespace, so the indented tsc tail that scripts/typecheck.mjs reprints in its crash report is not annotated twice.",
+  "problemMatcher": [
+    {
+      "owner": "tsc",
+      "pattern": [
+        {
+          "regexp": "^(\\S[^(]*)\\((\\d+),(\\d+)\\):\\s+(error|warning)\\s+(TS\\d+)\\s*:\\s*(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      ]
+    }
+  ]
+}
