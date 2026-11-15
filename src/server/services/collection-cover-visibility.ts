@@ -198,12 +198,14 @@ export function collectionItemCoversSql({
           AND ${servableImageSql}
           AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
-        -- A legacy cover string carries no image to judge, so only an article with no cover image,
+        -- A legacy cover string carries no image to judge, so only an article with no cover or
+        -- banner image at all (one it cannot serve drops the string too),
         -- at a level every viewer may see.
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${publishedArticleSql}
           AND a."coverId" IS NULL
+          AND a."bannerId" IS NULL
           AND (a."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
           AND (a."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
     ), model3dItemImage AS MATERIALIZED (
