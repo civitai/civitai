@@ -4,7 +4,7 @@ import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
+import tipaltiCaller, { TipaltiCaller } from '~/server/http/tipalti/tipalti.caller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { TipaltiStatus } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
@@ -89,9 +89,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      const client = await tipaltiCaller();
-      const { isValid } = client.validateWebhookEvent(sig as string, rawPayload);
-      const { isValid: isValid2 } = client.validateWebhookEvent(sig as string, req.body as string);
+      const { isValid } = TipaltiCaller.validateWebhookEvent(sig as string, rawPayload);
+      const { isValid: isValid2 } = TipaltiCaller.validateWebhookEvent(
+        sig as string,
+        req.body as string
+      );
       if (!isValid && !isValid2) {
         console.log('❌ Invalid signature');
         return res.status(400).send({

@@ -19,7 +19,8 @@ vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
-  default: async () => ({ validateWebhookEvent, getPaymentByRefCode }),
+  default: async () => ({ getPaymentByRefCode }),
+  TipaltiCaller: { validateWebhookEvent },
 }));
 vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorProgramService>()),
