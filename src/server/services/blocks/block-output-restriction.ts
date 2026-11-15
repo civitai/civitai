@@ -36,6 +36,8 @@ import type {
  *      keeps its POSITION, with no url. `MatureContent` is a maturity block, so it is
  *      `{ restricted: true, reason: 'ceiling' }`; any other reason (moderation) is
  *      `{ blocked: true }`.
+ *   0b. `'na'`: a verdict with no level (the provider moderated it): `{ url }`, never
+ *      held — it is a rating, not the absence of one.
  *   1. NOT RATED YET (`null` / `''`): HELD as `{ pending: true }` — no url, no rating —
  *      when its rating COULD STILL RESTRICT it ({@link ratingCouldRestrict}) and it is
  *      an output the orchestrator rates (`isUnratedOutput`: not audio). The
@@ -51,7 +53,6 @@ import type {
  *      `{ url }` whatever the ceiling — the site's rule (`NEVER_RATED_VIDEO_ECOSYSTEMS`
  *      in `workflow-data.ts`): the provider moderates its own output. A rating that
  *      does arrive on one goes through rules 2-6 as usual.
- *      `'na'` is a verdict with no level (the provider moderated it): `{ url }`.
  *   2. A rating this module does not know: restricted, `'ceiling'` (fail closed).
  *   3. Above the token's `maxBrowsingLevel` ceiling: restricted, `'ceiling'`.
  *   4. Above the workflow's own `nsfwLevel` cap (the site's base-model clamp):

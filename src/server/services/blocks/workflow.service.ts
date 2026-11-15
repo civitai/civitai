@@ -22,7 +22,7 @@ import { isNeverRatedVideoStep } from '~/shared/orchestrator/workflow-data';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restriction';
 import type { BlockOutputCeiling, BlockOutputWorkflowFacts } from './block-output-restriction';
-import { isRepeatStepType } from './workflow-graph';
+import { hasRecasedTwin, isRepeatStepType } from './workflow-graph';
 import { safeQuoteReason } from './pass-through-quote-failure';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
@@ -347,9 +347,17 @@ export function isBlockNeverRatedVideoStep(
         ?.params
     )
   ) {
+    // The ecosystem is read from `metadata.params`, which the server writes (the
+    // generation graph); no App Blocks body can set step or workflow metadata.
     return true;
   }
-  const engine = (step.input as { engine?: unknown } | undefined)?.engine;
+  const input = step.input;
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return false;
+  // 🔴 `input` IS THE APP'S OWN OBJECT. A re-cased twin (`Engine`) may be the key the
+  // orchestrator binds, so with one present the engine is unknown: not never-rated,
+  // and its outputs go through the normal hold.
+  if (hasRecasedTwin(input as Record<string, unknown>, 'engine')) return false;
+  const engine = (input as { engine?: unknown }).engine;
   if (typeof engine !== 'string') return false;
   const e = engine.trim().toLowerCase();
   return NEVER_RATED_VIDEO_ENGINES.some((n) => e === n || e.startsWith(`${n}-`));
@@ -446,7 +454,9 @@ export function propagateMeshRating(
         ...s,
         nsfwLevel:
           maxNsfwLevel([s.nsfwLevel as Parameters<typeof maxNsfwLevel>[0][number], mesh.rating]) ??
-          (s.nsfwLevel || mesh.rating),
+          // A source value `maxNsfwLevel` does not know beats a mesh's own `'na'`, so
+          // it reaches the classifier and fails closed there.
+          (s.nsfwLevel && s.nsfwLevel !== 'na' ? s.nsfwLevel : mesh.rating),
       };
     }
     // A source that has not rated yet: hold the mesh, whatever it carries itself.
