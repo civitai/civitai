@@ -53,7 +53,8 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //                failures share one bucket, never one keyed on the claimed client id.
 //   - token-service: per-client (60/min) — service tokens (service-token.ts), charged after client auth. The
 //                per-IP `token` limit never applies to it.
-//   - introspect-jwt: per-client (1200/min) — introspection of any `at+jwt` (exchanged or service), charged after client auth.
+//   - introspect-jwt: per-client (1200/min) — introspection of any `at+jwt` (exchanged or service),
+//                charged after client auth.
 //   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
 //                once per token TTL, so this only catches a runaway host loop.
 const OAUTH_RATE_LIMITS = {
