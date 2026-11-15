@@ -83,6 +83,10 @@ import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
+  getModelWithheldImageIds,
+  imageAllowedByItsModelSql,
+} from '~/server/services/collection-cover-visibility';
+import {
   handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
@@ -208,12 +212,16 @@ export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
 /**
  * The image a card shows for an article `a`: its cover, else its banner once servable. The article
  * page hides a banner that is not scanned or awaits review, so a card must not show one either.
+ * Either is dropped when its model withholds it (taken down, or above a minor or SFW-only model's
+ * gallery level); a withheld cover does not fall back to the banner, as on the entity cover read.
  */
-export const articleCardCoverIdSql = Prisma.sql`COALESCE(
-  a."coverId",
-  (SELECT b.id FROM "Image" b
-    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
-)`;
+export const articleCardCoverIdSql = Prisma.sql`CASE
+  WHEN a."coverId" IS NOT NULL THEN
+    CASE WHEN ${imageAllowedByItsModelSql(Prisma.sql`a."coverId"`)} THEN a."coverId" END
+  ELSE (SELECT b.id FROM "Image" b
+    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL
+      AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)})
+END`;
 
 export const getArticles = async ({
   limit,
@@ -805,6 +813,20 @@ export const articleContentImageSelect = {
   tosViolation: true,
 } satisfies Prisma.ImageSelect;
 
+/**
+ * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
+ * article's owner who uploaded it may see it. Read and save share this so a save keeps exactly what
+ * the edit form could not show.
+ */
+function modelHidesArticleImage(
+  image: { id: number; userId: number },
+  withheld: Set<number>,
+  viewerId: number | undefined,
+  articleUserId: number
+) {
+  return withheld.has(image.id) && !(viewerId === articleUserId && image.userId === articleUserId);
+}
+
 export const getArticleById = async ({
   id,
   userId,
@@ -859,8 +881,27 @@ export const getArticleById = async ({
     });
 
     const isOwnerOrMod = isModerator || userId === article.userId;
-    const coverImage = viewableArticleImage(article.coverImage, isOwnerOrMod);
-    const bannerImage = viewableArticleImage(article.bannerImage, isOwnerOrMod);
+    // A cover or banner its model withholds is shown only to moderators, and to the article's
+    // owner when they uploaded it. The edit form learns of one it may not see from the
+    // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
+    const withheldByModel = isModerator
+      ? new Set<number>()
+      : await getModelWithheldImageIds(
+          [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)
+        );
+    const hiddenByModel = (image: { id: number; userId: number } | null) =>
+      !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
+    const coverHidden = hiddenByModel(article.coverImage);
+    const bannerHidden = hiddenByModel(article.bannerImage);
+    const coverImage = viewableArticleImage(coverHidden ? null : article.coverImage, isOwnerOrMod);
+    const bannerImage = viewableArticleImage(
+      bannerHidden ? null : article.bannerImage,
+      isOwnerOrMod
+    );
+    // For the owner's edit form only: anyone else learns nothing about an image they cannot see.
+    const isOwner = userId !== undefined && userId === article.userId;
+    const coverImageWithheld = isOwner && coverHidden;
+    const bannerImageWithheld = isOwner && bannerHidden;
 
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.
@@ -901,6 +942,8 @@ export const getArticleById = async ({
       })),
       coverImage,
       bannerImage,
+      coverImageWithheld,
+      bannerImageWithheld,
       content,
       contentJson,
       contentImages,
@@ -1114,6 +1157,33 @@ export const upsertArticle = async ({
           if (!isImgOwner) throw throwAuthorizationError('Invalid banner image');
         },
       });
+    }
+
+    // A save that leaves out a cover or banner its model hides from this editor keeps it: the
+    // edit form never had it to send back (getArticleById).
+    if (article && !isModerator) {
+      const stored = [
+        coverId === null ? article.coverId : null,
+        bannerId === null ? article.bannerId : null,
+      ].filter(isDefined);
+      if (stored.length) {
+        const withheld = await getModelWithheldImageIds(stored, dbWrite);
+        const owners = withheld.size
+          ? await dbWrite.image.findMany({
+              where: { id: { in: [...withheld] } },
+              select: { id: true, userId: true },
+            })
+          : [];
+        const hiddenIds = new Set(
+          owners
+            .filter((image) => modelHidesArticleImage(image, withheld, userId, article.userId))
+            .map((image) => image.id)
+        );
+        if (coverId === null && article.coverId && hiddenIds.has(article.coverId))
+          coverId = undefined;
+        if (bannerId === null && article.bannerId && hiddenIds.has(article.bannerId))
+          bannerId = undefined;
+      }
     }
 
     if (!id) {
@@ -1512,9 +1582,8 @@ export const upsertArticle = async ({
 
     // The save has committed: a failed cleanup is logged, and must not skip the content change below.
     try {
-      // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
-      // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
-      // Only the author's own image: the hold below is read for the author alone.
+      // A replaced or cleared cover or banner, once nothing else shows it: the author's own
+      // unposted upload only, since the hold read below covers only the author's images.
       const replacedImageIds: number[] = [];
       if (
         coverId !== undefined &&
@@ -1525,16 +1594,14 @@ export const upsertArticle = async ({
         const isImgOwner =
           (await isImageOwner({ userId, isModerator, imageId: article.coverId })) &&
           !!(await dbWrite.image.findFirst({
-            where: { id: article.coverId, userId: result.userId },
+            where: { id: article.coverId, userId: result.userId, postId: null },
             select: { id: true },
           }));
         const shownElsewhere =
           isImgOwner &&
+          // This article too, as it stands now: a save since may have put the cover back.
           (await dbWrite.article.count({
-            where: {
-              id: { not: id },
-              OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
-            },
+            where: { OR: [{ coverId: article.coverId }, { bannerId: article.coverId }] },
           })) > 0;
         if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
       }

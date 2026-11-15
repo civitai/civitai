@@ -51,7 +51,8 @@ beforeAll(async () => {
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0, "postId" int,
       poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
-      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "tosViolation" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int DEFAULT ${OWNER}, "modelVersionId" int,
@@ -307,6 +308,12 @@ beforeAll(async () => {
       (2901, 2031, 'Published', now()), (2902, 2231, 'Published', now());
     -- Article 2903's cover is the taken-down model's image.
     INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (2903, 1631, 'Published', now());
+    -- Articles 2904-2906: a blocked cover, a ToS-violating cover, and an R cover on a restricted
+    -- base model, none on a post.
+    INSERT INTO "Image" (id, "blockedFor", "tosViolation", "nsfwLevel", "modelRestricted") VALUES
+      (2914, 'tos', false, 1, false), (2915, NULL, true, 1, false), (2916, NULL, false, ${NsfwLevel.R}, true);
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
+      (2904, 2914, 'Published', now()), (2905, 2915, 'Published', now()), (2906, 2916, 'Published', now());
     -- An X image on published post 201, which is on no model.
     INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES (2631, 201, ${NsfwLevel.X});
   `);
@@ -327,6 +334,8 @@ const hidden: [string, string, number, number][] = [
   ["a taken-down model's image", 'Image', 1631, 1631],
   ["a post on a taken-down model's version", 'Post', 1621, 1631],
   ["an article whose cover is a taken-down model's image", 'Article', 2903, 1631],
+  ['an article whose cover is blocked', 'Article', 2904, 2914],
+  ['an article whose cover violates the ToS', 'Article', 2905, 2915],
   ['a flagged image', 'Image', 1211, 1211],
   ['a post whose only image is flagged', 'Post', 1201, 1211],
   ['an article whose cover is flagged', 'Article', 1401, 1411],
@@ -547,6 +556,13 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     "keeps an article cover above its model's gallery level for the %s",
     async (who) => {
       expect(await coverOf('Article', 2901, viewers[who])).toBe(2031);
+    }
+  );
+
+  it.each(['anonymous', 'stranger', 'owner', 'moderator'] as const)(
+    'has no cover for an article whose R cover is on a restricted base model, for the %s',
+    async (who) => {
+      expect(await coverOf('Article', 2906, viewers[who])).toBeNull();
     }
   );
 
