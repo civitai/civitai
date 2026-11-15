@@ -218,7 +218,7 @@ describe('decision_resolution_answer_valid', () => {
       insertRaw(d, {
         ruling: 'resolved',
         answer_text: TEXT,
-        answer_ticket_id: '73618',
+        answer_ticket_id: '990200000',
         answer_conversation_id: '150003911207',
       })
     ).resolves.not.toThrow();
@@ -231,12 +231,12 @@ describe('decision_resolution_answer_valid', () => {
     ['an answer on another ruling', { ruling: 'correct', answer_text: TEXT }],
     [
       'a source on another ruling',
-      { ruling: 'skip', answer_ticket_id: '73618', answer_conversation_id: '150003911207' },
+      { ruling: 'skip', answer_ticket_id: '990200000', answer_conversation_id: '150003911207' },
     ],
     ['an answer over 8000 characters', { ruling: 'resolved', answer_text: 'x'.repeat(8001) }],
     [
       'a ticket without its reply',
-      { ruling: 'resolved', answer_text: TEXT, answer_ticket_id: '73618' },
+      { ruling: 'resolved', answer_text: TEXT, answer_ticket_id: '990200000' },
     ],
     [
       'a reply without its ticket',
@@ -247,7 +247,7 @@ describe('decision_resolution_answer_valid', () => {
       {
         ruling: 'resolved',
         answer_text: TEXT,
-        answer_ticket_id: 'T-73618',
+        answer_ticket_id: 'T-990200000',
         answer_conversation_id: '150003911207',
       },
     ],
@@ -256,7 +256,7 @@ describe('decision_resolution_answer_valid', () => {
       {
         ruling: 'resolved',
         answer_text: TEXT,
-        answer_ticket_id: '73618',
+        answer_ticket_id: '990200000',
         answer_conversation_id: 'c150003911207',
       },
     ],

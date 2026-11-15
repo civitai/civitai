@@ -90,7 +90,7 @@ describe('the replies endpoint', () => {
   });
 
   it('404s a ticket that is not a current member — Freshdesk is never asked', async () => {
-    expect((await call({ ticketId: '73618' })).status).toBe(404);
+    expect((await call({ ticketId: '990200000' })).status).toBe(404);
     expect(getPublicAgentReplies).not.toHaveBeenCalled();
   });
 

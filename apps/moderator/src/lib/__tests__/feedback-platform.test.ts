@@ -80,7 +80,7 @@ describe('splitPlatformContext', () => {
   it('never carries a reporter id out, only the count', () => {
     const out = splitPlatformContext({ report: REPORT, server: SERVER });
     const text = JSON.stringify(out);
-    // 90818 is also a sample's author, which the panel does show; the other two are ids only.
+    // 990100005 is also a sample's author, which the panel does show; the other two are ids only.
     expect(text).not.toContain('990100004');
     expect(text).not.toContain('990100006');
     expect(text).not.toContain('reporterIds');
