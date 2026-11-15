@@ -167,8 +167,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 }
 
 const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
-  const client = await tipaltiCaller();
-
   switch (event.type) {
     case 'paymentGroupApproved':
     case 'paymentGroupDeclined': {
@@ -276,7 +274,7 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
+      const paymentRecord = await (await tipaltiCaller()).getPaymentByRefCode(payment.refCode);
 
       if (!paymentRecord) {
         throw new Error('Could not fetch payment record');
@@ -307,8 +305,6 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
 };
 
 const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
-  const client = await tipaltiCaller();
-
   switch (event.type) {
     case 'paymentGroupApproved':
     case 'paymentGroupDeclined': {
@@ -418,7 +414,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
       const cashWithdrawal = await findCashWithdrawalByRefCode(payment.refCode);
 
-      const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
+      const paymentRecord = await (await tipaltiCaller()).getPaymentByRefCode(payment.refCode);
 
       if (!paymentRecord) {
         throw new Error('Could not fetch payment record');

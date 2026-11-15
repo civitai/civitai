@@ -5,14 +5,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { apiResolver } from 'next/dist/server/api-utils/node/api-resolver';
 
 import '~/__tests__/mocks/logging.mock';
-import '~/__tests__/mocks/db.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as UserPaymentConfigurationService from '~/server/services/user-payment-configuration.service';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 
 const SECRET = 'test-webhook-secret';
 
-const { updateByTipaltiAccount, bust } = vi.hoisted(() => ({
+const { updateByTipaltiAccount, updateCashWithdrawal, bust } = vi.hoisted(() => ({
+  updateCashWithdrawal: vi.fn(async () => undefined),
   updateByTipaltiAccount: vi.fn(async () => ({ userId: 7 })),
   bust: vi.fn(async () => undefined),
 }));
@@ -28,6 +29,7 @@ vi.mock('~/server/services/user-payment-configuration.service', async (importOri
 vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorProgramService>()),
   userCashCache: { bust },
+  updateCashWithdrawal,
 }));
 
 const routeModule = await import('~/pages/api/webhooks/tipalti');
@@ -129,6 +131,30 @@ describe('POST /api/webhooks/tipalti with a signed event', () => {
 
     expect(res.status).toBe(200);
     expect(updateByTipaltiAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a signed payout outcome while the API token cannot be fetched', async () => {
+    tokenEndpointUp = false;
+    const refCode = 'CW7_abc123';
+    dbMock.dbWrite.cashWithdrawal.findMany.mockResolvedValue([
+      { id: 'abc123-full', userId: 7, status: 'Cleared', metadata: { paymentRefCode: refCode } },
+    ]);
+    const payout = JSON.stringify({
+      id: 'evt-2',
+      type: 'paymentCompleted',
+      createdDate: new Date().toISOString(),
+      isTest: true,
+      version: '1',
+      traceId: 'trace-2',
+      eventData: { refCode, paymentStatus: 'Paid' },
+    });
+
+    const res = await post(sign(payout), payout);
+
+    expect(res.status).toBe(200);
+    expect(updateCashWithdrawal).toHaveBeenCalledWith(
+      expect.objectContaining({ withdrawalId: 'abc123-full', status: 'Paid' })
+    );
   });
 
   it('rejects a signature made with the wrong secret', async () => {
