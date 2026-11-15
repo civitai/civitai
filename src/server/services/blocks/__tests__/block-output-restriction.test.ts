@@ -384,7 +384,7 @@ describe('🔴 F1 — unrated outputs are held, at every level', () => {
     expect(snap).not.toHaveProperty('ratingPending');
   });
 
-  it('an imageResourceTraining sample (a plain string, never rated) is held on an SFW token', () => {
+  it('an imageResourceTraining sample (a plain string, NEVER rated) fails closed as unrated on an SFW token', () => {
     const training = wf([], {
       steps: [
         {
@@ -395,8 +395,11 @@ describe('🔴 F1 — unrated outputs are held, at every level', () => {
         },
       ],
     });
-    expect(snapshotFromWorkflow(training, SFW).outputs).toStrictEqual([{ pending: true }]);
-    expect(JSON.stringify(snapshotFromWorkflow(training, SFW))).not.toContain('sample.png');
+    const snap = snapshotFromWorkflow(training, SFW);
+    // Terminal, not a hold: no rating will ever come, so no ratingPending either.
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(snap).not.toHaveProperty('ratingPending');
+    expect(JSON.stringify(snap)).not.toContain('sample.png');
     expect(snapshotFromWorkflow(training, MATURE).outputs).toStrictEqual([
       { url: 'https://cdn/sample.png' },
     ]);
@@ -483,6 +486,151 @@ describe('🔴 F2 — a 3D mesh takes its thumbnail / preview rating', () => {
     expect(snap.outputs!.every((o) => 'pending' in o)).toBe(true);
     expect(snap.ratingPending).toBe(true);
     for (const url of MESH_URLS) expect(JSON.stringify(snap)).not.toContain(url);
+  });
+});
+
+describe('🔴 round 2 — a mesh is rated only when EVERY rating source has rated', () => {
+  const mesh = (id: string) => ({
+    id,
+    type: 'model3d',
+    url: `https://cdn/${id}.glb`,
+    available: true,
+    format: 'glb',
+    nsfwLevel: null,
+  });
+  /** One mesh, a pg13 thumbnail (or none), and an optional model3DPreview step. */
+  const withPreview = (opts: {
+    thumbnail?: string | null | 'absent';
+    preview?: { status: string; images: Array<string | null> } | 'absent';
+    stepStatus?: string;
+  }) =>
+    wf([], {
+      steps: [
+        {
+          $type: 'polyGen',
+          name: BLOCK_STEP_NAME,
+          status: opts.stepStatus ?? 'succeeded',
+          output: {
+            model: mesh('rm'),
+            ...(opts.thumbnail === 'absent'
+              ? {}
+              : { thumbnail: image('rt', opts.thumbnail ?? 'pg13') }),
+          },
+        },
+        ...(opts.preview === 'absent' || opts.preview === undefined
+          ? []
+          : [
+              {
+                $type: 'model3DPreview',
+                name: 'preview',
+                status: opts.preview.status,
+                output: {
+                  images: opts.preview.images.map((r, i) => image(`rp${i}`, r)),
+                },
+              },
+            ]),
+      ],
+    });
+  const meshOutput = (workflow: Parameters<typeof snapshotFromWorkflow>[0]) =>
+    snapshotFromWorkflow(workflow, SFW).outputs![0];
+
+  it('a pg13 thumbnail with the preview step STILL RUNNING is pending', () => {
+    expect(
+      meshOutput(withPreview({ preview: { status: 'processing', images: [] } }))
+    ).toStrictEqual({
+      pending: true,
+    });
+  });
+
+  it('a pg13 thumbnail with a preview image UNRATED is pending', () => {
+    expect(
+      meshOutput(withPreview({ preview: { status: 'succeeded', images: ['pg', null] } }))
+    ).toStrictEqual({ pending: true });
+  });
+
+  it('a pg13 thumbnail with the preview rated x is restricted', () => {
+    expect(
+      meshOutput(withPreview({ preview: { status: 'succeeded', images: ['pg', 'x'] } }))
+    ).toStrictEqual({ restricted: true, reason: 'ceiling' });
+  });
+
+  it('every source rated (pg13 thumbnail, pg preview) hands out the url at the max rating', () => {
+    expect(
+      meshOutput(withPreview({ preview: { status: 'succeeded', images: ['pg'] } }))
+    ).toStrictEqual({ url: 'https://cdn/rm.glb', nsfwLevel: 'pg13' });
+  });
+
+  it('a declared thumbnail with no rating yet is pending, even with the preview rated', () => {
+    expect(
+      meshOutput(withPreview({ thumbnail: null, preview: { status: 'succeeded', images: ['pg'] } }))
+    ).toStrictEqual({ pending: true });
+  });
+
+  it('no thumbnail and no preview on a FINISHED step fails closed as unrated', () => {
+    const snap = snapshotFromWorkflow(withPreview({ thumbnail: 'absent' }), SFW);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(snap).not.toHaveProperty('ratingPending');
+    expect(JSON.stringify(snap)).not.toContain('rm.glb');
+  });
+
+  it('no source yet while the step is still running is pending', () => {
+    expect(
+      meshOutput(withPreview({ thumbnail: 'absent', stepStatus: 'processing' }))
+    ).toStrictEqual({
+      pending: true,
+    });
+  });
+
+  it('no source on a mature token with nothing restricting it keeps the url', () => {
+    expect(
+      snapshotFromWorkflow(withPreview({ thumbnail: 'absent' }), MATURE).outputs
+    ).toStrictEqual([{ url: 'https://cdn/rm.glb' }]);
+  });
+
+  it('the listing applies the same rule', () => {
+    const running = withPreview({ preview: { status: 'processing', images: [] } });
+    expect(projectAppWorkflow(running, SFW).outputs![0]).toStrictEqual({ pending: true });
+    expect(JSON.stringify(projectAppWorkflow(running, SFW))).not.toContain('rm.glb');
+  });
+});
+
+describe('🔴 round 2 — a never-rated video engine, in the shape App Blocks submits', () => {
+  /** A pass-through `{ kind:'step', $type:'videoGen', input }` as the orchestrator echoes it. */
+  const videoGen = (engine: string) =>
+    wf([], {
+      steps: [
+        {
+          $type: 'videoGen',
+          name: BLOCK_STEP_NAME,
+          status: 'succeeded',
+          input: { engine, prompt: 'a lighthouse at dusk' },
+          output: {
+            video: { id: 'v', type: 'video', available: true, url: 'https://cdn/v.mp4' },
+          },
+        },
+      ],
+    });
+
+  it.each(['kling', 'kling-v3', 'veo3', 'vidu-q4', 'grok', 'gemini-omni'])(
+    '%s: an unrated video fails closed as unrated on an SFW token, with no ratingPending',
+    (engine) => {
+      const snap = snapshotFromWorkflow(videoGen(engine), SFW);
+      expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+      expect(snap).not.toHaveProperty('ratingPending');
+      expect(JSON.stringify(snap)).not.toContain('v.mp4');
+    }
+  );
+
+  it('an engine the orchestrator rates (wan) is HELD until its rating lands', () => {
+    const snap = snapshotFromWorkflow(videoGen('wan'), SFW);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(snap.ratingPending).toBe(true);
+  });
+
+  it('a never-rated engine on a mature token with nothing restricting it keeps its url', () => {
+    expect(snapshotFromWorkflow(videoGen('kling'), MATURE).outputs).toStrictEqual([
+      { url: 'https://cdn/v.mp4' },
+    ]);
   });
 });
 
@@ -583,12 +731,16 @@ describe('classifyBlockOutput', () => {
     }
   });
 
-  it('does not hold what the orchestrator never rates: audio, and a never-rated video engine', () => {
+  it('never holds what will never be rated: audio passes, a never-rated output fails closed', () => {
     expect(classifyBlockOutput({ ...media(null), type: 'audio' }, {}, SFW)).toStrictEqual({
       url: 'https://cdn/c.png',
     });
     expect(
-      classifyBlockOutput({ ...media(null), type: 'video' }, {}, SFW, { neverRatedVideoStep: true })
+      classifyBlockOutput({ ...media(null), type: 'video' }, {}, SFW, { neverRated: true })
+    ).toStrictEqual({ restricted: true, reason: 'unrated' });
+    // Where nothing could restrict it, a never-rated output keeps its url.
+    expect(
+      classifyBlockOutput({ ...media(null), type: 'video' }, {}, MATURE, { neverRated: true })
     ).toStrictEqual({ url: 'https://cdn/c.png' });
     // A rated engine's video IS held.
     expect(classifyBlockOutput({ ...media(null), type: 'video' }, {}, SFW)).toStrictEqual({
