@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { GET } from '../+server';
+import { GET as GET_AS_METADATA } from '../../oauth-authorization-server/+server';
 
 // The only test of the discovery document. It pins the two fields a client uses to FIND
 // introspection without being told the URL, plus the fact that scopes_supported is derived from
@@ -60,5 +61,17 @@ describe('openid-configuration', () => {
     expect(doc.token_endpoint).toMatch(/\/api\/auth\/oauth\/token$/);
     expect(doc.revocation_endpoint).toMatch(/\/api\/auth\/oauth\/revoke$/);
     expect(doc.device_authorization_endpoint).toMatch(/\/api\/auth\/oauth\/device$/);
+  });
+
+  it('lists the token exchange grant', async () => {
+    const doc = await discovery();
+    expect(doc.grant_types_supported).toContain('urn:ietf:params:oauth:grant-type:token-exchange');
+  });
+
+  it('serves the same document at /.well-known/oauth-authorization-server', async () => {
+    const url = new URL('https://auth.civitai.com/.well-known/oauth-authorization-server');
+    const res = await GET_AS_METADATA({ url } as never);
+    expect(res.headers.get('cache-control')).toBe('public, max-age=86400');
+    expect(await res.json()).toEqual(await discovery());
   });
 });

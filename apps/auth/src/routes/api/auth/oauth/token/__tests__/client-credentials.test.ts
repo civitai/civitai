@@ -113,6 +113,8 @@ describe('client_credentials grant', () => {
       userId: OWNER,
       clientId: 'game-frame',
       tokenScope: CATALOG | TokenScope.UserRead,
+      // Marks the token as the client's own, which the user token exchange refuses as a subject.
+      name: 'oauth-cc:game-frame',
     });
   });
 
