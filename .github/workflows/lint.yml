@@ -336,7 +336,6 @@ jobs:
       # runs on a PR only with the `full-ci` label, so a schema or validator edit could otherwise
       # merge without them. Unfiltered on purpose: they read the schema with readFileSync, so no
       # import graph sees it, and a hand-kept list of the files they pin would go stale silently.
-      # About 10 s here, mostly vitest start-up (8 files, 2026-11-14).
       #
       # The file list is a glob, so a new drift test joins by its name. The JSON report is counted
       # because vitest given files it does not match runs the rest and still exits 0.

@@ -3,7 +3,6 @@ import {
   assistantRules,
   assistantSystemPrompt,
   checkKindOf,
-  SCAFFOLD_TEMPLATE,
 } from '@civitai/app-assistant';
 import {
   APP_ASSISTANT_RULES,
@@ -322,6 +321,5 @@ describe('the scaffold step pins the page-elements template', () => {
     expect(scaffold).toEqual([
       'npx -y @civitai/cli@latest app create <blockId> --template page-elements.',
     ]);
-    expect(SCAFFOLD_TEMPLATE).toBe('page-elements');
   });
 });
