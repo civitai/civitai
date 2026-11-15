@@ -222,8 +222,8 @@ on:
       # Set by full-ci.yml. See the `passed` job.
       skip_passed:
         description: >-
-          Skip the suites the pull_request Lint run on this commit already passed
-          (with only = all). Geometry still runs.
+          Skip the suites the pull_request Lint run on this commit already passed.
+          Geometry still runs.
         type: boolean
         default: false
 
@@ -281,12 +281,14 @@ jobs:
   # green shard 1 there says nothing about it, and here it is a real verdict. The unit shards
   # and `typecheck` never wait on this job.
   #
+  # A hand dispatch may set `skip_passed` too, with any `only`; it narrows the same way.
+  #
   # Every job that `needs` this one has `!cancelled()` in its `if`: on a PR or a push this job
   # is skipped, and without a status function a job whose need was skipped is skipped too.
   passed:
     name: Suites the PR run passed (full-ci dispatch)
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_passed && (!inputs.only || inputs.only == 'all') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_passed }}
     permissions:
       actions: read
       contents: read

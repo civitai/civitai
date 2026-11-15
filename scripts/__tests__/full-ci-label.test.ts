@@ -189,7 +189,6 @@ describe('the full-ci label', () => {
       expect(conjuncts(jobs.passed?.if ?? '')).toEqual([
         "github.event_name == 'workflow_dispatch'",
         'inputs.skip_passed',
-        "(!inputs.only || inputs.only == 'all')",
       ]);
     });
 
