@@ -1745,3 +1745,152 @@ describe('trainingDataReady (the readiness whatif)', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 });
+
+describe('per-image repeats', () => {
+  const wireItems = () =>
+    submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.trainingData.items;
+
+  it('puts a repeated image on the wire once per repeat, each at its own path', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-rep' } });
+    await submitTrainingBatch(
+      client,
+      [
+        {
+          ...baseRun(),
+          items: [
+            { air: 'blob-1', caption: 'ohwx, 1girl', repeats: 3, ext: 'JPG' },
+            { air: 'blob-2', caption: 'ohwx, portrait' },
+          ],
+        },
+      ],
+      { checkText }
+    );
+    const items = wireItems();
+    expect(items).toEqual([
+      { air: 'blob-1', caption: 'ohwx, 1girl', path: 'repeat_0001_1.jpg' },
+      { air: 'blob-1', caption: 'ohwx, 1girl', path: 'repeat_0001_2.jpg' },
+      { air: 'blob-1', caption: 'ohwx, 1girl', path: 'repeat_0001_3.jpg' },
+      { air: 'blob-2', caption: 'ohwx, portrait' },
+    ]);
+  });
+
+  it('sends a dataset without repeats exactly as before', async () => {
+    const run = {
+      ...baseRun(),
+      items: [
+        { air: 'blob-1', caption: 'a' },
+        { air: 'blob-2', caption: 'b' },
+      ],
+    };
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-plain-rep' } });
+    await submitTrainingBatch(client, [run], { checkText });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(JSON.stringify(input.trainingData)).toBe(
+      JSON.stringify({ type: 'blobs', items: run.items })
+    );
+  });
+
+  it('gives blobs whose keys differ only in case paths that differ case-insensitively', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-case' } });
+    await submitTraining(client, {
+      ...baseRun(),
+      items: [
+        { air: 'urn:air:other:other:orchestrator:blob@AbC', caption: 'x', repeats: 2, ext: 'png' },
+        { air: 'urn:air:other:other:orchestrator:blob@XyZ', caption: 'y', repeats: 2, ext: 'png' },
+        { air: 'urn:air:other:other:orchestrator:blob@xyz', caption: 'y', repeats: 2, ext: 'PNG' },
+      ],
+    });
+    const paths = wireItems().map((i: { path?: string }) => i.path!.toLowerCase());
+    expect(new Set(paths).size).toBe(paths.length);
+    for (const path of paths) expect(path).toMatch(/^[a-z0-9_]+\.[a-z0-9]+$/);
+  });
+
+  it('expands repeats for Kohya too', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya-rep' } });
+    await submitTraining(client, {
+      ...baseRun(),
+      engine: 'kohya',
+      model: 'urn:air:sdxl:checkpoint:civitai:795765@889818',
+      lrScheduler: 'cosine_with_restarts',
+      items: [{ air: 'blob-1', caption: '1girl', repeats: 2, ext: 'png' }],
+    });
+    expect(wireItems().map((i: { path?: string }) => i.path)).toEqual([
+      'repeat_0001_1.png',
+      'repeat_0001_2.png',
+    ]);
+  });
+
+  it.each([
+    [
+      'a client-sent path on a plain run',
+      { air: 'blob-1', caption: '', path: 'x.png' },
+      /path only for edit/,
+    ],
+    [
+      'repeats of 1',
+      { air: 'blob-1', caption: '', repeats: 1, ext: 'png' },
+      /integer from 2 to 20/,
+    ],
+    [
+      'repeats over the cap',
+      { air: 'blob-1', caption: '', repeats: 21, ext: 'png' },
+      /integer from 2 to 20/,
+    ],
+    ['repeats without an extension', { air: 'blob-1', caption: '', repeats: 2 }, /file extension/],
+    [
+      'a path-like extension',
+      { air: 'blob-1', caption: '', repeats: 2, ext: '../a' },
+      /file extension/,
+    ],
+    [
+      'an extension without repeats',
+      { air: 'blob-1', caption: '', ext: 'png' },
+      /only sent with repeats/,
+    ],
+  ])('refuses %s', async (_label, item, message) => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), items: [item] }], { checkText })
+    ).rejects.toThrow(message);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses repeats on Flux.2', async () => {
+    await expect(
+      submitTrainingBatch(
+        client,
+        [
+          {
+            ...baseRun(),
+            ecosystem: 'flux2',
+            engine: 'flux2-dev',
+            model: 'urn:air:flux2:checkpoint:civitai:1@2',
+            items: [{ air: 'blob-1', caption: '', repeats: 2, ext: 'png' }],
+          },
+        ],
+        { checkText }
+      )
+    ).rejects.toThrow(/repeats are not supported/);
+  });
+
+  it('refuses repeats on an edit run', async () => {
+    await expect(
+      submitTrainingBatch(
+        client,
+        [
+          {
+            ...baseRun(),
+            ecosystem: 'flux2klein',
+            modelVariant: '9b',
+            editTraining: true,
+            items: [
+              { air: 'a', caption: '', path: 'control_1/pair_0001.png', repeats: 2, ext: 'png' },
+              { air: 'b', caption: 'do it', path: 'main/pair_0001.png' },
+            ],
+          },
+        ],
+        { checkText }
+      )
+    ).rejects.toThrow(/repeats are not supported/);
+  });
+});
