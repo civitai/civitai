@@ -1,20 +1,25 @@
+import {
+  allCookieNames,
+  LEGACY_SESSION_COOKIE_BASE,
+  SESSION_COOKIE_BASE,
+} from '@civitai/auth/client';
+
 /**
  * The pure half of the beacon-go shadow sampler (`./beacon-go-shadow`): what is forwarded for a
- * sampled /api/internal/ping or /api/internal/pulse request. Import-free, so beacon-go's golden
- * fixture generator (apps/beacon-go/testdata/golden/gen.ts) builds its samples with this exact code.
+ * sampled /api/internal/ping or /api/internal/pulse request. Its only import is the browser-safe
+ * `@civitai/auth/client`, so beacon-go's golden fixture generator
+ * (apps/beacon-go/testdata/golden/gen.ts) builds its samples with this exact code.
  */
 
 /**
- * Every spelling of the session cookies (SESSION_COOKIE_NAMES in endpoint-helpers.ts): beacon-go
- * needs the civ-token ones to resolve the viewer, and all five to decide `Vary` / `Cache-Control`
- * the way `requestCarriesCallerCredentials` does.
+ * Every spelling of the session cookies, derived as feed-go-shadow derives its set: the hub cookie
+ * (beacon-go resolves the viewer from it) and the legacy one, under each prefix. It covers the five
+ * names `requestCarriesCallerCredentials` checks for `Vary` / `Cache-Control` (plus
+ * `__Host-civitai-token`, which nothing reads; forwarding it changes no outcome).
  */
 const SESSION_COOKIE_NAMES = new Set([
-  '__Host-civ-token',
-  '__Secure-civ-token',
-  'civ-token',
-  '__Secure-civitai-token',
-  'civitai-token',
+  ...allCookieNames(SESSION_COOKIE_BASE),
+  ...allCookieNames(LEGACY_SESSION_COOKIE_BASE),
 ]);
 
 /** Headers forwarded verbatim when present. */

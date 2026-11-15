@@ -51,7 +51,6 @@ func fallbackProxy(target *url.URL) *httputil.ReverseProxy {
 	}}
 }
 
-// connectionTokens returns the header names the Connection header lists, canonicalized.
 func connectionTokens(h http.Header) map[string]bool {
 	out := map[string]bool{}
 	for _, v := range h["Connection"] {

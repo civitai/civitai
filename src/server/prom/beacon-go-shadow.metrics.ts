@@ -1,9 +1,7 @@
 import client from 'prom-client';
 import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai/telemetry/client';
 
-// ---------------------------------------------------------------------------
-// beacon-go shadow samples (see `~/server/beacon/beacon-go-shadow.ts`)
-// ---------------------------------------------------------------------------
+// beacon-go shadow samples (see `~/server/beacon/beacon-go-shadow.ts`).
 //
 // One increment per SAMPLED beacon request, by what became of the sample. Requests that were not
 // sampled are not counted. Labels: `outcome`, from the fixed set below, and `beacon_endpoint`

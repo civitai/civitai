@@ -1,10 +1,12 @@
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import {
+  BEACON_GO_SHADOW_ENDPOINTS,
   recordBeaconGoShadowOutcome,
   type BeaconGoShadowEndpoint,
   type BeaconGoShadowOutcome,
 } from '~/server/prom/beacon-go-shadow.metrics';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
+import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 import {
   buildBeaconGoShadowPayload,
   pickBeaconResponseHeaders,
@@ -59,13 +61,6 @@ export type BeaconGoShadowConfig = {
 };
 
 type Env = Record<string, string | undefined>;
-
-function envNumber(raw: string | undefined, fallback: number, min: number, max: number) {
-  if (raw == null || raw.trim() === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
 
 /** Parse the env. A `BEACON_GO_SHADOW_URL` that is not an http(s) URL disables the sampler. */
 export function readBeaconGoShadowConfig(env: Env = process.env): BeaconGoShadowConfig {
@@ -147,25 +142,8 @@ export function createBeaconGoShadow(deps: BeaconGoShadowDeps) {
   const record = deps.record ?? recordBeaconGoShadowOutcome;
   const now = deps.now ?? (() => performance.now());
   let inFlight = 0;
-  const bucketCap = Math.max(1, config.maxPerSecond);
-  const buckets: Record<BeaconGoShadowEndpoint, { tokens: number; refilledAt?: number }> = {
-    ping: { tokens: bucketCap },
-    pulse: { tokens: bucketCap },
-  };
-
-  function takeToken(endpoint: BeaconGoShadowEndpoint): boolean {
-    const bucket = buckets[endpoint];
-    const t = now();
-    if (bucket.refilledAt !== undefined)
-      bucket.tokens = Math.min(
-        bucketCap,
-        bucket.tokens + ((t - bucket.refilledAt) / 1000) * config.maxPerSecond
-      );
-    bucket.refilledAt = t;
-    if (bucket.tokens < 1) return false;
-    bucket.tokens -= 1;
-    return true;
-  }
+  // One bucket per endpoint, so a busy beacon cannot starve the other.
+  const buckets = createPerSecondBuckets(BEACON_GO_SHADOW_ENDPOINTS, config.maxPerSecond, now);
 
   function release(sample: BeaconGoShadowSample) {
     if (sample.done) return;
@@ -241,7 +219,7 @@ export function createBeaconGoShadow(deps: BeaconGoShadowDeps) {
         record('dropped_overload', endpoint);
         return undefined;
       }
-      if (!takeToken(endpoint)) {
+      if (!buckets.take(endpoint)) {
         record('dropped_rate_limit', endpoint);
         return undefined;
       }

@@ -73,7 +73,6 @@ func Options(s Settings) (*redis.FailoverOptions, *redis.Options, error) {
 	}, nil, nil
 }
 
-// New builds the system-Redis client for Settings.
 func New(s Settings) (redis.UniversalClient, error) {
 	failover, plain, err := Options(s)
 	if err != nil {

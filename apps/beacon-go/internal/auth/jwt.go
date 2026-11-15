@@ -167,8 +167,8 @@ func (v *Verifier) expireIfStale() {
 	}
 }
 
-// DefaultJWKSRefresh is the periodic refresh interval. Without it a signing key the hub removed stayed
-// trusted until a restart: the set was only refetched for an unknown kid.
+// DefaultJWKSRefresh is how often Run refetches the key set, so a signing key the hub removed stops
+// verifying.
 const DefaultJWKSRefresh = 10 * time.Minute
 
 // defaultRetryMin is the first retry delay after a failed periodic refresh.

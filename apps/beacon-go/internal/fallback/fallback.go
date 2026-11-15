@@ -24,7 +24,6 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("fallback: %s (%s)", e.Reason, e.Detail)
 }
 
-// New returns a fallback error.
 func New(reason string) error { return &Error{Reason: reason} }
 
 // Newf returns a fallback error with detail (detail never becomes a label).

@@ -37,7 +37,6 @@ func main() {
 	}
 }
 
-// redisClient builds the cache client (the session:data2 reads).
 func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 	if cluster {
 		opts, err := redis.ParseClusterURL(rawURL)

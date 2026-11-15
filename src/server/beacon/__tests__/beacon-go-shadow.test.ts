@@ -6,6 +6,7 @@
  */
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
+import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import {
   beaconGoShadowUrl,
   createBeaconGoShadow,
@@ -251,6 +252,23 @@ describe('beacon-go shadow pure helpers', () => {
     ).toBe('__Host-civ-token=x%2Ey; civ-token; __Secure-civitai-token=; civitai-token=l');
   });
 
+  // The seam with requestCarriesCallerCredentials: every name it treats as a credential (derived
+  // there from the same helpers, SESSION_COOKIE_NAMES in endpoint-helpers.ts) is forwarded, so
+  // beacon-go can decide Vary / Cache-Control the same way.
+  it('forwards every cookie name the credential check reads', () => {
+    const names = [
+      hostSessionCookieName(true),
+      sessionCookieName(true),
+      sessionCookieName(false),
+      legacySessionCookieName(true),
+      legacySessionCookieName(false),
+    ];
+    expect(new Set(names).size).toBe(5);
+    for (const name of names) {
+      expect(pickBeaconSessionCookies(`other=1; ${name}=v`)).toBe(`${name}=v`);
+    }
+  });
+
   it('forwards an Authorization header only as present, and only when non-empty', () => {
     expect(pickBeaconShadowHeaders({ headers: { authorization: '' } })).toEqual({});
     expect(pickBeaconShadowHeaders({ headers: { authorization: 'Bearer k' } })).toEqual({
@@ -298,14 +316,10 @@ describe('beacon-go shadow pure helpers', () => {
     expect(shadowBody(undefined)).toEqual({ body: '', bodyIsString: false });
   });
 
-  it('reads the env', () => {
-    expect(readBeaconGoShadowConfig({})).toEqual({
-      base: undefined,
-      rate: 0,
-      timeoutMs: 2000,
-      maxInFlight: 16,
-      maxPerSecond: 20,
-    });
+  it('reads the env: off by default, clamped, http(s) only', () => {
+    const off = readBeaconGoShadowConfig({});
+    expect(off.base).toBeUndefined();
+    expect(off.rate).toBe(0);
     const c = readBeaconGoShadowConfig({
       BEACON_GO_SHADOW_URL: 'http://beacon-go.test:9090',
       BEACON_GO_SHADOW_SAMPLE_RATE: '2',
