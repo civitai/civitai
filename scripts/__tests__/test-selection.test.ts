@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -357,6 +358,29 @@ describe('select fails open', () => {
     expect(r.projects).toEqual({
       unit: { mode: 'full', reason: 'no usable base (-): nothing to diff against' },
       component: { mode: 'full', reason: 'no usable base (-): nothing to diff against' },
+    });
+  });
+
+  // A re-run of an old red run: the last successful run is NEWER than this HEAD, so `base...HEAD`
+  // is empty and would scope down to the always-run set.
+  it('runs everything when the base is not an ancestor of HEAD', async () => {
+    const g = join(dir, 'repo');
+    const git = (...a: string[]) =>
+      execFileSync('git', ['-C', g, '-c', 'user.email=t@t', '-c', 'user.name=t', ...a], {
+        encoding: 'utf8',
+      }).trim();
+    execFileSync('git', ['init', '-q', g]);
+    git('commit', '-q', '--allow-empty', '-m', 'a');
+    const a = git('rev-parse', 'HEAD');
+    git('commit', '-q', '--allow-empty', '-m', 'b');
+    const b = git('rev-parse', 'HEAD');
+    git('checkout', '-q', a);
+    const r = await select(b, join(dir, 'c.json'), g, async () => {
+      throw new Error('must not build a graph for a descendant base');
+    });
+    expect(r.projects.unit).toEqual({
+      mode: 'full',
+      reason: `no usable base (${b}): nothing to diff against`,
     });
   });
 

@@ -955,12 +955,15 @@ jobs:
           SCOPED: ${{ needs.affected.outputs.unit_scoped == 'true' }}
           SHARD_TOTAL: ${{ needs.affected.outputs.unit_shard_total || 4 }}
         run: |
-          files=()
           if [ "$SCOPED" = true ]; then
             mapfile -t files < <(node scripts/ci/test-selection.mjs files "$RUNNER_TEMP/selection/selection.json" unit)
             echo "::notice title=Unit tests SCOPED::${#files[@]} selected files on ${SHARD_TOTAL} shard(s). SCOPED, not a full verdict."
+            # The wrapper itself, not `pnpm run`: pnpm hands the whole command line to `sh -c` as ONE
+            # argument, which Linux caps at 128 KiB (about 1,300 absolute test paths).
+            node scripts/test-unit-run.mjs --shard="${{ matrix.shard }}/$SHARD_TOTAL" --reporter=default --reporter=json --outputFile=unit-report.json "${files[@]}"
+          else
+            pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
           fi
-          pnpm run test:unit:run --shard="${{ matrix.shard }}/$SHARD_TOTAL" --reporter=default --reporter=json --outputFile=unit-report.json "${files[@]}"
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
@@ -1592,7 +1595,8 @@ jobs:
   nightly-bisect:
     name: Nightly first-bad-commit bisect
     needs: [unit, component]
-    runs-on: ubuntu-latest
+    # Pinned like `component`: it installs Chromium, which Playwright cannot yet on ubuntu-latest.
+    runs-on: ubuntu-24.04
     if: ${{ !cancelled() && github.event_name == 'schedule' && (needs.unit.result == 'failure' || needs.component.result == 'failure') }}
     timeout-minutes: 45
     permissions:

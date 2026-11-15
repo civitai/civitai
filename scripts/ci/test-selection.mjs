@@ -315,7 +315,9 @@ function baseUsable(base, root) {
   if (!base || base === '-' || /^0+$/.test(base)) return false;
   try {
     git(['cat-file', '-e', `${base}^{commit}`], root);
-    git(['merge-base', base, 'HEAD'], root);
+    // An ancestor only: a re-run of an older run, whose "last successful run" is NEWER than its
+    // HEAD, would otherwise diff to nothing and scope down to the always-run set.
+    git(['merge-base', '--is-ancestor', base, 'HEAD'], root);
     return true;
   } catch {
     return false;
