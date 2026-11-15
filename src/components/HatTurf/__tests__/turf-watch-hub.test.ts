@@ -6,9 +6,14 @@ type Sent = { event: string; imageIds: number[] };
 const options = (sent: Sent[], event = 'birthday2026') => ({
   event,
   send: (input: Sent) => void sent.push(input),
-  refreshMs: 60_000,
+  refreshMs: 40_000,
   coalesceMs: 250,
   minGapMs: 2_000,
+  retryMs: 5_000,
+  retryJitterMs: 1_000,
+  random: () => 0.5,
+  // No page here: visibility is driven by hand where a test needs it.
+  onVisible: () => () => undefined,
 });
 
 beforeEach(() => vi.useFakeTimers());
@@ -34,11 +39,11 @@ describe('TurfWatchHub', () => {
     [7, 8, 9].forEach((id) => hub.retain(id));
     vi.advanceTimersByTime(250);
     sent.length = 0;
-    vi.advanceTimersByTime(60_000 - 250 - 1);
+    vi.advanceTimersByTime(40_000 - 250 - 1);
     expect(sent).toEqual([]);
     vi.advanceTimersByTime(1);
     expect(sent).toEqual([{ event: 'birthday2026', imageIds: [7, 8, 9] }]);
-    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(40_000);
     expect(sent).toEqual([
       { event: 'birthday2026', imageIds: [7, 8, 9] },
       { event: 'birthday2026', imageIds: [7, 8, 9] },
@@ -54,10 +59,10 @@ describe('TurfWatchHub', () => {
     hub.retain(6);
     vi.advanceTimersByTime(250);
     hub.release(5);
-    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(40_000);
     expect(sent.at(-1)).toEqual({ event: 'birthday2026', imageIds: [5, 6] });
     hub.release(5);
-    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(40_000);
     expect(sent.at(-1)).toEqual({ event: 'birthday2026', imageIds: [6] });
     hub.dispose();
   });
@@ -107,6 +112,68 @@ describe('TurfWatchHub', () => {
   });
 });
 
+describe('TurfWatchHub lapse guards', () => {
+  test('a failed mark is sent once more after 5s plus jitter, and never a third time', async () => {
+    const tried: number[][] = [];
+    const hub = new TurfWatchHub({
+      ...options([]),
+      send: (input: Sent) => {
+        tried.push(input.imageIds);
+        return Promise.reject(new Error('down'));
+      },
+    });
+    hub.retain(41);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(tried).toEqual([[41]]);
+    // 5000 + 0.5 × 1000 = 5500ms after the failure.
+    await vi.advanceTimersByTimeAsync(5_499);
+    expect(tried).toEqual([[41]]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(tried).toEqual([[41], [41]]);
+    // The retry failed too: nothing more until the interval (at 40s).
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(tried).toEqual([[41], [41]]);
+    hub.dispose();
+  });
+
+  test('a retry pending at dispose is never sent', async () => {
+    const tried: number[][] = [];
+    const hub = new TurfWatchHub({
+      ...options([]),
+      send: (input: Sent) => {
+        tried.push(input.imageIds);
+        return Promise.reject(new Error('down'));
+      },
+    });
+    hub.retain(42);
+    await vi.advanceTimersByTimeAsync(250);
+    hub.dispose();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(tried).toEqual([[42]]);
+  });
+
+  test('page visible again: the whole set is re-marked at once and every id goes to catch-up', () => {
+    const sent: Sent[] = [];
+    const heard: number[][] = [];
+    let visible: () => void = () => undefined;
+    const hub = new TurfWatchHub({
+      ...options(sent),
+      onVisible: (callback) => {
+        visible = callback;
+        return () => undefined;
+      },
+    });
+    hub.subscribe((ids) => heard.push(ids));
+    [51, 52, 53].forEach((id) => hub.retain(id));
+    vi.advanceTimersByTime(250);
+    sent.length = 0;
+    visible();
+    expect(sent).toEqual([{ event: 'birthday2026', imageIds: [51, 52, 53] }]);
+    expect(heard).toEqual([[51, 52, 53]]);
+    hub.dispose();
+  });
+});
+
 describe('retainTurfWatchHub', () => {
   test('providers of one event share one hub; the last release stops its timers', () => {
     const sent: Sent[] = [];
@@ -128,7 +195,7 @@ describe('retainTurfWatchHub', () => {
     a.release();
     // Released twice by the same holder: counted once, so b still holds the hub.
     a.release();
-    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(40_000);
     expect(sent).toEqual([{ event: 'shared-event', imageIds: [1] }]);
 
     b.release();

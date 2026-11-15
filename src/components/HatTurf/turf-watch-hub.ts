@@ -8,7 +8,12 @@
  *
  * Same timing rules as the per-provider watcher (TurfSummaryProvider's TurfWatcher): new ids go out
  * together after a short wait and at most once per `minGapMs`; the whole set is re-marked every
- * `refreshMs`. Plain timers and an injected `send`, so it is testable without React.
+ * `refreshMs`. Two more, because a lapsed mark means pushes are missed and nothing re-reads them:
+ * - a failed mark is sent once more after `retryMs` (plus up to `retryJitterMs`), never twice;
+ * - when the page becomes visible again (a hidden tab's timers are throttled, so its marks may have
+ *   lapsed), the whole set is re-marked at once and every subscriber hears every watched id, so
+ *   each provider re-reads what has gone stale.
+ * Plain timers and an injected `send`, so it is testable without React.
  */
 
 /** The `imageIds` cap on `watchTurfImagesSchema` (MAX_TURF_IMAGES_PER_MARK on the server). */
@@ -16,34 +21,57 @@ export const MAX_IDS_PER_MARK = 50;
 
 export type TurfWatchHubOptions = {
   event: string;
-  send: (input: { event: string; imageIds: number[] }) => void;
+  /** One mark call. A rejected promise is retried once. */
+  send: (input: { event: string; imageIds: number[] }) => Promise<unknown> | void;
   /** Re-mark interval for the whole set. Must stay under the server's mark lifetime. */
   refreshMs: number;
   /** Ids added within this window go out in one mark. */
   coalesceMs: number;
   /** A mark of new ids waits at least this long after the previous one. */
   minGapMs: number;
+  /** A failed mark is sent again once, this long after (plus jitter). */
+  retryMs: number;
+  retryJitterMs: number;
   now?: () => number;
+  random?: () => number;
+  /** Calls back when the page becomes visible; returns the way to stop. Defaults to `document`. */
+  onVisible?: (callback: () => void) => () => void;
+};
+
+const documentVisible = (callback: () => void) => {
+  if (typeof document === 'undefined') return () => undefined;
+  const listener = () => {
+    if (document.visibilityState === 'visible') callback();
+  };
+  document.addEventListener('visibilitychange', listener);
+  return () => document.removeEventListener('visibilitychange', listener);
 };
 
 export class TurfWatchHub {
   readonly event: string;
-  private readonly options: Required<Omit<TurfWatchHubOptions, 'event'>>;
+  private readonly options: Required<Omit<TurfWatchHubOptions, 'event' | 'onVisible'>>;
   private readonly counts = new Map<number, number>();
   private marked = new Set<number>();
   private readonly everMarked = new Set<number>();
   private readonly listeners = new Set<(imageIds: number[]) => void>();
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly refreshTimer: ReturnType<typeof setInterval>;
+  private readonly retryTimers = new Set<ReturnType<typeof setTimeout>>();
+  private readonly stopVisible: () => void;
   private lastFlushSent = -Infinity;
+  private disposed = false;
 
-  constructor({ event, now = () => Date.now(), ...rest }: TurfWatchHubOptions) {
+  constructor({
+    event,
+    now = () => Date.now(),
+    random = Math.random,
+    onVisible = documentVisible,
+    ...rest
+  }: TurfWatchHubOptions) {
     this.event = event;
-    this.options = { ...rest, now };
-    this.refreshTimer = setInterval(() => {
-      const all = [...this.counts.keys()];
-      if (all.length) this.send(all);
-    }, rest.refreshMs);
+    this.options = { ...rest, now, random };
+    this.refreshTimer = setInterval(() => this.markAll(), rest.refreshMs);
+    this.stopVisible = onVisible(() => this.resume());
   }
 
   /** One more card on screen shows this image. */
@@ -60,7 +88,10 @@ export class TurfWatchHub {
     this.schedule();
   }
 
-  /** Hears the ids marked again after a gap (watched, then not, then again), for their catch-up. */
+  /**
+   * Hears ids to catch up: those marked again after a gap (watched, then not, then again), and every
+   * watched id when the page becomes visible again.
+   */
   subscribe(listener: (imageIds: number[]) => void) {
     this.listeners.add(listener);
     return () => void this.listeners.delete(listener);
@@ -71,16 +102,56 @@ export class TurfWatchHub {
     return [...this.counts.keys()];
   }
 
+  /** Back on screen: re-mark the whole set now, and have every provider catch up what it shows. */
+  resume() {
+    const all = this.watched();
+    if (!all.length) return;
+    this.send(all);
+    this.notify(all);
+  }
+
   dispose() {
+    this.disposed = true;
     clearTimeout(this.flushTimer);
     clearInterval(this.refreshTimer);
+    this.retryTimers.forEach((timer) => clearTimeout(timer));
+    this.retryTimers.clear();
+    this.stopVisible();
     this.flushTimer = undefined;
     this.listeners.clear();
   }
 
+  private markAll() {
+    const all = this.watched();
+    if (all.length) this.send(all);
+  }
+
+  private notify(ids: number[]) {
+    this.listeners.forEach((listener) => listener(ids));
+  }
+
   private send(ids: number[]) {
     for (let i = 0; i < ids.length; i += MAX_IDS_PER_MARK)
-      this.options.send({ event: this.event, imageIds: ids.slice(i, i + MAX_IDS_PER_MARK) });
+      this.sendOne({ event: this.event, imageIds: ids.slice(i, i + MAX_IDS_PER_MARK) }, true);
+  }
+
+  private sendOne(input: { event: string; imageIds: number[] }, retry: boolean) {
+    let sent: Promise<unknown> | void;
+    try {
+      sent = this.options.send(input);
+    } catch (error) {
+      sent = Promise.reject(error);
+    }
+    if (!sent) return;
+    sent.catch(() => {
+      if (!retry || this.disposed) return;
+      const { retryMs, retryJitterMs, random } = this.options;
+      const timer = setTimeout(() => {
+        this.retryTimers.delete(timer);
+        if (!this.disposed) this.sendOne(input, false);
+      }, retryMs + random() * retryJitterMs);
+      this.retryTimers.add(timer);
+    });
   }
 
   private schedule() {
@@ -97,7 +168,7 @@ export class TurfWatchHub {
       this.send(added);
       const again = added.filter((id) => this.everMarked.has(id));
       added.forEach((id) => this.everMarked.add(id));
-      if (again.length) this.listeners.forEach((listener) => listener(again));
+      if (again.length) this.notify(again);
     }, wait);
   }
 }

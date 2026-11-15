@@ -27,11 +27,15 @@ const SUMMARY_CHUNK = 100;
 /** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
-// With `hatTurfBatchedCalls`: the page's one shared mark set (turf-watch-hub.ts) re-marks every
-// minute. The re-mark only keeps the marks alive (TURF_WATCH_TTL_MS, 90s, on the server); a count
-// change on a marked image is pushed the moment it happens, and a card that mounts again catches up
-// by reading. A minute leaves 30s of the mark's lifetime for a late timer.
-export const BATCHED_WATCH_REFRESH_MS = 60_000;
+// With `hatTurfBatchedCalls`: the page's one shared mark set (turf-watch-hub.ts) re-marks every 40s.
+// The re-mark only keeps the marks alive (TURF_WATCH_TTL_MS, 90s, on the server); a count change on
+// a marked image is pushed the moment it happens. A lapsed mark misses pushes, so the interval
+// leaves room for one miss (two intervals, 80s, still under 90s), and a hidden tab's throttled
+// timers (woken about once a minute) still re-mark every 60s or so. The hub also retries a failed
+// mark once, and re-marks and catches up everything when the page becomes visible again.
+export const BATCHED_WATCH_REFRESH_MS = 40_000;
+export const BATCHED_WATCH_RETRY_MS = 5_000;
+export const BATCHED_WATCH_RETRY_JITTER_MS = 1_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
 // Newly mounted cards wait at least this long after a mark for the next, so a scroll stays under
@@ -462,7 +466,8 @@ function TurfWatcher({
 /**
  * TurfWatcher's job done by the page's shared hub: this provider's on-screen ids join the page's one
  * mark set, so the page sends one mark call per interval (per 50 ids) however many providers it has.
- * The hub tells every provider of ids marked again; each catches up only those its own reads hold.
+ * The hub tells every provider of ids marked again, and of every watched id when the page becomes
+ * visible again; each catches up only those its own reads hold and that have gone stale.
  */
 function TurfHubWatcher({
   event,
@@ -486,10 +491,13 @@ function TurfHubWatcher({
   useEffect(() => {
     const held = retainTurfWatchHub({
       event,
-      send: (input) => void utils.client.hatTurf.watch.mutate(input).catch(() => undefined),
+      // The hub retries a rejected mark once, then drops it.
+      send: (input) => utils.client.hatTurf.watch.mutate(input),
       refreshMs: BATCHED_WATCH_REFRESH_MS,
       coalesceMs: WATCH_COALESCE_MS,
       minGapMs: WATCH_MIN_GAP_MS,
+      retryMs: BATCHED_WATCH_RETRY_MS,
+      retryJitterMs: BATCHED_WATCH_RETRY_JITTER_MS,
     });
     hub.current = held.hub;
     const unsubscribe = held.hub.subscribe((ids) => added.current(ids));
