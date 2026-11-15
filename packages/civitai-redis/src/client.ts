@@ -2619,8 +2619,6 @@ export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
     COUNT: 'download:count',
-    /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
-    REPEATS: 'download:repeats',
     /** `<prefix>:<provider>:<hour>`: a provider's downloads this hour. See provider-download.limiter.ts. */
     PROVIDER: 'download:provider',
   },
@@ -3174,6 +3172,14 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   DOWNLOAD: {
     COUNT: 'download:count',
+    /*
+      Use: requests for one file by one user in the last day, so repeats of a file (a resumed
+      download) count toward the download limit only past a cap. A lost entry costs at most one
+      extra counted download. See src/server/utils/download-repeats.ts.
+      Structure: integer, key = `${REPEATS}:${userKey}:${fileId}`, SET NX EX 24h + INCR in one
+      single-key MULTI.
+     */
+    REPEATS: 'download:repeats',
   },
   USER: {
     BASE: 'user',
