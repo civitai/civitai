@@ -64,13 +64,16 @@ type Server struct {
 	Log      *slog.Logger
 	// ShadowQueue bounds concurrent shadow comparisons; a full queue drops (never blocks Node).
 	ShadowQueue chan struct{}
+	// ProbeQueue bounds concurrent Go-first probes (probe.go); a full queue drops the probe. Its own
+	// queue, so a probe never takes a comparison's slot; the solo-phase CPU method sees both.
+	ProbeQueue chan struct{}
 	// AllowedOrigins is the app's origin allow-list (config.AllowedOriginHosts). A public request whose
 	// Origin (else Referer) host is not on it is handed to Fallback: the app's isAcceptableOrigin then
 	// answers it (401 in production), and this service never serves one the app would refuse.
 	AllowedOrigins map[string]bool
 
-	// shadowStarts counts shadow samples admitted to the queue; a phase whose start and end readings
-	// differ overlapped another sample (phase CPU is then not attributed).
+	// shadowStarts counts shadow samples and probes admitted to their queues; a phase whose start and
+	// end readings differ overlapped another sample (phase CPU is then not attributed).
 	shadowStarts atomic.Uint64
 	// V1 serves the REST `/api/v1/images` shadow; nil = every such sample falls back.
 	V1 *feed.V1Deps
@@ -100,11 +103,11 @@ type phaseClock struct {
 	solo   bool
 }
 
-// startPhase begins a shadow phase. The caller holds a queue slot, so a queue length of 1 means this
-// is the only sample in flight.
+// startPhase begins a shadow phase. The caller holds a queue slot, so a queue length of 1 (and no
+// probe running) means this is the only sample in flight.
 func (s *Server) startPhase() phaseClock {
 	p := phaseClock{starts: s.shadowStarts.Load()}
-	p.solo = len(s.ShadowQueue) == 1
+	p.solo = s.aloneInFlight()
 	p.cpu, p.cpuOK = processCPU()
 	p.wall = time.Now()
 	return p
@@ -120,12 +123,17 @@ func (s *Server) endPhase(p phaseClock, endpoint, phase, outcome string) {
 		return
 	}
 	cpu, ok := processCPU()
-	if !ok || s.shadowStarts.Load() != p.starts || len(s.ShadowQueue) != 1 {
+	if !ok || s.shadowStarts.Load() != p.starts || !s.aloneInFlight() {
 		return
 	}
 	s.Metrics.ShadowPhaseCPU.WithLabelValues(endpoint, phase, outcome).Add((cpu - p.cpu).Seconds())
 	s.Metrics.ShadowPhaseSolo.WithLabelValues(endpoint, phase, outcome).Inc()
 	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(endpoint, phase, outcome).Add(wall)
+}
+
+// aloneInFlight: the caller's shadow sample is the only sample or probe holding a queue slot.
+func (s *Server) aloneInFlight() bool {
+	return len(s.ShadowQueue) == 1 && len(s.ProbeQueue) == 0
 }
 
 // computed is one answer. payload may be a pooled buffer's bytes (buf): whoever ends up holding the
@@ -144,23 +152,47 @@ type computed struct {
 
 // compute answers a request, or returns a fallback/other error.
 func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error) {
+	req, signedOut, err := s.prepare(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	res, err := feed.Serve(ctx, s.Deps, req)
+	if err != nil {
+		return nil, err
+	}
+	buf, err := superjson.SerializeBuffer(res.Value())
+	if err != nil {
+		return nil, err
+	}
+	out := &computed{payload: buf.Bytes(), buf: buf}
+	if signedOut {
+		// createContext: cacheable only without a session user (a banned user still has one).
+		out.ttl = &trpc.SignedOutTTL
+	}
+	return out, nil
+}
+
+// prepare is compute up to the handler call: the request's input, viewer and domain cap as
+// feed.Serve takes them, and whether there is no session user at all. The Go-first probe runs the
+// same steps (probe.go).
+func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bool, error) {
 	if r.Method != http.MethodGet {
-		return nil, fallback.New("method")
+		return feed.Request{}, false, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return nil, fallback.Newf("input-envelope", "%v", err)
+		return feed.Request{}, false, fallback.Newf("input-envelope", "%v", err)
 	}
 	in, err := feed.Parse(raw)
 	if err != nil {
-		return nil, err
+		return feed.Request{}, false, err
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
-		return nil, fallback.New("verified-bot")
+		return feed.Request{}, false, fallback.New("verified-bot")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return nil, err
+		return feed.Request{}, false, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
@@ -172,20 +204,7 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 	}
-	res, err := feed.Serve(ctx, s.Deps, req)
-	if err != nil {
-		return nil, err
-	}
-	buf, err := superjson.SerializeBuffer(res.Value())
-	if err != nil {
-		return nil, err
-	}
-	out := &computed{payload: buf.Bytes(), buf: buf}
-	if user == nil {
-		// createContext: cacheable only without a session user (a banned user still has one).
-		out.ttl = &trpc.SignedOutTTL
-	}
-	return out, nil
+	return req, user == nil, nil
 }
 
 // computeV1 answers a REST `/api/v1/images` request (handleImagesRequest), or returns a fallback/other
@@ -300,28 +319,38 @@ func (s *Server) panicked(where string, value any, stack []byte) {
 // `canceled` fallback; a panic anywhere in the computation, its errgroup workers included, is counted
 // under where and is the `panic` fallback.
 func (s *Server) computeWithin(parent context.Context, r *http.Request, where string, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
-	budget := s.budget()
-	ctx, cancel := context.WithTimeout(parent, budget)
-	defer cancel()
-	c, err := safe.Call(func() (*computed, error) { return fn(ctx, r) })
-	var pe *safe.PanicError
-	if errors.As(err, &pe) {
-		s.panicked(where, pe.Value, pe.Stack)
-		return nil, fallback.New("panic")
-	}
-	if errors.Is(parent.Err(), context.Canceled) {
-		c.release()
-		return nil, fallback.New("canceled")
-	}
-	if ctx.Err() != nil {
-		c.release()
-		return nil, fallback.Newf("deadline", "budget %v", budget)
-	}
+	var c *computed
+	err := s.within(parent, where, func(ctx context.Context) (err error) {
+		c, err = fn(ctx, r)
+		return err
+	})
 	if err != nil {
 		c.release()
 		return nil, err
 	}
 	return c, nil
+}
+
+// within is computeWithin for any computation (the Go-first probe's too): fn under the request
+// budget, its panic, cancellation and deadline turned into the same fallbacks. An error from within
+// means whatever fn produced must be discarded.
+func (s *Server) within(parent context.Context, where string, fn func(context.Context) error) error {
+	budget := s.budget()
+	ctx, cancel := context.WithTimeout(parent, budget)
+	defer cancel()
+	_, err := safe.Call(func() (struct{}, error) { return struct{}{}, fn(ctx) })
+	var pe *safe.PanicError
+	if errors.As(err, &pe) {
+		s.panicked(where, pe.Value, pe.Stack)
+		return fallback.New("panic")
+	}
+	if errors.Is(parent.Err(), context.Canceled) {
+		return fallback.New("canceled")
+	}
+	if ctx.Err() != nil {
+		return fallback.Newf("deadline", "budget %v", budget)
+	}
+	return err
 }
 
 // ServeHTTP is the public route.

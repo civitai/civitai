@@ -114,9 +114,10 @@ internal/browsing    level flags, domain cap, browsing-settings addons, host col
 internal/feed        input parsing, the SQL, page sources, page loop, post completion, grouping and
                      ordering, gallery gates; the REST /api/v1/images port (v1query.go, v1images.go)
 internal/feedsvc     the image feed service: query mapper, cursor codec, HTTP client
-internal/hydrate     read-only cache readers (msgpack) and miss paths
+internal/hydrate     read-only cache readers (msgpack) and miss paths; the page-cache enumeration
+                     and the presence check of the Go-first probe (presence.go)
 internal/shadow      the comparators (superjson envelope; plain JSON for REST)
-internal/server      HTTP handlers, metrics
+internal/server      HTTP handlers (the Go-first probe: probe.go), metrics
 internal/fallback    the fallback error and its reasons
 ```
 
@@ -355,6 +356,128 @@ read separates them by category.
 over a window that covers every supported shape in volume, zero `membership` / `order` diffs not
 explained by timing, and a fallback rate low enough that serving is worth it.
 
+**What shadow cannot see: serve-time cache misses.** Node fills the per-entity caches while it
+answers and posts its sample only afterwards, so a shadow compute always reads warm caches. A
+Go-first serve meets them as they were BEFORE Node ran: a serving trial fell back on cache misses
+that the shadow fallback rate never showed. The Go-first probe (§7.1) measures that miss rate on
+live traffic before any serving step.
+
+### 7.1 Go-first probe
+
+**Node side** (`src/server/trpc/feed-go-shadow.ts`, `probe`; flag `feed-go-gofirst-probe`, default
+OFF; `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE`, default 0). For a request the shadow sampler sampled — so
+the probe and the comparison describe the same requests — and for that fraction of them, the route
+starts, right after `beginFeedGoShadow` and BEFORE the tRPC handler runs, a fire-and-forget
+`POST /internal/probe/image.getImagesAsPostsInfinite` to feed-go's internal port:
+
+```json
+{ "input": "<the raw ?input value>",
+  "headers": { "cookie": "<session cookies only>", "host": "…", "cf-ipcountry": "…", … },
+  "startedAt": 1763200000123.25 }
+```
+
+`headers` is exactly what a shadow sample forwards (§7: the viewer context the page depends on);
+`startedAt` is the route's start on the epoch clock (`performance.timeOrigin + performance.now()`,
+in ms). Bounds: the probe runs only inside a sample that already took a per-second token and an
+in-flight slot; it takes its own slot under the same `FEED_GO_SHADOW_MAX_IN_FLIGHT` cap (dropped as
+`dropped_overload` when none is free) and has the shadow timeout. Outcomes:
+`civitai_app_feed_go_gofirst_probe_total{outcome,feed_endpoint}`.
+
+**Go side** (`internal/server/probe.go`). `/internal/probe/<procedure>` answers 202 at once and
+probes in the background, bounded by its own queue (`ProbeQueue`, as many slots as
+`FEED_GO_SHADOW_WORKERS`; full → `feed_go_gofirst_dropped_total`). The probe:
+
+1. resolves the page ids **exactly as serving would**: the same `prepare` (input, viewer, domain
+   cap) and the same `feed.Serve` over the same feed service and replica — gallery gates, pinned
+   and sponsored posts, the page loop and the lazy post completions included — with two swaps
+   (`probeDeps`): the page hydrator is `hydrate.PresenceProbe`, and the page-query cache is
+   read-only (`QueryCache.ReadOnly`). Its answer is discarded, never serialized;
+2. on every hydration of a page, runs `hydrate.Sources.Presence` instead: the same reads `Page`
+   sends for the same ids, read-only — GETs of the packed per-id entries (an entry is present
+   exactly when `Page` would use it: a `notFound` marker or a stale entry is present, a
+   `{debounce: true}` marker or an undecodable value is a miss), EXISTS on the metric hashes, and,
+   as `Page`'s stage 2, GETs of the cosmetic records the present user-cosmetic and frame entries
+   name. No replica query for a miss, no reactions query, no Model3D visibility query, no write;
+3. records the result in `feed_go_gofirst_total{feed_endpoint,result}`:
+   - `would_serve`: every cache answered, or missed only where Go answers the miss itself (basic
+     users, profile pictures, thumbnails, cosmetic records: a `Reason` of `""` in
+     `hydrate.PageCaches`);
+   - `would_miss`: a cache Go falls back on missed — a page cache with a `Reason` (user cosmetics,
+     image frames, event decorations, tag ids, metric hashes), or before hydration the session user
+     (`session-cache-miss` / `-cleared`) or the gallery settings (`gallery-settings-miss` /
+     `-stale`);
+   - `unsupported`: Go falls back for any other reason (an input shape, a bearer token, a sponsored
+     post it cannot decide, the request budget); the reason is on
+     `feed_go_fallback_total{mode="probe"}`;
+   - `error`: a store read failed (a miss it cannot tell from one), a panic
+     (`feed_go_panics_total{where="probe"}`), or a malformed probe;
+
+   and, once per probe for each cache that missed at least one id (whatever the result),
+   `feed_go_gofirst_miss_total{feed_endpoint,cache}`, so the caches that block serving read in
+   order of how often.
+
+**One enumeration.** `hydrate.PageCaches` is the single list of the per-entity caches a page reads,
+with the fallback reason a miss raises today. Its tests pin it against `Page` itself: `Presence`
+reads exactly the keys `Page` reads, and with each cache emptied `Page` falls back with that row's
+reason or answers the page; the golden tests run the probe beside serving on every fixture, and
+with each cache of every served fixture emptied, and require the same verdict. The Go-side miss
+computation (branch `zach/feed-go-compute-misses`) answers the user-cosmetics, frame,
+event-decoration and metric-hash misses: rebased onto it, those rows' `Reason` becomes `""` when
+`Sources.Compute` is set, and `would_serve` grows accordingly. The probe never computes a miss.
+
+**Adding a procedure.** One entry in `probes` (`internal/server/probe.go`): the `feed_endpoint`
+label and a `run` that resolves that procedure's ids as its serving path does, with the
+`PresenceProbe` handed to it standing in for its hydrator. `model.getAll` (PR #9062) and
+`image.getInfinite` (PR #9042) plug in that way, with a Node-side call of `probe` on their own
+sampled requests.
+
+**The race, and how close to request start it runs.** The probe is only meaningful if its cache
+reads land before Node's fills. It is not ahead by construction: both sides start at about the same
+time and run the same chain. Node: the route starts the probe POST (its bytes leave at the handler's
+first await, which comes before any page read), then `createContext` (session), the gallery gates, the feed-service call, the
+page query, the hydration's cache MGETs, the miss reads, and only then the cache writes. Go: receipt,
+the session and gallery reads, the same feed-service call and page query, then `Presence`. So Go's
+first page check lands roughly where Node's hydration starts; Node's first fill comes after its own
+MGET plus a miss query, which is the margin. Two histograms measure it, both against `startedAt`:
+
+- `feed_go_gofirst_receipt_lag_seconds`: probe receipt minus request start (transport and
+  scheduling);
+- `feed_go_gofirst_check_lag_seconds`: the first page cache read minus request start — the number
+  to hold against Node's time to its first fill on the same procedure (the route's hydration
+  span).
+
+Both cross two pods' clocks; a negative difference is recorded as 0, so mass in the lowest bucket
+can include clock skew. Later pages of one request (the page loop, the post completions) are
+checked later than the first, while Node fills only what IT reads; a miss on those is a real
+Go-first miss unless Node read the same ids first. Where the probe loses the race it reads a cache
+Node just warmed, so a lost race UNDER-counts misses: `would_serve` is an upper bound, and the lag
+histograms say how often the bound is loose.
+
+**Go/no-go for serving** (operator decision, 2026-11-15): both, over the same window and endpoint.
+
+```promql
+# 1. Parity: match rate of the shadow comparison >= 0.95.
+sum(rate(feed_go_shadow_compare_total{feed_endpoint="as-posts",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{feed_endpoint="as-posts",result=~"match|fields|order|membership"}[1h]))
+
+# 2. Go-first served share >= 0.90: of the probes, the share Go would have answered itself.
+sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",result="would_serve"}[1h]))
+  / sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts"}[1h]))
+
+# What blocks (2): the caches, then the other fallbacks.
+topk(10, sum by (cache) (rate(feed_go_gofirst_miss_total{feed_endpoint="as-posts"}[1h])))
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="as-posts",mode="probe"}[1h])))
+
+# The race margin: p50 / p99 of the first cache read after request start.
+histogram_quantile(0.5, sum by (le) (rate(feed_go_gofirst_check_lag_seconds_bucket{feed_endpoint="as-posts"}[1h])))
+histogram_quantile(0.99, sum by (le) (rate(feed_go_gofirst_check_lag_seconds_bucket{feed_endpoint="as-posts"}[1h])))
+```
+
+**Serve only when `match >= 0.95` AND `would_serve / all probes >= 0.90`.** The second
+denominator is every probe, `unsupported` and `error` included: a request Go falls back on for any
+reason is not served Go-first. Read `feed_go_gofirst_dropped_total` and the Node-side `dropped_overload`
+beside it: a dropped probe is not in the denominator.
+
 ## 8. Flags the Node path reads, and what this service does with them
 
 This service does not evaluate Flipt (a Go Flipt client is a follow-up). Each flag below is either
@@ -477,7 +600,9 @@ Series:
 - `feed_go_shadow_phase_seconds` — wall time of every phase (histogram).
 - `feed_go_shadow_phase_cpu_seconds_total` — **process** CPU (`getrusage(RUSAGE_SELF)`, user+system)
   consumed between the phase's start and end, added only when the phase was **solo**: it was the only
-  shadow sample holding a queue slot when it started, and no sample was admitted before it ended.
+  shadow sample holding a queue slot when it started, no Go-first probe (§7.1) held one, and no
+  sample or probe was admitted before it ended. (A probe of a request usually runs while that
+  request's shadow sample is on its way, so with probes on, coverage drops.)
 - `feed_go_shadow_phase_solo_total` — how many phases were counted in the CPU series (its denominator).
 - `feed_go_shadow_phase_solo_wall_seconds_total` — the wall time of those same solo phases, to compare
   with the mean over every phase (the length-bias check below).

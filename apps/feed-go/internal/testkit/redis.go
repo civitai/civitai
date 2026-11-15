@@ -350,5 +350,40 @@ func (p *pipe) SAdd(ctx context.Context, key string, members ...any) *redis.IntC
 	return cmd
 }
 
+// exists is EXISTS over one key: 1 when it holds a value of any type (an empty hash is no key).
+func (r *Redis) exists(key string) int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.strings[key]; ok {
+		return 1
+	}
+	if len(r.hashes[key]) > 0 || len(r.sets[key]) > 0 {
+		return 1
+	}
+	return 0
+}
+
+// Exists is EXISTS, pipelined. One key per command (a cluster pipeline sends one per slot anyway);
+// several keys panic, so a test never passes on a count the fake did not compute.
+func (p *pipe) Exists(ctx context.Context, keys ...string) *redis.IntCmd {
+	if len(keys) != 1 {
+		panic("testkit.Redis: EXISTS of other than one key")
+	}
+	key := keys[0]
+	cmd := redis.NewIntCmd(ctx, "exists", key)
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		cmd.SetVal(p.r.exists(key))
+	})
+	return cmd
+}
+
 // ErrDown is a stand-in transport failure.
 var ErrDown = errors.New("testkit: redis is down")

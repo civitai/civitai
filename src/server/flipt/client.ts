@@ -274,6 +274,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // per 5s per process; shares FEED_GO_SHADOW_URL and the rate / in-flight / per-second knobs with
   // FEED_GO_SHADOW. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_V1_IMAGES = 'feed-go-shadow-v1-images',
+  // The Go-first cache-presence probe: for a request the feed-go shadow sampler sampled, a POST at
+  // the START of the request (before the handler fills the caches) to feed-go's
+  // `/internal/probe/image.getImagesAsPostsInfinite`, which records the serve-time cache misses a
+  // Go-first serve would meet. DEFAULT-OFF. Global boolean, read at most once per 5s per process;
+  // also needs FEED_GO_SHADOW_URL and FEED_GO_GOFIRST_PROBE_SAMPLE_RATE > 0 (a fraction of the shadow
+  // samples). See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_GOFIRST_PROBE = 'feed-go-gofirst-probe',
   // Mirrors a sampled fraction of the /api/internal/ping and /api/internal/pulse beacons (the
   // request, Node's response AND the tracker rows it wrote) to the beacon-go shadow comparator,
   // after the response is written. DEFAULT-OFF. Global boolean, read at most once per 5s per

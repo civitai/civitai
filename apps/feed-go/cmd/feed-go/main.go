@@ -162,13 +162,15 @@ func run(log *slog.Logger) error {
 		NodeProduction: true,
 	}
 	srv := &server.Server{
-		Resolver:       resolver,
-		Deps:           deps,
-		Hosts:          cfg.Hosts,
-		RegionRules:    cfg.RegionRules,
-		Metrics:        metrics,
-		Log:            log,
-		ShadowQueue:    make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		Resolver:    resolver,
+		Deps:        deps,
+		Hosts:       cfg.Hosts,
+		RegionRules: cfg.RegionRules,
+		Metrics:     metrics,
+		Log:         log,
+		ShadowQueue: make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		// The Go-first probes get as many slots as the comparisons, in their own queue.
+		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
 		RequestBudget:  cfg.RequestBudget,
