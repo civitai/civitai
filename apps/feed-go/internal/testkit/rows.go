@@ -146,11 +146,13 @@ func isNumber(k reflect.Kind) bool {
 }
 
 // Route answers one query: Match picks it by SQL text, Rows builds the answer from the bound
-// arguments (or fails the query).
+// arguments (or fails the query). SQLRows, when set, is used instead of Rows and also receives the
+// SQL text, for a fake that evaluates the query's clauses (the golden tests' image query).
 type Route struct {
 	// Match is a substring the SQL must contain (all of them, when several are given with "&&").
-	Match string
-	Rows  func(args []any) (*Rows, error)
+	Match   string
+	Rows    func(args []any) (*Rows, error)
+	SQLRows func(sql string, args []any) (*Rows, error)
 }
 
 // DB is a Querier that answers each query from the first Route whose Match the SQL contains. A query
@@ -173,7 +175,13 @@ func (d *DB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, erro
 	}
 	for _, r := range d.Routes {
 		if matches(sql, r.Match) {
-			rows, err := r.Rows(args)
+			var rows *Rows
+			var err error
+			if r.SQLRows != nil {
+				rows, err = r.SQLRows(sql, args)
+			} else {
+				rows, err = r.Rows(args)
+			}
 			if err != nil {
 				return nil, err
 			}
