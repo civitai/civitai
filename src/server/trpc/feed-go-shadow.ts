@@ -25,8 +25,8 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
  * the route's Flipt flag is on (unknown or uninitialized reads as off). Both routes share the
  * sample rate and the in-flight cap; each has its own per-second bucket of the same size, so one
- * route's traffic cannot starve the other's samples. A REST sample takes its in-flight slot and its
- * token only once the handler has answered 200 (in `finish`): it holds nothing while it runs.
+ * route cannot drain the other's tokens. A REST sample takes its in-flight slot and its token
+ * only once the handler has answered 200 (in `finish`): it holds nothing while it runs.
  *
  * Why the per-second token bucket (`FEED_GO_SHADOW_MAX_PER_SECOND`): the send happens after the
  * response, but encoding the page (`JSON.stringify`, plus `superjson.serialize` for a devalue
