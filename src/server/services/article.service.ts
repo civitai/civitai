@@ -867,17 +867,28 @@ export const getArticleById = async ({
     });
 
     const isOwnerOrMod = isModerator || userId === article.userId;
-    // A cover or banner its model withholds is shown only to moderators and the article's owner:
-    // the edit form reads this, and a cover hidden from it would be saved back as cleared.
-    const withheldByModel = isOwnerOrMod
+    // A cover or banner its model withholds is shown only to moderators, and to the article's
+    // owner when they uploaded it. The edit form learns of one it may not see from the
+    // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
+    const withheldByModel = isModerator
       ? new Set<number>()
       : await getModelWithheldImageIds(
           [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)
         );
-    const allowedByModel = <T extends { id: number }>(image: T | null) =>
-      image && !withheldByModel.has(image.id) ? image : null;
-    const coverImage = viewableArticleImage(allowedByModel(article.coverImage), isOwnerOrMod);
-    const bannerImage = viewableArticleImage(allowedByModel(article.bannerImage), isOwnerOrMod);
+    const hiddenByModel = (image: { id: number; userId: number } | null) =>
+      !!image &&
+      withheldByModel.has(image.id) &&
+      !(userId === article.userId && image.userId === article.userId);
+    const coverImageWithheld = hiddenByModel(article.coverImage);
+    const bannerImageWithheld = hiddenByModel(article.bannerImage);
+    const coverImage = viewableArticleImage(
+      coverImageWithheld ? null : article.coverImage,
+      isOwnerOrMod
+    );
+    const bannerImage = viewableArticleImage(
+      bannerImageWithheld ? null : article.bannerImage,
+      isOwnerOrMod
+    );
 
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.
@@ -918,6 +929,8 @@ export const getArticleById = async ({
       })),
       coverImage,
       bannerImage,
+      coverImageWithheld,
+      bannerImageWithheld,
       content,
       contentJson,
       contentImages,
@@ -1131,6 +1144,31 @@ export const upsertArticle = async ({
           if (!isImgOwner) throw throwAuthorizationError('Invalid banner image');
         },
       });
+    }
+
+    // A save that leaves out a cover or banner its model hides from this editor keeps it: the
+    // edit form never had it to send back (getArticleById).
+    if (article && !isModerator) {
+      const stored = [
+        coverId === null ? article.coverId : null,
+        bannerId === null ? article.bannerId : null,
+      ].filter(isDefined);
+      if (stored.length) {
+        const withheld = await getModelWithheldImageIds(stored, dbWrite);
+        const owners = withheld.size
+          ? await dbWrite.image.findMany({
+              where: { id: { in: [...withheld] } },
+              select: { id: true, userId: true },
+            })
+          : [];
+        const hiddenIds = new Set(
+          owners.filter((image) => image.userId !== userId).map((image) => image.id)
+        );
+        if (coverId === null && article.coverId && hiddenIds.has(article.coverId))
+          coverId = undefined;
+        if (bannerId === null && article.bannerId && hiddenIds.has(article.bannerId))
+          bannerId = undefined;
+      }
     }
 
     if (!id) {

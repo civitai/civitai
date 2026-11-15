@@ -724,6 +724,58 @@ describe('the article banner', () => {
     expect(deletedIds()).not.toContain(COVER.id);
   });
 
+  describe('a save without a cover its model hides from the editor', () => {
+    const saveWithoutCover = async (stored: Row, withheld: boolean) => {
+      dbMock.dbWrite.article.findUnique.mockResolvedValue({
+        ...((await dbMock.dbWrite.article.findUnique({} as never)) as object),
+        coverId: stored.id,
+      } as never);
+      const holdRead = dbMock.dbWrite.$queryRaw.getMockImplementation();
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) =>
+        strings.join('?').includes('JOIN "Post" p ON p.id = i."postId"')
+          ? withheld
+            ? [{ id: stored.id }]
+            : []
+          : holdRead?.(strings, ...values)) as never);
+      const imageRead = dbMock.dbWrite.image.findMany.getMockImplementation();
+      dbMock.dbWrite.image.findMany.mockImplementation((async (args: any) =>
+        args.select?.userId
+          ? IMAGES.filter((image) => args.where.id.in.includes(image.id)).map(({ id, userId }) => ({
+              id,
+              userId,
+            }))
+          : imageRead?.(args)) as never);
+      dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+      await upsertArticle({
+        id: ARTICLE_ID,
+        userId: AUTHOR,
+        title: 'A title',
+        content: '<p>had images</p>',
+        status: 'Draft',
+        coverImage: null,
+        bannerImage: { id: BANNER.id, url: 'u' },
+      } as never);
+      // What the update wrote for the cover: undefined leaves the column alone.
+      const [{ data }] = dbMock.dbWrite.article.update.mock.calls.at(-1) as [{ data: any }];
+      return data.coverId;
+    };
+
+    it("🔴 keeps a withheld cover someone else uploaded, which the owner's form never had", async () => {
+      expect(await saveWithoutCover(FOREIGN, true)).toBeUndefined();
+    });
+
+    it('clears it when its model does not withhold it', async () => {
+      expect(await saveWithoutCover(FOREIGN, false)).toBeNull();
+    });
+
+    it("clears the owner's own withheld cover, which their form showed", async () => {
+      expect(await saveWithoutCover(COVER, true)).toBeNull();
+    });
+  });
+
   describe('when a moderator replaces the cover', () => {
     const replaceAsModerator = async (stored: Row, next: Row) => {
       dbMock.dbWrite.article.findUnique.mockResolvedValue({
