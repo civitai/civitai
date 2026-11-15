@@ -18,7 +18,8 @@ last sections list what is **not** at parity and what a deployment needs.
 
 A second port, the public REST endpoint `GET /api/v1/images`, runs in **shadow only** (nothing routes
 public traffic to it): §13. It shares the feed-service client, the hydration readers, the caches, the
-shadow queue and the metric families, told apart by an `endpoint` label.
+shadow queue and the metric families, told apart by a `feed_endpoint` label (not `endpoint`: that is a
+reserved scrape target label, which would overwrite ours).
 
 ---
 
@@ -328,8 +329,8 @@ path as serving, and compares decoded values:
   with its reason), `go_error`;
 - each differing path is counted by **category** — the path with indices folded to `*`, truncated at
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
-  `feed_go_shadow_field_diffs_total{endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
-- every `feed_go_*` series carries `endpoint` (`as-posts` for this procedure, `v1-images` for §13):
+  `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
+- every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13):
   two values, so the label at most doubles a family's cardinality;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field.
 
@@ -419,8 +420,8 @@ no hash was cached — a case this service falls back on (`metrics-miss`) instea
 ## 10. Measurement plan — CPU per call, Go vs Node, same traffic
 
 Shadow mode gives both sides the same requests. During it the Go process does nothing but handle
-shadow samples, so its CPU per call is a plain ratio. Every series below carries `endpoint`; add
-`endpoint="as-posts"` (or `"v1-images"`, §13) to each selector to read one endpoint. The
+shadow samples, so its CPU per call is a plain ratio. Every series below carries `feed_endpoint`; add
+`feed_endpoint="as-posts"` (or `"v1-images"`, §13) to each selector to read one endpoint. The
 whole-process ratio cannot be split by endpoint (process CPU has no label), so with both shadows on
 read the per-phase figure, which can. **That ratio is an UPPER BOUND for serving:**
 each shadow sample also costs work serving never does — receiving and decoding Node's envelope (up
@@ -472,8 +473,8 @@ wall-time share overstates compute; use the wall histogram for latency and as a 
 
 ```promql
 # Go CPU per SERVED call, compute only (the go/no-go figure), per endpoint.
-sum by (endpoint) (rate(feed_go_shadow_phase_cpu_seconds_total{phase="compute",outcome="served"}[1h]))
-  / sum by (endpoint) (rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
+sum by (feed_endpoint) (rate(feed_go_shadow_phase_cpu_seconds_total{phase="compute",outcome="served"}[1h]))
+  / sum by (feed_endpoint) (rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
 
 # Coverage: share of served computes that were solo (low share = the per-phase figure is a sample).
 sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
@@ -700,8 +701,8 @@ POSTs
 A request carrying an API credential (a bearer header or `?token=`) is never mirrored, only counted
 (`skipped_credential`): `metadata.nextPage` repeats the request's query, `?token=` included, and this
 service would fall back on it anyway. Outcomes are counted in
-`civitai_app_feed_go_shadow_samples_total{outcome,endpoint="v1-images"}`; the encode counters carry
-`endpoint` too.
+`civitai_app_feed_go_shadow_samples_total{outcome,feed_endpoint="v1-images"}`; the encode counters carry
+`feed_endpoint` too.
 
 ### 13.5 Comparison
 
@@ -727,13 +728,13 @@ recorded as compute outcome `served_empty` (not `served`) and, when it matches, 
 over the same calls:
 
 ```promql
-sum(rate(feed_go_shadow_phase_cpu_seconds_total{endpoint="v1-images",phase="compute",outcome="served"}[1h]))
-  / sum(rate(feed_go_shadow_phase_solo_total{endpoint="v1-images",phase="compute",outcome="served"}[1h]))
+sum(rate(feed_go_shadow_phase_cpu_seconds_total{feed_endpoint="v1-images",phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{feed_endpoint="v1-images",phase="compute",outcome="served"}[1h]))
 
-sum(rate(feed_go_shadow_compare_total{endpoint="v1-images",result="match"}[1h]))
-  / sum(rate(feed_go_shadow_compare_total{endpoint="v1-images",result=~"match|fields|order|membership"}[1h]))
+sum(rate(feed_go_shadow_compare_total{feed_endpoint="v1-images",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{feed_endpoint="v1-images",result=~"match|fields|order|membership"}[1h]))
 
-topk(10, sum by (reason) (rate(feed_go_fallback_total{endpoint="v1-images",mode="shadow"}[1h])))
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="v1-images",mode="shadow"}[1h])))
 ```
 
 **What share of the route that is.** The figure above says nothing about the requests the port

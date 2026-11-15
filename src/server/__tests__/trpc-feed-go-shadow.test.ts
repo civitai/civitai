@@ -7,6 +7,7 @@ import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
 import { FEED_GO_SHADOW_PATH, resetFeedGoShadowForTests } from '~/server/trpc/feed-go-shadow';
+import { FEED_GO_SHADOW_ENDPOINT_LABEL } from '~/server/prom/feed-go-shadow.metrics';
 
 /**
  * The feed-go shadow sampler wired end to end: the real route (`src/pages/api/trpc/[trpc].ts`,
@@ -175,10 +176,10 @@ async function outcomeCounts(): Promise<Record<string, number>> {
   );
   if (!metric) return {};
   const { values } = await metric.get();
-  // This route's series only: the REST route's (endpoint v1-images) are seeded at 0 too.
+  // This route's series only: the REST route's (feed_endpoint v1-images) are seeded at 0 too.
   return Object.fromEntries(
     values
-      .filter((v) => v.labels.endpoint === 'as-posts')
+      .filter((v) => v.labels.feed_endpoint === 'as-posts')
       .map((v) => [String(v.labels.outcome), v.value])
   );
 }
@@ -312,5 +313,24 @@ describe('feed-go shadow, end to end', () => {
       await new Promise((r) => setTimeout(r, 10));
     release();
     expect((await outcomeCounts()).timeout).toBe((before.timeout ?? 0) + 1);
+  });
+
+  // `endpoint` is a reserved scrape target label: the scraper's own value would overwrite ours.
+  it('labels the endpoint as feed_endpoint, never endpoint', async () => {
+    expect(FEED_GO_SHADOW_ENDPOINT_LABEL).toBe('feed_endpoint');
+    for (const name of [
+      'civitai_app_feed_go_shadow_samples_total',
+      'civitai_app_feed_go_shadow_encode_seconds_total',
+      'civitai_app_feed_go_shadow_encode_bytes_total',
+    ]) {
+      const metric = instrumentationRegistry.getSingleMetric(name);
+      expect(metric, name).toBeDefined();
+      const { values } = await metric!.get();
+      // Seeded for both endpoints, so the label set is visible without traffic.
+      expect(values.map((v) => v.labels.feed_endpoint).sort(), name).toEqual(
+        expect.arrayContaining(['as-posts', 'v1-images'])
+      );
+      for (const v of values) expect(Object.keys(v.labels), name).not.toContain('endpoint');
+    }
   });
 });

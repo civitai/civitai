@@ -64,7 +64,7 @@ func serveServer(reg *prometheus.Registry, fn func(context.Context, *http.Reques
 
 func requests(t *testing.T, reg *prometheus.Registry, mode, outcome string) float64 {
 	t.Helper()
-	v, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"endpoint": EndpointAsPosts, "mode": mode, "outcome": outcome})
+	v, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": EndpointAsPosts, "mode": mode, "outcome": outcome})
 	return v
 }
 
@@ -243,13 +243,13 @@ func TestServeHTTPPanicFallsBack(t *testing.T) {
 
 func shadowResult(t *testing.T, reg *prometheus.Registry, result string) float64 {
 	t.Helper()
-	v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointAsPosts, "result": result})
+	v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": result})
 	return v
 }
 
 func shadowFallback(t *testing.T, reg *prometheus.Registry, reason string) float64 {
 	t.Helper()
-	v, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"endpoint": EndpointAsPosts, "mode": "shadow", "reason": reason})
+	v, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"feed_endpoint": EndpointAsPosts, "mode": "shadow", "reason": reason})
 	return v
 }
 
@@ -365,7 +365,7 @@ func TestCloseCancelsAndDrainsShadowSamples(t *testing.T) {
 		return nil, nil
 	}
 	post(t, s, "{}")
-	if v, _ := metricValue(t, reg, "feed_go_shadow_dropped_total", map[string]string{"endpoint": EndpointAsPosts}); v != 1 {
+	if v, _ := metricValue(t, reg, "feed_go_shadow_dropped_total", map[string]string{"feed_endpoint": EndpointAsPosts}); v != 1 {
 		t.Fatalf("dropped after close = %v, want 1", v)
 	}
 }
@@ -527,4 +527,53 @@ func testCounterValue(t *testing.T, c prometheus.Counter) float64 {
 	reg.MustRegister(c)
 	v, _ := metricValue(t, reg, "x", map[string]string{})
 	return v
+}
+
+// The endpoint label is `feed_endpoint` on every per-endpoint family. `endpoint` is a reserved scrape
+// target label: the scraper's own value overwrites it, so a query on endpoint="as-posts" would match
+// nothing. Each family is touched once so Gather shows its label names.
+func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
+	if EndpointLabel != "feed_endpoint" {
+		t.Fatalf("EndpointLabel = %q, want feed_endpoint", EndpointLabel)
+	}
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	m.Requests.WithLabelValues(EndpointAsPosts, "serve", "served").Inc()
+	m.Fallbacks.WithLabelValues(EndpointAsPosts, "serve", "origin").Inc()
+	m.Duration.WithLabelValues(EndpointAsPosts, "serve", "served").Observe(1)
+	m.ShadowResults.WithLabelValues(EndpointAsPosts, "match").Inc()
+	m.ShadowDiffs.WithLabelValues(EndpointAsPosts, "c", "value").Inc()
+	m.ShadowPhase.WithLabelValues(EndpointAsPosts, "compute", "served").Observe(1)
+	m.ShadowPhaseCPU.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
+	m.ShadowPhaseSolo.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
+	m.ShadowPhaseSoloWall.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true}
+	checked := 0
+	for _, mf := range mfs {
+		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {
+			continue
+		}
+		checked++
+		for _, metric := range mf.GetMetric() {
+			has := false
+			for _, l := range metric.GetLabel() {
+				if l.GetName() == "endpoint" {
+					t.Errorf("%s carries the reserved label endpoint", mf.GetName())
+				}
+				if l.GetName() == "feed_endpoint" {
+					has = true
+				}
+			}
+			if !has {
+				t.Errorf("%s has no feed_endpoint label", mf.GetName())
+			}
+		}
+	}
+	if checked != 10 {
+		t.Fatalf("checked %d per-endpoint families, want 10 (a family was renamed or lost)", checked)
+	}
 }

@@ -6,8 +6,12 @@ import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai
 // ---------------------------------------------------------------------------
 //
 // One increment per SAMPLED request, by what became of the sample. Requests that were not sampled
-// are not counted. Labels: `outcome`, a member of the fixed set below, and `endpoint`, one of
+// are not counted. Labels: `outcome`, a member of the fixed set below, and `feed_endpoint`, one of
 // FEED_GO_SHADOW_ENDPOINTS, so cardinality is bounded by construction.
+//
+// FEED_GO_SHADOW_ENDPOINT_LABEL is not `endpoint`: that is a reserved scrape target label (the
+// scraper's target label), which overwrites a series' own `endpoint` and moves ours to
+// `exported_endpoint`. feed-go's feed_go_* series use the same name.
 //
 // Registered on `instrumentationRegistry`, which `/api/metrics` merges into the scrape, so it is
 // scraped whichever webpack graph registers it first (the importer, `~/server/trpc/feed-go-shadow.ts`,
@@ -40,7 +44,10 @@ export const FEED_GO_SHADOW_OUTCOMES = [
 
 export type FeedGoShadowOutcome = (typeof FEED_GO_SHADOW_OUTCOMES)[number];
 
-/** The mirrored routes, as feed-go labels them (`endpoint` on its feed_go_* series too). */
+/** The endpoint label's name on these counters (and on feed-go's feed_go_* series). */
+export const FEED_GO_SHADOW_ENDPOINT_LABEL = 'feed_endpoint';
+
+/** The mirrored routes, as feed-go labels them (`feed_endpoint` on its feed_go_* series too). */
 export const FEED_GO_SHADOW_ENDPOINTS = ['as-posts', 'v1-images'] as const;
 export type FeedGoShadowEndpoint = (typeof FEED_GO_SHADOW_ENDPOINTS)[number];
 
@@ -56,7 +63,7 @@ const feedGoShadowCounter = registerInstrumentationMetric(
         '(as-posts: image.getImagesAsPostsInfinite, flag feed-go-shadow; v1-images: GET ' +
         '/api/v1/images, flag feed-go-shadow-v1-images). Only sampled requests are counted ' +
         '(FEED_GO_SHADOW_URL set, FEED_GO_SHADOW_SAMPLE_RATE > 0).',
-      labelNames: ['outcome', 'endpoint'],
+      labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],
     })
 );
@@ -65,7 +72,7 @@ const feedGoShadowCounter = registerInstrumentationMetric(
 try {
   for (const endpoint of FEED_GO_SHADOW_ENDPOINTS) {
     for (const outcome of FEED_GO_SHADOW_OUTCOMES) {
-      feedGoShadowCounter.inc({ outcome, endpoint }, 0);
+      feedGoShadowCounter.inc({ outcome, feed_endpoint: endpoint }, 0);
     }
   }
 } catch {
@@ -78,7 +85,7 @@ export function recordFeedGoShadowOutcome(
   endpoint: FeedGoShadowEndpoint = 'as-posts'
 ): void {
   try {
-    feedGoShadowCounter.inc({ outcome, endpoint });
+    feedGoShadowCounter.inc({ outcome, feed_endpoint: endpoint });
   } catch {
     /* never throw from telemetry */
   }
@@ -86,7 +93,7 @@ export function recordFeedGoShadowOutcome(
 
 // The synchronous encode work the sampler adds to the event loop, after the sampled response is
 // written (`superjson.serialize` for a devalue response, then `JSON.stringify`). Two counters,
-// labelled by `endpoint` only: seconds of encode time and bytes of request body. Divide by the
+// labelled by `feed_endpoint` only: seconds of encode time and bytes of request body. Divide by the
 // `sent` + `rejected` + `timeout` + `error` outcomes of the same endpoint for a per-sample cost.
 
 const ENCODE_SECONDS = 'civitai_app_feed_go_shadow_encode_seconds_total';
@@ -100,7 +107,7 @@ const encodeSecondsCounter = registerInstrumentationMetric(
       help:
         'Seconds of synchronous event-loop time spent encoding feed-go shadow samples ' +
         '(after the sampled response was written).',
-      labelNames: ['endpoint'],
+      labelNames: ['feed_endpoint'],
       registers: [instrumentationRegistry],
     })
 );
@@ -111,7 +118,7 @@ const encodeBytesCounter = registerInstrumentationMetric(
     new client.Counter({
       name: ENCODE_BYTES,
       help: 'Bytes of request body encoded for feed-go shadow samples.',
-      labelNames: ['endpoint'],
+      labelNames: ['feed_endpoint'],
       registers: [instrumentationRegistry],
     })
 );
@@ -119,8 +126,8 @@ const encodeBytesCounter = registerInstrumentationMetric(
 // Seed both endpoints at 0.
 try {
   for (const endpoint of FEED_GO_SHADOW_ENDPOINTS) {
-    encodeSecondsCounter.inc({ endpoint }, 0);
-    encodeBytesCounter.inc({ endpoint }, 0);
+    encodeSecondsCounter.inc({ feed_endpoint: endpoint }, 0);
+    encodeBytesCounter.inc({ feed_endpoint: endpoint }, 0);
   }
 } catch {
   /* never throw from telemetry */
@@ -133,8 +140,8 @@ export function recordFeedGoShadowEncode(
   endpoint: FeedGoShadowEndpoint = 'as-posts'
 ): void {
   try {
-    if (seconds > 0) encodeSecondsCounter.inc({ endpoint }, seconds);
-    if (bytes > 0) encodeBytesCounter.inc({ endpoint }, bytes);
+    if (seconds > 0) encodeSecondsCounter.inc({ feed_endpoint: endpoint }, seconds);
+    if (bytes > 0) encodeBytesCounter.inc({ feed_endpoint: endpoint }, bytes);
   } catch {
     /* never throw from telemetry */
   }
