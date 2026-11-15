@@ -186,7 +186,7 @@ export function FullWidthMedia({ data }: EntityProps) {
               html5Controls={isVideo}
               muted={isVideo || undefined}
               placeholder="empty"
-              // The article body caps images at 800px tall; the box above already sizes this one.
+              // Overrides the article body's img max-height (80vh); the box above sizes this one.
               style={{
                 width: '100%',
                 height: '100%',
