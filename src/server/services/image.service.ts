@@ -1747,7 +1747,7 @@ async function markImageScanSubmitFailure({
             to_jsonb(${new Date().toISOString()}::text)
           )
         ) ELSE '{}'::jsonb END
-      )
+      ) || ${keepPermanentScanFailureSql()}
     WHERE id = ${imageId}
       -- Submit retries can outlive the callback, so a late failure must not clobber a verdict.
       AND "ingestion" = ANY(ARRAY['Pending','Rescan','Error']::"ImageIngestionStatus"[])

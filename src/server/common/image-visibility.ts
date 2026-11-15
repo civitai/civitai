@@ -19,7 +19,7 @@ const permanentScanFailureSql = (t: Prisma.Sql) => Prisma.sql`(
 
 /**
  * `{"permanentFailure": true}` when an `Image` row's `scanJobs` shows a permanent failure, else
- * `{}`. Append it in an UPDATE that drops or replaces `error` / `lastFailure`.
+ * `{}`. Append it in every UPDATE that writes, drops or replaces `error` / `lastFailure`.
  */
 export const keepPermanentScanFailureSql = () => Prisma.sql`(CASE
   WHEN ${permanentScanFailureSql(Prisma.raw('"Image"'))}

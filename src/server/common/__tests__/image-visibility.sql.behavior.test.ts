@@ -81,6 +81,19 @@ const fail = (failureClass: string) =>
      WHERE id = 1`,
     [failureClass]
   );
+/** A failure stamp as markImageScanError / markImageScanSubmitFailure write it. */
+const failKeeping = (failureClass: string) => {
+  const keep = keepPermanentScanFailureSql();
+  const at = keep.values.length + 1;
+  return db.query(
+    `UPDATE "Image" SET ingestion = 'Error',
+       "scanJobs" = jsonb_set(
+         "scanJobs", '{error}', jsonb_build_object('failureClass', $${at}::text)
+       ) || ${keep.text}
+     WHERE id = 1`,
+    [...keep.values, failureClass]
+  );
+};
 
 const locked = { nsfwLevelLocked: true };
 
@@ -141,6 +154,12 @@ describe('a permanent failure across later writes', () => {
     await resubmit();
     await fail('transient');
     await resubmit();
+    expect(await storedReviewed()).toBe(false);
+  });
+
+  it('stays not reviewed when a later error replaces a permanent one', async () => {
+    await insert(permanentlyFailed);
+    await failKeeping('transient');
     expect(await storedReviewed()).toBe(false);
   });
 
