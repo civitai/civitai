@@ -8,7 +8,8 @@
 //       head is the commit the last batch run already verified (green or red).
 //   node scripts/ci/unit-batched.mjs verify <unit-result> <reports-dir>
 //       In lint.yml's `unit-verify` job, after the shards of that dispatched run. Green: a success
-//       status on HEAD. Red: re-runs the failed files at HEAD (a pass = flaky), then
+//       status on HEAD. Red: re-runs the failed files at HEAD (a pass = flaky: a success on HEAD
+//       whose description names the flaky files, plus a warning annotation), then
 //       `git bisect run --first-parent` back to the last green verified commit, and posts a
 //       failure status on the first bad commit, or on HEAD when the bisect cannot isolate one.
 //   node <copy>/unit-batched.mjs step <failed.json>
@@ -76,7 +77,14 @@ export function statusTarget({ unitResult, head, failed = [], flaky = false, fir
       state: 'failure',
       description: 'A unit shard failed with no failing test file (setup or timeout). See the run.',
     };
-  if (flaky) return null;
+  // A flake is not the commit's fault, so HEAD gets a success, but never a bare one: the
+  // description always leads with the note and names the flaky files.
+  if (flaky)
+    return {
+      sha: head,
+      state: 'success',
+      description: statusLine('Passed on re-run; flaky: ', failed),
+    };
   if (firstBad)
     return {
       sha: firstBad,
@@ -272,8 +280,16 @@ function verify(unitResult, reportsDir) {
     lines.push(`${failed.length} failed file(s):`, ...failed.map((f) => `- \`${f}\``), '');
     console.log('Re-running the failed files at HEAD first.');
     flaky = runFiles(failed) === 0;
-    if (flaky) lines.push('They pass on a re-run at HEAD: flaky, not bisected, no status posted.');
-    else {
+    if (flaky) {
+      lines.push(
+        `**Flaky:** they pass on a re-run at HEAD, so this is not bisected: ${failed.join(', ')}`
+      );
+      console.log(
+        `::warning title=Flaky unit tests (main batch)::Failed in the batch run, passed on a re-run at HEAD: ${failed.join(
+          ', '
+        )}`
+      );
+    } else {
       let green = null;
       try {
         green = lastVerifiedRun(ref, { green: true })?.head_sha ?? null;

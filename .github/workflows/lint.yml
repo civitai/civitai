@@ -1473,7 +1473,8 @@ jobs:
   # Only on the batch dispatch (unit-batched.yml dispatches this workflow as github-actions[bot]
   # with `only: unit`); a person's `only: unit` dispatch and full-ci.yml's `only: all` dispatch
   # never reach it. Green: a success `Unit tests (main batch)` status on HEAD. Red: re-runs the
-  # failed files at HEAD (a pass there = flaky, nothing posted), then `git bisect run
+  # failed files at HEAD (a pass there = flaky: a success on HEAD whose description names the
+  # flaky files, never a bare one, plus a warning annotation), then `git bisect run
   # --first-parent` from the last green batch-verified commit, and posts a FAILING status on the
   # first bad commit naming the failed files, or on HEAD when the bisect cannot isolate one
   # (scripts/ci/unit-batched.mjs). That keeps a unit red rendering on the commit that caused it.

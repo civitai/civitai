@@ -92,10 +92,33 @@ describe('statusTarget: where the verdict is posted', () => {
     });
   });
 
-  it('flaky (passes on a re-run at HEAD): nothing is posted', () => {
+  // A flake is not the commit's fault, so it is a success, but never a bare one: the note
+  // naming the flaky files is part of the description.
+  it('flaky (passes on a re-run at HEAD): success on HEAD, naming the flaky files', () => {
     expect(
       statusTarget({ unitResult: 'failure', head: HEAD, failed, flaky: true, firstBad: BAD })
-    ).toBeNull();
+    ).toEqual({
+      sha: HEAD,
+      state: 'success',
+      description: 'Passed on re-run; flaky: src/a.test.ts, src/b.test.ts',
+    });
+  });
+
+  it('flaky with many files: the note survives truncation to 140 characters', () => {
+    const many = Array.from(
+      { length: 20 },
+      (_, i) => `src/server/services/__tests__/file-${i}.test.ts`
+    );
+    const d = statusTarget({
+      unitResult: 'failure',
+      head: HEAD,
+      failed: many,
+      flaky: true,
+    })!.description;
+    expect(d).toHaveLength(140);
+    expect(
+      d.startsWith('Passed on re-run; flaky: src/server/services/__tests__/file-0.test.ts')
+    ).toBe(true);
   });
 
   it.each(['cancelled', 'skipped'])('%s: nothing is posted', (unitResult) => {

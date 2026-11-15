@@ -68,7 +68,7 @@ gh workflow run apps.yml -R civitai/civitai --ref <branch>                 # app
 every 2 hours at :41 as of 2026-11) a gate dispatches Lint with `only: unit` on `main` if `main`'s
 head moved since the last batch run; the gate's record is the newest finished bot-dispatched Lint
 run whose `Unit verified (main batch)` job ran. That job posts `Unit tests (main batch)`: `success` on HEAD when green;
-on red it re-runs the failed files at HEAD (a pass there is a flake, and nothing is posted), then
+on red it re-runs the failed files at HEAD (a pass there is a flake: `success` on HEAD whose description reads "Passed on re-run; flaky: <files>", plus a warning annotation), then
 bisects first-parent from the last green batch-verified commit and posts `failure` on the FIRST BAD
 commit, naming the files, or on HEAD when the bisect cannot isolate one. So read the status on the
 commit, and expect up to one interval (2 hours) plus a run (~20 min) before a commit gets one,
