@@ -2,7 +2,7 @@ import type { Workflow } from '@civitai/orchestration-client';
 import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import { NsfwLevel } from '~/server/common/enums';
 import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
-import { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-gated-images.logic';
+import { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-viewer-ceiling';
 import type {
   BlockWorkflowOutput,
   BlockWorkflowOutputRating,

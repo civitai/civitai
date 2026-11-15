@@ -92,10 +92,10 @@ export type BlockGatedImage =
     }
   | { imageId: number; status: 'hidden' };
 
-// The viewer's browsing-level ceiling lives in the pure logic module, so the App Blocks
+// The viewer's browsing-level ceiling lives in its own pure module, so the App Blocks
 // output ceiling (`blockOutputCeilingFromClaims`) reads the same level without this
 // service's database graph. Re-exported here for its existing callers.
-export { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-gated-images.logic';
+export { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-viewer-ceiling';
 
 /** Raw row shape read from Postgres for the clamp decision. */
 type GatedImageRow = {
