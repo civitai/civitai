@@ -4,7 +4,10 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { Prisma } from '@prisma/client';
-import { collectionsSearchIndex } from '~/server/search-index';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForModelImages,
+} from '~/server/services/collection-media-index';
 import { legacyCoverStringAllowedSql } from '~/server/services/collection-cover-visibility';
 
 // The feed index carries `collectionIds` for ACCEPTED membership of non-private
@@ -91,7 +94,8 @@ export async function queueCollectionReadConfigChange({
 
 /**
  * The collections whose cover may come from these models' posts: by a model item, a post or image
- * item on one of their posts, or a stored cover image on one.
+ * item on one of their posts, an article item whose cover or banner is on one, or a stored cover
+ * image on one.
  */
 export async function getCollectionIdsCoveredByModels(modelIds: number[]) {
   if (!modelIds.length) return [];
@@ -113,11 +117,19 @@ export async function getCollectionIdsCoveredByModels(modelIds: number[]) {
     SELECT c.id FROM "Collection" c
     JOIN "Image" i ON i.id = c."imageId"
     WHERE i."postId" IN (SELECT id FROM posts)
+    UNION
+    SELECT ci."collectionId" FROM "CollectionItem" ci
+    JOIN "Article" a ON a.id = ci."articleId"
+    JOIN "Image" i ON i.id = a."coverId"
+    WHERE i."postId" IN (SELECT id FROM posts)
+    UNION
+    SELECT ci."collectionId" FROM "CollectionItem" ci
+    JOIN "Article" a ON a.id = ci."articleId"
+    JOIN "Image" i ON i.id = a."bannerId"
+    WHERE i."postId" IN (SELECT id FROM posts)
   `;
   return rows.map((row) => Number(row.id));
 }
-
-const COLLECTION_QUEUE_CHUNK = 1000;
 
 /**
  * Rebuild the search documents of the collections whose cover may come from these models, after a
@@ -125,22 +137,10 @@ const COLLECTION_QUEUE_CHUNK = 1000;
  * gallery level. Never throws; a failure is logged and the documents catch up on their next update.
  */
 export async function queueModelCollectionsReindex(modelIds: number[]) {
-  try {
-    const ids = await getCollectionIdsCoveredByModels(modelIds);
-    for (let i = 0; i < ids.length; i += COLLECTION_QUEUE_CHUNK) {
-      await collectionsSearchIndex.queueUpdate(
-        ids
-          .slice(i, i + COLLECTION_QUEUE_CHUNK)
-          .map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-      );
-    }
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'model-collections-index-enqueue-failed',
-      message: error instanceof Error ? error.message : 'unknown',
-      modelIds,
-    }).catch(() => undefined);
+  const source = 'held-gallery-level';
+  for (const modelId of modelIds) {
+    const { collectionIds, truncated } = await getCollectionIdsForModelImages({ modelId, source });
+    await enqueueCollectionRebuild({ collectionIds, truncated, source });
   }
 }
 

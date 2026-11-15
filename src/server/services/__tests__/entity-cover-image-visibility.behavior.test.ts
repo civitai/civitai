@@ -302,6 +302,11 @@ beforeAll(async () => {
     INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES (2821, 2811, now() - interval '1 day');
     INSERT INTO "Image" (id, "postId", index, "nsfwLevel") VALUES
       (2831, 2821, 0, ${NsfwLevel.X}), (2832, 2821, 1, ${NsfwLevel.PG13});
+    -- Article 2901's cover is the minor model's X image; article 2902's the unflagged model's.
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
+      (2901, 2031, 'Published', now()), (2902, 2231, 'Published', now());
+    -- Article 2903's cover is the taken-down model's image.
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (2903, 1631, 'Published', now());
     -- An X image on published post 201, which is on no model.
     INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES (2631, 201, ${NsfwLevel.X});
   `);
@@ -321,6 +326,7 @@ const hidden: [string, string, number, number][] = [
   ["a taken-down model's version", 'ModelVersion', 1611, 1631],
   ["a taken-down model's image", 'Image', 1631, 1631],
   ["a post on a taken-down model's version", 'Post', 1621, 1631],
+  ["an article whose cover is a taken-down model's image", 'Article', 2903, 1631],
   ['a flagged image', 'Image', 1211, 1211],
   ['a post whose only image is flagged', 'Post', 1201, 1211],
   ['an article whose cover is flagged', 'Article', 1401, 1411],
@@ -505,6 +511,7 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     ['a minor model whose stored level is not a number', 'Model', 2501, 2532],
     ['a minor model whose stored level is beyond int range', 'Model', 2801, 2832],
     ["a bounty linking a minor model's image above its gallery level", 'Bounty', 2701, 2032],
+    ["an article whose cover is an unflagged model's image", 'Article', 2902, 2231],
   ] as const)('%s', (_, entityType, entityId, imageId) => {
     it.each(['anonymous', 'stranger'] as const)(
       'has the cover %s viewers are served',
@@ -526,6 +533,20 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     "keeps a minor model's image above its gallery level for the %s",
     async (who) => {
       expect(await coverOf('Image', 2031, viewers[who])).toBe(2031);
+    }
+  );
+
+  it.each(['anonymous', 'stranger'] as const)(
+    "has no cover for an article whose cover is a minor model's image above its gallery level, for a %s viewer",
+    async (who) => {
+      expect(await coverOf('Article', 2901, viewers[who])).toBeNull();
+    }
+  );
+
+  it.each(['owner', 'moderator'] as const)(
+    "keeps an article cover above its model's gallery level for the %s",
+    async (who) => {
+      expect(await coverOf('Article', 2901, viewers[who])).toBe(2031);
     }
   );
 
