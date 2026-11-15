@@ -1,5 +1,6 @@
 import type { SessionUser } from '~/types/session';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { Flags } from '~/shared/utils/flags';
 import { getSponsoredModel } from '~/server/services/promotion.service';
@@ -2472,6 +2473,7 @@ export const updateGallerySettingsHandler = async ({
     if (heldLevelChanged) {
       // The search document carries the held showcase, so it is rebuilt at the new level.
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+      await queueModelCollectionsReindex([id]);
       await purgeHeldShowcase(id);
     }
 

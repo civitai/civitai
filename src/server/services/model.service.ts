@@ -1,5 +1,6 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
+import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
@@ -2874,6 +2875,8 @@ export async function applyModelFlagSideEffects({
   if (heldLevelChanged && !listingChanged)
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   if (minorChanged || heldLevelChanged) await purgeHeldShowcase(id, modelVersionIds);
+  // Collection documents carry covers judged at the gallery level too.
+  if (minorChanged || heldLevelChanged) await queueModelCollectionsReindex([id]);
 }
 
 /**
