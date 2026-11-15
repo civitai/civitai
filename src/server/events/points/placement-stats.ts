@@ -1,4 +1,3 @@
-import { TupleParam } from '@clickhouse/client';
 import { createHash } from 'crypto';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
@@ -34,8 +33,7 @@ async function openPlacements(event: string, userId: number) {
   `;
 }
 
-// The query's params as the client sends them. Placements go as TupleParam: a plain JS array is
-// sent as a ClickHouse Array, which the Array(Tuple(...)) param rejects.
+// The query's params. Primitive arrays only, so they are sent the same by any copy of the client.
 export function placementViewsParams(
   event: string,
   userId: number,
@@ -49,16 +47,11 @@ export function placementViewsParams(
       new Date(Math.min(...placements.map((p) => p.startedAt.getTime())))
     ),
     to: formatClickhouseDateTime64(now),
-    placements: placements.map(
-      (p) =>
-        new TupleParam([
-          p.cosmeticId,
-          p.claimKey,
-          p.entityType,
-          p.entityId,
-          formatClickhouseDateTime64(p.startedAt),
-        ])
-    ),
+    cosmeticIds: placements.map((p) => p.cosmeticId),
+    claimKeys: placements.map((p) => p.claimKey),
+    entityTypes: placements.map((p) => p.entityType),
+    entityIds: placements.map((p) => p.entityId),
+    startedAts: placements.map((p) => formatClickhouseDateTime64(p.startedAt)),
   };
 }
 
