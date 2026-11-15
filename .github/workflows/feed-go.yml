@@ -3,7 +3,12 @@ name: feed-go
 # apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`; see
 # apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
-# This workflow is its only gate: gofmt, vet, the unit tests and a build of the binary.
+# This workflow is its only gate: gofmt, vet, the unit tests, the integration tests and a build of the
+# binary.
+#
+# The integration tier (`-tags integration`, files under that build tag only) runs against a real
+# Redis Cluster (3 masters) and a real Postgres 16 started in this job; the plain unit run never
+# compiles those files, so it stays hermetic.
 #
 # A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
 # dispatches this workflow when the label is added. A push to `main` is unfiltered.
@@ -33,7 +38,22 @@ jobs:
     name: feed-go vet + test + build
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
-    timeout-minutes: 15
+    timeout-minutes: 20
+    services:
+      postgres:
+        # postgres:16 (16.16), pinned by its multi-arch index digest.
+        image: postgres:16@sha256:63e83b5a3dc36a917dccb76fe1bd2ac51f1ec9c1deb47ff20d4f04233bf6eae9
+        env:
+          POSTGRES_USER: feedgo
+          POSTGRES_PASSWORD: feedgo-integ
+          POSTGRES_DB: feedgo_integ
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U feedgo -d feedgo_integ"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     defaults:
       run:
         working-directory: apps/feed-go
@@ -56,7 +76,9 @@ jobs:
           fi
 
       - name: go vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags integration ./...
 
       # `-json` so the step below can count the tests that actually ran: a package that silently
       # compiled to zero tests would otherwise still exit 0.
@@ -78,8 +100,78 @@ jobs:
           # Positive control: a count below these floors means tests stopped being discovered, not that
           # they passed. Raise the package floor when a package gains its first test.
           [ "$failed" -eq 0 ]
-          [ "$pkgs" -ge 12 ]
-          [ "$passed" -ge 131 ]
+          [ "$pkgs" -ge 13 ]
+          [ "$passed" -ge 253 ]
+
+      # A cluster on the host network: a cluster node announces its own address to clients, and on the
+      # services bridge network that is a container IP the runner's cluster client cannot always reach.
+      - name: Start Redis Cluster
+        env:
+          # redis:7.4 (7.4.12), pinned by its multi-arch index digest.
+          REDIS_IMAGE: redis:7.4@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+        run: |
+          set -euo pipefail
+          for port in 7000 7001 7002; do
+            docker run -d --name "feedgo-redis-$port" --network host "$REDIS_IMAGE" \
+              redis-server --port "$port" --cluster-enabled yes --cluster-config-file "nodes-$port.conf" \
+              --cluster-node-timeout 5000 --appendonly no --save ''
+          done
+          for port in 7000 7001 7002; do
+            for i in $(seq 1 60); do
+              if docker exec feedgo-redis-7000 redis-cli -p "$port" ping 2>/dev/null | grep -qx PONG; then break; fi
+              [ "$i" -lt 60 ] || { echo "::error::redis :$port never answered"; exit 1; }
+              sleep 1
+            done
+          done
+          docker exec feedgo-redis-7000 redis-cli --cluster create 127.0.0.1:7000 127.0.0.1:7001 127.0.0.1:7002 \
+            --cluster-replicas 0 --cluster-yes
+          for port in 7000 7001 7002; do
+            for i in $(seq 1 60); do
+              if docker exec feedgo-redis-7000 redis-cli -p "$port" cluster info | grep -q '^cluster_state:ok'; then break; fi
+              [ "$i" -lt 60 ] || { echo "::error::redis :$port never reached cluster_state:ok"; exit 1; }
+              sleep 1
+            done
+          done
+          masters=$(docker exec feedgo-redis-7000 redis-cli -p 7000 cluster nodes | grep -c master)
+          echo "cluster masters: $masters"
+          [ "$masters" -eq 3 ]
+
+      - name: Apply the integration schema
+        run: |
+          set -euo pipefail
+          docker exec -i "${{ job.services.postgres.id }}" \
+            psql -v ON_ERROR_STOP=1 -U feedgo -d feedgo_integ < testdata/integration/schema.sql
+
+      # -run 'Integration' keeps the unit tests (already run above) out of this step.
+      - name: go test (integration)
+        env:
+          FEED_GO_TEST_REDIS_CLUSTER: 127.0.0.1:7000,127.0.0.1:7001,127.0.0.1:7002
+          FEED_GO_TEST_PG_URL: postgres://feedgo:feedgo-integ@127.0.0.1:5432/feedgo_integ?sslmode=disable
+        run: |
+          status=0
+          go test -race -count=1 -tags integration -run 'Integration' -json ./... > integration.json || status=$?
+          jq -j 'select(.Action=="output") | .Output' integration.json
+          exit $status
+
+      - name: Assert the integration tests ran
+        if: always()
+        run: |
+          set -euo pipefail
+          top='select(.Action=="pass" and .Test!=null and (.Test|contains("/")|not))'
+          failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' integration.json | wc -l)
+          hydrate=$(jq -r "$top | select(.Package|endswith(\"/internal/hydrate\")) | .Test" integration.json | wc -l)
+          feed=$(jq -r "$top | select(.Package|endswith(\"/internal/feed\")) | .Test" integration.json | wc -l)
+          passed=$(jq -r "$top | .Test" integration.json | wc -l)
+          echo "passed integration tests: $passed (hydrate $hydrate, feed $feed), failed: $failed"
+          # Positive control: below these floors (the TestIntegration* functions per package) the tests
+          # stopped being discovered — a wrong tag or -run filter runs zero tests and exits 0.
+          [ "$failed" -eq 0 ]
+          [ "$hydrate" -ge 18 ]
+          [ "$feed" -ge 12 ]
 
       - name: go build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go
+
+      - name: Redis Cluster logs
+        if: failure()
+        run: for port in 7000 7001 7002; do docker logs "feedgo-redis-$port" 2>&1 | tail -n 50; done

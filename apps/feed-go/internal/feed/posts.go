@@ -30,6 +30,9 @@ type Config struct {
 	ImageIndexFeed bool
 	// VisibleDecorationEvents is the set of event decorations every viewer may see.
 	VisibleDecorationEvents map[string]bool
+	// CompletionConcurrency caps the lazy-post-images completion fetches one request runs at once
+	// (FEED_GO_COMPLETION_CONCURRENCY; <= 0 = DefaultCompletionConcurrency, sized for shadow load).
+	CompletionConcurrency int
 }
 
 // AddonSource reads `system:browsing-setting-addons` from the system redis.
@@ -370,7 +373,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 			}
 			counts = nil
 		}
-		if err := completePosts(ctx, src, posts, postIDs, counts); err != nil {
+		if err := completePosts(ctx, src, posts, postIDs, counts, d.Config.CompletionConcurrency); err != nil {
 			return nil, err
 		}
 	}

@@ -32,7 +32,12 @@ set -a; . ./.env; set +a
 go run ./cmd/feed-go
 ```
 
-Tests run in CI (`feed-go vet + test + build`). Unit tests sit next to the code and need no services.
+Tests run in CI (`feed-go vet + test + build`). Unit tests sit next to the code and need no services
+(`internal/testkit` holds the in-memory Redis and `pgx.Rows` fakes); the golden tests compare whole
+answers with Node's for fixed inputs (`testdata/golden/`). The integration tier carries the
+`integration` build tag and runs only in CI, against a real Redis Cluster and Postgres
+(`testdata/integration/schema.sql`); under the tag a missing `FEED_GO_TEST_REDIS_CLUSTER` /
+`FEED_GO_TEST_PG_URL` fails the run.
 
 ## Config
 
@@ -43,5 +48,6 @@ falls back (`index-feed-unconfigured`). The REST endpoint's shadow also needs
 `NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds
 `metadata.nextPage` as the production Node app does (`https://<host>`).
 
-Every `feed_go_*` series carries `endpoint` (`as-posts` | `v1-images`), so parity and CPU per call
-read per endpoint (DESIGN.md §10, §13).
+Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images`), so parity and CPU per
+call read per endpoint (DESIGN.md §10, §13). It is not called `endpoint` because that is a reserved
+scrape target label: the scraper's own `endpoint` would overwrite it.

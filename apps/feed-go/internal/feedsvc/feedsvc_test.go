@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // Expected strings are what mapSearchInputToFeedQuery's URLSearchParams.toString() writes for the
@@ -150,8 +151,9 @@ func TestClientFetch(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	c := &Client{BaseURL: srv.URL + "/"}
-	a, err := c.Fetch(context.Background(), "levels=1&sort=newest&limit=2")
+	c := &Client{BaseURL: srv.URL + "/", HTTP: srv.Client()}
+	shadowCtx := WithShadow(context.Background())
+	a, err := c.Fetch(shadowCtx, "levels=1&sort=newest&limit=2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,9 +167,41 @@ func TestClientFetch(t *testing.T) {
 	if a.Status != 200 || !reflect.DeepEqual(a.IDs, []int{30, 10, 20}) || a.NextCursor != "1700|10" {
 		t.Fatalf("answer = %+v", a)
 	}
-	a, err = c.Fetch(context.Background(), "sort=oldest")
+	a, err = c.Fetch(shadowCtx, "sort=oldest")
 	if err != nil || a.Status != 400 || len(a.IDs) != 0 {
 		t.Fatalf("a 400 is an answer with its status: %+v %v", a, err)
+	}
+}
+
+// A served request is the site's own traffic: it sends Node's served source and no replay id, so it
+// lands in the feed service's live series. Only a shadow compute (WithShadow) is marked as replay.
+func TestClientFetchServedRequestIsNotMarkedShadow(t *testing.T) {
+	var gotSource string
+	var replaySent bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSource = r.Header.Get("x-request-source")
+		_, replaySent = r.Header["X-Replay-Id"]
+		_, _ = w.Write([]byte(`{"items":[5]}`))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if _, err := c.Fetch(context.Background(), "levels=1&sort=newest&limit=1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotSource != "primary" || replaySent {
+		t.Fatalf("served: x-request-source=%q replay header sent=%v, want primary and none", gotSource, replaySent)
+	}
+	// The mark is carried by the context, through derived contexts too.
+	derived, cancel := context.WithTimeout(WithShadow(context.Background()), time.Minute)
+	defer cancel()
+	if _, err := c.Fetch(derived, "levels=1&sort=newest&limit=1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotSource != "shadow" || !replaySent {
+		t.Fatalf("shadow: x-request-source=%q replay header sent=%v, want shadow and sent", gotSource, replaySent)
+	}
+	if IsShadow(context.Background()) || !IsShadow(derived) {
+		t.Fatal("IsShadow must be false for an unmarked context and true for a marked one")
 	}
 }
 

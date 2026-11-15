@@ -5,10 +5,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"runtime/debug"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +20,8 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
+	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
@@ -34,6 +39,14 @@ const (
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
+
+// DefaultRequestBudget bounds one computation (Server.RequestBudget, FEED_GO_REQUEST_BUDGET_MS): the
+// served path and a shadow sample's compute both run under it. Past it the request falls back
+// (reason `deadline`) and nothing computed so far is sent.
+const DefaultRequestBudget = 6 * time.Second
+
+// shadowSampleTimeout bounds a whole shadow sample (compute under the request budget, then compare).
+const shadowSampleTimeout = 30 * time.Second
 
 // verifiedBotHeader is VERIFIED_BOT_HEADER: a verified crawler is "authorized" where NSFW is viewable.
 const verifiedBotHeader = "x-civitai-verified-bot"
@@ -61,6 +74,16 @@ type Server struct {
 	shadowStarts atomic.Uint64
 	// V1 serves the REST `/api/v1/images` shadow; nil = every such sample falls back.
 	V1 *feed.V1Deps
+	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
+	RequestBudget time.Duration
+
+	// The shadow goroutines' lifetime: bg is cancelled by Close, which then waits on shadows.
+	bgOnce   sync.Once
+	bg       context.Context
+	stopBG   context.CancelFunc
+	shadowMu sync.Mutex
+	closing  bool
+	shadows  sync.WaitGroup
 
 	// computeFn and computeV1Fn replace compute / computeV1 in the shadow path (tests only; nil in
 	// production).
@@ -215,6 +238,72 @@ func AcceptableOrigin(r *http.Request, allowed map[string]bool) bool {
 	return host != "" && allowed[host]
 }
 
+func (s *Server) budget() time.Duration {
+	if s.RequestBudget > 0 {
+		return s.RequestBudget
+	}
+	return DefaultRequestBudget
+}
+
+// background is the parent context of every shadow sample; Close cancels it.
+func (s *Server) background() context.Context {
+	s.bgOnce.Do(func() { s.bg, s.stopBG = context.WithCancel(context.Background()) })
+	return s.bg
+}
+
+// Close stops the shadow path for shutdown: new samples are dropped, the running ones are cancelled,
+// and Close waits for them to return (each releases its queue slot) or for ctx to end. Call it before
+// closing the stores the samples read.
+func (s *Server) Close(ctx context.Context) error {
+	s.shadowMu.Lock()
+	s.closing = true
+	s.shadowMu.Unlock()
+	s.background()
+	s.stopBG()
+	done := make(chan struct{})
+	go func() {
+		s.shadows.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// panicked records a recovered panic: the counter and one log line with the stack.
+func (s *Server) panicked(where string, value any, stack []byte) {
+	s.Metrics.Panics.WithLabelValues(where).Inc()
+	s.Log.Error("recovered panic", "where", where, "panic", value, "stack", string(stack))
+}
+
+// computeWithin runs fn under the request budget. Whatever fn returns, the answer is all or nothing:
+// past a deadline — the budget's, or an earlier one parent carries (a shadow sample's own bound) —
+// even when fn returned a value (e.g. after a store read failed open on the expired context), it is
+// the `deadline` fallback; once parent was cancelled (the client left, or shutdown) it is the
+// `canceled` fallback; a panic anywhere in the computation, its errgroup workers included, is counted
+// under where and is the `panic` fallback.
+func (s *Server) computeWithin(parent context.Context, r *http.Request, where string, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
+	budget := s.budget()
+	ctx, cancel := context.WithTimeout(parent, budget)
+	defer cancel()
+	c, err := safe.Call(func() (*computed, error) { return fn(ctx, r) })
+	var pe *safe.PanicError
+	if errors.As(err, &pe) {
+		s.panicked(where, pe.Value, pe.Stack)
+		return nil, fallback.New("panic")
+	}
+	if errors.Is(parent.Err(), context.Canceled) {
+		return nil, fallback.New("canceled")
+	}
+	if ctx.Err() != nil {
+		return nil, fallback.Newf("deadline", "budget %v", budget)
+	}
+	return c, err
+}
+
 // ServeHTTP is the public route.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -223,7 +312,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		err error
 	)
 	if AcceptableOrigin(r, s.AllowedOrigins) {
-		c, err = s.compute(r.Context(), r)
+		fn := s.compute
+		if s.computeFn != nil {
+			fn = s.computeFn
+		}
+		c, err = s.computeWithin(r.Context(), r, "serve", fn)
 	} else {
 		// The app's answer differs by environment and credential (non-production and bearer callers
 		// are accepted, a cookie caller in production is refused): never decided here.
@@ -244,10 +337,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.Metrics.Requests.WithLabelValues(EndpointAsPosts, "serve", outcome).Inc()
 	s.Metrics.Fallbacks.WithLabelValues(EndpointAsPosts, "serve", reason).Inc()
 	s.Metrics.Duration.WithLabelValues(EndpointAsPosts, "serve", outcome).Observe(time.Since(start).Seconds())
+	if reason == "canceled" {
+		// The client has gone: nobody would read a proxied answer, and proxying would only make the
+		// Node app compute one.
+		return
+	}
 	if s.Fallback == nil {
 		trpc.WriteError(w, Procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
 		return
 	}
+	// The original request (and its context): the budget bounded only this service's own compute.
 	s.Fallback.ServeHTTP(w, r)
 }
 
@@ -285,6 +384,23 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	// Register with the shutdown wait first: once Close has begun, a sample is dropped, and every
+	// sample Close does not see starting here cannot start at all.
+	s.shadowMu.Lock()
+	if s.closing {
+		s.shadowMu.Unlock()
+		s.Metrics.ShadowDropped.WithLabelValues(endpoint).Inc()
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	s.shadows.Add(1)
+	s.shadowMu.Unlock()
+	started := false
+	defer func() {
+		if !started {
+			s.shadows.Done()
+		}
+	}()
 	// Take a queue slot BEFORE reading the body: a full queue drops the sample without buffering up to
 	// maxShadowBody for it, so concurrent callers cannot hold more bodies than there are workers.
 	select {
@@ -313,9 +429,19 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 	}
 	s.endPhase(decode, endpoint, "decode", "ok")
 	w.WriteHeader(http.StatusAccepted)
+	started = true
 	go func() {
+		// Deferred in this order so they run in reverse: recover first (a panic in compare or
+		// classify is counted, never fatal), then the queue slot is released, then shutdown is told.
+		defer s.shadows.Done()
 		defer func() { <-s.ShadowQueue }()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer func() {
+			if p := recover(); p != nil {
+				s.panicked("shadow", p, debug.Stack())
+			}
+		}()
+		// Marked as shadow: its feed-service calls carry the shadow headers (feedsvc.WithShadow).
+		ctx, cancel := context.WithTimeout(feedsvc.WithShadow(s.background()), shadowSampleTimeout)
 		defer cancel()
 		s.compare(ctx, endpoint, req)
 	}()
@@ -379,13 +505,19 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	}
 	start := time.Now()
 	phase := s.startPhase()
-	c, err := computeFn(ctx, r)
+	c, err := s.computeWithin(ctx, r, "shadow", computeFn)
 	if err != nil {
 		if reason := fallback.Reason(err); reason != "" {
 			s.endPhase(phase, endpoint, "compute", "fallback")
 			s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "fallback").Inc()
 			s.Metrics.Fallbacks.WithLabelValues(endpoint, "shadow", reason).Inc()
-			s.Metrics.ShadowResults.WithLabelValues(endpoint, "unsupported").Inc()
+			// A compute cut by the budget is its own result, not `unsupported`: the match-rate
+			// denominator leaves both out, and this keeps the budget's share visible (DESIGN.md §10).
+			result := "unsupported"
+			if reason == "deadline" {
+				result = "deadline"
+			}
+			s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
 			s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "fallback").Observe(time.Since(start).Seconds())
 			return
 		}
