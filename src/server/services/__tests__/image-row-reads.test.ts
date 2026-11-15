@@ -72,7 +72,11 @@ describe('image rows returned to non-moderators', () => {
   });
 
   it('the acceptable-minor update returns no scanJobs', async () => {
-    const image = await updateImageAcceptableMinor({ id: IMAGE.id, acceptableMinor: true });
+    const image = await updateImageAcceptableMinor({
+      id: IMAGE.id,
+      collectionId: 1,
+      acceptableMinor: true,
+    });
 
     expect(image).toMatchObject({ id: IMAGE.id, acceptableMinor: true });
     expect(image).not.toHaveProperty('scanJobs');
