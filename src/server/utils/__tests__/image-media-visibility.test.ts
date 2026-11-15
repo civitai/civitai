@@ -192,6 +192,17 @@ describe('keepCrawlerAnswerOutOfEdgeCache', () => {
       expect(run(signedOut(value))).toMatchObject(cached);
     }
   );
+
+  it('leaves a signed-in answer with a crawler header cacheable', () => {
+    const ctx = { ...signedOut('googlebot'), user: { id: 1 } };
+    keepCrawlerAnswerOutOfEdgeCache(ctx as never);
+    expect(ctx.cache).toMatchObject(cached);
+  });
+
+  it('does nothing for a crawler on a route with no cache context', () => {
+    const { req } = signedOut('googlebot');
+    expect(() => keepCrawlerAnswerOutOfEdgeCache({ req } as never)).not.toThrow();
+  });
 });
 
 describe('withoutMediaReferences', () => {
