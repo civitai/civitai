@@ -27,7 +27,8 @@ name: Full CI on label
 # ── WHAT THE DISPATCHED RUNS TEST ─────────────────────────────────────────────────────────────
 #
 # A dispatch runs on the BRANCH HEAD, not on the PR's merge commit with its base, so this first
-# full run tests the branch as pushed.
+# full run tests the branch as pushed, except the suites it skips because the PR run on that
+# commit passed them (see below): their verdict is the PR run's, on the merge commit.
 #
 # 🔴 ITS RESULTS ARE NOT IN THE PR'S CHECKS LIST. Measured: the dispatched runs' check-runs sit on
 # the head commit (the commit's check-runs API, the Actions tab), but `gh pr checks` and the PR's

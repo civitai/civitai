@@ -10,8 +10,9 @@
  *
  *   run    some instance failed (or timed out, or any conclusion that is not success, cancelled
  *          or skipped), or every instance was cancelled or skipped: nothing to reuse.
- *   wait   some instance has not finished, or the job is not listed yet while a run is still
- *          going (a matrix job is listed under its expanded names only once it starts).
+ *   wait   some instance has not finished, or a run that is still going does not list the job
+ *          yet (the jobs API lists a matrix job's expanded names, and a `needs` job, only once
+ *          they start), even if another, finished run lists it.
  *   skip   no failure, nothing pending, and at least one success.
  *
  * A suite is `run` if any of its jobs is, `wait` if any is, else `skip`. The script polls while
@@ -45,32 +46,31 @@ const NO_EVIDENCE = new Set(['cancelled', 'skipped']);
 
 /**
  * @param {Array<{ status?: string; conclusion?: string | null }>} instances jobs with one name
- * @param {boolean} runsFinished every same-commit PR run has completed
+ * @param {boolean} unlisted a same-commit PR run that has not finished does not list this name
  * @returns {'run' | 'wait' | 'skip'}
  */
-export function decideJob(instances, runsFinished) {
+export function decideJob(instances, unlisted) {
   const done = instances.filter((j) => j.status === 'completed');
   if (done.some((j) => j.conclusion !== 'success' && !NO_EVIDENCE.has(j.conclusion ?? '')))
     return 'run';
-  if (done.length < instances.length) return 'wait';
+  if (unlisted || done.length < instances.length) return 'wait';
   if (done.some((j) => j.conclusion === 'success')) return 'skip';
-  if (instances.length > 0) return 'run';
-  return runsFinished ? 'run' : 'wait';
+  return 'run';
 }
 
 /**
- * @param {Array<{ name?: string; status?: string; conclusion?: string | null }>} jobs
- * @param {boolean} runsFinished
+ * @param {Array<{ status?: string; jobs: Array<{ name?: string; status?: string; conclusion?: string | null }> }>} runs
+ *   every same-commit pull_request Lint run, with its latest attempt's jobs
  * @returns {Record<keyof typeof SUITES, 'run' | 'wait' | 'skip'>}
  */
-export function decide(jobs, runsFinished) {
+export function decide(runs) {
   /** @type {Record<string, 'run' | 'wait' | 'skip'>} */
   const out = {};
   for (const [suite, names] of Object.entries(SUITES)) {
     const per = names.map((n) =>
       decideJob(
-        jobs.filter((j) => j.name === n),
-        runsFinished
+        runs.flatMap((r) => r.jobs.filter((j) => j.name === n)),
+        runs.some((r) => r.status !== 'completed' && !r.jobs.some((j) => j.name === n))
       )
     );
     out[suite] = per.includes('run') ? 'run' : per.includes('wait') ? 'wait' : 'skip';
@@ -99,18 +99,15 @@ export async function findPassed(o) {
       `repos/${o.repo}/actions/workflows/lint.yml/runs?event=pull_request&head_sha=${o.sha}&per_page=20`
     );
     const runs = (list?.workflow_runs ?? []).filter((r) => r?.head_sha === o.sha);
-    const jobs = [];
+    const withJobs = [];
     for (const r of runs) {
       const body = await o.fetchJson(
         `repos/${o.repo}/actions/runs/${r.id}/jobs?filter=latest&per_page=100`
       );
       if (!Array.isArray(body?.jobs)) throw new Error(`no jobs array for run ${r.id}`);
-      jobs.push(...body.jobs);
+      withJobs.push({ status: r.status, jobs: body.jobs });
     }
-    const decisions = decide(
-      jobs,
-      runs.every((r) => r.status === 'completed')
-    );
+    const decisions = decide(withJobs);
     const waiting = Object.values(decisions).includes('wait');
     if (!waiting || o.now() >= deadline) {
       for (const k of Object.keys(decisions)) if (decisions[k] === 'wait') decisions[k] = 'run';

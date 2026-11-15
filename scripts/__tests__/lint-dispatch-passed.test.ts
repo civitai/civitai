@@ -38,20 +38,23 @@ describe('decideJob', () => {
     ['a success and one still running', [done(TT, 'success'), going(TT)], 'wait'],
     ['a failure and one still running', [done(TT, 'failure'), going(TT)], 'run'],
   ] as const)('%s -> %s', (_label, jobs, want) => {
-    expect(decideJob([...jobs], true)).toBe(want);
+    expect(decideJob([...jobs], false)).toBe(want);
   });
 
-  it('a job not listed waits while a PR run is still going, and runs once all have finished', () => {
-    expect(decideJob([], false)).toBe('wait');
-    expect(decideJob([], true)).toBe('run');
+  it('waits while a run that is still going does not list the job, else runs', () => {
+    expect(decideJob([], true)).toBe('wait');
+    expect(decideJob([], false)).toBe('run');
+    // Another run's success is not enough while one run has yet to list the job.
+    expect(decideJob([done(TT, 'success')], true)).toBe('wait');
   });
 });
 
 describe('decide', () => {
   const allGreen = [TT, PKG, ...COMPONENT].map((n) => done(n, 'success'));
+  const finished = (jobs: J[]) => ({ status: 'completed', jobs });
 
   it('skips every suite the PR run passed', () => {
-    expect(decide(allGreen, true)).toEqual({
+    expect(decide([finished(allGreen)])).toEqual({
       typecheck_tests: 'skip',
       packages: 'skip',
       component: 'skip',
@@ -62,7 +65,7 @@ describe('decide', () => {
     const jobs = allGreen.map((j) =>
       j.name === 'Component + geometry tests (2/3)' ? done(j.name, 'failure') : j
     );
-    expect(decide(jobs, true)).toEqual({
+    expect(decide([finished(jobs)])).toEqual({
       typecheck_tests: 'skip',
       packages: 'skip',
       component: 'run',
@@ -74,7 +77,7 @@ describe('decide', () => {
       ...allGreen.filter((j) => j.name !== 'Component + geometry tests'),
       going('Component + geometry tests', 'queued'),
     ];
-    expect(decide(jobs, false).component).toBe('wait');
+    expect(decide([{ status: 'in_progress', jobs }]).component).toBe('wait');
   });
 
   // A draft PR run: the matrix job is skipped under its unexpanded name, so no shard is listed.
@@ -86,15 +89,40 @@ describe('decide', () => {
       done('Component + geometry tests (${{ matrix.shard }}/3)', 'skipped'),
       done('Component + geometry tests', 'skipped'),
     ];
-    expect(decide(jobs, true)).toEqual({
+    expect(decide([finished(jobs)])).toEqual({
       typecheck_tests: 'run',
       packages: 'run',
       component: 'run',
     });
   });
 
+  // A draft run, then a ready_for_review run on the same commit whose shards are still going: the
+  // ledger is not listed in the ready run yet, and the draft run's skipped ledger is no reason to
+  // give up on it.
+  it('waits for a running run that does not list the ledger yet, despite a skipped one elsewhere', () => {
+    const draft = finished([
+      done(TT, 'skipped'),
+      done(PKG, 'skipped'),
+      done('Component + geometry tests (${{ matrix.shard }}/3)', 'skipped'),
+      done('Component + geometry tests', 'skipped'),
+    ]);
+    const ready = {
+      status: 'in_progress',
+      jobs: [
+        done(TT, 'success'),
+        done(PKG, 'success'),
+        ...COMPONENT.slice(0, 3).map((n) => going(n)),
+      ],
+    };
+    expect(decide([draft, ready])).toEqual({
+      typecheck_tests: 'skip',
+      packages: 'skip',
+      component: 'wait',
+    });
+  });
+
   it('runs everything when there is no PR run', () => {
-    expect(decide([], true)).toEqual({ typecheck_tests: 'run', packages: 'run', component: 'run' });
+    expect(decide([])).toEqual({ typecheck_tests: 'run', packages: 'run', component: 'run' });
   });
 
   it('does not count a job with a similar name', () => {
@@ -103,7 +131,7 @@ describe('decide', () => {
       done('Typecheck test files', 'success'),
       done('Typecheck (main pushes / fork PRs / non-main base)', 'success'),
     ];
-    expect(decide(jobs, true)).toMatchObject({ typecheck_tests: 'run', packages: 'run' });
+    expect(decide([finished(jobs)])).toMatchObject({ typecheck_tests: 'run', packages: 'run' });
   });
 });
 

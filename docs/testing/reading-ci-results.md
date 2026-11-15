@@ -150,7 +150,7 @@ plain `Unit tests`, and a run one as `Unit tests (<n>)`: no exception among the 
 
 **Suites a `full-ci` Lint dispatch ran that the PR run had passed** (`skip_passed`, the `passed`
 job in lint.yml). The dispatcher's 19 Lint dispatches in the 24 h after the change above
-(2026-11-14 04:03 to 11-15 04:03 UTC) all had a pull_request Lint run on the same head SHA. On 11
+(2026-11-14 04:03 to 11-15 04:03 UTC): 18 had a pull_request Lint run on the same head SHA. On 11
 of them that run passed `Typecheck test files`, `Package unit tests` or the component shards
 (on 9, all of them), but only one had finished when the dispatch started: the label is usually
 added while the PR run is going. Replaying those job lists with a 10-minute wait for unfinished

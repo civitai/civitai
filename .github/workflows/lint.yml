@@ -273,6 +273,10 @@ jobs:
   # usually added while they are. A failed, cancelled or unfinished PR job, a lookup error, or
   # this job failing all mean the suite runs here.
   #
+  # Same SHA, not the same tree: a PR run tests the PR's merge commit (head plus base), while
+  # this dispatch tests the branch head alone. So a skipped suite's verdict is the one on the
+  # merge commit; to see the head alone, dispatch without `skip_passed`.
+  #
   # Geometry still runs when the component suite is skipped: on a PR it is report-only, so a
   # green shard 1 there says nothing about it, and here it is a real verdict. The unit shards
   # and `typecheck` never wait on this job.
