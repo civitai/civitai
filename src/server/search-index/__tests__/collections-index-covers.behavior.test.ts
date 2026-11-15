@@ -65,6 +65,8 @@ const MODEL_ITEM_PRIVATE_POST = 46;
 const POST_ITEM_REMOVAL_REASON = 47;
 const OWN_RESTRICTED_R = 48;
 const OWN_RESTRICTED_PG = 49;
+const OWN_HELD_ABOVE = 90;
+const HELD_POST_ITEM = 91;
 
 beforeAll(async () => {
   pg = new PGlite();
@@ -280,6 +282,18 @@ beforeAll(async () => {
       (${OWN_RESTRICTED_R}, ${OWNER}, 126), (${OWN_RESTRICTED_PG}, ${OWNER}, 127);
     INSERT INTO "CollectionItem" (id, "collectionId", "imageId") VALUES
       (900, ${OWN_RESTRICTED_R}, 126), (901, ${OWN_RESTRICTED_PG}, 127);
+    -- Minor model 80, PG stored: its showcase post leads with an X image, then a PG one.
+    INSERT INTO "Model" (id, "userId", status, availability, minor, "gallerySettings") VALUES
+      (80, ${STRANGER}, 'Published', 'Public', true, '{"level": 1}');
+    INSERT INTO "ModelVersion" (id, "modelId", index) VALUES (81, 80, 0);
+    INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
+      (82, ${STRANGER}, 81, now() - interval '1 day');
+    INSERT INTO "Image" (id, "userId", "postId", index, "nsfwLevel") VALUES
+      (180, ${STRANGER}, 82, 0, 16), (181, ${STRANGER}, 82, 1, 1);
+    INSERT INTO "Collection" (id, "userId", "imageId") VALUES
+      (${OWN_HELD_ABOVE}, ${STRANGER}, 180), (${HELD_POST_ITEM}, ${OWNER}, NULL);
+    INSERT INTO "CollectionItem" (id, "collectionId", "imageId", "postId") VALUES
+      (950, ${OWN_HELD_ABOVE}, 180, NULL), (951, ${HELD_POST_ITEM}, NULL, 82);
   `);
 });
 afterAll(() => pg.close());
@@ -300,6 +314,11 @@ const pull = async (id: number) => {
 };
 
 describe('collections search index covers', () => {
+  it("indexes no cover above a minor model's gallery level, taking the next item image within it", async () => {
+    expect(await pull(OWN_HELD_ABOVE)).toMatchObject({ cover: null, itemCovers: [] });
+    expect(await pull(HELD_POST_ITEM)).toMatchObject({ cover: null, itemCovers: [181] });
+  });
+
   it("indexes a collection's own cover a stranger could see (control)", async () => {
     expect((await pull(OWN_PUBLISHED)).cover).toBe(100);
   });
