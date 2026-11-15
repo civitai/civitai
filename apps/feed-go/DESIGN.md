@@ -342,6 +342,13 @@ it is never less correct than not routing it — only its share of fallbacks cha
   and the request budget plus 60 s to write the response, room for the Node app's answer to a
   fallback, relayed on the same connection. Internal: 60 s to read (a shadow sample is up to 32 MiB),
   30 s to write; pprof captures extend their own deadline (§10.2).
+- **Fallback proxy transport** (`cmd/feed-go/proxy.go`): its own transport, idle connections kept
+  3 s, below the Node app's keep-alive, whatever its server sets (Node's 5 s default unless
+  configured longer), and 32 idle per host. DefaultTransport's 90 s would reuse connections Node has
+  closed: Go replays a GET on a new one, a POST becomes a 502. The browser client never POSTs to this
+  procedure, so the main gains are the larger idle pool and the error counter. A failure before the
+  Node app's response starts is a 502 and `feed_go_fallback_proxy_errors_total{reason="upstream"}`
+  (logged), or `reason="canceled"`; one mid-body aborts the response and is not counted.
 - **Shutdown.** On SIGTERM, within one 15 s grace period: new shadow samples are dropped, the running
   ones are cancelled and waited for, then both listeners drain their in-flight requests, and only then
   are the replica pool and both Redis clients closed.
@@ -545,8 +552,8 @@ Series:
 **Method, and why.** Go has no faithful per-request CPU clock: a request's work runs on several
 goroutines (the hydration lookups run in parallel) that migrate across OS threads, so a thread CPU
 clock misses work and a goroutine cannot be pinned without changing the program. Process CPU deltas
-are exact when only one request is running, and the shadow pod is in that regime almost all the time
-(it serves nothing but sampled shadow requests, at a low rate). So the CPU series counts only phases
+are exact when only one request is running, and a pod taking sampled shadow requests at a low rate
+is in that regime almost all the time. So the CPU series counts only phases
 no other sample overlapped, and `solo_total` says how many that was. Wall time is NOT a CPU proxy for
 `compute`: it is mostly waiting on Redis, Postgres and the feed service, so apportioning process CPU by
 wall-time share overstates compute; use the wall histogram for latency and as a sanity check only.

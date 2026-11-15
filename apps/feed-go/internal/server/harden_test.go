@@ -641,7 +641,7 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true,
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
 		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
 		"feed_go_cache_miss_total": true}
 	checked := 0
@@ -667,5 +667,17 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	}
 	if checked != 10 {
 		t.Fatalf("checked %d per-endpoint families, want 10 (a family was renamed or lost)", checked)
+	}
+}
+
+// Both fallback proxy error reasons are exported from the start, reading 0.
+func TestFallbackProxyErrorsAreSeeded(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	NewMetrics(reg)
+	for _, reason := range []string{"upstream", "canceled"} {
+		v, found := metricValue(t, reg, "feed_go_fallback_proxy_errors_total", map[string]string{"reason": reason})
+		if !found || v != 0 {
+			t.Errorf("feed_go_fallback_proxy_errors_total{reason=%q} = %v (found %v), want an exported 0", reason, v, found)
+		}
 	}
 }
