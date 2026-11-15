@@ -7,6 +7,7 @@ import {
   recordFeedGoShadowOutcome,
   type FeedGoShadowEndpoint,
   type FeedGoShadowOutcome,
+  type FeedGoV1ShapeClass,
 } from '~/server/prom/feed-go-shadow.metrics';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
@@ -22,8 +23,10 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  *   carrying an API credential is not mirrored (`skipped_credential`): the body can echo it.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
- * the route's Flipt flag is on (unknown or uninitialized reads as off). Both routes share the rate,
- * the in-flight cap and the per-second budget: the budget bounds the process, not a route.
+ * the route's Flipt flag is on (unknown or uninitialized reads as off). Both routes share the
+ * sample rate and the in-flight cap; each has its own per-second bucket of the same size, so one
+ * route's traffic cannot starve the other's samples. A REST sample takes its in-flight slot and its
+ * token only once the handler has answered 200 (in `finish`): it holds nothing while it runs.
  *
  * Why the per-second token bucket (`FEED_GO_SHADOW_MAX_PER_SECOND`): the send happens after the
  * response, but encoding the page (`JSON.stringify`, plus `superjson.serialize` for a devalue
@@ -174,6 +177,8 @@ type Captured = { envelope: unknown } | { data: unknown };
 
 export type FeedGoShadowSample = {
   endpoint: FeedGoShadowEndpoint;
+  /** Whether this sample holds an in-flight slot (a REST sample takes it in `finish`). */
+  holdsSlot: boolean;
   /** The tRPC `input`, or the REST query string (without `?`). */
   input: string;
   /** The REST request's path (feed-go builds `metadata.nextPage` from it). */
@@ -216,24 +221,34 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   // limiter for App Blocks events defaulting to Date.now; this needs one bucket on a monotonic clock.
   // Token bucket for `maxPerSecond`: starts full, refills continuously, holds at most one
   // second's worth (and at least one token, so a rate below 1/s still admits a sample).
+  // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve the other.
   const bucketCap = Math.max(1, config.maxPerSecond);
-  let tokens = bucketCap;
-  let refilledAt: number | undefined;
+  const buckets: Record<FeedGoShadowEndpoint, { tokens: number; refilledAt?: number }> = {
+    'as-posts': { tokens: bucketCap },
+    'v1-images': { tokens: bucketCap },
+  };
 
-  function takeToken(): boolean {
+  function takeToken(endpoint: FeedGoShadowEndpoint): boolean {
+    const bucket = buckets[endpoint];
     const t = now();
-    if (refilledAt !== undefined)
-      tokens = Math.min(bucketCap, tokens + ((t - refilledAt) / 1000) * config.maxPerSecond);
-    refilledAt = t;
-    if (tokens < 1) return false;
-    tokens -= 1;
+    if (bucket.refilledAt !== undefined)
+      bucket.tokens = Math.min(
+        bucketCap,
+        bucket.tokens + ((t - bucket.refilledAt) / 1000) * config.maxPerSecond
+      );
+    bucket.refilledAt = t;
+    if (bucket.tokens < 1) return false;
+    bucket.tokens -= 1;
     return true;
   }
 
   function release(sample: FeedGoShadowSample) {
     if (sample.done) return;
     sample.done = true;
-    inFlight--;
+    if (sample.holdsSlot) {
+      sample.holdsSlot = false;
+      inFlight--;
+    }
   }
 
   /**
@@ -254,19 +269,19 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       if (!admit('as-posts')) return undefined;
       const headers = pickShadowHeaders(req);
       inFlight++;
-      return { endpoint: 'as-posts', input: input ?? '', headers, done: false };
+      return { endpoint: 'as-posts', holdsSlot: true, input: input ?? '', headers, done: false };
     } catch {
       return undefined;
     }
   }
 
-  /** The shared bounds: the in-flight cap, then the per-second budget. Counts a drop. */
+  /** The bounds: the shared in-flight cap, then the endpoint's per-second bucket. Counts a drop. */
   function admit(endpoint: FeedGoShadowEndpoint): boolean {
     if (inFlight >= config.maxInFlight) {
       record('dropped_overload', endpoint);
       return false;
     }
-    if (!takeToken()) {
+    if (!takeToken(endpoint)) {
       record('dropped_rate_limit', endpoint);
       return false;
     }
@@ -274,8 +289,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * `begin` for `GET /api/v1/images`: whether this REST request is sampled. The handler captures
-   * its own JSON body (`captureV1Images`) and calls `finish`. Never throws.
+   * `begin` for `GET /api/v1/images`: whether this REST request is sampled. The handler calls it
+   * after its cheap rejects and its bulkhead slot, captures its own JSON body (`captureV1Images`)
+   * and calls `finish`, which is where the in-flight slot and the token are taken. Never throws.
    */
   function beginV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
     try {
@@ -293,10 +309,15 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const q = target.indexOf('?');
       const path = q < 0 ? target : target.slice(0, q);
       const input = q < 0 ? '' : target.slice(q + 1);
-      if (!admit('v1-images')) return undefined;
       const headers = pickShadowHeaders(req);
-      inFlight++;
-      return { endpoint: 'v1-images', input, path: path || undefined, headers, done: false };
+      return {
+        endpoint: 'v1-images',
+        holdsSlot: false,
+        input,
+        path: path || undefined,
+        headers,
+        done: false,
+      };
     } catch {
       return undefined;
     }
@@ -404,6 +425,16 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         release(sample);
         return;
       }
+      if (!sample.holdsSlot) {
+        // A REST sample is bounded here, after the handler: it held nothing while it ran.
+        if (!admit(sample.endpoint)) {
+          sample.captured = undefined;
+          release(sample);
+          return;
+        }
+        inFlight++;
+        sample.holdsSlot = true;
+      }
       schedule(() => send(sample));
     } catch {
       release(sample);
@@ -451,17 +482,62 @@ export function beginFeedGoShadow(req: ShadowRequestLike): FeedGoShadowSample | 
   return sample;
 }
 
-/** `GET /api/v1/images`: whether this request is sampled (see `beginV1Images`). */
+/** `GET /api/v1/images`: whether this request is sampled (see `beginV1Images`). Never throws. */
 export function beginFeedGoShadowV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
-  const owner = getInstance();
-  const sample = owner.beginV1Images(req);
-  if (sample) owners.set(sample, owner);
-  return sample;
+  try {
+    const owner = getInstance();
+    const sample = owner.beginV1Images(req);
+    if (sample) owners.set(sample, owner);
+    return sample;
+  } catch {
+    return undefined;
+  }
 }
 
 /** `GET /api/v1/images`: keep a reference to the 200 body the handler is about to write. */
 export function captureFeedGoShadowV1Images(sample: FeedGoShadowSample, body: unknown): void {
-  (owners.get(sample) ?? getInstance()).captureV1Images(sample, body);
+  try {
+    (owners.get(sample) ?? getInstance()).captureV1Images(sample, body);
+  } catch {
+    /* never throw from the handler */
+  }
+}
+
+/** The `/api/v1/images` request shapes, by what feed-go can port (see FEED_GO_V1_SHAPE_CLASSES). */
+export type FeedGoV1ShapeInput = {
+  ids?: readonly unknown[];
+  imageId?: unknown;
+  modelId?: unknown;
+  modelVersionId?: unknown;
+  tags?: readonly unknown[];
+  baseModels?: readonly unknown[];
+  withMeta?: boolean;
+  withTags?: boolean;
+};
+
+/**
+ * The shape class of one `/api/v1/images` request, from its parsed query (null when it did not
+ * parse) and its final status, in feed-go's own fallback order (ParseV1). Pure and cheap.
+ */
+export function feedGoV1ShapeClass(
+  req: ShadowRequestLike,
+  data: FeedGoV1ShapeInput | null,
+  statusCode: number
+): FeedGoV1ShapeClass {
+  try {
+    if (statusCode !== 200 || !data) return 'non200';
+    if (hasApiCredential(req)) return 'api_key';
+    if (data.ids !== undefined) return 'unported_ids';
+    if (data.imageId !== undefined) return 'unported_imageId';
+    if (data.tags !== undefined) return 'unported_tags';
+    if (data.baseModels !== undefined) return 'unported_baseModels';
+    if (data.modelId && !data.modelVersionId) return 'unported_modelId_only';
+    if (data.withMeta) return 'unported_withMeta';
+    if (data.withTags) return 'unported_withTags';
+    return 'ported';
+  } catch {
+    return 'non200';
+  }
 }
 
 export function runWithFeedGoShadow<T>(sample: FeedGoShadowSample | undefined, fn: () => T): T {

@@ -46,9 +46,6 @@ type Config struct {
 	// ImageLocation is NEXT_PUBLIC_IMAGE_LOCATION (same var as the Node app): the edge URL prefix the
 	// REST images endpoint publishes. Unset = that endpoint falls back.
 	ImageLocation string
-	// NodeProduction is FEED_GO_NODE_PRODUCTION (default true): the Node app's isProd, which decides
-	// the REST endpoint's nextPage origin (https://<host> in production, else http://localhost:3000).
-	NodeProduction bool
 	// Pprof is FEED_GO_PPROF (default off): serve net/http/pprof under /debug/pprof/ on the internal
 	// listener only (never the public one).
 	Pprof bool
@@ -95,7 +92,6 @@ func Load() (*Config, error) {
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 		Pprof:            boolEnv("FEED_GO_PPROF", false),
 		ImageLocation:    os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
-		NodeProduction:   boolEnv("FEED_GO_NODE_PRODUCTION", true),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),

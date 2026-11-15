@@ -68,10 +68,20 @@ func emptyGate() superjson.Object {
 	return superjson.Object{{Key: "items", Val: []any{}}, {Key: "metadata", Val: superjson.Object{}}}
 }
 
+// V1Answer is one computed answer.
+type V1Answer struct {
+	// Body is what Node writes with `res.status(200).json(...)`.
+	Body superjson.Object
+	// Trivial marks an answer computed without loading any image: a withheld or fully held gallery,
+	// `limit=0`, a shape the feed cannot express, or a feed page with no ids. Such answers cost
+	// almost nothing on either side, so they are kept out of the CPU-per-served-call and match series
+	// (outcome `served_empty`, result `match_empty`).
+	Trivial bool
+}
+
 // ServeV1 is the `/api/v1/images` handler (handleImagesRequest) on the feed-service path
-// (runImageSearch → getImagesFromFeedServiceForRest), for the supported subset. It returns the response
-// body Node writes with `res.status(200).json(...)`.
-func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (superjson.Object, error) {
+// (runImageSearch → getImagesFromFeedServiceForRest), for the supported subset.
+func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 	in := req.Input
 	if d.Feed == nil {
 		// Node answers from Postgres without a feed service (local development only).
@@ -106,14 +116,14 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (superjson.Object, e
 			return nil, err
 		}
 		if !ok {
-			return emptyGate(), nil
+			return &V1Answer{Body: emptyGate(), Trivial: true}, nil
 		}
 		withheld, err := d.Gallery.Withheld(ctx, modelIDs, 0)
 		if err != nil {
 			return nil, err
 		}
 		if withheld {
-			return emptyGate(), nil
+			return &V1Answer{Body: emptyGate(), Trivial: true}, nil
 		}
 		levels, err := heldLevels(ctx, d.Gallery, modelIDs)
 		if err != nil {
@@ -126,7 +136,7 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (superjson.Object, e
 			}
 			level &= held
 			if level == 0 {
-				return emptyGate(), nil
+				return &V1Answer{Body: emptyGate(), Trivial: true}, nil
 			}
 		}
 	}
@@ -159,7 +169,8 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (superjson.Object, e
 	for i, it := range items {
 		wire[i] = it.wire
 	}
-	return superjson.Object{{Key: "items", Val: wire}, {Key: "metadata", Val: meta}}, nil
+	body := superjson.Object{{Key: "items", Val: wire}, {Key: "metadata", Val: meta}}
+	return &V1Answer{Body: body, Trivial: !page.hydrated}, nil
 }
 
 // v1Item is one shaped image plus what withoutHeldImages reads.
@@ -172,6 +183,8 @@ type v1Item struct {
 type v1Result struct {
 	items []v1Item
 	next  string
+	// hydrated: the page's rows were loaded (false = a trivial answer, see V1Answer).
+	hydrated bool
 }
 
 // v1Page is runImageSearch's feed-service arm: getImagesFromFeedServiceForRest, then the shaping.
@@ -308,7 +321,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	if err != nil {
 		return nil, err
 	}
-	return &v1Result{items: items, next: next}, nil
+	return &v1Result{items: items, next: next, hydrated: true}, nil
 }
 
 // publishedFor is getAllImages' publish filter: for anyone but a moderator, an image whose post is
@@ -445,7 +458,10 @@ func ShapeV1Image(r RawImage, h V1Hydrated, level int, location string) (v1Item,
 			username = superjson.FormatNumber(u)
 		}
 	}
-	var baseModel any // getBaseModelFromResources: the checkpoint's base model, else null
+	// getBaseModelFromResources as image.service.ts imports it: the one in src/server/redis/caches.ts
+	// (the checkpoint resource's raw baseModel, else null; no cache entry is null too), NOT the
+	// same-named ecosystem-group helper in src/shared/constants/generation.constants.ts.
+	var baseModel any
 	modelVersionIDs := []any{}
 	if h.HasResources {
 		for _, res := range h.Resources {

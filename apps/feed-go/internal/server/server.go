@@ -109,6 +109,10 @@ func (s *Server) endPhase(p phaseClock, endpoint, phase, outcome string) {
 type computed struct {
 	payload []byte
 	ttl     *trpc.CacheTTL
+	// trivial: answered without loading any image (feed.V1Answer.Trivial). Recorded as outcome
+	// served_empty and result match_empty, so the per-served-call CPU and the match rate cover only
+	// answers that did the work.
+	trivial bool
 }
 
 // compute answers a request, or returns a fallback/other error.
@@ -181,17 +185,17 @@ func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, err
 		viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator}
 	}
 	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
-	body, err := feed.ServeV1(ctx, s.V1, feed.V1Request{
+	ans, err := feed.ServeV1(ctx, s.V1, feed.V1Request{
 		Input: in, Viewer: viewer, RegionRestricted: restricted, Host: r.Host, Path: r.URL.Path,
 	})
 	if err != nil {
 		return nil, err
 	}
-	payload, err := superjson.Plain(body)
+	payload, err := superjson.Plain(ans.Body)
 	if err != nil {
 		return nil, err
 	}
-	return &computed{payload: payload}, nil
+	return &computed{payload: payload, trivial: ans.Trivial}, nil
 }
 
 func countryOf(r *http.Request) string {
@@ -391,9 +395,13 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		s.Log.Warn("shadow compute failed", "endpoint", endpoint, "err", err)
 		return
 	}
-	s.endPhase(phase, endpoint, "compute", "served")
-	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "served").Inc()
-	s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "served").Observe(time.Since(start).Seconds())
+	served := "served"
+	if c.trivial {
+		served = "served_empty"
+	}
+	s.endPhase(phase, endpoint, "compute", served)
+	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", served).Inc()
+	s.Metrics.Duration.WithLabelValues(endpoint, "shadow", served).Observe(time.Since(start).Seconds())
 	phase = s.startPhase()
 	report, err := compareFn(c.payload, req.Node)
 	if err != nil {
@@ -402,6 +410,10 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		return
 	}
 	result := classify(report, c.payload, req.Node)
+	if c.trivial && result == "match" {
+		// A trivial answer that differs is still counted as the diff it is (fields, membership, …).
+		result = "match_empty"
+	}
 	s.endPhase(phase, endpoint, "compare", "ok")
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
 	for _, d := range report.Diffs {

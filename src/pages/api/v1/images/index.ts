@@ -21,8 +21,12 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import {
   beginFeedGoShadowV1Images,
   captureFeedGoShadowV1Images,
+  feedGoV1ShapeClass,
   finishFeedGoShadow,
+  type FeedGoShadowSample,
+  type FeedGoV1ShapeInput,
 } from '~/server/trpc/feed-go-shadow';
+import { recordFeedGoV1Shape } from '~/server/prom/feed-go-shadow.metrics';
 import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -165,11 +169,13 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
 
   let releaseSlot: (() => void) | undefined;
 
-  // feed-go shadow (flag `feed-go-shadow-v1-images`, default off): a sampled request keeps a
-  // reference to the 200 body it writes, and after the handler its query string, the headers the
-  // answer depends on and that body are POSTed to feed-go's internal compare endpoint from
-  // `setImmediate`, never awaited. Never throws. See `~/server/trpc/feed-go-shadow`.
-  const shadow = beginFeedGoShadowV1Images(req);
+  // feed-go shadow (flag `feed-go-shadow-v1-images`, default off): decided after the cheap rejects
+  // and the bulkhead slot (below). A sampled request keeps a reference to the 200 body it writes,
+  // and after the handler its query string, the headers the answer depends on and that body are
+  // POSTed to feed-go's internal compare endpoint from `setImmediate`, never awaited. Never throws.
+  // See `~/server/trpc/feed-go-shadow`. `shape` is this request's class for the shape counter.
+  let shadow: FeedGoShadowSample | undefined;
+  let shape: FeedGoV1ShapeInput | null = null;
   const ok = (body: unknown) => {
     if (shadow) captureFeedGoShadowV1Images(shadow, body);
     return res.status(200).json(body);
@@ -177,6 +183,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
+    shape = reqParams.data;
 
     const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
@@ -228,6 +235,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
 
     // Timed only for admitted requests (bulkhead 503 returns above, before this).
     endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
+    shadow = beginFeedGoShadowV1Images(req);
 
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
@@ -356,6 +364,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // serialization — the actual pin cost — is done by now), not on socket close.
     releaseSlot?.();
     if (shadow) finishFeedGoShadow(shadow, res.statusCode);
+    recordFeedGoV1Shape(feedGoV1ShapeClass(req, shape, res.statusCode));
   }
 }
 

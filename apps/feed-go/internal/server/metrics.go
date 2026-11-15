@@ -33,7 +33,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		Requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_requests_total",
-			Help: "Requests by mode (serve|shadow) and outcome (served|fallback|error).",
+			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|fallback|error).",
 		}, []string{"endpoint", "mode", "outcome"}),
 		Fallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_total",
@@ -46,7 +46,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"endpoint", "mode", "outcome"}),
 		ShadowResults: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_compare_total",
-			Help: "Shadow comparisons by result: match, fields, order, membership, unsupported, go_error, bad_request.",
+			Help: "Shadow comparisons by result: match, match_empty, fields, order, membership, unsupported, go_error, bad_request.",
 		}, []string{"endpoint", "result"}),
 		ShadowDiffs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_field_diffs_total",
@@ -73,6 +73,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_shadow_phase_solo_wall_seconds_total",
 			Help: "Wall seconds of the shadow-sample phases counted in feed_go_shadow_phase_cpu_seconds_total.",
 		}, []string{"endpoint", "phase", "outcome"}),
+	}
+	// Seed the dropped counter per endpoint so "none dropped" reads 0 rather than an absent series.
+	for _, e := range []string{EndpointAsPosts, EndpointV1Images} {
+		m.ShadowDropped.WithLabelValues(e)
 	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall)

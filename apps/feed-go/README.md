@@ -40,9 +40,8 @@ See `.env.example`. Variable names match the main app's where the value is the s
 `FEED_GO_*` flag mirrors default to ON; set each to its Flipt flag's real value (DESIGN.md §8). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
 `FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
 falls back (`index-feed-unconfigured`). The REST endpoint's shadow also needs
-`NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes) and reads
-`FEED_GO_NODE_PRODUCTION` (default on: the Node app's `isProd`, which sets `metadata.nextPage`'s
-origin).
+`NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds
+`metadata.nextPage` as the production Node app does (`https://<host>`).
 
 Every `feed_go_*` series carries `endpoint` (`as-posts` | `v1-images`), so parity and CPU per call
 read per endpoint (DESIGN.md §10, §13).

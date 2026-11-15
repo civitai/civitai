@@ -11,6 +11,7 @@ import superjson from 'superjson';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
+  feedGoV1ShapeClass,
   FEED_GO_SHADOW_PATH,
   pickSessionCookies,
   pickShadowHeaders,
@@ -606,21 +607,42 @@ describe('createFeedGoShadow — GET /api/v1/images', () => {
     expect(h.shadow.inFlight()).toBe(0);
   });
 
-  it('shares the in-flight cap and the per-second budget with the gallery procedure', () => {
+  it('holds no in-flight slot while the handler runs, only once it answered 200', async () => {
+    const h = harness();
+    const sample = h.shadow.beginV1Images(restRequest())!;
+    expect(sample).toBeDefined();
+    expect(h.shadow.inFlight()).toBe(0);
+    h.shadow.captureV1Images(sample, { items: [], metadata: {} });
+    h.shadow.finish(sample, 200);
+    expect(h.shadow.inFlight()).toBe(1); // the queued send
+    await h.flush();
+    expect(h.shadow.inFlight()).toBe(0);
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it('shares the in-flight cap with the gallery procedure', async () => {
     const h = harness({ config: { maxInFlight: 1 } });
     // A gallery sample holds the only slot (its POST has not settled).
     expect(h.shadow.begin(request())).toBeDefined();
-    expect(h.shadow.beginV1Images(restRequest())).toBeUndefined();
+    expect(serveRest(h)).toBeDefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
     expect(h.outcomes).toEqual(['dropped_overload']);
     expect(h.endpoints).toEqual(['v1-images']);
+  });
 
-    let t = 0;
-    const b = harness({ config: { maxPerSecond: 1 }, now: () => t });
-    expect(b.shadow.begin(request())).toBeDefined();
-    expect(b.shadow.beginV1Images(restRequest())).toBeUndefined();
-    expect(b.outcomes).toEqual(['dropped_rate_limit']);
-    t = 1000;
-    expect(b.shadow.beginV1Images(restRequest())).toBeDefined();
+  it('has its own per-second bucket, so REST samples cannot starve the gallery', async () => {
+    const h = harness({ config: { maxPerSecond: 1 }, now: () => 0 });
+    // The REST bucket's one token is spent...
+    serveRest(h);
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent']);
+    serveRest(h);
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+    // ...and the gallery procedure's bucket is untouched.
+    expect(h.shadow.begin(request())).toBeDefined();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
   });
 
   it('a non-200 answer is skipped and frees the slot', async () => {
@@ -648,5 +670,33 @@ describe('createFeedGoShadow — GET /api/v1/images', () => {
     await h.flush();
     expect(h.outcomes).toEqual(['skipped_no_capture', 'skipped_no_capture']);
     expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('feedGoV1ShapeClass', () => {
+  const req = restRequest();
+  it.each([
+    ['a plain gallery page', { modelVersionId: 9 }, 200, 'ported'],
+    ['modelId with a version', { modelId: 3, modelVersionId: 9 }, 200, 'ported'],
+    ['an id batch', { ids: [1, 2] }, 200, 'unported_ids'],
+    ['one image', { imageId: 5 }, 200, 'unported_imageId'],
+    ['a model without a version', { modelId: 3 }, 200, 'unported_modelId_only'],
+    ['tags', { tags: [5] }, 200, 'unported_tags'],
+    ['base models', { baseModels: ['SDXL 1.0'] }, 200, 'unported_baseModels'],
+    ['meta', { withMeta: true }, 200, 'unported_withMeta'],
+    ['tags on images', { withTags: true }, 200, 'unported_withTags'],
+    ['a 503', { modelVersionId: 9 }, 503, 'non200'],
+  ] as const)('%s is %s', (_name, data, status, want) => {
+    expect(feedGoV1ShapeClass(req, data, status)).toBe(want);
+  });
+
+  it('a query that did not parse is non200, an API credential is api_key', () => {
+    expect(feedGoV1ShapeClass(req, null, 200)).toBe('non200');
+    expect(
+      feedGoV1ShapeClass(restRequest({ headers: { authorization: 'Bearer K' } }), {}, 200)
+    ).toBe('api_key');
+    expect(feedGoV1ShapeClass(restRequest({ query: { token: 'K' } }), { ids: [1] }, 200)).toBe(
+      'api_key'
+    );
   });
 });

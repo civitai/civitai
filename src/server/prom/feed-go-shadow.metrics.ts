@@ -116,6 +116,16 @@ const encodeBytesCounter = registerInstrumentationMetric(
     })
 );
 
+// Seed both endpoints at 0.
+try {
+  for (const endpoint of FEED_GO_SHADOW_ENDPOINTS) {
+    encodeSecondsCounter.inc({ endpoint }, 0);
+    encodeBytesCounter.inc({ endpoint }, 0);
+  }
+} catch {
+  /* never throw from telemetry */
+}
+
 /** Count one sample's encode cost. Never throws. */
 export function recordFeedGoShadowEncode(
   seconds: number,
@@ -125,6 +135,59 @@ export function recordFeedGoShadowEncode(
   try {
     if (seconds > 0) encodeSecondsCounter.inc({ endpoint }, seconds);
     if (bytes > 0) encodeBytesCounter.inc({ endpoint }, bytes);
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Every GET /api/v1/images request, by shape class (sampled or not, flag on or off)
+// ---------------------------------------------------------------------------
+//
+// The share of the route feed-go's port can answer at all: `ported` over the total. A shape it
+// falls back on by construction (the legacy Postgres path, tags, ...), an API-key request, and a
+// non-200 answer each have their own class. Labels: `class` only, from the fixed set below.
+
+export const FEED_GO_V1_SHAPE_CLASSES = [
+  'ported',
+  'unported_ids',
+  'unported_imageId',
+  'unported_modelId_only',
+  'unported_tags',
+  'unported_baseModels',
+  'unported_withMeta',
+  'unported_withTags',
+  'api_key',
+  'non200',
+] as const;
+
+export type FeedGoV1ShapeClass = (typeof FEED_GO_V1_SHAPE_CLASSES)[number];
+
+const SHAPE_NAME = 'civitai_app_feed_go_v1_shape_total';
+
+const v1ShapeCounter = registerInstrumentationMetric(
+  SHAPE_NAME,
+  () =>
+    new client.Counter({
+      name: SHAPE_NAME,
+      help:
+        'GET /api/v1/images requests by shape class: ported (a shape feed-go answers), the ' +
+        'unported_* shapes it falls back on by construction, api_key, and non200.',
+      labelNames: ['class'],
+      registers: [instrumentationRegistry],
+    })
+);
+
+try {
+  for (const shape of FEED_GO_V1_SHAPE_CLASSES) v1ShapeCounter.inc({ class: shape }, 0);
+} catch {
+  /* never throw from telemetry */
+}
+
+/** Count one /api/v1/images request's shape class. Never throws. */
+export function recordFeedGoV1Shape(shape: FeedGoV1ShapeClass): void {
+  try {
+    v1ShapeCounter.inc({ class: shape });
   } catch {
     /* never throw from telemetry */
   }

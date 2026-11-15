@@ -312,6 +312,7 @@ type v1Fixture struct {
 	src     *fakeV1Sources
 	gallery *fakeV1Gallery
 	hq      []ImagesQuery
+	trivial []bool // V1Answer.Trivial per served call
 }
 
 func newV1Fixture(rows []RawImage) *v1Fixture {
@@ -360,11 +361,12 @@ func serveV1(t *testing.T, f *v1Fixture, query string, viewer *Viewer) (string, 
 	if err != nil {
 		t.Fatalf("parse %q: %v", query, err)
 	}
-	body, err := ServeV1(context.Background(), f.deps, V1Request{Input: in, Viewer: viewer, Host: "civitai.example", Path: "/api/v1/images"})
+	ans, err := ServeV1(context.Background(), f.deps, V1Request{Input: in, Viewer: viewer, Host: "civitai.example", Path: "/api/v1/images"})
 	if err != nil {
 		return "", err
 	}
-	b, err := superjson.Plain(body)
+	f.trivial = append(f.trivial, ans.Trivial)
+	b, err := superjson.Plain(ans.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,6 +396,9 @@ func TestServeV1VersionGallery(t *testing.T) {
 		`"nextPage":"https://civitai.example/api/v1/images?modelVersionId=9&limit=2&sort=Newest&cursor=feed%3A1700000000000%3A10"}}`
 	if got != want {
 		t.Fatalf("body:\n got %s\nwant %s", got, want)
+	}
+	if !reflect.DeepEqual(f.trivial, []bool{false}) {
+		t.Fatalf("a hydrated page is not trivial: %v", f.trivial)
 	}
 	// The feed query: the addon tags (deduped), the version, minor and POI always excluded on this route.
 	if q := f.feed.queries; len(q) != 1 || q[0] != "levels=1&excludedTags=5&versionIds=9&excludeMinor=1&excludePoi=1&sort=newest&limit=2" {
@@ -466,8 +471,8 @@ func TestServeV1GalleryGates(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Taken down: empty for everyone on this route, a moderator included, and no feed call.
-	if got != `{"items":[],"metadata":{}}` || len(f.feed.queries) != 0 {
-		t.Fatalf("withheld: body %s, feed calls %d", got, len(f.feed.queries))
+	if got != `{"items":[],"metadata":{}}` || len(f.feed.queries) != 0 || !f.trivial[0] {
+		t.Fatalf("withheld: body %s, feed calls %d, trivial %v", got, len(f.feed.queries), f.trivial)
 	}
 	f = newV1Fixture(nil)
 	if got, _ := serveV1(t, f, "modelVersionId=404", nil); got != `{"items":[],"metadata":{}}` {
@@ -536,6 +541,10 @@ func TestServeV1FeedAnswers(t *testing.T) {
 	if got, err := serveV1(t, f, "limit=0", nil); err != nil || got != `{"items":[],"metadata":{}}` || len(f.feed.queries) != 0 {
 		t.Fatalf("limit 0: %s %v, feed calls %d", got, err, len(f.feed.queries))
 	}
+	// requiringMeta's empty page and limit=0 are both trivial answers.
+	if !reflect.DeepEqual(f.trivial, []bool{true, true}) {
+		t.Fatalf("trivial = %v, want [true true]", f.trivial)
+	}
 	f.feed.ans = feedsvc.Answer{Status: 503}
 	if _, err := serveV1(t, f, "", nil); fallback.Reason(err) != "feed-status" {
 		t.Fatalf("feed 503: %v", err)
@@ -575,5 +584,38 @@ func TestShapeV1VideoStillWithoutCustomThumbnail(t *testing.T) {
 	it, _ = ShapeV1Image(row(1, 1, "image", "x", 1, ""), V1Hydrated{User: hydrate.BasicUser{Username: int64(222)}, HasUser: true}, browsing.PG, loc)
 	if u, _ := it.wire.Get("username"); u != "222" {
 		t.Fatalf("username = %#v", u)
+	}
+}
+
+// baseModel is getBaseModelFromResources from src/server/redis/caches.ts (what image.service.ts
+// imports): `if (!resources) return null; return resources.find((r) => r.modelType ===
+// 'Checkpoint')?.baseModel ?? null`. The raw value, never an ecosystem group, and null (not absent)
+// without a checkpoint, unlike the same-named helper in generation.constants.ts, which would answer
+// a group for the first case and vote one for the second.
+func TestShapeV1BaseModelIsTheCachesHelper(t *testing.T) {
+	cases := []struct {
+		name string
+		h    V1Hydrated
+		want string
+	}{
+		{"checkpoint: its raw baseModel", V1Hydrated{HasResources: true, Resources: []hydrate.ImageResource{
+			{ModelVersionID: 2, ModelType: "LORA", BaseModel: "Pony"},
+			{ModelVersionID: 1, ModelType: "Checkpoint", BaseModel: "SDXL 1.0"},
+		}}, `"SDXL 1.0"`},
+		{"no checkpoint: null, no vote", V1Hydrated{HasResources: true, Resources: []hydrate.ImageResource{
+			{ModelVersionID: 2, ModelType: "LORA", BaseModel: "Pony"},
+			{ModelVersionID: 3, ModelType: "LORA", BaseModel: "Pony"},
+		}}, `null`},
+		{"no resources entry: null", V1Hydrated{}, `null`},
+	}
+	for _, c := range cases {
+		it, err := ShapeV1Image(row(1, 1, "image", "x", 1, ""), c.h, browsing.PG, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := superjson.Plain(it.wire)
+		if !strings.Contains(string(b), `"baseModel":`+c.want+`,`) {
+			t.Errorf("%s: %s", c.name, b)
+		}
 	}
 }

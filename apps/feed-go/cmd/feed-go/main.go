@@ -133,9 +133,10 @@ func run(log *slog.Logger) error {
 		Rows: func(ctx context.Context, q feed.ImagesQuery) ([]feed.RawImage, error) {
 			return feed.FetchRows(ctx, pool, deps.Cache, q.Build())
 		},
-		Addons:         deps.Addons.Addons,
-		ImageLocation:  cfg.ImageLocation,
-		NodeProduction: cfg.NodeProduction,
+		Addons:        deps.Addons.Addons,
+		ImageLocation: cfg.ImageLocation,
+		// The Node app this service shadows is the production build (isProd): nextPage on https://<host>.
+		NodeProduction: true,
 	}
 	srv := &server.Server{
 		Resolver:       resolver,

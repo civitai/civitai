@@ -610,7 +610,10 @@ compared at `POST /internal/shadow/api/v1/images`. Nothing serves it publicly.
    `browsingLevel` (the image level, raised to a video thumbnail's), a public video still
    (`getPublicVideoThumbnail`: the custom thumbnail when its level is allowed, else a transcoded
    frame, skipped past the first seconds of a long video), six counts from the metric hashes,
-   `username` (a cached numeric name as a string), `baseModel` (the checkpoint resource's) and
+   `username` (a cached numeric name as a string), `baseModel` (the checkpoint resource's raw
+   `baseModel`, else null: `getBaseModelFromResources` as image.service.ts imports it, from
+   `src/server/redis/caches.ts`, not the same-named ecosystem-group helper in
+   `generation.constants.ts`) and
    `modelVersionIds` (the detected resources). Then `withoutHeldImages`: an image above its post's
    held model level is left out, whatever the request named.
 8. **Body.** `res.json({ items, metadata })`, plain JSON (not superjson): `metadata` holds `nextCursor`
@@ -638,15 +641,18 @@ not read them, and their cache misses (a fallback on the gallery procedure) cost
 | (no flag) | the REST route always takes the feed service when `FEED_SERVICE_URL` is set (`feedPrimaryAvailable`); `image-index-feed` is not read on this route | `FEED_SERVICE_URL` |
 | `datapacket-read` | which replica the hydrate reads, and whether an empty hydrate is retried on the other one | not mirrored: an empty hydrate falls back |
 | `feed-service-degrade` | breaker + last good page on a feed failure | not mirrored: a failure falls back |
-| `isProd` | `nextPage` on `https://<host>`, else `http://localhost:3000` | `FEED_GO_NODE_PRODUCTION` (default on) |
+| `isProd` | `nextPage` on `https://<host>`, else `http://localhost:3000` | always the production form (the shadowed app is a production build) |
 | `NEXT_PUBLIC_IMAGE_LOCATION` | the edge URL prefix | the same variable |
 
 ### 13.4 The Node sampler (flag `feed-go-shadow-v1-images`, default OFF)
 
 `src/server/trpc/feed-go-shadow.ts` (`beginV1Images` / `captureV1Images`), wired in the route's
 handler. Its own Flipt flag, so the REST route is enabled separately from the gallery procedure; it
-shares `FEED_GO_SHADOW_URL`, the sample rate, the in-flight cap and the per-second budget with
-`feed-go-shadow` (the budget bounds the process, not a route). A sampled 200 keeps a reference to the
+shares `FEED_GO_SHADOW_URL`, the sample rate and the in-flight cap with `feed-go-shadow`, and has its
+own per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size, so REST traffic cannot starve
+the gallery's samples. The sampling decision is made after the handler's cheap rejects (the 400 and
+429) and its bulkhead slot, and the in-flight slot and the token are taken only once the handler has
+answered 200, so a sample holds nothing while the handler runs. A sampled 200 keeps a reference to the
 body the handler passes to `res.json`; after the handler, from `setImmediate` and never awaited, it
 POSTs
 
@@ -671,17 +677,44 @@ does the same). Categories stop at `meta` only: `metadata` is the paging object 
 `metadata.nextCursor` / `metadata.nextPage` keep their keys. Results classify by `items[].id`
 (images, not posts): `match`, `fields`, `order`, `membership`, `unsupported`, `go_error`.
 
-### 13.6 Measurement
+### 13.6 Measurement: the go/no-go is for the ported subset
 
 The shadow samples of both endpoints share one queue, so §10.1's solo-phase method covers both;
-read it per endpoint:
+read it per endpoint.
+
+**Trivial answers are kept apart.** An answer computed without loading any image — a withheld or
+fully held gallery, `limit=0`, a shape the feed cannot express, a feed page with no ids — costs
+almost nothing on either side and would pull CPU per call down and the match rate up. It is
+recorded as compute outcome `served_empty` (not `served`) and, when it matches, as result
+`match_empty` (not `match`); a trivial answer that differs is still counted as its diff.
+
+**The go/no-go figure** is CPU per non-trivial served call on the ported subset, with the match rate
+over the same calls:
 
 ```promql
 sum(rate(feed_go_shadow_phase_cpu_seconds_total{endpoint="v1-images",phase="compute",outcome="served"}[1h]))
   / sum(rate(feed_go_shadow_phase_solo_total{endpoint="v1-images",phase="compute",outcome="served"}[1h]))
 
+sum(rate(feed_go_shadow_compare_total{endpoint="v1-images",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{endpoint="v1-images",result=~"match|fields|order|membership"}[1h]))
+
 topk(10, sum by (reason) (rate(feed_go_fallback_total{endpoint="v1-images",mode="shadow"}[1h])))
 ```
+
+**What share of the route that is.** The figure above says nothing about the requests the port
+cannot take. Node counts every request of the route, sampled or not and whatever the flag, by shape
+class in `civitai_app_feed_go_v1_shape_total{class}`: `ported` (a shape the port answers), the
+`unported_*` shapes it falls back on by construction (`ids`, `imageId`, `modelId_only`, `tags`,
+`baseModels`, `withMeta`, `withTags`), `api_key`, and `non200`. The share of the route a Go service
+could take is
+
+```promql
+sum(rate(civitai_app_feed_go_v1_shape_total{class="ported"}[1d]))
+  / sum(rate(civitai_app_feed_go_v1_shape_total{class!="non200"}[1d]))
+```
+
+and is an upper bound: a `ported` request can still fall back on a cache miss or a feed failure
+(the fallback-reason rate above). A saving read from the go/no-go figure applies to that share only.
 
 Node's side is the route's own timer, `images_search_request_duration_seconds{route="api/v1/images"}` (wall time), and
 the per-route CPU attribution over the same window.

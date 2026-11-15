@@ -94,3 +94,33 @@ func TestSyntheticV1RequestKeepsTheRawQuery(t *testing.T) {
 		t.Fatalf("synthetic request: path=%q query=%q host=%q", r.URL.Path, r.URL.RawQuery, r.Host)
 	}
 }
+
+// A trivial answer (no image loaded) is served_empty / match_empty, never served / match: the
+// per-served-call CPU and the match rate cover only answers that did the work.
+func TestV1TrivialAnswerIsKeptOutOfServedAndMatch(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s := newPhaseServer(reg, 1, nil)
+	s.computeV1Fn = func(context.Context, *http.Request) (*computed, error) {
+		return &computed{payload: []byte(`{"items":[],"metadata":{}}`), trivial: true}, nil
+	}
+	postV1(t, s, `{"items":[],"metadata":{}}`)
+	waitFor(t, "the trivial match", func() bool {
+		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointV1Images, "result": "match_empty"})
+		return v == 1 && len(s.ShadowQueue) == 0
+	})
+	if _, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointV1Images, "result": "match"}); found {
+		t.Fatal("a trivial answer must not count as a match")
+	}
+	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"endpoint": EndpointV1Images, "phase": "compute", "outcome": "served_empty"}); n != 1 {
+		t.Fatalf("served_empty compute phases = %v, want 1", n)
+	}
+	if _, found := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"endpoint": EndpointV1Images, "phase": "compute", "outcome": "served"}); found {
+		t.Fatal("a trivial answer must not be a served compute")
+	}
+	// The dropped counter starts at 0 for both endpoints.
+	for _, e := range []string{EndpointAsPosts, EndpointV1Images} {
+		if v, found := metricValue(t, reg, "feed_go_shadow_dropped_total", map[string]string{"endpoint": e}); !found || v != 0 {
+			t.Fatalf("dropped{%s} = %v found=%v, want a 0 series", e, v, found)
+		}
+	}
+}
