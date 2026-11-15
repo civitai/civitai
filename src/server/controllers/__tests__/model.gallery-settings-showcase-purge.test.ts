@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockUpdateModelById, mockPurgeHeldShowcase, mockQueueUpdate } = vi.hoisted(() => ({
-  mockUpdateModelById: vi.fn(),
-  mockPurgeHeldShowcase: vi.fn(),
-  mockQueueUpdate: vi.fn(async () => undefined),
+const { mockUpdateModelById, mockPurgeHeldShowcase, mockQueueUpdate, mockCollectionsReindex } =
+  vi.hoisted(() => ({
+    mockUpdateModelById: vi.fn(),
+    mockPurgeHeldShowcase: vi.fn(),
+    mockQueueUpdate: vi.fn(async () => undefined),
+    mockCollectionsReindex: vi.fn(async () => undefined),
+  }));
+vi.mock('~/server/services/collection-index-sync', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  queueModelCollectionsReindex: mockCollectionsReindex,
 }));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -60,17 +66,21 @@ describe('updateGallerySettingsHandler — public showcase caches and search doc
     expect(mockPurgeHeldShowcase).toHaveBeenCalledWith(MODEL);
     expect(mockQueueUpdate).toHaveBeenCalledTimes(1);
     expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: MODEL, action: 'Update' }]);
+    expect(mockCollectionsReindex).toHaveBeenCalledTimes(1);
+    expect(mockCollectionsReindex).toHaveBeenCalledWith([MODEL]);
   });
 
   it('leaves them when the level of a held model is unchanged', async () => {
     await save({ minor: true, sfwOnly: false, gallerySettings: { level: 1 } }, 1);
     expect(mockPurgeHeldShowcase).not.toHaveBeenCalled();
     expect(mockQueueUpdate).not.toHaveBeenCalled();
+    expect(mockCollectionsReindex).not.toHaveBeenCalled();
   });
 
   it('leaves them when the model is not held', async () => {
     await save({ minor: false, sfwOnly: false, gallerySettings: { level: 3 } }, 1);
     expect(mockPurgeHeldShowcase).not.toHaveBeenCalled();
     expect(mockQueueUpdate).not.toHaveBeenCalled();
+    expect(mockCollectionsReindex).not.toHaveBeenCalled();
   });
 });
