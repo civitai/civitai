@@ -22,11 +22,9 @@ const h = await vi.hoisted(async () => {
   return {
     tables: {} as Record<string, Record<string, unknown>[]>,
     queries: [] as { table: string; where: [string, string, unknown][] }[],
-    dbThrows: null as null | ((table: string) => boolean),
+    dbThrows: null as null | ((table: string, where: [string, string, unknown][]) => boolean),
     redis: new Map<string, { value: string; ex: number }>(),
     cacheRedis: new Map<string, string>(),
-    redisGetThrows: false,
-    redisGetHangs: false,
     redisSetThrows: false,
     // Like the real sys client (disableOfflineQueue): commands reject until it is ready.
     sysReady: true,
@@ -64,7 +62,7 @@ vi.mock('$lib/server/db/db', () => ({
       const where: [string, string, unknown][] = [];
       const run = () => {
         h.queries.push({ table, where });
-        if (h.dbThrows?.(table)) throw new Error(`db down: ${table}`);
+        if (h.dbThrows?.(table, where)) throw new Error(`db down: ${table}`);
         return (h.tables[table] ?? []).filter((r) => where.every((w) => matches(r, w)));
       };
       const qb: Record<string, unknown> = {
@@ -105,8 +103,6 @@ vi.mock('$lib/server/redis', async (orig) => ({
     },
     async get(key: string) {
       if (!h.sysReady) throw new Error('The client is offline');
-      if (h.redisGetThrows) throw new Error('redis down');
-      if (h.redisGetHangs) return new Promise<never>(() => undefined);
       return h.redis.get(key)?.value ?? null;
     },
   }),
@@ -236,8 +232,6 @@ beforeEach(() => {
   h.dbThrows = null;
   h.redis.clear();
   h.cacheRedis.clear();
-  h.redisGetThrows = false;
-  h.redisGetHangs = false;
   h.redisSetThrows = false;
   h.sysReady = true;
   h.rate.clear();
@@ -648,9 +642,8 @@ describe('service token — introspection', () => {
 
   it('answers 503 when the client lookup fails', async () => {
     const token = await minted();
-    let calls = 0;
-    // The introspector's own client check is the first OauthClient read; the service row is the next.
-    h.dbThrows = (table) => table === 'OauthClient' && ++calls > 1;
+    h.dbThrows = (table, where) =>
+      table === 'OauthClient' && where.some(([, , value]) => value === SERVICE);
     const res = await introspect(token);
     expect(res.status).toBe(503);
   });
