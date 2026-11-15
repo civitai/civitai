@@ -7,7 +7,15 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { getCollectionIdsCoveredByModels } = await import('~/server/services/collection-index-sync');
+const { mockCollectionsQueueUpdate } = vi.hoisted(() => ({ mockCollectionsQueueUpdate: vi.fn() }));
+vi.mock('~/server/search-index', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
+}));
+
+const { getCollectionIdsCoveredByModels, queueModelCollectionsReindex } = await import(
+  '~/server/services/collection-index-sync'
+);
 
 beforeAll(async () => {
   const db = new PGlite();
@@ -43,5 +51,20 @@ describe('getCollectionIdsCoveredByModels', () => {
     (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockClear();
     expect(await getCollectionIdsCoveredByModels([])).toEqual([]);
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('queueModelCollectionsReindex', () => {
+  it("queues the model's collections for a rebuild", async () => {
+    mockCollectionsQueueUpdate.mockResolvedValueOnce(undefined);
+    await queueModelCollectionsReindex([1]);
+    expect(mockCollectionsQueueUpdate).toHaveBeenCalledTimes(1);
+    const queued = mockCollectionsQueueUpdate.mock.calls[0][0] as { id: number }[];
+    expect(queued.map((item) => item.id).sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it('resolves when the queue cannot be written, so a settings save never fails on it', async () => {
+    mockCollectionsQueueUpdate.mockRejectedValueOnce(new Error('queue down'));
+    await expect(queueModelCollectionsReindex([1])).resolves.toBeUndefined();
   });
 });

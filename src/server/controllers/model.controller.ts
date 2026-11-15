@@ -2473,7 +2473,8 @@ export const updateGallerySettingsHandler = async ({
     if (heldLevelChanged) {
       // The search document carries the held showcase, so it is rebuilt at the new level.
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-      await queueModelCollectionsReindex([id]);
+      // Not awaited: finding the collections can be slow, and it never throws.
+      void queueModelCollectionsReindex([id]);
       await purgeHeldShowcase(id);
     }
 

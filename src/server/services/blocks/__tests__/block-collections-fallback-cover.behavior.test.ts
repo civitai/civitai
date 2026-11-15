@@ -15,8 +15,8 @@ vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }))
 vi.mock('~/server/auth/session-client', () => ({ sessionClient: {} }));
 // The cached gallery level of a held post's model; by default no post is held.
 const coverLevels = vi.hoisted(() => ({ held: new Map<number, number>() }));
-// Hand-listed: the cover level helper takes only this from model.service, whose import graph is large.
-vi.mock('~/server/services/model.service', () => ({
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getHeldLevelsByPost: async (postIds: number[]) =>
     new Map(
       postIds

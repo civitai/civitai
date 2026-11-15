@@ -42,7 +42,8 @@ vi.mock('~/server/redis/caches', () => ({
   userModelCountCache: { refresh: vi.fn() },
 }));
 
-vi.mock('~/server/services/collection-index-sync', () => ({
+vi.mock('~/server/services/collection-index-sync', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   queueModelCollectionsReindex: mockCollectionsReindex,
 }));
 vi.mock('~/server/search-index', () => ({
