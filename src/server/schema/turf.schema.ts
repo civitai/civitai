@@ -80,8 +80,8 @@ export const turfStickersForImagesSchema = z.object({
 });
 
 /**
- * Images per `hatTurf.watch` call. The one copy: the schema, the server and both client watchers
- * read it, so a client never chunks wider than the server accepts.
+ * Images per `hatTurf.watch` call; clients chunk by it, so it must not exceed what the schema
+ * accepts.
  */
 export const MAX_TURF_IMAGES_PER_MARK = 50;
 

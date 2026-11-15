@@ -5,6 +5,7 @@
  * misses pushes that nothing re-reads.
  */
 import { MAX_TURF_IMAGES_PER_MARK } from '~/server/schema/turf.schema';
+import { chunkIds } from '~/utils/array-helpers';
 import { backoffDelay } from '~/utils/backoff';
 
 /**
@@ -125,11 +126,8 @@ export class TurfWatchHub {
   }
 
   private send(ids: number[]) {
-    for (let i = 0; i < ids.length; i += MAX_TURF_IMAGES_PER_MARK)
-      this.sendOne(
-        { event: this.event, imageIds: ids.slice(i, i + MAX_TURF_IMAGES_PER_MARK) },
-        true
-      );
+    for (const imageIds of chunkIds(ids, MAX_TURF_IMAGES_PER_MARK))
+      this.sendOne({ event: this.event, imageIds }, true);
   }
 
   private sendOne(input: { event: string; imageIds: number[] }, retry: boolean) {
