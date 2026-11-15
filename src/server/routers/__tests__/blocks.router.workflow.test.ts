@@ -13254,6 +13254,99 @@ describe('blocks.estimateWorkflowBatch', () => {
 });
 
 /**
+ * `kind:'textToImage'` source images reach the generation input gate inside the graph build
+ * (`createBlockTextToImageStep` → `createWorkflowStepsFromGraphInput`, `inputGate` entry
+ * `appBlocks`). An own source whose scan has not finished must reach the app as the same failed
+ * snapshot `kind:'step'` and `kind:'workflow'` return (`errorCode: 'source-scan-pending'`), not as
+ * a thrown error the host turns into a code-less failure. The real gate behind that entry is driven
+ * on real rows in `block-generation-source.behavior.test.ts`; here the graph is a mock that refuses
+ * the way the gate does.
+ */
+describe("blocks workflow — kind:'textToImage' source images and the scan gate", () => {
+  const SOURCE = {
+    url: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d/original=true/ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d.jpeg',
+    width: 768,
+    height: 1024,
+  };
+  const pageClaims = () =>
+    validClaims({
+      blockInstanceId: 'page_apb_page',
+      ctx: { slotId: 'app.page', entityType: 'none' },
+    });
+  const call = (proc: 'estimateWorkflow' | 'submitWorkflow') => {
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const body = validBody({ sourceImages: [SOURCE] });
+    return proc === 'estimateWorkflow'
+      ? caller.estimateWorkflow({ blockToken: 'tok', body })
+      : caller.submitWorkflow({ blockToken: 'tok', body });
+  };
+
+  beforeEach(() => {
+    mockVerifyBlockToken.mockResolvedValue(pageClaims());
+    happyVersionLookup();
+    happyUser();
+    mockSubmitWorkflow.mockResolvedValue({
+      id: '',
+      status: 'succeeded',
+      cost: { total: 12 },
+      steps: [],
+    });
+  });
+
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '%s: the graph gates the source on the appBlocks entry',
+    async (proc) => {
+      await call(proc).catch(() => undefined);
+      expect(mockCreateStepsFromGraph).toHaveBeenCalled();
+      const opts = mockCreateStepsFromGraph.mock.calls[0][0] as {
+        input: { images?: Array<{ url: string }> };
+        inputGate: unknown;
+      };
+      expect(opts.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
+      expect(opts.input.images?.map((i) => i.url)).toEqual([SOURCE.url]);
+    }
+  );
+
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '🔴 %s: a source still being scanned is a failed snapshot with source-scan-pending, before any orchestrator call',
+    async (proc) => {
+      const { APP_SOURCE_PENDING_MESSAGE } = await import(
+        '~/server/services/generation-input-urls'
+      );
+      mockCreateStepsFromGraph.mockRejectedValue(
+        new TRPCError({ code: 'BAD_REQUEST', message: APP_SOURCE_PENDING_MESSAGE })
+      );
+      await expect(call(proc)).resolves.toEqual({
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed',
+          error: APP_SOURCE_PENDING_MESSAGE,
+          errorCode: 'source-scan-pending',
+        },
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+    '%s: any other source refusal still throws, unchanged',
+    async (proc) => {
+      const { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } = await import(
+        '~/server/services/generation-input-urls'
+      );
+      mockCreateStepsFromGraph.mockRejectedValue(
+        new TRPCError({ code: 'BAD_REQUEST', message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE })
+      );
+      await expect(call(proc)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: GENERATION_IMAGE_UNAVAILABLE_MESSAGE,
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+});
+
+/**
  * `accountType` — the Buzz pool tried FIRST — on both `kind:'step'` arms, and the
  * textToImage ESTIMATE honouring it. Asserted on the `currencies` the orchestrator
  * receives, as LITERAL arrays (the global client mock carries the real

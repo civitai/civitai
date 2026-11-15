@@ -102,7 +102,9 @@ import {
   checkBlockSubmitRateLimit,
   checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
+  checkBlockGenerationSourceUserRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
+import { withInFlightLimit } from '~/server/utils/in-flight-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
@@ -2262,6 +2264,19 @@ async function afterPromptedGrant(
     await syncOauthConsentFromGrant({ userId, appBlockId });
   }
 }
+
+/**
+ * `blocks.persistGenerationSource`'s concurrency cap: 2 calls in flight per token subject. The TTL
+ * outlasts the 30 s request deadline (`GENERATION_SOURCE_DEADLINE_MS`) with room for the fetch of
+ * the workflow before it starts, so a slot never lapses under a live call.
+ */
+const GENERATION_SOURCE_IN_FLIGHT = {
+  bucket: 'block-generation-source',
+  limit: 2,
+  ttlMs: 120_000,
+  acquireTimeoutMs: 500,
+  errorMessage: 'A generation source is already being saved — wait for it to finish.',
+};
 
 export const blocksRouter = router({
   /**
@@ -6184,6 +6199,87 @@ export const blocksRouter = router({
     }),
 
   /**
+   * `PERSIST_GENERATION_SOURCE { workflowId, imageIndex }`: keep ONE of the app's own finished
+   * workflow outputs as a PRIVATE, scanned generation source and return it in the
+   * `{ url, width, height }` shape a workflow's source image takes, plus `imageId` and `ready`.
+   * See `block-generation-source.service.ts`.
+   *
+   * No host dialog, because nothing is shared: the row is the viewer's, has no post, and carries
+   * `blockGenerationSourceAppId`, which no shared-grid, post or attribution read accepts.
+   *
+   * GATES. The token checks match `publishGenerationOutputs`'s first three (`ai:write:budgeted`,
+   * subject = session user, the runtime flag). Two things differ from publish, on purpose:
+   *   - NO per-install publish bucket (below);
+   *   - NO dev-token stand-in for the `block_workflows` row. Ownership is
+   *     `resolveOwnedWorkflowOutputs` (row + app tag + finished workflow), which has no
+   *     ephemeral dev-tunnel branch, so an App Assistant preview with no row is refused.
+   *
+   * BOUNDS, in order, all keyed on the token subject:
+   *   1. the per-user 60/h `rateLimit` middleware. It skips moderators (the current flag
+   *      audience) and dev, test and preview, so it is not the binding bound for them;
+   *   2. `withInFlightLimit`: at most 2 calls in flight per user, so a burst cannot hold many
+   *      30 s scan waits. Checked before the bucket, so a call it refuses spends nothing;
+   *   3. `checkBlockGenerationSourceUserRateLimit`: 60 per hour with NO exemption.
+   * NOT the per-install publish bucket: a page app's install id is shared by every viewer. A
+   * repeat call for an output already kept returns that row and writes nothing.
+   *
+   * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   */
+  persistGenerationSource: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many generation sources saved — slow down.',
+      })
+    )
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        workflowId: z.string().min(1).max(64),
+        imageIndex: z.number().int().nonnegative(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'saving a generation source requires an authenticated viewer',
+        });
+      }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
+      await assertAppBlocksEnabledForTokenUser(userId);
+      return withInFlightLimit({ ...GENERATION_SOURCE_IN_FLIGHT, userId }, async () => {
+        const rate = await checkBlockGenerationSourceUserRateLimit(userId);
+        if (!rate.allowed) {
+          throw new TRPCError({
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Too many generation sources saved — slow down.',
+          });
+        }
+        const { persistBlockGenerationSource } = await import(
+          '~/server/services/blocks/block-generation-source.service'
+        );
+        return persistBlockGenerationSource({
+          userId,
+          appId: claims.appId,
+          appBlockId: claims.appBlockId,
+          workflowId: input.workflowId,
+          imageIndex: input.imageIndex,
+          // Lazily, so the durable ownership row is checked before an orchestrator token is minted.
+          getWorkflow: async (workflowId) =>
+            getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
+        });
+      });
+    }),
+
+  /**
    * `OPEN_MEDIA_UPLOAD_BATCH`, step 1 of 3: the viewer confirmed a batch in host chrome. Charges
    * their UTC-day batch quota for every file and writes the audit row; returns the batch id the
    * two steps below name. A refusal here uploads nothing. See `media-upload-batch.service.ts`.
@@ -7622,12 +7718,22 @@ export const blocksRouter = router({
       // Adding the field leaks nothing the caller does not already own: it is
       // the caller's own requested id and the id that would have run, never any
       // cap value (exit 3's message stays deliberately number-free).
-      const { step: stepForCostCheck, modelSubstitutions: preflightSubstitutions } =
-        await createBlockTextToImageStep({
+      // The graph build runs the source gate (`inputGate` entry `appBlocks`). An own source still
+      // being scanned is the same failed snapshot the other kinds return, before anything is
+      // claimed or reserved; every other refusal still throws.
+      let preflight: Awaited<ReturnType<typeof createBlockTextToImageStep>>;
+      try {
+        preflight = await createBlockTextToImageStep({
           input: generateInput,
           user,
           whatIf: true,
         });
+      } catch (error) {
+        const pending = sourceScanPendingSnapshot(error);
+        if (!pending) throw error;
+        return pending;
+      }
+      const { step: stepForCostCheck, modelSubstitutions: preflightSubstitutions } = preflight;
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
@@ -10352,11 +10458,20 @@ async function estimateBlockWorkflowCell(
   // whatIf: no `metadata` on the body — matches the normal path
   // (`generateFromGraph` builds workflowMetadata only for real submits) and
   // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
-  const { step, modelSubstitutions } = await createBlockTextToImageStep({
-    input: generateInput,
-    user,
-    whatIf: true,
-  });
+  // A pending own source is the failed snapshot the other kinds return; see the submit preflight.
+  let built: Awaited<ReturnType<typeof createBlockTextToImageStep>>;
+  try {
+    built = await createBlockTextToImageStep({
+      input: generateInput,
+      user,
+      whatIf: true,
+    });
+  } catch (error) {
+    const pending = sourceScanPendingSnapshot(error);
+    if (!pending) throw error;
+    return pending;
+  }
+  const { step, modelSubstitutions } = built;
   const whatIfResult = await submitWorkflow({
     token,
     body: {
@@ -11372,6 +11487,24 @@ function isPassThroughStepBody(body: StepBody): body is PassThroughStepBody {
   return body.step === undefined;
 }
 
+/**
+ * The failed snapshot every generation kind answers an own source still being scanned with
+ * (`errorCode: 'source-scan-pending'`), or `null` for any other error, which the caller rethrows.
+ * One place, so `kind:'textToImage'`, `kind:'step'` / `kind:'workflow'` and inline customComfy
+ * cannot disagree about how a pending source reaches the app.
+ */
+function sourceScanPendingSnapshot(error: unknown): { snapshot: BlockWorkflowSnapshot } | null {
+  if (!isAppSourcePendingError(error)) return null;
+  return {
+    snapshot: {
+      workflowId: 'failed',
+      status: 'failed',
+      error: (error as TRPCError).message,
+      errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
+    } satisfies BlockWorkflowSnapshot,
+  };
+}
+
 /** A text-to-image body's source image urls, both wire shapes. */
 function textToImageSourceUrls(body: {
   sourceImage?: { url: string };
@@ -11432,15 +11565,9 @@ async function assertStepOrWorkflowInputsUsable(
       appBlockLog: { appBlockId: claims.appBlockId, stepTypes: bodyStepTypes(body), phase },
     });
   } catch (error) {
-    if (!isAppSourcePendingError(error)) throw error;
-    return {
-      snapshot: {
-        workflowId: 'failed',
-        status: 'failed',
-        error: (error as TRPCError).message,
-        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
-      } satisfies BlockWorkflowSnapshot,
-    };
+    const pending = sourceScanPendingSnapshot(error);
+    if (!pending) throw error;
+    return pending;
   }
 }
 
@@ -11476,15 +11603,9 @@ async function checkInlineComfySources(opts: {
       },
     });
   } catch (error) {
-    if (!isAppSourcePendingError(error)) throw error;
-    return {
-      snapshot: {
-        workflowId: 'failed',
-        status: 'failed',
-        error: (error as TRPCError).message,
-        errorCode: SOURCE_SCAN_PENDING_ERROR_CODE,
-      } satisfies BlockWorkflowSnapshot,
-    };
+    const pending = sourceScanPendingSnapshot(error);
+    if (!pending) throw error;
+    return pending;
   }
   return null;
 }
