@@ -8,7 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AppDocument from '~/pages/_document';
 import {
   measureRenderCpu,
+  recordSsrPrefetchGsspCpu,
   SSR_CPU_METRIC,
+  SSR_PREFETCH_COHORT_GSSP_CPU_METRIC,
+  SSR_PREFETCH_COHORT_GSSP_METRIC,
   SSR_PREFETCH_COHORT_CPU_METRIC,
   SSR_PREFETCH_COHORT_RENDERS_METRIC,
 } from '~/server/prom/ssr-cpu.metrics';
@@ -39,7 +42,12 @@ async function rows(name = SSR_CPU_METRIC): Promise<Row[]> {
   return metric ? ((await metric.get()).values as Row[]) : [];
 }
 
-const COHORT_METRICS = [SSR_PREFETCH_COHORT_CPU_METRIC, SSR_PREFETCH_COHORT_RENDERS_METRIC];
+const COHORT_METRICS = [
+  SSR_PREFETCH_COHORT_CPU_METRIC,
+  SSR_PREFETCH_COHORT_RENDERS_METRIC,
+  SSR_PREFETCH_COHORT_GSSP_CPU_METRIC,
+  SSR_PREFETCH_COHORT_GSSP_METRIC,
+];
 
 function runDocument(
   req: { url: string; headers: Record<string, string>; [SSR_PREFETCH_COHORT_REQ_KEY]?: string },
@@ -182,5 +190,27 @@ describe('_document records the ssrSignedInSkipPrefetch arm', () => {
     // Control: the render itself was measured, so the empty cohort rows are the mark speaking.
     expect(await rows()).toHaveLength(1);
     for (const name of COHORT_METRICS) expect(await rows(name)).toEqual([]);
+  });
+});
+
+describe('recordSsrPrefetchGsspCpu', () => {
+  it('adds the seconds and one run under the route pattern and arm', async () => {
+    recordSsrPrefetchGsspCpu(MODEL_ROUTE, 'full', 0.125);
+    recordSsrPrefetchGsspCpu(MODEL_ROUTE, 'full', 0.5);
+    recordSsrPrefetchGsspCpu(MODEL_ROUTE, 'skip', 0.03);
+
+    const byCohort = (rs: Row[]) =>
+      Object.fromEntries(rs.map((r) => [`${r.labels.route} ${r.labels.cohort}`, r.value]));
+    expect(byCohort(await rows(SSR_PREFETCH_COHORT_GSSP_CPU_METRIC))).toEqual({
+      [`${MODEL_ROUTE} full`]: 0.625,
+      [`${MODEL_ROUTE} skip`]: 0.03,
+    });
+    expect(byCohort(await rows(SSR_PREFETCH_COHORT_GSSP_METRIC))).toEqual({
+      [`${MODEL_ROUTE} full`]: 2,
+      [`${MODEL_ROUTE} skip`]: 1,
+    });
+    // The render metrics are untouched.
+    expect(await rows()).toEqual([]);
+    expect(await rows(SSR_PREFETCH_COHORT_CPU_METRIC)).toEqual([]);
   });
 });

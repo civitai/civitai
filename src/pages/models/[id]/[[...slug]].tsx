@@ -212,6 +212,8 @@ import { TrainingAuditMenuItem } from '~/components/Moderation/TrainingAuditMenu
 const RAIL_ACTIVATE_WIDTH = 1440;
 
 const NOT_FOUND = Symbol('model-not-found');
+/** This page's pattern (`ctx.pathname` in `_document`), the route label of its SSR metrics. */
+const MODEL_PAGE_ROUTE = '/models/[id]/[[...slug]]';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -354,10 +356,18 @@ export const getServerSideProps = createServerSideProps({
       }
 
       // Every 404, access and redirect decision above is made in both arms of the trial. `skip`
-      // keeps only `model.getById` — those decisions, the ad gating and the page's `<head>` read
-      // it, and its dehydrated copy saves the client a refetch — and renders the content as a
-      // loading shell that the client fills with its own queries after hydration.
-      if (resolveSsrPrefetchCohort({ ctx, session, features }) === 'skip') return pageResult(true);
+      // keeps `model.getById` — those decisions, the ad gating and the page's `<head>` read it,
+      // and its dehydrated copy saves the client a refetch — and `hiddenPreferences.getHidden`,
+      // whose blocked-users list the page reads to render NotFound for a creator the viewer
+      // blocked, so that page is decided on the server in both arms rather than flashing the
+      // blocked creator's model after mount. Everything else renders as a loading shell that the
+      // client fills with its own queries after hydration.
+      if (
+        resolveSsrPrefetchCohort({ ctx, session, features, route: MODEL_PAGE_ROUTE }) === 'skip'
+      ) {
+        await ssg.hiddenPreferences.getHidden.prefetch();
+        return pageResult(true);
+      }
 
       // No redirect — fire the remaining prefetches in parallel. They have no
       // mutual dependencies, so SSR latency drops from sum(latencies) to
@@ -982,8 +992,9 @@ export default function ModelDetailsV2({
     },
   };
 
-  // `ssrSignedInSkipPrefetch`: getServerSideProps prefetched only `model.getById`, so the server
-  // renders the gate and `<head>` with a loader in place of the content. The hydrating render must
+  // `ssrSignedInSkipPrefetch`: getServerSideProps prefetched only `model.getById` and the hidden
+  // preferences (so a blocked creator's page is already NotFound above), so the server renders the
+  // gate and `<head>` with a loader in place of the content. The hydrating render must
   // match it, so it waits for the client mount too; the content then renders as it does after a
   // client-side navigation, with the queries the server skipped loading in place.
   if (deferredSsr && !isClient) {

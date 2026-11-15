@@ -6,7 +6,13 @@
  */
 export const SSR_PREFETCH_COHORT_REQ_KEY = 'civSsrPrefetchCohort';
 
-/** `skip`: the flag is on, so the page rendered its loading shell. `full`: it is off. */
+/**
+ * Set alongside the cohort, to the page pattern the adopting page names (`/models/[id]/[[...slug]]`):
+ * the route label of the getServerSideProps CPU counter, which runs before Next has a `pathname`.
+ */
+export const SSR_PREFETCH_ROUTE_REQ_KEY = 'civSsrPrefetchRoute';
+
+/** `skip`: the flag is on, so the page skipped its prefetches and rendered its loading shell. `full`: it is off. */
 export type SsrPrefetchCohort = 'skip' | 'full';
 
 export function isSsrPrefetchCohort(value: unknown): value is SsrPrefetchCohort {

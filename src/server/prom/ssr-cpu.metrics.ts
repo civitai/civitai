@@ -21,6 +21,9 @@ export const SSR_CPU_METRIC = PROM_PREFIX + 'ssr_cpu_seconds_total';
 export const SSR_PREFETCH_COHORT_CPU_METRIC =
   PROM_PREFIX + 'ssr_prefetch_cohort_render_cpu_seconds_total';
 export const SSR_PREFETCH_COHORT_RENDERS_METRIC = PROM_PREFIX + 'ssr_prefetch_cohort_renders_total';
+export const SSR_PREFETCH_COHORT_GSSP_CPU_METRIC =
+  PROM_PREFIX + 'ssr_prefetch_cohort_gssp_cpu_seconds_total';
+export const SSR_PREFETCH_COHORT_GSSP_METRIC = PROM_PREFIX + 'ssr_prefetch_cohort_gssp_total';
 
 export type SsrRequestKind = 'html' | 'data' | 'shell';
 
@@ -78,6 +81,56 @@ function cohortRendersCounter(): Counter<'route' | 'cohort'> {
         registers: [instrumentationRegistry],
       })
   );
+}
+
+function cohortGsspCpuCounter(): Counter<'route' | 'cohort'> {
+  return registerInstrumentationMetric(
+    SSR_PREFETCH_COHORT_GSSP_CPU_METRIC,
+    () =>
+      new client.Counter({
+        name: SSR_PREFETCH_COHORT_GSSP_CPU_METRIC,
+        help:
+          'Process CPU seconds (user + system, all threads) spent in createServerSideProps from the ' +
+          "page's resolver (its prefetches) through dehydrate, for requests in the " +
+          'ssrSignedInSkipPrefetch trial population, by page route and arm. Diagnostic only: ' +
+          'wall-interval, so it includes CPU of requests interleaved on the process',
+        labelNames: ['route', 'cohort'] as const,
+        registers: [instrumentationRegistry],
+      })
+  );
+}
+
+function cohortGsspCounter(): Counter<'route' | 'cohort'> {
+  return registerInstrumentationMetric(
+    SSR_PREFETCH_COHORT_GSSP_METRIC,
+    () =>
+      new client.Counter({
+        name: SSR_PREFETCH_COHORT_GSSP_METRIC,
+        help:
+          'getServerSideProps runs counted into ssr_prefetch_cohort_gssp_cpu_seconds_total, by page ' +
+          'route and ssrSignedInSkipPrefetch arm',
+        labelNames: ['route', 'cohort'] as const,
+        registers: [instrumentationRegistry],
+      })
+  );
+}
+
+/**
+ * One getServerSideProps run of the trial population: `seconds` of process CPU from its resolver
+ * through dehydrate (`createServerSideProps` measures it). Never throws.
+ */
+export function recordSsrPrefetchGsspCpu(
+  route: string,
+  cohort: SsrPrefetchCohort,
+  seconds: number
+) {
+  try {
+    const labels = { route: pageRouteLabel(route), cohort };
+    cohortGsspCpuCounter().inc(labels, seconds);
+    cohortGsspCounter().inc(labels);
+  } catch {
+    // Losing one sample is fine.
+  }
 }
 
 /** The trial arm `getServerSideProps` marked the request with, or `undefined` outside the trial. */

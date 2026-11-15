@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as CommonService from '~/server/services/common.service';
 import type * as BrowsingLevelUtils from '~/server/utils/browsing-level';
-import { SSR_PREFETCH_COHORT_REQ_KEY } from '~/shared/constants/ssr-prefetch-cohort.constants';
+import {
+  SSR_PREFETCH_COHORT_REQ_KEY,
+  SSR_PREFETCH_ROUTE_REQ_KEY,
+} from '~/shared/constants/ssr-prefetch-cohort.constants';
+import { BOT_CACHE_REQ_KEY } from '~/shared/constants/bot-cache.constants';
 import * as F from './model-page-fixture';
 
 /**
@@ -13,8 +17,10 @@ import * as F from './model-page-fixture';
  * assertion is over exactly the calls the resolver makes and exactly what it returns.
  *
  * - Flag ON + signed in: only `model.getById` (the data the 404, slug redirect, ad gating and
- *   `<head>` need); the page gets `deferredSsr: true`.
- * - Flag OFF, or anonymous, or a verified bot: the full prefetch set, `deferredSsr: false`.
+ *   `<head>` need) and `hiddenPreferences.getHidden` (a blocked creator's page is NotFound on the
+ *   server); the page gets `deferredSsr: true`.
+ * - Flag OFF, or anonymous, a verified bot, a bot-cache candidate or a `/_next/data` request: the
+ *   full prefetch set, `deferredSsr: false`.
  * - Every 404 and redirect outcome is the same literal result in every arm.
  */
 
@@ -95,6 +101,7 @@ async function run({
   slug = [SLUG],
   query = {},
   headers = {},
+  reqMarks = {},
   url = `/models/${F.MODEL_ID}/${SLUG}`,
   getById = 'model',
   id = String(F.MODEL_ID),
@@ -105,12 +112,14 @@ async function run({
   slug?: string[] | null;
   query?: Record<string, string>;
   headers?: Record<string, string>;
+  /** Properties `_app` sets on the request before getServerSideProps runs. */
+  reqMarks?: Record<string, unknown>;
   url?: string;
   getById?: GetById;
   id?: string;
 }) {
   const calls: Call[] = [];
-  const req: Record<string, unknown> = { url, headers };
+  const req: Record<string, unknown> = { url, headers, ...reqMarks };
   const resolver = getServerSideProps as unknown as (args: unknown) => Promise<unknown>;
   const result = await resolver({
     ssg: recordingSsg(calls, getById),
@@ -127,6 +136,7 @@ async function run({
     result,
     procs: calls.map((c) => `${c.method} ${c.proc}`).sort(),
     cohort: req[SSR_PREFETCH_COHORT_REQ_KEY],
+    route: req[SSR_PREFETCH_ROUTE_REQ_KEY],
   };
 }
 
@@ -160,12 +170,13 @@ beforeEach(() => {
 });
 
 describe('model page getServerSideProps — ssrSignedInSkipPrefetch', () => {
-  it('ON + signed in: fetches only model.getById, and the page renders its shell', async () => {
-    const { result, procs, cohort } = await run({ flag: true });
+  it('ON + signed in: only model.getById and the hidden preferences, and the page renders its shell', async () => {
+    const { result, procs, cohort, route } = await run({ flag: true });
 
-    expect(procs).toEqual(['fetch model.getById']);
+    expect(procs).toEqual(['fetch model.getById', 'prefetch hiddenPreferences.getHidden']);
     expect(result).toEqual(page(true));
     expect(cohort).toBe('skip');
+    expect(route).toBe('/models/[id]/[[...slug]]');
   });
 
   it('OFF + signed in: the full prefetch set, unchanged', async () => {
@@ -188,6 +199,17 @@ describe('model page getServerSideProps — ssrSignedInSkipPrefetch', () => {
     const { result, procs, cohort } = await run({
       flag: true,
       headers: { 'x-civitai-verified-bot': 'googlebot' },
+    });
+
+    expect(procs).toEqual(FULL_SIGNED_IN);
+    expect(result).toEqual(page(false));
+    expect(cohort).toBeUndefined();
+  });
+
+  it('ON + signed in, but a bot-cache candidate: the full prefetch set', async () => {
+    const { result, procs, cohort } = await run({
+      flag: true,
+      reqMarks: { [BOT_CACHE_REQ_KEY]: 'models' },
     });
 
     expect(procs).toEqual(FULL_SIGNED_IN);

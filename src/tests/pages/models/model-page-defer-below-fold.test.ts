@@ -33,8 +33,11 @@ const m = vi.hoisted(() => ({
   flags: {} as Record<string, boolean>,
   user: null as null | Record<string, unknown>,
   downloaded: [] as number[],
-  /** `ssrSignedInSkipPrefetch`'s `skip` arm: getServerSideProps prefetched `model.getById` only. */
-  onlyGetById: false,
+  /**
+   * `ssrSignedInSkipPrefetch`'s `skip` arm: getServerSideProps prefetched only `model.getById` and
+   * `hiddenPreferences.getHidden` (pinned by `model-page-skip-prefetch.test.ts`).
+   */
+  skipArm: false,
 }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -137,7 +140,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
   const procedures = new Proxy(prefetched, {
     get: (target, key: string) =>
-      key in target && (!m.onlyGetById || key === 'model.getById') ? target[key] : notPrefetched,
+      key in target &&
+      (!m.skipArm || key === 'model.getById' || key === 'hiddenPreferences.getHidden')
+        ? target[key]
+        : notPrefetched,
   });
   return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy(procedures) };
 });
@@ -246,7 +252,7 @@ const VIEWER = {
 beforeEach(() => {
   m.user = null;
   m.downloaded = [];
-  m.onlyGetById = false;
+  m.skipArm = false;
 });
 
 describe('model page server render — modelPageDeferBelowFold OFF', () => {
@@ -564,8 +570,8 @@ describe('model page server render — deferredSsr (ssrSignedInSkipPrefetch skip
     m.user = VIEWER;
   });
 
-  it('renders a loader in place of the content, with only model.getById in the cache', () => {
-    m.onlyGetById = true;
+  it("renders a loader in place of the content, with the skip arm's cache", () => {
+    m.skipArm = true;
     const { html } = renderPage(ANON_FLAGS, { deferredSsr: true });
 
     expect(count(html, PAGE_LOADER)).toBe(1);
@@ -577,7 +583,7 @@ describe('model page server render — deferredSsr (ssrSignedInSkipPrefetch skip
 
   it("keeps the full page's title, description and canonical in <head>", () => {
     const full = renderPage(ANON_FLAGS).head;
-    m.onlyGetById = true;
+    m.skipArm = true;
     const { head } = renderPage(ANON_FLAGS, { deferredSsr: true });
 
     const tag = (markup: string, re: RegExp) => markup.match(re)?.[0];
