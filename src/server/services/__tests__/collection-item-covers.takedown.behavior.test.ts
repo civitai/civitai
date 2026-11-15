@@ -40,7 +40,7 @@ beforeAll(async () => {
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL DEFAULT 'Published',
-      "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public', mode "ModelModifier"
+      "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public', mode "ModelModifier", minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int NOT NULL, index int NOT NULL DEFAULT 0,
@@ -59,7 +59,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "bannerId" int, cover text, status text,
-      "publishedAt" timestamp, availability text, ingestion text
+      "publishedAt" timestamp, availability text, ingestion text, "nsfwLevel" int NOT NULL DEFAULT 1
     );
     CREATE TABLE "Model3D" (
       id int PRIMARY KEY, "thumbnailImageId" int, status text, "deletedAt" timestamp,

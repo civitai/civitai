@@ -113,12 +113,12 @@ beforeAll(async () => {
     );
     CREATE TABLE "Model" (
       "id" integer PRIMARY KEY, "userId" integer, "status" text NOT NULL DEFAULT 'Published',
-      "deletedAt" timestamp, "availability" text NOT NULL DEFAULT 'Public', "mode" text
+      "deletedAt" timestamp, "availability" text NOT NULL DEFAULT 'Public', "mode" text, minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
     );
     CREATE TABLE "Article" (
       "id" integer PRIMARY KEY, "cover" text, "coverId" integer,
       "status" text NOT NULL DEFAULT 'Published', "publishedAt" timestamp DEFAULT now(),
-      "availability" text NOT NULL DEFAULT 'Public', "ingestion" text NOT NULL DEFAULT 'Scanned', "bannerId" integer
+      "availability" text NOT NULL DEFAULT 'Public', "ingestion" text NOT NULL DEFAULT 'Scanned', "bannerId" integer, "nsfwLevel" integer NOT NULL DEFAULT 1
     );
     CREATE TABLE "Model3D" (
       "id" integer PRIMARY KEY, "thumbnailImageId" integer,

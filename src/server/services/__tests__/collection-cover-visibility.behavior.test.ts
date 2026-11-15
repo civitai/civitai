@@ -140,7 +140,7 @@ beforeAll(async () => {
       "modelVersionId" integer
     );
     CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
-    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "mode" "ModelModifier");
+    CREATE TABLE "Model" ("id" integer PRIMARY KEY, "userId" integer, "mode" "ModelModifier", minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb);
     CREATE TABLE "ModelVersion" ("id" integer PRIMARY KEY, "modelId" integer NOT NULL);
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "CollectionContributor" (
@@ -149,7 +149,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Article" (
       "id" integer PRIMARY KEY, "coverId" integer, "status" text, "publishedAt" timestamp, "ingestion" text,
-      "bannerId" integer
+      "bannerId" integer, "nsfwLevel" integer NOT NULL DEFAULT 1
     );
     CREATE TABLE "ImageConnection" ("imageId" integer, "entityId" integer, "entityType" text);
     CREATE TABLE "Collection" (id int PRIMARY KEY, "userId" int NOT NULL);

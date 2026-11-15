@@ -109,11 +109,11 @@ beforeAll(async () => {
       availability text DEFAULT 'Public', "publishedAt" timestamp
     );
     CREATE TABLE "Model" (
-      id int PRIMARY KEY, "userId" int, status text, "deletedAt" timestamp, availability text, mode text
+      id int PRIMARY KEY, "userId" int, status text, "deletedAt" timestamp, availability text, mode text, minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, cover text, "coverId" int, status text, "publishedAt" timestamp,
-      availability text, ingestion text DEFAULT 'Scanned', "bannerId" int
+      availability text, ingestion text DEFAULT 'Scanned', "bannerId" int, "nsfwLevel" int NOT NULL DEFAULT 1
     );
     CREATE TABLE "Model3D" (
       id int PRIMARY KEY, "thumbnailImageId" int, status text, "deletedAt" timestamp,

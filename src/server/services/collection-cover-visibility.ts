@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
+import {
+  nsfwBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * The same base-model rule as images (`getAllImages`): an image on a restricted base model is not
@@ -29,13 +33,34 @@ const notOnTakenDownModelSql = Prisma.sql`NOT EXISTS (
 )`;
 
 /**
+ * The image `"Image" i` on post `"Post" p` is within its model's gallery level when the model is
+ * minor or SFW-only; true for no post or a post on no model. `exempt` is over that model `hm`: who
+ * sees its whole showcase. A cover is shared between viewers unless the caller says otherwise.
+ */
+function withinHeldGallerySql(exempt: Prisma.Sql = Prisma.sql`FALSE`) {
+  return Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "ModelVersion" hmv
+    JOIN "Model" hm ON hm.id = hmv."modelId"
+    WHERE hmv.id = p."modelVersionId"
+      AND NOT ${heldGalleryImageSql({ model: Prisma.raw('hm'), exempt })}
+  )`;
+}
+
+/**
  * Whether an image may be shown as a collection's cover to someone who doesn't own it, as SQL over
  * `"Image" i` with `"Post" p` LEFT JOINed on `i."postId"`. The image must be scanned, not awaiting
  * review and not removed. A posted image needs its post published, not Private and on no
- * taken-down model. A postless image needs `postlessAllowed`: `coverUploadSql` for a collection's
- * own cover, `itemUploadSql` for a cover taken from an item.
+ * taken-down model, and within the gallery level of a minor or SFW-only model. A postless image
+ * needs `postlessAllowed`: `coverUploadSql` for a collection's own cover, `itemUploadSql` for a
+ * cover taken from an item. `heldExempt` (over the model `hm`) is who sees past the gallery level.
  */
-export function servableCollectionCoverSql({ postlessAllowed }: { postlessAllowed: Prisma.Sql }) {
+export function servableCollectionCoverSql({
+  postlessAllowed,
+  heldExempt,
+}: {
+  postlessAllowed: Prisma.Sql;
+  heldExempt?: Prisma.Sql;
+}) {
   return Prisma.sql`(
     ${servableImageSql}
     AND (
@@ -44,6 +69,7 @@ export function servableCollectionCoverSql({ postlessAllowed }: { postlessAllowe
         AND p."publishedAt" < now()
         AND p."availability" != 'Private'
         AND ${notOnTakenDownModelSql}
+        AND ${withinHeldGallerySql(heldExempt)}
       )
       OR (i."postId" IS NULL AND ${postlessAllowed})
     )
@@ -135,6 +161,7 @@ export function collectionItemCoversSql({
             AND p."publishedAt" < now()
             AND p."availability" != 'Private'
             AND ${notOnTakenDownModelSql}
+            AND ${withinHeldGallerySql()}
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (
@@ -155,6 +182,7 @@ export function collectionItemCoversSql({
               AND m."deletedAt" IS NULL
               AND m.availability != 'Private'
               AND m.mode IS DISTINCT FROM 'TakenDown'
+              AND ${heldGalleryImageSql()}
               AND mv.status = 'Published'
               AND mv.availability != 'Private'
               AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
@@ -170,9 +198,14 @@ export function collectionItemCoversSql({
           AND ${servableImageSql}
           AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
+        -- A legacy cover string carries no image to judge, so only an article with no cover image,
+        -- at a level every viewer may see.
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${publishedArticleSql}
+          AND a."coverId" IS NULL
+          AND (a."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
+          AND (a."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
     ), model3dItemImage AS MATERIALIZED (
         SELECT
           m3.id,
@@ -222,6 +255,9 @@ export async function getServableCoverCollectionIds(
   if (viewer?.isModerator) return new Set(candidates.map((c) => c.collectionId));
 
   const ownImage = viewer?.id ? Prisma.sql`i."userId" = ${viewer.id} OR ` : Prisma.empty;
+  // The image's owner sees their own past the rules above, but not past the gallery level of a
+  // model they don't own: that is the model owner's alone.
+  const modelOwnerSql = viewer?.id ? Prisma.sql`hm."userId" = ${viewer.id}` : Prisma.sql`FALSE`;
   const rows = await db.$queryRaw<{ collectionId: number }[]>`
     SELECT v."collectionId"
     FROM unnest(
@@ -236,8 +272,10 @@ export async function getServableCoverCollectionIds(
       collectionId: Prisma.sql`v."collectionId"`,
       collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
     }),
+    heldExempt: modelOwnerSql,
   })})
       AND ${baseModelAllowedSql}
+      AND ${withinHeldGallerySql(modelOwnerSql)}
   `;
   return new Set(rows.map((r) => r.collectionId));
 }
