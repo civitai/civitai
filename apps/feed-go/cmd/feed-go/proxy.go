@@ -11,12 +11,14 @@ import (
 )
 
 // fallbackIdleTimeout is how long the fallback proxy keeps an idle connection to the Node app. It must
-// stay below the Node server's keep-alive timeout: Node closes a connection that has been idle that
-// long, and a request the proxy writes onto a connection Node has just closed fails. Go replays an
-// idempotent request (a GET) on a new connection; it cannot replay a POST, which the proxy answers
-// with a 502. Node's http.Server default is 5 s, which Next's standalone server keeps unless
-// KEEP_ALIVE_TIMEOUT is set: 3 s leaves a 2 s margin below that default, and a deployment that raises
-// KEEP_ALIVE_TIMEOUT only widens it. The cost is a new connection after 3 s without a fallback.
+// stay below the Node app's keep-alive timeout, which is whatever its server sets: Node's http.Server
+// default of 5 s unless it is configured longer (Next's standalone server reads KEEP_ALIVE_TIMEOUT).
+// 3 s stays below any of those. Past it, Node closes the idle connection, and a request the proxy
+// writes onto a connection Node has just closed fails: Go replays an idempotent request (a GET) on a
+// new connection, but cannot replay a POST, which the proxy answers 502. The browser client never
+// POSTs to this procedure (a query too large for a GET does not take the Go transport), so the main
+// gains here are the larger idle pool and feed_go_fallback_proxy_errors_total. The cost is a new
+// connection after 3 s without a fallback.
 const fallbackIdleTimeout = 3 * time.Second
 
 // fallbackMaxIdlePerHost is the idle pool kept for the one upstream (DefaultTransport keeps 2 per
@@ -45,8 +47,10 @@ var forwardingHeaders = []string{"Forwarded", "X-Forwarded-Host", "X-Forwarded-P
 // ReverseProxy itself sends an empty User-Agent when the inbound request has none.
 //
 // The proxy has its own transport, keeping idle connections for idle (fallbackIdleTimeout in
-// production; a test passes a shorter one), not DefaultTransport's 90 s. A request it cannot proxy
-// is answered 502 and reported to onError (if non-nil) with proxyErrorCanceled or proxyErrorUpstream.
+// production; a test passes a shorter one), not DefaultTransport's 90 s. A request that fails before
+// the Node app's response starts is answered 502 and reported to onError (if non-nil) with
+// proxyErrorCanceled or proxyErrorUpstream; one that fails mid-body is aborted by ReverseProxy
+// (http.ErrAbortHandler) and not reported.
 func fallbackProxy(target *url.URL, idle time.Duration, onError func(reason string, err error)) *httputil.ReverseProxy {
 	p := &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
 		pr.SetURL(target)

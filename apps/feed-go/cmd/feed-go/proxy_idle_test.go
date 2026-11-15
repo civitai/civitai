@@ -225,8 +225,9 @@ func TestFallbackProxyReportsACanceledClient(t *testing.T) {
 	}
 }
 
-// The production transport: idle connections are dropped below Node's 5 s default keep-alive, and the
-// one upstream keeps more than DefaultTransport's 2 idle connections.
+// The production transport: idle connections are dropped after 3 s, below the Node app's keep-alive
+// (Node's 5 s default unless its server is configured longer), and the one upstream keeps more than
+// DefaultTransport's 2 idle connections.
 func TestFallbackProxyTransport(t *testing.T) {
 	target, err := url.Parse("http://127.0.0.1:1")
 	if err != nil {
