@@ -39,14 +39,28 @@ const ctx = (user: unknown, over: Record<string, unknown> = {}) =>
 
 type Row = { refused: boolean; csamHeld: boolean; nsfwLevel: number };
 const scanned: Row = { refused: false, csamHeld: false, nsfwLevel: NsfwLevel.PG };
+/**
+ * What the primary decides: `hidden` is its one-snapshot verdict on the row flags and the csam hold.
+ * The gate's statement is a Prisma.Sql; the reader's hidden-ids read is a tagged template.
+ */
+const sqlOf = (first: unknown) =>
+  JSON.stringify(first && typeof first === 'object' && 'sql' in first ? first.sql : first);
+const givenPrimary = (row: { nsfwLevel: number; hidden: boolean } | null) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation(((first: unknown) => {
+    if (!row) return Promise.resolve([]);
+    // The gate's statement selects `AS hidden`; the reader's asks for the hidden ids.
+    const gate = sqlOf(first).includes('AS hidden');
+    return Promise.resolve(gate ? [{ postId: POST, ...row }] : row.hidden ? [{ id: TEXT }] : []);
+  }) as never);
+/** A text as the replica shows it, and the primary agreeing with it. */
 const givenText = (row: Row | null) => {
-  dbMock.dbRead.postText.findUnique.mockResolvedValue(
-    row ? ({ postId: POST, ...row } as never) : (null as never)
-  );
+  givenPrimary(row && { nsfwLevel: row.nsfwLevel, hidden: row.refused || row.csamHeld });
+  givenReplica(row);
+};
+const givenReplica = (row: Row | null) =>
   dbMock.dbRead.postText.findMany.mockResolvedValue(
     row ? ([{ id: TEXT, index: 0, content: '<p>t</p>', ...row }] as never) : []
   );
-};
 const threadReadable = (c: never) =>
   assertPostTextVisible(TEXT, c).then(
     () => true,
@@ -63,7 +77,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getPostDetail.mockResolvedValue({ id: POST, user: { id: AUTHOR } });
   mocks.amIBlockedByUser.mockResolvedValue(false);
-  dbMock.dbRead.textScanHold.findMany.mockResolvedValue([] as never);
 });
 
 describe("a storyline text's thread is readable exactly where post.get serves the text", () => {
@@ -107,14 +120,30 @@ describe("a storyline text's thread is readable exactly where post.get serves th
     }
   });
 
-  it('a text with a Pending csam hold has no readable thread, author and moderators included', async () => {
-    givenText(scanned);
-    dbMock.dbRead.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
-    for (const user of [undefined, member, author, moderator]) {
-      const c = ctx(user);
-      expect(await threadReadable(c)).toBe(false);
-      expect(await servedByPostGet(c)).toBe(false);
-    }
+  // The replica lags the primary; only the primary decides whether a text is hidden.
+  const everyone = [undefined, member, author, moderator];
+  const readBy = async (user: unknown) => {
+    const c = ctx(user);
+    return [await threadReadable(c), await servedByPostGet(c)];
+  };
+
+  it('(a) is hidden right after its hold is confirmed, while the replica still shows it unheld', async () => {
+    givenReplica(scanned);
+    givenPrimary({ nsfwLevel: scanned.nsfwLevel, hidden: true });
+    for (const user of everyone) expect(await readBy(user)).toEqual([false, false]);
+  });
+
+  it('(b) is hidden right after a hold is detected, before the replica has it', async () => {
+    givenReplica(scanned);
+    givenPrimary({ nsfwLevel: scanned.nsfwLevel, hidden: true });
+    expect(await readBy(member)).toEqual([false, false]);
+    expect(dbMock.dbRead.postText.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('(c) is shown again once the hold is released, though the replica still shows it held', async () => {
+    givenReplica({ ...scanned, csamHeld: true });
+    givenPrimary({ nsfwLevel: scanned.nsfwLevel, hidden: false });
+    for (const user of everyone) expect(await readBy(user)).toEqual([true, true]);
   });
 
   it('an unscanned text is readable by its author and moderators only', async () => {

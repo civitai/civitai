@@ -47,10 +47,15 @@ describe('getHatPlacementViews', () => {
     ]);
     const params = query.mock.calls[0][0].query_params;
     expect(params.from).toBe('2026-11-05 00:00:00.000');
-    // As the real client sends it: ClickHouse refuses `[[...]]` for the Array(Tuple(...)) param.
-    expect((await wireParams(params)).placements).toBe(
-      "[(1,'k1','Image',11,'2026-11-09 06:00:00.000'),(2,'k2','Image',12,'2026-11-05 00:00:00.000')]"
-    );
+    // As the client sends them; the SQL zips these five back into one tuple per placement.
+    const wire = await wireParams(params);
+    expect(wire).toMatchObject({
+      cosmeticIds: '[1,2]',
+      claimKeys: "['k1','k2']",
+      entityTypes: "['Image','Image']",
+      entityIds: '[11,12]',
+      startedAts: "['2026-11-09 06:00:00.000','2026-11-05 00:00:00.000']",
+    });
   });
 
   it('asks ClickHouse once for a user reloading while a read is in flight', async () => {

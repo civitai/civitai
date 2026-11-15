@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { placementViewsParams } from '~/server/events/points/placement-stats';
 import { hatPlacementViewsSql } from '~/server/events/points/placement-stats.sql';
-import { wireParams } from '~/server/events/points/__tests__/clickhouse-wire';
+import { bundledClientCopy, wireParams } from '~/server/events/points/__tests__/clickhouse-wire';
 
 // Runs the per-placement views query in a real ClickHouse (clickhouse local). Needs
 // CLICKHOUSE_LOCAL_BIN (a `clickhouse` binary). CI does not set it, so CI skips this file.
@@ -40,11 +40,13 @@ const ledger: Row[] = [
   ['2026-11-01 11:00:00', 'view', 208, 30, [3, 'k3']],
   ['2026-11-01 13:00:00', 'view', 208, 30, [3, 'k3']],
   ['2026-11-01 13:00:00', 'view', 209, 31, [3, 'k3']],
+  // Hat 4's claim key needs escaping.
+  ['2026-11-01 13:00:00', 'view', 210, 40, [4, "it's-k1"]],
   // Someone else's hat and rows.
   ['2026-11-01 13:00:00', 'view', 207, 10, [1, 'k1'], 999],
 ];
 
-const q = (s: string) => `'${s}'`;
+const q = (s: string) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 const insert = `INSERT INTO event_point_events VALUES ${ledger
   .map(
     ([time, type, actor, entity, [c, k], owner]) =>
@@ -54,8 +56,12 @@ const insert = `INSERT INTO event_point_events VALUES ${ledger
   )
   .join(',')}`;
 
-// Params go through placementViewsParams and the real client's encoding, as in production.
-async function views(placements: [number, string, number, string][]) {
+// Params go through placementViewsParams and the encoding of a second, separately loaded copy of
+// the client, as in production, where the shared client can come from another bundle's copy.
+async function views(
+  placements: [number, string, number, string][],
+  edit: (wire: Record<string, string>) => Record<string, string> = (w) => w
+) {
   const wire = await wireParams(
     placementViewsParams(
       'e',
@@ -68,13 +74,14 @@ async function views(placements: [number, string, number, string][]) {
         startedAt: new Date(`${startedAt.replace(' ', 'T')}Z`),
       })),
       new Date('2026-11-03T00:00:00Z')
-    )
+    ),
+    bundledClientCopy()
   );
   const out = execFileSync(
     BIN!,
     [
       'local',
-      ...Object.entries(wire).map(([k, v]) => `--param_${k}=${v}`),
+      ...Object.entries(edit(wire)).map(([k, v]) => `--param_${k}=${v}`),
       '--query',
       `${TABLE}; ${insert}; ${hatPlacementViewsSql} FORMAT JSONEachRow`,
     ],
@@ -107,5 +114,23 @@ describe.skipIf(!BIN)('hat placement views in ClickHouse', () => {
         [3, 'k3', 31, '2026-11-01 12:00:00.000'],
       ])
     ).toEqual({ '3:k3': 1 });
+  });
+
+  it('reads a claim key that needs escaping', async () => {
+    expect(await views([[4, "it's-k1", 40, '2026-11-01 12:00:00.000']])).toEqual({
+      "4:it's-k1": 1,
+    });
+  });
+
+  // The five arrays are zipped by position, so arrays of different lengths must fail, not pair up
+  // the wrong placements.
+  it('refuses placement arrays of different lengths', async () => {
+    const placements: [number, string, number, string][] = [
+      [1, 'k1', 10, '2026-11-01 12:00:00.000'],
+      [2, 'k2', 11, '2026-11-01 00:00:00.000'],
+    ];
+    await expect(views(placements, (w) => ({ ...w, entityIds: '[10]' }))).rejects.toThrow(
+      /SIZES_OF_ARRAYS_DONT_MATCH/
+    );
   });
 });

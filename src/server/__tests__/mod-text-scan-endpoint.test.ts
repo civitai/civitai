@@ -97,6 +97,24 @@ describe('mod/text-scan', () => {
     expect(runTextScanHarnessAction).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['putConfig', { action: 'putConfig', config: { thinking: true } }],
+    ['putModes', { action: 'putModes', entityType: 'Model', rollout: { shadow: 100 } }],
+    [
+      'putWebSearchModes',
+      { action: 'putWebSearchModes', entityType: 'Model', rollout: { shadow: 10 } },
+    ],
+    ['putLabelModes', { action: 'putLabelModes', label: 'poi', mode: 'review' }],
+  ])(
+    'refuses %s to a moderator without the publish permission, reaching no harness',
+    async (_, body) => {
+      session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+      const res = await call(body);
+      expect(res.status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    }
+  );
+
   it('serves other actions to a moderator without the publish permission (control)', async () => {
     session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
     expect((await call({ action: 'getPrompts' })).status).toBe(200);
