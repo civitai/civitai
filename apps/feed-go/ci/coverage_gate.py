@@ -4,7 +4,8 @@
 Reads a Go cover profile (go test -coverprofile) and a floors file, prints statement coverage per
 package and in total, and exits 1 when the total or any listed package is below its floor, or when a
 listed package is absent from the profile (a package that silently stopped being measured must not
-pass as covered).
+pass as covered), or when a package that has tests (any test event for it in the `go test -json`
+output) has no floor, so a new package cannot join unmeasured.
 
 Coverage is statement-weighted, as `go tool cover -func` computes its total: a block counts its
 statements once (blocks repeated in the profile are merged, covered if any copy is).
@@ -15,6 +16,7 @@ value rounded DOWN to a whole percent: to raise one, read the measured value thi
 CI and set the floor to its integer part. Never lower one to get a red run green.
 """
 
+import json
 import sys
 
 MODULE = "github.com/civitai/civitai/apps/feed-go"
@@ -69,9 +71,31 @@ def read_floors(path):
     return floors
 
 
+def packages_with_tests(path):
+    """Module-relative packages with at least one test event in `go test -json` output."""
+    out = set()
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("Test") and ev.get("Package"):
+                pkg = ev["Package"]
+                if pkg.startswith(MODULE + "/"):
+                    pkg = pkg[len(MODULE) + 1:]
+                elif pkg == MODULE:
+                    pkg = "."
+                out.add(pkg)
+    return out
+
+
 def main(argv):
-    if len(argv) != 3:
-        sys.exit("usage: coverage_gate.py <cover.out> <floors.txt>")
+    if len(argv) != 4:
+        sys.exit("usage: coverage_gate.py <cover.out> <floors.txt> <test.json>")
     blocks = read_profile(argv[1])
     floors = read_floors(argv[2])
     pkgs = per_package(blocks)
@@ -95,6 +119,12 @@ def main(argv):
             mark = f"  (floor can be raised to {int(measured[p])})"
         floor_s = "-" if floor is None else f"{floor:g}"
         print(f"{p:<28} {stmts:>6} {measured[p]:>8.2f}% {floor_s:>6}{mark}")
+    tested = packages_with_tests(argv[3])
+    if not tested:
+        failures.append(f"no test events in {argv[3]}; cannot tell which packages need a floor")
+    for p in sorted(tested):
+        if p not in floors:
+            failures.append(f"{p}: has tests but no floor in {argv[2]} (add one at its measured value, rounded down)")
     for p in sorted(floors):
         if p not in measured:
             failures.append(f"{p}: listed in the floors file but absent from the profile")

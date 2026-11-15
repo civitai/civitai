@@ -112,7 +112,7 @@ jobs:
       - name: Coverage floors
         run: |
           set -euo pipefail
-          python3 ci/coverage_gate.py cover.out ci/coverage-floors.txt
+          python3 ci/coverage_gate.py cover.out ci/coverage-floors.txt test.json
           go tool cover -func=cover.out | tail -n 1
 
       - name: Upload the coverage profile
@@ -286,19 +286,26 @@ jobs:
         working-directory: apps/feed-go
     env:
       FUZZ_TIME: 20s
-      # <package dir>:<target>. The step below fails when this list and the Fuzz functions in the
-      # module differ in either direction, so a new target cannot go unfuzzed and a renamed one
-      # cannot silently fuzz nothing (`-fuzz` matching no target exits 0).
+      # <package dir>:<target>:<min execs>. The first step fails when this list and the Fuzz functions
+      # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
+      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). The Fuzz step fails a
+      # target whose final `execs: N` is below its floor (or missing): a run that fuzzed nothing, or
+      # stalled, is not a pass.
+      # Floors: about half the LOWEST final count over three green runs (43686322270, 43686825094,
+      # 43687297743) at FUZZ_TIME=20s. Counts vary up to ~18x between runs on shared runners, so a
+      # floor from one run would flake. To change one: read the "execs" summary line the Fuzz step
+      # prints for each target over a few runs, and set the floor to about half the lowest; scale
+      # all floors with FUZZ_TIME.
       FUZZ_TARGETS: >-
-        internal/auth:FuzzTokenFromCookieHeader
-        internal/auth:FuzzVerify
-        internal/feed:FuzzParse
-        internal/hydrate:FuzzUnpack
-        internal/shadow:FuzzCompare
-        internal/shadow:FuzzCompareJSON
-        internal/superjson:FuzzAppendString
-        internal/superjson:FuzzSerialize
-        internal/trpc:FuzzDecodeEnvelope
+        internal/auth:FuzzTokenFromCookieHeader:90000
+        internal/auth:FuzzVerify:25000
+        internal/feed:FuzzParse:180000
+        internal/hydrate:FuzzUnpack:100000
+        internal/shadow:FuzzCompare:11000
+        internal/shadow:FuzzCompareJSON:6000
+        internal/superjson:FuzzAppendString:42000
+        internal/superjson:FuzzSerialize:11000
+        internal/trpc:FuzzDecodeEnvelope:100000
     steps:
       - uses: actions/checkout@v7
 
@@ -313,7 +320,7 @@ jobs:
           go test -list '^Fuzz' -json ./... \
             | jq -r 'select(.Action=="output" and (.Output|startswith("Fuzz"))) | (.Package|sub(".*/apps/feed-go/";"")) + ":" + (.Output|rtrimstr("\n"))' \
             | sort > "$RUNNER_TEMP/fuzz-found.txt"
-          printf '%s\n' $FUZZ_TARGETS | sort > "$RUNNER_TEMP/fuzz-listed.txt"
+          printf '%s\n' $FUZZ_TARGETS | cut -d: -f1,2 | sort > "$RUNNER_TEMP/fuzz-listed.txt"
           echo "found $(wc -l < "$RUNNER_TEMP/fuzz-found.txt") fuzz targets, $(wc -l < "$RUNNER_TEMP/fuzz-listed.txt") listed"
           if ! diff -u "$RUNNER_TEMP/fuzz-listed.txt" "$RUNNER_TEMP/fuzz-found.txt"; then
             echo "::error::FUZZ_TARGETS in feed-go.yml and the module's Fuzz functions differ (- listed, + found)"
@@ -323,15 +330,23 @@ jobs:
 
       - name: Fuzz
         run: |
+          set -o pipefail # the go test status must survive the tee
           status=0
           for t in $FUZZ_TARGETS; do
-            pkg=${t%%:*}; name=${t##*:}
-            echo "::group::$t"
-            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "$FUZZ_TIME" "./$pkg"; then
-              echo "::error::$t failed; the crasher is in the uploaded artifact ($pkg/testdata/fuzz/$name/)"
+            IFS=: read -r pkg name floor <<< "$t"
+            echo "::group::$pkg:$name"
+            out="$RUNNER_TEMP/fuzz-$name.log"
+            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "$FUZZ_TIME" "./$pkg" 2>&1 | tee "$out"; then
+              echo "::error::$pkg:$name failed; the crasher is in the uploaded artifact ($pkg/testdata/fuzz/$name/)"
               status=1
             fi
             echo "::endgroup::"
+            execs=$(grep -o 'execs: [0-9]*' "$out" | tail -n 1 | cut -d' ' -f2 || true)
+            echo "$pkg:$name execs ${execs:-none} (floor $floor)"
+            if [ -z "$execs" ] || [ "$execs" -lt "$floor" ]; then
+              echo "::error::$pkg:$name ran ${execs:-no} fuzz executions, below its floor of $floor"
+              status=1
+            fi
           done
           exit $status
 

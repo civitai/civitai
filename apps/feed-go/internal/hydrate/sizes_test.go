@@ -62,3 +62,26 @@ func TestCheckSizesAcceptsExactLengths(t *testing.T) {
 		}
 	}
 }
+
+// The 16/32-bit length forms at the exact boundary: a declared length the bytes meet is accepted,
+// the same bytes declaring one more are refused.
+func TestCheckSizesWideLengthBoundaries(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		fit, over []byte
+	}{
+		{"str32", []byte{0xdb, 0, 0, 0, 3, 'a', 'b', 'c'}, []byte{0xdb, 0, 0, 0, 4, 'a', 'b', 'c'}},
+		{"bin32", []byte{0xc6, 0, 0, 0, 2, 0xff, 0xfe}, []byte{0xc6, 0, 0, 0, 3, 0xff, 0xfe}},
+		{"ext16", []byte{0xc8, 0, 3, 0x05, 1, 2, 3}, []byte{0xc8, 0, 4, 0x05, 1, 2, 3}},
+		{"ext32", []byte{0xc9, 0, 0, 0, 3, 0x05, 1, 2, 3}, []byte{0xc9, 0, 0, 0, 4, 0x05, 1, 2, 3}},
+		{"array32", []byte{0xdd, 0, 0, 0, 2, 0x01, 0x02}, []byte{0xdd, 0, 0, 0, 3, 0x01, 0x02}},
+		{"map32", []byte{0xdf, 0, 0, 0, 1, 0x01, 0x02}, []byte{0xdf, 0, 0, 0, 2, 0x01, 0x02}},
+	} {
+		if err := checkSizes(c.fit); err != nil {
+			t.Errorf("%s exact fit %x: %v", c.name, c.fit, err)
+		}
+		if err := checkSizes(c.over); !errors.Is(err, errTruncated) {
+			t.Errorf("%s one over %x: %v, want errTruncated", c.name, c.over, err)
+		}
+	}
+}
