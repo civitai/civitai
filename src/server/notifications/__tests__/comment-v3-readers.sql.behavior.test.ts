@@ -37,6 +37,7 @@ const {
 } = await import('~/server/notifications/comment.notifications');
 const { mentionNotifications } = await import('~/server/notifications/mention.notifications');
 const { reactionNotifications } = await import('~/server/notifications/reaction.notifications');
+const { postTextGateRowSql } = await import('~/server/services/post-text-hold');
 const { commentDetailFetcher } = await import(
   '~/server/notifications/detail-fetchers/comment.detail-fetcher'
 );
@@ -777,6 +778,37 @@ describe('the mute menu', () => {
     expect(await menu(100, 6)).toEqual({ muted: true, viaAncestor: false, canMute: true });
     expect(await menu(102, 6)).toEqual({ muted: true, viaAncestor: true, canMute: true });
     expect(await menu(100, 9)).toEqual({ muted: false, viaAncestor: false, canMute: true });
+  });
+});
+
+describe("the text thread gate's one read", () => {
+  const hidden = async () => {
+    const q = postTextGateRowSql(50);
+    return (await db.pg.query<{ hidden: boolean }>(q.text, q.values)).rows[0].hidden;
+  };
+  const withHold = (status: string, label = 'csam') =>
+    `INSERT INTO "TextScanHold"("entityType", "entityId", label, status) VALUES ('PostText', 50, '${label}', '${status}')`;
+
+  it('reads the post, rating and hidden decision in one statement', async () => {
+    const q = postTextGateRowSql(50);
+    expect((await db.pg.query(q.text, q.values)).rows).toEqual([
+      { postId: 1, nsfwLevel: 1, hidden: false },
+    ]);
+  });
+
+  it.each([
+    ['a Pending csam hold', true, withHold('Pending')],
+    ['a Confirmed csam hold', true, withHold('Confirmed')],
+    ['a Dismissed csam hold', false, withHold('Dismissed')],
+    ['a Pending hold of another label', false, withHold('Pending', 'poi')],
+    ['csamHeld', true, `UPDATE "PostText" SET "csamHeld" = true WHERE id = 50`],
+    ['refused', true, `UPDATE "PostText" SET refused = true WHERE id = 50`],
+  ])('with %s, hidden is %s', async (_, expected, change) => {
+    await temporarily(
+      change,
+      `DELETE FROM "TextScanHold"; UPDATE "PostText" SET refused = false, "csamHeld" = false WHERE id = 50`,
+      async () => expect(await hidden()).toBe(expected)
+    );
   });
 });
 

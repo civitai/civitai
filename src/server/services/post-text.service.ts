@@ -2,7 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   heldPostTextPostIds,
   heldTextError,
-  pendingCsamHoldTextIds,
+  hiddenPostTextIds,
   unheldPostTextUpdateSql,
 } from '~/server/services/post-text-hold';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -131,7 +131,8 @@ export async function deletePostText({
   return { id };
 }
 
-const readableTextWhere = { refused: false, csamHeld: false, nsfwLevel: { not: 0 } } as const;
+/** Rated rows only. Whether a text is hidden is decided on the primary (`hiddenPostTextIds`). */
+const ratedTextWhere = { nsfwLevel: { not: 0 } } as const;
 
 /**
  * The text items a reader is shown on these chapter posts, without content: which slides exist.
@@ -149,13 +150,18 @@ export async function getStorylineTextStubs({
 }) {
   if (!postIds.length) return [];
   const rows = await dbRead.postText.findMany({
-    where: { postId: { in: postIds }, ...readableTextWhere },
-    select: { id: true, postId: true, index: true, nsfwLevel: true, refused: true },
+    where: { postId: { in: postIds }, ...ratedTextWhere },
+    select: { id: true, postId: true, index: true, nsfwLevel: true },
   });
-  const pending = await pendingCsamHoldTextIds(rows.map((row) => row.id));
+  const hidden = await hiddenPostTextIds(rows.map((row) => row.id));
   return rows
-    .filter((row) => !pending.has(row.id))
-    .filter((row) => isImageCaptionShown(row, { browsingLevel, maxNsfwLevel, failClosed: true }))
+    .filter((row) => !hidden.has(row.id))
+    .filter((row) =>
+      isImageCaptionShown(
+        { ...row, refused: false },
+        { browsingLevel, maxNsfwLevel, failClosed: true }
+      )
+    )
     .map(({ id, postId, index, nsfwLevel }) => ({ id, postId, index, nsfwLevel }));
 }
 
@@ -179,20 +185,19 @@ export async function getPostTextsForViewer({
   const rows = await dbRead.postText.findMany({
     where: {
       postId,
-      ...(seesAll ? { refused: false, csamHeld: false } : readableTextWhere),
+      ...(seesAll ? {} : ratedTextWhere),
     },
     select: {
       id: true,
       index: true,
       content: true,
       nsfwLevel: true,
-      refused: true,
-      csamHeld: true,
     },
   });
-  const pending = await pendingCsamHoldTextIds(rows.map((row) => row.id));
+  // The replica row supplies the words and the rating; the primary says which are hidden.
+  const hidden = await hiddenPostTextIds(rows.map((row) => row.id));
   return rows
-    .map((row) => ({ ...row, csamHeld: row.csamHeld || pending.has(row.id) }))
+    .map((row) => ({ ...row, refused: false, csamHeld: hidden.has(row.id) }))
     .filter((row) => isPostTextShownToViewer(row, { browsingLevel, seesAll }))
     .map(({ id, index, content, nsfwLevel }) => ({ id, index, content, nsfwLevel }));
 }

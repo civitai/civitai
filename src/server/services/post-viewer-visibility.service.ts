@@ -1,8 +1,8 @@
 import type { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getPostDetail } from '~/server/services/post.service';
-import { pendingCsamHoldTextIds } from '~/server/services/post-text-hold';
+import { postTextGateRowSql } from '~/server/services/post-text-hold';
 import { isPostTextShownToViewer } from '~/server/services/post-text.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -35,17 +35,16 @@ export async function assertPostTextVisible(
   ctx: Pick<Context, 'user' | 'features' | 'req'>
 ) {
   if (!ctx.features?.storylineText) throw throwNotFoundError('Text not found');
-  const text = await dbRead.postText.findUnique({
-    where: { id: textId },
-    select: { postId: true, refused: true, csamHeld: true, nsfwLevel: true },
-  });
+  // Post, rating and the hidden decision in one primary statement (`postTextGateRowSql`).
+  const [text] = await dbWrite.$queryRaw<{ postId: number; nsfwLevel: number; hidden: boolean }[]>(
+    postTextGateRowSql(textId)
+  );
   if (!text) throw throwNotFoundError('Text not found');
   const post = await assertPostVisibleToViewer({ id: text.postId, user: ctx.user });
   const seesAll = !!ctx.user && (ctx.user.id === post.user.id || !!ctx.user.isModerator);
-  const pending = await pendingCsamHoldTextIds([textId]);
   if (
     !isPostTextShownToViewer(
-      { ...text, csamHeld: text.csamHeld || pending.has(textId) },
+      { nsfwLevel: text.nsfwLevel, refused: false, csamHeld: text.hidden },
       {
         browsingLevel: storylineReaderLevel(ctx, undefined),
         seesAll,
