@@ -913,6 +913,8 @@ jobs:
           path: unit-report.json
           if-no-files-found: warn
           retention-days: 3
+          # A re-run of a failed shard uploads again under the same name.
+          overwrite: true
 
       # The registry adapter's bundle, and its check that every external it loads loads under
       # this Node (`scripts/build-registry-adapter.mjs`), which no other job builds. It takes
@@ -1490,7 +1492,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: ${{ needs.unit.result == 'failure' && 0 || 1 }}
+          # Strings, not numbers: `cond && 0 || 1` is always 1, because 0 is falsy.
+          fetch-depth: ${{ needs.unit.result == 'failure' && '0' || '1' }}
           submodules: ${{ needs.unit.result == 'failure' }}
 
       - uses: pnpm/action-setup@v6

@@ -18,11 +18,19 @@
 // THE RECORD of what was verified is the run list itself: lint.yml runs on <ref> with
 // event=workflow_dispatch and actor=github-actions[bot]. Only this workflow's gate dispatches
 // lint.yml as the bot with `only: unit`; full-ci.yml's bot dispatches are `only: all` on PR
-// branches, never on `main`, and are told apart by the `unit-verify` job they do not have.
+// branches, never on `main`, and their `unit-verify` job is SKIPPED, so a run counts as a
+// verification only when that job concluded success or failure.
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,8 +39,10 @@ const VERIFY_JOB = 'Unit verified (hourly)';
 const BOT = 'github-actions[bot]';
 
 /** Should the hourly gate dispatch a run? Fails OPEN: no record or an error means run. */
-export function decideRun({ head, lastVerified, error }) {
+export function decideRun({ head, lastVerified, inProgress = false, error }) {
   if (error) return { run: true, reason: `could not read the last verified commit (${error})` };
+  if (inProgress)
+    return { run: false, reason: 'an hourly verification run is still queued or running' };
   if (!lastVerified) return { run: true, reason: 'no hourly run has verified a commit yet' };
   if (lastVerified === head)
     return {
@@ -98,33 +108,36 @@ const sh = (cmd, args, opts = {}) =>
 const gh = (...args) => sh('gh', args);
 const repo = () => process.env.GITHUB_REPOSITORY;
 
-/** Recent bot-dispatched lint.yml runs on <ref> that carry the verify job, newest first. */
-function verifiedRuns(ref, { conclusion } = {}) {
+/** Recent bot-dispatched lint.yml runs on <ref>, newest first (the gate's only dispatches). */
+function botRuns(ref, status) {
   const q = new URLSearchParams({
     branch: ref,
     event: 'workflow_dispatch',
     actor: BOT,
     per_page: '20',
   });
-  if (conclusion) q.set('status', conclusion);
+  if (status) q.set('status', status);
   const runs = JSON.parse(
     gh('api', `repos/${repo()}/actions/workflows/lint.yml/runs?${q}`, '-q', '.workflow_runs')
   );
-  const self = process.env.GITHUB_RUN_ID;
-  const out = [];
-  for (const run of runs) {
-    if (String(run.id) === self || run.status !== 'completed') continue;
+  return runs.filter((r) => String(r.id) !== process.env.GITHUB_RUN_ID);
+}
+
+/**
+ * The newest finished run whose verify job actually RAN (success or failure). A skipped verify
+ * job is listed too, so its presence alone proves nothing.
+ */
+function lastVerifiedRun(ref, { green = false } = {}) {
+  for (const run of botRuns(ref, green ? 'success' : undefined)) {
+    if (run.status !== 'completed') continue;
     if (!['success', 'failure'].includes(run.conclusion)) continue;
-    const jobs = gh(
-      'api',
-      `repos/${repo()}/actions/runs/${run.id}/jobs?per_page=50`,
-      '-q',
-      '.jobs[].name'
+    const jobs = JSON.parse(
+      gh('api', `repos/${repo()}/actions/runs/${run.id}/jobs?per_page=50`, '-q', '.jobs')
     );
-    if (jobs.split('\n').includes(VERIFY_JOB)) out.push(run);
-    if (out.length) break;
+    const v = jobs.find((j) => j.name === VERIFY_JOB);
+    if (v && ['success', 'failure'].includes(v.conclusion)) return run;
   }
-  return out;
+  return null;
 }
 
 function summary(lines) {
@@ -139,13 +152,17 @@ function summary(lines) {
 function gate(ref) {
   const head = gh('api', `repos/${repo()}/commits/${ref}`, '-q', '.sha');
   let lastVerified = null;
+  let inProgress = false;
   let error = null;
   try {
-    lastVerified = verifiedRuns(ref)[0]?.head_sha ?? null;
+    // A run still going is not re-dispatched: in its concurrency group a new dispatch would
+    // cancel it, and a red one is the long one (unit, then the bisect).
+    inProgress = botRuns(ref).some((r) => r.status !== 'completed');
+    lastVerified = lastVerifiedRun(ref)?.head_sha ?? null;
   } catch (err) {
     error = String(err.message).split('\n')[0];
   }
-  const d = decideRun({ head, lastVerified, error });
+  const d = decideRun({ head, lastVerified, inProgress, error });
   summary([`${d.run ? 'Dispatching' : 'Skipped'}: ${d.reason}.`]);
   if (d.run) gh('workflow', 'run', 'lint.yml', '--repo', repo(), '--ref', ref, '-f', 'only=unit');
 }
@@ -163,14 +180,24 @@ function runFiles(files) {
     : 1;
 }
 
-const lockHash = () => createHash('sha256').update(readFileSync('pnpm-lock.yaml')).digest('hex');
-const LOCK_MARK = 'node_modules/.bisect-lockfile-sha';
+// What an install depends on: the lockfile, and the Prisma schema the postinstall generates from.
+const SCHEMA = 'packages/civitai-db-schema/prisma/schema.full.prisma';
+const lockHash = () => {
+  const h = createHash('sha256').update(readFileSync('pnpm-lock.yaml'));
+  if (existsSync(SCHEMA)) h.update(readFileSync(SCHEMA));
+  return h.digest('hex');
+};
+const LOCK_MARK = 'node_modules/.bisect-install-sha';
 
 function step(failedJson) {
   try {
     sh('git', ['submodule', 'update', '--init', '--quiet']);
     if (!existsSync(LOCK_MARK) || readFileSync(LOCK_MARK, 'utf8') !== lockHash()) {
-      sh('pnpm', ['install', '--frozen-lockfile'], { stdio: 'inherit' });
+      // Marker first removed, then written only after a SUCCESSFUL install: a failed one must
+      // not leave a marker claiming node_modules matches this commit.
+      rmSync(LOCK_MARK, { force: true });
+      const r = spawnSync('pnpm', ['install', '--frozen-lockfile'], { stdio: 'inherit' });
+      if (r.status !== 0) throw new Error('pnpm install failed');
       writeFileSync(LOCK_MARK, lockHash());
     }
   } catch {
@@ -248,7 +275,7 @@ function verify(unitResult, reportsDir) {
     else {
       let green = null;
       try {
-        green = verifiedRuns(ref, { conclusion: 'success' })[0]?.head_sha ?? null;
+        green = lastVerifiedRun(ref, { green: true })?.head_sha ?? null;
       } catch (err) {
         lines.push(`Could not read the last green verified commit: ${err.message.split('\n')[0]}`);
       }

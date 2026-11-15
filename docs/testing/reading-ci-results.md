@@ -71,7 +71,8 @@ hourly run; the gate's record is the newest finished bot-dispatched Lint run car
 on red it re-runs the failed files at HEAD (a pass there is a flake, and nothing is posted), then
 bisects first-parent from the last green hourly-verified commit and posts `failure` on the FIRST BAD
 commit, naming the files, or on HEAD when the bisect cannot isolate one. So read the status on the
-commit, and expect up to about an hour plus a run (~20 min) before a commit gets one. To verify now,
+commit, and expect up to about an hour plus a run (~20 min) before a commit gets one. On green
+only HEAD gets the status; it covers every earlier commit in the batch, which get none. To verify now,
 dispatch the gate: `gh workflow run unit-hourly.yml -R civitai/civitai` (it skips when `main` has
 not moved).
 

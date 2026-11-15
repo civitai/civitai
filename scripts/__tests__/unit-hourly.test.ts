@@ -38,6 +38,14 @@ describe('decideRun: did main move since the last hourly verification?', () => {
     });
   });
 
+  // A new dispatch would cancel the running one in its concurrency group.
+  it('skips while a verification run is still queued or running, even when HEAD moved', () => {
+    expect(decideRun({ head: HEAD, lastVerified: OLD, inProgress: true })).toEqual({
+      run: false,
+      reason: 'an hourly verification run is still queued or running',
+    });
+  });
+
   // Fail open: a gate that cannot read its record must not leave main unverified.
   it('runs when the record could not be read, even if it would have matched', () => {
     expect(decideRun({ head: HEAD, lastVerified: HEAD, error: 'HTTP 502' })).toEqual({
