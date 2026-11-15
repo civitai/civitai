@@ -19,6 +19,7 @@ const getGetUrlByKey = vi.hoisted(() => vi.fn());
 const trackModActivity = vi.hoisted(() => vi.fn());
 const checkFixedWindow = vi.hoisted(() => vi.fn());
 const flags = vi.hoisted(() => ({ modRetractedMedia: true }));
+const getFeatureFlagsAsync = vi.hoisted(() => vi.fn());
 
 // The moderator check itself runs for real in `retracted-media.mod-only.test.ts`.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -28,7 +29,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       handler(req, res, { id: 42, isModerator: true }),
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({
-  getFeatureFlagsAsync: async () => flags,
+  getFeatureFlagsAsync,
 }));
 vi.mock('~/server/services/retracted-media.service', () => ({ getRetractedMedia }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
@@ -39,6 +40,7 @@ vi.mock('~/utils/s3-utils', () => ({
 }));
 
 const { default: handler } = await import('~/pages/api/mod/retracted-media/[imageId]');
+const { RETRACTED_MEDIA_STREAM_MS } = await import('@civitai/shared/retracted-media');
 
 // Arrow properties: the metrics wrapper around `ModEndpoint` calls these unbound.
 class FakeRes extends Writable {
@@ -95,6 +97,7 @@ const stored = (body = 'bytes', headers: Record<string, string> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   flags.modRetractedMedia = true;
+  getFeatureFlagsAsync.mockImplementation(async () => flags);
   getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null });
   getGetUrlByKey.mockResolvedValue({ url: SIGNED, bucket: 'media', key: KEY });
   trackModActivity.mockResolvedValue(undefined);
@@ -209,5 +212,98 @@ describe('/api/mod/retracted-media serving', () => {
     const res = await call({ headers: { range: 'bytes=2-3' } });
     expect(res.statusCode).toBe(206);
     expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('audits a range that starts at byte 0, as a video first loads', async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response('by', {
+          status: 206,
+          headers: {
+            'content-type': 'image/png',
+            'content-length': '2',
+            'content-range': 'bytes 0-1/5',
+          },
+        })
+    );
+    const res = await call({ headers: { range: 'bytes=0-' } });
+    expect(res.statusCode).toBe(206);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches the signed URL with the forwarded range', async () => {
+    await call({ headers: { range: 'bytes=2-3' } });
+    expect(fetchMock.mock.calls[0][0]).toBe(SIGNED);
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get('range')).toBe('bytes=2-3');
+  });
+
+  it('reads the kill switch for the signed-in moderator', async () => {
+    await call();
+    expect(getFeatureFlagsAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ user: expect.objectContaining({ id: 42 }) })
+    );
+  });
+
+  it('stops streaming at the deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      fetchMock.mockImplementation(async (_url: string, init: { signal: AbortSignal }) => {
+        const body = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('b'));
+            init.signal.addEventListener('abort', () => controller.error(new Error('aborted')));
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'image/png', 'content-length': '5' },
+        });
+      });
+      const pending = call();
+      await vi.advanceTimersByTimeAsync(RETRACTED_MEDIA_STREAM_MS);
+      const res = await pending;
+      expect(res.statusCode).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('/api/mod/retracted-media other failures', () => {
+  it('refuses a row whose url is not a storage key, before presigning', async () => {
+    getRetractedMedia.mockResolvedValue({
+      url: 'https://x.test/y.png',
+      type: 'image',
+      mimeType: null,
+    });
+    const res = await call();
+    expect(res.statusCode).toBe(422);
+    expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(getGetUrlByKey).not.toHaveBeenCalled();
+  });
+
+  it('refuses a video type a browser cannot play', async () => {
+    getRetractedMedia.mockResolvedValue({ url: KEY, type: 'video', mimeType: 'video/quicktime' });
+    fetchMock.mockImplementation(async () => stored('x', { 'content-type': 'video/quicktime' }));
+    const res = await call();
+    expect(res.statusCode).toBe(415);
+    expect(res.headers['cache-control']).toBe('private, no-store');
+  });
+
+  it.each([
+    [404, 404],
+    [416, 416],
+  ])('answers a store %i as %i with no-store', async (from, to) => {
+    fetchMock.mockImplementation(async () => new Response(null, { status: from }));
+    const res = await call();
+    expect(res.statusCode).toBe(to);
+    expect(res.headers['cache-control']).toBe('private, no-store');
+  });
+
+  it('keeps the storage URL out of an error answer', async () => {
+    fetchMock.mockRejectedValue(new Error(SIGNED));
+    const res = await call();
+    expect(res.statusCode).toBe(502);
+    expect(res.body).not.toContain('store.test');
   });
 });

@@ -83,7 +83,9 @@ beforeAll(async () => {
       (NULL, '{"secondaryUserId": "522"}', '[]'),
       (NULL, '{}', '[{"id": 23}]'),
       (NULL, '{}', '[24]'),
-      (521, '{}', '[]');
+      (521, '{}', '[]'),
+      (NULL, '{"secondaryUserId": "abc"}', '{"a": 1}'),
+      (NULL, '{"secondaryUserId": "123456789012345678901"}', '7');
   `);
 });
 
@@ -106,6 +108,10 @@ describe('getRetractedMedia', () => {
     for (const id of [1, 2, 3, 4, 5])
       expect({ id, served: await served(id) }).toEqual({ id, served: true });
     expect(await getRetractedMedia(1)).toEqual({ url: 'key-1', type: 'image', mimeType: null });
+  });
+
+  it('survives a report with a malformed secondary user or image list', async () => {
+    expect(await served(1)).toBe(true);
   });
 
   it('refuses any other block reason', async () => {
