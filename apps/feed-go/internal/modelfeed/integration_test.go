@@ -177,9 +177,10 @@ func TestIntegrationModelPageCursors(t *testing.T) {
 		t.Fatalf("newest from a .25 cursor: %v, want the short-fraction-cursor fallback", err)
 	}
 	// A 3-digit fraction is served, and binds the instant the row holds: the equality branch finds the
-	// cursor row itself (a misread millisecond would start the page at 3101005).
+	// cursor row itself (a misread millisecond would find nothing: the row is not before it either).
+	// The NULL lastVersionAt row is not reached from a timestamp cursor, in Node's SQL as here.
 	integWant(t, "newest from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortNewest, BrowsingLevel: 31, Cursor: "2026-06-11 10:00:00.125|3101002"})),
-		[]int{3101002, 3101005})
+		[]int{3101002})
 	// Oldest takes the OR predicate.
 	integWant(t, "oldest", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortOldest, BrowsingLevel: 31, Cursor: "2026-06-11 10:00:00.125|3101002"})),
 		[]int{3101002, 3101001})
