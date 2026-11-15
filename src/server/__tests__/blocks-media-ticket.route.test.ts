@@ -63,6 +63,22 @@ describe('GET /api/v1/blocks/media/[ticket]', () => {
     expect(resolveBlockMediaFetch).toHaveBeenCalledWith(['a', 'b']);
   });
 
+  it('🔴 answers a CORS preflight with 204, GET/HEAD only, without judging the ticket', async () => {
+    const r = await call('OPTIONS');
+    expect(r.status).toBe(204);
+    expect(r.headers['access-control-allow-methods']).toBe('GET, HEAD');
+    expect(r.headers['access-control-allow-origin']).toBe('*');
+    expect(resolveBlockMediaFetch).not.toHaveBeenCalled();
+  });
+
+  it('🔴 lets an opaque-origin frame read Retry-After on a pending ticket', async () => {
+    resolveBlockMediaFetch.mockResolvedValue({ state: 'pending' });
+    const r = await call('GET');
+    expect(r.headers['access-control-allow-origin']).toBe('*');
+    expect(r.headers['access-control-expose-headers']).toBe('Retry-After');
+    expect(r.headers['retry-after']).toBe('5');
+  });
+
   it('refuses other methods without judging the ticket', async () => {
     expect((await call('POST')).status).toBe(405);
     expect(resolveBlockMediaFetch).not.toHaveBeenCalled();

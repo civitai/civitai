@@ -77,11 +77,11 @@ const backoffKey = (blobId: string) =>
 /**
  * One HEAD with the system token, never waiting long: the orchestrator holds a
  * HEAD open until the scan has a verdict, so a timeout means pending. Only a
- * verdict is cached; a failed or timed-out read backs off for 5 s, so an outage
- * costs at most one HEAD per blob per 5 s. Never throws.
+ * verdict is cached; a failed, timed-out or pending read backs off for
+ * BLOB_STATE_BACKOFF_SECONDS, so an outage costs one HEAD per blob per backoff. Never throws.
  *
- * A cached verdict can be up to ~120 s old, not 60: `fetchThroughCache` keeps
- * entries for twice the TTL and serves the stale one while another request
+ * A cached verdict can be up to twice BLOB_STATE_TTL_SECONDS old: `fetchThroughCache`
+ * keeps entries for twice the TTL and serves the stale one while another request
  * holds the refresh.
  */
 export async function readBlobState(blobId: string): Promise<BlobState> {
@@ -116,7 +116,7 @@ async function headBlobState(blobId: string): Promise<BlobState> {
     ? parseBlobVerdictHeaders(response.headers, response.status)
     : ({ status: 'unavailable', httpStatus: 0 } as const);
   if (verdict.status === 'pending') {
-    // Matches the route's Retry-After, so polling a pending blob costs one HEAD per 5 s.
+    // Matches the media route's Retry-After, so polling a pending blob costs one HEAD per backoff.
     await holdOff(blobId);
     throw new NoVerdict();
   }

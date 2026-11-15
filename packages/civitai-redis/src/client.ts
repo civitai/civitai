@@ -3249,7 +3249,7 @@ const REDIS_KEYS_UNPREFIXED = {
     ACCOUNT_STANDING: 'packed:caches:account-standing',
     // `<prefix>:<blobId>` — an App Block media blob's scan verdict. See blobRatings.ts `readBlobState`.
     BLOCK_MEDIA_BLOB_STATE: 'packed:caches:block-media-blob-state',
-    // `<prefix>:<blobId>` — set for 5 s after a failed or timed-out verdict read.
+    // `<prefix>:<blobId>` — set after a failed, timed-out or pending verdict read (see `BLOB_STATE_BACKOFF_SECONDS`).
     BLOCK_MEDIA_BLOB_STATE_BACKOFF: 'packed:caches:block-media-blob-state-backoff',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',

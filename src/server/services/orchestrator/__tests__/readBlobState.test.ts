@@ -88,12 +88,14 @@ describe('readBlobState', () => {
     headBlob.mockRejectedValue(new Error('ECONNRESET'));
     expect(await readBlobState('b1')).toEqual({ verdict: 'pending' });
     backedOff();
+    await refillIsNotCached();
   });
 
   it('🔴 a HEAD that times out is pending and backs off', async () => {
     headBlob.mockRejectedValue(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
     expect(await readBlobState('b1')).toEqual({ verdict: 'pending' });
     backedOff();
+    await refillIsNotCached();
   });
 
   it('🔴 a 503 (scan pending) is pending, holds off 5 s, and is never cached as a verdict', async () => {
@@ -107,6 +109,7 @@ describe('readBlobState', () => {
     headBlob.mockResolvedValue(answered(status, { 'X-NSFW-Level': 'PG' }));
     expect(await readBlobState('b1')).toEqual({ verdict: 'pending' });
     backedOff();
+    await refillIsNotCached();
   });
 
   it('🔴 a 200 with neither a level nor a block is pending', async () => {

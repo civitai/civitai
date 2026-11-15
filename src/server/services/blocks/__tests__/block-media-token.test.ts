@@ -8,6 +8,7 @@ import {
   sealBlockMediaTicket,
 } from '~/server/services/blocks/block-media-token';
 import { openToken, sealToken } from '~/server/utils/sealed-token';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const claims = {
   blobId: 'BLOBKEY123',
@@ -117,6 +118,20 @@ describe('bm1 media tokens', () => {
 
 describe('sealToken / openToken', () => {
   const opts = { domain: 'test:v1', prefix: 't1', aad: 'a' };
+
+  it.each([
+    ['an empty', ''],
+    ['a 7-character', 'x'.repeat(7)],
+  ])('🔴 fails closed with %s secret: seals nothing, opens nothing', (_label, secret) => {
+    const token = sealToken({ x: 1 }, opts);
+    setEnv({ NEXTAUTH_SECRET: secret });
+    try {
+      expect(sealToken({ x: 1 }, opts)).toBeUndefined();
+      expect(openToken(token, opts)).toBeNull();
+    } finally {
+      resetEnv();
+    }
+  });
 
   it('CONTROL: opens with the same domain and AAD', () => {
     expect(openToken(sealToken({ x: 1 }, opts), opts)).toEqual({ x: 1 });
