@@ -347,8 +347,11 @@ export function isBlockNeverRatedVideoStep(
         ?.params
     )
   ) {
-    // The ecosystem is read from `metadata.params`, which the server writes (the
-    // generation graph); no App Blocks body can set step or workflow metadata.
+    // The ecosystem is read from `metadata.params`. A recipe submit builds those params
+    // from the APP's own params through the generation graph, and the step's engine is
+    // derived from that same ecosystem. So it is app-chosen, not server-chosen: what it
+    // selects is an engine the provider moderates, the same set the engine check below
+    // delivers.
     return true;
   }
   const input = step.input;
@@ -421,13 +424,23 @@ function meshRatingOf(
   // `'na'` — the verdict with no level — or a value `maxNsfwLevel` does not know, which
   // is passed on so the classifier fails closed on it.
   if (sources > 0) {
-    const odd = ratings.find((r) => r !== 'na');
+    const odd = ratings.find((r) => !isNaVerdict(r));
     return {
       kind: 'rated',
       rating: (odd ?? 'na') as NonNullable<Parameters<typeof maxNsfwLevel>[0][number]>,
     };
   }
   return FINISHED_STEP_STATUSES.has(step.status ?? '') ? { kind: 'never' } : { kind: 'pending' };
+}
+
+/**
+ * The `'na'` verdict, in ANY case or padding, as the classifier reads it
+ * (`classifyBlockOutput` trims and lower-cases). Compared exactly, an `'NA'` on the mesh
+ * would read as a real value here, mask an unknown source value, and then be delivered
+ * by the classifier as `'na'`.
+ */
+function isNaVerdict(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().toLowerCase() === 'na';
 }
 
 /**
@@ -456,7 +469,7 @@ export function propagateMeshRating(
           maxNsfwLevel([s.nsfwLevel as Parameters<typeof maxNsfwLevel>[0][number], mesh.rating]) ??
           // A source value `maxNsfwLevel` does not know beats a mesh's own `'na'`, so
           // it reaches the classifier and fails closed there.
-          (s.nsfwLevel && s.nsfwLevel !== 'na' ? s.nsfwLevel : mesh.rating),
+          (s.nsfwLevel && !isNaVerdict(s.nsfwLevel) ? s.nsfwLevel : mesh.rating),
       };
     }
     // A source that has not rated yet: hold the mesh, whatever it carries itself.

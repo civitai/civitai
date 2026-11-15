@@ -1,8 +1,12 @@
 import type { Workflow } from '@civitai/orchestration-client';
 import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import { NsfwLevel } from '~/server/common/enums';
-import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
+import {
+  allowMatureContentForCeiling,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-viewer-ceiling';
+import { USER_SUB_RE } from '~/server/services/block-token-subject';
 import type {
   BlockWorkflowOutput,
   BlockWorkflowOutputRating,
@@ -25,12 +29,13 @@ import type {
  * Restricted urls are withheld from the app entirely, so a restricted output reaches
  * the app only as a position in `outputs`.
  *
- * THE DECISION, in order — it mirrors the on-site generator's blob rules in
- * `shared/orchestrator/workflow-data.ts` (`holdUnrated` / `PENDING_RATING` for an
- * output not rated yet, `NSFW_CAPPED` for a site cap, `canUpgrade` for
- * `allowMatureContent === false`), with the token's viewer ceiling (the domain ceiling
- * cut to the viewer's own browsing level) in place of the site's domain and viewer
- * settings:
+ * THE DECISION, in order, exactly as below. Several rules take their shape from the
+ * on-site generator's blob rules in `shared/orchestrator/workflow-data.ts`
+ * (`holdUnrated` / `PENDING_RATING`, `NSFW_CAPPED`, `canUpgrade`,
+ * `NEVER_RATED_VIDEO_ECOSYSTEMS`), but this is NOT a copy of them. It is judged against
+ * the token's output ceiling ({@link blockOutputCeilingFromClaims}), not the site's
+ * domain and viewer settings, an unknown rating fails closed, and a mesh needs EVERY
+ * rating source rated (`propagateMeshRating`):
  *   0. BLOCKED by the orchestrator (a `blockedReason` other than `none`): the output
  *      keeps its POSITION, with no url. `MatureContent` is a maturity block, so it is
  *      `{ restricted: true, reason: 'ceiling' }`; any other reason (moderation) is
@@ -53,8 +58,9 @@ import type {
  *      in `workflow-data.ts`): the provider moderates its own output. A rating that
  *      does arrive on one goes through rules 2-6 as usual.
  *   2. A rating this module does not know: restricted, `'ceiling'` (fail closed).
- *   3. Above the viewer ceiling ({@link blockOutputCeilingFromClaims}): restricted,
- *      `'ceiling'`.
+ *   3. Above the output ceiling ({@link blockOutputCeilingFromClaims}: the viewer's
+ *      level, floored at PG-13 for a signed-in viewer, cut to the domain ceiling):
+ *      restricted, `'ceiling'`.
  *   4. Above the workflow's own `nsfwLevel` cap (the site's base-model clamp):
  *      restricted, `'ceiling'`.
  *   5. Mature (R and up) on a workflow with `allowMatureContent === false`:
@@ -64,9 +70,11 @@ import type {
  *      charge-time detection.
  *   6. Otherwise `{ url, nsfwLevel }`.
  *
- * A 3D mesh is never rated itself; the producers copy its thumbnail's and the
- * workflow's `model3DPreview` rating onto it BEFORE this runs (`propagateMeshRating` in
- * `services/blocks/workflow.service`), and a mesh with neither is unrated (rule 1).
+ * A 3D mesh is never rated itself; the producers copy the most severe rating of its
+ * thumbnail and the workflow's `model3DPreview` images onto it BEFORE this runs
+ * (`propagateMeshRating` in `services/blocks/workflow.service`). While any of those
+ * sources is unrated the mesh is unrated (rule 1); with no source at all on a finished
+ * step it is never-rated (rule 1b).
  *
  * ⚠️ HOW FAR 'pool' vs 'ceiling' CAN BE TOLD APART. The workflow carries only the
  * resulting flag, not who wrote it, so step 5 infers it from the CURRENT token. Two
@@ -183,17 +191,44 @@ export type BlockOutputWorkflowFacts = Pick<Workflow, 'allowMatureContent' | 'ns
 export type BlockOutputCeiling = { readonly maxBrowsingLevel: number };
 
 /**
- * The output ceiling from a verified token: the domain ceiling (`maxBrowsingLevel`)
- * intersected with the viewer's own signed `viewerBrowsingLevel`. That is EXACTLY
- * `resolveViewerBrowsingLevel`, the level #8786 clamps the gated-image read and posts
- * to, so an output and a gated image are judged at the same level. FAIL CLOSED to PG
- * for a token without a viewer level or a numeric domain ceiling.
+ * The output ceiling from a verified token: `resolveViewerBrowsingLevel` (the level
+ * #8786 clamps the gated-image read and posts to: the domain ceiling `maxBrowsingLevel`
+ * intersected with the viewer's signed `viewerBrowsingLevel`), with ONE difference.
+ *
+ * 🔴 PG-13 FLOOR (operator decision). For a SIGNED-IN viewer (`sub` is `user:<id>`,
+ * {@link USER_SUB_RE}) whose token carries a valid viewer level, that level is OR-ed
+ * with PG | PG-13 BEFORE the domain intersection. The site's generator shows a signed-in
+ * user their own PG-13 generations whatever their NSFW setting, so a blue or red viewer
+ * with NSFW off is not held at PG here. The domain ceiling still cuts it, so the floor
+ * never widens past what the domain allows.
+ *
+ * Everyone else is exactly `resolveViewerBrowsingLevel(claims)`: an anonymous viewer
+ * (`sub: 'anon'`), a token with no or a malformed `sub`, and a token with no (or an
+ * invalid) viewer level all read PG, FAIL CLOSED. `resolveViewerBrowsingLevel` itself
+ * is never floored, so #8786's gated-image and post rules are unchanged.
  */
 export function blockOutputCeilingFromClaims(claims: {
+  sub?: string;
   maxBrowsingLevel?: number | null;
   viewerBrowsingLevel?: number | null;
 }): BlockOutputCeiling {
-  return { maxBrowsingLevel: resolveViewerBrowsingLevel(claims) };
+  const viewer = claims.viewerBrowsingLevel;
+  const flooredForSignedInViewer =
+    typeof claims.sub === 'string' &&
+    USER_SUB_RE.test(claims.sub) &&
+    typeof viewer === 'number' &&
+    Number.isInteger(viewer) &&
+    viewer >= 0;
+  return {
+    maxBrowsingLevel: resolveViewerBrowsingLevel(
+      flooredForSignedInViewer
+        ? {
+            maxBrowsingLevel: claims.maxBrowsingLevel,
+            viewerBrowsingLevel: viewer | sfwBrowsingLevelsFlag,
+          }
+        : claims
+    ),
+  };
 }
 
 /**
