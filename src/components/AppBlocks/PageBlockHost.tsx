@@ -46,6 +46,7 @@ import {
   readyWaitPolicyFor,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
+  resolveGetWorkflowMediaRequest,
   resolveImageUploadRequest,
   resolveNavigateRequest,
   resolvePersistGenerationSourceRequest,
@@ -146,7 +147,11 @@ import {
   type MediaUploadBatchItemResult,
 } from './mediaUploadBatchLogic';
 import { MEDIA_UPLOAD_BATCH_CONCURRENCY } from '~/shared/constants/media-upload-batch.constants';
-import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
+import {
+  PAGE_HOST_CAPABILITIES,
+  projectBlockInitMaturity,
+  withSignedInFlag,
+} from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
 import {
   reportAppSubmitError,
@@ -1525,6 +1530,7 @@ export function PageBlockHost({
       ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
       // Keyed on `surface`, never on `grantedScopes` — see BLOCK_HOST_LOCAL_PREVIEW_STORAGE.
       ...blockInitStorageMode(surface),
+      capabilities: PAGE_HOST_CAPABILITIES,
     }),
     [
       surface,
@@ -2513,6 +2519,7 @@ export function PageBlockHost({
   // same bearer-token-in-URL reason as the other block-token bridges.
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
+  const getWorkflowMediaMutation = trpc.blocks.getWorkflowMedia.useMutation();
   // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
   // consent payload server-side, then the write. Both take the block token and
   // both require the viewer's signed-in session.
@@ -2945,6 +2952,38 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, getImagesByIdsMutation, reportNoToken]);
+
+  // GET_WORKFLOW_MEDIA → blocks.getWorkflowMedia → WORKFLOW_MEDIA_RESULT. Stored media refs →
+  // viewer-bound media URLs; the server judges each for this token's viewer.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; refs?: unknown } | undefined>(
+      'GET_WORKFLOW_MEDIA',
+      async (raw) => {
+        const req = resolveGetWorkflowMediaRequest(raw);
+        if (!req) return;
+        const { requestId, refs } = req;
+        if (refs.length === 0) {
+          send('WORKFLOW_MEDIA_RESULT', { requestId, result: { media: [] } });
+          return;
+        }
+        if (!token) {
+          reportNoToken('GET_WORKFLOW_MEDIA');
+          send('WORKFLOW_MEDIA_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await getWorkflowMediaMutation.mutateAsync({ blockToken: token, refs });
+          send('WORKFLOW_MEDIA_RESULT', { requestId, result });
+        } catch (err) {
+          send('WORKFLOW_MEDIA_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getWorkflowMediaMutation, reportNoToken]);
 
   // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
   // per-account (blue/green/yellow) balance read that backs the SDK

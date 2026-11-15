@@ -209,6 +209,7 @@ const GUARD_CALL_SITE_LEDGER = [
   'estimateWorkflow',
   'estimateWorkflowBatch',
   'getImagesByIds',
+  'getWorkflowMedia',
   'listMyWorkflows',
   // PERSIST_GENERATION_SOURCE: the publish preamble, spelled inline.
   'persistGenerationSource',
@@ -237,6 +238,7 @@ const BRIDGE_INPUT_LEDGER = [
   // `blockEstimateBatchInputSchema`, imported from the workflow schema.
   'estimateWorkflowBatch',
   'getImagesByIds',
+  'getWorkflowMedia',
   'getMyBuzzAccounts',
   'getMyBuzzBalance',
   'getMyBuzzTransactions',

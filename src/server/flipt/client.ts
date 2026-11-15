@@ -3,6 +3,9 @@ import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
 export enum FLIPT_FEATURE_FLAGS {
+  // Mirrors the `knightsApp` fliptKey (KNIGHTS_APP_FLIPT_FLAG) and the Knights app's own access flag.
+  // Read here with no user for the server-side cutover from the old in-app game.
+  KNIGHTS_APP = 'knights-of-new-order-app',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
@@ -277,6 +280,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // in-flight cap with FEED_GO_SHADOW, with its own per-second bucket. Default OFF.
   // See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_INFINITE = 'feed-go-shadow-infinite',
+  // Mirrors a sampled fraction of the /api/internal/ping and /api/internal/pulse beacons (the
+  // request, Node's response AND the tracker rows it wrote) to the beacon-go shadow comparator,
+  // after the response is written. DEFAULT-OFF. Global boolean, read at most once per 5s per
+  // process; also needs BEACON_GO_SHADOW_URL and BEACON_GO_SHADOW_SAMPLE_RATE > 0. See
+  // `src/server/beacon/beacon-go-shadow.ts`.
+  BEACON_GO_SHADOW = 'beacon-go-shadow',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -377,6 +386,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
   // version declares (that would fail open). See `storage-hooks.ts`.
   APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
+  // Global brake. Off or absent hides all App Block media; see `isBlockMediaServing`
+  // in `block-media-serving.ts` for what happens when Flipt is unreachable.
+  APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
@@ -413,6 +425,15 @@ export enum FLIPT_FEATURE_FLAGS {
   //
   // Add the key (enabled: false) to flag state before flipping it.
   PLACEMENT_SPACE_READ_CACHE = 'placement-space-read-cache',
+  // ON keeps the shared, viewer-independent home block entry (the one `getHomeBlockCached` reads
+  // from Redis) in a per-process LRU for 10s, so `homeBlock.getHomeBlock` skips the Redis read and
+  // its decode on a hit. The row read, the viewer gates and the per-row identity still run on
+  // every request. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized
+  // client, which keeps the Redis-only path. Global boolean, read at most once per 5s per process.
+  // See `home-block-cache.service.ts`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key reads as off.
+  HOME_BLOCK_SERVER_CACHE = 'home-block-server-cache',
   // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
   // that `buildFliptContext` emits from the user's opt-in setting, so background paths
   // (no request context) can gate on the same flag the request path does.
@@ -670,6 +691,8 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
+  // The App Block media brake: a flip must reach the next media fetch.
+  FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
 ]);
 
 // 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.

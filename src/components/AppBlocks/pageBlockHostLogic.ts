@@ -3,6 +3,7 @@
 // (no RTL — civitai-web's unit project runs `environment: 'node'` and only
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
+import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
@@ -630,6 +631,29 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
     ? obj.imageIds.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
     : [];
   return { requestId: obj.requestId, imageIds };
+}
+
+// ── GET_WORKFLOW_MEDIA ───────────────────────────────────────────────────────
+
+export type GetWorkflowMediaRequest = { requestId: string; refs: string[] };
+
+/** Max refs the host forwards; matches `blocks.getWorkflowMedia`. */
+export const GET_WORKFLOW_MEDIA_MAX_REFS = WORKFLOW_MEDIA_MAX_REFS;
+
+/**
+ * Validate a raw GET_WORKFLOW_MEDIA payload from an untrusted iframe: `null` drops it
+ * (no requestId); non-string refs are filtered out and the list is capped.
+ */
+export function resolveGetWorkflowMediaRequest(raw: unknown): GetWorkflowMediaRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+  const refs = Array.isArray(obj.refs)
+    ? obj.refs
+        .filter((r): r is string => typeof r === 'string' && r.length > 0 && r.length <= 2048)
+        .slice(0, GET_WORKFLOW_MEDIA_MAX_REFS)
+    : [];
+  return { requestId: obj.requestId, refs };
 }
 
 // ── ESTIMATE_WORKFLOW_BATCH ──────────────────────────────────────────────────

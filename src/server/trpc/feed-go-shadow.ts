@@ -3,6 +3,7 @@ import superjson from 'superjson';
 import { allCookieNames, SESSION_COOKIE_BASE } from '@civitai/auth/client';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import {
+  FEED_GO_SHADOW_ENDPOINTS,
   recordFeedGoShadowEncode,
   recordFeedGoShadowOutcome,
   type FeedGoShadowEndpoint,
@@ -10,6 +11,7 @@ import {
   type FeedGoV1ShapeClass,
 } from '~/server/prom/feed-go-shadow.metrics';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
+import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
@@ -27,8 +29,8 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
  * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
  * sample rate and the in-flight cap; each has its own per-second bucket of the same size, so one
- * route's traffic cannot starve another's samples. A REST sample takes its in-flight slot and its
- * token only once the handler has answered 200 (in `finish`): it holds nothing while it runs.
+ * route cannot drain another's tokens. A REST sample takes its in-flight slot and its token
+ * only once the handler has answered 200 (in `finish`): it holds nothing while it runs.
  *
  * Why the per-second token bucket (`FEED_GO_SHADOW_MAX_PER_SECOND`): the send happens after the
  * response, but encoding the page (`JSON.stringify`, plus `superjson.serialize` for a devalue
@@ -84,13 +86,6 @@ export type FeedGoShadowConfig = {
 };
 
 type Env = Record<string, string | undefined>;
-
-function envNumber(raw: string | undefined, fallback: number, min: number, max: number) {
-  if (raw == null || raw.trim() === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
 
 /**
  * Parse the env. `FEED_GO_SHADOW_URL` is the BASE of feed-go's internal listener (scheme + host +
@@ -233,29 +228,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   let inFlight = 0;
   // A local bucket rather than `createBlockEventRateLimiter`: that one is a keyed, LRU-bounded
   // limiter for App Blocks events defaulting to Date.now; this needs one bucket on a monotonic clock.
-  // Token bucket for `maxPerSecond`: starts full, refills continuously, holds at most one
-  // second's worth (and at least one token, so a rate below 1/s still admits a sample).
   // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve another.
-  const bucketCap = Math.max(1, config.maxPerSecond);
-  const buckets: Record<FeedGoShadowEndpoint, { tokens: number; refilledAt?: number }> = {
-    'as-posts': { tokens: bucketCap },
-    'v1-images': { tokens: bucketCap },
-    infinite: { tokens: bucketCap },
-  };
-
-  function takeToken(endpoint: FeedGoShadowEndpoint): boolean {
-    const bucket = buckets[endpoint];
-    const t = now();
-    if (bucket.refilledAt !== undefined)
-      bucket.tokens = Math.min(
-        bucketCap,
-        bucket.tokens + ((t - bucket.refilledAt) / 1000) * config.maxPerSecond
-      );
-    bucket.refilledAt = t;
-    if (bucket.tokens < 1) return false;
-    bucket.tokens -= 1;
-    return true;
-  }
+  const buckets = createPerSecondBuckets(FEED_GO_SHADOW_ENDPOINTS, config.maxPerSecond, now);
 
   function release(sample: FeedGoShadowSample) {
     if (sample.done) return;
@@ -326,7 +300,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       record('dropped_overload', endpoint);
       return false;
     }
-    if (!takeToken(endpoint)) {
+    if (!buckets.take(endpoint)) {
       record('dropped_rate_limit', endpoint);
       return false;
     }

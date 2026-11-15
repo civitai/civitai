@@ -3,8 +3,10 @@ import { NsfwLevel } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
-import { requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
+import {
+  requestDomainBrowsingLevelCap,
+  requestVerifiedCrawler,
+} from '~/server/utils/browsing-level';
 import { storedSourceImageIds } from '~/server/utils/source-image-ids';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
 import { Flags } from '~/shared/utils/flags';
@@ -50,8 +52,7 @@ export function canViewImageMedia(
 export function keepCrawlerAnswerOutOfEdgeCache(
   ctx: Pick<Context, 'user' | 'req'> & Partial<Pick<Context, 'cache'>>
 ) {
-  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-  if (!ctx.user && verifiedBot !== null && ctx.cache) {
+  if (!ctx.user && requestVerifiedCrawler(ctx.req) !== null && ctx.cache) {
     ctx.cache.edgeTTL = 0;
     ctx.cache.browserTTL = 0;
     ctx.cache.staleWhileRevalidate = 0;
