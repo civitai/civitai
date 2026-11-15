@@ -44,6 +44,12 @@ type Config struct {
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// The flags model.getAll reads (DESIGN.md §15.3), each defaulting to its production value. Only
+	// that state is ported: any of them off makes every model.getAll sample the flag-off-state fallback.
+	BaseModelFeedMetrics bool // FEED_GO_BASE_MODEL_FEED_METRICS: mirrors `base-model-feed-metrics`
+	ModelImagesSlim      bool // FEED_GO_MODEL_IMAGES_SLIM: mirrors the getAllModelImagesSlim feature
+	CoverageNext         bool // FEED_GO_GENERATION_COVERAGE_NEXT: mirrors `generation-coverage-next`
+	LoadingOpenToAll     bool // FEED_GO_GENERATION_LOADING_OPEN_TO_ALL: mirrors `generation-loading-open-to-all`
 	// ImageLocation is NEXT_PUBLIC_IMAGE_LOCATION (same var as the Node app): the edge URL prefix the
 	// REST images endpoint publishes. Unset = that endpoint falls back.
 	ImageLocation string
@@ -104,8 +110,13 @@ func Load() (*Config, error) {
 		FeedServiceURL:   os.Getenv("FEED_SERVICE_URL"),
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
-		Pprof:            boolEnv("FEED_GO_PPROF", false),
-		ImageLocation:    os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
+
+		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
+		ModelImagesSlim:      boolEnv("FEED_GO_MODEL_IMAGES_SLIM", true),
+		CoverageNext:         boolEnv("FEED_GO_GENERATION_COVERAGE_NEXT", true),
+		LoadingOpenToAll:     boolEnv("FEED_GO_GENERATION_LOADING_OPEN_TO_ALL", true),
+		Pprof:                boolEnv("FEED_GO_PPROF", false),
+		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),

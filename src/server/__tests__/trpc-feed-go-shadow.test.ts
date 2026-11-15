@@ -8,6 +8,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
 import {
   FEED_GO_SHADOW_INFINITE_PATH,
+  FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
   resetFeedGoShadowForTests,
 } from '~/server/trpc/feed-go-shadow';
@@ -42,8 +43,13 @@ vi.mock('~/shared/utils/trpc-union-transformer', async (importOriginal) => ({
 const flag = vi.hoisted(() => ({
   shadow: null as boolean | null,
   infinite: null as boolean | null,
+  models: null as boolean | null,
 }));
-const handler = vi.hoisted(() => ({ fail: false, infiniteBadRequest: false }));
+const handler = vi.hoisted(() => ({
+  fail: false,
+  infiniteBadRequest: false,
+  modelsBadRequest: false,
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
@@ -53,6 +59,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
         ? flag.shadow
         : key === 'feed-go-shadow-infinite'
         ? flag.infinite
+        : key === 'feed-go-shadow-model-getall'
+        ? flag.models
         : actual.isFliptSync(key, ...rest),
   };
 });
@@ -81,6 +89,15 @@ vi.mock('~/server/routers', async () => {
           if (handler.infiniteBadRequest) {
             const { TRPCError } = await import('@trpc/server');
             throw new TRPCError({ code: 'BAD_REQUEST', message: 'bad cursor' });
+          }
+          return PAYLOAD;
+        }),
+      }),
+      model: router({
+        getAll: publicProcedure.query(async () => {
+          if (handler.modelsBadRequest) {
+            const { TRPCError } = await import('@trpc/server');
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid cursor' });
           }
           return PAYLOAD;
         }),
@@ -160,8 +177,10 @@ beforeEach(() => {
   feedGo.onReceived = undefined;
   flag.shadow = true;
   flag.infinite = false;
+  flag.models = false;
   handler.fail = false;
   handler.infiniteBadRequest = false;
+  handler.modelsBadRequest = false;
   h.writeDevalue = false;
   configure({
     FEED_GO_SHADOW_URL: fakeBase,
@@ -345,7 +364,7 @@ describe('feed-go shadow, end to end', () => {
       const { values } = await metric!.get();
       // Seeded for every endpoint, so the label set is visible without traffic.
       expect(values.map((v) => v.labels.feed_endpoint).sort(), name).toEqual(
-        expect.arrayContaining(['as-posts', 'v1-images', 'infinite'])
+        expect.arrayContaining(['as-posts', 'v1-images', 'infinite', 'model-getall'])
       );
       for (const v of values) expect(Object.keys(v.labels), name).not.toContain('endpoint');
     }
@@ -398,6 +417,59 @@ describe('feed-go shadow, image.getInfinite end to end', () => {
     flag.infinite = false;
     resetFeedGoShadowForTests();
     expect((await get(INFINITE)).status).toBe(200);
+    expect(await receivedWithin(1, 200)).toHaveLength(0);
+  });
+});
+
+describe('feed-go shadow, model.getAll end to end', () => {
+  const MODELS = 'model.getAll';
+
+  it('flag on: one POST to its own compare path with the raw input and the envelope Node wrote', async () => {
+    flag.shadow = false; // the gallery flag plays no part
+    flag.models = true;
+    resetFeedGoShadowForTests();
+    const served = await get(MODELS, {
+      cookie: '__Secure-civ-token=hdr.payload.sig; theme=dark',
+    });
+    expect(served.status).toBe(200);
+    expect(JSON.parse(served.text).result.data).toEqual(SUPERJSON_PAYLOAD);
+    const posts = await receivedWithin(1);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe(FEED_GO_SHADOW_MODEL_GET_ALL_PATH);
+    expect(posts[0].body.input).toBe(INPUT);
+    expect(posts[0].body.node).toEqual(SUPERJSON_PAYLOAD);
+    expect(posts[0].body.headers).toEqual({
+      host: new URL(baseUrl).host,
+      cookie: '__Secure-civ-token=hdr.payload.sig',
+    });
+    // Exactly one: nothing more arrives (the gallery procedure was not asked).
+    expect(await receivedWithin(2, 200)).toHaveLength(1);
+  });
+
+  it('a 4xx answer is not mirrored, and is counted as skipped_status under its endpoint', async () => {
+    flag.models = true;
+    resetFeedGoShadowForTests();
+    handler.modelsBadRequest = true;
+    const before = await outcomeCounts('model-getall');
+    const served = await get(MODELS);
+    expect(served.status).toBe(400);
+    const start = Date.now();
+    while (
+      ((await outcomeCounts('model-getall')).skipped_status ?? 0) ===
+        (before.skipped_status ?? 0) &&
+      Date.now() - start < 1000
+    )
+      await new Promise((r) => setTimeout(r, 10));
+    expect((await outcomeCounts('model-getall')).skipped_status).toBe(
+      (before.skipped_status ?? 0) + 1
+    );
+    expect(await receivedWithin(1, 200)).toHaveLength(0);
+  });
+
+  it('flag off: nothing is mirrored (the first case proves the same request IS when on)', async () => {
+    flag.models = false;
+    resetFeedGoShadowForTests();
+    expect((await get(MODELS)).status).toBe(200);
     expect(await receivedWithin(1, 200)).toHaveLength(0);
   });
 });

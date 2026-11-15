@@ -1,7 +1,8 @@
 # Golden fixtures
 
 One JSON file per request shape: `as-posts/` for `image.getImagesAsPostsInfinite`, `infinite/` for
-`image.getInfinite`, `v1-images/` for `GET /api/v1/images`. `internal/server/golden_test.go` loads every file, builds a real `*Server`
+`image.getInfinite`, `v1-images/` for `GET /api/v1/images`, `model-getall/` for `model.getAll`.
+`internal/server/golden_test.go` loads every file, builds a real `*Server`
 over in-memory fakes (`internal/testkit`) holding exactly what the fixture records, computes the
 request, and compares the answer with the Node answer the fixture expects (`shadow.Compare` for the
 superjson envelope, `shadow.CompareJSON` for the REST body). All data is synthetic: invented ids
@@ -33,6 +34,7 @@ a fixture is corrected only when the mirror mis-read Node, and otherwise feed-go
 
 ```bash
 TZ=UTC node apps/feed-go/testdata/golden/gen.mjs              # regenerate everything
+TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-models.mjs   # model-getall/
 node apps/feed-go/testdata/golden/pack.mjs <fixture.json>...   # re-pack edited `value`s in place
 ```
 
@@ -61,3 +63,16 @@ hand (or add a spec to `gen.mjs`):
 
 Replace every id, name, URL and hash with synthetic values before committing: this repository is
 public.
+
+## `model-getall/`
+
+`gen-models.mjs` writes them. Unlike `gen.mjs` it runs the REAL Node functions for every pure step
+(through `tsx`: the image cap and trim, the per-viewer image filter, the .com face, metric privacy,
+`isGenerationEligible`, `toPublicApiVersionFlags`, `isMatureRestricted`, the addon resolution, the
+blocked-tag check, `postgresSlugify`) and transcribes only the orchestration that reads the database
+and the caches. The page query is an external system to it, as the feed service is to `gen.mjs`: a
+fixture's `db.modelPages` lists, per call, the cursor Node sent and the rows Postgres answered, and
+the Go harness fails when feed-go asks for a page with another cursor, asks for more pages, or fewer.
+The SQL itself is pinned by `internal/modelfeed`'s unit tests and run against Postgres by its
+integration tests. Extra keys: `config` holds the model flag mirrors; `db` holds `paidAccess`,
+`coverImages`, `tags` (by name) and `creators` (by username). Raise `goldenMinModels` with the count.

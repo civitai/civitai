@@ -62,7 +62,7 @@ func TestPprofOnInternalMuxOnlyWhenToggleOn(t *testing.T) {
 			t.Errorf("public %s: %d, want 404", p, code)
 		}
 	}
-	for _, p := range []string{"/metrics", "/healthz", "/internal/shadow/" + Procedure, "/internal/shadow/api/v1/images"} {
+	for _, p := range []string{"/metrics", "/healthz", "/internal/shadow/" + Procedure, "/internal/shadow/api/v1/images", "/internal/shadow/model.getAll"} {
 		if code := statusOf(public, p); code != http.StatusNotFound {
 			t.Errorf("public %s: %d, want 404 (internal routes stay internal)", p, code)
 		}
@@ -78,5 +78,16 @@ func TestV1ImagesShadowRouteOnInternalMux(t *testing.T) {
 	}
 	if code := statusOf(internal, "/internal/shadow/api/v1/nope"); code != http.StatusNotFound {
 		t.Fatalf("unknown shadow path: %d, want 404", code)
+	}
+}
+
+// The model.getAll shadow is routed on the internal listener only (a GET reaches the handler: 405).
+func TestModelGetAllShadowRouteOnInternalMux(t *testing.T) {
+	internal := InternalMux(muxServer(), okHandler(), false)
+	if code := statusOf(internal, "/internal/shadow/model.getAll"); code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /internal/shadow/model.getAll: %d, want 405", code)
+	}
+	if code := statusOf(PublicMux(muxServer()), "/api/trpc/model.getAll"); code != http.StatusNotFound {
+		t.Fatalf("public /api/trpc/model.getAll: %d, want 404 (shadow only)", code)
 	}
 }

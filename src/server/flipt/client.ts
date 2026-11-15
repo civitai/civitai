@@ -280,6 +280,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // in-flight cap with FEED_GO_SHADOW, with its own per-second bucket. Default OFF.
   // See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_INFINITE = 'feed-go-shadow-infinite',
+  // Mirror sampled `model.getAll` requests (raw input, the headers the answer depends on, Node's
+  // superjson envelope) to feed-go's `/internal/shadow/model.getAll`. Its own flag so this procedure
+  // is enabled separately; shares FEED_GO_SHADOW_URL, the sample rate and the in-flight cap with
+  // FEED_GO_SHADOW, with its own per-second bucket. Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_MODEL_GET_ALL = 'feed-go-shadow-model-getall',
   // Mirrors a sampled fraction of the /api/internal/ping and /api/internal/pulse beacons (the
   // request, Node's response AND the tracker rows it wrote) to the beacon-go shadow comparator,
   // after the response is written. DEFAULT-OFF. Global boolean, read at most once per 5s per

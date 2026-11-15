@@ -16,11 +16,12 @@ This document covers what the service does, what it reuses, how it identifies th
 reaches it, how parity is proven before it serves anyone, and how the CPU comparison is made. The
 last sections list what is **not** at parity and what a deployment needs.
 
-Two more ports run in **shadow only** (nothing routes public traffic to them): the public REST
-endpoint `GET /api/v1/images` (§13) and the tRPC procedure `image.getInfinite`, the flat image feed
-(§14). They share the feed-service client, the hydration readers, the caches, the shadow queue and
-the metric families, told apart by a `feed_endpoint` label (not `endpoint`: that is a reserved scrape
-target label, which would overwrite ours).
+Three more ports run in **shadow only** (nothing routes public traffic to them): the public REST
+endpoint `GET /api/v1/images` (§13), and the tRPC procedures `image.getInfinite`, the flat image feed
+(§14), and `model.getAll`, the model browse feed (§15). They share the hydration readers, the caches
+(and, except `model.getAll`, the feed-service client), the shadow queue and the metric families, told
+apart by a `feed_endpoint` label (not `endpoint`: that is a reserved scrape target label, which would
+overwrite ours).
 
 ---
 
@@ -115,10 +116,11 @@ internal/browsing    level flags, domain cap, browsing-settings addons, host col
 internal/feed        input parsing, the SQL, page sources, page loop, post completion, grouping and
                      ordering, gallery gates; the REST /api/v1/images port (v1query.go, v1images.go);
                      the image.getInfinite port (infinite.go)
+internal/modelfeed   the model.getAll port: input, the getModelsRaw SQL, the page loop and the wire
 internal/feedsvc     the image feed service: query mapper, cursor codec, HTTP client
 internal/hydrate     read-only cache readers (msgpack) and miss paths
 internal/shadow      the comparators (superjson envelope; plain JSON for REST) and classifiers (by
-                     post id; by image id for the flat page and REST)
+                     post id; by item id for a flat page and REST)
 internal/server      HTTP handlers, metrics
 internal/fallback    the fallback error and its reasons
 ```
@@ -148,7 +150,12 @@ internal/fallback    the fallback error and its reasons
   (msgpackr's module-level `pack`, `useRecords: false`), Dates as the timestamp extension, `undefined`
   as fixext type 0, `notFound` / `debounce` markers honoured, stale entries served. **This service
   never writes those keys** — a Go encoding bug cannot poison a cache the Node app reads. The cost:
-  a miss Go sees stays a miss until Node fills it; the fallback rate shows how often that matters.
+  a miss Go sees stays a miss until Node fills it. The shadow fallback rate does **not** measure
+  how often that matters: a sample reaches this service after Node has answered the same request,
+  so Node has just filled every key it read and the shadow almost never sees a miss. Serving reads
+  first, before Node, so it needs two things this service does not have yet: a Go-first measurement
+  of the miss rate (the cache reads alone, on requests Node has not answered) and Go-side miss
+  filling (the lookups and the write-back), or every Go-first miss is a fallback to Node.
 - **Redis (system):** the session revocation registry and the browsing-settings addons. Reached the
   way the Node app reaches it (`packages/civitai-redis`, `getBaseClient('system')`), from the same
   env vars, so one deployment config feeds both (`internal/sysredis`):
@@ -353,7 +360,8 @@ path as serving, and compares decoded values:
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
 - every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
-  `infinite` for §14): three values, so the label at most triples a family's cardinality;
+  `infinite` for §14, `model-getall` for §15): four values, so the label at most quadruples a family's
+  cardinality;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field.
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
@@ -443,9 +451,10 @@ no hash was cached — a case this service falls back on (`metrics-miss`) instea
 
 Shadow mode gives both sides the same requests. During it the Go process does nothing but handle
 shadow samples, so its CPU per call is a plain ratio. Every series below carries `feed_endpoint`; add
-`feed_endpoint="as-posts"` (or `"v1-images"`, §13, or `"infinite"`, §14) to each selector to read one
-endpoint. The whole-process ratio cannot be split by endpoint (process CPU has no label), so with more
-than one shadow on read the per-phase figure, which can. **That ratio is an UPPER BOUND for serving:**
+`feed_endpoint="as-posts"` (or `"v1-images"`, §13, `"infinite"`, §14, or `"model-getall"`, §15) to each
+selector to read one endpoint. The whole-process ratio cannot be split by endpoint (process CPU has no
+label), so with more than one shadow on read the per-phase figure, which can. **That ratio is an UPPER
+BOUND for serving:**
 each shadow sample also costs work serving never does — receiving and decoding Node's envelope (up
 to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That overhead is
 in `process_cpu_seconds_total`, so a whole-process figure below Node's is conservative, and one near
@@ -583,8 +592,10 @@ measurement that identified this one), read over the same window for
   no served request in the denominator, so it is a second reason Go's figure is an upper bound; read
   the fallback-reason rate beside it;
 - run both reads over the same windows and compare medians across several windows, not one;
-- note what Go does **not** pay yet: cache write-back, ClickHouse populates, auth-hub fetches — all
-  rare misses that Node pays and Go falls back on. The fallback rate bounds how much this can matter;
+- note what Go does **not** pay yet: cache write-back, ClickHouse populates, auth-hub fetches —
+  the misses Node pays and Go falls back on. In shadow they look rare because Node filled the keys
+  moments before the sample was computed (§3), so neither their frequency nor their cost is measured
+  here; a serving estimate must add them from a Go-first miss measurement;
 - add the extra Redis and Postgres reads Go makes in shadow mode to the cost side when the sample
   rate is raised (shadowing doubles the read work for sampled requests, and on the feed-service path
   each sample is one more feed-service call per page and per completion batch).
@@ -923,3 +934,136 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="infinite",m
 - the blocked tag list is read from its cache key and memoized in-process for 30 s (single flight, an
   error never memoized), as Node's `createTtlMemo` does: a changed list reaches both within that
   window, each pod on its own clock.
+
+## 15. `model.getAll` (tRPC, shadow only)
+
+The model browse feed (`/models`, a creator's models, a tag's models): `src/server/routers/model.router.ts`
+(`publicProcedure`, input `getAllModelsSchema`) → `getModelsInfiniteHandler` / `getModelsFeed`
+(`src/server/controllers/model.controller.ts`) → `getModelsWithImagesAndModelVersions` → `getModelsRaw`
+(`src/server/services/model.service.ts`). Ported in `internal/modelfeed`; compared at
+`POST /internal/shadow/model.getAll`. Nothing serves it publicly. It shares the session resolver, the
+domain cap, the browsing-settings addons, the gallery-settings reader and the user / cosmetic /
+profile-picture / image-tag cache readers with the gallery port; its own readers are in
+`internal/hydrate/models.go`.
+
+### 15.1 What the Node path does
+
+1. **Levels.** `applyDomainFeature` (every public procedure), then `resolveRequestBrowsingLevels`: a
+   signed-in caller with no `browsingLevel` gets their saved one, then the domain cap clamps it.
+2. **The loop** (`getModelsFeed`): up to three `getModelsWithImagesAndModelVersions` pages until
+   `limit` items; each later page starts from the previous one's lookahead cursor. The answer's
+   `nextCursor` is the cursor of the last page that had one, so a last page without a lookahead leaves
+   the previous cursor in place. Hot with a base-model filter (and no query) leads page 1 with the
+   official checkpoints and drops them from every page.
+3. **`getModelsRaw`.** `enforceBlockedBrowsingTagsForModels`: a blocked tag name is an empty page; the
+   addons' poi / minor switches and tag exclusions are resolved at the request level (the tag ones off
+   on the viewer's own `username`). The query: `ModelMetric` joined to `Model`, or, with
+   `base-model-feed-metrics` on and a base-model filter, one of three per-base-model paths (one base
+   model drives from `ModelBaseModelMetric`; several on Newest / Oldest / Hot drive from `ModelMetric`
+   with a LATERAL sum; several on the other sorts aggregate per model); every filter clause; a keyset
+   cursor of `CONCAT(sort fields, '|')`, split into an equality and a strict branch under UNION ALL
+   for the DESC-headed sorts. Then, for every row (the lookahead included): basic users, profile
+   pictures, user cosmetics, `dataForModelsCache` (versions, hashes, and tags through
+   `modelTagCache` → `tagCache`), the model frames, the paid-access gates, the visible event hats.
+   Per row: the .com face, the visible versions (Published, not mature-restricted at a mature level,
+   Public unless a creator is named), the badge's base models, the base-model selection, the first
+   version, the excluded-tag drop.
+4. **`getModelsWithImagesAndModelVersions`.** The shown versions' cached showcases
+   (`imagesForModelVersionsCache`, image tags from `tagIdsForImagesCache`), held to a minor or
+   SFW-only model's gallery level except for its owner (moderators exempt); the covers (on the shown
+   version, else located on the replica and read from that version's cache, unless a base-model filter
+   pins the card); the owners' metric-privacy defaults and, for owners with a hide flag, their Creator
+   Program membership; per model: the cover hoisted, the face's images, `filterImagesForViewer`, the
+   excluded-tag image filter, the imageless rule, `canGenerate`, the hidden metrics, the image cap
+   (12, or the 6-image coverage slice with `getAllModelImagesSlim`) and field trim.
+5. **Encoding.** superjson (devalue only for opted-in web bundles; the sampler re-encodes those).
+
+### 15.2 What is ported, and what falls back
+
+The ported set was chosen by the input shapes' share of the route's successful answers, read from
+request logs before the port (the figures are not recorded here): base-model filters, cursors, tag
+names and creators are the common shapes and are ported; a collection and Hot with a base-model filter
+are the largest fallbacks; every other unsupported key is rare. A ported shape can still fall back on
+a cache miss. In shadow that is not measured: the sample is computed after Node answered the same
+request and filled every key it read, so the shadow's miss fallbacks undercount the misses a Go-first
+read would see. Serving needs a Go-first miss measurement and Go-side miss filling first (§3).
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor` | `query` (Meilisearch), `collectionId`, `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added (`model-sort-recently-added`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); Hot with a base-model filter (`model-official-pin`) |
+| Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read) |
+| Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
+| Lookups | the tag by name and the creator by name on the replica; the blocked tag list | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
+| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica) | misses on the model data, the model tags, the model frames, the model hats, user cosmetics, the version showcases, image tags, memberships (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `user-cosmetics-miss`, `model-images-miss`, `tag-ids-miss`, `membership-miss`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
+
+### 15.3 Flags
+
+Only the state each flag runs in production is ported. A `FEED_GO_*` mirror below that reads off is
+the `flag-off-state` fallback for every request: the off-state code paths (the 12-image cap, the
+version-table base-model filter, the live coverage column, the non-member coverage audience) are not
+in this service.
+
+| Flag | Node effect | Here |
+|---|---|---|
+| `base-model-feed-metrics` | the per-base-model metric tables back a base-model filter (on, no rules, as of 2026-11-15) | `FEED_GO_BASE_MODEL_FEED_METRICS` (default on; off → `flag-off-state`) |
+| feature `getAllModelImagesSlim` (Flipt `get-all-model-images-slim`) | 6 images per model by the coverage slice (a 100% threshold rollout as of 2026-11-15: on for every viewer) | `FEED_GO_MODEL_IMAGES_SLIM` (default on; off → `flag-off-state`) |
+| `generation-coverage-next`, `generation-loading-open-to-all` | which coverage column `canGenerate` reads, and who is a member (both on as of 2026-11-15: `coveredNext`, every viewer a member) | `FEED_GO_GENERATION_COVERAGE_NEXT`, `FEED_GO_GENERATION_LOADING_OPEN_TO_ALL` (default on; either off → `flag-off-state`) |
+| feature `modelMetricPrivacyReadtime` | the read-time metric privacy (`availability: ['public']`, no Flipt key: always on) | always on |
+| `model-version-images-skip-tags` | which unused per-entry tags the version cache read attaches | no decoded difference; nothing to do |
+| `frame-cache-negative` | frame-cache notFound markers are honoured (on) | markers honoured, as for image frames |
+| event decoration flags | as §8 | `FEED_GO_DECORATION_EVENTS`, as §8 (the one event lists Model among its entities) |
+
+### 15.4 The Node sampler (flag `feed-go-shadow-model-getall`, default OFF)
+
+The same mechanism as the gallery's (§7): `src/server/trpc/feed-go-shadow.ts` keeps a table of the
+mirrored tRPC procedures (endpoint label, compare URL, flag); `begin` samples a GET of one of them,
+unbatched (`model.getAll` is in `NEVER_BATCH_PROCEDURES`), at `FEED_GO_SHADOW_SAMPLE_RATE`; the server
+transformer captures the envelope Node wrote; `finish` posts `{ input, headers, node }` to
+`/internal/shadow/model.getAll` after a 200, from `setImmediate`, never awaited. It shares
+`FEED_GO_SHADOW_URL`, the sample rate and the in-flight cap with the other routes and has its own
+per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size. Outcomes are counted in
+`civitai_app_feed_go_shadow_samples_total{outcome,feed_endpoint="model-getall"}`, seeded at 0 for every
+outcome; the encode counters carry the label too.
+
+### 15.5 Comparison
+
+`shadow.Compare` (§7: annotations applied, referential equalities ignored), classified by
+`shadow.ClassifyFlat`, which keys the items by model `id`: `match`, `fields`, `order`, `membership`,
+plus `unsupported`, `deadline`, `go_error`. Categories are `items.*.<field>`, `items.*.version.<field>`,
+`items.*.images.*.<field>`, `items.*.user.<field>`, `items.*.rank.<count>`, `nextCursor`, truncated at
+the same opaque keys (`metadata`, cosmetic `data`, `remixOfId`). The showcase images and the version
+are cache entries, emitted with sorted keys (§5).
+
+### 15.6 Measurement
+
+The shadow queue and §10.1's solo-phase method are shared, so the per-endpoint figures read with
+`feed_endpoint="model-getall"`. An answer that loaded no model row (`limit` 0, a blocked tag name,
+pages the query answered empty) is `served_empty` / `match_empty`, kept out of the served CPU and the
+match rate (§13.6):
+
+```promql
+sum(rate(feed_go_shadow_phase_cpu_seconds_total{feed_endpoint="model-getall",phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{feed_endpoint="model-getall",phase="compute",outcome="served"}[1h]))
+
+sum(rate(feed_go_shadow_compare_total{feed_endpoint="model-getall",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{feed_endpoint="model-getall",result=~"match|fields|order|membership"}[1h]))
+
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getall",mode="shadow"}[1h])))
+```
+
+### 15.7 Known divergences
+
+- those of §9 that apply (timing: a model's counts or a version published between the two reads;
+  the per-viewer event-decoration gap; response headers);
+- cache staleness: a stale-while-revalidate entry (basic users, cosmetics, tags, version showcases)
+  is served here where Node, holding the refresh lock, would read it again;
+- the metric-privacy defaults are read for every row's owner (Node reads the shown models' owners):
+  extra reads, the same answer;
+- the creator lookup reads the replica only (Node reads the primary next);
+- the blocked tag list is read from its cache key on every page with a tag name (Node memoizes it per
+  pod for 30 s), so a changed list can reach this service up to 30 s before a Node pod;
+- a cursor's date token is read in Postgres' own `CONCAT` form only; any other spelling dayjs accepts
+  falls back;
+- `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,
+  generated by `scripts/feed-go-basemodels.ts` from the Node functions and held to them by
+  `scripts/__tests__/feed-go-basemodels.test.ts`: a constants change that is not regenerated fails CI.

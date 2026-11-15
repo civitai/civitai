@@ -34,6 +34,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
@@ -45,6 +46,7 @@ const (
 	goldenMinAsPosts  = 21
 	goldenMinV1       = 22
 	goldenMinInfinite = 19
+	goldenMinModels   = 18
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -87,6 +89,11 @@ type goldenFixture struct {
 		CreatorPromotions string   `json:"creatorPromotions"`
 		DecorationEvents  []string `json:"decorationEvents"`
 		ImageLocation     string   `json:"imageLocation"`
+		// model.getAll's flag mirrors (model-getall/ fixtures).
+		BaseModelMetrics bool `json:"baseModelMetrics"`
+		ModelImagesSlim  bool `json:"modelImagesSlim"`
+		CoverageNext     bool `json:"coverageNext"`
+		LoadingOpenToAll bool `json:"loadingOpenToAll"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -256,6 +263,68 @@ type goldenDB struct {
 		Image     *string    `json:"image"`
 		DeletedAt goldenTime `json:"deletedAt"`
 	} `json:"users"`
+
+	// model-getall/ fixtures: the page query's answer per call, in order, with the cursor Node sent
+	// for it; the paid-access gates, cover lookups, tags by name and creators by name Node read.
+	ModelPages []struct {
+		Cursor *string          `json:"cursor"`
+		Rows   []goldenModelRow `json:"rows"`
+	} `json:"modelPages"`
+	PaidAccess []struct {
+		ModelID  int        `json:"modelId"`
+		Deadline goldenTime `json:"deadline"`
+	} `json:"paidAccess"`
+	CoverImages []struct {
+		ID             int `json:"id"`
+		UserID         int `json:"userId"`
+		ModelVersionID int `json:"modelVersionId"`
+		ModelID        int `json:"modelId"`
+	} `json:"coverImages"`
+	Tags []struct {
+		Name string `json:"name"`
+		ID   int    `json:"id"`
+	} `json:"tags"`
+	Creators []struct {
+		Username string `json:"username"`
+		ID       int    `json:"id"`
+	} `json:"creators"`
+}
+
+// goldenModelRow is one row of model.getAll's page query (getModelsRaw's SELECT).
+type goldenModelRow struct {
+	ID              int             `json:"id"`
+	Name            string          `json:"name"`
+	SfwName         *string         `json:"sfwName"`
+	CoverImageID    *int            `json:"coverImageId"`
+	SfwCoverImageID *int            `json:"sfwCoverImageId"`
+	Type            string          `json:"type"`
+	Minor           bool            `json:"minor"`
+	SfwOnly         bool            `json:"sfwOnly"`
+	Poi             bool            `json:"poi"`
+	Nsfw            bool            `json:"nsfw"`
+	NsfwLevel       int             `json:"nsfwLevel"`
+	Status          string          `json:"status"`
+	CreatedAt       goldenTime      `json:"createdAt"`
+	LastVersionAt   goldenTime      `json:"lastVersionAt"`
+	PublishedAt     goldenTime      `json:"publishedAt"`
+	Locked          bool            `json:"locked"`
+	Meta            json.RawMessage `json:"meta"`
+	Mode            *string         `json:"mode"`
+	Availability    string          `json:"availability"`
+	Rank            json.RawMessage `json:"rank"`
+	UserID          int             `json:"userId"`
+	CursorID        string          `json:"cursorId"`
+}
+
+var goldenModelColumns = []string{"id", "name", "sfwName", "coverImageId", "sfwCoverImageId", "type", "minor", "sfwOnly",
+	"poi", "nsfw", "nsfwLevel", "status", "createdAt", "lastVersionAt", "publishedAt", "locked", "meta", "mode",
+	"availability", "rank", "userId", "cursorId"}
+
+func (g goldenModelRow) row() []any {
+	return []any{g.ID, g.Name, goldenPtr(g.SfwName), goldenPtr(g.CoverImageID), goldenPtr(g.SfwCoverImageID), g.Type,
+		g.Minor, g.SfwOnly, g.Poi, g.Nsfw, g.NsfwLevel, g.Status, goldenTimeVal(g.CreatedAt), goldenTimeVal(g.LastVersionAt),
+		goldenTimeVal(g.PublishedAt), g.Locked, goldenJSONVal(g.Meta), goldenPtr(g.Mode), g.Availability, string(g.Rank),
+		g.UserID, g.CursorID}
 }
 
 // --- the Postgres fake: each query this service sends, answered over the fixture's tables ------
@@ -702,6 +771,9 @@ type goldenEnv struct {
 	server  *Server
 	feed    *goldenFeed
 	headers map[string]string
+	// The stores the server reads, for a fixture that wires more of them (model.getAll).
+	cache, sys *testkit.Redis
+	now        func() time.Time
 }
 
 func goldenRedis(t *testing.T, entries map[string]goldenRedisEntry) *testkit.Redis {
@@ -794,7 +866,7 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	if fx.Request.Session != nil {
 		headers["cookie"] = goldenCookieName + "=" + goldenToken(t, priv, fx.Request.Session.UserID, now)
 	}
-	return &goldenEnv{server: s, feed: fake, headers: headers}
+	return &goldenEnv{server: s, feed: fake, headers: headers, cache: cache, sys: sys, now: nowFn}
 }
 
 // --- loading and running --------------------------------------------------------------------------
@@ -948,6 +1020,158 @@ func goldenRunInfinite(t *testing.T, fx *goldenFixture) {
 	env.feed.check(t, true)
 }
 
+// --- model.getAll --------------------------------------------------------------------------------
+
+// goldenModelPG is a model-getall fixture's Postgres: the page query answered page by page from the
+// fixture (each page asserted to carry the cursor Node sent for it), and the lookups Node made.
+type goldenModelPG struct {
+	*testkit.DB
+	mu    sync.Mutex
+	pages int
+}
+
+func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
+	db := &fx.DB
+	g := &goldenModelPG{}
+	g.DB = &testkit.DB{Routes: []testkit.Route{
+		{Match: `"cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if g.pages >= len(db.ModelPages) {
+				return nil, fmt.Errorf("golden: page query %d, the fixture lists %d", g.pages+1, len(db.ModelPages))
+			}
+			page := db.ModelPages[g.pages]
+			g.pages++
+			if page.Cursor == nil {
+				if strings.Contains(sql, "UNION ALL") || strings.Contains(sql, ") OR (") {
+					return nil, fmt.Errorf("golden: page %d has no cursor in Node, feed-go sent one", g.pages)
+				}
+			} else {
+				// Each cursor token is bound: as its integer, or as the timestamp Postgres wrote.
+				bound := map[string]bool{}
+				for _, a := range args {
+					if tm, ok := a.(time.Time); ok {
+						bound[tm.UTC().Format("2006-01-02 15:04:05.999")] = true
+					} else {
+						bound[fmt.Sprint(a)] = true
+					}
+				}
+				for _, tok := range strings.Split(*page.Cursor, "|") {
+					if !bound[tok] {
+						return nil, fmt.Errorf("golden: page %d: cursor token %q (of Node's %q) is not bound in %v", g.pages, tok, *page.Cursor, args)
+					}
+				}
+			}
+			rows := make([][]any, len(page.Rows))
+			for i, r := range page.Rows {
+				rows[i] = r.row()
+			}
+			return testkit.NewRows(goldenModelColumns, rows...), nil
+		}},
+		{Match: `GROUP BY mv."modelId"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, p := range db.PaidAccess {
+				if goldenHas(goldenInts(args[0]), p.ModelID) {
+					rows = append(rows, []any{p.ModelID, goldenTimeVal(p.Deadline)})
+				}
+			}
+			return testkit.NewRows([]string{"modelId", "deadline"}, rows...), nil
+		}},
+		{Match: `FROM "Image" i`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, c := range db.CoverImages {
+				if goldenHas(goldenInts(args[0]), c.ID) {
+					rows = append(rows, []any{c.ID, c.UserID, c.ModelVersionID, c.ModelID})
+				}
+			}
+			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, rows...), nil
+		}},
+		// Tag.name and User.username are citext.
+		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
+			for _, tag := range db.Tags {
+				if strings.EqualFold(tag.Name, fmt.Sprint(args[0])) {
+					return testkit.NewRows([]string{"id"}, []any{tag.ID}), nil
+				}
+			}
+			return testkit.NewRows([]string{"id"}), nil
+		}},
+		{Match: `SELECT id FROM "User" WHERE username = $1`, Rows: func(args []any) (*testkit.Rows, error) {
+			for _, c := range db.Creators {
+				if strings.EqualFold(c.Username, fmt.Sprint(args[0])) {
+					return testkit.NewRows([]string{"id"}, []any{c.ID}), nil
+				}
+			}
+			return testkit.NewRows([]string{"id"}), nil
+		}},
+		// The metric-privacy defaults of an owner Node did not read (feed-go reads every row's owner,
+		// Node only the shown models'): no row, nothing hidden.
+		{Match: `settings->'hideModelBuzz'`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"id", "hideModelBuzz", "hideModelDownloads", "hideModelGenerations"}), nil
+		}},
+	}}
+	t.Cleanup(func() {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if !t.Failed() && fx.Expect.Fallback == "" && g.pages != len(db.ModelPages) {
+			t.Errorf("feed-go asked for %d page(s); Node asked for %d", g.pages, len(db.ModelPages))
+		}
+	})
+	return g
+}
+
+func goldenRunModels(t *testing.T, fx *goldenFixture) {
+	env := goldenSetup(t, fx)
+	db := newGoldenModelPG(t, fx)
+	events := map[string]bool{}
+	for _, e := range fx.Config.DecorationEvents {
+		events[e] = true
+	}
+	packed := &hydrate.PackedReader{Redis: env.cache, Now: env.now}
+	env.server.Models = &modelfeed.Deps{
+		DB:      db,
+		Sources: &hydrate.Sources{Packed: packed, Cache: env.cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: env.cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: env.sys}).Addons,
+		Cache:   env.cache,
+		Config: modelfeed.Config{
+			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
+			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
+			VisibleDecorationEvents: events,
+		},
+		Now: env.now,
+	}
+	ctx := context.Background()
+	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := env.server.computeModelGetAll(ctx, r)
+	if want := fx.Expect.Fallback; want != "" {
+		if err == nil {
+			t.Fatalf("served; want fallback %q", want)
+		}
+		if got := fallback.Reason(err); got != want {
+			t.Fatalf("fallback reason %q (%v), want %q", got, err, want)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("computeModelGetAll: %v (fallback reason %q)", err, fallback.Reason(err))
+	}
+	rep, err := shadow.Compare(c.payload, fx.Expect.Envelope)
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	goldenReport(t, rep, c.payload)
+}
+
+func TestGoldenModelGetAll(t *testing.T) {
+	for _, path := range goldenFiles(t, "model-getall", goldenMinModels) {
+		fx := goldenLoad(t, path)
+		t.Run(fx.Name, func(t *testing.T) { goldenRunModels(t, fx) })
+	}
+}
+
 func TestGoldenAsPosts(t *testing.T) {
 	for _, path := range goldenFiles(t, "as-posts", goldenMinAsPosts) {
 		fx := goldenLoad(t, path)
@@ -1082,6 +1306,36 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 			if got := shadow.ClassifyFlat(rep, payload, mutated); got != "membership" {
 				t.Errorf("%s: a changed image id classifies %q, want membership", name, got)
 			}
+		}
+	})
+	t.Run("model-getall", func(t *testing.T) {
+		fx := goldenLoad(t, filepath.Join(goldenDir, "model-getall", "highest-rated-signed-out.json"))
+		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.images.0.id", 999999)
+		fx.Expect.Envelope = mutated
+		// The harness must report the mismatch: run the comparison as goldenRunModels does.
+		env := goldenSetup(t, fx)
+		db := newGoldenModelPG(t, fx)
+		packed := &hydrate.PackedReader{Redis: env.cache, Now: env.now}
+		env.server.Models = &modelfeed.Deps{
+			DB: db, Sources: &hydrate.Sources{Packed: packed, Cache: env.cache, Replica: db},
+			Gallery: &feed.GalleryStore{Cache: env.cache, DB: db}, Addons: (&feed.AddonSource{Sys: env.sys}).Addons,
+			Cache: env.cache, Config: modelfeed.Config{BaseModelMetrics: true, ImagesSlim: true, CoverageNext: true, LoadingOpenToAll: true},
+			Now: env.now,
+		}
+		r, err := SyntheticModelGetAllRequest(context.Background(), ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := env.server.computeModelGetAll(context.Background(), r)
+		if err != nil {
+			t.Fatalf("computeModelGetAll: %v", err)
+		}
+		rep, err := shadow.Compare(c.payload, mutated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.Match {
+			t.Error("feed-go: a changed image id still matches")
 		}
 	})
 	t.Run("unexpected-feed-query", func(t *testing.T) {

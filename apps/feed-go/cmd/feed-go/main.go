@@ -26,6 +26,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
 )
@@ -168,9 +169,27 @@ func run(log *slog.Logger) error {
 		Sources: sources,
 		Blocked: &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix},
 	}
+	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
+	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
+	models := &modelfeed.Deps{
+		DB:      pool,
+		Sources: sources,
+		Gallery: deps.Gallery,
+		Addons:  deps.Addons.Addons,
+		Cache:   cache,
+		Prefix:  cfg.CacheKeyPrefix,
+		Config: modelfeed.Config{
+			BaseModelMetrics:        cfg.BaseModelFeedMetrics,
+			ImagesSlim:              cfg.ModelImagesSlim,
+			CoverageNext:            cfg.CoverageNext,
+			LoadingOpenToAll:        cfg.LoadingOpenToAll,
+			VisibleDecorationEvents: cfg.DecorationEvents,
+		},
+	}
 	srv := &server.Server{
 		Resolver:       resolver,
 		Deps:           deps,
+		Models:         models,
 		Hosts:          cfg.Hosts,
 		RegionRules:    cfg.RegionRules,
 		Metrics:        metrics,
