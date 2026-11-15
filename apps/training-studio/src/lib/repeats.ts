@@ -1,12 +1,17 @@
 import type { TrainingItem } from './train-core';
+import { mediaOfExt } from './media';
+import { isFlux2 } from './orchestrator-core';
 
 export const MAX_REPEATS = 20;
-export const REPEAT_EXT = /^[a-z0-9]{1,5}$/i;
+/** A repeat copy is staged under a media extension only: a `.txt` path would make the orchestrator read
+ *  the blob as a caption file. */
+export const isRepeatExt = (ext: unknown): ext is string =>
+  typeof ext === 'string' && mediaOfExt(ext) !== undefined;
 
 /** Per-image repeats ride on staged paths, which edit pairs already use for their layout and the
  *  Flux.2 (`imageResourceTraining`) worker is not known to honour. */
 export const engineTakesRepeats = (engine: string | undefined, trainsPairs: boolean) =>
-  !trainsPairs && engine !== 'flux2-dev' && engine !== 'flux2-dev-edit';
+  !trainsPairs && !isFlux2(engine);
 
 /** The wire items for a dataset: an item with `repeats` N becomes N copies of the blob and caption, each
  *  at its own path. The orchestrator refuses a blob named twice unless every copy has a distinct path

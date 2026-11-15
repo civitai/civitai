@@ -1,5 +1,5 @@
 import { buildKohyaInput } from './kohya-training';
-import { engineTakesRepeats, expandRepeats, MAX_REPEATS, REPEAT_EXT } from './repeats';
+import { engineTakesRepeats, expandRepeats, isRepeatExt, MAX_REPEATS } from './repeats';
 import { kohyaFamily, type KohyaOptions, type KohyaInput } from './data/kohya';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 // Client-safe training submit builders: pure body construction + SDK calls against a provided
@@ -556,8 +556,8 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
         fail(`${field}.items[${i}].repeats`, 'are not supported for this model.');
       if (!Number.isInteger(item.repeats) || item.repeats < 2 || item.repeats > MAX_REPEATS)
         fail(`${field}.items[${i}].repeats`, `must be an integer from 2 to ${MAX_REPEATS}.`);
-      if (typeof item.ext !== 'string' || !REPEAT_EXT.test(item.ext))
-        fail(`${field}.items[${i}].ext`, 'must be a file extension.');
+      if (!isRepeatExt(item.ext))
+        fail(`${field}.items[${i}].ext`, 'must be a media file extension.');
     } else if (item.ext !== undefined)
       fail(`${field}.items[${i}].ext`, 'is only sent with repeats.');
   });
@@ -955,9 +955,14 @@ async function buildContinuation(
     : undefined;
 
   const srcMeta = (wf.metadata ?? {}) as TrainingStudioMeta;
-  const airs = ((input.trainingData as { items?: { air?: unknown }[] } | undefined)?.items ?? [])
-    .map((i) => i.air)
-    .filter((a): a is string => typeof a === 'string' && a.length > 0);
+  // Deduped: a repeated image is on the wire once per copy.
+  const airs = [
+    ...new Set(
+      ((input.trainingData as { items?: { air?: unknown }[] } | undefined)?.items ?? [])
+        .map((i) => i.air)
+        .filter((a): a is string => typeof a === 'string' && a.length > 0)
+    ),
+  ];
   // A stamped positive count is trusted (it can only ask the user to confirm); 0 or none is re-checked.
   const matureCount =
     typeof srcMeta.matureCount === 'number' && srcMeta.matureCount > 0

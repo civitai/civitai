@@ -1790,19 +1790,25 @@ describe('per-image repeats', () => {
     );
   });
 
-  it('gives blobs whose keys differ only in case paths that differ case-insensitively', async () => {
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-case' } });
+  it('dedupes a blob before expanding it, so a repeated image is never sent extra times', async () => {
+    const blob = (key: string) => `urn:air:other:other:orchestrator:blob@${key}`;
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-dup-rep' } });
     await submitTraining(client, {
       ...baseRun(),
       items: [
-        { air: 'urn:air:other:other:orchestrator:blob@AbC', caption: 'x', repeats: 2, ext: 'png' },
-        { air: 'urn:air:other:other:orchestrator:blob@XyZ', caption: 'y', repeats: 2, ext: 'png' },
-        { air: 'urn:air:other:other:orchestrator:blob@xyz', caption: 'y', repeats: 2, ext: 'PNG' },
+        { air: blob('AbC'), caption: 'x', repeats: 3, ext: 'PNG' },
+        { air: blob('abc'), caption: 'x' },
+        { air: blob('XyZ'), caption: 'y', repeats: 2, ext: 'png' },
+        { air: blob('xyz'), caption: 'y', repeats: 2, ext: 'png' },
       ],
     });
-    const paths = wireItems().map((i: { path?: string }) => i.path!.toLowerCase());
-    expect(new Set(paths).size).toBe(paths.length);
-    for (const path of paths) expect(path).toMatch(/^[a-z0-9_]+\.[a-z0-9]+$/);
+    expect(wireItems().map((i: { path?: string }) => i.path)).toEqual([
+      'repeat_0001_1.png',
+      'repeat_0001_2.png',
+      'repeat_0001_3.png',
+      'repeat_0002_1.png',
+      'repeat_0002_2.png',
+    ]);
   });
 
   it('expands repeats for Kohya too', async () => {
@@ -1841,6 +1847,11 @@ describe('per-image repeats', () => {
       'a path-like extension',
       { air: 'blob-1', caption: '', repeats: 2, ext: '../a' },
       /file extension/,
+    ],
+    [
+      'a caption-file extension',
+      { air: 'blob-1', caption: '', repeats: 2, ext: 'txt' },
+      /media file extension/,
     ],
     [
       'an extension without repeats',

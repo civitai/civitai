@@ -951,6 +951,30 @@ describe('per-image repeats on the submit', () => {
     expect(out.meta.imageCount).toBe(1);
   });
 
+  it('sends no repeats in a sweep where any run cannot take them', () => {
+    const sdxl = run('sdxl');
+    const flux2 = run('flux2');
+    const out = buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [sdxl, flux2] },
+      [{ ...image(1, ['ohwx']), repeats: 3 }],
+      'ohwx',
+      'test',
+      [
+        { run: sdxl, params: defaultRunParams(sdxl) },
+        { run: flux2, params: defaultRunParams(flux2) },
+      ],
+      rows(['ohwx, a photo']),
+      ['blue'],
+      'tag'
+    );
+    for (const payload of out) expect(payload.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
+  it('sends an image set back to 1 repeat as a plain item', () => {
+    const out = build(run('sdxl'), [{ ...image(1, ['ohwx']), repeats: 1 }]);
+    expect(out.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
   it("stages a copy under the file's own media extension, else its blob's, else the media default", () => {
     expect(repeatExt({ name: 'clip.MP4', blobId: 'x', mediaType: 'video' })).toBe('mp4');
     expect(
