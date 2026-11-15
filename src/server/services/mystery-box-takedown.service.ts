@@ -1,16 +1,24 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { boxOddsSnapshotSchema, snapshotOfLiveBox } from '@civitai/shared/box-odds-snapshot';
 import {
   BOX_OPENING_REWARD_STATUS,
   ITEM_DEFINITION_STATUS,
+  boxOpenClaimKey,
   ITEM_TYPE,
   MOD_GRANT_SOURCE_PREFIX,
   parsePackBoxSourceKey,
 } from '@civitai/shared/mystery-box';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import { revokeCosmeticsFromUsers } from '~/server/services/cosmetic.service';
+import { appendItemHistory } from '~/server/services/creator-shop.data';
+import { refundBoxPurchase } from '~/server/services/mystery-box-refund.service';
+import { createNotification } from '~/server/services/notification.service';
 import { lockBox } from '~/server/services/box-version-lock';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
-import { withRetries } from '~/server/utils/errorHandling';
+import { throwNotFoundError, withRetries } from '~/server/utils/errorHandling';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 type Tx = Prisma.TransactionClient;
@@ -148,7 +156,8 @@ function claimOpening(opening: GrantedOpening, shopItemId: number) {
       UPDATE "BoxOpening" SET "rewardStatus" = ${BOX_OPENING_REWARD_STATUS.refunded}
       WHERE "boxItemId" = ${opening.boxItemId}
         AND "rewardStatus" = ${BOX_OPENING_REWARD_STATUS.granted}`;
-    if (!flipped || opening.boxSourceKey.startsWith(MOD_GRANT_SOURCE_PREFIX)) return;
+    if (!flipped) return 'none';
+    if (opening.boxSourceKey.startsWith(MOD_GRANT_SOURCE_PREFIX)) return 'granted';
     // One box of a pack is owed its share, not the pack's charge: stamped per box, the purchase stays
     // unrefunded for the rest of the pack.
     const packBox = parsePackBoxSourceKey(opening.boxSourceKey);
@@ -165,7 +174,7 @@ function claimOpening(opening: GrantedOpening, shopItemId: number) {
         WHERE p."buzzTransactionId" = ${packBox.transactionId} AND p."userId" = ${opening.userId}
           AND NOT p.refunded
           AND s.id = p."shopItemId" AND s."itemDefinitionId" = ${opening.boxDefinitionId}`;
-      return;
+      return 'purchased';
     }
     // Through the listing's box, as the moderator refund finds it: the source key alone is a string
     // anything could have written.
@@ -179,6 +188,7 @@ function claimOpening(opening: GrantedOpening, shopItemId: number) {
       WHERE p."buzzTransactionId" = ${opening.boxSourceKey} AND p."userId" = ${opening.userId}
         AND NOT p.refunded
         AND s.id = p."shopItemId" AND s."itemDefinitionId" = ${opening.boxDefinitionId}`;
+    return 'purchased';
   });
 }
 
@@ -204,11 +214,14 @@ export async function claimBoxRefundsForCosmetic({
       AND o."rewardStatus" = ${BOX_OPENING_REWARD_STATUS.granted}
     ORDER BY o."boxItemId"`;
   const failed: { userId: number; boxItemId: string; error: string }[] = [];
+  // Openers of a moderator's grant lose what they drew too, with no Buzz to return.
+  const grantedUserIds = new Set<number>();
   for (const opening of openings) {
     try {
       // A retry after an attempt that committed finds nothing left to flip; its purchase is still
       // stamped, so `listOwedBoxRefunds` pays it.
-      await withRetries(() => claimOpening(opening, shopItemId), 3, 1000);
+      const claimed = await withRetries(() => claimOpening(opening, shopItemId), 3, 1000);
+      if (claimed === 'granted') grantedUserIds.add(opening.userId);
     } catch (error) {
       failed.push({
         userId: opening.userId,
@@ -217,7 +230,7 @@ export async function claimBoxRefundsForCosmetic({
       });
     }
   }
-  return { openings: openings.length, failed };
+  return { openings: openings.length, failed, grantedUserIds: [...grantedUserIds] };
 }
 
 export type OwedBoxRefund = {
@@ -314,4 +327,290 @@ export function markBoxRefundPaid(buzzTransactionId: string) {
     UPDATE "UserCosmeticShopPurchases"
     SET meta = jsonb_set(meta, '{takedownRefund,paidAt}', to_jsonb(now()))
     WHERE "buzzTransactionId" = ${buzzTransactionId}`;
+}
+
+/**
+ * Takes a whole mystery box down: stops its sales, then refunds every purchase of it, opened and
+ * unopened, taking back the boxes and what they gave and reversing the creator's payouts. Boxes a
+ * moderator granted are taken back with what they gave, with no money to return. A creator's
+ * submission fee is kept, as for an item takedown. Refunds the first `limit` purchases here; the
+ * hourly over-pool job refunds the rest (`continueBoxTakedowns`), and running this again does too.
+ */
+export async function takedownMysteryBox({
+  id,
+  reason,
+  moderatorId,
+  limit = 20,
+}: {
+  /** The box's listing, as the review queue names it. */
+  id: number;
+  reason: string;
+  moderatorId: number;
+  limit?: number;
+}) {
+  const [listing] = await dbWrite.$queryRaw<{ boxId: number | null; title: string }[]>`
+    SELECT "itemDefinitionId" AS "boxId", title FROM "CosmeticShopItem" WHERE id = ${id}`;
+  if (!listing?.boxId) throw throwNotFoundError('Mystery box listing not found');
+  const boxId = listing.boxId;
+  const now = new Date().toISOString();
+
+  // Sales stop before any refund, so no purchase can land after the list is read.
+  const box = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBox(tx, boxId);
+    const [row] = await tx.$queryRaw<{ type: string; sellerId: number | null }[]>`
+      SELECT type, "sellerId" FROM "ItemDefinition" WHERE id = ${boxId}`;
+    if (!locked || row?.type !== ITEM_TYPE.box) return null;
+    await tx.$executeRaw`
+      UPDATE "ItemDefinition"
+      SET status = ${ITEM_DEFINITION_STATUS.archived}, "updatedById" = ${moderatorId}, "updatedAt" = now()
+      WHERE id = ${boxId}`;
+    const listings = await tx.$queryRaw<{ id: number; meta: CosmeticShopItemMeta | null }[]>`
+      SELECT id, meta FROM "CosmeticShopItem" WHERE "itemDefinitionId" = ${boxId} FOR UPDATE`;
+    let retried = false;
+    for (const item of listings) {
+      const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
+      retried ||= !!meta.takedown;
+      const next = appendItemHistory(
+        { ...meta, takedown: meta.takedown ?? { reason, moderatorId, at: now } },
+        {
+          at: now,
+          userId: moderatorId,
+          kind: 'takedown',
+          status: 'Archived',
+          note: meta.takedown ? `Retried: ${reason}` : reason,
+        }
+      );
+      // Event tags place a listing in tagged sections, as the placement rows do by hand.
+      await tx.$executeRaw`
+        UPDATE "CosmeticShopItem"
+        SET status = 'Archived', listed = false, "eventTags" = '{}',
+          "archivedAt" = COALESCE("archivedAt", now()), meta = ${JSON.stringify(next)}::jsonb
+        WHERE id = ${item.id}`;
+    }
+    await tx.$executeRaw`
+      DELETE FROM "CosmeticShopSectionItem"
+      WHERE "shopItemId" IN (SELECT id FROM "CosmeticShopItem" WHERE "itemDefinitionId" = ${boxId})`;
+    return { ...row, retried };
+  });
+  if (!box) throw throwNotFoundError('Mystery box not found');
+
+  if (box.sellerId && !box.retried)
+    await createNotification({
+      type: 'creator-shop-item-taken-down',
+      userId: box.sellerId,
+      category: NotificationCategory.System,
+      key: `creator-shop-item-taken-down:${id}`,
+      details: { title: listing.title, reason },
+    });
+
+  const result = await refundTakenDownBox({
+    boxId,
+    title: listing.title,
+    limit,
+    actorId: moderatorId,
+  });
+  await logToAxiom({
+    level: result.failed.length ? 'error' : 'info',
+    name: 'mystery-box-takedown',
+    message: 'Box takedown run finished',
+    data: { ...result, moderatorId, reason },
+  }).catch(() => undefined);
+  return result;
+}
+
+/**
+ * Up to `limit` of a taken-down box's purchases refunded, unrefunded ones and any claimed and never
+ * paid back, with each buyer told; then, once none are left, its granted boxes taken back.
+ */
+async function refundTakenDownBox({
+  boxId,
+  title,
+  limit,
+  actorId,
+}: {
+  boxId: number;
+  title: string;
+  limit: number;
+  actorId: number;
+}) {
+  const owedWhere = Prisma.sql`
+    s."itemDefinitionId" = ${boxId}
+    AND (NOT p.refunded
+      OR (p.meta -> 'boxRefund' IS NOT NULL AND p.meta -> 'boxRefund' ->> 'paidAt' IS NULL))`;
+  const purchases = await dbWrite.$queryRaw<{ buzzTransactionId: string; userId: number }[]>`
+    SELECT p."buzzTransactionId", p."userId"
+    FROM "CosmeticShopItem" s
+    JOIN "UserCosmeticShopPurchases" p ON p."shopItemId" = s.id
+    WHERE ${owedWhere}
+    -- A purchase that failed before goes behind the rest, so failures never fill the batch.
+    ORDER BY COALESCE(p.meta -> 'boxRefund' -> 'attempt' ->> 'at', p.meta -> 'boxRefundRefused' ->> 'at')
+      NULLS FIRST, p."purchasedAt"
+    LIMIT ${limit}`;
+  const failed: { userId: number; buzzTransactionId: string; error: string }[] = [];
+  let refunded = 0;
+  let refundedValue = 0;
+  let clawedBack = 0;
+  for (const purchase of purchases) {
+    const outcome = await refundBoxPurchase({ ...purchase, reason: 'box-takedown', actorId });
+    if (outcome.status === 'failed') failed.push({ ...purchase, error: outcome.error });
+    if (outcome.status !== 'refunded') continue;
+    refunded++;
+    refundedValue += outcome.refunded;
+    clawedBack += outcome.clawedBack;
+    for (const failure of outcome.payoutFailures)
+      failed.push({ ...purchase, error: `Payout not reversed: ${JSON.stringify(failure)}` });
+    await createNotification({
+      type: 'cosmetic-shop-item-taken-down',
+      userId: purchase.userId,
+      category: NotificationCategory.System,
+      key: `cosmetic-shop-item-taken-down:box-${boxId}:${purchase.buzzTransactionId}`,
+      details: { title },
+    });
+  }
+
+  // Granted boxes once the purchases are through, not on every batch: their read spans the box. A
+  // full batch can be the last one, and nothing selects this box again once none are owed.
+  const more =
+    purchases.length === limit &&
+    (
+      await dbWrite.$queryRaw<{ owed: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "CosmeticShopItem" s
+          JOIN "UserCosmeticShopPurchases" p ON p."shopItemId" = s.id
+          WHERE ${owedWhere}
+        ) AS owed`
+    )[0].owed;
+  const grantsTakenBack = more ? 0 : await takeBackGrantsAndTell(boxId, title);
+
+  return {
+    boxId,
+    purchases: purchases.length,
+    refunded,
+    refundedValue,
+    clawedBack,
+    grantsTakenBack,
+    failed,
+    more,
+  };
+}
+
+/** `takeBackGrantedBoxes`, with each holder whose boxes went told. */
+async function takeBackGrantsAndTell(boxId: number, title: string) {
+  const granted = await takeBackGrantedBoxes(boxId);
+  for (const userId of granted.userIds)
+    await createNotification({
+      type: 'cosmetic-shop-item-removed',
+      userId,
+      category: NotificationCategory.System,
+      key: `cosmetic-shop-item-removed:box-${boxId}:${userId}`,
+      details: { title },
+    });
+  return granted.boxes;
+}
+
+/**
+ * Refunds what box takedowns left, and takes back what they left granted, box by box until the
+ * deadline. A box with nothing owed but grants still out (a run died after its last refund) is
+ * picked up too.
+ */
+export async function continueBoxTakedowns(deadline: number) {
+  const boxes = await dbWrite.$queryRaw<{ boxId: number; title: string }[]>`
+    SELECT DISTINCT ON (s."itemDefinitionId") s."itemDefinitionId" AS "boxId", s.title
+    FROM "CosmeticShopItem" s
+    WHERE s."itemDefinitionId" IS NOT NULL AND s.meta ? 'takedown'
+      AND (
+        EXISTS (
+          SELECT 1 FROM "UserCosmeticShopPurchases" p
+          WHERE p."shopItemId" = s.id
+            AND (NOT p.refunded
+              OR (p.meta -> 'boxRefund' IS NOT NULL AND p.meta -> 'boxRefund' ->> 'paidAt' IS NULL))
+        )
+        OR EXISTS (
+          SELECT 1 FROM "Item" i
+          WHERE i."itemDefinitionId" = s."itemDefinitionId" AND i."holderType" = 'user'
+            AND starts_with(i."sourceKey", ${MOD_GRANT_SOURCE_PREFIX})
+        )
+        OR EXISTS (
+          SELECT 1 FROM "BoxOpening" o
+          WHERE o."boxDefinitionId" = s."itemDefinitionId"
+            AND o."rewardStatus" = ${BOX_OPENING_REWARD_STATUS.granted}
+            AND starts_with(o."boxSourceKey", ${MOD_GRANT_SOURCE_PREFIX})
+        )
+      )
+    ORDER BY s."itemDefinitionId"`;
+  let refunded = 0;
+  const failed: { boxId: number; error: string }[] = [];
+  for (const { boxId, title } of boxes) {
+    try {
+      // A batch whose purchases all fail ends this box's turn; the next run tries them again.
+      let more = false;
+      while (Date.now() < deadline) {
+        const batch = await refundTakenDownBox({ boxId, title, limit: 50, actorId: -1 });
+        refunded += batch.refunded;
+        more = batch.more;
+        if (!batch.more || !batch.refunded) break;
+      }
+      // Purchases still owed (failing, or past the deadline) don't keep the free grants out: they
+      // cost nothing, and an archived box still opens.
+      if (more) await takeBackGrantsAndTell(boxId, title);
+    } catch (error) {
+      failed.push({ boxId, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  if (failed.length)
+    await logToAxiom({
+      level: 'error',
+      name: 'mystery-box-takedown',
+      message: 'Box takedowns left work behind',
+      data: { failed },
+    }).catch(() => undefined);
+  return { boxes: boxes.length, refunded, failed };
+}
+
+/**
+ * Every box a moderator granted from this box, held or opened: the held ones deleted, the opened
+ * ones' rewards revoked and their openings marked refunded. Nothing was paid, so nothing is returned.
+ */
+async function takeBackGrantedBoxes(boxId: number) {
+  const holders = await dbWrite.$queryRaw<{ userId: number }[]>`
+    SELECT DISTINCT "holderId" AS "userId" FROM "Item"
+    WHERE "itemDefinitionId" = ${boxId} AND "holderType" = 'user'
+      AND starts_with("sourceKey", ${MOD_GRANT_SOURCE_PREFIX})
+    UNION
+    SELECT DISTINCT "userId" FROM "BoxOpening"
+    WHERE "boxDefinitionId" = ${boxId} AND starts_with("boxSourceKey", ${MOD_GRANT_SOURCE_PREFIX})`;
+  let boxes = 0;
+  const userIds: number[] = [];
+  for (const { userId } of holders) {
+    const changed = await dbWrite.$transaction(async (tx) => {
+      await lockItemHolder(tx, userId);
+      const deleted = await tx.$executeRaw`
+        DELETE FROM "Item"
+        WHERE "itemDefinitionId" = ${boxId} AND "holderType" = 'user' AND "holderId" = ${userId}
+          AND starts_with("sourceKey", ${MOD_GRANT_SOURCE_PREFIX})`;
+      const flipped = await tx.$executeRaw`
+        UPDATE "BoxOpening" SET "rewardStatus" = ${BOX_OPENING_REWARD_STATUS.refunded}
+        WHERE "boxDefinitionId" = ${boxId} AND "userId" = ${userId}
+          AND "rewardStatus" = ${BOX_OPENING_REWARD_STATUS.granted}
+          AND starts_with("boxSourceKey", ${MOD_GRANT_SOURCE_PREFIX})`;
+      return deleted + flipped;
+    });
+    boxes += changed;
+    // Every refunded granted opening, not only this run's: a revoke a run died before is redone.
+    const cosmetics = await dbWrite.$queryRaw<{ boxItemId: bigint; cosmeticId: number }[]>`
+      SELECT o."boxItemId", d."cosmeticId"
+      FROM "BoxOpening" o JOIN "ItemDefinition" d ON d.id = o."rewardDefinitionId"
+      WHERE o."boxDefinitionId" = ${boxId} AND o."userId" = ${userId}
+        AND o."rewardStatus" = ${BOX_OPENING_REWARD_STATUS.refunded}
+        AND starts_with(o."boxSourceKey", ${MOD_GRANT_SOURCE_PREFIX})
+        AND d."cosmeticId" IS NOT NULL`;
+    if (cosmetics.length)
+      await revokeCosmeticsFromUsers({
+        userIds: [userId],
+        cosmeticIds: cosmetics.map((r) => r.cosmeticId),
+        claimKeys: cosmetics.map((r) => boxOpenClaimKey(r.boxItemId)),
+      });
+    if (changed) userIds.push(userId);
+  }
+  return { boxes, userIds };
 }

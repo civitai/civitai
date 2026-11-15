@@ -218,6 +218,13 @@ beforeEach(() => {
   mocks.user = { id: 42, muted: false };
 });
 
+// Each submit carries the entry's idempotency key (a uuid), so a retry cannot charge its fee twice.
+const entryOf = (imageId: number) => ({
+  crucibleId: 1,
+  imageId,
+  idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/),
+});
+
 describe('CrucibleSubmitEntryModal — free entries', () => {
   test('a first entry within the free ones submits without a charge', async () => {
     renderModal();
@@ -478,9 +485,7 @@ describe('CrucibleSubmitEntryModal — generator picks enter once scanned', () =
       />
     );
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
   });
 });
@@ -548,7 +553,7 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
       )
     );
     await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(1));
-    expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 });
+    expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77));
     expect(mocks.showErrorNotification).not.toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Processing failed' })
     );
@@ -568,9 +573,7 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     mocks.images = [image(77)];
     await rerender();
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
     await vi.waitFor(() =>
       expect(mocks.showErrorNotification).toHaveBeenCalledWith(
@@ -602,9 +605,7 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     mocks.images = [image(77)];
     await rerender();
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
     await vi.waitFor(() =>
       expect(mocks.showErrorNotification).toHaveBeenCalledWith(
@@ -663,6 +664,42 @@ describe('CrucibleSubmitEntryModal — an upload whose scan fails', () => {
     await vi.waitFor(() => expect(plainSubmit()!.textContent).toMatch(/Submit [1-9]/));
     expect(plainSubmit()!.textContent).toContain('Submit 1 Entry');
     expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CrucibleSubmitEntryModal — the entry key across a retry', () => {
+  // A failure that may have charged the fee (a 5xx, as "may have gone through" is) holds the key.
+  const possiblyCharged = () =>
+    Object.assign(new Error('may have gone through'), { data: { httpStatus: 500 } });
+  // A 4xx says nothing was charged, so the next attempt is a new entry.
+  const declined = () => Object.assign(new Error('declined'), { data: { httpStatus: 400 } });
+
+  const submitTwice = async (firstError: Error) => {
+    mocks.submitEntry.mockRejectedValueOnce(firstError);
+    renderModal();
+    await select(1);
+    await vi.waitFor(() => expect(plainSubmit()?.disabled).toBe(false));
+    plainSubmit()!.click();
+    await vi.waitFor(() => expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(plainSubmit()?.disabled).toBe(false));
+    plainSubmit()!.click();
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(2));
+    return mocks.submitEntry.mock.calls.map(([input]) => input.idempotencyKey as string);
+  };
+
+  test('a retry after a failure that may have charged sends the same key', async () => {
+    const [first, retry] = await submitTwice(possiblyCharged());
+
+    expect(first).toMatch(/^[0-9a-f-]{36}$/);
+    expect(retry).toBe(first);
+  });
+
+  // Control: the comparison above can see a different key.
+  test('a retry after a declined submit sends a new key', async () => {
+    const [first, retry] = await submitTwice(declined());
+
+    expect(retry).toMatch(/^[0-9a-f-]{36}$/);
+    expect(retry).not.toBe(first);
   });
 });
 

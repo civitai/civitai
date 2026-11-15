@@ -8,6 +8,8 @@ import { ServiceOfferingFormModal } from './ServiceOfferingFormModal';
 vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: () => undefined }),
 }));
+// The uploader needs a signed-in session; this test is about the layout of the other fields.
+vi.mock('~/libs/form/components/SimpleImageUpload', () => ({ SimpleImageUpload: () => null }));
 vi.mock('~/components/CreatorShop/Services/creator-service.util', () => ({
   useMutateMyServices: () => ({ upsert: { mutateAsync: vi.fn(), isPending: false } }),
 }));

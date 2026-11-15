@@ -21,8 +21,10 @@ import {
   auditPostImageMeta,
   getTagsFromPrompt,
   includesInappropriate,
+  includesMinorAge,
   includesPoi,
 } from '~/utils/metadata/audit';
+import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
@@ -41,6 +43,7 @@ import {
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { queueScanSampleForKnights } from '~/server/services/knights/sources';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import {
@@ -58,6 +61,7 @@ import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import {
   hasBlockMarker,
   ingestionAfterScanErrorSql,
+  keepPermanentScanFailureSql,
   ingestionAfterVerdictSql,
   ingestionKeptAfterVerdict,
 } from '~/server/common/image-visibility';
@@ -68,6 +72,7 @@ import {
   type RatingAxes,
 } from '~/server/services/image-nsfw-axes';
 import { signalClient } from '~/utils/signal-client';
+import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -311,7 +316,7 @@ export async function markImageScanError({
         ),
         '{error}',
         ${errorJson}::jsonb
-      )
+      ) || ${keepPermanentScanFailureSql()}
     WHERE id = ${imageId}
     RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType",
       "userId"
@@ -943,7 +948,17 @@ async function auditScanResults(args: {
   let blockedFor: string | undefined;
   if (nsfw && prompt) {
     // The post editor's own verdict, so the scan never blocks what the editor let through.
-    const auditResult = auditPostImageMeta({ prompt }, nsfw);
+    let auditResult = auditPostImageMeta({ prompt }, nsfw);
+    const ageHit = auditResult.success ? undefined : includesMinorAge(normalizeText(prompt));
+    if (ageHit?.found && ageHit.age != null) {
+      const decision = await decideAgeRegexHit({
+        surface: 'post-scan',
+        age: ageHit.age,
+        prompt,
+        source: 'other',
+      });
+      if (!decision.block) auditResult = auditPostImageMeta({ prompt: decision.withoutAge }, nsfw);
+    }
     if (!auditResult.success)
       blockedFor = auditResult.blockedFor.join(',') ?? 'Failed audit, no explanation';
     else if (auditResult.softBlockedFor?.length)
@@ -1206,7 +1221,9 @@ export async function applyIngestionSideEffects({
       }
 
       if (!reviewKey && image.type === 'image' && image.userId !== FEEDBACK_CAPTURE_OWNER_ID) {
-        await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+        if (await isV1KnightsLive())
+          await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+        await queueScanSampleForKnights({ imageId: image.id, nsfw: audit.nsfw });
       }
     }
   }

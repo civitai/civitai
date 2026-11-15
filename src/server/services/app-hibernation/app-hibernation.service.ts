@@ -10,6 +10,7 @@ import {
   archiveObjectKeys,
   keptObjectKeys,
   userArchivePrefix,
+  WAKE_TTL_SECONDS,
 } from '~/utils/app-archive-s3';
 import type { SleepingAppLimits } from '~/server/services/blocks/user-app-caps.service';
 import type {
@@ -59,8 +60,6 @@ export const MAX_SECRETS_BLOB_BYTES = 64 * 1024;
 const MAX_SEALED_BYTES = MAX_SECRETS_BLOB_BYTES + 64;
 /** How long a `begin` is remembered for its `commit` (and for a retried commit). */
 export const ATTEMPT_TTL_SECONDS = 24 * 60 * 60;
-/** How long a wake ticket can be redeemed for the secrets, once. */
-export const WAKE_TICKET_TTL_SECONDS = 10 * 60;
 /**
  * An archive object no row references is swept once it is this old. Longer than an attempt lives
  * ({@link ATTEMPT_TTL_SECONDS}), so no commit can still be about to record it.
@@ -521,7 +520,7 @@ export type MintWakeTicketResult =
 /**
  * A one-time ticket releasing one sleeping app's secrets to the sandbox service, for the archive
  * the wake restores; the ticket goes to the sandbox service with the seed and is redeemed once,
- * within {@link WAKE_TICKET_TTL_SECONDS}, by `/api/internal/app-hibernation/secrets`.
+ * within {@link WAKE_TTL_SECONDS}, by `/api/internal/app-hibernation/secrets`.
  *
  * Refused unless the account is active, read from its `User` row (`deletedAt` / `bannedAt`), as
  * begin and commit do. Does not check who called it: call it only from the signed-in user's own
@@ -537,16 +536,12 @@ export async function mintWakeTicket(
   const row = await deps.repo.get(userId, app);
   if (!row) return { kind: 'not-found' };
   const ticket = randomBytes(32).toString('base64url');
-  await deps.tickets.put(
-    ticketHash(ticket),
-    { userId, app, sha256: row.sha256 },
-    WAKE_TICKET_TTL_SECONDS
-  );
+  await deps.tickets.put(ticketHash(ticket), { userId, app, sha256: row.sha256 }, WAKE_TTL_SECONDS);
   return {
     kind: 'ok',
     ticket,
     sha256: row.sha256,
-    expiresAt: new Date(deps.now().getTime() + WAKE_TICKET_TTL_SECONDS * 1000).toISOString(),
+    expiresAt: new Date(deps.now().getTime() + WAKE_TTL_SECONDS * 1000).toISOString(),
   };
 }
 
@@ -643,13 +638,17 @@ export type SweepResult = {
   /** Deleted accounts whose sleeping apps this run removed (a retry of a failed deletion step). */
   accountsRetried: number[];
   accountsFailed: number[];
+  /** Deleted accounts skipped because they are under a legal hold, or the hold could not be read. */
+  accountsHeld: number[];
   /** Rows and objects those retries removed. */
   accountRowsFinished: number;
   accountObjectsRemoved: number;
   /** Objects listed under the archives prefix. */
   scanned: number;
-  /** Objects older than {@link ORPHAN_MIN_AGE_MS} that no row references. */
+  /** Objects older than {@link ORPHAN_MIN_AGE_MS} that no row references (and were removed). */
   orphans: string[];
+  /** Such objects KEPT because their user is under a legal hold (or it could not be read). */
+  orphansHeld: number;
   dryRun: boolean;
 };
 
@@ -657,15 +656,26 @@ export type SweepResult = {
  * ORPHAN SWEEP, run hourly by the `sweep-hibernation-objects` job (`src/server/jobs/sweep-hibernation-objects.ts`): uploads of attempts that never committed,
  * kept copies whose superseding delete failed, and the leftovers of a failed account-deletion
  * step. Two passes:
- *   1. every deleted account that still has rows gets {@link deleteSleepingAppsForAccount} again;
+ *   1. every deleted account that still has rows gets {@link deleteSleepingAppsForAccount} again,
+ *      unless it is under a legal hold (or the hold cannot be read): then nothing is touched;
  *   2. every object under the archives prefix older than {@link ORPHAN_MIN_AGE_MS} that NO row
- *      references is deleted. A referenced key is never touched, whatever its age; an unreadable
+ *      references is deleted, unless its user is under a legal hold (or it cannot be read). A referenced key is never touched, whatever its age; an unreadable
  *      reference set aborts the run (it throws) rather than deleting blind.
  * `dryRun` reports what it would do and changes nothing.
  */
 export async function sweepOrphanedArchives(
   deps: Pick<HibernationDeps, 'repo' | 'store' | 'now' | 'report'> & {
     isMissingTable: (err: unknown) => boolean;
+    /**
+     * Whether the account is under a legal hold (`isAccountUnderLegalHold`): `null` means it could
+     * not be read, and counts as held.
+     */
+    isUnderLegalHold: (userId: number) => Promise<boolean | null>;
+    /**
+     * The same check for many users in one lookup (`areAccountsUnderLegalHold`): `true` is held.
+     * A user it leaves out, or a lookup that throws, counts as held.
+     */
+    areUnderLegalHold: (userIds: number[]) => Promise<Map<number, boolean>>;
   },
   opts: { dryRun?: boolean; accountBatch?: number } = {}
 ): Promise<SweepResult> {
@@ -673,15 +683,26 @@ export async function sweepOrphanedArchives(
   const result: SweepResult = {
     accountsRetried: [],
     accountsFailed: [],
+    accountsHeld: [],
     accountRowsFinished: 0,
     accountObjectsRemoved: 0,
     scanned: 0,
     orphans: [],
+    orphansHeld: 0,
     dryRun,
   };
   if (!deps.store) return result;
 
+  // A random batch each run (`deletedAccountsWithRows`), so accounts that keep failing or stay held
+  // cannot starve the rest.
   for (const userId of await deps.repo.deletedAccountsWithRows(opts.accountBatch ?? 100)) {
+    // Re-checked immediately before each wipe: a hold placed after the deletion keeps everything.
+    // An unreadable hold blocks like a hold.
+    if ((await deps.isUnderLegalHold(userId)) !== false) {
+      result.accountsHeld.push(userId);
+      deps.report('app-hibernation.account-held', { userId });
+      continue;
+    }
     if (dryRun) {
       result.accountsRetried.push(userId);
       continue;
@@ -704,12 +725,41 @@ export async function sweepOrphanedArchives(
   const listed = await deps.store.list(ARCHIVE_PREFIX);
   result.scanned = listed.length;
   const old = listed.filter((o) => o.lastModified.getTime() <= cutoff).map((o) => o.key);
+  // The legal hold applies here too: an orphan under a held user's prefix is never deleted. One
+  // batched lookup per listing batch, covering only users not already answered this run.
+  const held = new Map<number, boolean>();
   for (let i = 0; i < old.length; i += 1000) {
     const batch = old.slice(i, i + 1000);
     const referenced = await deps.repo.referencedKeys(batch);
-    const orphans = batch.filter((k) => !referenced.has(k));
+    const unreferenced = batch.filter((k) => !referenced.has(k));
+    const unknown = [
+      ...new Set(unreferenced.map(archiveOwner).filter((u): u is number => u !== null)),
+    ].filter((u) => !held.has(u));
+    if (unknown.length > 0) {
+      let answers: Map<number, boolean> | null = null;
+      try {
+        answers = await deps.areUnderLegalHold(unknown);
+      } catch {
+        answers = null; // a failed lookup clears nobody
+      }
+      // Only an explicit `false` clears a user.
+      for (const u of unknown) held.set(u, answers?.get(u) !== false);
+    }
+    const orphans: string[] = [];
+    for (const key of unreferenced) {
+      const owner = archiveOwner(key);
+      // A key under no user prefix has no owner to clear: keep it.
+      if (owner === null || held.get(owner)) result.orphansHeld += 1;
+      else orphans.push(key);
+    }
     if (orphans.length > 0 && !dryRun) await deps.store.deleteMany(orphans);
     result.orphans.push(...orphans);
   }
   return result;
+}
+
+/** The user id of an `archives/<userId>/…` key, or `null` for any other key. */
+function archiveOwner(key: string): number | null {
+  const m = /^archives\/(\d+)\//.exec(key);
+  return m ? Number(m[1]) : null;
 }

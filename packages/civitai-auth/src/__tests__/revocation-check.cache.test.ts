@@ -1,18 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  createRevocationCheck,
-  REVOCATION_MARKER_CACHE_MAX_ENTRIES,
-  type RevocationCheckConfig,
-} from '../revocation-check';
+import { createRevocationCheck, type RevocationCheckConfig } from '../revocation-check';
 import { impersonatorCutKey, type SessionRegistryRedis } from '../session-registry';
 import { SESSION_REGISTRY_KEYS } from '../session-registry-keys';
 import type { SessionClaims } from '../types';
 
 // The shared check keeps the revocation markers it has read, so a revocation this process has seen still
-// denies when a later read fails. Before the record, every failed read answered "not revoked", so a signed-out
-// or banned session kept working for the whole outage, in the main app, the hub and every spoke. A session
-// with no known marker still fails open (signing everyone out during an outage is not the policy), and that
-// verdict is reported.
+// denies when a later read fails. A session with no known marker still fails open (signing everyone out during
+// an outage is not the policy), and that verdict is reported.
 
 const K = SESSION_REGISTRY_KEYS;
 const USER_CUT_7 = `${K.userCut}:7`;
@@ -255,9 +249,5 @@ describe('createRevocationCheck with the store answering', () => {
     // token state + family state; ALL + user cut + impersonator's user cut + impersonation cut.
     expect(on).toEqual([2, 4]);
     expect(off).toEqual(on);
-  });
-
-  it('is bounded to 20k entries', () => {
-    expect(REVOCATION_MARKER_CACHE_MAX_ENTRIES).toBe(20_000);
   });
 });

@@ -75,6 +75,7 @@ const ASSISTANT = {
   sandboxUrl: 'https://sandbox.example',
   subagents: false,
   remoteRunner: true,
+  hibernate: false,
 };
 const MEMBER = { id: 12, isModerator: false };
 const MODERATOR = { id: 2, isModerator: true };

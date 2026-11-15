@@ -31,10 +31,12 @@ import {
 } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import { NotificationCategory } from '~/server/common/enums';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
-  notificationCategoryTypes,
+  notificationSettingGroups,
   notificationTypes,
   optInNotificationTypes,
+  visibleNotificationSettingGroups,
 } from '~/server/notifications/utils.notifications';
 
 const categoryIcons: Record<string, Icon> = {
@@ -53,9 +55,8 @@ const categoryIcons: Record<string, Icon> = {
  * `Other` is the catch-all bucket, so it belongs under the named categories however processor
  * registration happens to order them. Stable sort, so everything else keeps its order.
  */
-const categoryEntries = Object.entries(notificationCategoryTypes).sort(
-  ([a], [b]) => Number(a === NotificationCategory.Other) - Number(b === NotificationCategory.Other)
-);
+const byOtherLast = ([a]: [string, unknown], [b]: [string, unknown]) =>
+  Number(a === NotificationCategory.Other) - Number(b === NotificationCategory.Other);
 
 export function NotificationsPane() {
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
@@ -64,6 +65,10 @@ export function NotificationsPane() {
   const { pushTypes } = usePushNotificationSettings(pushAvailable);
   const updateNotificationSettingMutation = useToggleNotificationSetting();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const features = useFeatureFlags();
+  const categoryEntries = Object.entries(visibleNotificationSettingGroups(features)).sort(
+    byOtherLast
+  );
 
   // Asymmetric on purpose. Turning everything OFF must also unsubscribe opt-in types, or a user who
   // silences the site keeps receiving promos with no way back. Turning everything ON must NOT
@@ -73,7 +78,7 @@ export function NotificationsPane() {
     updateNotificationSettingMutation.mutate({ toggle, type });
   };
   const toggleCategory = (category: string, toggle: boolean) => {
-    const categoryTypes = notificationCategoryTypes[category]
+    const categoryTypes = notificationSettingGroups[category]
       ?.filter((x) => toggle === false || !x.optIn)
       .map((x) => x.type);
     if (!categoryTypes?.length) return;

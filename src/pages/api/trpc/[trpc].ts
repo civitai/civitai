@@ -41,6 +41,11 @@ import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.
 import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
 import { rateLimitHeaders } from '~/server/trpc/rate-limit-headers';
 import { retryAfterHeader } from '~/server/trpc/retry-after-header';
+import {
+  beginFeedGoShadow,
+  finishFeedGoShadow,
+  runWithFeedGoShadow,
+} from '~/server/trpc/feed-go-shadow';
 
 /**
  * The longest input an error log line carries: in JSON characters, and in values (so the measure
@@ -334,7 +339,19 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   //
   // The response write format (superjson vs devalue) is decided per request from the
   // client headers — see `~/server/trpc/response-write-format`.
-  await runWithResponseWriteFormat(req.headers, () =>
-    runWithSerializeCtx(serializeCtxFromRequest(req), () => trpcHandler(req, res))
-  );
+  //
+  // feed-go shadow (flag `feed-go-shadow`, default off): a sampled `image.getImagesAsPostsInfinite`
+  // request runs with a capture scope, and after the handler has written the response its input,
+  // the headers the answer depends on and the captured body are POSTed to feed-go's internal
+  // compare endpoint from `setImmediate`, never awaited. See `~/server/trpc/feed-go-shadow`.
+  const shadow = beginFeedGoShadow(req);
+  try {
+    await runWithResponseWriteFormat(req.headers, () =>
+      runWithSerializeCtx(serializeCtxFromRequest(req), () =>
+        runWithFeedGoShadow(shadow, () => trpcHandler(req, res))
+      )
+    );
+  } finally {
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
+  }
 }) as NextApiHandler;

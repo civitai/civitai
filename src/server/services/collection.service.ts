@@ -6,7 +6,7 @@ import { canReadCollectionItems } from '~/server/services/collection-item-access
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
-import { uniq, uniqBy } from 'lodash-es';
+import { omit, uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import type { CoverageAudience } from '~/server/services/generation/coverage-source';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
@@ -67,6 +67,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readCollectionByIdViaKysely,
@@ -141,6 +142,7 @@ import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
   collectionItemCoversSql,
   getServableCoverCollectionIds,
+  isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
 import {
   assertImagesVisibleToViewer,
@@ -694,6 +696,14 @@ export const getUserCollectionsWithPermissions = async <
               in: collectionImageIds,
             },
           },
+          // The blocks collections route gates covers on these (`PublicCollectionImageFields`).
+          select: {
+            ...imageSelect,
+            poi: true,
+            minor: true,
+            acceptableMinor: true,
+            tosViolation: true,
+          },
         })
       : [];
 
@@ -1063,9 +1073,10 @@ export const saveItemInCollections = async ({
     canAccessUserChallenges?: boolean;
   };
 }) => {
-  const itemKey = Object.keys(inputToCollectionType).find((key) =>
-    input.hasOwnProperty(key)
-  ) as keyof typeof inputToCollectionType;
+  // By value, not key presence: `{ modelId: undefined, imageId: 5 }` passes the schema refine.
+  const itemKey = (
+    Object.keys(inputToCollectionType) as (keyof typeof inputToCollectionType)[]
+  ).find((key) => input[key] != null);
   if (!itemKey) throw throwBadRequestError(`We don't know the type of thing you're adding`);
   // Safeguard against duppes.
   upsertCollectionItems = uniqBy(upsertCollectionItems, 'collectionId');
@@ -1844,6 +1855,14 @@ export const upsertCollection = async ({
 
   if (imageId) await assertImagesVisibleToViewer({ ids: [imageId], userId, isModerator });
 
+  const hasInitialItem = [
+    collectionItem.modelId,
+    collectionItem.articleId,
+    collectionItem.postId,
+    collectionItem.model3dId,
+    imageId,
+  ].some((id) => id != null);
+
   // TODO allow cover image
   const collection = await dbWrite.collection.create({
     select: {
@@ -1877,7 +1896,10 @@ export const upsertCollection = async ({
           ],
         },
       },
-      items: { create: { ...collectionItem, imageId, addedById: userId } },
+      // Only with an entity: an item-less row would count toward itemCount and the per-user cap.
+      ...(hasInitialItem && {
+        items: { create: { ...collectionItem, imageId, addedById: userId } },
+      }),
       tags: tags
         ? {
             create: tags.map((tag) => {
@@ -3899,6 +3921,7 @@ type ImageProps = {
   mimeType: string | null;
   meta: Prisma.JsonObject | null;
   userId: number;
+  tosViolation: boolean;
 } | null;
 
 type CollectionImageRaw = {
@@ -3910,9 +3933,11 @@ type CollectionImageRaw = {
 export const getCollectionCoverImages = async ({
   collectionIds,
   imagesPerCollection,
+  browsingLevel,
 }: {
   collectionIds: number[];
   imagesPerCollection: number;
+  browsingLevel: number;
 }) => {
   const imageSql = Prisma.sql`
     jsonb_build_object(
@@ -3930,7 +3955,8 @@ export const getCollectionCoverImages = async ({
         'scannedAt', i."scannedAt",
         'type', i."type",
         'meta', i."meta",
-        'userId', i."userId"
+        'userId', i."userId",
+        'tosViolation', i."tosViolation"
       ) image
   `;
 
@@ -3940,22 +3966,31 @@ export const getCollectionCoverImages = async ({
           collectionIds,
           itemsPerCollection: imagesPerCollection,
           imageSql,
+          // The string is dropped below with an image above the viewer's level.
+          srcImageLevels: allBrowsingLevelsFlag,
         })}`
       : [];
+  // An article's cover string carries no rating of its own: it is served only beside a cover
+  // image that passed.
+  const shown = itemImages.map(({ id, image, src }) =>
+    image && isCoverWithinBrowsingLevel(image, browsingLevel)
+      ? { id, image, src }
+      : { id, image: null, src: null }
+  );
 
   // Use Redis cache for tag lookups (much faster than direct DB query)
-  const imageIds = [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))];
+  const imageIds = [...new Set(shown.map(({ image }) => image?.id).filter(isDefined))];
   const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
   const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
     cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
   );
 
-  return itemImages
+  return shown
     .map(({ id, image, src }) => ({
       id,
       image: image
         ? {
-            ...image,
+            ...omit(image, 'tosViolation'),
             tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
           }
         : null,

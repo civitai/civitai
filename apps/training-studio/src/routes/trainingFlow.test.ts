@@ -28,10 +28,14 @@ import {
   optimizerLrParams,
   teLocked,
   paramDeviations,
+  paramLockReason,
   paramHelpText,
   promptHasTrigger,
   recommendedCardFor,
   runExtraCapabilities,
+  runEngine,
+  runParamsKey,
+  runTrainingParams,
   sampleImagesProblem,
   seedPrompts,
   startLabelPass,
@@ -49,6 +53,8 @@ import {
   type SamplePrompt,
   blockedSelectionMessage,
   cardUnavailability,
+  repeatExt,
+  clampRepeats,
 } from './trainingFlow';
 
 const rows = (texts: string[]): SamplePrompt[] => texts.map((text, id) => ({ id, text }));
@@ -817,5 +823,174 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
     expect(cardUnavailability(klein, on, status)).toBeNull();
     expect(newRun(klein, on, status).versionKey).toBe('flux2klein_4b');
     expect(newRun(klein, on).versionKey).toBe('flux2klein_9b');
+  });
+});
+
+describe('Kohya engine selection and options', () => {
+  it('keeps AI Toolkit as default and isolates parameter drafts by engine', () => {
+    const original = run('sdxl');
+    const kohya = { ...original, engine: 'kohya' };
+    expect(runEngine(original)).toBe('ai-toolkit');
+    expect(runParamsKey(original)).not.toBe(runParamsKey(kohya));
+    expect(defaultRunParams(kohya)).toMatchObject({
+      optimizer: 'Adafactor',
+      lrScheduler: 'cosine_with_restarts',
+      batchSize: '4',
+      numRepeats: '1',
+      enableBucket: true,
+      lrSchedulerNumCycles: '3',
+      vParameterization: 'auto',
+      zeroTerminalSnr: 'auto',
+    });
+  });
+
+  it.each(['flux', 'chroma'])('offers custom %s checkpoints only for Kohya', (cardType) => {
+    const card = cardByType(cardType)!;
+    expect(versionOptions(card).some((v) => v.key === CUSTOM_VERSION_KEY)).toBe(false);
+    expect(versionOptions(card, undefined, 'kohya').some((v) => v.key === CUSTOM_VERSION_KEY)).toBe(
+      true
+    );
+  });
+
+  it('keeps Kohya resolution editable while AI Toolkit resolution is locked', () => {
+    const original = run('sdxl');
+    const kohya = { ...original, engine: 'kohya' };
+    expect(paramLockReason(original, 'resolution')).toBeDefined();
+    expect(paramLockReason(kohya, 'resolution')).toBeUndefined();
+    const params = { ...defaultRunParams(kohya), resolution: '768' };
+    expect(paramDeviations(kohya, params, 'tag')).toContainEqual(
+      expect.objectContaining({ field: 'resolution', value: '768' })
+    );
+    expect(runTrainingParams(kohya, params, 'tag').resolution).toBe(768);
+  });
+
+  it('uses Kohya model defaults for cleared fields in both quotes and submits', () => {
+    const kohya = { ...run('sd15', 'anime'), engine: 'kohya' };
+    const params = {
+      ...defaultRunParams(kohya, 'ohwx'),
+      unetLr: '',
+      batchSize: '',
+      clipSkip: '',
+      keepTokens: '',
+    };
+    const quoted = runTrainingParams(kohya, params, 'tag', 'ohwx', 'character');
+    const [submitted] = buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [kohya] },
+      [],
+      'ohwx',
+      'Example',
+      [{ run: kohya, params }],
+      [],
+      [],
+      'tag'
+    );
+    expect(quoted).toMatchObject({
+      engine: 'kohya',
+      unetLr: 0.0005,
+      batchSize: 6,
+      keepTokens: 1,
+      kohya: { clipSkip: 2 },
+    });
+    expect(submitted).toMatchObject(quoted);
+  });
+
+  it('restores safe learning rates when leaving the Pony Prodigy preset', () => {
+    const kohya = { ...run('pony'), engine: 'kohya' };
+    const p = defaultRunParams(kohya);
+    expect(p).toMatchObject({ optimizer: 'Prodigy', unetLr: '1', textEncoderLr: '1' });
+    expect(optimizerLrParams(kohya, { ...p, optimizer: 'AdamW8bit' })).toEqual({
+      unetLr: '0.0005',
+      textEncoderLr: '0.00005',
+    });
+  });
+
+  it('sends caption controls only for tag datasets while retaining Kohya options', () => {
+    const kohya = { ...run('sd15', 'anime'), engine: 'kohya' };
+    const p = defaultRunParams(kohya, 'ohwx');
+    expect(p.networkAlpha).toBe('8');
+    expect(runTrainingParams(kohya, p, 'tag')).toMatchObject({
+      engine: 'kohya',
+      shuffleTokens: true,
+      keepTokens: 1,
+      kohya: { clipSkip: 2, enableBucket: true },
+    });
+    expect(runTrainingParams(kohya, p, 'caption')).toMatchObject({
+      shuffleTokens: false,
+      keepTokens: 0,
+    });
+  });
+});
+
+describe('per-image repeats on the submit', () => {
+  const build = (r: Run, images: Img[]) =>
+    buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [r] },
+      images,
+      'ohwx',
+      'test',
+      [{ run: r, params: defaultRunParams(r) }],
+      rows(['ohwx, a photo']),
+      ['blue'],
+      'tag'
+    )[0]!;
+
+  it('sends the repeat count and extension only for an image that repeats', () => {
+    const out = build(run('sdxl'), [
+      { ...image(1, ['ohwx']), name: 'a.JPG', repeats: 3 },
+      image(2, ['ohwx']),
+    ]);
+    expect(out.items).toEqual([
+      { air: 'blob-1', caption: 'ohwx', repeats: 3, ext: 'jpg' },
+      { air: 'blob-2', caption: 'ohwx' },
+    ]);
+    expect(out.meta.imageCount).toBe(4);
+  });
+
+  it('drops repeats for Flux.2, whose trainer is not known to honour staged paths', () => {
+    const out = build(run('flux2'), [{ ...image(1, ['ohwx']), repeats: 3 }]);
+    expect(out.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+    expect(out.meta.imageCount).toBe(1);
+  });
+
+  it('sends no repeats in a sweep where any run cannot take them', () => {
+    const sdxl = run('sdxl');
+    const flux2 = run('flux2');
+    const out = buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [sdxl, flux2] },
+      [{ ...image(1, ['ohwx']), repeats: 3 }],
+      'ohwx',
+      'test',
+      [
+        { run: sdxl, params: defaultRunParams(sdxl) },
+        { run: flux2, params: defaultRunParams(flux2) },
+      ],
+      rows(['ohwx, a photo']),
+      ['blue'],
+      'tag'
+    );
+    for (const payload of out) expect(payload.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
+  it('sends an image set back to 1 repeat as a plain item', () => {
+    const out = build(run('sdxl'), [{ ...image(1, ['ohwx']), repeats: 1 }]);
+    expect(out.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
+  it('clamps a typed repeat count to a whole number from 1 to 20', () => {
+    expect(clampRepeats(2.4)).toBe(2);
+    expect(clampRepeats(2.6)).toBe(3);
+    expect(clampRepeats(Number.NaN)).toBe(1);
+    expect(clampRepeats(0)).toBe(1);
+    expect(clampRepeats(-5)).toBe(1);
+    expect(clampRepeats(21)).toBe(20);
+    expect(clampRepeats(Number.POSITIVE_INFINITY)).toBe(1);
+  });
+
+  it("stages a copy under the file's own media extension, else its blob's, else the media default", () => {
+    expect(repeatExt({ name: 'clip.MP4', blobId: 'x', mediaType: 'video' })).toBe('mp4');
+    expect(
+      repeatExt({ name: 'image 3', blobId: 'urn:air:a:b:c:blob@K.webp', mediaType: 'image' })
+    ).toBe('webp');
+    expect(repeatExt({ name: 'image 3', blobId: 'K', mediaType: 'video' })).toBe('mp4');
   });
 });

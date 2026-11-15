@@ -3,6 +3,10 @@ import type { Session } from '~/types/session';
 import * as z from 'zod';
 
 import { getArticleById } from '~/server/services/article.service';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { articleContentJson } from '~/server/utils/article-content-json';
+import { removeBodyMedia, servableBodyImageUrls } from '~/server/utils/article-body-media';
+import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
 import {
@@ -10,8 +14,10 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
 
 /**
  * GET /api/v1/articles/[id] — public article detail.
@@ -21,12 +27,12 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
  * evaluates as anonymous ALWAYS (no `userId`/`isModerator` passed), so the service
  * matches `publishedAt IS NOT NULL AND status = Published AND ingestion = Scanned`
  * for EVERY caller: a draft / unpublished / not-yet-scanned article is a 404 for
- * everyone, authed or not. There is no owner self-view branch here, so the
- * response is a pure function of the id (+ region) — byte-identical for an
- * anonymous caller and any authenticated caller. It is `private, no-store` for every
- * caller: the body depends on the caller's region and can carry content above SFW. A
- * private article is INDISTINGUISHABLE from a non-existent one (both 404), so this
- * is not an existence oracle.
+ * everyone, authed or not. There is no owner self-view branch here. It is
+ * `private, no-store` for every caller: the body depends on the caller's region and level.
+ * Outside a restricted region the article body follows the article's own level, so it can be
+ * above SFW; the cover, banner and author avatar are clamped to PG, or PG|PG13 in a restricted
+ * region. A private article is INDISTINGUISHABLE from a non-existent one (both 404), so this is
+ * not an existence oracle.
  *
  * Maturity: in a restricted region, an article above SFW (its own level, or any connected image
  * in its body) is the same 404 as a missing one, as on `/api/v1/posts/[id]`. The cover image is
@@ -37,7 +43,12 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
  * `getArticleById` takes no browsing-level param, so the clamp is applied here as
  * a post-service filter. It is derived ONLY from the region (`cf-ipcountry`) — it
  * NEVER reads the caller's nsfw preference / browsingLevel cookie / session — so
- * the response stays a pure function of id + region.
+ * the cover, banner and avatar are a pure function of id + region.
+ *
+ * Body images and media (`content`, `contentJson`, `contentImages`) are the exception: they
+ * are held to the caller's level, the public default when signed out, or an API key holder's own
+ * level under the domain cap. Above it, or not servable to anyone (unscanned, awaiting review, a
+ * violation), the node is dropped from the body, author included.
  */
 
 // Bound the coerced id to Postgres int4 (mirrors models/[id].ts): a huge numeric
@@ -51,7 +62,7 @@ export default MixedAuthEndpoint(async function handler(
   user: Session['user'] | undefined
 ) {
   // Conservative per-client rate limit (before the service call). Keys on
-  // CF-Connecting-IP / userId; the response body itself never varies by user.
+  // CF-Connecting-IP / userId.
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'articles', userId: user?.id });
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
@@ -68,27 +79,20 @@ export default MixedAuthEndpoint(async function handler(
   // Maturity/region ceiling — the SAME fixed PUBLIC default the list endpoint
   // uses (articles/index.ts), narrowed to SFW for restricted regions. Region-
   // derived ONLY (from `cf-ipcountry`); it NEVER reads the caller's nsfw
-  // preference/cookie/session, so the response stays a pure function of id + region.
+  // preference/cookie/session. Body media is held separately, by `bodyBrowsingLevel`.
   const region = getRegion(req);
   const restricted = isRegionRestricted(region);
   const browsingLevel = restricted ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
-  // The body depends on the caller's region, which the shared cache does not key on.
+  // The body depends on the caller's region and level, which the shared cache does not key on.
   res.setHeader('Cache-Control', 'private, no-store');
 
   try {
     // Evaluate as anonymous — NEVER pass the session userId/isModerator. This
-    // pins published-only visibility for every caller (no owner-draft branch), so
-    // the response is caller-independent.
+    // pins published-only visibility for every caller (no owner-draft branch).
     const article = await getArticleById({ id });
-    // A restricted region is served an article only when it and every connected (Civitai-hosted)
-    // image in its body are rated SFW; unrated fails closed. The images count too because a
-    // moderator's override sets the article's own level. Answered as the same 404 as a missing
-    // article.
-    if (restricted) {
-      const levels = [article.nsfwLevel, ...(article.contentImages ?? []).map((i) => i.nsfwLevel)];
-      if (!levels.every((level) => !!level && Flags.hasFlag(sfwBrowsingLevelsFlag, level)))
-        throw throwNotFoundError(`No article with id ${id}`);
-    }
+    // Answered as the same 404 as a missing article.
+    if (restricted && !isArticleServableWhenRestricted(article))
+      throw throwNotFoundError(`No article with id ${id}`);
 
     // moderatorNsfwLevel is a moderator-only override the service includes for the
     // edit form; strip it so it never leaks through the public REST payload.
@@ -115,17 +119,37 @@ export default MixedAuthEndpoint(async function handler(
       publicArticle.bannerImage = undefined;
     }
 
+    const bodyLevel = bodyBrowsingLevel(req, user, restricted);
+    const bodyImages = publicArticle.contentImages ?? [];
+    const servable = servableBodyImageUrls(bodyImages, bodyLevel);
+    const withheld = bodyImages.map(({ url }) => url).filter((url) => !servable.has(url));
+    const content =
+      publicArticle.content && removeBodyMedia(publicArticle.content, { keep: servable, withheld });
+    const contentJson = content ? articleContentJson(content) : undefined;
     // The page reads more of each content image to guard it; the documented payload keeps these three.
-    const contentImages = publicArticle.contentImages?.map(({ id, url, ingestion }) => ({
-      id,
-      url,
-      ingestion,
-    }));
+    const contentImages = publicArticle.contentImages
+      ?.filter(({ url }) => servable.has(url))
+      .map(({ id, url, ingestion }) => ({ id, url, ingestion }));
 
-    return res.status(200).json({ ...publicArticle, contentImages });
+    const author = publicArticle.user && withPublicAvatar(publicArticle.user, browsingLevel);
+
+    return res
+      .status(200)
+      .json({ ...publicArticle, user: author, content, contentJson, contentImages });
   } catch (e) {
     // getArticleById throws NOT_FOUND for a missing / non-visible article →
     // handleEndpointError maps it to a 404.
     return handleEndpointError(res, e);
   }
 });
+
+/** Signed out, the public default; with a key, the holder's own level under the domain cap. */
+function bodyBrowsingLevel(
+  req: NextApiRequest,
+  user: Session['user'] | undefined,
+  restricted: boolean
+) {
+  const features = getFeatureFlagsLazy({ user, req });
+  const level = relatedPostsBrowsingLevel({ user, req, features }, undefined);
+  return restricted ? level & sfwBrowsingLevelsFlag : level;
+}

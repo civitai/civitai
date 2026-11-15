@@ -18,6 +18,8 @@ import {
 
 const h = vi.hoisted(() => ({
   storeConfigured: true,
+  /** What the legal-hold check answers: `null` is "could not be read". */
+  hold: false as boolean | null,
   log: [] as string[],
   repo: undefined as unknown as ReturnType<typeof fakeRepo>,
   store: undefined as unknown as ReturnType<typeof fakeStore>,
@@ -26,6 +28,9 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+  isAccountUnderLegalHold: async () => h.hold,
+  areAccountsUnderLegalHold: async (ids: number[]) =>
+    new Map(ids.map((id) => [id, h.hold !== false])),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({ wipeAccount: vi.fn() }),
@@ -67,6 +72,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.log = [];
   h.storeConfigured = true;
+  h.hold = false;
   h.repo = fakeRepo(h.log);
   h.store = fakeStore(h.log);
   dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: USER_ID, meta: {} });
@@ -147,9 +153,11 @@ describe('deleteUser — sleeping apps', () => {
     expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
       scanned: 0,
       removed: 0,
+      orphansHeld: 0,
       deletedAccountsFinished: 1,
       deletedAccountRowsFinished: 1,
       deletedAccountObjectsRemoved: 2,
+      heldAccounts: 0,
       errors: 0,
     });
     expect(h.repo.rows.size).toBe(0);
@@ -163,9 +171,11 @@ describe('deleteUser — sleeping apps', () => {
     expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
       scanned: 2,
       removed: 0,
+      orphansHeld: 0,
       deletedAccountsFinished: 0,
       deletedAccountRowsFinished: 0,
       deletedAccountObjectsRemoved: 0,
+      heldAccounts: 0,
       errors: 1,
     });
     expect(h.repo.rows.size).toBe(1);
@@ -180,5 +190,41 @@ describe('deleteUser — sleeping apps', () => {
     });
     expect(h.repo.rows.size).toBe(1);
     expect(h.store.objects.size).toBe(2);
+  });
+
+  it.each([
+    ['under a legal hold', true],
+    ['whose hold cannot be read', null],
+  ])('the sweep job leaves a deleted account %s untouched', async (_label, hold) => {
+    sleeping(USER_ID, 'tip-calculator');
+    h.repo.accounts.set(USER_ID, 'deleted');
+    h.hold = hold;
+    const res = (await (
+      await sweepHibernationObjectsJob.run({} as never)
+    ).result) as Record<string, unknown>;
+    expect(res.heldAccounts).toBe(1);
+    expect(res.deletedAccountsFinished).toBe(0);
+    expect(h.repo.rows.size).toBe(1);
+    expect(h.store.objects.size).toBe(2);
+  });
+
+  it('a missing table is a FAILED run too, never a quiet skip', async () => {
+    h.repo.repo.deletedAccountsWithRows = async () => {
+      throw Object.assign(new Error('relation "app_sandbox_hibernations" does not exist'), {
+        code: '42P01',
+      });
+    };
+    await expect((await sweepHibernationObjectsJob.run({} as never)).result).rejects.toThrow(
+      /does not exist/
+    );
+  });
+
+  it('a sweep that fails is a FAILED run (the job runner counts it), not a quiet success', async () => {
+    h.repo.repo.deletedAccountsWithRows = async () => {
+      throw new Error('database unavailable');
+    };
+    await expect((await sweepHibernationObjectsJob.run({} as never)).result).rejects.toThrow(
+      /database unavailable/
+    );
   });
 });

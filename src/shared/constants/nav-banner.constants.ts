@@ -16,10 +16,20 @@ export type NavBanner = {
   image?: string;
   // Fills the strip where the image does not reach. Match the image's left edge.
   background?: string;
+  // Colours for a strip that carries another product's palette; unset keeps the default look.
+  theme?: NavBannerTheme;
   dismissible: boolean;
   priority: number;
   // Optional so a page rendered before this field existed still reads the answer.
   promo?: EventPromo;
+};
+
+export type NavBannerTheme = {
+  text: string;
+  mutedText: string;
+  accent: string;
+  ctaBackground: string;
+  ctaText: string;
 };
 
 export const EVENT_PROMO_ICONS = ['confetti', 'trophy', 'sparkles'] as const;

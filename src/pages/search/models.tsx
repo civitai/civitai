@@ -18,6 +18,7 @@ import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { useRouter } from 'next/router';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -33,7 +34,6 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
 import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
-import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
@@ -72,7 +72,7 @@ const RenderFilters = () => {
     paidModelsSearchFilterClause(features.paidModelSearchFilter, hidePaid),
     `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
       ', '
-    )}] AND version.baseModel IN [${nsfwRestrictedBaseModels
+    )}] AND version.baseModel IN [${matureRestrictedBaseModels('models')
       .map((model) => `'${model}'`)
       .join(', ')}])`,
   ].filter(isDefined);

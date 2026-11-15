@@ -7,6 +7,7 @@ import {
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
@@ -36,7 +37,9 @@ export const FORCED_LEVEL_MESSAGE =
 // Moderator actions that lock or unlock a model's nsfw flag. Any logged after the system marker makes
 // the lock that stands now the moderator's: an unlock means a later lock (a dispute resolution logs
 // none) is not the one the system set.
-const MODERATOR_NSFW_LOCK_ACTIVITIES = [
+const SYSTEM_USER_ID = constants.system.user.id;
+
+export const MODERATOR_NSFW_LOCK_ACTIVITIES = [
   'lockProperty:nsfw',
   'unlockProperty:nsfw',
   'setSfwOnly',
@@ -52,6 +55,31 @@ const MODERATOR_NSFW_LOCK_ACTIVITIES = [
   'revertPoiAutoHash',
 ];
 
+/** Whether a moderator ruled on the model's nsfw flag after `at`; the primary, as a fresh ruling
+ *  may not have reached the replica. */
+export async function moderatorRuledNsfwSince(
+  modelId: number,
+  at: Date,
+  { alsoRejections = false }: { alsoRejections?: boolean } = {}
+) {
+  const ruling = await dbWrite.modActivity.findFirst({
+    where: {
+      entityType: 'model',
+      entityId: modelId,
+      activity: {
+        in: alsoRejections
+          ? [...MODERATOR_NSFW_LOCK_ACTIVITIES, 'rejectLockReview']
+          : MODERATOR_NSFW_LOCK_ACTIVITIES,
+      },
+      createdAt: { gt: at },
+      // The system's own approval of a dispute is not a moderator's ruling.
+      NOT: { userId: SYSTEM_USER_ID },
+    },
+    select: { id: true },
+  });
+  return !!ruling;
+}
+
 export async function hasSystemNsfwLock(
   modelId: number,
   m: { nsfw: boolean; lockedProperties: string[] | null; meta: unknown }
@@ -60,16 +88,7 @@ export async function hasSystemNsfwLock(
   const at = readSystemNsfwLockAt(m.meta);
   if (!at) return false;
   // Primary: a moderator's lock that has not reached the replica would read as the system's.
-  const moderatorLock = await dbWrite.modActivity.findFirst({
-    where: {
-      entityType: 'model',
-      entityId: modelId,
-      activity: { in: MODERATOR_NSFW_LOCK_ACTIVITIES },
-      createdAt: { gt: at },
-    },
-    select: { id: true },
-  });
-  return !moderatorLock;
+  return !(await moderatorRuledNsfwSince(modelId, at));
 }
 
 // Blocked is a ToS action, not a rating: an `nsfw` bounty stores R|X|XXX|Blocked, so its highest bit would read as Blocked.

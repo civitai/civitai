@@ -1,3 +1,4 @@
+import { omit } from 'lodash-es';
 import { TRPCError } from '@trpc/server';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
@@ -65,6 +66,7 @@ import {
 } from '~/server/services/collection.service';
 import {
   getServableCoverCollectionIds,
+  isCoverWithinBrowsingLevel,
   withServableCovers,
 } from '~/server/services/collection-cover-visibility';
 import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
@@ -78,7 +80,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { requestServableLevels } from '~/server/utils/browsing-level';
+import { relatedPostsBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -113,15 +115,20 @@ export const getAllCollectionsInfiniteHandler = async ({
         userId: true,
         user: { select: userWithCosmeticsSelect },
         nsfwLevel: true,
-        image: { select: imageSelect },
+        image: { select: { ...imageSelect, tosViolation: true } },
         mode: true,
         createdAt: true,
         metadata: true,
       },
       user: ctx.user,
     });
+    const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
     // A cover the viewer may not see falls through to the item covers below.
-    const items = await withServableCovers(rows, ctx.user);
+    const items = (await withServableCovers(rows, ctx.user)).map((row) =>
+      row.image && !isCoverWithinBrowsingLevel(row.image, browsingLevel)
+        ? { ...row, image: null }
+        : row
+    );
 
     let nextCursor: number | undefined;
     if (items.length > input.limit) {
@@ -134,6 +141,7 @@ export const getAllCollectionsInfiniteHandler = async ({
     const collectionImages = await getCollectionCoverImages({
       collectionIds: collectionRequiringImages,
       imagesPerCollection: 10, // Some fallbacks
+      browsingLevel,
     });
 
     // Get Item Counts
@@ -164,7 +172,7 @@ export const getAllCollectionsInfiniteHandler = async ({
           },
           image: item.image
             ? {
-                ...item.image,
+                ...omit(item.image, 'tosViolation'),
                 meta: item.image.meta as ImageMetaProps | null,
                 tags: item.image.tags.map((t) => t.tag),
               }
@@ -207,9 +215,15 @@ export const getAllUserCollectionsHandler = async ({
         : undefined,
     ]);
 
-    if (!counts) return collections;
+    // The cover carries only the fields its client uses; the blocks route reads the service.
+    const clientCollections = collections.map(({ image, ...collection }) => {
+      if (!image) return { ...collection, image };
+      const { poi, minor, acceptableMinor, tosViolation, ...cover } = image;
+      return { ...collection, image: cover };
+    });
+    if (!counts) return clientCollections;
 
-    return collections.map((collection) => ({
+    return clientCollections.map((collection) => ({
       ...collection,
       pendingReviewCount: counts.byCollection[collection.id] ?? 0,
     }));

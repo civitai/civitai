@@ -3,14 +3,22 @@ import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
 export enum FLIPT_FEATURE_FLAGS {
+  // Mirrors the `knightsApp` fliptKey (KNIGHTS_APP_FLIPT_FLAG) and the Knights app's own access flag.
+  // Read here with no user for the server-side cutover from the old in-app game.
+  KNIGHTS_APP = 'knights-of-new-order-app',
   // Mirrors the `articleRatingDispute` fliptKey in feature-flags.service.ts so
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
   RATING_DISPUTE = 'rating-dispute',
+  // Kill switch for minting review sheet batches; off answers 503.
+  REVIEW_BATCHES_MINT = 'review-batches-mint',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
+  // Remix sweep and post scan: an age-check hit goes to the external classifier instead of
+  // blocking. Off when Flipt is unreachable.
+  SHADOW_AGE_PROMPT = 'shadow-age-prompt',
   // Percentage rollout keyed on the file id: the share of files whose mini response leads with
   // the content-hash download url. Each file's url changes once over the ramp. Create the key in
   // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
@@ -23,16 +31,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // clamp). DISABLED LIFTS THE CLAMP: non-moderators search at their own browsing level. A missing
   // key, an evaluation error or no Flipt client all keep the clamp ON (`isNonModClampOn`).
   SEMANTIC_SEARCH_NONMOD_CLAMP = 'semantic-search-nonmod-clamp',
+  // On: semantic searches send the search service the request id and the viewer's levels and
+  // moderator status, and key the candidate cache on the guard's mode and version. Create the key
+  // (disabled) before this deploys: a missing key logs on every eval.
+  SEMANTIC_SEARCH_AUDIT = 'semantic-search-audit',
   // On: the image feed's feed-service call runs behind a circuit breaker, and an anonymous first
   // page the feed fails to answer is served from that pod's last good copy (10 min) instead of a
   // 503 (`~/server/services/feed-primary-degrade`). DEFAULT-OFF: `isFliptSync` returns null for an
   // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
   // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
   FEED_SERVICE_DEGRADE = 'feed-service-degrade',
-  // Off-switch for the image feed's shorter feed-service budget: on puts it back from 2.5s to 5s
-  // (`FEED_PRIMARY_TIMEOUT_MS`). Off, unknown or an uninitialised client keep 2.5s. Global boolean,
-  // read at most once per 5s per process (`createCachedFlagGate`).
-  FEED_SERVICE_TIMEOUT_WIDEN = 'feed-service-timeout-widen',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -118,6 +126,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // means WAIT FOREVER, so such an environment must set a non-zero value before flipping.
   // Failures surface as pg errors, not Prisma P2024/P1008.
   KYSELY_HOT_READS_11 = 'kysely-hot-reads-11',
+  // `userWithCosmeticsSelect` (the user, profile picture and equipped cosmetics) as one Kysely
+  // statement on `model.getSimple` and `resourceReview.getInfinite` (hot-reads-12.db.ts).
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (kyselyRead), or `pgDbWrite`
+  // (kyselyWrite) when the replication-lag check sent `model.getSimple` to the primary. Those
+  // pools' acquire wait is `DATABASE_CONNECTION_TIMEOUT` (default 0); with IS_DATAPACKET set,
+  // getClient (src/server/db/db-helpers.ts) turns 0 into 5s, and without it 0 means WAIT FOREVER,
+  // so such an environment must set a non-zero value before flipping. Failures surface as pg
+  // errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_12 = 'kysely-hot-reads-12',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
@@ -245,6 +263,23 @@ export enum FLIPT_FEATURE_FLAGS {
   // boolean, read at most once per 5s per process. A no-op unless TRPC_FAST_SUPERJSON_SHARED_REFS
   // is on too (the fast walk would bail on the shared users). See `feed-shared-users.ts`.
   IMAGE_FEED_SHARED_USERS = 'image-feed-shared-users',
+  // Mirrors a sampled fraction of image.getImagesAsPostsInfinite requests (input, the headers the
+  // answer depends on, Node's response) to the feed-go shadow comparator, after the response is
+  // written. DEFAULT-OFF. Global boolean, read at most once per 5s per process; also needs
+  // FEED_GO_SHADOW_URL and FEED_GO_SHADOW_SAMPLE_RATE > 0. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW = 'feed-go-shadow',
+  // The same mirror for the public REST `GET /api/v1/images` (the query string, the headers, Node's
+  // JSON body), to feed-go's `/internal/shadow/api/v1/images`. Its own flag so the REST route is
+  // enabled separately from the gallery procedure. DEFAULT-OFF. Global boolean, read at most once
+  // per 5s per process; shares FEED_GO_SHADOW_URL and the rate / in-flight / per-second knobs with
+  // FEED_GO_SHADOW. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_V1_IMAGES = 'feed-go-shadow-v1-images',
+  // Mirrors a sampled fraction of the /api/internal/ping and /api/internal/pulse beacons (the
+  // request, Node's response AND the tracker rows it wrote) to the beacon-go shadow comparator,
+  // after the response is written. DEFAULT-OFF. Global boolean, read at most once per 5s per
+  // process; also needs BEACON_GO_SHADOW_URL and BEACON_GO_SHADOW_SAMPLE_RATE > 0. See
+  // `src/server/beacon/beacon-go-shadow.ts`.
+  BEACON_GO_SHADOW = 'beacon-go-shadow',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -260,6 +295,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off:
   // `evaluateBoolean` throws and `isFliptSync` swallows it, at most once per refresh per process.
   OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
+  // Lets the inbound HTTP instrumentation make the head-sampling decision BEFORE it does any span
+  // work, for a request with no `traceparent`: unsampled requests then run with tracing suppressed
+  // (no span built at all), sampled ones are recorded exactly as before, at the same ratio. See
+  // `src/server/otel-root-presample.ts`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
+  // or an uninitialized client, which keeps today's behaviour. Global boolean, evaluated with no
+  // entity or context, read at most once per 5s per process. A flip reaches each process after the
+  // Flipt config poll, the eval cache and the gate's 5s cache.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off.
+  OTEL_ROOT_PRESAMPLE = 'otel-root-presample',
   // Picks how `getFeatureFlagsLazy` (feature-flags.service.ts) builds the per-request flag
   // object: ON = one small instance of a class whose prototype carries the per-key getters,
   // defined once at module load; OFF = a fresh object with one getter defined per flag key on
@@ -271,6 +316,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // reads as off: `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it,
   // at most once per 5s per process.
   FEATURE_FLAGS_LAZY_PROTO = 'feature-flags-lazy-proto',
+  // `getFeatureFlags` result cache: ON = keep a whole-registry result until the Flipt state version
+  // moves (or 10 min); OFF/unknown = the 10-second cache. Global boolean, read at most once per 5s.
+  //
+  // The key exists in flag state, enabled: false. Were it missing it would read as off:
+  // `evaluateBoolean` throws (skipping the eval cache) and `isFliptSync` swallows it, at most once
+  // per 5s per process.
+  FEATURE_FLAGS_STATE_VERSION_CACHE = 'feature-flags-state-version-cache',
   // Kill switch for BOTH unattended paths that flag a model minor by SHA256
   // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
   // returns false for an unknown flag or an unreachable Flipt, and for a path
@@ -328,6 +380,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
   // version declares (that would fail open). See `storage-hooks.ts`.
   APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
+  // Global brake. Off or absent hides all App Block media; see `isBlockMediaServing`
+  // in `block-media-serving.ts` for what happens when Flipt is unreachable.
+  APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
@@ -364,6 +419,15 @@ export enum FLIPT_FEATURE_FLAGS {
   //
   // Add the key (enabled: false) to flag state before flipping it.
   PLACEMENT_SPACE_READ_CACHE = 'placement-space-read-cache',
+  // ON keeps the shared, viewer-independent home block entry (the one `getHomeBlockCached` reads
+  // from Redis) in a per-process LRU for 10s, so `homeBlock.getHomeBlock` skips the Redis read and
+  // its decode on a hit. The row read, the viewer gates and the per-row identity still run on
+  // every request. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized
+  // client, which keeps the Redis-only path. Global boolean, read at most once per 5s per process.
+  // See `home-block-cache.service.ts`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key reads as off.
+  HOME_BLOCK_SERVER_CACHE = 'home-block-server-cache',
   // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
   // that `buildFliptContext` emits from the user's opt-in setting, so background paths
   // (no request context) can gate on the same flag the request path does.
@@ -537,11 +601,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // state (enabled: false) before this code serves traffic.
   SSR_CLIENT_ONLY_SECTIONS = 'ssr-client-only-sections',
 
-  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
-  // or unreachable: every link answers 404 and no link is minted.
+  // Download links (`/api/download/l/<id>`, the mint at `/api/v1/download-links`, and the provider
+  // links mini hands out on `?downloadLink=1`). Off, unknown or unreachable: every link answers 404
+  // and no link is minted.
   //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
-  // must exist in flag state (enabled: false) before this code serves traffic.
+  // 🔴 BOOLEAN ONLY, no entityId, with context `mode`: `api` (the mint route and its links) or
+  // `provider` (mini's links), so a rule can turn on one without the other. The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
   DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
   // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
@@ -619,6 +685,8 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
+  // The App Block media brake: a flip must reach the next media fetch.
+  FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
 ]);
 
 // 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.
@@ -701,6 +769,11 @@ export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.
 export const getFliptCacheStats = flipt.getCacheStats;
+// Moves whenever the flag state this process evaluates against may have changed (see the package's
+// `getStateVersion`), and the eval-cache TTL that bounds how long evaluations cached before such a
+// move keep answering. For `getFeatureFlags`' version-keyed result cache (feature-flags.service.ts).
+export const getFliptStateVersion = flipt.getStateVersion;
+export const getFliptEvalCacheTtlMs = (): number => flipt.config.evalCacheTtlMs;
 // The underlying SDK client (or `null` before init), for a short-lived process that must
 // `close()` it on the way out — its config poller is a timer that otherwise keeps the
 // process alive. `getClientSync` closes over the instance (no `this`), like the above.

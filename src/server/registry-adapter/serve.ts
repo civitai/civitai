@@ -15,6 +15,7 @@
  *     traffic.
  *   - A consumer that keeps the socket's buffer full for {@link SLOW_CONSUMER_MS} is ended with
  *     `slow_consumer`.
+ *   - A subscription over a cap on open subscriptions (`limits.ts`) is 503 `unavailable`.
  *   - Auth (`auth.ts`): the token is the `Authorization: Bearer` header; without one the request
  *     is anonymous. `invalid_token` before the stream is 401 with its JSON body and a
  *     `WWW-Authenticate: Bearer error=…` header; after, an `error` event, at the token's expiry or
@@ -36,8 +37,11 @@ import {
   watchPrincipal,
   wwwAuthenticate,
 } from '~/server/registry-adapter/auth';
+import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
+import { clientAddress, regionRestricted } from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
   SLOW_CONSUMER_MS,
@@ -185,6 +189,15 @@ export type ServeOptions = {
   resource?: ResourceConfig;
   /** How often an open stream's token is re-verified (`auth.ts`). */
   tokenRecheckMs?: number;
+  /**
+   * The caps on open subscriptions (`limits.ts`), shared with the gRPC binding. Without it, none.
+   */
+  limiter?: SubscriptionLimiter;
+  /**
+   * Whether a request comes from a region the site restricts to SFW content: the site's own rule
+   * (`request-origin.ts`) unless replaced.
+   */
+  regionRestricted?: (origin: RequestOrigin) => boolean;
 };
 
 export function handleRequest(
@@ -204,6 +217,7 @@ export function handleRequest(
     }
     let stream: ReturnType<typeof openStream> | undefined;
     let unwatch: (() => void) | undefined;
+    let slot: SubscriptionSlot | undefined;
     try {
       const request = subscribeRequest({
         schema: url.searchParams.get('schema'),
@@ -211,7 +225,22 @@ export function handleRequest(
         urns: url.searchParams.getAll('urn'),
         filter: url.searchParams.get('filter'),
       });
-      const principal = await authenticate(lastHeader(req.headers.authorization), opts.verifyToken);
+      const origin: RequestOrigin = {
+        headers: req.headers,
+        // Optional: a request handed to `handleRequest` directly need not carry a socket.
+        remoteAddress: req.socket?.remoteAddress,
+      };
+      // The total and per-address caps before the token is verified; per token once it is.
+      slot = opts.limiter?.acquire(clientAddress(origin));
+      const restricted = opts.regionRestricted ?? regionRestricted;
+      const principal = await authenticate(
+        lastHeader(req.headers.authorization),
+        opts.verifyToken,
+        {
+          regionRestricted: () => restricted(origin),
+        }
+      );
+      slot?.claim(principal.subject);
       const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).
@@ -229,6 +258,7 @@ export function handleRequest(
       sendError(res, err, opts.onError, metadataUrl);
     } finally {
       unwatch?.();
+      slot?.release();
     }
   };
 }

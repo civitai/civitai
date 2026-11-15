@@ -19,7 +19,7 @@ import type { SessionRegistryRedis } from './session-registry';
  *
  * What it does NOT know: a marker written while this process never read it. It is a record of what was seen
  * here, not a replica, so with the store down an unseen revocation is still not applied. The caller decides
- * what to do about that (today: allow, and report it).
+ * what to do about that.
  *
  * Bounded by size: at most `maxEntries` entries, least recently used evicted first. There is no time-based
  * expiry (see REVOCATION_MARKER_CACHE_MAX_ENTRIES). Recording is synchronous and in memory; the wrapped client

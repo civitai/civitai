@@ -201,12 +201,18 @@ const GUARD_CALL_SITE_LEDGER = [
   // guard through it and nothing else — the post preamble's shape, router-local for the same
   // reason.
   'authorizeBlockReactionRequest',
+  // The batch-upload preamble: the three `*MediaUploadBatch*` procedures reach the guard through
+  // it and nothing else — the post preamble's shape, router-local for the same reason.
+  'authorizeMediaUploadBatchRequest',
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
   'estimateWorkflowBatch',
   'getImagesByIds',
+  'getWorkflowMedia',
   'listMyWorkflows',
+  // PERSIST_GENERATION_SOURCE: the publish preamble, spelled inline.
+  'persistGenerationSource',
   'pollWorkflow',
   'publishGenerationOutputs',
   'queryAppWorkflows',
@@ -232,6 +238,7 @@ const BRIDGE_INPUT_LEDGER = [
   // `blockEstimateBatchInputSchema`, imported from the workflow schema.
   'estimateWorkflowBatch',
   'getImagesByIds',
+  'getWorkflowMedia',
   'getMyBuzzAccounts',
   'getMyBuzzBalance',
   'getMyBuzzTransactions',
@@ -261,6 +268,12 @@ const BRIDGE_INPUT_LEDGER = [
   // `authorizeBlockReactionRequest`, above.
   'setReactionFromApp',
   'getReactionsForApp',
+  // The three steps of OPEN_MEDIA_UPLOAD_BATCH, via `authorizeMediaUploadBatchRequest`, above.
+  'startMediaUploadBatch',
+  'presignMediaUploadBatchItem',
+  'recordMediaUploadBatchItem',
+  // PERSIST_GENERATION_SOURCE (a private generation source); calls the guard directly.
+  'persistGenerationSource',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',

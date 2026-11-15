@@ -27,6 +27,7 @@ describe('the content gate', () => {
       filter: { gate } as CandidateFilter,
       offset: 0,
       limit: 10,
+      viewer: { isModerator: false },
     });
 
   const challenge: ViewerGate = {
@@ -67,6 +68,19 @@ describe('the content gate', () => {
   it('sends a query that carries the browsing level', async () => {
     await search('articles', { kind: 'level', nsfwLevels: [1, 2] });
     expect(sent[0].must).toContainEqual({ key: 'nsfwLevel', match: { any: [1, 2] } });
+  });
+
+  it("requires a 3D model's thumbnail level too, and drops a point written without it", async () => {
+    await search('models3d', { kind: 'level', nsfwLevels: [1] });
+    // Qdrant's must/match-any, applied to stored payloads: a missing field matches nothing.
+    const served = (payload: Record<string, number[]>) =>
+      (sent[0].must as { key: string; match: { any: number[] } }[]).every((c) =>
+        (payload[c.key] ?? []).some((v) => c.match.any.includes(v))
+      );
+    expect(served({ nsfwLevel: [1], thumbnailNsfwLevel: [1] })).toBe(true);
+    // A PG model whose thumbnail was re-rated R.
+    expect(served({ nsfwLevel: [1], thumbnailNsfwLevel: [4] })).toBe(false);
+    expect(served({ nsfwLevel: [1] })).toBe(false);
   });
 
   it('requires both levels of a challenge, and keeps user challenges to their domain', async () => {

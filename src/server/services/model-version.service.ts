@@ -31,7 +31,6 @@ import {
   constants,
   isNonCommercialBaseModel,
   notCommerciallyAvailableMessage,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -168,10 +167,11 @@ import {
   getOrchestratorVersionAirs,
 } from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import { addPostImage, bustCachesForPosts, createPost } from '~/server/services/post.service';
 import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
+  handleLogError,
   runClickHouseRead,
   sleep,
   throwAuthorizationError,
@@ -214,14 +214,17 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   getBaseModelConfig,
   getBaseModelsByGroup,
   getEcosystemTurboSettings,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
 import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
@@ -878,17 +881,13 @@ export const upsertModelVersion = async ({
   }
 
   // Validate NSFW + restricted base model combination
-  if (
-    model.nsfw &&
-    data.baseModel &&
-    nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
-  ) {
+  if (model.nsfw && data.baseModel && isMatureRestricted(data.baseModel, 'models')) {
     throw throwBadRequestError(
       `NSFW models cannot use base models with license restrictions. The base model "${
         data.baseModel
-      }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`
+      }" is restricted for NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`
     );
   }
 
@@ -1958,16 +1957,16 @@ export const publishModelVersionsWithEarlyAccess = async ({
     if (
       version.model.nsfw &&
       version.baseModel &&
-      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+      isMatureRestricted(version.baseModel, 'models')
     ) {
       throw throwBadRequestError(
         `Cannot publish NSFW model version "${
           version.name
         }" with restricted base model. The base model "${
           version.baseModel
-        }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-          ', '
-        )}`
+        }" does not permit NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+          'models'
+        ).join(', ')}`
       );
     }
 
@@ -2117,14 +2116,14 @@ export const publishModelVersionById = async ({
   if (
     currentVersion.model.nsfw &&
     currentVersion.baseModel &&
-    nsfwRestrictedBaseModels.includes(currentVersion.baseModel as BaseModel)
+    isMatureRestricted(currentVersion.baseModel, 'models')
   ) {
     throw throwBadRequestError(
       `Cannot publish NSFW model version with restricted base model. The base model "${
         currentVersion.baseModel
-      }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`
+      }" does not permit NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`
     );
   }
 
@@ -4153,6 +4152,9 @@ export const mergeVersions = async ({
     },
     { timeout: 60000 }
   );
+
+  const restricted = await flagImagesOnRestrictedVersions({ modelVersionIds: [targetVersionId] });
+  if (restricted.postIds.length) await bustCachesForPosts(restricted.postIds).catch(handleLogError);
 
   // Post-transaction cache busting
   const allVersionIds2 = [targetVersionId, ...sourceVersionIds];

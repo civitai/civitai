@@ -235,6 +235,7 @@ import {
   type ShowcaseHat,
 } from '~/server/events/showcase-hat';
 import { asJsonbObject, asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
@@ -349,7 +350,7 @@ export async function getUsersWithSearch({
     .map(({ deletedAt, profilePicture, image, ...user }) => ({
       ...user,
       avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? NsfwLevel.PG,
+      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
       meta: null,
     }))
     .slice(0, limit);
@@ -431,9 +432,9 @@ export const getUsers = async ({
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 
-  return result.map(({ avatarNsfwLevel, ...user }) => ({
+  return result.map((user) => ({
     ...user,
-    avatarNsfw: getNsfwLevelDeprecatedReverseMapping(avatarNsfwLevel),
+    avatarNsfw: getNsfwLevelDeprecatedReverseMapping(user.avatarNsfwLevel),
   }));
 };
 
@@ -1977,7 +1978,9 @@ export const removeAllContent = async ({
       afterCommentsV3Deleted(await dbWrite.$transaction((tx) => deleteCommentsV3(tx, batch)));
     }
     await dbWrite.$executeRaw`DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
-    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
+    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE id IN (${owned(
+      'Post'
+    )} AND NOT ${postHoldsHeldTextSql(Prisma.raw('o.id'))})`;
     const formerOwnerHeld = heldModelIdsSql(
       Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
       markerView
@@ -3806,31 +3809,43 @@ export async function cosmeticStatus({ id, userId }: { id: number; userId: numbe
   };
 }
 
+/** The user may not equip this cosmetic, and asking again will not change that. */
+export class CosmeticEquipRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CosmeticEquipRefusedError';
+  }
+}
+
 export async function equipCosmetic({
   cosmeticId,
   userId,
+  readOwnershipFromPrimary = false,
 }: {
   cosmeticId: number | number[];
   userId: number;
+  /** For a caller that equips right after granting: the replica may not have the grant yet. */
+  readOwnershipFromPrimary?: boolean;
 }) {
   if (!Array.isArray(cosmeticId)) cosmeticId = [cosmeticId];
   if (!cosmeticId.length) return;
 
-  const userCosmetics = await dbRead.userCosmetic.findMany({
+  const userCosmetics = await (readOwnershipFromPrimary ? dbWrite : dbRead).userCosmetic.findMany({
     where: { userId, cosmeticId: { in: cosmeticId } },
     select: { obtainedAt: true, cosmetic: { select: { type: true, data: true } } },
   });
-  if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
+  if (!userCosmetics.length) throw new CosmeticEquipRefusedError("You don't have that cosmetic");
   // An event decoration is placed on content, never worn by the user: equipped here it would show
   // on every user-level read, none of which applies the event's preview gate.
   if (userCosmetics.some((x) => isEventDecorationData(x.cosmetic.data)))
-    throw new Error('Event decorations are placed on content, not equipped');
+    throw new CosmeticEquipRefusedError('Event decorations are placed on content, not equipped');
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
   // Stickers are owned, not equipped — everything you own is already in the
   // picker, so equipping has nothing to mean. Guarded here and not only in the
   // UI so an equipped sticker can't exist for the buckets to have to explain.
-  if (types.includes(CosmeticType.Sticker)) throw new Error('Stickers cannot be equipped');
+  if (types.includes(CosmeticType.Sticker))
+    throw new CosmeticEquipRefusedError('Stickers cannot be equipped');
   if ((await getWithheldCosmeticIds(cosmeticId, dbWrite)).size)
     throw throwBadRequestError(WITHHELD_COSMETIC_ERROR);
 

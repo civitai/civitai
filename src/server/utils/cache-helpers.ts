@@ -143,7 +143,7 @@ function createCodecCopier() {
   };
 }
 
-function createSingleFlight() {
+export function createSingleFlight() {
   const inFlight = new Map<
     string,
     { flight: Promise<unknown>; copy: ReturnType<typeof createCodecCopier> }

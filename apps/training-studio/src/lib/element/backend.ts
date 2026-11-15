@@ -14,6 +14,7 @@ import type {
 import { UploadError } from '$lib/upload';
 import { AutoLabelRefusedError } from '$lib/autolabel-errors';
 import { computeFromPrices } from '$lib/pricing-core';
+import { KOHYA_FLAG_KEY } from '$lib/data/trainingModels';
 import * as orch from '$lib/orchestrator-core';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 import * as train from '$lib/train-core';
@@ -79,8 +80,9 @@ export interface StudioElementHost {
     supportUrl?: string;
     /** The host's dataset storage policy, linked beside the dataset-sharing choice. */
     dataPolicyUrl?: string;
-    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see — the embed's stand-in
-     *  for the shell's server-side `allowedModelFlags`. Omitted => every gated model stays hidden. */
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see, plus `KOHYA_FLAG_KEY`
+     *  when they may train with Kohya — the embed's stand-in for the shell's server-side
+     *  `allowedModelFlags`. Omitted => every gated model, and Kohya, stays hidden. */
     enabledModelFlags?: string[];
   };
   hrefFor(loc: StudioLocation): string;
@@ -156,10 +158,12 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
     return raw ? parseServiceStatus(raw) : null;
   };
+  const kohyaAllowed = () => host.config.enabledModelFlags?.includes(KOHYA_FLAG_KEY) === true;
   const submitOpts = async (): Promise<train.SubmitOptions> => ({
     // No signal callbacks: the element runs on polling alone (signalsEndpoint is null there).
     traceMode: host.config.traceMode ?? 'events',
     status: await hostStatus().catch(() => null),
+    kohyaAllowed: kohyaAllowed(),
   });
 
   return {
@@ -262,7 +266,10 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     getFromPrices: () => call((client) => computeFromPrices(client)),
 
-    quoteRun: (input) => call((client) => orch.trainingWhatIf(client, input)),
+    quoteRun: (input) =>
+      input.engine === 'kohya' && !kohyaAllowed()
+        ? Promise.reject(new Error(train.KOHYA_UNAVAILABLE))
+        : call((client) => orch.trainingWhatIf(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
 

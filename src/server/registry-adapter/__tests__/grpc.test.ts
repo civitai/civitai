@@ -190,8 +190,7 @@ describe('the gRPC binding', () => {
     expect(res.error).toEqual({ code: grpc.status.INVALID_ARGUMENT, reason: 'bad_request' });
   });
 
-  // Rule 6: a filter this source will not evaluate is refused, never ignored. Before, both were
-  // streamed unfiltered (the upsert, then live) with no error.
+  // Rule 6: a filter this source will not evaluate is refused, never ignored.
   it.each([
     ['a pattern', '{"properties":{"slug":{"pattern":"^zzz"}}}'],
     ['a $ref', '{"$ref":"#/x","x":{"properties":{"slug":{"const":"zzz"}}}}'],
@@ -205,7 +204,7 @@ describe('the gRPC binding', () => {
   });
 
   // Rule 4: `urns` outside this registry's namespace are a request it can never serve anything
-  // for. Before, this was an empty snapshot and `live`, with the stream left open.
+  // for.
   it('🔴 urns all of another namespace are end first, and nothing else', async () => {
     const res = await viaGrpc(catalog([[ent('alpha', 'r1')]]), {
       urns: ['urn:huggingface:black-forest-labs/FLUX.3-dev@a1b2c3d'],
@@ -230,7 +229,6 @@ describe('🔴 the method answers at the spec path only', () => {
     expect(REGISTRY_SERVICE.Subscribe.path).toBe('/registry.v1.Registry/Subscribe');
   });
 
-  // Before, only `/Source/Subscribe` was registered: the spec path was UNIMPLEMENTED.
   it('the spec path: a snapshot, then live', async () => {
     const res = await viaGrpc(
       catalog([[ent('alpha', 'r1')]]),
@@ -243,7 +241,7 @@ describe('🔴 the method answers at the spec path only', () => {
     expect(res.events[0]).toEqual({ type: 'upsert', entity: ent('alpha', 'r1'), cursor: '' });
   });
 
-  // The earlier spec's path is not served; before, it was the only one that was.
+  // The earlier spec's path is not served.
   it.each([[LEGACY_PATH], ['/Nope/Subscribe']])(
     '%s is UNIMPLEMENTED, with no event',
     async (path) => {

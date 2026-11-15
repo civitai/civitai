@@ -4,6 +4,7 @@ import {
   type TrainingBridgeGateInput,
 } from '~/components/AppBlocks/runTrainingGate';
 import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import { capitalize } from '~/utils/string-helpers';
 
 /**
  * The decision + copy layer for the `RUN_CONFIRMED_STEP` host bridge — ONE
@@ -54,6 +55,12 @@ export type ConfirmedStepQuotePreview = {
   dailyLimit: { limit: number; spentToday: number; remaining: number } | null;
   /** TRUE when the job exceeds what remains of `dailyLimit` today. */
   exceedsDailyLimit: boolean;
+  /**
+   * The Buzz pools the job is paid from, in the order they are tried, when the block
+   * picked one (`accountType`); `null` with no pick. Absent from a server that
+   * predates picks on steps.
+   */
+  fundingOrder?: string[] | null;
 };
 
 /**
@@ -155,6 +162,8 @@ export type ConfirmedStepConsentCopy = {
   dailyLimitLine: string | null;
   /** Present only when the viewer's balance is known to be short. */
   shortfallLine: string | null;
+  /** Which pool pays first, when the block picked one; `null` with no pick. */
+  fundingLine: string | null;
   confirmLabel: string;
 };
 
@@ -182,8 +191,22 @@ export function buildConfirmedStepConsentCopy({
       preview.shortfall != null && preview.shortfall > 0
         ? `You need ${buzz(preview.shortfall)} more Buzz to run this job.`
         : null,
+    fundingLine: fundingLine(preview.fundingOrder),
     confirmLabel: `Run for ${buzz(preview.total)} Buzz`,
   };
+}
+
+/**
+ * "Paid from Yellow Buzz first, then Blue." — the server's order, named the way the
+ * generator's cost popover names pools (`capitalize(type)` + " Buzz"). `null` with no
+ * pick, so a dialog for an unpicked job is unchanged.
+ */
+function fundingLine(order: string[] | null | undefined): string | null {
+  if (!order || order.length === 0) return null;
+  const [first, ...rest] = order.map((type) => capitalize(type));
+  return rest.length === 0
+    ? `Paid from ${first} Buzz.`
+    : `Paid from ${first} Buzz first, then ${rest.join(', then ')}.`;
 }
 
 export type ConfirmedStepDailyLimitCopy = { title: string; body: string; linkLabel: string };

@@ -30,6 +30,11 @@ import {
   listHeldItems,
 } from '~/server/services/item.service';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
+import {
+  assertCreatorBoxSellable,
+  payCreatorBoxSaleAfterGrant,
+  singleColorOf,
+} from '~/server/services/creator-box-payout.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, lockItemHolder } from '~/server/services/item-holder-lock';
 import {
   assertConfirmedPrice,
@@ -217,14 +222,70 @@ async function markLeftForUser<T extends { cosmeticId: number; rewardDefinitionI
 }
 
 /**
+ * For each holding, how many of its box's catalog entries for the holder's `team` are still left
+ * for them, by `markLeftForUser`'s rule (owned from any source, or drawn from this box, is not
+ * left). Two reads for all the holdings together, so a job checking many holders reads per page,
+ * not per holder.
+ */
+export async function countLeftForHolders(
+  client: Prisma.TransactionClient,
+  holdings: {
+    boxDefinitionId: number;
+    userId: number;
+    team: string | undefined;
+    catalog: BoxCatalogEntry[];
+  }[]
+): Promise<number[]> {
+  if (!holdings.length) return [];
+  const userIds = [...new Set(holdings.map((h) => h.userId))];
+  const boxIds = [...new Set(holdings.map((h) => h.boxDefinitionId))];
+  const cosmeticIds = [...new Set(holdings.flatMap((h) => h.catalog.map((e) => e.cosmeticId)))];
+  const owned = cosmeticIds.length
+    ? await client.$queryRaw<{ userId: number; cosmeticId: number }[]>`
+        SELECT DISTINCT "userId", "cosmeticId" FROM "UserCosmetic"
+        WHERE "userId" = ANY(${userIds}::int[]) AND "cosmeticId" = ANY(${cosmeticIds}::int[])`
+    : [];
+  const drawn = await client.$queryRaw<
+    { userId: number; boxDefinitionId: number; rewardDefinitionId: number }[]
+  >`
+    SELECT DISTINCT "userId", "boxDefinitionId", "rewardDefinitionId" FROM "BoxOpening"
+    WHERE "userId" = ANY(${userIds}::int[]) AND "boxDefinitionId" = ANY(${boxIds}::int[])
+      AND "rewardType" = ${ITEM_TYPE.cosmetic}`;
+  const ownedKeys = new Set(owned.map((o) => `${o.userId}:${o.cosmeticId}`));
+  const drawnKeys = new Set(
+    drawn.map((d) => `${d.userId}:${d.boxDefinitionId}:${d.rewardDefinitionId}`)
+  );
+  return holdings.map(
+    ({ boxDefinitionId, userId, team, catalog }) =>
+      catalog.filter(
+        (entry) =>
+          isForTeam(entry.team, team) &&
+          !ownedKeys.has(`${userId}:${entry.cosmeticId}`) &&
+          !drawnKeys.has(`${userId}:${boxDefinitionId}:${entry.rewardDefinitionId}`)
+      ).length
+  );
+}
+
+/**
  * Everything this box holds for this user, read live: its enabled contents for their `team`, each
  * marked whether it is still `left` for them.
  */
 export async function getBoxContentsForUser(
   client: Prisma.TransactionClient,
-  { boxDefinitionId, userId, team }: { boxDefinitionId: number; userId: number; team?: string }
+  {
+    boxDefinitionId,
+    userId,
+    team,
+    catalog,
+  }: {
+    boxDefinitionId: number;
+    userId: number;
+    team?: string;
+    /** This box's `getBoxCatalog`, when the caller already read it. */
+    catalog?: BoxCatalogEntry[];
+  }
 ): Promise<BoxContentForUser[]> {
-  const forTeam = (await getBoxCatalog(client, boxDefinitionId)).flatMap(
+  const forTeam = (catalog ?? (await getBoxCatalog(client, boxDefinitionId))).flatMap(
     ({ team: cosmeticTeam, ...entry }) => (isForTeam(cosmeticTeam, team) ? [entry] : [])
   );
   return markLeftForUser(client, { boxDefinitionId, userId }, forTeam);
@@ -236,7 +297,7 @@ export async function getBoxContentsForUser(
  */
 export async function getBoxPoolForUser(
   client: Prisma.TransactionClient,
-  params: { boxDefinitionId: number; userId: number; team?: string }
+  params: Parameters<typeof getBoxContentsForUser>[1]
 ): Promise<BoxPoolEntry[]> {
   const contents = await getBoxContentsForUser(client, params);
   return contents.filter((entry) => entry.left).map(({ left: _left, ...entry }) => entry);
@@ -368,6 +429,9 @@ export const clearBoxCatalogDisplayCache = () => {
   servedVersions.clear();
 };
 
+/** Who sells a creator's pack. */
+export type BoxSeller = { id: number; username: string | null };
+
 export type MysteryBoxView = {
   boxDefinitionId: number;
   name: string;
@@ -417,6 +481,7 @@ export type MysteryBoxView = {
   }[];
   /** The viewer's unopened boxes of it, as `Item.id` strings. */
   heldBoxItemIds: string[];
+  seller?: BoxSeller;
 };
 
 // Archived boxes too: one still held still opens.
@@ -583,6 +648,52 @@ export type MysteryBoxCatalogEntry = {
 };
 
 /**
+ * The catalog entries for boxes on sale: each box with its tiers and display contents. A box with no
+ * live listing is skipped. `withPack` adds the bundle listing; creator packs have none.
+ */
+export async function buildCatalogEntries(
+  boxes: BoxDefinitionRow[],
+  { teams, withPack }: { teams: string[]; withPack: boolean }
+): Promise<MysteryBoxCatalogEntry[]> {
+  const boxIds = boxes.map((box) => box.id);
+  const [{ onSale, packOnSale }, tiers] = await Promise.all([
+    readBoxListings(boxIds),
+    getBoxTiers(boxIds),
+  ]);
+  const entries = await Promise.all(
+    boxes.map(async (box): Promise<MysteryBoxCatalogEntry | null> => {
+      const listing = onSale(box.id);
+      if (!listing) return null;
+      const catalog = await getBoxCatalogForDisplay(box);
+      const pack = withPack ? packOnSale(box.id) : undefined;
+      return {
+        boxDefinitionId: box.id,
+        name: box.name,
+        description: box.description,
+        unitAmount: listing.unitAmount,
+        pack: pack
+          ? {
+              unitAmount: pack.unitAmount,
+              size: pack.pack.size,
+              guaranteedTierIds: pack.pack.guaranteedTierIds,
+            }
+          : null,
+        tiers: tiers
+          .filter((tier) => tier.boxDefinitionId === box.id)
+          .map(({ boxDefinitionId: _box, ...tier }) => tier),
+        contents: catalog.map(({ contentId, tierId, team }) => ({
+          contentId,
+          tierId,
+          team: team ?? null,
+        })),
+        teams,
+      };
+    })
+  );
+  return entries.filter((entry): entry is MysteryBoxCatalogEntry => entry !== null);
+}
+
+/**
  * An event's mystery boxes on sale now, for a viewer not on a team (signed out, or not joined): the
  * box and its contents by tier, for base odds. It reads no team, so it places no one and shows no
  * pool of anyone's; the odds page's gates apply (flag, country, the event open to them), and the
@@ -605,73 +716,23 @@ export async function getMysteryBoxCatalogForEvent({
 
   const boxes = await readEventBoxes(event, [ITEM_DEFINITION_STATUS.published]);
   if (!boxes.length) return [];
-  const boxIds = boxes.map((box) => box.id);
-  const [{ onSale, packOnSale }, tiers] = await Promise.all([
-    readBoxListings(boxIds),
-    getBoxTiers(boxIds),
-  ]);
-
-  const views = await Promise.all(
-    boxes.map(async (box): Promise<MysteryBoxCatalogEntry | null> => {
-      const listing = onSale(box.id);
-      if (!listing) return null;
-      const catalog = await getBoxCatalogForDisplay(box);
-      const pack = packOnSale(box.id);
-      return {
-        boxDefinitionId: box.id,
-        name: box.name,
-        description: box.description,
-        unitAmount: listing.unitAmount,
-        pack: pack
-          ? {
-              unitAmount: pack.unitAmount,
-              size: pack.pack.size,
-              guaranteedTierIds: pack.pack.guaranteedTierIds,
-            }
-          : null,
-        tiers: tiers
-          .filter((tier) => tier.boxDefinitionId === box.id)
-          .map(({ boxDefinitionId: _box, ...tier }) => tier),
-        contents: catalog.map(({ contentId, tierId, team }) => ({
-          contentId,
-          tierId,
-          team: team ?? null,
-        })),
-        teams: [...access.teams],
-      };
-    })
-  );
-  return views.filter((view): view is MysteryBoxCatalogEntry => view !== null);
+  return buildCatalogEntries(boxes, { teams: [...access.teams], withPack: true });
 }
 
 /**
- * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
- * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
- * the event is closed to them; once it ends, only the boxes they hold.
+ * The viewer's view of each box: on sale (only while `playable` and published), or held. A box that
+ * is neither is skipped. `withPack` adds the bundle listing; creator packs have none.
  */
-export async function getMysteryBoxesForEvent({
-  userId,
-  isModerator,
-  event,
-  mysteryBoxEnabled,
-  countryCode,
-}: {
-  userId: number;
-  isModerator?: boolean;
-  event: string;
-  mysteryBoxEnabled: boolean | undefined;
-  countryCode: string | null | undefined;
-}): Promise<MysteryBoxView[]> {
-  if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
-  // The event's own gate first: a box's contents are not shown before the event is open to them.
-  const viewer = await getEventBoxViewer(event, { id: userId, isModerator });
-  if (!viewer) return [];
-  const { team, playable } = viewer;
-
-  const boxes = await readEventBoxes(event, SHOWN_BOX_STATUSES);
-  if (!boxes.length) return [];
+export async function buildBoxViews(
+  boxes: BoxDefinitionRow[],
+  {
+    userId,
+    team,
+    playable,
+    withPack,
+  }: { userId: number; team: string | undefined; playable: boolean; withPack: boolean }
+): Promise<MysteryBoxView[]> {
   const boxIds = boxes.map((box) => box.id);
-
   const [{ onSale, packOnSale }, held, tiers] = await Promise.all([
     readBoxListings(boxIds),
     listHeldItems(dbRead, { userId, itemDefinitionIds: boxIds }),
@@ -682,7 +743,7 @@ export async function getMysteryBoxesForEvent({
     boxes.map(async (box): Promise<MysteryBoxView | null> => {
       const sold = playable && box.status === ITEM_DEFINITION_STATUS.published;
       const listing = sold ? onSale(box.id) : undefined;
-      const pack = sold ? packOnSale(box.id) : undefined;
+      const pack = sold && withPack ? packOnSale(box.id) : undefined;
       const heldBoxItemIds = held
         .filter((item) => item.itemDefinitionId === box.id)
         .map((item) => item.id.toString());
@@ -715,6 +776,35 @@ export async function getMysteryBoxesForEvent({
     })
   );
   return views.filter((view): view is MysteryBoxView => view !== null);
+}
+
+/**
+ * An event's mystery boxes as the viewer sees them: each box on sale, or that they hold, with its
+ * tiers and what it holds for their team. Nothing when boxes are off, hidden in their country, or
+ * the event is closed to them; once it ends, only the boxes they hold.
+ */
+export async function getMysteryBoxesForEvent({
+  userId,
+  isModerator,
+  event,
+  mysteryBoxEnabled,
+  countryCode,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  event: string;
+  mysteryBoxEnabled: boolean | undefined;
+  countryCode: string | null | undefined;
+}): Promise<MysteryBoxView[]> {
+  if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return [];
+  // The event's own gate first: a box's contents are not shown before the event is open to them.
+  const viewer = await getEventBoxViewer(event, { id: userId, isModerator });
+  if (!viewer) return [];
+  const { team, playable } = viewer;
+
+  const boxes = await readEventBoxes(event, SHOWN_BOX_STATUSES);
+  if (!boxes.length) return [];
+  return buildBoxViews(boxes, { userId, team, playable, withPack: true });
 }
 
 // How long a purchase still settling counts against what is left for its buyer, from its last
@@ -809,6 +899,7 @@ export async function purchaseMysteryBox({
   payWith = 'default',
   buzzType,
   mysteryBoxEnabled,
+  creatorMysteryPacksEnabled,
   countryCode,
 }: {
   userId: number;
@@ -820,6 +911,7 @@ export async function purchaseMysteryBox({
   payWith?: 'default' | 'blue-first';
   buzzType: BuzzSpendType;
   mysteryBoxEnabled: boolean | undefined;
+  creatorMysteryPacksEnabled?: boolean;
   countryCode: string | null | undefined;
 }): Promise<MysteryBoxPurchaseResult> {
   const shopItemId = shopItem.id;
@@ -870,8 +962,14 @@ export async function purchaseMysteryBox({
       throw throwBadRequestError('This box is not available');
     if (!box || box.type !== ITEM_TYPE.box || box.status !== ITEM_DEFINITION_STATUS.published)
       throw throwBadRequestError('This box is not available');
-    // A creator's pack isn't sold until its sale pays the creator; approving one doesn't open it.
-    if (box.sellerId != null) throw throwBadRequestError('This box is not available');
+    if (box.sellerId != null)
+      await assertCreatorBoxSellable({
+        sellerId: box.sellerId,
+        buyerId: userId,
+        enabled: creatorMysteryPacksEnabled,
+        isPack: !!pack,
+        buzzType,
+      });
 
     if (isMysteryBoxBlockedIn(countryCode, await getMysteryBoxBlockedRegions()))
       throw throwBadRequestError('Mystery boxes are not available in your region');
@@ -997,8 +1095,9 @@ export async function purchaseMysteryBox({
   );
   if (!transaction.transactionCount) throw new Error('There was an error creating the transaction');
 
+  let items: { id: bigint; itemDefinitionId: number }[];
   try {
-    const items = await dbWrite.$transaction(async (tx) => {
+    items = await dbWrite.$transaction(async (tx) => {
       // The lock comes first here, unlike the shelf grant: the availability check counts this claim
       // as pending until the box exists, so the claim turning paid and the box appearing must be
       // seen together by anyone holding the lock. A concurrent grant of the same claim waits on the
@@ -1034,7 +1133,6 @@ export async function purchaseMysteryBox({
         );
       return granted;
     });
-    return purchaseResult(items);
   } catch (error) {
     // With a client key, a unique violation here means a request with the same key recorded this
     // purchase first; the prefix is shared with it, so it is not refunded from here.
@@ -1055,6 +1153,21 @@ export async function purchaseMysteryBox({
     );
     throw throwBadRequestError('Failed to purchase box');
   }
+
+  // Outside the grant's try: a payout failure must not refund the buyer. Paid in the colour the
+  // charge came from, which a resumed claim may not share with this request; a charge from several
+  // accounts is left to the sweep, which refuses it for a person to pay.
+  const chargedColor = singleColorOf(transaction.transactionIds);
+  if (box.sellerId != null && chargedColor)
+    await payCreatorBoxSaleAfterGrant({
+      buzzTransactionId: transactionId,
+      buyerId: userId,
+      sellerId: box.sellerId,
+      unitAmount,
+      color: chargedColor,
+      title: shopItem.title,
+    });
+  return purchaseResult(items);
 }
 
 export type MysteryBoxOpenResult = {
@@ -1207,17 +1320,13 @@ export async function openMysteryBox({
       // FOR SHARE holds the version until commit: a builder save locks this row FOR NO KEY UPDATE
       // and waits for opens in flight, so this open cannot pass the check at one version and draw
       // from the next one's tiers and contents. After the Item lock, never before it.
-      const [box] = await tx.$queryRaw<
-        { id: number; type: string; version: number; sellerId: number | null }[]
-      >`
-        SELECT "id", "type", "version", "sellerId" FROM "ItemDefinition"
+      const [box] = await tx.$queryRaw<{ id: number; type: string; version: number }[]>`
+        SELECT "id", "type", "version" FROM "ItemDefinition"
         WHERE "id" = ${item.itemDefinitionId}
         FOR SHARE
       `;
       if (!box || box.type !== ITEM_TYPE.box)
         throw throwBadRequestError('This box cannot be opened');
-      // Not sold or granted yet; whatever path reached one, it doesn't open before it pays its creator.
-      if (box.sellerId != null) throw throwBadRequestError('This box cannot be opened');
       // The holder was shown this version's contents and odds.
       if (expectedVersion !== box.version)
         throw throwBadRequestError("This box's contents changed. Check them and try again.");

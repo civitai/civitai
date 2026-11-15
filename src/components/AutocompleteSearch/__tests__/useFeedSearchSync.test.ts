@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const router = vi.hoisted(() => ({
   pathname: '/images',
   query: {} as Record<string, string>,
-  replace: vi.fn(),
+  push: vi.fn(),
 }));
 vi.mock('next/router', () => ({ useRouter: () => router }));
 
@@ -36,12 +36,12 @@ function mount(initial: Partial<Props> = {}) {
   return render;
 }
 
-const replacedQueries = () => router.replace.mock.calls.map(([url]) => url.query);
+const pushedQueries = () => router.push.mock.calls.map(([url]) => url.query);
 
 describe('useFeedSearchSync', () => {
   beforeEach(() => {
     router.query = {};
-    router.replace.mockReset();
+    router.push.mockReset();
     setSearch.mockReset();
   });
 
@@ -49,7 +49,7 @@ describe('useFeedSearchSync', () => {
     const render = mount();
     render({ debouncedSearch: 'red' });
     render({ debouncedSearch: 'red dragon' });
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it("writes committed text into the feed's URL, keeping its filters", () => {
@@ -57,29 +57,29 @@ describe('useFeedSearchSync', () => {
     const render = mount();
     render({ debouncedSearch: 'red dragon' });
     act(() => hook.commit('red dragon'));
-    expect(replacedQueries()).toEqual([{ baseModels: 'Illustrious', query: 'red dragon' }]);
+    expect(pushedQueries()).toEqual([{ baseModels: 'Illustrious', query: 'red dragon' }]);
   });
 
   it('applies a commit only once the refusal checks have read that text', () => {
     const render = mount({ debouncedSearch: 'red' });
     act(() => hook.commit('red dragon'));
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
     render({ debouncedSearch: 'red dragon' });
-    expect(replacedQueries()).toEqual([{ query: 'red dragon' }]);
+    expect(pushedQueries()).toEqual([{ query: 'red dragon' }]);
   });
 
   it('clears the search at once when the bar is cleared, even after a refused text', () => {
     router.query = { query: 'cat' };
     mount({ debouncedSearch: 'refused words', blocked: true });
     act(() => hook.commit(''));
-    expect(replacedQueries()).toEqual([{}]);
+    expect(pushedQueries()).toEqual([{}]);
   });
 
   it('seeds the bar from a URL it did not write, without writing the URL back', () => {
     router.query = { query: 'red dragon' };
     mount();
     expect(setSearch).toHaveBeenCalledWith('red dragon');
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it('re-seeds the bar when the feed clears the search', () => {
@@ -88,14 +88,14 @@ describe('useFeedSearchSync', () => {
     router.query = {};
     render();
     expect(setSearch).toHaveBeenLastCalledWith('');
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it('never sends a refused query to the feed', () => {
     const render = mount({ blocked: true, debouncedSearch: 'refused words' });
     act(() => hook.commit('refused words'));
     render({ debouncedSearch: 'refused words', blocked: true });
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it('does nothing on a page whose feed does not answer a query', () => {
@@ -103,7 +103,7 @@ describe('useFeedSearchSync', () => {
     mount({ enabled: false, debouncedSearch: 'cats' });
     act(() => hook.commit('cats'));
     expect(setSearch).not.toHaveBeenCalled();
-    expect(router.replace).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
   });
 
   it('does not put an earlier commit back in the bar when a later one is still on its way', () => {
@@ -126,6 +126,6 @@ describe('useFeedSearchSync', () => {
     router.query = { baseModels: 'Illustrious', query: 'dragon', username: 'alice' };
     render({ debouncedSearch: 'dragon' });
     act(() => hook.commit('dragon'));
-    expect(replacedQueries().at(-1)).toEqual({ baseModels: 'Illustrious', query: 'dragon' });
+    expect(pushedQueries().at(-1)).toEqual({ baseModels: 'Illustrious', query: 'dragon' });
   });
 });

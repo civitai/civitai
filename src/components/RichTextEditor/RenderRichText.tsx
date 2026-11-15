@@ -52,7 +52,8 @@ const CivitaiEmbedBlock = dynamic(() =>
   import('~/components/CivitaiEmbed/CivitaiEmbedBlock').then((m) => m.CivitaiEmbedBlock)
 );
 
-const extensions = [
+/** Must cover every node and mark in `tiptapExtensions`; RenderRichText.browser.test.tsx pins it. */
+export const renderExtensions = [
   StarterKit.configure({ heading: false }),
   CustomHeading,
   TextStyleKit,
@@ -129,7 +130,7 @@ export function RenderRichText({
     try {
       const el = renderToReactElement({
         content: groupSpoilerRuns(rewriteLinkMarks(content, toCurrentDomain)) as typeof content,
-        extensions,
+        extensions: renderExtensions,
         options: {
           nodeMapping: {
             media: ({ node }) => {
@@ -190,7 +191,9 @@ export function RenderRichText({
             ),
             spoilerRun: ({ children }) => <SpoilerText>{children}</SpoilerText>,
             spoilerBlock: ({ children }) => <SpoilerBlock>{children}</SpoilerBlock>,
-            civitaiEmbed: ({ node }) => <CivitaiEmbedBlock items={node.attrs.items} />,
+            civitaiEmbed: ({ node }) => (
+              <CivitaiEmbedBlock items={node.attrs.items} display={node.attrs.display} />
+            ),
             embed: ({ node }) => {
               const src = node.attrs.src as string | null;
               const provider = isAllowedPlayerUrl(src);
@@ -217,10 +220,11 @@ export function RenderRichText({
       // alone can't distinguish "rendered empty" from "threw".
       return { ok: true as const, el };
     } catch {
-      // A node or mark type outside `extensions` throws while the doc is built, before
+      // A node or mark type outside `renderExtensions` throws while the doc is built, before
       // `nodeMapping` is ever consulted — so an extra mapping entry cannot absorb it, and
-      // with no ErrorBoundary in the tree it blanks the whole page. `extensions` is kept in
-      // sync with `tiptapExtensions` by hand, so treat drift as reachable.
+      // with no ErrorBoundary in the tree it blanks the whole page. The schema test keeps stored
+      // node types out of here; a throw inside a `nodeMapping` entry still lands here, and the
+      // fallback does not apply `imageGuard`.
       return { ok: false as const };
     }
   }, [content, allowed, toCurrentDomain, host, imagesByUrl, guardNsfwLevel]);

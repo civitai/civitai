@@ -17,6 +17,7 @@ const {
   isRevoked,
   guardCheck,
   loadPageAccessGrants,
+  applyGrants,
 } = vi.hoisted(() => {
   const store = new Map<string, Entry>();
   const live = (key: string) => {
@@ -52,6 +53,7 @@ const {
     isRevoked: vi.fn(async (_claims: unknown) => false),
     guardCheck: vi.fn(async (_cookie: string, _url: string, _opts?: unknown) => ({} as unknown)),
     loadPageAccessGrants: vi.fn(async () => ({})),
+    applyGrants: vi.fn((_grants: unknown) => {}),
   };
 });
 
@@ -73,7 +75,7 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
 }));
 vi.mock('$lib/server/page-access', () => ({ loadPageAccessGrants }));
 vi.mock('$lib/server/access', () => ({
-  applyGrants: () => {},
+  applyGrants,
   resolvePermissions: () => ({}),
   canAccess: (user: { roles?: string[] }, path: string) =>
     path === '/images/csam' && !!user.roles?.includes('moderator:senior'),
@@ -372,6 +374,18 @@ describe('hook: the sheet cookie', () => {
     expect(locals.heldCredential).toBe('sheet');
     // Asked first, and found no web session.
     expect(guardCheck).toHaveBeenCalledTimes(1);
+  });
+
+  // The image route's page check reads the grants applied here. Without a fresh load on the sheet
+  // path, a server that sees only sheet fetches would keep a pulled grant until a web request came.
+  it('loads the current page grants for a sheet fetch before the route runs', async () => {
+    const token = await signIn();
+    const grants = { '/images/csam': ['moderator:senior'] };
+    loadPageAccessGrants.mockResolvedValueOnce(grants);
+    applyGrants.mockClear();
+    const { res } = await run('/api/held-media/7', `__Secure-held_sheet=${token}`);
+    expect(res.status).toBe(299);
+    expect(applyGrants).toHaveBeenCalledWith(grants);
   });
 
   it('lets a valid web session win over a sheet cookie on the image route', async () => {

@@ -20,6 +20,7 @@ const router = Router as unknown as {
   query: Record<string, string>;
   pathname: string;
   replace: ReturnType<typeof vi.fn>;
+  push: ReturnType<typeof vi.fn>;
 };
 
 // Base model came in on the URL; the period is the viewer's saved feed filter.
@@ -44,6 +45,7 @@ describe('ImageFeedSearchSummary', () => {
     router.pathname = '/images';
     router.query = { query: 'red dragon', baseModels: 'Illustrious' };
     router.replace.mockClear();
+    router.push.mockClear();
     setImageFilters.mockClear();
     saved.images = {};
   });
@@ -62,10 +64,29 @@ describe('ImageFeedSearchSummary', () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  test('clearing the search keeps the filters', async () => {
+  test('clearing the search keeps the filters, as a history entry Back returns from', async () => {
     renderSummary();
     await page.getByText('Clear search').click();
-    expect(router.replace.mock.calls.at(-1)?.[0].query).toEqual({ baseModels: 'Illustrious' });
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({ baseModels: 'Illustrious' });
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test('shows Made On-site and Metadata only, and removing one takes it off the URL', async () => {
+    router.query = { query: 'red dragon', fromPlatform: 'true', withMeta: 'true' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query="red dragon"
+        filters={{ fromPlatform: true, withMeta: true }}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('Metadata only')).toBeVisible();
+    await removeChip('Made On-site');
+    expect(router.replace.mock.calls.at(-1)?.[0].query).toEqual({
+      query: 'red dragon',
+      withMeta: 'true',
+    });
   });
 
   test('removing the last base model from the URL clears a saved one rather than uncovering it', async () => {

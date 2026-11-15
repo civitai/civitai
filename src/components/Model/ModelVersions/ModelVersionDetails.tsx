@@ -146,14 +146,13 @@ import {
   getEffectiveCommercialUse,
   getDisplayedBaseModelLicense,
   getEffectiveDifferentLicense,
-  getRestrictedNsfwLevelsForBaseModel,
   hasAdditionalLicensePermissions,
   isNonCommercialBaseModel,
   NOT_COMMERCIALLY_AVAILABLE_LABEL,
   notCommerciallyAvailableMessage,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelGroup, isMatureRestricted } from '~/shared/constants/basemodel.constants';
 import { SfwOnlyBadge } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -576,8 +575,7 @@ function ModelVersionDetailsContent({
   const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
   // Base model can restrict mature content (e.g. Ideogram) and/or commercial use.
   // Both are derived per displayed version rather than stored on the model.
-  const baseModelRestrictsMature =
-    getRestrictedNsfwLevelsForBaseModel(version.baseModel).length > 0;
+  const baseModelRestrictsMature = isMatureRestricted(version.baseModel, 'images');
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
     constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0') &&

@@ -195,6 +195,10 @@ const repeatOverImages = (template: Record<string, unknown>) => ({
 });
 
 beforeEach(() => {
+  // Every Civitai version a step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
   // Only the submit's account-restriction read gets a row; other user reads keep the default.
   dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
     select?: Record<string, boolean>;
@@ -385,17 +389,11 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
         [
           repeatOverImages({
             $type: 'training',
-            input: { triggerWord: { $ref: 'item', path: 'url' } },
+            input: { triggerWord: { $ref: 'item', path: 'text' } },
           }),
         ],
         { images: [{ url: 'a' }] }
       ),
-    ],
-    [
-      'a training input that is itself a reference',
-      workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
-        cfg: { triggerWord: 'badword' },
-      }),
     ],
   ])('refuses %s, before any check or orchestrator call', async (_label, body) => {
     await expect(estimate(body)).rejects.toMatchObject({
@@ -406,6 +404,20 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
       code: 'BAD_REQUEST',
       message: NOT_A_STRING,
     });
+    expect(h.check).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a training input that is itself a reference, before any check or orchestrator call', async () => {
+    const body = workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
+      cfg: { triggerWord: 'badword' },
+    });
+    const refused = expect.stringContaining('a step input must be an object, not a reference');
+    for (const call of [estimate, submit]) {
+      await expect(call(body)).resolves.toMatchObject({
+        snapshot: { status: 'failed', errorCode: 'workflow_ref_invalid', error: refused },
+      });
+    }
     expect(h.check).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });

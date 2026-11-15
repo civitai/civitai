@@ -87,11 +87,15 @@ export const preLaunchImageReactionListed = (viewerId: number) => sql`
       SELECT id FROM "User" WHERE settings -> ${sql.lit(SHOW_PRE_LAUNCH_REACTIONS_KEY)}::text = 'true'::jsonb
     )))`;
 
-/** Only a scanned, safe-level profile picture; the legacy User.image is unmoderated. Reads alias `p` (Image). */
+/**
+ * Only a scanned, safe-level profile picture, never one held for CSAM review (which the main app's
+ * `servableProfilePictureSql` also excludes); the legacy User.image is unmoderated. Reads alias `p` (Image).
+ */
 export const safeProfilePictureUrl = () => sql`
   CASE
     WHEN p.ingestion = 'Scanned' AND p."nsfwLevel" > 0
-      AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0 THEN p.url
+      AND (p."nsfwLevel" & ~${sql.lit(sfwBrowsingLevelsFlag)}) = 0
+      AND p."needsReview" IS DISTINCT FROM 'csam' THEN p.url
   END`;
 
 /**

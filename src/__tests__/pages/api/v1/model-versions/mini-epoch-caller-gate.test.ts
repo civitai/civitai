@@ -71,7 +71,8 @@ async function request(
   caller: Caller = {},
   row: Partial<typeof versionRow> = {},
   file: object = TRAINING_FILE,
-  versionRows: object[] = [{ ...versionRow, ...row }]
+  versionRows: object[] = [{ ...versionRow, ...row }],
+  query: Record<string, string> = {}
 ) {
   h.user.value = caller.user;
   dbMock.dbWrite.$queryRaw.mockReset();
@@ -88,7 +89,7 @@ async function request(
   await handler(
     {
       method: 'GET',
-      query: { id: String(VERSION_ID) },
+      query: { id: String(VERSION_ID), ...query },
       headers: {
         host: 'civitai.com',
         ...(caller.authorization ? { authorization: caller.authorization } : {}),
@@ -359,10 +360,11 @@ describe('mini/[id] epoch arm, cache', () => {
     '%s: no shared cache may store the response',
     async (variant) => {
       h.variant.value = variant;
-      for (const caller of [anonymous, owner, service]) {
-        const { cacheControl } = await request(caller);
-        expect(cacheControl).toBe('private, no-store');
-      }
+      for (const caller of [anonymous, stranger, grantee, owner, moderator, service])
+        for (const query of [{}, { epoch: '5' }] as Record<string, string>[]) {
+          const { cacheControl } = await request(caller, {}, undefined, undefined, query);
+          expect(cacheControl, JSON.stringify({ caller, query })).toBe('private, no-store');
+        }
     }
   );
 
@@ -466,4 +468,111 @@ describe('mini/[id] epoch arm, a stored blob url', () => {
     expect(body.downloadUrls).toEqual([FRESH]);
     expect(h.refreshBlobs).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('mini/[id] ?epoch= from the query string', () => {
+  const EARLY =
+    'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000005.safetensors';
+  const twoEpochs = {
+    ...TRAINING_FILE,
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: {
+        epochs: [
+          { epoch_number: 5, model_url: EARLY },
+          { epoch_number: 10, model_url: EPOCH_URL },
+        ],
+      },
+    },
+  };
+  const ask = (query: Record<string, string>) => request(owner, {}, twoEpochs, undefined, query);
+
+  beforeEach(() => {
+    h.variant.value = 'enforce';
+  });
+
+  it('serves the named epoch from epochs written as epochNumber', async () => {
+    const v2 = {
+      ...twoEpochs,
+      metadata: {
+        ...twoEpochs.metadata,
+        trainingResults: {
+          epochs: [
+            { epochNumber: 5, modelUrl: EARLY },
+            { epochNumber: 10, modelUrl: EPOCH_URL },
+          ],
+        },
+      },
+    };
+    const { status, body } = await request(owner, {}, v2, undefined, { epoch: '5' });
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EARLY]);
+  });
+
+  it('400s a repeated epoch', async () => {
+    const { status } = await request(owner, {}, twoEpochs, undefined, {
+      epoch: ['5', '10'] as unknown as string,
+    });
+    expect(status).toBe(400);
+  });
+
+  it('serves the latest epoch when none is named', async () => {
+    const { status, body } = await ask({});
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  it.each([
+    ['a word', 'latest'],
+    ['a fraction', '5.5'],
+  ])('400s an epoch that is %s', async (_, epoch) => {
+    expect((await ask({ epoch })).status).toBe(400);
+  });
+
+  describe.each(['log', 'enforce', 'enforce-anon', 'off'])(
+    '%s: only the owner, a moderator or the service token picks the epoch',
+    (variant) => {
+      beforeEach(() => {
+        h.variant.value = variant === 'off' ? null : variant;
+      });
+
+      // Only the callers the mode serves; a refused one is covered by the gate tests above.
+      const held = (
+        [
+          ['a signed-out caller', anonymous],
+          ['a signed-in caller with no grant', stranger],
+          ['a grantee', grantee],
+        ] as const
+      ).filter(
+        ([, caller]) =>
+          (variant !== 'enforce' || caller === grantee) &&
+          (variant !== 'enforce-anon' || caller !== anonymous)
+      );
+
+      it.each(held)('%s gets the no-param response whatever ?epoch= holds', async (_, caller) => {
+        const unnamed = await request(caller, {}, twoEpochs);
+        expect(unnamed.status).toBe(200);
+        expect(unnamed.body.downloadUrls).toEqual([EPOCH_URL]);
+        for (const epoch of ['5', '10', '99', '', 'latest', '5.5', ['5', '10']])
+          expect(
+            await request(caller, {}, twoEpochs, undefined, { epoch: epoch as string }),
+            `?epoch=${JSON.stringify(epoch)}`
+          ).toEqual(unnamed);
+      });
+
+      it.each([
+        ['the owner', owner],
+        ['a moderator', moderator],
+        ['the service token', service],
+      ])('%s still gets the epoch it names', async (_, caller) => {
+        const { status, body, cacheControl } = await request(caller, {}, twoEpochs, undefined, {
+          epoch: '5',
+        });
+        expect(status).toBe(200);
+        expect(body.downloadUrls).toEqual([EARLY]);
+        // The other modes already set it for every caller on this arm.
+        if (variant === 'off') expect(cacheControl).toBe('private, no-store');
+      });
+    }
+  );
 });

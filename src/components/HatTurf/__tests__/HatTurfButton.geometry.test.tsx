@@ -299,13 +299,33 @@ describe('Hat Turf button geometry on a feed card', () => {
   );
 });
 
-// Feedback: the "+N" hats chip sat at the card's top right, under the Remix button the card's
-// header stacks below its menu, so it could not be seen.
-describe('the +N hats chip on a feed card', () => {
+// A feed card draws up to 10 hats and no "+N" chip (3 hats on a narrow card). The hats are placed
+// anywhere on the picture, the top right corner included, and the card's menu and Remix buttons
+// stack down that corner: a hat must not take their taps, and the card's own badge needs the same.
+describe('hats on a feed card', () => {
   const overlaps = (a: DOMRect, b: DOMRect) =>
     a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const q = (selector: string) => document.body.querySelector(selector) as HTMLElement | null;
+  // 4 columns x 3 rows across the picture, the top right hat first so a narrow card draws it.
+  const scattered = Array.from({ length: 12 }, (_, i) => ({
+    id: i + 1,
+    userId: 10 + i,
+    team: 'blue',
+    cosmeticId: 11,
+    data: {
+      x: 0.08 + 0.84 * (1 - (i % 4) / 3),
+      y: 0.08 + 0.84 * (Math.floor(i / 4) / 2),
+      scale: 0.2,
+      rotation: 0,
+      flip: false,
+    },
+  }));
 
-  test.each([171, 260, 320])('clears the Remix and menu buttons at %spx', async (width) => {
+  test.each([
+    [171, 3],
+    [260, 10],
+    [320, 10],
+  ])('at %spx draws %s hats, no +N chip, and leaves the buttons tappable', async (width, drawn) => {
     features.imageGeneration = true;
     header.real = true;
     try {
@@ -315,42 +335,58 @@ describe('the +N hats chip on a feed card', () => {
           width,
           images: {
             [image.id]: {
-              shown: { blue: 6, pink: 4 },
-              counted: { blue: 6, pink: 4 },
+              shown: { blue: 14, pink: 4 },
+              counted: { blue: 14, pink: 4 },
               leader: 'blue',
               leaderCosmeticId: 11,
               hatted: true,
               hattedTeam: null,
             },
           },
-          stickers: {
-            [image.id]: [1, 2].map((id) => ({
-              id,
-              userId: 10 + id,
-              team: 'blue',
-              cosmeticId: 11,
-              data: { x: 0.3 * id, y: 0.6, scale: 0.2, rotation: 0, flip: false },
-            })),
-          },
+          stickers: { [image.id]: scattered as unknown as TurfStickers[number] },
         }
       );
-      const q = (selector: string) => document.body.querySelector(selector);
-      await vi.waitFor(() => expect(q('[data-testid="hat-turf-more"]')).not.toBeNull());
-      const chip = q('[data-testid="hat-turf-more"]')!.getBoundingClientRect();
-      expect(chip.width).toBeGreaterThan(0);
+      await vi.waitFor(() =>
+        expect(document.body.querySelectorAll('[data-testid="hat-turf-hat"]')).toHaveLength(drawn)
+      );
+      expect(q('[data-testid="hat-turf-more"]'), 'a feed card draws no +N chip').toBeNull();
+      const hats = [...document.body.querySelectorAll('[data-testid="hat-turf-hat"]')].map((el) =>
+        el.getBoundingClientRect()
+      );
+      const frame = q('[data-testid="card-frame"]')!.getBoundingClientRect();
+      for (const r of hats) {
+        expect(r.width).toBeGreaterThan(0);
+        expect(r.right).toBeGreaterThan(frame.left);
+        expect(r.left).toBeLessThan(frame.right);
+      }
+
       const remix = q('[data-activity="remix:image-card-home"]')!;
       expect(remix.getBoundingClientRect().width).toBeGreaterThan(0);
       // The header's right column: the menu button with Remix under it.
-      const column = remix.closest('.flex-col')!.getBoundingClientRect();
-      expect(column.height).toBeGreaterThan(remix.getBoundingClientRect().height);
-      expect(overlaps(chip, column), 'the +N chip is under the menu or Remix button').toBe(false);
-      // It moves to the left, under the badge row there.
-      const badge = q('[data-testid="hat-turf-count"]')!.getBoundingClientRect();
-      expect(badge.width).toBeGreaterThan(0);
-      expect(overlaps(chip, badge), 'the +N chip is under the Hat Turf badge').toBe(false);
-      const frame = q('[data-testid="card-frame"]')!.getBoundingClientRect();
-      expect(chip.left).toBeGreaterThanOrEqual(frame.left);
-      expect(chip.right).toBeLessThanOrEqual(frame.right);
+      const column = remix.closest('.flex-col')!;
+      const columnBox = column.getBoundingClientRect();
+      expect(columnBox.height).toBeGreaterThan(remix.getBoundingClientRect().height);
+      const badge = q('[data-testid="hat-turf-count"]')!;
+      expect(badge.getBoundingClientRect().width).toBeGreaterThan(0);
+
+      // The hats do reach the controls, so the tap test below has something to fail on.
+      expect(
+        hats.some((r) => overlaps(r, columnBox)),
+        'no drawn hat reaches the menu and Remix column'
+      ).toBe(true);
+      // Paint order: the layer and its hats set no z-index, so the card's chips stay above them.
+      const layer = q('[data-testid="hat-turf-layer"]')!;
+      for (const el of [layer, ...document.body.querySelectorAll('[data-testid="hat-turf-hat"]')]) {
+        expect(getComputedStyle(el).zIndex, 'a hat is lifted over the card chips').toBe('auto');
+      }
+      // Taps: the menu and Remix buttons answer where a hat sits over them.
+      for (const control of [...column.querySelectorAll('button'), remix]) {
+        const r = control.getBoundingClientRect();
+        expect(r.width).toBeGreaterThan(0);
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        const name = control.getAttribute('data-activity') ?? control.getAttribute('aria-label');
+        expect(control.contains(hit), `a hat covers ${name}`).toBe(true);
+      }
     } finally {
       features.imageGeneration = false;
       header.real = false;

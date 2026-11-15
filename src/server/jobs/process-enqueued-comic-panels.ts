@@ -38,6 +38,22 @@ function isSubmitCheckUnavailable(error: unknown): boolean {
   );
 }
 
+/**
+ * The orchestrator `externalId` for a queued panel's submit. The orchestrator dedupes on
+ * (user, externalId) and returns the existing workflow, so a panel this job already submitted but
+ * could not mark Generating (the write failed, or the pod died after the submit) and therefore
+ * picked up again is answered with that workflow, not a second charged one.
+ *
+ * Keyed on the panel row alone, because a row is submitted as one generation: a panel is Enqueued
+ * only when it is created, and a regenerate deletes the panel and creates a new one. A path that
+ * ever puts an existing panel back into Enqueued must add a per-attempt part to this key, or its
+ * submit is answered with the old workflow.
+ */
+export function comicPanelExternalId(panelId: number): string {
+  // The orchestrator accepts only [A-Za-z0-9_-] in an externalId.
+  return `comic-panel-${panelId}`;
+}
+
 // Process at most this many panels per job run to avoid long-running jobs
 const MAX_PANELS_PER_RUN = 20;
 
@@ -290,6 +306,7 @@ export const processEnqueuedComicPanelsJob = createJob(
               tags,
               isGreen,
               allowMatureContent: isGreen ? false : undefined,
+              externalId: comicPanelExternalId(panel.id),
             });
 
             // Update panel status

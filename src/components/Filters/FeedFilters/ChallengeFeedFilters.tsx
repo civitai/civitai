@@ -1,6 +1,8 @@
 import type { GroupProps } from '@mantine/core';
 import { Group } from '@mantine/core';
 import { useRouter } from 'next/router';
+import { FeedSearchInput } from '~/components/Filters/FeedSearchInput';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { ChallengeFiltersDropdown } from '~/components/Challenge/Infinite/ChallengeFiltersDropdown';
 import { ChallengeSort } from '~/server/schema/challenge.schema';
@@ -16,6 +18,7 @@ const sortOptions = [
 
 export function ChallengeFeedFilters({ ...groupProps }: GroupProps) {
   const router = useRouter();
+  const { semanticChallengeSearch } = useFeatureFlags();
   const sort = (router.query.sort as ChallengeSort) || ChallengeSort.Newest;
   const sortLabel = sortOptions.find((option) => option.value === sort)?.label || 'Newest';
 
@@ -29,6 +32,7 @@ export function ChallengeFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
+      {semanticChallengeSearch && <FeedSearchInput placeholder="Search challenges" />}
       <SelectMenuV2
         label={sortLabel}
         value={sort}

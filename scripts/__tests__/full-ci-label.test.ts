@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
+import { classifyUnitJobs } from '../ci/full-ci-unit-shards.mjs';
+
 // The `full-ci` PR label: lint.yml, apps.yml and moderator-boot.yml read it on every PR run, and
 // full-ci.yml dispatches all three when it is added.
 //
@@ -31,7 +33,13 @@ const UNIT_PR_GATE = `(github.event_name != 'pull_request' || ${FULL})`;
 const DISPATCH_IF =
   "github.event.label.name == 'full-ci' && github.event.pull_request.head.repo.full_name == github.repository";
 
-type Step = { name?: string; run?: string; env?: Record<string, string> };
+type Step = {
+  name?: string;
+  run?: string;
+  uses?: string;
+  with?: Record<string, string | boolean>;
+  env?: Record<string, string>;
+};
 type Job = { name?: string; if?: string; permissions?: Record<string, string>; steps?: Step[] };
 type Workflow = {
   on?: Record<string, { types?: string[] } | null>;
@@ -130,7 +138,15 @@ describe('the full-ci label', () => {
   it.each([
     [
       'lint.yml',
-      ['component', 'component-ledger', 'eslint', 'packages', 'typecheck', 'typecheck-tests', 'unit'],
+      [
+        'component',
+        'component-ledger',
+        'eslint',
+        'packages',
+        'typecheck',
+        'typecheck-tests',
+        'unit',
+      ],
     ],
     ['apps.yml', ['apps']],
     ['moderator-boot.yml', ['boot']],
@@ -183,6 +199,75 @@ describe('the full-ci label', () => {
       );
       expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
       expect(step.run).toContain('gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"');
+    });
+
+    // A PR opened with the label gets `opened` and `labeled` at once, and the `opened` Lint run
+    // already starts the shards, so dispatching as well ran the suite twice on one commit. The
+    // check must key on the head commit and come BEFORE the first dispatch; WHAT it counts is
+    // the classifier's job, tested by behaviour below.
+    it("classifies the head commit's PR runs before the first dispatch", () => {
+      const steps = jobs[0].steps ?? [];
+      const idx = steps.findIndex((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
+      const run = steps[idx]?.run ?? '';
+      expect(steps[idx]?.env?.HEAD_SHA).toBe('${{ github.event.pull_request.head.sha }}');
+      expect(run).toContain(
+        'repos/$REPO/actions/workflows/lint.yml/runs?event=pull_request&head_sha=$HEAD_SHA'
+      );
+      const classify = '| node scripts/ci/full-ci-unit-shards.mjs';
+      expect(run).toContain(classify);
+      expect(run.indexOf(classify)).toBeLessThan(run.indexOf('gh workflow run lint.yml'));
+      // The classifier must be on disk when the step runs, and the checkout must not leave the
+      // dispatching token in the git config.
+      const checkout = steps.slice(0, idx).find((s) => s.uses?.startsWith('actions/checkout@'));
+      expect(checkout?.with?.['sparse-checkout']).toBe('scripts/ci/full-ci-unit-shards.mjs');
+      expect(checkout?.with?.['persist-credentials']).toBe(false);
+    });
+  });
+
+  // The classifier full-ci.yml pipes each PR Lint run's job list through. `expanded` > 0 means
+  // skip the dispatch; `skipped` > 0 means stop polling and dispatch. A skipped matrix job has
+  // no `(<n>)` suffix, so counting the plain name as "running" would skip the dispatch on exactly
+  // the PRs that need it.
+  describe('classifyUnitJobs', () => {
+    const job = (name: string, conclusion: string | null) => ({ name, conclusion });
+
+    it.each([
+      [
+        'an expanded shard still queued',
+        [job('Unit tests (1)', null)],
+        { expanded: 1, skipped: 0 },
+      ],
+      [
+        'four expanded shards, one cancelled',
+        [
+          job('Unit tests (1)', 'success'),
+          job('Unit tests (2)', 'failure'),
+          job('Unit tests (3)', 'cancelled'),
+          job('Unit tests (4)', 'in_progress'),
+        ],
+        { expanded: 3, skipped: 0 },
+      ],
+      ['the unexpanded job, skipped', [job('Unit tests', 'skipped')], { expanded: 0, skipped: 1 }],
+      [
+        'the unexpanded job, not yet decided',
+        [job('Unit tests', null)],
+        { expanded: 0, skipped: 0 },
+      ],
+      ['only cancelled shards', [job('Unit tests (2)', 'cancelled')], { expanded: 0, skipped: 0 }],
+      [
+        'other jobs with similar names',
+        [
+          job('Unit tests (x)', 'success'),
+          job('Package unit tests', 'skipped'),
+          job('Slow Unit tests', 'skipped'),
+          job('Unit tests (1) extra', 'success'),
+          job('Typecheck', 'success'),
+        ],
+        { expanded: 0, skipped: 0 },
+      ],
+      ['no jobs listed yet', [], { expanded: 0, skipped: 0 }],
+    ])('%s', (_label, jobs, want) => {
+      expect(classifyUnitJobs(jobs)).toEqual(want);
     });
   });
 });

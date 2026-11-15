@@ -27,6 +27,7 @@ export const semanticImageSearchSchema = baseQuerySchema
     postedBefore: z.coerce.date().optional(),
     // The feed's "Made On-site": generated here, as the feed judges it from the image's meta.
     fromPlatform: z.boolean().optional(),
+    withMeta: z.boolean().optional(),
     limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
     // Offset into the ranked candidate list.
     cursor: z.number().int().min(0).optional(),

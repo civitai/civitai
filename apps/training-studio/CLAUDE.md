@@ -42,7 +42,7 @@ enters the flow.
 - **Per-blob upload, no zip.** Scan on upload (same policy as generation). Auto-label over signals.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
-- **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
+- **AI Toolkit by default**, with Kohya available for SD 1.5, SDXL, Flux.1 and Chroma behind the `training-studio-kohya` gate (`KOHYA_FLAG_KEY`: moderators only until the Flipt flag exists; the submit, continuation and quote paths refuse Kohya without it, not just the Select toggle). Both use the `training` workflow step; Kohya uses its own generated input contract. Trigger word is **model-dependent** (large/
   video models can't train it — check per model before enforcing).
 
 - **Every submit calls the main app's trigger word check** (`POST /api/training-studio/check-text`,
@@ -56,8 +56,9 @@ enters the flow.
 are present, grouped by family with versions. Re-mirror by hand when the trainer's list changes; if
 `trainingModelInfo` ever moves to a `packages/civitai-*`, import it instead.
 
-A card's `flagKey` (its per-model Flipt gate) is evaluated by the shell in `/new`'s load, but the
-main-app embed can't ask Flipt: every key must also be in `studioModelFlagFeatures`
+A card's `flagKey` (its per-model Flipt gate) and the Kohya gate — together `hostFlagKeys()` — are
+evaluated by the shell in `/new`'s load, but the main-app embed can't ask Flipt: every key must also be
+in `studioModelFlagFeatures`
 (`src/utils/training.ts`), or the card is hidden on `/training-studio` for everyone. That is pinned by
 `src/utils/__tests__/new-training-models.test.ts` in the **root** unit suite — this app's own `test`
 does not run it.

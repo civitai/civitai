@@ -35,6 +35,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   CryptoDeposit: { subject: ['userId'] },
   CryptoTransaction: { subject: ['userId'] },
   CustomerSubscription: { subject: ['userId'] },
+  CustomerSubscriptionHistory: { subject: ['userId'] },
   MembershipGift: { subject: ['gifterId', 'recipientId', 'holderId'] },
   Purchase: { subject: ['userId'] },
   UserEngagement: { subject: ['userId'], others: ['targetUserId'] },
@@ -55,6 +56,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   ResourceReview: { subject: ['userId'] },
   ResourceReviewReaction: { subject: ['userId'] },
   Post: { subject: ['userId'] },
+  PostText: { subject: ['userId'] },
   Image: { subject: ['userId'], rule: 'image-media' },
   ImageEngagement: { subject: ['userId'] },
   ArticleRatingReview: { subject: ['userId'], staff: ['resolvedBy'] },
@@ -93,6 +95,8 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   BlockSubscriptionAttribution: { subject: ['userId', 'appOwnerUserId'] },
   BlockScopeInvocation: { subject: ['userId'] },
   AppUserScopeGrant: { subject: ['userId'] },
+  // Batches of private files apps uploaded for the user (OPEN_MEDIA_UPLOAD_BATCH): counts, keys, expiry.
+  AppBlockUploadBatch: { subject: ['userId'] },
   AppDeveloperTermsAcceptance: { subject: ['userId'] },
   AppDevForgejoIdentity: { subject: ['userId'] },
   OauthConsent: { subject: ['userId'] },
@@ -246,6 +250,8 @@ export const EXCLUDED: Record<string, string> = {
   Cosmetic:
     'catalog item; names the user only as its staff author (owned cosmetics are UserCosmetic)',
   CosmeticShopSection: 'shop configuration; names the user only as its staff author',
+  KnightsShopItemChange:
+    'audit log of Knights shop catalog edits; the user id there is the staff member who made the edit',
   CosmeticShopItem:
     'shop configuration; names the user only as its staff author (purchases are exported)',
   CsamReport: 'safety record; never exported',

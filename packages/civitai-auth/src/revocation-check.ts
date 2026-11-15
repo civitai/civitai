@@ -10,16 +10,14 @@ import type { SessionClaims } from './types';
 //
 // When the read fails (an error, the deadline, or the caller's breaker refusing it) the verdict comes from
 // the revocation markers this check has already read (revocation-marker-cache.ts): a revocation seen here
-// still denies, and a session with no known marker is allowed, as before. Signing everyone out during a
-// store outage is not the policy. `markerCache: false` (each app maps its SESSION_REVOCATION_CACHE=off|0|false
-// to it) turns the record off and restores the plain fail-open.
+// still denies, and a session with no known marker is allowed (signing everyone out during a store outage is
+// not the policy). `markerCache: false` (each app maps its SESSION_REVOCATION_CACHE=off|0|false to it) turns
+// the record off and restores the plain fail-open.
 
 /**
- * The record's size bound, least recently used evicted first. Entries are short strings (a key and `invalid`
- * or a timestamp), so this is a few MB at most; only revoking token/family states and cut timestamps are held.
- * There is no time-based expiry: a held marker only ever revokes tokens signed before it (or the one token or
- * family it names), so keeping it longer cannot deny a session the store would allow, and a process restart
- * empties the record.
+ * The record's size bound, least recently used evicted first. There is no time-based expiry: a held marker
+ * only ever revokes tokens signed before it (or the one token or family it names), so keeping it longer cannot
+ * deny a session the store would allow, and a process restart empties the record.
  */
 export const REVOCATION_MARKER_CACHE_MAX_ENTRIES = 20_000;
 

@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ArticleSort } from '~/server/common/enums';
 import { getArticles } from '~/server/services/article.service';
+import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
@@ -128,7 +129,12 @@ export default MixedAuthEndpoint(async function handler(
     const nextCursorStr = nextCursor ? `${nextCursor.v}|${nextCursor.id}` : undefined;
     const { nextPage } = getNextPage({ req, nextCursor: nextCursorStr });
 
-    return res.status(200).json({ items, metadata: { nextCursor: nextCursorStr, nextPage } });
+    return res.status(200).json({
+      items: items.map((item) =>
+        item.user ? { ...item, user: withPublicAvatar(item.user, browsingLevel) } : item
+      ),
+      metadata: { nextCursor: nextCursorStr, nextPage },
+    });
   } catch (e) {
     return handleEndpointError(res, e);
   }

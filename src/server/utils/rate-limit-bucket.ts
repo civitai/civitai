@@ -82,6 +82,8 @@ export const FAIL_CLOSED_RATE_LIMIT_SCOPES: readonly string[] = [
 export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'appCollaborators',
   'appFeedback',
+  // getWakeSeed / deleteMine: a user's own sleeping apps; nothing charges or pays Buzz.
+  'appHibernation',
   'appListings',
   'appStorage',
   'article',
@@ -107,8 +109,12 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'report',
   'resourceLoad',
   'semanticArticleSearch',
+  'semanticChallengeSearch',
   'semanticComicSearch',
   'semanticImageSearch',
+  'semanticModel3DSearch',
+  'semanticStorylineSearch',
+  'storyline',
   'user',
 ];
 

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AssistantTokenError } from '~/components/Apps/AppAssistant/assistantToken';
-import { openApp } from '@civitai/app-assistant';
+import { openApp, wakeSleepingApp, type WakeSeed } from '@civitai/app-assistant';
 import type {
   Sandbox,
   SandboxClient,
@@ -62,8 +62,20 @@ export function useSandboxes(client: SandboxClient | null) {
     mutationFn: (name: string) => (client as SandboxClient).remove(name),
     onSettled: refresh,
   });
+  // App hibernate: wakes a sleeping app (a seeded create carrying civitai's wake ticket), and
+  // puts a kept one to sleep. Neither runs with the `app-hibernate` flag off.
+  const wake = useMutation({
+    mutationFn: ({ app, getSeed }: { app: string; getSeed: (app: string) => Promise<WakeSeed> }) =>
+      wakeSleepingApp(client as SandboxClient, app, getSeed),
+    onSuccess: addToList,
+    onSettled: refresh,
+  });
+  const sleep = useMutation({
+    mutationFn: (name: string) => (client as SandboxClient).hibernate(name),
+    onSettled: refresh,
+  });
 
-  return { list, open, seed, suspend, remove };
+  return { list, open, seed, suspend, remove, wake, sleep };
 }
 
 export type SandboxesState = ReturnType<typeof useSandboxes>;

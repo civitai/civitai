@@ -3,6 +3,7 @@ import { dbRead } from '~/server/db/client';
 import {
   OWNER_VISIBLE_INVOCATION_FILTER,
   PRIVATE_RUN_INVOCATION_SOURCE,
+  VIEWER_CONSENT_INVOCATION_SOURCE,
 } from '~/server/services/blocks/scope-activity-predicate';
 import { hasInstallSlot, type InstallSlotManifest } from '~/shared/constants/slot-registry';
 import { type AppViews, emptyViews, getAppViews, unavailableViews } from './app-views.service';
@@ -637,7 +638,7 @@ export async function getMyAppAnalytics({
       WHERE "app_block_id" IN (${Prisma.join(ownedIds)})
         AND "invoked_at" >= ${range.from}
         AND "invoked_at" <= ${range.to}
-        AND "source" <> ${PRIVATE_RUN_INVOCATION_SOURCE}
+        AND "source" NOT IN (${PRIVATE_RUN_INVOCATION_SOURCE}, ${VIEWER_CONSENT_INVOCATION_SOURCE})
     `),
     dbRead.blockScopeInvocation.count({
       where: {

@@ -11,7 +11,11 @@ import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
+import {
+  ImageIngestionStatus,
+  ServiceOfferingIngestionStatus,
+  ServiceOfferingStatus,
+} from '~/shared/utils/prisma/enums';
 
 /**
  * The cross-seller services feed against a fixture table: `findMany` applies the `where`,
@@ -27,6 +31,14 @@ type Row = {
   maxOpenDeals: number | null;
   createdAt: Date;
   sellerId: number;
+  ingestion: ServiceOfferingIngestionStatus;
+  coverImageId: number | null;
+  coverImage: {
+    ingestion: ImageIngestionStatus;
+    needsReview: string | null;
+    tosViolation: boolean;
+    nsfwLevel: number;
+  } | null;
   seller: {
     username: string | null;
     bannedAt: Date | null;
@@ -44,6 +56,8 @@ function matches(value: unknown, filter: unknown): boolean {
     switch (key) {
       case 'OR':
         return (arg as unknown[]).some((clause) => matches(value, clause));
+      case 'AND':
+        return (arg as unknown[]).every((clause) => matches(value, clause));
       case 'lte':
         return (value as number) <= (arg as number);
       case 'in':
@@ -63,6 +77,8 @@ function matches(value: unknown, filter: unknown): boolean {
       case 'equals':
         return 'path' in (filter as object) || value === arg;
       default:
+        // An absent relation (`coverImage: null`) matches no filter on it.
+        if (value === null && key !== 'equals') return false;
         if (typeof value !== 'object' || value === null) throw new Error(`unread operator ${key}`);
         return matches((value as Record<string, unknown>)[key], arg);
     }
@@ -93,6 +109,9 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
     maxOpenDeals: null,
     createdAt: new Date(Date.UTC(2026, 10, id)),
     sellerId: SELLER,
+    ingestion: ServiceOfferingIngestionStatus.Scanned,
+    coverImageId: null,
+    coverImage: null,
     ...rest,
     seller: {
       username: 'seller',
@@ -149,6 +168,15 @@ beforeEach(() => {
 });
 
 describe('services feed', () => {
+  it("selects the seller with their equipped cosmetics, so the card's avatar shows frame and nameplate", async () => {
+    table = [row()];
+    await feedIds({});
+    const [args] = dbMock.dbRead.serviceOffering.findMany.mock.calls.at(-1) as [
+      { select: { seller: { select: { cosmetics?: unknown } } } }
+    ];
+    expect(args.select.seller.select.cosmetics).toBeDefined();
+  });
+
   it('hides an X-rated offering from an SFW viewer and shows it to one who browses X', async () => {
     const pg13 = row();
     const x = row({ maxNsfwLevel: NsfwLevel.X });
@@ -161,6 +189,23 @@ describe('services feed', () => {
     expect(
       await feedIds({ browsingLevel: allBrowsingLevelsFlag, servable: sfwBrowsingLevelsFlag })
     ).toEqual([pg13.id]);
+  });
+
+  it("hides an offering until its content checks, and its cover's, are done", async () => {
+    const shown = row();
+    const cover = (ingestion: ImageIngestionStatus) => ({
+      coverImageId: 1,
+      coverImage: { ingestion, needsReview: null, tosViolation: false, nsfwLevel: NsfwLevel.PG },
+    });
+    const withCover = row(cover(ImageIngestionStatus.Scanned));
+    table = [
+      shown,
+      withCover,
+      row({ ingestion: ServiceOfferingIngestionStatus.Pending }),
+      row({ ingestion: ServiceOfferingIngestionStatus.Blocked }),
+      row(cover(ImageIngestionStatus.Pending)),
+    ];
+    expect(await feedIds()).toEqual([withCover.id, shown.id]);
   });
 
   it('hides paused, draft and removed offerings', async () => {

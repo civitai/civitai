@@ -1,7 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
+import {
+  nsfwBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * The same base-model rule as images (`getAllImages`): an image on a restricted base model is not
@@ -12,11 +17,15 @@ const baseModelAllowedSql = Prisma.sql`(
   OR NOT i."modelRestricted"
 )`;
 
-/** Scanned, not awaiting review, not removed, allowed by its base model: as SQL over `"Image" i`. */
+/**
+ * Scanned, not awaiting review, not removed or a ToS violation, allowed by its base model: as SQL
+ * over `"Image" i`.
+ */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
+  AND i."tosViolation" IS NOT TRUE
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
   AND ${baseModelAllowedSql}
 )`;
@@ -29,13 +38,50 @@ const notOnTakenDownModelSql = Prisma.sql`NOT EXISTS (
 )`;
 
 /**
+ * The image `"Image" i` on post `"Post" p` is within its model's gallery level when the model is
+ * minor or SFW-only; true for no post or a post on no model. `exempt` is over that model `hm`: who
+ * sees its whole showcase. A cover is shared between viewers unless the caller says otherwise.
+ */
+function withinHeldGallerySql(exempt: Prisma.Sql = Prisma.sql`FALSE`) {
+  return Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "ModelVersion" hmv
+    JOIN "Model" hm ON hm.id = hmv."modelId"
+    WHERE hmv.id = p."modelVersionId"
+      AND NOT ${heldGalleryImageSql({ model: Prisma.raw('hm'), exempt })}
+  )`;
+}
+
+/**
+ * The image `"Image" i` on post `"Post" p` is allowed by its model, for every viewer: on no
+ * taken-down model, and within a minor or SFW-only model's gallery level. True for no post or a post
+ * on no model.
+ */
+const withinItsModelSql = Prisma.sql`(${notOnTakenDownModelSql} AND ${withinHeldGallerySql()})`;
+
+/** `withinItsModelSql` for the image with id `imageId`; true when that image is on no post. */
+export function imageAllowedByItsModelSql(imageId: Prisma.Sql) {
+  return Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId} AND NOT ${withinItsModelSql}
+  )`;
+}
+
+/**
  * Whether an image may be shown as a collection's cover to someone who doesn't own it, as SQL over
  * `"Image" i` with `"Post" p` LEFT JOINed on `i."postId"`. The image must be scanned, not awaiting
  * review and not removed. A posted image needs its post published, not Private and on no
- * taken-down model. A postless image needs `postlessAllowed`: `coverUploadSql` for a collection's
- * own cover, `itemUploadSql` for a cover taken from an item.
+ * taken-down model, and within the gallery level of a minor or SFW-only model. A postless image
+ * needs `postlessAllowed`: `coverUploadSql` for a collection's own cover, `itemUploadSql` for a
+ * cover taken from an item. `heldExempt` (over the model `hm`) is who sees past the gallery level.
  */
-export function servableCollectionCoverSql({ postlessAllowed }: { postlessAllowed: Prisma.Sql }) {
+export function servableCollectionCoverSql({
+  postlessAllowed,
+  heldExempt,
+}: {
+  postlessAllowed: Prisma.Sql;
+  heldExempt?: Prisma.Sql;
+}) {
   return Prisma.sql`(
     ${servableImageSql}
     AND (
@@ -44,6 +90,7 @@ export function servableCollectionCoverSql({ postlessAllowed }: { postlessAllowe
         AND p."publishedAt" < now()
         AND p."availability" != 'Private'
         AND ${notOnTakenDownModelSql}
+        AND ${withinHeldGallerySql(heldExempt)}
       )
       OR (i."postId" IS NULL AND ${postlessAllowed})
     )
@@ -84,6 +131,28 @@ export const publishedArticleSql = Prisma.sql`(
 )`;
 
 /**
+ * Whether article `"Article" a`'s legacy cover string may be served: beside a servable cover or
+ * banner image within `imageLevels` and its model's gallery level, on no taken-down model, or, with
+ * neither, for an article at an SFW level.
+ */
+export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLevelsFlag) {
+  return Prisma.sql`CASE
+    WHEN a."coverId" IS NULL AND a."bannerId" IS NULL THEN
+      (a."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
+      AND (a."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
+    ELSE EXISTS (
+      SELECT 1 FROM "Image" i
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      WHERE i.id = COALESCE(a."coverId", a."bannerId")
+        AND ${servableImageSql}
+        AND ${withinItsModelSql}
+        AND (i."nsfwLevel" & ${imageLevels}::int) <> 0
+        AND (i."nsfwLevel" & ~${imageLevels}::int) = 0
+    )
+  END`;
+}
+
+/**
  * For each collection, a cover drawn from its first `itemsPerCollection` accepted items: one row
  * per item, `image` projected by `imageSql` over `"Image" i` (null when no item yields a servable
  * image) and `src` for an article's external cover.
@@ -92,10 +161,17 @@ export function collectionItemCoversSql({
   collectionIds,
   itemsPerCollection,
   imageSql,
+  srcImageLevels = sfwBrowsingLevelsFlag,
 }: {
   collectionIds: number[];
   itemsPerCollection: number;
   imageSql: Prisma.Sql;
+  /**
+   * The levels an article's cover image may have for its legacy cover string to go with it. SFW
+   * for a reader that shows the string to everyone; a reader that drops the string with an image
+   * above the viewer's level may pass every level.
+   */
+  srcImageLevels?: number;
 }) {
   return Prisma.sql`
     WITH target AS MATERIALIZED (
@@ -134,7 +210,7 @@ export function collectionItemCoversSql({
             AND ${servableImageSql}
             AND p."publishedAt" < now()
             AND p."availability" != 'Private'
-            AND ${notOnTakenDownModelSql}
+            AND ${withinItsModelSql}
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (
@@ -155,6 +231,7 @@ export function collectionItemCoversSql({
               AND m."deletedAt" IS NULL
               AND m.availability != 'Private'
               AND m.mode IS DISTINCT FROM 'TakenDown'
+              AND ${heldGalleryImageSql()}
               AND mv.status = 'Published'
               AND mv.availability != 'Private'
               AND (mv."publishedAt" IS NULL OR mv."publishedAt" <= now())
@@ -166,13 +243,19 @@ export function collectionItemCoversSql({
           ${imageSql}
         FROM "Article" a
         JOIN "Image" i ON i.id = COALESCE(a."coverId", a."bannerId")
+        LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${servableImageSql}
+          AND ${withinItsModelSql}
           AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
+        -- A legacy cover string carries no rating of its own, and its readers show it to every
+        -- viewer: it goes with a servable cover or banner image at a level everyone may see, or,
+        -- with neither, an article at such a level. An image that cannot be served drops it.
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${publishedArticleSql}
+          AND ${legacyCoverStringAllowedSql(srcImageLevels)}
     ), model3dItemImage AS MATERIALIZED (
         SELECT
           m3.id,
@@ -200,6 +283,25 @@ export function collectionItemCoversSql({
   `;
 }
 
+/**
+ * Of these image ids, the ones their model withholds (taken down, or above a minor or SFW-only
+ * model's gallery level): the rule `imageAllowedByItsModelSql` applies. No viewer exemption here;
+ * callers exempt moderators and owners.
+ */
+export async function getModelWithheldImageIds(
+  imageIds: number[],
+  db: Pick<typeof dbRead, '$queryRaw'> = dbRead
+): Promise<Set<number>> {
+  const ids = [...new Set(imageIds)];
+  if (!ids.length) return new Set();
+  const rows = await db.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id IN (${Prisma.join(ids)}) AND NOT ${withinItsModelSql}
+  `;
+  return new Set(rows.map((row) => Number(row.id)));
+}
+
 type CoverViewer = { id?: number; isModerator?: boolean } | undefined | null;
 
 type CoverCandidate = { collectionId: number; collectionOwnerId: number; imageId: number };
@@ -222,6 +324,9 @@ export async function getServableCoverCollectionIds(
   if (viewer?.isModerator) return new Set(candidates.map((c) => c.collectionId));
 
   const ownImage = viewer?.id ? Prisma.sql`i."userId" = ${viewer.id} OR ` : Prisma.empty;
+  // The image's owner sees their own past the rules above, but not past the gallery level of a
+  // model they don't own: that is the model owner's alone.
+  const modelOwnerSql = viewer?.id ? Prisma.sql`hm."userId" = ${viewer.id}` : Prisma.sql`FALSE`;
   const rows = await db.$queryRaw<{ collectionId: number }[]>`
     SELECT v."collectionId"
     FROM unnest(
@@ -236,10 +341,29 @@ export async function getServableCoverCollectionIds(
       collectionId: Prisma.sql`v."collectionId"`,
       collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
     }),
+    heldExempt: modelOwnerSql,
   })})
       AND ${baseModelAllowedSql}
+      AND ${withinHeldGallerySql(modelOwnerSql)}
   `;
   return new Set(rows.map((r) => r.collectionId));
+}
+
+/**
+ * Whether a cover may be served at `browsingLevel`: rated within it, and never Blocked or a ToS
+ * violation, whatever the level. Narrower than `isPublicCoverImage`, the public API's rule: the
+ * app shows its viewers images that rule refuses (POI, minor), and its covers carry only these
+ * fields. Servability is judged in SQL first (`servableCollectionCoverSql`).
+ */
+export function isCoverWithinBrowsingLevel(
+  image: { nsfwLevel?: number | null; tosViolation?: boolean | null },
+  browsingLevel: number
+) {
+  return (
+    !image.tosViolation &&
+    image.nsfwLevel !== NsfwLevel.Blocked &&
+    isRatingWithinCap(image.nsfwLevel, browsingLevel)
+  );
 }
 
 /**

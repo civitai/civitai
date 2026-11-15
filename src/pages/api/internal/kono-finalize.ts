@@ -29,6 +29,8 @@ export default WebhookEndpoint(async (req, res) => {
 
   const { imageId, nsfwLevel } = result.data;
 
+  // Not gated on the cutover: it settles v1 votes still pending while the old game drains, and is
+  // removed with it.
   await updatePendingImageRatings({ imageId, rating: nsfwLevel });
   await leaveQueuesAfterModeratorRating(imageId);
 

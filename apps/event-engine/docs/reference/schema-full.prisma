@@ -3665,6 +3665,3 @@ model ReportAutomated {
   createdAt DateTime @default(now())
 }
 
-model RestrictedBaseModels {
-  baseModel String @id
-}

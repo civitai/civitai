@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -651,9 +652,12 @@ export async function getInfiniteChallenges(
     currentUserId?: number;
     isGreen: boolean;
     canAccessUserChallenges?: boolean;
+    /** Server-only: only these challenges, e.g. the semantic search's candidates. */
+    ids?: number[];
   }
 ) {
   const {
+    ids,
     query,
     status,
     source,
@@ -684,6 +688,11 @@ export async function getInfiniteChallenges(
     }))
   );
 
+  if (ids) {
+    if (!ids.length) return { items: [], nextCursor: undefined };
+    conditions.push(Prisma.sql`c.id IN (${Prisma.join(ids)})`);
+  }
+
   // Status filter (parameterized)
   if (status && status.length > 0) {
     const statusValues = status.map((s) => Prisma.sql`${s}::"ChallengeStatus"`);
@@ -702,7 +711,7 @@ export async function getInfiniteChallenges(
 
   // Text search (parameterized - safe from SQL injection)
   if (query) {
-    const searchPattern = `%${query}%`;
+    const searchPattern = ilikeContains(query);
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 
@@ -4119,17 +4128,83 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
+/**
+ * A challenge's winners, only when the viewer may see the challenge in a public list
+ * (challengeVisibilityConditions); otherwise the same empty list as an unknown id. Moderators keep
+ * the detail page's exemptions (getChallengeDetail): every gate but the userChallenges flag.
+ */
+export async function getVisibleChallengeWinners({
+  challengeId,
+  isGreen,
+  viewerId,
+  isModerator = false,
+  canAccessUserChallenges = false,
+  browsingLevel,
+}: {
+  challengeId: number;
+  isGreen: boolean;
+  viewerId?: number;
+  isModerator?: boolean;
+  canAccessUserChallenges?: boolean;
+  browsingLevel?: number;
+}) {
+  const conditions: Prisma.Sql[] = [Prisma.sql`c.id = ${challengeId}`];
+  if (isModerator) {
+    if (!canAccessUserChallenges)
+      conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
+  } else {
+    // Cancelled stays hidden from all but its creator, as on the detail page.
+    conditions.push(
+      viewerId
+        ? Prisma.sql`(c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus" OR c."createdById" = ${viewerId})`
+        : Prisma.sql`c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus"`
+    );
+    conditions.push(
+      ...(await challengeVisibilityConditions({
+        isGreen,
+        viewerId,
+        canAccessUserChallenges,
+        browsingLevel,
+      }))
+    );
+  }
+  const visible = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id FROM "Challenge" c WHERE ${Prisma.join(conditions, ' AND ')}
+  `;
+  if (!visible.length) return [];
+  return getChallengeWinners(challengeId, { isGreen, viewerId });
+}
+
 export async function getCompletedChallengesWithWinners(
-  input: GetCompletedChallengesWithWinnersInput & { isGreen: boolean; currentUserId?: number }
+  input: GetCompletedChallengesWithWinnersInput & {
+    isGreen: boolean;
+    currentUserId?: number;
+    canAccessUserChallenges?: boolean;
+  }
 ) {
-  const { cursor, limit, eventId, browsingLevel, query, source, isGreen, currentUserId } = input;
+  const {
+    cursor,
+    limit,
+    eventId,
+    browsingLevel,
+    query,
+    source,
+    isGreen,
+    currentUserId,
+    canAccessUserChallenges = false,
+  } = input;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
     Prisma.sql`c."visibleAt" <= now()`,
     Prisma.sql`c.status = 'Completed'::"ChallengeStatus"`,
     Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
+    ...challengeScanGates(currentUserId),
   ];
+
+  // User challenges stay behind the `userChallenges` flag, as on the feed and the detail page.
+  if (!canAccessUserChallenges)
+    conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
 
   if (eventId) {
     conditions.push(Prisma.sql`c."eventId" = ${eventId}`);
@@ -4172,7 +4247,7 @@ export async function getCompletedChallengesWithWinners(
   }
 
   if (query) {
-    const searchPattern = `%${String(query)}%`;
+    const searchPattern = ilikeContains(String(query));
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 

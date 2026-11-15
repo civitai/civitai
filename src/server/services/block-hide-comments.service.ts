@@ -21,6 +21,8 @@ export const SECTION_OWNERS: Record<CommentEntityType, (owner: string) => string
   appListing: (o) => `SELECT serial_id FROM app_listings WHERE user_id = ${o}`,
   crucible: (o) => `SELECT id FROM "Crucible" WHERE "userId" = ${o}`,
   storyline: (o) => `SELECT id FROM "Storyline" WHERE "userId" = ${o}`,
+  postText: (o) =>
+    `SELECT t.id FROM "PostText" t JOIN "Post" p ON p.id = t."postId" WHERE p."userId" = ${o}`,
   comicChapter: (o) =>
     `SELECT ch.id FROM "ComicChapter" ch JOIN "ComicProject" p ON p.id = ch."projectId" WHERE p."userId" = ${o}`,
 };

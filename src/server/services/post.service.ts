@@ -115,6 +115,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { heldPostTextPostIds, heldTextError } from '~/server/services/post-text-hold';
 import {
   Availability,
   CollectionMode,
@@ -156,6 +157,7 @@ import type {
 } from './../schema/post.schema';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
@@ -775,12 +777,16 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
 export type PostDetailEditable = AsyncReturnType<typeof getPostEditDetail>;
 export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
+export type PostEditTextDetail = PostDetailEditable['texts'][number];
 export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 
 export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
-  const editImages = await getPostEditImages({ id, user });
+  const [editImages, texts] = await Promise.all([
+    getPostEditImages({ id, user }),
+    getPostEditTexts(id),
+  ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
 
   let collectionTagId: null | number = null;
@@ -807,6 +813,7 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     parentModelName: model?.name ?? null,
     collectionTagId,
     images,
+    texts,
     collectionItemExists,
     ownModelId: model?.userId === post.user.id ? model.id : null,
   };
@@ -922,6 +929,19 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
 }
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
+/**
+ * The post's storyline text items for its editor, whatever the `storylineText` flag: the editor
+ * places new items by index among them, so it needs every row the author has.
+ */
+async function getPostEditTexts(postId: number) {
+  const db = await getDbWithoutLag('postImages', postId);
+  return db.postText.findMany({
+    where: { postId },
+    select: { id: true, index: true, content: true },
+    orderBy: [{ index: 'asc' }, { id: 'asc' }],
+  });
+}
+
 export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
@@ -1070,6 +1090,7 @@ export const createPost = async ({
     collectionTagId,
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
+    texts: [] as PostDetailEditable['texts'],
     collectionItemExists,
     // A fresh post has never been unpublished — supply the
     // PostUnpublishContext defaults so the type matches getPostEditDetail
@@ -1341,7 +1362,11 @@ export const deletePost = async ({
   id,
   isModerator,
   deletedById,
-}: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
+  viewerIsModerator = isModerator,
+}: GetByIdInput & { isModerator?: boolean; deletedById?: number; viewerIsModerator?: boolean }) => {
+  // The delete trigger on "PostText" refuses it too; this refuses it with a message.
+  if ((await heldPostTextPostIds({ postIds: [id] })).length)
+    throw heldTextError(viewerIsModerator, 'Text in this post');
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
@@ -1713,6 +1738,20 @@ export const addPostImage = async ({
   }
 
   const { generationWorkflowId, ...imageProps } = props;
+  // On a post with storyline text items, a new image goes after the last item whatever index the
+  // client sent: an editor without text items counts only images.
+  const lastText = await dbWrite.postText.findFirst({
+    where: { postId: props.postId },
+    orderBy: { index: 'desc' },
+    select: { index: true },
+  });
+  if (lastText) {
+    const imageEnd = await dbWrite.image.aggregate({
+      where: { postId: props.postId },
+      _max: { index: true },
+    });
+    imageProps.index = Math.max(lastText.index, imageEnd._max.index ?? -1) + 1;
+  }
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
@@ -2018,6 +2057,10 @@ export async function creditResourcesToImages({
   });
 
   if (createdResources.length > 0) {
+    await flagImagesOnRestrictedVersions({
+      modelVersionIds: uniq(createdResources.map((x) => x.modelVersionId)),
+      imageIds: uniq(createdResources.map((x) => x.imageId)),
+    });
     await queueImageSearchIndexUpdate({
       ids: uniq(createdResources.map((x) => x.imageId)),
       action: SearchIndexUpdateQueueAction.Update,
@@ -2098,10 +2141,36 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {
-  const transaction = await dbWrite.$transaction(
-    imageIds.map((id, index) => dbWrite.image.update({ where: { id, postId }, data: { index } }))
-  );
+/**
+ * Without `items` (an editor from before text items, or with them off), a post that has text keeps
+ * every text row where it is: the listed images take, in order, the indexes those images already hold.
+ */
+async function imageOnlyReorder(postId: number, imageIds: number[]) {
+  const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
+  if (!hasText) return imageIds.map((id, index) => ({ id, index }));
+  const held = await dbWrite.image.findMany({
+    where: { postId, id: { in: imageIds } },
+    select: { index: true },
+  });
+  const indexes = held.map((image) => image.index ?? 0).sort((a, b) => a - b);
+  return imageIds.slice(0, indexes.length).map((id, i) => ({ id, index: indexes[i] }));
+}
+
+export const reorderPostImages = async ({
+  id: postId,
+  imageIds,
+  items,
+}: ReorderPostImagesInput) => {
+  const writes = items
+    ? items.map(({ type, id }, index) =>
+        type === 'image'
+          ? dbWrite.image.update({ where: { id, postId }, data: { index } })
+          : dbWrite.postText.update({ where: { id, postId }, data: { index } })
+      )
+    : (await imageOnlyReorder(postId, imageIds)).map(({ id, index }) =>
+        dbWrite.image.update({ where: { id, postId }, data: { index } })
+      );
+  const transaction = await dbWrite.$transaction(writes);
 
   await updatePostNsfwLevel(postId);
   await bustCachesForPosts(postId);

@@ -393,6 +393,76 @@ describe('REGRESSION — a ~1040 fixed-price pass-through step above the 1000 bu
   });
 });
 
+describe('the resources a pass-through step names', () => {
+  const NAMED = {
+    engine: 'meshy',
+    prompt: 'a teapot',
+    model: 'urn:air:sdxl:checkpoint:civitai:1@11',
+  };
+  const HUGGING_FACE = {
+    ...NAMED,
+    model: 'urn:air:sdxl:checkpoint:huggingface:org/repo@main/x.safetensors',
+  };
+
+  beforeEach(() => {
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    // A mature ceiling spends yellow Buzz.
+    h.buzzAccounts.mockImplementation(async () => ({ ...ENOUGH_BUZZ, yellow: 20_000 }));
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) =>
+      args.where.id.in.map((id) => ({
+        id,
+        baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
+      }))) as never);
+  });
+  const UNRESTRICTED = { ...NAMED, model: 'urn:air:sdxl:checkpoint:civitai:1@10' };
+
+  const sentBody = () => (realSubmits()[0][0] as { body: Record<string, unknown> }).body;
+
+  const unconfirmed = async (input: Record<string, unknown>) => {
+    whatifPrice = { total: 100 };
+    chargedPrice = 100;
+    await submit(body({ input }));
+  };
+  const confirmed = async (input: Record<string, unknown>) => {
+    const { snapshot } = await estimate(body({ input }));
+    const quoteId = snapshot.stepQuote!.quoteId;
+    await consent(quoteId);
+    await submit(body({ input, quoteId }));
+  };
+
+  it.each([
+    ['an unconfirmed', unconfirmed],
+    ['a confirmed', confirmed],
+  ])(
+    'holds %s submit to PG-13 when one is on a base model that restricts mature generation',
+    async (_, run) => {
+      await run(NAMED);
+      expect(realSubmits()).toHaveLength(1);
+      expect(sentBody()).toMatchObject({ nsfwLevel: 'pg13', allowMatureContent: false });
+    }
+  );
+
+  it.each([
+    ['an unconfirmed', unconfirmed],
+    ['a confirmed', confirmed],
+  ])('leaves %s submit on an unrestricted base model uncapped', async (_, run) => {
+    await run(UNRESTRICTED);
+    expect(realSubmits()).toHaveLength(1);
+    expect(sentBody().nsfwLevel).toBeUndefined();
+  });
+
+  it.each([
+    ['estimate', () => estimate(body({ input: HUGGING_FACE }))],
+    ['submit', () => submit(body({ input: HUGGING_FACE }))],
+    ['confirmed submit', () => submit(body({ input: HUGGING_FACE, quoteId: SEEDED }))],
+  ])('%s refuses a Hugging Face resource before any orchestrator call', async (_, run) => {
+    await expect(run()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
 describe('ESTIMATE — grants a confirmable quote only for a fixed price above the budget', () => {
   it('returns the quote and stores it UNCONSENTED, reserving nothing', async () => {
     const { snapshot } = await estimate();
@@ -1380,5 +1450,89 @@ describe('account Limits section: the Apps Buzz row is what the per-user cap enf
     const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
     const row = await getMyAppBuzzToday({ id: VIEWER } as never);
     expect(row?.used).toBe(PRICE);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('accountType — a confirmed quote is bound to the pool it was priced with', () => {
+  const currenciesOf = (whatif: boolean) =>
+    h.submitWorkflow.mock.calls
+      .map((c) => c[0] as { body: { currencies?: unknown }; query?: { whatif?: boolean } })
+      .filter((a) => (a.query?.whatif === true) === whatif)
+      .map((a) => a.body.currencies);
+  async function confirmedQuoteFor(b: Record<string, unknown>) {
+    const { snapshot } = await estimate(b);
+    const quoteId = snapshot.stepQuote!.quoteId;
+    await consent(quoteId);
+    return quoteId;
+  }
+
+  // The fixture token is SFW (`maxBrowsingLevel: 1`): blue and green are allowed.
+  it('runs with the SAME pool, which goes first on the estimate, the re-quote and the submit', async () => {
+    const quoteId = await confirmedQuoteFor(body({ accountType: 'green' }));
+    const r = await submit(body({ accountType: 'green', quoteId }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
+    // Estimate whatif, then the submit's re-quote: both priced green-first.
+    expect(currenciesOf(true)).toEqual([
+      ['green', 'blue'],
+      ['green', 'blue'],
+    ]);
+    expect(currenciesOf(false)).toEqual([['green', 'blue']]);
+  });
+
+  it.each([
+    ['a different pool', { accountType: 'green' }, { accountType: 'blue' }],
+    ['a pool added after the quote', {}, { accountType: 'green' }],
+    ['the pool dropped after the quote', { accountType: 'green' }, {}],
+  ] as const)('refuses %s as a changed body, charging nothing', async (_l, quoted, submitted) => {
+    const quoteId = await confirmedQuoteFor(body(quoted));
+    await expect(submit(body({ ...submitted, quoteId }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'the step body differs from the one that was quoted — estimate again',
+    });
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
+  });
+
+  // The record the consent dialog reads. Kills: a grant that drops the pick (the
+  // dialog could then never say which pool pays first).
+  it('the stored quote record carries the pick, and the preview its order', async () => {
+    const { snapshot } = await estimate(body({ accountType: 'green' }));
+    const quoteId = snapshot.stepQuote!.quoteId;
+    const record = JSON.parse(store.get(`system:blocks:step-quote:${quoteId}`) as string);
+    expect(record.accountType).toBe('green');
+    const preview = await caller(VIEWER).previewQuoteGrant({
+      kind: 'step',
+      blockToken: 't',
+      quoteId,
+    });
+    // SFW token: green first, then blue — not the default blue-first order.
+    expect((preview as { fundingOrder?: unknown }).fundingOrder).toEqual(['green', 'blue']);
+  });
+
+  it('with no pick the record has no accountType and the preview no order', async () => {
+    const { snapshot } = await estimate(body());
+    const quoteId = snapshot.stepQuote!.quoteId;
+    const record = JSON.parse(store.get(`system:blocks:step-quote:${quoteId}`) as string);
+    expect('accountType' in record).toBe(false);
+    const preview = await caller(VIEWER).previewQuoteGrant({
+      kind: 'step',
+      blockToken: 't',
+      quoteId,
+    });
+    expect((preview as { fundingOrder?: unknown }).fundingOrder).toBeNull();
+  });
+
+  it('a disallowed pool is refused BEFORE the quote is consumed, so the quote still runs', async () => {
+    const quoteId = await confirmedQuoteFor(body());
+    await expect(submit(body({ accountType: 'yellow', quoteId }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: "buzz account 'yellow' is not spendable for this app's content rating",
+    });
+    expect(realSubmits()).toHaveLength(0);
+    // Not spent: the original body still submits against it.
+    const r = await submit(body({ quoteId }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
   });
 });
