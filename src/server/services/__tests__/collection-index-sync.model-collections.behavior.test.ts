@@ -85,7 +85,9 @@ describe('getCollectionIdsCoveredByModels', () => {
   });
 
   it('asks nothing for no models', async () => {
+    (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockClear();
     expect(await getCollectionIdsCoveredByModels([])).toEqual([]);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 });
 
