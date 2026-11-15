@@ -6,10 +6,8 @@ import {
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
-import {
-  resolveWorkflowMediaForBlockClaims,
-  WORKFLOW_MEDIA_MAX_REFS,
-} from '~/server/services/blocks/block-media-serving';
+import { resolveWorkflowMediaForBlockClaims } from '~/server/services/blocks/block-media-serving';
+import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 

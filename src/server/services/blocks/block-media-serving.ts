@@ -124,7 +124,7 @@ function judgeRef(
   return { status: 'visible', url: blockMediaUrl(ticket) };
 }
 
-export const WORKFLOW_MEDIA_MAX_REFS = 32;
+export { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 
 /**
  * The one body behind `GET_WORKFLOW_MEDIA` and its REST twin. Claims come from an

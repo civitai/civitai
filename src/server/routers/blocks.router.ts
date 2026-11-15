@@ -3,6 +3,7 @@ import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
 import * as z from 'zod';
+import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
   APP_STORAGE_COLLECTION_NAME_RE,
@@ -7107,7 +7108,7 @@ export const blocksRouter = router({
     .input(
       z.object({
         blockToken: z.string().min(1),
-        refs: z.string().min(1).max(2048).array().min(1).max(32),
+        refs: z.string().min(1).max(2048).array().min(1).max(WORKFLOW_MEDIA_MAX_REFS),
       })
     )
     .mutation(async ({ input }) => {

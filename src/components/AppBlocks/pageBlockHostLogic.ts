@@ -3,6 +3,7 @@
 // (no RTL — civitai-web's unit project runs `environment: 'node'` and only
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
+import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
@@ -637,7 +638,7 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
 export type GetWorkflowMediaRequest = { requestId: string; refs: string[] };
 
 /** Max refs the host forwards; matches `blocks.getWorkflowMedia`. */
-export const GET_WORKFLOW_MEDIA_MAX_REFS = 32;
+export const GET_WORKFLOW_MEDIA_MAX_REFS = WORKFLOW_MEDIA_MAX_REFS;
 
 /**
  * Validate a raw GET_WORKFLOW_MEDIA payload from an untrusted iframe: `null` drops it
