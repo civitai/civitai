@@ -1410,7 +1410,8 @@ export async function handleUpdateImageNsfwLevel({
     const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
 
     if (isModerator) {
-      // Update knights of new order pending votes and remove it from new order queue
+      // Update knights of new order pending votes and remove it from new order queue. Not gated on the
+      // cutover: it settles v1 votes still pending while the old game drains, and is removed with it.
       await updatePendingImageRatings({ imageId: input.id, rating: input.nsfwLevel });
       await leaveQueuesAfterModeratorRating(input.id);
     }

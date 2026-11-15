@@ -259,6 +259,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Collection.archivedAt`: `20260831000000_collection_archived_at`
     //   `ModActivity.host`: `20261205120000_mod_activity_host`
     //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
+    //   the four `NewOrderPlayer.payout*` columns: `20261209120000_knights_new_order_player_and_link_review`
     //   `StorylineCollaborator.acceptedAt`: `20261215120000_storyline_collaborator_accepted`
     //   the four `Crucible` takedown columns: `20261203120000_crucible_takedown`
     //   `Crucible.ownerRemovalCount`: `20261216120000_crucible_owner_removal_count`
@@ -308,6 +309,13 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ModActivity.host',
       'OauthClient.skipConsent',
       'OauthClient.tokenRateLimit',
+      'NewOrderPlayer.payoutBlockedAt',
+      'NewOrderPlayer.payoutBlockReason',
+      'NewOrderPlayer.payoutBlockedBy',
+      'NewOrderPlayer.payoutReleaseFrom',
+      'NewOrderPlayer.goldPending',
+      'NewOrderPlayer.goldEarned',
+      'NewOrderPlayer.goldConverted',
       'StorylineCollaborator.acceptedAt',
       'Crucible.takenDownAt',
       'Crucible.takenDownById',

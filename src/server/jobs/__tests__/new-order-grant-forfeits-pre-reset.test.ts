@@ -115,11 +115,16 @@ beforeEach(() => {
   mocks.createBuzzTransactionMany.mockResolvedValue(undefined);
   mocks.counters.blessed.getAll.mockResolvedValue([]);
   dbMock.dbRead.newOrderPlayer.findMany.mockImplementation(
-    ({ where }: { where: { userId: { in: number[] }; rankType: { not: string } } }) =>
+    ({ where }: { where: { userId?: { in: number[] }; rankType: { not: string } } }) =>
+      // The released-payout catch-up queries without a userId filter and has no players here.
       Promise.resolve(
-        players.filter(
-          (p) => where.userId.in.includes(p.userId) && p.rankType !== where.rankType.not
-        )
+        where.userId
+          ? players
+              .filter(
+                (p) => where.userId!.in.includes(p.userId) && p.rankType !== where.rankType.not
+              )
+              .map((p) => ({ ...p, payoutBlockedAt: null, user: { bannedAt: null } }))
+          : []
       )
   );
 });

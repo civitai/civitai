@@ -21,6 +21,9 @@ export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
 export const isFeedbackStatus = (value: string): value is FeedbackStatus =>
   (FEEDBACK_STATUSES as readonly string[]).includes(value);
 
+/** A Knights report's path belongs to the Knights origin, which the moderator app has no address for, so it is not linked. */
+export const feedbackPathLinksToCivitai = (area: string): boolean => area !== 'knights';
+
 export const DEFAULT_FEEDBACK_STATUSES: FeedbackStatus[] = ['new'];
 
 /**
@@ -81,6 +84,7 @@ export const FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT: readonly string[] = [
 const FEEDBACK_AREA_LABELS = new Map<string, string>([
   [APP_BLOCK_FEEDBACK_AREA, 'App feedback'],
   [APPS_PLATFORM_FEEDBACK_AREA, 'Apps platform (developers)'],
+  ['knights', 'Knights of New Order'],
   [ORCHESTRATION_FEEDBACK_AREA, 'Generation & training errors'],
 ]);
 
