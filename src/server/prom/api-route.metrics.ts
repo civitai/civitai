@@ -1,23 +1,23 @@
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import client from 'prom-client';
-import type { Histogram } from 'prom-client';
+import type { Counter } from 'prom-client';
 import type { RequestMeta } from 'next/dist/server/request-meta';
 import {
   PROM_PREFIX,
-  TRPC_PROCEDURE_DURATION_BUCKETS,
   instrumentationRegistry,
   registerInstrumentationMetric,
 } from '@civitai/telemetry/client';
 import { apiRouteLabel } from '~/server/utils/page-routes';
 
 // ---------------------------------------------------------------------------
-// Per-route request histogram for every pages-API route (`src/pages/api/**`)
+// Per-route request counter for every pages-API route (`src/pages/api/**`)
 // ---------------------------------------------------------------------------
 //
 // WHY: tRPC procedures have `civitai_app_trpc_procedure_duration_seconds{path}`, but the REST routes
 // had no per-route request count, so their share of server CPU could not be attributed. This counts
-// and times every request to a pages-API route, labelled by the route PATTERN.
+// every request to a pages-API route, labelled by the route PATTERN. A counter rather than a
+// histogram: the request rate is what attribution needs, and buckets would multiply the series.
 //
 // WHERE IT HOOKS: `http.Server.prototype.emit('request')`, not an endpoint wrapper. The routes use
 // a dozen different wrappers (endpoint-helpers, defineModeratorEndpoint, withBlockScope, bare
@@ -37,14 +37,13 @@ import { apiRouteLabel } from '~/server/utils/page-routes';
 // `other`. So the label set is the build's API routes plus `other`: a URL never reaches a label.
 //
 // COST: requests whose URL does not start with `/api/` pay one string compare. API requests pay one
-// `performance.now()` and one `close` listener; the label lookups run once, when the response
-// closes, and do no async work.
+// `close` listener; the label lookups run once, when the response closes, and do no async work.
 //
 // DARK BY DEFAULT: nothing is installed unless API_ROUTE_METRICS=true, the same opt-in shape as
-// TRPC_PROCEDURE_METRICS, because a histogram per route x method x status class is a large series
-// count per pod. Enable it on the pools being measured.
+// TRPC_PROCEDURE_METRICS, because a series per route x method x status class is a large count per
+// pod. Enable it on the pools being measured.
 
-export const API_ROUTE_DURATION_METRIC = PROM_PREFIX + 'api_route_duration_seconds';
+export const API_ROUTE_REQUESTS_METRIC = PROM_PREFIX + 'api_route_requests_total';
 
 /** The `Symbol.for` key under which the standalone server stores the page it matched on `req`. */
 export const STANDALONE_API_ROUTE_PAGE_KEY = 'civitai.standalone.apiRoutePage';
@@ -63,20 +62,18 @@ type Labels = 'route' | 'method' | 'status_class';
 
 // Registered on the shared registry: the hook is installed from instrumentation.node.ts (the
 // instrumentation graph), and `/api/metrics` (the request graph) merges this registry into its scrape.
-function apiRouteHistogram(): Histogram<Labels> {
+function apiRouteCounter(): Counter<Labels> {
   return registerInstrumentationMetric(
-    API_ROUTE_DURATION_METRIC,
+    API_ROUTE_REQUESTS_METRIC,
     () =>
-      new client.Histogram({
-        name: API_ROUTE_DURATION_METRIC,
+      new client.Counter({
+        name: API_ROUTE_REQUESTS_METRIC,
         help:
-          'Wall-clock seconds from request receipt to response close for pages-API routes, by route ' +
-          'pattern (the pages-manifest key, e.g. /api/v1/models/[id]; anything else is other), ' +
-          'method and status class (aborted when the response closed without finishing). Counts ' +
-          'every request once, so _count is the per-route request rate; tRPC requests land under ' +
-          '/api/trpc/[trpc] as HTTP requests (one per batch). Opt-in via API_ROUTE_METRICS=true',
+          'Requests to pages-API routes, counted once when the response closes, by route pattern ' +
+          '(the pages-manifest key, e.g. /api/v1/models/[id]; anything else is other), method and ' +
+          'status class (aborted when the response closed without finishing). tRPC requests land ' +
+          'under /api/trpc/[trpc] as HTTP requests (one per batch). Opt-in via API_ROUTE_METRICS=true',
         labelNames: ['route', 'method', 'status_class'] as const,
-        buckets: [...TRPC_PROCEDURE_DURATION_BUCKETS],
         registers: [instrumentationRegistry],
       })
   );
@@ -106,33 +103,26 @@ export function statusClassLabel(statusCode: number, finished: boolean): string 
   return cls >= 1 && cls <= 5 ? STATUS_CLASSES[cls - 1] : API_ROUTE_OTHER;
 }
 
-const defaultNow = () => performance.now();
-
 /**
- * Times `req` from now until `res` closes and records it once. No-op for a non-API URL. Never
- * throws, and never touches the response beyond adding one listener.
+ * Counts `req` once, when `res` closes. No-op for a non-API URL. Never throws, and never touches the
+ * response beyond adding one listener.
  */
 export function observeApiRequest(
   req: IncomingMessage | undefined,
-  res: ServerResponse | undefined,
-  now: () => number = defaultNow
+  res: ServerResponse | undefined
 ): void {
   const url = req?.url;
   if (typeof url !== 'string' || !url.startsWith('/api/')) return;
   if (!res || typeof res.once !== 'function') return;
-  const startedAt = now();
   res.once('close', () => {
     try {
-      apiRouteHistogram().observe(
-        {
-          route: apiRouteLabel(apiRoutePattern(req as IncomingMessage)),
-          method: methodLabel(req?.method),
-          status_class: statusClassLabel(res.statusCode, res.writableFinished),
-        },
-        (now() - startedAt) / 1000
-      );
+      apiRouteCounter().inc({
+        route: apiRouteLabel(apiRoutePattern(req as IncomingMessage)),
+        method: methodLabel(req?.method),
+        status_class: statusClassLabel(res.statusCode, res.writableFinished),
+      });
     } catch {
-      // Losing one observation is fine; failing the response is not.
+      // Losing one increment is fine; failing the response is not.
     }
   });
 }
@@ -150,12 +140,18 @@ type EmitTarget = { emit(event: string | symbol, ...args: any[]): boolean };
  * Wraps `proto.emit` so every `request` event is observed before the server's own listeners run.
  * Idempotent per prototype, across webpack graphs (the set lives on globalThis). Returns whether
  * this call installed it.
+ *
+ * The wrapped emit is looked up on EVERY call, not captured here: an `emit` that `proto` itself
+ * owned at install time is kept, and otherwise the parent prototype's current `emit` is called, so
+ * a parent patched later (another instrumentation wrapping `http.Server.prototype.emit` after this
+ * ran on a subclass) is still reached. `this`, the arguments and the return value pass through.
  */
 export function installApiRouteServerHook(proto: EmitTarget = http.Server.prototype): boolean {
   const hooked = (globalThis.__civitaiApiRouteHookedProtos ??= new WeakSet());
   if (hooked.has(proto)) return false;
   hooked.add(proto);
-  const original = proto.emit;
+  const ownEmit = Object.prototype.hasOwnProperty.call(proto, 'emit') ? proto.emit : undefined;
+  const parent = Object.getPrototypeOf(proto) as EmitTarget;
   proto.emit = function emitWithApiRouteMetrics(this: unknown, event: string | symbol) {
     if (event === 'request') {
       try {
@@ -165,8 +161,9 @@ export function installApiRouteServerHook(proto: EmitTarget = http.Server.protot
         // Never let telemetry stop a request from being handled.
       }
     }
+    const next = ownEmit ?? parent.emit;
     // eslint-disable-next-line prefer-rest-params
-    return original.apply(this, arguments as unknown as Parameters<EmitTarget['emit']>);
+    return next.apply(this, arguments as unknown as Parameters<EmitTarget['emit']>);
   };
   return true;
 }

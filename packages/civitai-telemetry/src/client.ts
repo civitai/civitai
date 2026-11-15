@@ -217,10 +217,6 @@ export const cacheRevalidateCounter = registerCounterWithLabels({
   labelNames: ['cache_name', 'cache_type'] as const,
 });
 
-// Exported so other per-route duration histograms (civitai_app_api_route_duration_seconds) use the
-// same boundaries (see the bucket note on trpcProcedureDuration below) and compare bucket for bucket.
-export const TRPC_PROCEDURE_DURATION_BUCKETS: readonly number[] = [0.1, 0.5, 1, 2.5, 10, 30];
-
 // tRPC per-procedure latency — wall-clock duration of the full middleware chain +
 // resolver, labeled by procedure path. Used to rank heavy-pool isolation
 // candidates by P99 x rate (the criterion behind the image-feed cutover). Bucket
@@ -240,7 +236,7 @@ export const trpcProcedureDuration = registerHistogram({
   // keeping boundaries near typical p95/p99. Dropped only the 50ms floor; the
   // 30s tail boundary is retained so _bucket-based p99 can still resolve the
   // 10–30s range (the parked-handler / slow-procedure diagnostic band).
-  buckets: TRPC_PROCEDURE_DURATION_BUCKETS,
+  buckets: [0.1, 0.5, 1, 2.5, 10, 30],
 });
 
 // Web-client READ-capability saturation for the superjson → devalue serializer

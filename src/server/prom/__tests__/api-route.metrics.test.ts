@@ -3,17 +3,19 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createRequire } from 'node:module';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { Socket } from 'node:net';
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import {
   NEXT_REQUEST_META as NEXT_OWN_REQUEST_META,
   addRequestMeta,
   type RequestMeta,
 } from 'next/dist/server/request-meta';
+import { NodeNextRequest } from 'next/dist/server/base-http/node';
 import type client from 'prom-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  API_ROUTE_DURATION_METRIC,
+  API_ROUTE_REQUESTS_METRIC,
   NEXT_REQUEST_META,
   STANDALONE_API_ROUTE_PAGE_KEY,
   apiRoutePattern,
@@ -44,20 +46,16 @@ const MANIFEST = [
   '/api/auth/session',
 ];
 
-type Row = { value: number; labels: Record<string, string | number>; metricName?: string };
+type Row = { value: number; labels: Record<string, string | number> };
 
-async function rows(): Promise<Row[]> {
-  const metric = instrumentationRegistry.getSingleMetric(API_ROUTE_DURATION_METRIC) as
-    | client.Histogram<string>
+/** Every series of the counter, as `{labels, value}`. */
+async function counts(): Promise<Row[]> {
+  const metric = instrumentationRegistry.getSingleMetric(API_ROUTE_REQUESTS_METRIC) as
+    | client.Counter<string>
     | undefined;
-  return metric ? ((await metric.get()).values as Row[]) : [];
-}
-
-/** The `_count` rows only, as `{labels, value}`. */
-async function counts() {
-  return (await rows())
-    .filter((r) => r.metricName === API_ROUTE_DURATION_METRIC + '_count')
-    .map((r) => ({ labels: r.labels, value: r.value }));
+  return metric
+    ? ((await metric.get()).values as Row[]).map((r) => ({ labels: r.labels, value: r.value }))
+    : [];
 }
 
 /** Sets the route match the way Next's own router does, through Next's own function. */
@@ -70,7 +68,7 @@ function setNextMatch(req: object, page: string, params: Record<string, string> 
 
 beforeEach(() => {
   usePagesManifestFixture(MANIFEST);
-  (instrumentationRegistry.getSingleMetric(API_ROUTE_DURATION_METRIC) as client.Histogram)?.reset();
+  (instrumentationRegistry.getSingleMetric(API_ROUTE_REQUESTS_METRIC) as client.Counter)?.reset();
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -79,6 +77,21 @@ afterEach(() => {
 describe('route label', () => {
   it('reads Next under the same request-meta key Next itself writes', () => {
     expect(NEXT_REQUEST_META).toBe(NEXT_OWN_REQUEST_META);
+  });
+
+  it("reads a match Next adds through its own request wrapper on the raw request's meta", () => {
+    // Next's server wraps the raw IncomingMessage in a NodeNextRequest and adds `match` to the
+    // WRAPPER. The raw request (the one the server hook holds) sees it only because the wrapper
+    // shares the raw request's existing meta object. If a Next upgrade stops sharing it, the label
+    // reads `other` for every route, and this goes red.
+    const raw = new http.IncomingMessage(new Socket());
+    raw.method = 'GET';
+    raw.url = '/api/v1/models/123?x=1';
+    addRequestMeta(raw, 'initURL', 'http://localhost/api/v1/models/123?x=1');
+    const wrapped = new NodeNextRequest(raw);
+    setNextMatch(wrapped, '/api/v1/models/[id]', { id: '123' });
+    expect(apiRoutePattern(raw)).toBe('/api/v1/models/[id]');
+    expect(apiRouteLabel(apiRoutePattern(raw))).toBe('/api/v1/models/[id]');
   });
 
   it('labels /api/v1/models/123?x=1, handled by [id].ts, as /api/v1/models/[id]', () => {
@@ -160,30 +173,16 @@ function makeRes(statusCode: number, writableFinished = true) {
 }
 
 describe('observeApiRequest', () => {
-  it('records one observation, with the duration from receipt to close', async () => {
+  it('counts exactly one per response, even when close fires twice', async () => {
     const req = { url: '/api/v1/models/123?x=1', method: 'GET' };
     const res = makeRes(200);
-    const clock = vi.fn().mockReturnValueOnce(1000).mockReturnValueOnce(1250);
-    observeApiRequest(req as unknown as IncomingMessage, res as unknown as ServerResponse, clock);
+    observeApiRequest(req as unknown as IncomingMessage, res as unknown as ServerResponse);
     setNextMatch(req, '/api/v1/models/[id]', { id: '123' }); // resolved after receipt, as in Next
     res.emit('close');
     res.emit('close');
 
-    const labels = { route: '/api/v1/models/[id]', method: 'GET', status_class: '2xx' };
-    expect(await counts()).toEqual([{ labels, value: 1 }]);
-    const all = await rows();
-    expect(all.find((r) => r.metricName === API_ROUTE_DURATION_METRIC + '_sum')?.value).toBe(0.25);
-    const buckets = all
-      .filter((r) => r.metricName === API_ROUTE_DURATION_METRIC + '_bucket')
-      .map((r) => [r.labels.le, r.value]);
-    expect(buckets).toEqual([
-      [0.1, 0],
-      [0.5, 1],
-      [1, 1],
-      [2.5, 1],
-      [10, 1],
-      [30, 1],
-      ['+Inf', 1],
+    expect(await counts()).toEqual([
+      { labels: { route: '/api/v1/models/[id]', method: 'GET', status_class: '2xx' }, value: 1 },
     ]);
   });
 
@@ -307,6 +306,46 @@ describe('server hook', () => {
     expect(installApiRouteServerHook(HookedServer.prototype)).toBe(false);
     expect(HookedServer.prototype.emit).toBe(emit);
     expect(http.Server.prototype.emit).toBe(realServerEmit);
+  });
+});
+
+describe('installApiRouteServerHook delegation', () => {
+  type Call = { self: unknown; args: unknown[] };
+
+  it("reaches a parent's emit that was replaced after install, with the same this, args and result", () => {
+    const calls: Call[] = [];
+    const parent = {
+      emit(..._args: unknown[]): boolean {
+        throw new Error('the emit captured at install time must not be called');
+      },
+    };
+    const child = Object.create(parent) as typeof parent;
+    expect(installApiRouteServerHook(child)).toBe(true);
+    parent.emit = function (this: unknown, ...args: unknown[]) {
+      calls.push({ self: this, args });
+      return false;
+    };
+    const self = { name: 'server' };
+    expect(child.emit.call(self, 'connection', 1, 2)).toBe(false);
+    expect(calls).toEqual([{ self, args: ['connection', 1, 2] }]);
+  });
+
+  it('keeps an emit the prototype itself owned at install time', () => {
+    const calls: Call[] = [];
+    const parent = {
+      emit(): boolean {
+        throw new Error('the parent must not be called when the prototype owns emit');
+      },
+    };
+    const own = Object.create(parent) as typeof parent;
+    own.emit = function (this: unknown, ...args: unknown[]) {
+      calls.push({ self: this, args });
+      return true;
+    };
+    expect(installApiRouteServerHook(own)).toBe(true);
+    const self = { name: 'server' };
+    expect(own.emit.call(self, 'listening')).toBe(true);
+    expect(calls).toEqual([{ self, args: ['listening'] }]);
   });
 });
 

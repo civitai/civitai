@@ -61,7 +61,7 @@ const API_POLICY_GLOBAL_KEY = 'civitai.standalone.applyApiRequestPolicy';
 
 /**
  * The `req` key (via `Symbol.for`) under which this server stores the page it matched, so the
- * per-route request histogram (`src/server/prom/api-route.metrics.ts`, which reads it as
+ * per-route request counter (`src/server/prom/api-route.metrics.ts`, which reads it as
  * `STANDALONE_API_ROUTE_PAGE_KEY`) can label the request: this server calls route modules without
  * Next's router, so Next's own route match is never set on the request.
  */

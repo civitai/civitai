@@ -177,7 +177,7 @@ async function handle(req, res) {
   if (matched.decodeError) return compat.sendBadRequest(res);
   compat.applyRoutingHeaders(res, routed.headers);
   if (matched.notFound) return compat.sendNotFound(res);
-  // The page this request is for, read by the per-route request histogram when the response closes.
+  // The page this request is for, read by the per-route request counter when the response closes.
   req[API_ROUTE_PAGE] = matched.page;
 
   compat.fillForwardedHeaders(req, { hostname, port: listenPort });
