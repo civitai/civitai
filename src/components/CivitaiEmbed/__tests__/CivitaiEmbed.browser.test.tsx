@@ -449,6 +449,18 @@ describe('a full-width image in an article', () => {
     expect(page.getByTestId('civitai-embed-full').elements()).toHaveLength(0);
   });
 
+  test('display full on a model has no effect', async () => {
+    renderArticle({
+      type: 'doc',
+      content: [
+        { type: 'civitaiEmbed', attrs: { items: [{ type: 'model', id: 1 }], display: 'full' } },
+      ],
+    });
+
+    await expect.element(page.getByTestId('model-card')).toBeInTheDocument();
+    expect(page.getByTestId('civitai-embed-full').elements()).toHaveLength(0);
+  });
+
   test('display full on more than one item has no effect', async () => {
     renderArticle(fullEmbed(7, 9));
 

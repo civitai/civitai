@@ -92,6 +92,13 @@ describe('civitaiEmbed full-width display', () => {
     expect(embedOf(generateJSON(html, tiptapExtensions))?.attrs.display).toBe('card');
   });
 
+  it('keeps no display value but full on the embed, on the article save path', () => {
+    const content = upsertArticleInput.shape.content.parse(
+      '<div data-type="civitaiEmbed" data-display="anything"><a href="/images/13" data-entity="image" data-id="13">x</a></div>'
+    );
+    expect(content).not.toContain('anything');
+  });
+
   it('drops data-display from any div that is not the embed, on the article save path', () => {
     const content = upsertArticleInput.shape.content.parse(
       '<div data-type="civitaiembed" data-display="full">a</div>' +

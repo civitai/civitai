@@ -136,7 +136,7 @@ const FULL_WIDTH = 1200;
  * One image or video at the article's column width. Gated by the same ImageGuard2 the image card
  * uses, so anything the card would blur is blurred here too.
  */
-function FullWidthMedia({ data }: EntityProps) {
+export function FullWidthMedia({ data }: EntityProps) {
   const image = data as EmbedImage;
   const { getImages, ...context } = useImagesContext();
   const features = useFeatureFlags();
