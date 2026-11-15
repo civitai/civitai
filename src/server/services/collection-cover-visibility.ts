@@ -231,6 +231,7 @@ export function collectionItemCoversSql({
         LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${servableImageSql}
+          AND ${notOnTakenDownModelSql}
           AND ${withinHeldGallerySql()}
           AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (

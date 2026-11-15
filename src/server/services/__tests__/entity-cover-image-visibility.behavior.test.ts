@@ -305,6 +305,8 @@ beforeAll(async () => {
     -- Article 2901's cover is the minor model's X image; article 2902's the unflagged model's.
     INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
       (2901, 2031, 'Published', now()), (2902, 2231, 'Published', now());
+    -- Article 2903's cover is the taken-down model's image.
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES (2903, 1631, 'Published', now());
     -- An X image on published post 201, which is on no model.
     INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES (2631, 201, ${NsfwLevel.X});
   `);
@@ -324,6 +326,7 @@ const hidden: [string, string, number, number][] = [
   ["a taken-down model's version", 'ModelVersion', 1611, 1631],
   ["a taken-down model's image", 'Image', 1631, 1631],
   ["a post on a taken-down model's version", 'Post', 1621, 1631],
+  ["an article whose cover is a taken-down model's image", 'Article', 2903, 1631],
   ['a flagged image', 'Image', 1211, 1211],
   ['a post whose only image is flagged', 'Post', 1201, 1211],
   ['an article whose cover is flagged', 'Article', 1401, 1411],

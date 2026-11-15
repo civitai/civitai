@@ -31,6 +31,8 @@ const IMAGE_RESTRICTED_PG = 111;
 const MODEL_RESTRICTED_FIRST = 112;
 const ARTICLE_RESTRICTED_R = 113;
 const MODEL3D_RESTRICTED_R = 114;
+const ARTICLE_ON_TAKEN_DOWN = 115;
+const ARTICLE_ON_LIVE = 116;
 
 let db: PGlite;
 
@@ -90,6 +92,10 @@ beforeAll(async () => {
     INSERT INTO "Article" (id, "coverId", status, "publishedAt", availability, ingestion) VALUES
       (60, 48, 'Published', now() - interval '1 day', 'Public', 'Scanned');
     INSERT INTO "Model3D" (id, "thumbnailImageId", status, availability) VALUES (61, 49, 'Published', 'Public');
+    -- Article 62's cover is on the taken-down model's post, article 63's on the live model's.
+    INSERT INTO "Article" (id, "coverId", status, "publishedAt", availability, ingestion) VALUES
+      (62, 41, 'Published', now() - interval '1 day', 'Public', 'Scanned'),
+      (63, 40, 'Published', now() - interval '1 day', 'Public', 'Scanned');
     INSERT INTO "CollectionItem" ("collectionId", "addedById", "imageId", "postId", "modelId") VALUES
       (${IMAGE_ON_LIVE}, ${OWNER}, 40, NULL, NULL),
       (${IMAGE_ON_TAKEN_DOWN}, ${STRANGER}, 42, NULL, NULL),
@@ -107,7 +113,9 @@ beforeAll(async () => {
       (${MODEL_RESTRICTED_FIRST}, ${OWNER}, NULL, NULL, 12);
     INSERT INTO "CollectionItem" ("collectionId", "addedById", "articleId", "model3dId") VALUES
       (${ARTICLE_RESTRICTED_R}, ${STRANGER}, 60, NULL),
-      (${MODEL3D_RESTRICTED_R}, ${STRANGER}, NULL, 61);
+      (${MODEL3D_RESTRICTED_R}, ${STRANGER}, NULL, 61),
+      (${ARTICLE_ON_TAKEN_DOWN}, ${STRANGER}, 62, NULL),
+      (${ARTICLE_ON_LIVE}, ${STRANGER}, 63, NULL);
   `);
 });
 
@@ -131,6 +139,7 @@ describe('collection item covers', () => {
     ['a PG image item on a restricted base model', IMAGE_RESTRICTED_PG, 45],
     ['a post item past its R image on a restricted base model', POST_RESTRICTED_R, 50],
     ['a model item past its R image on a restricted base model', MODEL_RESTRICTED_FIRST, 47],
+    ['an article item whose cover is on a live model', ARTICLE_ON_LIVE, 40],
   ])('takes the cover from %s', async (_, collectionId, imageId) => {
     expect(await coverOf(collectionId)).toEqual([imageId]);
   });
@@ -139,6 +148,7 @@ describe('collection item covers', () => {
     ['an image item on a taken-down model', IMAGE_ON_TAKEN_DOWN],
     ['a post item on a taken-down model', POST_ON_TAKEN_DOWN],
     ['a model item for a taken-down model', MODEL_TAKEN_DOWN],
+    ['an article item whose cover is on a taken-down model', ARTICLE_ON_TAKEN_DOWN],
     ['an R image item on a restricted base model', IMAGE_RESTRICTED_R],
     ['an article item whose cover is R on a restricted base model', ARTICLE_RESTRICTED_R],
     ['a 3D model item whose thumbnail is R on a restricted base model', MODEL3D_RESTRICTED_R],

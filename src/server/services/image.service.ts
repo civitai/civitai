@@ -5619,6 +5619,7 @@ export const getEntityCoverImage = async ({
           LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
           LEFT JOIN "Model" m ON m.id = mv."modelId"
           WHERE e."entityType" = 'Article'
+              AND ${modelNotWithheld}
               AND ${withinHeldGallery}
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
