@@ -40,7 +40,7 @@
   const num = (n: number) => n.toLocaleString();
   const period = new CookieState<ModelPeriod>(MODEL_PERIOD_COOKIE, () => data.period);
   const periodLabel = $derived(
-    data.period === 'all' ? 'all time' : `for ${formatRange(data.range)}`
+    data.period === 'all' ? 'across all time' : `for ${formatRange(data.range)}`
   );
   const impressionsDeltaOk = $derived(impressionsComparable(data.compare.from));
   const perPage = $derived(analyticsPageSize.value);
@@ -233,8 +233,7 @@
     variant="outline"
     size="sm"
     spacing={1}
-    value={period.value}
-    onValueChange={(v: string) => v && period.set(v as ModelPeriod)}
+    bind:value={() => period.value, (v: string) => v && period.set(v as ModelPeriod)}
     aria-label="Show one month or all time"
   >
     <ToggleGroup.Item value="month" class="text-xs">Month</ToggleGroup.Item>

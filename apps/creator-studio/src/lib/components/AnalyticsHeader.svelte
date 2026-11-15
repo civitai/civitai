@@ -24,7 +24,7 @@
     <p>Your content and model performance.</p>
   </div>
   {#if children || (range && compare)}
-    <div class="ml-auto flex flex-wrap items-center gap-2">
+    <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
       {@render children?.()}
       {#if range && compare}
         <RangeSelector {range} {compare} {showCompare} />
