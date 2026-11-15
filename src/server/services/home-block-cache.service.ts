@@ -1,6 +1,15 @@
+import { LRUCache } from 'lru-cache';
+import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
+import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
+import { createCachedFlagGate } from '~/server/utils/cached-flag-gate';
+import {
+  countHomeBlockL1Eviction,
+  countHomeBlockL1Hit,
+  countHomeBlockL1Miss,
+} from '~/server/prom/home-block-l1.metrics';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import { isCollectionReadShared } from '~/server/services/collection-item-access';
@@ -74,6 +83,101 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache, metadata: HomeBloc
 // a red-scoped board rendered onto civitai.com.
 const domainSegment = (domain?: DomainColor) => domain ?? 'unscoped';
 
+// ---------------------------------------------------------------------------------------------
+// Per-process L1 over the shared Redis entry, behind `home-block-server-cache` (default OFF).
+//
+// It holds exactly what the Redis entry holds, under the same key (type, identifier, domain), and
+// only what would be written there: a block whose content is the same for every viewer. Nothing
+// viewer-specific is in it, because nothing viewer-specific is in the Redis entry either — the
+// viewer gates (`canViewHomeBlock`, the collection audience) run in `getHomeBlockById` before this
+// is reached, and a viewer-only collection never comes here. The per-row identity (id, userId,
+// index, sourceId) and the resolved metadata are laid over the shared content on every call, hit
+// or miss, and the cosmetic shop rotation is applied per request after it, as before.
+//
+// STALENESS. A bust clears the Redis entry and THIS process's copy, but most busts run in a
+// process that serves no home page (a job), so every serving process keeps its copy until it
+// expires. A copy filled from a Redis hit also starts a fresh TTL, however old the Redis entry
+// was. So the TTL is short, not the edge cache's 60s: that would stack with the edge and put a
+// bust up to ~120s from reaching every viewer. With 10s, the worst case after a bust is 10s for a
+// request that misses the edge (it was 0s), and 10s + the edge's 60s = 70s for one served from
+// the edge (it was 60s). A copy outlives its Redis entry's natural expiry by at most 10s (every
+// entry here is kept 3 min or more). The alternative, clipping each copy to the Redis entry's
+// remaining TTL, bounds only that last case, never a bust, and costs a TTL read per fill.
+export const HOME_BLOCK_L1_TTL_MS = 10_000;
+
+// SIZE. The key space is (type, identifier, domain segment). The hot part is the system blocks
+// every default home page shows (`getSystemHomeBlocks`, userId -1), each under at most 4 domain
+// segments (`getRequestBoardDomainColor` answers green, blue, red or none); a user's own
+// collection blocks add one key per public collection that is on someone's page. Sized to hold
+// the hot part with room for users' blocks; `home_block_l1_evictions_total` shows whether it does.
+const HOME_BLOCK_L1_MAX = 256;
+// The byte cap is measured with an estimate, not a serialisation: `packed.get` hands back the
+// decoded value only (the wire size is not exposed to the caller), and a JSON.stringify of a
+// 56-item block on every fill is the cost this cache exists to remove. A block's size is driven
+// by its item count, so the estimate is a fixed overhead plus an allowance per item. The 4KB
+// allowance is a deliberately generous guess, not a measurement: an under-estimate would let the
+// cache hold more than its budget, an over-estimate only evicts sooner (which the counter shows).
+const HOME_BLOCK_L1_ENTRY_BYTES = 4 * 1024;
+const HOME_BLOCK_L1_ITEM_BYTES = 4 * 1024;
+
+const readHomeBlockL1Flag = () => isFliptSync(FLIPT_FEATURE_FLAGS.HOME_BLOCK_SERVER_CACHE);
+let isHomeBlockL1On = createCachedFlagGate(readHomeBlockL1Flag);
+
+/**
+ * Array elements in a block, three levels down: the block's item lists (a collection's items, a
+ * feed's items, a shop section's items) and lists one level inside a list (a board's results, a
+ * picked collection's items). Walks containers only, never an item's fields, so it costs O(items).
+ */
+export function countHomeBlockItems(value: unknown, depth = 3): number {
+  if (Array.isArray(value)) {
+    let n = value.length;
+    if (depth > 0) for (const v of value) n += countHomeBlockItems(v, depth - 1);
+    return n;
+  }
+  if (!value || typeof value !== 'object' || depth <= 0) return 0;
+  let n = 0;
+  for (const v of Object.values(value)) n += countHomeBlockItems(v, depth - 1);
+  return n;
+}
+
+export function estimateHomeBlockBytes(block: HomeBlockWithData): number {
+  return HOME_BLOCK_L1_ENTRY_BYTES + countHomeBlockItems(block) * HOME_BLOCK_L1_ITEM_BYTES;
+}
+
+const homeBlockL1 = new LRUCache<string, HomeBlockWithData>({
+  max: HOME_BLOCK_L1_MAX,
+  maxSize: L1_CACHE_BYTE_BUDGETS.homeBlocks,
+  sizeCalculation: (value) => Math.max(1, estimateHomeBlockBytes(value)),
+  ttl: HOME_BLOCK_L1_TTL_MS,
+  // 'evict' is a removal to make room; expiry, a bust ('delete') and replacement ('set') are not.
+  dispose: (_value, _key, reason) => {
+    if (reason === 'evict') countHomeBlockL1Eviction();
+  },
+});
+
+/** Reads the L1, counting the answer as a hit or a miss. */
+function readHomeBlockL1(key: string): HomeBlockWithData | undefined {
+  const value = homeBlockL1.get(key);
+  if (value === undefined) countHomeBlockL1Miss();
+  else countHomeBlockL1Hit();
+  return value;
+}
+
+/** The shared entry's key: every input that changes the shared content. */
+export function homeBlockCacheKey(
+  type: HomeBlockType,
+  identifier: number | string,
+  domain?: DomainColor
+) {
+  return `${REDIS_KEYS.HOMEBLOCKS.BASE}:${type}:${identifier}:${domainSegment(domain)}` as const;
+}
+
+/** Tests only: forget every L1 entry and the cached flag read, optionally reading `read` instead. */
+export function resetHomeBlockL1ForTests(read: () => boolean | null = readHomeBlockL1Flag) {
+  homeBlockL1.clear();
+  isHomeBlockL1On = createCachedFlagGate(read);
+}
+
 export async function getHomeBlockCached(
   homeBlock: HomeBlockForCache,
   domain?: DomainColor,
@@ -85,20 +189,26 @@ export async function getHomeBlockCached(
 
   if (!identifier) return null;
 
-  const cacheKey = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${homeBlock.type}:${identifier}:${domainSegment(
-    domain
-  )}` as const;
+  const cacheKey = homeBlockCacheKey(homeBlock.type, identifier, domain);
+  const useL1 = isHomeBlockL1On();
+  const local = useL1 ? readHomeBlockL1(cacheKey) : undefined;
   // An unreadable cache (error, timeout, open breaker) is a miss: the block is built from source.
-  const cachedHomeBlock = await clusterCacheGuard.readOr(
-    'home-block-cache.getHomeBlockCached',
-    () => redis.packed.get<HomeBlockWithData>(cacheKey),
-    null
-  );
+  const cachedHomeBlock =
+    local ??
+    (await clusterCacheGuard.readOr(
+      'home-block-cache.getHomeBlockCached',
+      () => redis.packed.get<HomeBlockWithData>(cacheKey),
+      null
+    ));
 
   // One entry serves every clone of a source, so the stored copy carries the identity of whichever
   // row filled it first. The content is shared; the identity is not — the caller asked about THIS
   // row and uses its id to place the block on the page.
-  if (cachedHomeBlock) return { ...cachedHomeBlock, ...homeBlock, metadata };
+  if (cachedHomeBlock) {
+    if (useL1 && !local) homeBlockL1.set(cacheKey, cachedHomeBlock);
+    // A new top-level object per caller over shared nested content; see the note on the miss path.
+    return { ...cachedHomeBlock, ...homeBlock, metadata };
+  }
 
   log(`getHomeBlockCached :: getting home block with identifier ${identifier}`);
 
@@ -124,6 +234,7 @@ export async function getHomeBlockCached(
       (homeBlockWithData as { collection?: { read?: string } } | null)?.collection?.read
     );
   if (homeBlockWithData && shareable) {
+    if (useL1) homeBlockL1.set(cacheKey, parsedHomeBlock);
     await clusterCacheGuard.writeBestEffort('home-block-cache.getHomeBlockCached set', () =>
       redis.packed.set<HomeBlockWithData>(cacheKey, parsedHomeBlock, {
         EX: CACHE_EXPIRY[homeBlock.type],
@@ -133,7 +244,12 @@ export async function getHomeBlockCached(
     log('getHomeBlockCached :: done getting system home blocks');
   }
 
-  return parsedHomeBlock;
+  // A copy: with the L1 on, `parsedHomeBlock` is the object later hits are served from. SHALLOW:
+  // it protects the top-level fields only. The nested content (items, boards) is shared with the
+  // L1 and with every other caller, which is safe because no consumer mutates it: the controller
+  // returns it, `getHomeBlockById` replaces (never edits) `cosmeticShopSection`, and the
+  // procedure's middlewares only read the result.
+  return { ...parsedHomeBlock };
 }
 
 /**
@@ -171,6 +287,9 @@ export async function homeBlockCacheBust(type: HomeBlockType, entityId: number |
     ...[...colorDomainNames, undefined].map((d) => `${base}:${domainSegment(d)}`),
   ];
   log(`Cache busted: ${base} (${keys.length} keys)`);
+  // This process's L1 too, whatever the flag says now: an entry kept while it was on must not
+  // outlive a bust if it is turned on again within the TTL.
+  for (const key of keys) homeBlockL1.delete(key);
   await Promise.all(keys.map((key) => redis.del(key as typeof base)));
 }
 
