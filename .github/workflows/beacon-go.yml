@@ -203,18 +203,19 @@ jobs:
       # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
       # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). The Fuzz step fails a
       # target whose final `execs: N` is below its floor (or missing).
-      # Floors: about 40% of the final count of the first green run at FUZZ_TIME with
-      # FUZZ_MINIMIZE=100x; once more runs are in, move each to about half the LOWEST count observed
-      # (read the "execs" summary line the Fuzz step prints per target).
+      # Floors: about half the LOWEST final count observed over green runs at FUZZ_TIME with
+      # FUZZ_MINIMIZE=100x (two runs so far). Counts vary between runs on shared runners, so a floor
+      # from one run would flake. To change one, read the "execs" summary line the Fuzz step prints
+      # per target over a few runs and set the floor to about half the lowest.
       FUZZ_TARGETS: >-
-        internal/auth:FuzzTokenFromCookieHeader:100000
-        internal/auth:FuzzVerify:60000
-        internal/beacon:FuzzCompute:140000
-        internal/beacon:FuzzURLHost:230000
-        internal/hydrate:FuzzUnpack:210000
-        internal/jsvalue:FuzzParse:480000
-        internal/jsvalue:FuzzStringToNumber:470000
-        internal/shadow:FuzzDecode:240000
+        internal/auth:FuzzTokenFromCookieHeader:128000
+        internal/auth:FuzzVerify:77000
+        internal/beacon:FuzzCompute:176000
+        internal/beacon:FuzzURLHost:290000
+        internal/hydrate:FuzzUnpack:263000
+        internal/jsvalue:FuzzParse:604000
+        internal/jsvalue:FuzzStringToNumber:592000
+        internal/shadow:FuzzDecode:304000
     steps:
       - uses: actions/checkout@v7
 
