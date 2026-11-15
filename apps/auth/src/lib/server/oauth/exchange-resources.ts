@@ -3,14 +3,17 @@ import { dev } from '$app/environment';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { logToAxiom } from '$lib/server/axiom';
+import { SERVICE_GRANT, SYSTEM_USER_ID } from './constants';
 import { carriesNonUserScope } from './scope';
 
 // The resources a user access token can be exchanged for (RFC 8693 `resource`), from
 // OAUTH_EXCHANGE_RESOURCES. Each lists the scopes it may receive and three client lists:
 //   apps          — clients whose user tokens may be exchanged for this resource;
 //   relays        — clients that may exchange another listed app's token (the JWT names them in `act`);
-//   introspectors — clients that may introspect the resulting JWTs.
-// Validation is all or nothing: one bad entry and no resource is registered.
+//   introspectors — clients that may introspect the resulting JWTs;
+//   services      — service clients that may get a token for the resource as themselves (optional).
+// Validation is all or nothing: one bad entry and no resource is registered. `services` is the exception:
+// a bad one empties that resource's `services` only.
 
 export interface ExchangeResource {
   resource: string;
@@ -19,10 +22,31 @@ export interface ExchangeResource {
   apps: string[];
   relays: string[];
   introspectors: string[];
+  services: ServiceEntry[];
+}
+
+/** A service client's token for one resource: what it may hold, and the identity its tokens carry. */
+export interface ServiceEntry {
+  client: string;
+  /** Bitmask, within the resource's scopes. */
+  scopes: number;
+  /** Passed through to the resource as the token's `roles`, in this order. */
+  roles: string[];
+  /** The service's user id at the resource: at most -1000, and one service's only. */
+  uid: number;
 }
 
 const CLIENT_ID = /^[A-Za-z0-9._-]{1,128}$/;
 const LIST_KEYS = ['apps', 'relays', 'introspectors'] as const;
+// Service client ids are random UUIDs: never numeric like a user id, never another id family's shape.
+const SERVICE_CLIENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/** Whether `id` has the shape every service client id has. */
+export const isServiceClientId = (id: string) => SERVICE_CLIENT_ID.test(id);
+const ROLE = /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/;
+const MAX_ROLES = 16;
+const MAX_SERVICE_UID = -1000;
+const MIN_INT32 = -(2 ** 31);
 
 function isLocalHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname.endsWith('.localhost');
@@ -71,11 +95,84 @@ function scopesFrom(value: unknown): number | string {
   return bits;
 }
 
-/** The registry parsed from `raw`, or the first reason it is invalid. */
+function serviceEntryError(value: unknown, resourceScopes: number): string | ServiceEntry {
+  if (!value || typeof value !== 'object') return 'each service must be an object';
+  const e = value as Record<string, unknown>;
+  if (typeof e.client !== 'string' || !SERVICE_CLIENT_ID.test(e.client)) {
+    return 'a service client id must be a lowercase random UUID';
+  }
+  const scopes = scopesFrom(e.scopes);
+  if (typeof scopes === 'string') return `service ${e.client}: ${scopes}`;
+  if ((scopes & ~resourceScopes) !== 0) {
+    return `service ${e.client}: scopes must be within the resource's`;
+  }
+  const roles = e.roles ?? [];
+  if (!Array.isArray(roles) || roles.length > MAX_ROLES) {
+    return `service ${e.client}: roles must be a list of at most ${MAX_ROLES}`;
+  }
+  if (roles.some((r) => typeof r !== 'string' || !ROLE.test(r))) {
+    return `service ${e.client}: invalid role`;
+  }
+  const uid = e.uid;
+  if (
+    typeof uid !== 'number' ||
+    !Number.isInteger(uid) ||
+    uid > MAX_SERVICE_UID ||
+    uid < MIN_INT32
+  ) {
+    return `service ${e.client}: uid must be an integer from ${MIN_INT32} to ${MAX_SERVICE_UID}`;
+  }
+  return { client: e.client, scopes, roles: roles as string[], uid };
+}
+
+/**
+ * Fill in each resource's `services` from the raw entries. A resource whose list is invalid gets none,
+ * and the reason is returned; the other resources and lists are untouched.
+ */
+function attachServices(resources: ExchangeResource[], rawServices: unknown[]): string[] {
+  const errors: string[] = [];
+  const userClients = new Set(resources.flatMap((r) => [...r.apps, ...r.relays]));
+  // A uid names one service everywhere. The first resource to use it keeps it; a later one that repeats
+  // it loses its services.
+  const takenUids = new Set<number>();
+  for (const [i, resource] of resources.entries()) {
+    const raw = rawServices[i] ?? [];
+    const fail = (why: string) => errors.push(`${resource.resource}: services ignored: ${why}`);
+    if (!Array.isArray(raw)) {
+      fail('services must be a list');
+      continue;
+    }
+    const entries: ServiceEntry[] = [];
+    let error: string | null = null;
+    for (const value of raw) {
+      const entry = serviceEntryError(value, resource.scopes);
+      if (typeof entry === 'string') error = entry;
+      else if (userClients.has(entry.client)) {
+        error = `service ${entry.client} is also an app or relay`;
+      } else if (entries.some((s) => s.client === entry.client)) {
+        error = `service ${entry.client} is listed twice`;
+      } else if (takenUids.has(entry.uid) || entries.some((s) => s.uid === entry.uid)) {
+        error = `uid ${entry.uid} is used more than once`;
+      } else entries.push(entry);
+      if (error) break;
+    }
+    if (error) fail(error);
+    else {
+      resource.services = entries;
+      for (const s of entries) takenUids.add(s.uid);
+    }
+  }
+  return errors;
+}
+
+/**
+ * The registry parsed from `raw`, or the first reason it is invalid. `serviceErrors` lists the resources
+ * whose `services` were dropped, and why.
+ */
 export function parseExchangeResources(
   raw: string | undefined
-): { resources: ExchangeResource[] } | { error: string } {
-  if (!raw?.trim()) return { resources: [] };
+): { resources: ExchangeResource[]; serviceErrors: string[] } | { error: string } {
+  if (!raw?.trim()) return { resources: [], serviceErrors: [] };
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -85,6 +182,7 @@ export function parseExchangeResources(
   if (!Array.isArray(parsed)) return { error: 'OAUTH_EXCHANGE_RESOURCES must be a JSON array' };
 
   const resources: ExchangeResource[] = [];
+  const rawServices: unknown[] = [];
   const seen = new Set<string>();
   for (const entry of parsed) {
     if (!entry || typeof entry !== 'object') return { error: 'each entry must be an object' };
@@ -108,9 +206,68 @@ export function parseExchangeResources(
     }
     if (lists.apps.length === 0) return { error: `${resource}: apps must not be empty` };
 
-    resources.push({ resource, scopes, ...lists });
+    resources.push({ resource, scopes, ...lists, services: [] });
+    rawServices.push(e.services);
   }
-  return { resources };
+  const serviceErrors = attachServices(resources, rawServices);
+  return { resources, serviceErrors };
+}
+
+/**
+ * Warn about service clients whose row cannot get a token: missing, not owned by the system account, any
+ * grant but the service grant, no secret, or disabled. Only a warning: the token route and introspection
+ * check the row on every request, so a database error here never turns a service off.
+ */
+async function warnOnServiceClients(resources: ExchangeResource[]): Promise<void> {
+  const ids = [...new Set(resources.flatMap((r) => r.services.map((s) => s.client)))];
+  if (ids.length === 0) return;
+  try {
+    const rows = await db
+      .selectFrom('OauthClient')
+      .select(['id', 'userId', 'grants', 'isConfidential', 'secret', 'accessMode'])
+      .where('id', 'in', ids)
+      .execute();
+    for (const id of ids) {
+      const row = rows.find((r) => r.id === id);
+      const problem = !row
+        ? 'not found'
+        : !isServiceClient(row)
+        ? 'not a system-owned service client'
+        : !row.isConfidential || !row.secret
+        ? 'has no secret'
+        : null;
+      if (problem) {
+        void logToAxiom({
+          type: 'warning',
+          name: 'oauth-exchange-service-client',
+          message: `service client ${id} ${problem}`,
+        }).catch(() => undefined);
+      }
+    }
+  } catch (err) {
+    void logToAxiom({
+      type: 'warning',
+      name: 'oauth-exchange-service-client',
+      message: `service clients not checked: ${String(err)}`,
+    }).catch(() => undefined);
+  }
+}
+
+/**
+ * Whether the client row may hold service tokens: owned by the system account, holding the service grant and
+ * no other, and not disabled.
+ */
+export function isServiceClient(row: {
+  userId: number;
+  grants: string[];
+  accessMode: string;
+}): boolean {
+  return (
+    row.userId === SYSTEM_USER_ID &&
+    row.grants.length === 1 &&
+    row.grants[0] === SERVICE_GRANT &&
+    row.accessMode !== 'disabled'
+  );
 }
 
 let cache: { raw: string | undefined; resources: Promise<ExchangeResource[]> } | undefined;
@@ -124,6 +281,11 @@ async function load(raw: string | undefined): Promise<ExchangeResource[]> {
       message: parsed.error,
     }).catch(() => undefined);
     return [];
+  }
+  for (const message of parsed.serviceErrors) {
+    void logToAxiom({ type: 'error', name: 'oauth-exchange-services-invalid', message }).catch(
+      () => undefined
+    );
   }
   if (parsed.resources.length === 0) return [];
   // A resource string must never also be a client id: an `aud` names one or the other.
@@ -144,6 +306,7 @@ async function load(raw: string | undefined): Promise<ExchangeResource[]> {
     }).catch(() => undefined);
     return [];
   }
+  void warnOnServiceClients(parsed.resources);
   return parsed.resources;
 }
 

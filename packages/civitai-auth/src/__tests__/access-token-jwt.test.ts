@@ -64,6 +64,15 @@ describe('mintAccessTokenJwt', () => {
     const payload = decodeJwt(await signer.mintAccessTokenJwt(claims()));
     expect(payload.aud).toBe(resource);
     expect(payload).not.toHaveProperty('act');
+    expect(payload).not.toHaveProperty('roles');
+    expect(payload).not.toHaveProperty('civitai_uid');
+  });
+
+  it('carries roles and civitai_uid only when given', async () => {
+    const payload = decodeJwt(
+      await signer.mintAccessTokenJwt(claims({ roles: ['trusted', 'Manager'], civitai_uid: -1001 }))
+    );
+    expect(payload).toMatchObject({ roles: ['trusted', 'Manager'], civitai_uid: -1001 });
   });
 
   it('refuses an empty issuer or audience', async () => {
