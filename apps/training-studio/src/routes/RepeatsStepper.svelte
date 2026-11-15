@@ -22,7 +22,12 @@
     max={MAX_REPEATS}
     aria-label={label}
     value={value}
-    onchange={(e) => (value = clampRepeats(e.currentTarget.valueAsNumber))}
+    onchange={(e) => {
+      value = clampRepeats(e.currentTarget.valueAsNumber);
+      // When the clamped number equals the stored one, `value` doesn't change and Svelte leaves the
+      // typed text (25, 0, 3.4) in the box.
+      e.currentTarget.value = String(value);
+    }}
     class="h-7 w-10 bg-transparent text-center font-mono text-xs text-dark-0 [appearance:textfield] focus:outline-none [&::-webkit-inner-spin-button]:appearance-none"
   />
   <button
