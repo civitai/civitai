@@ -594,9 +594,9 @@ describe('🔴 round 2 — a mesh is rated only when EVERY rating source has rat
   });
 });
 
-describe('🔴 round 2 — a never-rated video engine, in the shape App Blocks submits', () => {
+describe('🔴 round 3 — a never-rated video engine is DELIVERED, as on the site', () => {
   /** A pass-through `{ kind:'step', $type:'videoGen', input }` as the orchestrator echoes it. */
-  const videoGen = (engine: string) =>
+  const videoGen = (engine: string, nsfwLevel?: string) =>
     wf([], {
       steps: [
         {
@@ -605,32 +605,91 @@ describe('🔴 round 2 — a never-rated video engine, in the shape App Blocks s
           status: 'succeeded',
           input: { engine, prompt: 'a lighthouse at dusk' },
           output: {
-            video: { id: 'v', type: 'video', available: true, url: 'https://cdn/v.mp4' },
+            video: {
+              id: 'v',
+              type: 'video',
+              available: true,
+              url: 'https://cdn/v.mp4',
+              ...(nsfwLevel ? { nsfwLevel } : {}),
+            },
           },
         },
       ],
     });
 
   it.each(['kling', 'kling-v3', 'veo3', 'vidu-q4', 'grok', 'gemini-omni'])(
-    '%s: an unrated video fails closed as unrated on an SFW token, with no ratingPending',
+    '%s: an UNRATED video gets its url on an SFW token — not held, not locked',
     (engine) => {
       const snap = snapshotFromWorkflow(videoGen(engine), SFW);
-      expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+      expect(snap.outputs).toStrictEqual([{ url: 'https://cdn/v.mp4' }]);
+      expect(snap.imageUrls).toStrictEqual(['https://cdn/v.mp4']);
       expect(snap).not.toHaveProperty('ratingPending');
-      expect(JSON.stringify(snap)).not.toContain('v.mp4');
+      expect(projectAppWorkflow(videoGen(engine), SFW).outputs).toStrictEqual([
+        { url: 'https://cdn/v.mp4' },
+      ]);
     }
   );
 
-  it('an engine the orchestrator rates (wan) is HELD until its rating lands', () => {
-    const snap = snapshotFromWorkflow(videoGen('wan'), SFW);
-    expect(snap.outputs).toStrictEqual([{ pending: true }]);
-    expect(snap.ratingPending).toBe(true);
+  it('a rating that DOES arrive still meets the ceiling: veo3 rated x is restricted', () => {
+    const snap = snapshotFromWorkflow(videoGen('veo3', 'x'), SFW);
+    expect(snap.outputs).toStrictEqual([{ restricted: true, reason: 'ceiling' }]);
+    expect(JSON.stringify(snap)).not.toContain('v.mp4');
   });
 
-  it('a never-rated engine on a mature token with nothing restricting it keeps its url', () => {
-    expect(snapshotFromWorkflow(videoGen('kling'), MATURE).outputs).toStrictEqual([
-      { url: 'https://cdn/v.mp4' },
-    ]);
+  it('a rated engine not on the list (gemini, not gemini-omni) is HELD while unrated', () => {
+    const snap = snapshotFromWorkflow(videoGen('gemini'), SFW);
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(snap.ratingPending).toBe(true);
+    expect(JSON.stringify(snap)).not.toContain('v.mp4');
+  });
+
+  it('another rated engine (wan) is held too', () => {
+    expect(snapshotFromWorkflow(videoGen('wan'), SFW).outputs).toStrictEqual([{ pending: true }]);
+  });
+});
+
+describe("round 3 — a mesh whose sources read 'na' is delivered", () => {
+  const mesh = {
+    id: 'nm',
+    type: 'model3d',
+    url: 'https://cdn/nm.glb',
+    available: true,
+    format: 'glb',
+    nsfwLevel: null,
+  };
+  const meshWith = (thumbnail: string, preview: string[]) =>
+    wf([], {
+      steps: [
+        {
+          $type: 'polyGen',
+          name: BLOCK_STEP_NAME,
+          status: 'succeeded',
+          output: { model: mesh, thumbnail: image('nt', thumbnail) },
+        },
+        {
+          $type: 'model3DPreview',
+          name: 'preview',
+          status: 'succeeded',
+          output: { images: preview.map((r, i) => image(`np${i}`, r)) },
+        },
+      ],
+    });
+
+  it("every source 'na': the mesh gets 'na' — its url, no rating to report", () => {
+    expect(snapshotFromWorkflow(meshWith('na', ['na']), SFW).outputs![0]).toStrictEqual({
+      url: 'https://cdn/nm.glb',
+    });
+  });
+
+  it("'na' mixed with real ratings: the real max wins", () => {
+    expect(snapshotFromWorkflow(meshWith('na', ['pg13', 'na']), SFW).outputs![0]).toStrictEqual({
+      url: 'https://cdn/nm.glb',
+      nsfwLevel: 'pg13',
+    });
+    expect(snapshotFromWorkflow(meshWith('r', ['na']), SFW).outputs![0]).toStrictEqual({
+      restricted: true,
+      reason: 'ceiling',
+    });
   });
 });
 
