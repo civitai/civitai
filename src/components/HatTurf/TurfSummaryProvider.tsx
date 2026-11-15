@@ -13,7 +13,10 @@ import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { applyTurfPush, readTurfPush } from '~/components/HatTurf/hat-turf.utils';
 import type { HatSticker, TurfSummary } from '~/components/HatTurf/hat-turf.utils';
+import { retainTurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
+import type { TurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import { chunkIds } from '~/utils/array-helpers';
@@ -24,6 +27,11 @@ const SUMMARY_CHUNK = 100;
 /** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
+// With `hatTurfBatchedCalls`: the page's one shared mark set (turf-watch-hub.ts) re-marks every
+// minute. The re-mark only keeps the marks alive (TURF_WATCH_TTL_MS, 90s, on the server); a count
+// change on a marked image is pushed the moment it happens, and a card that mounts again catches up
+// by reading. A minute leaves 30s of the mark's lifetime for a late timer.
+export const BATCHED_WATCH_REFRESH_MS = 60_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
 // Newly mounted cards wait at least this long after a mark for the next, so a scroll stays under
@@ -97,6 +105,8 @@ export function TurfSummaryProvider({
     { enabled: !!event && !!user, staleTime: 30_000 }
   );
   const joined = !!user && stock?.optedIn === true;
+  // Off (or no flags provider): every provider keeps its own marks, as before.
+  const batched = useOptionalFeatureFlags()?.hatTurfBatchedCalls === true;
 
   // On the feed nothing reads the summaries for a signed-out viewer: the hat button waits for a
   // stock (signed in only), and the badge and the hat layer for a joined viewer. Image detail passes
@@ -360,7 +370,21 @@ export function TurfSummaryProvider({
       {event && joined && (
         <>
           <TurfPushes onPush={onPush} />
-          <TurfWatcher event={event} watching={watching} version={watchVersion} onAdded={catchUp} />
+          {batched ? (
+            <TurfHubWatcher
+              event={event}
+              watching={watching}
+              version={watchVersion}
+              onAdded={catchUp}
+            />
+          ) : (
+            <TurfWatcher
+              event={event}
+              watching={watching}
+              version={watchVersion}
+              onAdded={catchUp}
+            />
+          )}
         </>
       )}
       {children}
@@ -431,6 +455,70 @@ function TurfWatcher({
     }, WATCH_REFRESH_MS);
     return () => clearInterval(timer);
   }, [watching, send]);
+
+  return null;
+}
+
+/**
+ * TurfWatcher's job done by the page's shared hub: this provider's on-screen ids join the page's one
+ * mark set, so the page sends one mark call per interval (per 50 ids) however many providers it has.
+ * The hub tells every provider of ids marked again; each catches up only those its own reads hold.
+ */
+function TurfHubWatcher({
+  event,
+  watching,
+  version,
+  onAdded,
+}: {
+  event: string;
+  watching: React.MutableRefObject<Map<number, number>>;
+  version: number;
+  onAdded: (imageIds: number[]) => void;
+}) {
+  const utils = trpc.useUtils();
+  const hub = useRef<TurfWatchHub | null>(null);
+  const registered = useRef(new Set<number>());
+  const added = useRef(onAdded);
+  added.current = onAdded;
+
+  // Declared before the sync below, so on mount and on an event change the hub is held by the time
+  // the sync runs in the same commit.
+  useEffect(() => {
+    const held = retainTurfWatchHub({
+      event,
+      send: (input) => void utils.client.hatTurf.watch.mutate(input).catch(() => undefined),
+      refreshMs: BATCHED_WATCH_REFRESH_MS,
+      coalesceMs: WATCH_COALESCE_MS,
+      minGapMs: WATCH_MIN_GAP_MS,
+    });
+    hub.current = held.hub;
+    const unsubscribe = held.hub.subscribe((ids) => added.current(ids));
+    const mine = registered.current;
+    return () => {
+      mine.forEach((id) => held.hub.release(id));
+      mine.clear();
+      unsubscribe();
+      held.release();
+      hub.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event]);
+
+  useEffect(() => {
+    const current = hub.current;
+    if (!current) return;
+    const onScreen = new Set(watching.current.keys());
+    registered.current.forEach((id) => {
+      if (onScreen.has(id)) return;
+      registered.current.delete(id);
+      current.release(id);
+    });
+    onScreen.forEach((id) => {
+      if (registered.current.has(id)) return;
+      registered.current.add(id);
+      current.retain(id);
+    });
+  }, [event, version, watching]);
 
   return null;
 }
