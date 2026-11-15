@@ -451,24 +451,25 @@ describe('CONTROL: the same workflow, mature content allowed', () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔴 The output ceiling is the VIEWER's level (#8786): the domain ceiling intersected
-// with the token's `viewerBrowsingLevel`, PG without one. Domain PG|PG13|R (7) on a
-// workflow that allows mature content, so only the ceiling decides. Outputs pg (1),
-// r (4), pg13 (2); viewers PG (1) and PG+R (5), pairwise distinct. A site that passed
-// the domain ceiling would hand over all three; one that ignored the domain, nothing new.
+// with the token's `viewerBrowsingLevel`, PG without one, and for this SIGNED-IN viewer
+// (`sub: user:42`) floored at PG|PG-13 first. Domain PG|PG13|R (7) on a workflow that
+// allows mature content, so only the ceiling decides. Outputs pg (1), r (4), pg13 (2);
+// viewers PG (1) and PG+R (5), pairwise distinct. A site that passed the domain ceiling
+// would hand the PG viewer the R output; one without the floor would lock their PG-13.
 describe("🔴 every read and publish judges outputs at the viewer's own level", () => {
   const DOMAIN_TO_R = 1 | 2 | 4;
   const VIEWERS = [
     [
-      'a PG viewer',
+      'a signed-in PG viewer (floored to PG-13)',
       { viewerBrowsingLevel: 1 },
       [
         { url: OK_A, nsfwLevel: 'pg' },
         { restricted: true, reason: 'ceiling' },
-        { restricted: true, reason: 'ceiling' },
+        { url: OK_B, nsfwLevel: 'pg13' },
       ],
     ],
     [
-      'a token without a viewer level (PG)',
+      'a token without a viewer level (PG, no floor)',
       { viewerBrowsingLevel: undefined },
       [
         { url: OK_A, nsfwLevel: 'pg' },
@@ -477,12 +478,12 @@ describe("🔴 every read and publish judges outputs at the viewer's own level",
       ],
     ],
     [
-      'a PG+R viewer',
+      'a signed-in PG+R viewer (floored to PG-13)',
       { viewerBrowsingLevel: 1 | 4 },
       [
         { url: OK_A, nsfwLevel: 'pg' },
         { url: SECRET, nsfwLevel: 'r' },
-        { restricted: true, reason: 'ceiling' },
+        { url: OK_B, nsfwLevel: 'pg13' },
       ],
     ],
   ] as const;

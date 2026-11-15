@@ -557,15 +557,16 @@ describe('write trust', () => {
 // 🔴 F5 — the post actor's OUTPUT CEILING comes from the token, at BOTH actor sites.
 // It decides which output positions are restricted; an all-levels constant there would
 // type-check and hand a post every restricted output. It is the VIEWER's level (#8786):
-// the domain ceiling intersected with `viewerBrowsingLevel`, PG without one. Domain 7
-// (to R) and the viewer levels 1, 13 and none give 1, 5 and 1: pairwise distinct from
-// the domain (7), the viewer (13) and the all-levels flag (31), so a site that passed
-// the domain ceiling, the raw viewer level or a constant fails.
+// the domain ceiling intersected with `viewerBrowsingLevel`, PG without one, and this
+// signed-in viewer's level floored at PG|PG-13 first. On red (31), the viewer levels 1,
+// 5 and none give 3, 7 and 1: pairwise distinct from the domain (31), the raw viewer
+// levels and the unfloored results (1, 5), so a site that passed the domain ceiling,
+// the raw viewer level, a constant, or the level without its floor fails.
 describe('post actor outputCeiling is the viewer-clamped token ceiling', () => {
   it.each([
-    ['a PG viewer', { maxBrowsingLevel: 7, viewerBrowsingLevel: 1 }, 1],
-    ['a PG+R+X viewer on a domain to R', { maxBrowsingLevel: 7, viewerBrowsingLevel: 13 }, 5],
-    ['a token without a viewer level', { maxBrowsingLevel: 7 }, 1],
+    ['a signed-in PG viewer on red', { maxBrowsingLevel: 31, viewerBrowsingLevel: 1 }, 3],
+    ['a signed-in PG+R viewer on red', { maxBrowsingLevel: 31, viewerBrowsingLevel: 5 }, 7],
+    ['a token without a viewer level', { maxBrowsingLevel: 31 }, 1],
   ] as const)(
     '%s: previewPostFromApp and createPostFromApp pass the clamped ceiling',
     async (_label, over, level) => {

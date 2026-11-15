@@ -673,7 +673,10 @@ describe('🔴 round 4 — never-rated delivery is gated on exactly what it clai
 
   it.each([
     ['a re-cased twin beside the engine', { engine: 'kling', Engine: 'wan' }],
-    ['a re-cased engine key alone', { Engine: 'kling' }],
+    // INVARIANT GUARD, not regression coverage: with no `engine` key at all the step was
+    // already held before the twin refusal existed (it passed at base, and it stays green
+    // with that refusal deleted). Only the twin-beside case above pins the refusal.
+    ['(invariant guard) a re-cased engine key alone', { Engine: 'kling' }],
   ])('%s: the engine is unknown, so the unrated video is HELD on an SFW token', (_label, input) => {
     const snap = snapshotFromWorkflow(step('videoGen', input, { video }), SFW);
     expect(snap.outputs).toStrictEqual([{ pending: true }]);
@@ -711,28 +714,31 @@ describe('🔴 round 4 — never-rated delivery is gated on exactly what it clai
     ).toStrictEqual([{ pending: true }]);
   });
 
-  it("a mesh's own 'na' gives way to a source value it does not know, which fails closed", () => {
-    const snap = snapshotFromWorkflow(
-      step(
-        'polyGen',
-        {},
-        {
-          model: {
-            id: 'wm',
-            type: 'model3d',
-            url: 'https://cdn/wm.glb',
-            available: true,
-            format: 'glb',
-            nsfwLevel: 'na',
-          },
-          thumbnail: image('wt', 'weird'),
-        }
-      ),
-      MATURE
-    );
-    expect(snap.outputs![0]).toStrictEqual({ restricted: true, reason: 'ceiling' });
-    expect(JSON.stringify(snap)).not.toContain('wm.glb');
-  });
+  it.each(['na', 'NA', ' Na '])(
+    "a mesh's own %j gives way to a source value it does not know, which fails closed",
+    (own) => {
+      const snap = snapshotFromWorkflow(
+        step(
+          'polyGen',
+          {},
+          {
+            model: {
+              id: 'wm',
+              type: 'model3d',
+              url: 'https://cdn/wm.glb',
+              available: true,
+              format: 'glb',
+              nsfwLevel: own,
+            },
+            thumbnail: image('wt', 'weird'),
+          }
+        ),
+        MATURE
+      );
+      expect(snap.outputs![0]).toStrictEqual({ restricted: true, reason: 'ceiling' });
+      expect(JSON.stringify(snap)).not.toContain('wm.glb');
+    }
+  );
 });
 
 describe("round 3 — a mesh whose sources read 'na' is delivered", () => {
@@ -1010,5 +1016,84 @@ describe("🔴 the output ceiling is clamped to the viewer's own browsing level"
       restricted: true,
       reason: 'ceiling',
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 PG-13 FLOOR (operator decision). For a SIGNED-IN viewer (`sub` is `user:<id>`) with a
+// viewer level, the output ceiling is that level OR PG|PG-13, intersected with the
+// domain ceiling: the site's generator shows a signed-in user their own PG-13
+// generations whatever their NSFW setting. An anonymous viewer, and a token with no
+// viewer level, keep PG. Real domain ceilings: green and blue are PG|PG-13 (3), red is
+// every level (31). Outputs pg13 (2) and r (4); viewers PG (1) and PG+R (5).
+describe('🔴 a signed-in viewer is never below PG-13', () => {
+  const GREEN = 1 | 2;
+  const BLUE = 1 | 2;
+  const RED = 1 | 2 | 4 | 8 | 16;
+  const SIGNED_IN = 'user:42';
+  const pg13 = { id: 'fp', type: 'image', url: 'https://cdn/fp.png', nsfwLevel: 'pg13' };
+  const r = { id: 'fr', type: 'image', url: 'https://cdn/fr.png', nsfwLevel: 'r' };
+  const facts = { allowMatureContent: true };
+  const ceilingOf = (claims: Parameters<typeof blockOutputCeilingFromClaims>[0]) =>
+    blockOutputCeilingFromClaims(claims);
+
+  it('a signed-in PG viewer on blue: the PG-13 output gets its url, the R one is ceiling', () => {
+    const ceiling = ceilingOf({ sub: SIGNED_IN, maxBrowsingLevel: BLUE, viewerBrowsingLevel: 1 });
+    expect(ceiling).toStrictEqual({ maxBrowsingLevel: 3 });
+    expect(classifyBlockOutput(pg13, facts, ceiling)).toStrictEqual({
+      url: 'https://cdn/fp.png',
+      nsfwLevel: 'pg13',
+    });
+    expect(classifyBlockOutput(r, facts, ceiling)).toStrictEqual({
+      restricted: true,
+      reason: 'ceiling',
+    });
+  });
+
+  it('a signed-in PG viewer on red gets PG|PG-13 (3), not PG and not the domain', () => {
+    expect(
+      ceilingOf({ sub: SIGNED_IN, maxBrowsingLevel: RED, viewerBrowsingLevel: 1 })
+    ).toStrictEqual({ maxBrowsingLevel: 3 });
+  });
+
+  it('a signed-in PG+R viewer on red keeps R and gains PG-13: 7', () => {
+    expect(
+      ceilingOf({ sub: SIGNED_IN, maxBrowsingLevel: RED, viewerBrowsingLevel: 1 | 4 })
+    ).toStrictEqual({ maxBrowsingLevel: 7 });
+  });
+
+  it.each([
+    ['an anonymous viewer', { sub: 'anon', maxBrowsingLevel: RED, viewerBrowsingLevel: 1 }],
+    ['a signed-in token without a viewer level', { sub: SIGNED_IN, maxBrowsingLevel: RED }],
+    ['a token with no subject', { maxBrowsingLevel: RED, viewerBrowsingLevel: 1 }],
+    ['a malformed subject', { sub: 'user:0042', maxBrowsingLevel: RED, viewerBrowsingLevel: 1 }],
+    [
+      'a signed-in token with an invalid viewer level',
+      { sub: SIGNED_IN, maxBrowsingLevel: RED, viewerBrowsingLevel: -1 },
+    ],
+  ] as const)('%s keeps PG: the PG-13 output is restricted', (_label, claims) => {
+    const ceiling = ceilingOf(claims);
+    expect(ceiling).toStrictEqual({ maxBrowsingLevel: 1 });
+    expect(classifyBlockOutput(pg13, facts, ceiling)).toStrictEqual({
+      restricted: true,
+      reason: 'ceiling',
+    });
+  });
+
+  it('(invariant guard) green is unchanged: its viewer level is already PG|PG-13', () => {
+    const ceiling = ceilingOf({ sub: SIGNED_IN, maxBrowsingLevel: GREEN, viewerBrowsingLevel: 3 });
+    expect(ceiling).toStrictEqual({ maxBrowsingLevel: 3 });
+    expect(classifyBlockOutput(r, facts, ceiling)).toStrictEqual({
+      restricted: true,
+      reason: 'ceiling',
+    });
+  });
+
+  // INVARIANT GUARD (green at base too): it pins the INTERSECTION, so a floor applied
+  // after the domain cut, rather than before it, fails here.
+  it('(invariant guard) a floor that would exceed the domain is cut to it: a PG-only domain stays PG', () => {
+    expect(
+      ceilingOf({ sub: SIGNED_IN, maxBrowsingLevel: 1, viewerBrowsingLevel: 1 })
+    ).toStrictEqual({ maxBrowsingLevel: 1 });
   });
 });
