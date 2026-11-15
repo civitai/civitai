@@ -33,7 +33,8 @@ import dayjs from '~/shared/utils/dayjs';
 import { publishedRangeBounds, publishedRangeError } from '~/shared/utils/published-range';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
-import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { clickhouse } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import type { BaseModelType } from '~/server/common/constants';
 import {
   CacheTTL,

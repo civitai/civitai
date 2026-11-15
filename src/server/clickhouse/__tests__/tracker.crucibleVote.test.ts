@@ -21,7 +21,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
-import { Tracker } from '../client';
+import { Tracker } from '../tracker';
 
 /** Exactly the columns of `crucible_votes`, written as literals on purpose. */
 const CRUCIBLE_VOTES_COLUMNS = [

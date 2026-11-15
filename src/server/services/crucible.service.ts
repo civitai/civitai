@@ -139,7 +139,7 @@ import {
   getAllEntryElos,
 } from './crucible-elo.service';
 import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';

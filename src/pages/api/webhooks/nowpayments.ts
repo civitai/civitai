@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { env } from '~/env/server';
-import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { trackWebhookEvent } from '~/server/clickhouse/tracker';
 import client from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { isDepositComplete } from '~/server/common/chain-config';

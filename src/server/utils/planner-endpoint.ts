@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import type { Context } from '~/server/createContext';
 import { appRouter } from '~/server/routers';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';

@@ -48,6 +48,11 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { trackWebhookEvent: client.trackWebhookEvent };
+});
 vi.mock('~/server/services/stripe.service', () => ({
   manageCheckoutPayment: vi.fn(),
   manageInvoicePaid: vi.fn(),
@@ -121,7 +126,7 @@ vi.mock('~/server/auth/session-invalidation', () => ({
 }));
 
 import handler from '~/pages/api/webhooks/stripe';
-import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { trackWebhookEvent } from '~/server/clickhouse/tracker';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 
 type Reward = {

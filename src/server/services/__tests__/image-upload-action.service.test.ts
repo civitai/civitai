@@ -8,6 +8,11 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
     return { imageUploadRequest: ch.request };
   }),
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async (importOriginal) => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { ...(await importOriginal<Record<string, unknown>>()), Tracker: client.Tracker };
+});
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';

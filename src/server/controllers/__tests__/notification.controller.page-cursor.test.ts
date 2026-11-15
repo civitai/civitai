@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseNotificationCursor } from '@civitai/notifications';
-import type * as NotificationService from '~/server/services/notification.service';
+import type * as NotificationReadService from '~/server/services/notification-read.service';
 
 const { mockGetUserNotifications } = vi.hoisted(() => ({ mockGetUserNotifications: vi.fn() }));
 
-vi.mock('~/server/services/notification.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof NotificationService>()),
+vi.mock('~/server/services/notification-read.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationReadService>()),
   getUserNotifications: mockGetUserNotifications,
 }));
 vi.mock('~/server/utils/browsing-level', () => ({ getRequestBrowsingLevel: () => 1 }));

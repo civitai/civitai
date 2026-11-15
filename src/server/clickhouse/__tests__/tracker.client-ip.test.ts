@@ -34,7 +34,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
-import { Tracker } from '../client';
+import { Tracker } from '../tracker';
 import { UNRESOLVED_CLIENT_IP, resolveClientIp } from '~/server/utils/client-ip';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 

@@ -28,6 +28,11 @@ vi.mock('~/server/clickhouse/client', () => ({
     retoolAudit = audit;
   },
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 // The grant row as `/admin` writes it: which roles hold which grant id.
 const GRANTS: Record<string, string[]> = { 'labelStore.submitPrediction': ['moderator:pipeline'] };
 vi.mock('~/server/services/moderator-grants', () => ({

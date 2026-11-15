@@ -1,5 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
 import type { NewOrderDamnedReason } from '~/server/common/enums';

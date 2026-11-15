@@ -18,6 +18,11 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { trackWebhookEvent: client.trackWebhookEvent };
+});
 vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
   default: async () => ({ validateWebhookEvent, getPaymentByRefCode }),
 }));

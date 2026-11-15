@@ -5,7 +5,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
-import { Tracker } from '../client';
+import { Tracker } from '../tracker';
 
 describe('Tracker.serviceDealFileAccess', () => {
   let fetchMock: ReturnType<typeof vi.fn>;

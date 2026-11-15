@@ -49,7 +49,7 @@ import {
 } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getWithheldCosmeticIds } from '~/server/services/creator-shop-withheld';
-import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility.sql';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';

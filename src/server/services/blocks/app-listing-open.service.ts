@@ -1,7 +1,7 @@
 import type { GetServerSidePropsContext } from 'next';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import type { Session } from '~/types/session';
 import type { AppsRunOrigin } from '~/shared/utils/apps-run-origin';
 import { referrerHostOf, type AppSurface } from '~/shared/utils/app-store-telemetry';

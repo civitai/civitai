@@ -36,6 +36,11 @@ vi.mock('~/server/trpc', () => ({
 }));
 vi.mock('~/server/routers/blocks.router', () => ({ blocksRouter: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ Tracker: class {} }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 vi.mock('~/server/utils/client-ip', () => ({ resolveClientIpOrNull: () => '10.0.0.1' }));
 vi.mock('~/server/utils/server-domain', () => ({ getRequestDomainColor: () => 'blue' }));
 

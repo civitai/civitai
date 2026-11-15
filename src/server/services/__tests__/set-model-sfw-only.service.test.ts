@@ -29,6 +29,11 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
 vi.mock('~/server/metrics', () => ({ modelMetrics: {} }));
 vi.mock('~/server/redis/caches', () => ({
@@ -100,7 +105,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import { SFW_ONLY_LOCKED_PROPERTIES, setModelSfwOnly } from '~/server/services/model.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Availability } from '~/shared/utils/prisma/enums';

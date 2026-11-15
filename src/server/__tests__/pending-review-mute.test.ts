@@ -239,6 +239,11 @@ vi.mock('~/server/clickhouse/client', () => ({
     userActivity = trackUserActivity;
   },
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 
 import muteHandler from '~/pages/api/mod/mute-user-pending-review';
 import overturnHandler from '~/pages/api/mod/overturn-user-mute';

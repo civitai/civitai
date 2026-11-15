@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { createCallerFactory } from '~/server/trpc';

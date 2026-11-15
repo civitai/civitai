@@ -18,7 +18,7 @@ import { constants, STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constan
 import { BanReasonCode } from '~/server/common/enums';
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
-import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { trackWebhookEvent } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
 import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
 import { dbWrite } from '~/server/db/client';

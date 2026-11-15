@@ -90,7 +90,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { logToAxiom } from '~/server/logging/client';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { logSectionPlacements } from '~/server/services/cosmetic-shop-featured-log.service';
 import {
   CosmeticShopItemStatus,

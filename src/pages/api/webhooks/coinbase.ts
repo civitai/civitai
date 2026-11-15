@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
-import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { trackWebhookEvent } from '~/server/clickhouse/tracker';
 import { CoinbaseCaller } from '~/server/http/coinbase/coinbase.caller';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { logToAxiom } from '~/server/logging/client';

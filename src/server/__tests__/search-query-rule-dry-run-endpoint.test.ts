@@ -22,6 +22,11 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
     retoolAudit = mockAudit;
   },
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async (importOriginal) => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { ...(await importOriginal<Record<string, unknown>>()), Tracker: client.Tracker };
+});
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),

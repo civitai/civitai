@@ -1,5 +1,5 @@
 import { isDev } from '~/env/other';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { awardViewPoints, hattedImpressionEntities } from '~/server/events/points/hooks';
 import { trackBatchSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';

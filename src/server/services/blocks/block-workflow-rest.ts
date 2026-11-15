@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import type { Context } from '~/server/createContext';
 import type { blocksRouter } from '~/server/routers/blocks.router';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';

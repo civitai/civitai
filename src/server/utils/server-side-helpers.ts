@@ -8,7 +8,7 @@ import type {
 } from 'next';
 import type { Session } from '~/types/session';
 import { jsonSafeSession } from '~/server/utils/session-props';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { unionTransformer } from '~/shared/utils/trpc-union-transformer';
 import {
   runWithSerializeCtxAlways,

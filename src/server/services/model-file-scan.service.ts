@@ -44,7 +44,7 @@ import {
 } from '~/server/services/model-version.service';
 import { excludedFromCoverage, hasFailedScan } from '~/server/utils/failed-scan';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { clamFilesScanned } from '~/server/services/orchestrator/consumer-blob-scan';
 import { PUBLIC_MODEL_STATUSES } from '~/server/services/text-scan/public-content';

@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { clickhouse } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

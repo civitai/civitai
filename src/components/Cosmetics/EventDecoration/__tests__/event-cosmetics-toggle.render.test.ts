@@ -15,7 +15,7 @@ const act = (React as unknown as { act: (callback: () => void) => void }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const session = vi.hoisted(() => ({ showEventCosmetics: true }));
-vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', () => ({
+vi.mock('~/components/CivitaiWrapped/CivitaiSessionContext', () => ({
   useCivitaiSessionContext: () => ({
     type: 'unauthed',
     settings: {

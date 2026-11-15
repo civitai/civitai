@@ -7,7 +7,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
-import { Tracker } from '../client';
+import { Tracker } from '../tracker';
 
 /**
  * The tracker rejects a whole `userActivities` batch when any row in it carries a key the table has

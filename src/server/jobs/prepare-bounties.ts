@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
 import dayjs from '~/shared/utils/dayjs';
 import type { Currency } from '~/shared/utils/prisma/enums';
-import { Tracker } from '../clickhouse/client';
+import { Tracker } from '../clickhouse/tracker';
 import { handleLogError } from '../utils/errorHandling';
 import {
   bountyAutomaticallyAwardedEmail,

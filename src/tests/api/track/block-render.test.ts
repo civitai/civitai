@@ -60,6 +60,11 @@ vi.mock('~/server/clickhouse/client', () => ({
     blockRender = mockBlockRender;
   },
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 
 // Detection log for an unknown appBlockId — asserted in both directions below.
 vi.mock('~/server/logging/client', () => ({

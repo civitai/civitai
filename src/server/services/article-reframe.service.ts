@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { stageGenerationOutputImage } from '~/server/services/blocks/block-image-upload.service';

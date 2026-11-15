@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { clickhouse } from '~/server/clickhouse/client';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import type { EntityChangeRow } from '~/server/common/entity-change.constants';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

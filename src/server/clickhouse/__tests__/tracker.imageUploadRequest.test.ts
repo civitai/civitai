@@ -7,7 +7,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
-import { Tracker } from '../client';
+import { Tracker } from '../tracker';
 
 const migration = fs.readFileSync(
   path.resolve(__dirname, '../migrations/2026-10-28-image-upload-requests.sql'),

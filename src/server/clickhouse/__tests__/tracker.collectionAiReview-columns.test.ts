@@ -7,7 +7,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
-import { Tracker } from '../client';
+import { Tracker } from '../tracker';
 
 /**
  * The tracker rejects a whole batch when a row carries a key its table has no column for. Every

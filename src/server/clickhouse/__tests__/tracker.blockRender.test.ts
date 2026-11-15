@@ -21,7 +21,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
-import { Tracker } from '../client';
+import { Tracker } from '../tracker';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 function lastFetchBody(fetchMock: ReturnType<typeof vi.fn>) {

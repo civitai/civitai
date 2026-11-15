@@ -90,6 +90,11 @@ vi.mock('~/server/services/blocks/block-collections.service', async (importOrigi
   hydrateBlockSubject: vi.fn(async () => ({ id: 42, bannedAt: null, muted: false })),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ Tracker: class {} }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 
 import { dbMock } from '~/__tests__/mocks';
 import { BlockTokenService } from '~/server/services/block-token.service';

@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import {
   constants,
   isNonCommercialBaseModel,

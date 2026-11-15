@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { queryWithTimeout } from '~/server/db/db-helpers';

@@ -37,6 +37,11 @@ vi.mock('~/server/clickhouse/client', () => ({
     action = trackerMocks.action;
   },
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 
 // Which hosts are red-capable is deployment config; pinned here so the host → `redCapable`
 // hand-off is observable with a host the real config may not list.

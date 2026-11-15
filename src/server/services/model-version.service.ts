@@ -21,7 +21,7 @@ import {
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
 import { env } from '~/env/server';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { clickhouse } from '~/server/clickhouse/client';
 import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';

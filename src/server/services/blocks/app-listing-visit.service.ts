@@ -80,7 +80,7 @@ export const defaultAppVisitDeps: AppVisitDeps = {
     return getStoreVisibleOffsiteDestination(listingId, opts);
   },
   recordEvent: async (details, ctx, session) => {
-    const { Tracker } = await import('~/server/clickhouse/client');
+    const { Tracker } = await import('~/server/clickhouse/tracker');
     const tracker = new Tracker(
       ctx.req as unknown as NextApiRequest,
       ctx.res as unknown as NextApiResponse,

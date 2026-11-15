@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { Tracker } from './clickhouse/client';
+import { Tracker } from './clickhouse/tracker';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';

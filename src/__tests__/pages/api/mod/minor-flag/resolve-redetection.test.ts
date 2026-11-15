@@ -18,6 +18,11 @@ vi.mock('~/server/clickhouse/client', () => ({
     userActivity = vi.fn();
   },
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/services/text-scan/actions/redetection', () => ({
   resolveTextScanRedetection: mockResolve,

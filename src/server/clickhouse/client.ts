@@ -1,6 +1,6 @@
 // App shim for @civitai/clickhouse. The package owns the base client + env schema; the
 // app injects the debug logger, owns the process singleton + Next build guard, and re-exports
-// the base client surface plus the app-side Tracker (./tracker) for existing call sites.
+// the base client surface plus the app-side Tracker's types (its values come from ./tracker).
 import { createClickhouseClient, type CustomClickHouseClient } from '@civitai/clickhouse/client';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
@@ -36,6 +36,7 @@ export const clickhouseLongQueries: CustomClickHouseClient | undefined = !should
       requestTimeoutMs: LONG_QUERY_REQUEST_TIMEOUT_MS,
     }));
 
-// The Tracker is app-coupled (auth/session/schemas); it lives in the app and is
-// re-exported here so existing `~/server/clickhouse/client` imports keep working.
-export * from './tracker';
+// The Tracker is app-coupled (auth/session/schemas) and lives in ./tracker: import its values
+// from `~/server/clickhouse/tracker`. Only its TYPES are re-exported here, so a type import from
+// this path keeps compiling while loading the client never loads the tracker's module graph.
+export type * from './tracker';

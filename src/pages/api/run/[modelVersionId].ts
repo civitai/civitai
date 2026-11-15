@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbRead, dbWrite } from '~/server/db/client';
 import * as z from 'zod';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({

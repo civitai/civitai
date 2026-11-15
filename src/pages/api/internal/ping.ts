@@ -1,5 +1,5 @@
 import { isDev } from '~/env/other';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { pageViewBeaconSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getMatchingPathname } from '~/shared/constants/pathname.constants';

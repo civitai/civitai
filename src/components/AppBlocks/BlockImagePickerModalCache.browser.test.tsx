@@ -5,7 +5,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as BrowsingLevelProviderModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import type * as CivitaiSessionProviderModule from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import type * as CivitaiSessionContextModule from '~/components/CivitaiWrapped/CivitaiSessionContext';
 import type * as GenerationRequestHooks from '~/components/ImageGeneration/utils/generationRequestHooks';
 import type * as DomainColorModule from '~/hooks/useDomainColor';
 import type * as SessionProviderModule from '~/providers/SessionProvider';
@@ -71,8 +71,8 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (orig) => {
   };
 });
 
-vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', async (orig) => ({
-  ...(await orig<typeof CivitaiSessionProviderModule>()),
+vi.mock('~/components/CivitaiWrapped/CivitaiSessionContext', async (orig) => ({
+  ...(await orig<typeof CivitaiSessionContextModule>()),
   useCivitaiSessionContext: () => mocks.session,
 }));
 

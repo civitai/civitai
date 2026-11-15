@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

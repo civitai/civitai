@@ -8,7 +8,7 @@
  */
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { overturnPendingReviewMute } from '~/server/services/user-restriction-resolve.service';

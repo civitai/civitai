@@ -12,7 +12,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { createBuzzTipTransactionHandler } from '~/server/controllers/buzz.controller';
 import { dbRead } from '~/server/db/client';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import type { ProtectedContext } from '~/server/createContext';
 import { hydrateBlockSubject } from '~/server/services/blocks/block-collections.service';
 import {

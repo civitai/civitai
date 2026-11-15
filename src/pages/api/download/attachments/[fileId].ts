@@ -6,7 +6,7 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';

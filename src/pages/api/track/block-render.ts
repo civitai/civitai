@@ -1,6 +1,6 @@
 import { isDev } from '~/env/other';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
   normalizeErrorClass,

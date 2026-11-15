@@ -110,6 +110,11 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   Tracker: mockTracker,
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async (importOriginal) => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { ...(await importOriginal<Record<string, unknown>>()), Tracker: client.Tracker };
+});
 vi.mock('~/server/redis/client', () => {
   const make = (): any => new Proxy(() => 'k', { get: () => make() });
   const keyProxy = make();

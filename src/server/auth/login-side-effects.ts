@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { NotificationCategory } from '~/server/common/enums';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { createNotification } from '~/server/services/notification.service';

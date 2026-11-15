@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

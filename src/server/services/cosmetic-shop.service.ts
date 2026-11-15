@@ -68,7 +68,7 @@ import {
   diffSectionItems,
   logSectionPlacements,
 } from '~/server/services/cosmetic-shop-featured-log.service';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import {
   excludeDeletedShopListing,
   SHOP_VERDICT_TRANSACTION,

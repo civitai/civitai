@@ -12,7 +12,7 @@ import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing
 import { getCapTier } from '~/server/services/subscriptions.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import type { SessionUser } from '~/types/session';
 

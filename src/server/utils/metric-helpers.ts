@@ -118,7 +118,7 @@ export const updateEntityMetricDetached = async ({
    */
   userId?: number;
 }) => {
-  const { Tracker } = await import('~/server/clickhouse/client');
+  const { Tracker } = await import('~/server/clickhouse/tracker');
   const track = new Tracker(
     undefined,
     undefined,

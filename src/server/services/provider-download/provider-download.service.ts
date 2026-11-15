@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { countProviderDownload } from '~/server/prom/provider-download.metrics';
 import {
   checkGenerationFetch,

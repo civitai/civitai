@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { createNotification } from '~/server/services/notification.service';
 import { bustRatingTotalsForRows } from '~/server/services/resourceReview.cache';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility.sql';
 
 /**
  * A review written from an unpublished post stays hidden from everyone but its author until the
@@ -17,9 +18,8 @@ export const visibleReviewWhere = (viewerId?: number): Prisma.ResourceReviewWher
   ],
 });
 
-/** The SQL twin of `visibleReviewWhere`, without the author exception. A plain string, for the metric jobs. */
-export const visibleReviewSql = (alias: string) =>
-  `(${alias}."postId" IS NULL OR EXISTS (SELECT 1 FROM "Post" rvp WHERE rvp.id = ${alias}."postId" AND rvp."publishedAt" <= now()))`;
+// The SQL twin of `visibleReviewWhere` lives in a leaf module; re-exported for existing callers.
+export { visibleReviewSql };
 
 export const visibleReviewForViewerSql = (alias: string, viewerId?: number) =>
   viewerId

@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {

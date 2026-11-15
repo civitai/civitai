@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { createModelFile } from '~/server/controllers/model-file.controller';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

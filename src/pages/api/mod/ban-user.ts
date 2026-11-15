@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
 import { handBanReasonSchema } from '~/server/schema/user.schema';
 import { toggleBan } from '~/server/services/user.service';

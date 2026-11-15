@@ -7,7 +7,7 @@ import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
 import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import {

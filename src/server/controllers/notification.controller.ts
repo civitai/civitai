@@ -7,8 +7,8 @@ import type {
 import {
   createUserNotificationSetting,
   deleteUserNotificationSetting,
-  getUserNotifications,
 } from '~/server/services/notification.service';
+import { getUserNotifications } from '~/server/services/notification-read.service';
 import { isOptInNotification } from '~/server/notifications/utils.notifications';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';

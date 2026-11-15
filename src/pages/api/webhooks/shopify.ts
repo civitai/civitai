@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
-import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { trackWebhookEvent } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import { processShopifyOrderPaid, shopifyOrderPaidSchema } from '~/server/services/merch.service';

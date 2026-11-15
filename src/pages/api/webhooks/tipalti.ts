@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
 import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
-import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { trackWebhookEvent } from '~/server/clickhouse/tracker';
 import { dbWrite } from '~/server/db/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';

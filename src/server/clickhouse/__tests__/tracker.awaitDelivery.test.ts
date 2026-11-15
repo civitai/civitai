@@ -18,7 +18,7 @@ vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: {},
 }));
 
-import { Tracker } from '../client';
+import { Tracker } from '../tracker';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const metric = () => ({

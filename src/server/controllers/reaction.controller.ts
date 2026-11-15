@@ -25,7 +25,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { isFutureDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
-import type { ReactionType } from '../clickhouse/client';
+import type { ReactionType } from '../clickhouse/tracker';
 import { dbRead, dbWrite } from '../db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import {

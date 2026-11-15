@@ -1,5 +1,5 @@
-import type { CurrentUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
-import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import type { CurrentUser } from '~/components/CivitaiWrapped/CivitaiSessionContext';
+import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionContext';
 import { AuthorizationError } from '~/utils/errorHandling';
 
 export function useCurrentUser() {

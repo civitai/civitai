@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CurrentUser from '~/hooks/useCurrentUser';
-import type * as SessionProvider from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import type * as SessionContext from '~/components/CivitaiWrapped/CivitaiSessionContext';
 import type * as DomainColor from '~/hooks/useDomainColor';
 import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
@@ -19,8 +19,8 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   useCurrentUser: () => null,
 }));
 // The real BrowserSettingsProvider builds its store from these; effects never run in a static render.
-vi.mock('~/components/CivitaiWrapped/CivitaiSessionProvider', async (importOriginal) => ({
-  ...(await importOriginal<typeof SessionProvider>()),
+vi.mock('~/components/CivitaiWrapped/CivitaiSessionContext', async (importOriginal) => ({
+  ...(await importOriginal<typeof SessionContext>()),
   useCivitaiSessionContext: () => ({ type: 'authed', settings: { ...session } }),
 }));
 vi.mock('~/hooks/useDomainColor', async (importOriginal) => ({

@@ -96,6 +96,11 @@ vi.mock('~/server/controllers/buzz.controller', () => ({
 }));
 // Tracker is instantiated for the fabricated ctx — a no-op class is enough.
 vi.mock('~/server/clickhouse/client', () => ({ Tracker: class {} }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 vi.mock('~/server/services/blocks/block-collections.service', () => ({
   hydrateBlockSubject: mockHydrate,
 }));

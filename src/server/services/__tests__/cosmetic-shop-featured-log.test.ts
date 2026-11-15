@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
-import type { Tracker } from '~/server/clickhouse/client';
+import type { Tracker } from '~/server/clickhouse/tracker';
 
 const { chQuery } = vi.hoisted(() => ({ chQuery: vi.fn() }));
 

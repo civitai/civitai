@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { chunk } from 'lodash-es';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { dbRead } from '~/server/db/client';
 import { handleUnblockImages } from '~/server/services/image.service';
 import { WebhookEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';

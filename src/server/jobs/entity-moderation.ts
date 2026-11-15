@@ -2,7 +2,7 @@ import { StreamError } from '@clavata/sdk';
 import type { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
-import { Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/tracker';
 import { ExternalModerationType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { clavataEvaluate } from '~/server/integrations/clavata';

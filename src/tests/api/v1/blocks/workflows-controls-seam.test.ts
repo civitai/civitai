@@ -100,6 +100,11 @@ vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => 
 });
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 vi.mock('~/server/clickhouse/client', () => ({ Tracker: class {} }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: mockGetOrchestratorToken,
 }));

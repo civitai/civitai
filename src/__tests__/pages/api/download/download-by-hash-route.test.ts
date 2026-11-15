@@ -68,6 +68,11 @@ vi.mock('~/server/clickhouse/client', () => ({
     modelVersionEvent = mockModelVersionEvent;
   },
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 vi.mock('~/server/utils/rate-limiting', () => ({
   createLimiter: () => ({
     hasExceededLimit: vi.fn().mockResolvedValue(false),

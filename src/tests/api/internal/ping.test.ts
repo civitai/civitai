@@ -42,6 +42,11 @@ vi.mock('~/server/clickhouse/client', () => ({
     pageView = mockPageView;
   },
 }));
+// The Tracker lives in ./tracker; serve it from the client mock above, as before.
+vi.mock('~/server/clickhouse/tracker', async () => {
+  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
+  return { Tracker: client.Tracker };
+});
 
 // getMatchingPathname maps the request path to a page id; a match dispatches the
 // insert, no-match short-circuits to 200. Return the path itself as the id so a
