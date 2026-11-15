@@ -196,9 +196,8 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	}
 
 	// prepareImageFeedRequest: the addons are resolved at the request's level for this viewer. The
-	// viewer there carries no username, so only a `userId` naming the viewer, with no `username`
-	// beside it, is their own feed (which keeps its tag exclusions off): a name cannot be matched
-	// against a viewer without one. disablePoi / disableMinor are always on for this route.
+	// viewer there carries no username, so only a `userId` naming the viewer is their own feed (which
+	// keeps its tag exclusions off). disablePoi / disableMinor are always on for this route.
 	var excluded []int
 	addonLevel := browsing.OnlySelectable(orInt(level, browsing.PublicLevels))
 	if addonLevel == 0 {

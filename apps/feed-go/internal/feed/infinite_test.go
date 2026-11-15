@@ -90,12 +90,13 @@ func TestInfiniteOwnScopeAndPath(t *testing.T) {
 		{"another creator's id", InfiniteInput{UserID: 6}, 5, "alice", false},
 		{"another creator's name", InfiniteInput{Username: "bob"}, 5, "alice", false},
 		{"another creator's id with the viewer's name", InfiniteInput{UserID: 6, Username: "alice"}, 5, "alice", false},
-		{"the viewer's id with another creator's name", InfiniteInput{UserID: 5, Username: "bob"}, 5, "alice", false},
+		{"own id beside a name that does not match (a slugified one)", InfiniteInput{UserID: 5, Username: "johndoe"}, 5, "john.doe", true},
 		{"a prefix is not the name", InfiniteInput{Username: "alice2"}, 5, "alice", false},
 		{"no creator scope", InfiniteInput{}, 5, "alice", false},
 		{"signed out, by id", InfiniteInput{UserID: 5}, 0, "", false},
 		{"signed out, by name", InfiniteInput{Username: "alice"}, 0, "", false},
-		{"a viewer without a name, own id and a name", InfiniteInput{UserID: 5, Username: "alice"}, 5, "", false},
+		{"a viewer without a name (v1), own id beside a name", InfiniteInput{UserID: 5, Username: "alice"}, 5, "", true},
+		{"a viewer without a name (v1), by name alone", InfiniteInput{Username: "alice"}, 5, "", false},
 	}
 	for _, c := range cases {
 		in := c.in

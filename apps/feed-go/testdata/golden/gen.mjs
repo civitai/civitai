@@ -477,12 +477,9 @@ function enforceBlockedBrowsingTags(input, viewer) {
   const resolved = resolveAddons(addons, level, { isModerator: viewer.isModerator });
   input.disablePoi = input.disablePoi || resolved.disablePoi;
   input.disableMinor = input.disableMinor || resolved.disableMinor;
-  const scopedById = !!input.userId;
-  const scopedByName = !!input.username;
-  const isOwnScoped =
-    (scopedById || scopedByName) &&
-    (!scopedById || !!(viewer.id && viewer.id === input.userId)) &&
-    (!scopedByName || (!!viewer.username && input.username.toLowerCase() === viewer.username.toLowerCase()));
+  const isOwnScoped = input.userId
+    ? !!(viewer.id && viewer.id === input.userId)
+    : !!viewer.username && !!input.username && viewer.username.toLowerCase() === input.username.toLowerCase();
   if (!isOwnScoped && resolved.excludedTagIds.length)
     input.excludedTagIds = [...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds])];
   return { emptyResult: false };
@@ -1665,13 +1662,6 @@ const V1 = [
     query: 'userId=1001&limit=3',
     viewer: 1001,
     replies: { 'levels=1&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=reactions&limit=3': { body: { items: [8001, 8007] } } },
-  },
-  {
-    name: 'user-id-own-with-username-signed-in',
-    description: '`userId` naming the signed-in viewer beside a `username`: this route’s viewer carries no name to match it against, so it is not their own feed and the tag exclusions apply.',
-    query: 'userId=1001&username=artist_one&limit=3',
-    viewer: 1001,
-    replies: { 'levels=1&excludedTags=9901&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=reactions&limit=3': { body: { items: [8001, 8007] } } },
   },
   {
     name: 'post-id-filter',

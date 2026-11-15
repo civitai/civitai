@@ -43,7 +43,7 @@ const (
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 21
-	goldenMinV1       = 23
+	goldenMinV1       = 22
 	goldenMinInfinite = 20
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"

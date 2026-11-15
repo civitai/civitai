@@ -107,21 +107,14 @@ func (in *InfiniteInput) ownScoped(viewerID int, viewerUsername string) bool {
 	return ownScope(viewerID, viewerUsername, in.UserID, in.Username)
 }
 
-// ownScope is applyAddonExclusions' isOwnScoped: the request names a creator (`userId`, before a
-// username is resolved, or `username`) and every creator identifier it carries is the viewer — the
-// id equal, the name equal case-insensitively. A `userId` naming someone else is their feed whatever
-// `username` says, and vice versa. 0 / "" is no identifier (Node's falsy checks).
+// ownScope is applyAddonExclusions' isOwnScoped, read on the creator the feed filters by: the
+// `userId` whenever present (equal to the viewer's id, whatever `username` says), otherwise the
+// `username` (the viewer's, case-insensitively). 0 / "" is no identifier (Node's falsy checks).
 func ownScope(viewerID int, viewerUsername string, userID int, username string) bool {
-	if userID == 0 && username == "" {
-		return false
+	if userID != 0 {
+		return viewerID != 0 && userID == viewerID
 	}
-	if userID != 0 && (viewerID == 0 || userID != viewerID) {
-		return false
-	}
-	if username != "" && (viewerUsername == "" || !strings.EqualFold(username, viewerUsername)) {
-		return false
-	}
-	return true
+	return username != "" && viewerUsername != "" && strings.EqualFold(username, viewerUsername)
 }
 
 // dbPath is requiresImageDbPath for the supported inputs: a post's media, or a model without a
