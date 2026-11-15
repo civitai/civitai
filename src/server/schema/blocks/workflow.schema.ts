@@ -1147,9 +1147,12 @@ export type BlockWorkflowSnapshot = {
    *     `allowMatureContent` was set false at charge time) and the output is above
    *     PG-13. `'ceiling'`: the output is above the app token's maturity ceiling, or
    *     above a cap the site itself put on the workflow, or a `MatureContent` block.
-   *     `'unrated'`: no rating will ever arrive (a never-rated video engine, a training
-   *     sample, a 3D mesh with no rating source) and one could restrict it — terminal,
-   *     fail closed. Treat an unknown reason like `'ceiling'`.
+   *     `'unrated'`: no rating will ever arrive (an `imageResourceTraining` sample, a
+   *     3D mesh on a finished step with no rating source) and one could restrict it —
+   *     terminal, fail closed. Treat an unknown reason like `'ceiling'`.
+   *   A video from an engine the orchestrator never rates (kling, veo3, vidu, grok,
+   *   gemini-omni) is DELIVERED with its url while unrated, as on the site — its
+   *   provider moderates it; a rating that arrives still meets the ceiling checks.
    * Restricted urls are withheld; an app shows a locked state for such an entry and
    * must not try to fetch it. Not-yet-available outputs are dropped, as from
    * `imageUrls`; a BLOCKED one keeps its slot (below).

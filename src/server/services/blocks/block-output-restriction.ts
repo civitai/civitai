@@ -42,11 +42,15 @@ import type {
  *      orchestrator marks a workflow succeeded seconds before it rates the last output,
  *      so a url handed out now would be a restricted output's url a moment later.
  *      When nothing could restrict it, `{ url }`.
- *   1b. NEVER TO BE RATED (`opts.neverRated`: a never-rated video engine, an
- *      `imageResourceTraining` sample, a mesh on a finished step with no rating
- *      source): where a rating could restrict it, `{ restricted: true, reason:
- *      'unrated' }` — terminal, no url, no `ratingPending`, refused like any restricted
- *      slot; otherwise `{ url }`. A hold would never release.
+ *   1b. NEVER TO BE RATED (`opts.neverRated`: an `imageResourceTraining` sample, a
+ *      mesh on a finished step with no rating source): where a rating could restrict
+ *      it, `{ restricted: true, reason: 'unrated' }` — terminal, no url, no
+ *      `ratingPending`, refused like any restricted slot; otherwise `{ url }`. A hold
+ *      would never release.
+ *   1c. A NEVER-RATED VIDEO ENGINE's unrated output (`opts.unratedDelivered`):
+ *      `{ url }` whatever the ceiling — the site's rule (`NEVER_RATED_VIDEO_ECOSYSTEMS`
+ *      in `workflow-data.ts`): the provider moderates its own output. A rating that
+ *      does arrive on one goes through rules 2-6 as usual.
  *      `'na'` is a verdict with no level (the provider moderated it): `{ url }`.
  *   2. A rating this module does not know: restricted, `'ceiling'` (fail closed).
  *   3. Above the token's `maxBrowsingLevel` ceiling: restricted, `'ceiling'`.
@@ -81,8 +85,12 @@ export function classifyBlockOutput(
   },
   workflow: BlockOutputWorkflowFacts,
   ceiling: BlockOutputCeiling,
-  /** `neverRated`: no rating will EVER arrive for this output (rule 1b). */
-  opts: { neverRated?: boolean } = {}
+  /**
+   * `neverRated`: no rating will EVER arrive for this output (rule 1b).
+   * `unratedDelivered`: an unrated output the site delivers as is — a never-rated
+   * video engine's, whose provider moderates it (rule 1c).
+   */
+  opts: { neverRated?: boolean; unratedDelivered?: boolean } = {}
 ): BlockWorkflowOutput {
   const blockedReason = media.blockedReason;
   if (typeof blockedReason === 'string' && blockedReason.toLowerCase() !== 'none') {
@@ -91,6 +99,8 @@ export function classifyBlockOutput(
   const raw = typeof media.nsfwLevel === 'string' ? media.nsfwLevel.trim().toLowerCase() : '';
   if (raw === 'na') return { url: media.url };
   if (raw === '') {
+    // 1c. A never-rated video engine's unrated output: delivered, as on the site.
+    if (opts.unratedDelivered) return { url: media.url };
     // 1b. No rating will ever come: FAIL CLOSED where one could restrict it — terminal,
     // never held, never a url.
     if (opts.neverRated) {

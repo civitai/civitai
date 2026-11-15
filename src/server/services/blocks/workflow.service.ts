@@ -311,8 +311,12 @@ function classifyOutputs(
   const neverRatedVideo = isBlockNeverRatedVideoStep(step, workflow);
   return propagateMeshRating(slots, step, workflow).map((m) =>
     classifyBlockOutput(m, workflow as BlockOutputWorkflowFacts, ceiling, {
-      // A video from an engine the orchestrator never rates will get no rating.
-      neverRated: m.neverRated === true || (neverRatedVideo && m.type === 'video'),
+      neverRated: m.neverRated === true,
+      // 🔴 MIRRORS THE SITE (`workflow-data.ts`, `NEVER_RATED_VIDEO_ECOSYSTEMS`): the
+      // provider moderates a never-rated engine's own output, so an UNRATED video from
+      // one is delivered — neither held nor locked — whatever the ceiling. A rating
+      // that does arrive still meets every ceiling check.
+      unratedDelivered: neverRatedVideo && m.type === 'video',
     })
   );
 }
@@ -402,7 +406,16 @@ function meshRatingOf(
   }
   const rating = maxNsfwLevel(ratings);
   if (rating) return { kind: 'rated', rating };
-  if (sources > 0) return { kind: 'pending' };
+  // Every source rated (any unrated one returned above) but none to a level: all
+  // `'na'` — the verdict with no level — or a value `maxNsfwLevel` does not know, which
+  // is passed on so the classifier fails closed on it.
+  if (sources > 0) {
+    const odd = ratings.find((r) => r !== 'na');
+    return {
+      kind: 'rated',
+      rating: (odd ?? 'na') as NonNullable<Parameters<typeof maxNsfwLevel>[0][number]>,
+    };
+  }
   return FINISHED_STEP_STATUSES.has(step.status ?? '') ? { kind: 'never' } : { kind: 'pending' };
 }
 
@@ -425,11 +438,12 @@ export function propagateMeshRating(
   return slots.map((s) => {
     if (s.type !== 'model3d') return s;
     if (mesh.kind === 'rated') {
+      // The most severe real rating wins; with none (all `'na'`), the verdict carries.
       return {
         ...s,
         nsfwLevel:
           maxNsfwLevel([s.nsfwLevel as Parameters<typeof maxNsfwLevel>[0][number], mesh.rating]) ??
-          null,
+          (s.nsfwLevel || mesh.rating),
       };
     }
     // A source that has not rated yet: hold the mesh, whatever it carries itself.
