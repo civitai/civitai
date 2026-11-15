@@ -2,6 +2,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import type {
   CheckCrucibleEntryEligibilitySchema,
+  DismissJudgingPairSchema,
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
@@ -39,6 +40,7 @@ import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import {
   checkCrucibleEntryEligibility,
   createCrucibleEntryPost,
+  dismissJudgingPair,
   cancelCrucible,
   removeCrucibleEntry,
   removeCrucibleEntryAsOwner,
@@ -343,6 +345,17 @@ export const submitVoteHandler = async ({
     userId: ctx.user.id,
     blockedCreatorIds: await getAllBlockedCreatorIds(ctx.user),
   });
+};
+
+export const dismissJudgingPairHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DismissJudgingPairSchema;
+  ctx: ProtectedContext;
+}) => {
+  await assertCanJudgeCrucible({ userId: ctx.user.id, isModerator: ctx.user.isModerator });
+  return dismissJudgingPair({ ...input, userId: ctx.user.id });
 };
 
 export const cancelCrucibleHandler = async ({

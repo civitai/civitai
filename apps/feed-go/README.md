@@ -44,7 +44,10 @@ answers with Node's for fixed inputs (`testdata/golden/`). The integration tier 
 ## Config
 
 See `.env.example`. Variable names match the main app's where the value is the same thing. The
-`FEED_GO_*` flag mirrors default to ON; set each to its Flipt flag's real value (DESIGN.md §8). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
+`FEED_GO_*` flag mirrors default to ON (`FEED_GO_FRAME_CACHE_NEGATIVE` to off); set each to its Flipt flag's real value (DESIGN.md §8).
+Cache misses on user cosmetics, image frames and event decorations are computed with the Node
+lookup's own query (`FEED_GO_COMPUTE_MISSES`, default on) and written back only with
+`FEED_GO_CACHE_WRITEBACK=true` (default off; it then needs `DATABASE_URL`, the primary; DESIGN.md §3.1). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
 `FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
 falls back (`index-feed-unconfigured`). The REST endpoint's shadow also needs
 `NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds

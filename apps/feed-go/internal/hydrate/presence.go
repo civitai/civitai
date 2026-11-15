@@ -34,13 +34,10 @@ type PageCache struct {
 	// Key is the key prefix: one key per id, `${Key}:${id}` (a packed entry; for CacheMetrics the
 	// watcher-fed hash, which carries no namespace prefix).
 	Key string
-	// Reason is the fallback reason a miss on this cache raises in Sources.Page today; "" when Page
-	// answers the miss itself (from the replica). A page with a miss on a cache with a Reason is not
-	// served by this service.
-	//
-	// The Go-side miss computation (branch zach/feed-go-compute-misses) answers the user-cosmetics,
-	// image-frames, event-decorations and metrics misses: rebased onto it, those Reasons become ""
-	// when Sources.Compute is set. This table is the one place that changes.
+	// Reason is the fallback reason a miss on this cache raises in Sources.Page WITHOUT a miss
+	// computation; "" when Page answers the miss itself (from the replica). With Sources.Compute the
+	// caches in MissCaches (misses.go) are answered too: Sources.MissReason is the reason for a
+	// given Sources, and the one the probe classifies by.
 	Reason string
 }
 
@@ -58,6 +55,24 @@ var PageCaches = []PageCache{
 	{Name: CacheEventDecorations, Key: KeyImageEvents, Reason: "event-decoration-miss"},
 	{Name: CacheMetrics, Key: metricHashPrefix, Reason: "metrics-miss"},
 	{Name: CacheCosmetics, Key: KeyCosmetics},
+}
+
+// MissReason is the fallback reason a miss on the named page cache raises in s.Page: the PageCaches
+// Reason, or "" for a cache s.Compute answers (MissCaches, shared with the miss computation) and for
+// a name that is not a page cache.
+func (s *Sources) MissReason(name string) string {
+	c, ok := PageCacheNamed(name)
+	if !ok {
+		return ""
+	}
+	if s.Compute != nil {
+		for _, m := range MissCaches {
+			if m == name {
+				return ""
+			}
+		}
+	}
+	return c.Reason
 }
 
 // PageCacheNamed is the PageCaches entry of that name.
@@ -118,6 +133,15 @@ func (s *Sources) Presence(ctx context.Context, req PageRequest) (map[string]int
 			return nil, fmt.Errorf("presence %s: %w", r.name, err)
 		}
 		entries := r.read.Entries()
+		if r.name == CacheImageFrames && s.Compute != nil && !s.Compute.FrameNegative {
+			// As fillFrames: while frame-cache-negative is off a notFound marker is a miss (Node's
+			// fetch ignores markers then), so the lookup runs for it.
+			for id, e := range entries {
+				if e.NotFound {
+					delete(entries, id)
+				}
+			}
+		}
 		got[r.name] = entries
 		if n := len(Missing(r.ids, entries)); n > 0 {
 			out[r.name] = n
@@ -190,9 +214,11 @@ func keysOf(m map[int]Entry) []int {
 	return out
 }
 
-// PresenceChecker is the cache-presence surface the probe needs (implemented by *Sources).
+// PresenceChecker is the cache-presence surface the probe needs (implemented by *Sources): the
+// misses, and which of them make the page fall back.
 type PresenceChecker interface {
 	Presence(ctx context.Context, req PageRequest) (map[string]int, error)
+	MissReason(name string) string
 }
 
 // PresenceProbe stands in for the page hydrator (feed.Hydrator) on a Go-first probe: every Page call

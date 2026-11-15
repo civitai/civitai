@@ -234,6 +234,49 @@ func TestPresenceReadFailures(t *testing.T) {
 	}
 }
 
+// MissReason is the table's Reason without a miss computation, and "" for the caches it answers
+// (MissCaches, the computation's own list) with one; the caches it does not answer keep theirs.
+func TestMissReason(t *testing.T) {
+	plain, computed := &Sources{}, &Sources{Compute: &MissCompute{}}
+	for _, c := range PageCaches {
+		if got := plain.MissReason(c.Name); got != c.Reason {
+			t.Errorf("no computation: %s = %q, want %q", c.Name, got, c.Reason)
+		}
+	}
+	want := map[string]string{
+		CacheUserCosmetics: "", CacheImageFrames: "", CacheEventDecorations: "",
+		CacheTagIDs: "tag-ids-miss", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
+	}
+	for name, w := range want {
+		if got := computed.MissReason(name); got != w {
+			t.Errorf("computed: %s = %q, want %q", name, got, w)
+		}
+	}
+	if plain.MissReason("nope") != "" {
+		t.Error("an unknown cache has a reason")
+	}
+}
+
+// With misses computed and frame-cache-negative off, a frame notFound marker is a miss (fillFrames
+// looks it up); with the flag on, or without a computation, it is an answer.
+func TestPresenceFrameMarkersFollowFrameNegative(t *testing.T) {
+	for _, tc := range []struct {
+		compute *MissCompute
+		want    int
+	}{{nil, 0}, {&MissCompute{FrameNegative: true}, 0}, {&MissCompute{}, 2}} {
+		s, _, _ := basePageFixture(t).load()
+		s.Compute = tc.compute
+		got, err := s.Presence(context.Background(), pageRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		// basePageFixture: frames 13 and 14 are notFound markers.
+		if got[CacheImageFrames] != tc.want {
+			t.Errorf("compute %+v: image-frames missed %d, want %d", tc.compute, got[CacheImageFrames], tc.want)
+		}
+	}
+}
+
 func TestMetricHashPrefix(t *testing.T) {
 	if got, want := metricHashKey(8001), metricHashPrefix+":8001"; got != want {
 		t.Fatalf("metricHashKey = %q, PageCaches says %q", got, want)
@@ -254,6 +297,8 @@ type fakeChecker struct {
 	err     error
 	reqs    []PageRequest
 }
+
+func (f *fakeChecker) MissReason(string) string { return "" }
 
 func (f *fakeChecker) Presence(_ context.Context, req PageRequest) (map[string]int, error) {
 	f.mu.Lock()

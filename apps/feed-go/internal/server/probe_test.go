@@ -84,7 +84,7 @@ func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture, procedure s
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker}
 	err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: fx.Request.Input, Headers: env.headers}, rec)
-	result, missed := classifyProbe(err, rec.Misses())
+	result, missed := classifyProbe(err, rec.Misses(), checker.MissReason)
 	return result, missed, err
 }
 
@@ -132,6 +132,14 @@ func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 				if result != ProbeWouldServe {
 					t.Fatalf("served by Go; probe %s (missed %v, err %v)", result, missed, err)
 				}
+				// A cold-<cache> fixture is served by computing that cache's misses: the probe
+				// still reports the cache (the miss Go-first would compute), and would_serve.
+				if c := goldenColdCache[fx.Name]; c != "" {
+					if !slices.Contains(missed, c) {
+						t.Fatalf("%s: probe missed %v, want %s reported", fx.Name, missed, c)
+					}
+					seen["cold:"+c]++
+				}
 				env.feed.check(t, true)
 			case c != "":
 				if result != ProbeWouldMiss || !slices.Contains(missed, c) {
@@ -146,17 +154,27 @@ func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 			}
 		})
 	}
-	// Positive control: the fixtures reached the outcomes (as-posts has a cache-miss fixture; the
-	// infinite fixtures have none, so would_miss is reached for it by the next test only).
+	// Positive control: the fixtures reached the outcomes (would_miss is reached by the next test,
+	// which empties the caches Go falls back on), and on as-posts every cold-<cache> fixture.
 	outcomes := []string{ProbeWouldServe, ProbeUnsupported}
 	if gc.dir == "as-posts" {
-		outcomes = append(outcomes, ProbeWouldMiss)
+		for _, c := range goldenColdCache {
+			outcomes = append(outcomes, "cold:"+c)
+		}
 	}
 	for _, r := range outcomes {
 		if seen[r] == 0 {
 			t.Errorf("no fixture probed %s: %v", r, seen)
 		}
 	}
+}
+
+// goldenColdCache names the cache each cold-<cache> fixture has cold (gen.mjs): served by computing
+// those misses (hydrate.MissCompute).
+var goldenColdCache = map[string]string{
+	"cold-user-cosmetics":   hydrate.CacheUserCosmetics,
+	"cold-image-frames":     hydrate.CacheImageFrames,
+	"cold-event-decoration": hydrate.CacheEventDecorations,
 }
 
 // goldenKeyCache is the cache a golden Redis key belongs to ("" for keys the probe does not report).
@@ -253,11 +271,12 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 		}
 	}
 	// Positive controls: every cache Go falls back on was compared at least once, and so was a cache
-	// Go fills from the replica (else the would_serve arm proves nothing). The as-posts fixtures
-	// reach every one; the infinite fixtures, the per-image caches every page reads.
-	required := []string{hydrate.CacheUserCosmetics, hydrate.CacheImageFrames, hydrate.CacheTagIDs, hydrate.CacheMetrics}
+	// Go fills itself (else the would_serve arm proves nothing). The golden server computes the
+	// user-cosmetic, frame and event-decoration misses (MissCompute), so those serve; tag ids and
+	// metric hashes still fall back. The infinite fixtures reach the per-image ones.
+	required := []string{hydrate.CacheTagIDs, hydrate.CacheMetrics}
 	if gc.dir == "as-posts" {
-		required = append(required, CacheSessionUser, CacheGallerySettings, hydrate.CacheEventDecorations)
+		required = append(required, CacheSessionUser, CacheGallerySettings)
 	}
 	for _, c := range required {
 		if missCompared[c] == 0 {
@@ -293,14 +312,32 @@ func TestClassifyProbe(t *testing.T) {
 		{"the budget", fallback.New("deadline"), nil, ProbeUnsupported, nil},
 		{"a panic", fallback.New("panic"), nil, ProbeError, nil},
 		{"a store error", errors.New("redis down"), map[string]int{hydrate.CacheTagIDs: 1}, ProbeError, []string{hydrate.CacheTagIDs}},
+		{"a blocked-tag list to rebuild", fallback.New("blocked-tags-stale"), nil, ProbeWouldMiss, []string{CacheBlockedTags}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			result, missed := classifyProbe(c.err, c.misses)
+			result, missed := classifyProbe(c.err, c.misses, (&hydrate.Sources{}).MissReason)
 			if result != c.wantResult || !reflect.DeepEqual(missed, c.wantMissed) {
 				t.Fatalf("classifyProbe = %s %v, want %s %v", result, missed, c.wantResult, c.wantMissed)
 			}
 		})
+	}
+}
+
+// With the misses computed (MissCompute), a user-cosmetics miss is served Go-first and a tag-ids
+// miss still is not: the classification follows the deployment's Sources, not the static table.
+func TestClassifyProbeWithComputedMisses(t *testing.T) {
+	computed := (&hydrate.Sources{Compute: &hydrate.MissCompute{}}).MissReason
+	result, missed := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheImageFrames: 1}, computed)
+	if result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{hydrate.CacheUserCosmetics, hydrate.CacheImageFrames}) {
+		t.Fatalf("computed misses: %s %v, want would_serve reporting both", result, missed)
+	}
+	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheTagIDs: 1}, computed); result != ProbeWouldMiss {
+		t.Fatalf("a tag-ids miss with computed misses: %s, want would_miss", result)
+	}
+	// The same miss without a computation is would_miss (the arm can differ).
+	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3}, (&hydrate.Sources{}).MissReason); result != ProbeWouldMiss {
+		t.Fatalf("a user-cosmetics miss without a computation: %s, want would_miss", result)
 	}
 }
 

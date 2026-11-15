@@ -174,6 +174,24 @@ describe('countJudgingPairs', () => {
     expect(counts.get(101)).toMatchObject({ judged: true, remainingPairs: 2 });
   });
 
+  it('counts, when judgedOnly, a crucible the judge has only dismissed pairs in', async () => {
+    queryRaw.mockResolvedValue(entries({ 101: [10, 11, 12] }));
+    redisMock.sysRedis.sMembers.mockImplementation(async (key: string) =>
+      key === `${REDIS_SYS_KEYS.CRUCIBLE.DISMISSED_PAIRS}:101:${JUDGE}` ? ['10:11'] : []
+    );
+
+    const counts = await countJudgingPairs({
+      crucibleIds: [101, 202],
+      userId: JUDGE,
+      viewerLevel: 1,
+      judgedOnly: true,
+    });
+
+    expect([...counts.keys()]).toEqual([101]);
+    // Not judged (no vote), but the dismissed pair is off what is left.
+    expect(counts.get(101)).toMatchObject({ judged: false, remainingPairs: 2 });
+  });
+
   it('makes no queries for no crucibles', async () => {
     const counts = await countJudgingPairs({ crucibleIds: [], userId: JUDGE, viewerLevel: 1 });
 

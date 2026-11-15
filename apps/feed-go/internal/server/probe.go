@@ -236,7 +236,7 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 	if first, pages := rec.FirstCheck(); pages > 0 {
 		observeLag(s.Metrics.GoFirstCheckLag, spec.endpoint, first, req.StartedAt)
 	}
-	result, missed := classifyProbe(err, rec.Misses())
+	result, missed := classifyProbe(err, rec.Misses(), checker.MissReason)
 	s.Metrics.GoFirst.WithLabelValues(spec.endpoint, result).Inc()
 	for _, c := range missed {
 		s.Metrics.GoFirstMiss.WithLabelValues(spec.endpoint, c).Inc()
@@ -249,10 +249,12 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 }
 
 // classifyProbe is a probe's result from how its resolution ended and the page misses it recorded,
-// and the caches it saw miss (each once, in probeCaches order). A cache with a miss path is listed
-// when it missed, but only a cache Go falls back on makes the result would_miss. The misses are
-// listed whatever the result: a fallback for another reason can come after a page was checked.
-func classifyProbe(err error, misses map[string]int) (string, []string) {
+// and the caches it saw miss (each once, in probeCaches order). missReason is the deployment's
+// fallback reason for a miss on a page cache (hydrate.Sources.MissReason: "" where Go answers the
+// miss itself, from the replica or by computing it). A cache Go answers is listed when it missed, but
+// only a cache Go falls back on makes the result would_miss. The misses are listed whatever the
+// result: a fallback for another reason can come after a page was checked.
+func classifyProbe(err error, misses map[string]int, missReason func(string) string) (string, []string) {
 	reason := fallback.Reason(err)
 	pre := preHydrateMissReasons[reason]
 	var missed []string
@@ -266,7 +268,7 @@ func classifyProbe(err error, misses map[string]int) (string, []string) {
 			continue
 		}
 		missed = append(missed, name)
-		if c, ok := hydrate.PageCacheNamed(name); ok && c.Reason != "" {
+		if missReason(name) != "" {
 			wouldMiss = true
 		}
 	}

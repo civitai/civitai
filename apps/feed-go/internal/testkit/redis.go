@@ -14,7 +14,7 @@ import (
 )
 
 // Redis is an in-memory redis.UniversalClient for the commands this service sends: GET, HGET,
-// HGETALL, SET and SADD, directly or in a pipeline. Any other command panics (the embedded nil
+// HGETALL, SET, SET NX and SADD, directly or in a pipeline. Any other command panics (the embedded nil
 // interface), so a test never passes on a command the fake silently ignored.
 //
 // Failure modes: Err makes every command fail with it (a transport failure); KeyErr, when it returns
@@ -381,6 +381,60 @@ func (p *pipe) Exists(ctx context.Context, keys ...string) *redis.IntCmd {
 			return
 		}
 		cmd.SetVal(p.r.exists(key))
+	})
+	return cmd
+}
+
+// setNX is SET NX with an expiry: false (and nothing written) when key holds a value of any type.
+func (r *Redis) setNX(key string, val any, ttl time.Duration) bool {
+	r.mu.Lock()
+	_, s := r.strings[key]
+	_, h := r.hashes[key]
+	_, m := r.sets[key]
+	r.mu.Unlock()
+	if s || h || m {
+		return false
+	}
+	r.set(key, val, ttl)
+	return true
+}
+
+// Has reports whether key holds a value of any type.
+func (r *Redis) Has(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, s := r.strings[key]
+	_, h := r.hashes[key]
+	_, m := r.sets[key]
+	return s || h || m
+}
+
+// Hash returns a stored hash (nil when absent).
+func (r *Redis) Hash(key string) map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.hashes[key] == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range r.hashes[key] {
+		out[k] = v
+	}
+	return out
+}
+
+func (p *pipe) SetNX(ctx context.Context, key string, val any, ttl time.Duration) *redis.BoolCmd {
+	cmd := redis.NewBoolCmd(ctx, "set", key, "nx")
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		cmd.SetVal(p.r.setNX(key, val, ttl))
 	})
 	return cmd
 }
