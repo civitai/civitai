@@ -25,10 +25,8 @@ type batchGroup struct {
 	queue  []func(context.Context, redis.Pipeliner)
 }
 
-// NewBatch returns an empty batch.
 func NewBatch() *Batch { return &Batch{} }
 
-// add queues fn's commands on client's pipeline.
 func (b *Batch) add(client redis.UniversalClient, fn func(context.Context, redis.Pipeliner)) {
 	for _, g := range b.groups {
 		if g.client == client {
@@ -125,9 +123,8 @@ func (s *Sources) queueMetrics(b *Batch, ids []int) *metricsRead {
 	return r
 }
 
-// result is the metrics lookup's answer after Exec. Any command error is a read failure: the first one in
-// command order names it, as the separate pipeline's first-command error did (an HGETALL answers an
-// absent key with an empty hash, never redis.Nil, so every error here is a real failure).
+// result is the metrics lookup's answer after Exec. The first command error in command order is the read
+// failure (an HGETALL answers an absent key with an empty hash, never redis.Nil, so every error here is real).
 func (r *metricsRead) result() (map[int]Metrics, error) {
 	if len(r.ids) == 0 {
 		return map[int]Metrics{}, nil

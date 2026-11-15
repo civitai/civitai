@@ -174,7 +174,6 @@ type Metrics map[string]int
 // metricHashKey is cacheKeys.metric (event-engine-common/utils/cache-keys.ts); never namespace-prefixed.
 func metricHashKey(id int) string { return "metrics:Image:" + strconv.Itoa(id) }
 
-// metricsReadFailed is the fallback for a metric hash read that failed.
 func metricsReadFailed(err error) error { return fallback.Newf("metrics-read-failed", "%v", err) }
 
 // MetricsFromHashes is the per-id half of ImageMetrics: hashes[i] is the `metrics:Image:<ids[i]>`
