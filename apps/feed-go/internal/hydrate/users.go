@@ -181,7 +181,9 @@ func ImageReviewedSQL(alias string) string {
 	     AND ` + a + `."ingestion" NOT IN ('Blocked'::"ImageIngestionStatus", 'NotFound'::"ImageIngestionStatus")
 	     AND NOT (` + a + `."ingestion" = 'Error'::"ImageIngestionStatus"
 	              AND (COALESCE(` + a + `."metadata"->>'nsfwLevelReason','') = 'Knights Vote'
-	                   OR COALESCE(` + a + `."scanJobs"->'error'->>'failureClass','') = 'permanent'))))`
+	                   OR COALESCE(` + a + `."scanJobs"->'error'->>'failureClass','') = 'permanent'
+	                   OR COALESCE(` + a + `."scanJobs"->'lastFailure'->>'failureClass','') = 'permanent'
+	                   OR COALESCE(` + a + `."scanJobs"->'permanentFailure' = 'true'::jsonb, FALSE)))))`
 }
 
 // Unique returns ids without duplicates or zeros, keeping first-seen order.

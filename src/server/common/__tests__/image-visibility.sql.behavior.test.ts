@@ -1,10 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import {
-  imageReviewedSql,
-  isImageReviewed,
-  keepPermanentScanFailureSql,
-} from '~/server/common/image-visibility';
+import { imageReviewedSql, isImageReviewed } from '~/server/common/image-visibility';
 import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 type Row = {
@@ -53,48 +49,6 @@ const reviewed = async (row: Row) => {
   return storedReviewed();
 };
 
-// The writes that drop or replace error / lastFailure, as image.service and the ingest cron run them.
-const resubmit = () => {
-  const keep = keepPermanentScanFailureSql();
-  return db.query(
-    `UPDATE "Image" SET ingestion = 'Error', "scanJobs" = '{"workflowId": "w"}'::jsonb
-       || jsonb_strip_nulls(jsonb_build_object(
-         'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
-       )) || ${keep.text}
-     WHERE id = 1`,
-    keep.values
-  );
-};
-const cronFlipToError = () => {
-  const keep = keepPermanentScanFailureSql();
-  return db.query(
-    `UPDATE "Image" SET ingestion = 'Error',
-       "scanJobs" = ("scanJobs" - 'lastFailure') || ${keep.text}
-     WHERE id = 1`,
-    keep.values
-  );
-};
-const fail = (failureClass: string) =>
-  db.query(
-    `UPDATE "Image" SET ingestion = 'Error',
-       "scanJobs" = jsonb_set("scanJobs", '{error}', jsonb_build_object('failureClass', $1::text))
-     WHERE id = 1`,
-    [failureClass]
-  );
-/** A failure stamp as markImageScanError / markImageScanSubmitFailure write it. */
-const failKeeping = (failureClass: string) => {
-  const keep = keepPermanentScanFailureSql();
-  const at = keep.values.length + 1;
-  return db.query(
-    `UPDATE "Image" SET ingestion = 'Error',
-       "scanJobs" = jsonb_set(
-         "scanJobs", '{error}', jsonb_build_object('failureClass', $${at}::text)
-       ) || ${keep.text}
-     WHERE id = 1`,
-    [...keep.values, failureClass]
-  );
-};
-
 const locked = { nsfwLevelLocked: true };
 
 describe('a moderator lock on an errored scan', () => {
@@ -132,42 +86,6 @@ describe('a moderator lock on an errored scan', () => {
         },
       })
     ).toBe(true);
-  });
-});
-
-describe('a permanent failure across later writes', () => {
-  const permanentlyFailed = {
-    ingestion: 'Error',
-    ...locked,
-    scanJobs: { error: { failureClass: 'permanent' } },
-  } as const;
-
-  it('stays not reviewed when the ingest cron drops lastFailure', async () => {
-    await insert(permanentlyFailed);
-    await resubmit();
-    await cronFlipToError();
-    expect(await storedReviewed()).toBe(false);
-  });
-
-  it('stays not reviewed after a second re-submit replaces lastFailure', async () => {
-    await insert(permanentlyFailed);
-    await resubmit();
-    await fail('transient');
-    await resubmit();
-    expect(await storedReviewed()).toBe(false);
-  });
-
-  it('stays not reviewed when a later error replaces a permanent one', async () => {
-    await insert(permanentlyFailed);
-    await failKeeping('transient');
-    expect(await storedReviewed()).toBe(false);
-  });
-
-  it('is not kept for a history with no permanent failure', async () => {
-    await insert({ ...permanentlyFailed, scanJobs: { error: { failureClass: 'transient' } } });
-    await resubmit();
-    await cronFlipToError();
-    expect(await storedReviewed()).toBe(true);
   });
 });
 

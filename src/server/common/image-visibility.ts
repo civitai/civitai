@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { ImageScanFailureClass } from '~/server/services/image-scan-failure';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 // The only lock a moderator didn't set: Knights consensus locks through the moderator path.
 export const KNIGHTS_VOTE_NSFW_LEVEL_REASON = 'Knights Vote';
-const PERMANENT_SCAN_FAILURE = 'permanent';
+const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
 
 /**
  * Whether a scan's media failed permanently. A re-submit moves `scanJobs.error` to
