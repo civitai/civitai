@@ -2,6 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   heldPostTextPostIds,
   heldTextError,
+  pendingCsamHoldTextIds,
   unheldPostTextUpdateSql,
 } from '~/server/services/post-text-hold';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -151,7 +152,9 @@ export async function getStorylineTextStubs({
     where: { postId: { in: postIds }, ...readableTextWhere },
     select: { id: true, postId: true, index: true, nsfwLevel: true, refused: true },
   });
+  const pending = await pendingCsamHoldTextIds(rows.map((row) => row.id));
   return rows
+    .filter((row) => !pending.has(row.id))
     .filter((row) => isImageCaptionShown(row, { browsingLevel, maxNsfwLevel, failClosed: true }))
     .map(({ id, postId, index, nsfwLevel }) => ({ id, postId, index, nsfwLevel }));
 }
@@ -187,7 +190,9 @@ export async function getPostTextsForViewer({
       csamHeld: true,
     },
   });
+  const pending = await pendingCsamHoldTextIds(rows.map((row) => row.id));
   return rows
+    .map((row) => ({ ...row, csamHeld: row.csamHeld || pending.has(row.id) }))
     .filter((row) => isPostTextShownToViewer(row, { browsingLevel, seesAll }))
     .map(({ id, index, content, nsfwLevel }) => ({ id, index, content, nsfwLevel }));
 }

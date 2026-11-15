@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { placementViewsParams } from '~/server/events/points/placement-stats';
 import { hatPlacementViewsSql } from '~/server/events/points/placement-stats.sql';
+import { wireParams } from '~/server/events/points/__tests__/clickhouse-wire';
 
 // Runs the per-placement views query in a real ClickHouse (clickhouse local). Needs
 // CLICKHOUSE_LOCAL_BIN (a `clickhouse` binary). CI does not set it, so CI skips this file.
@@ -52,18 +54,27 @@ const insert = `INSERT INTO event_point_events VALUES ${ledger
   )
   .join(',')}`;
 
-function views(placements: [number, string, number, string][]) {
+// Params go through placementViewsParams and the real client's encoding, as in production.
+async function views(placements: [number, string, number, string][]) {
+  const wire = await wireParams(
+    placementViewsParams(
+      'e',
+      U,
+      placements.map(([cosmeticId, claimKey, entityId, startedAt]) => ({
+        cosmeticId,
+        claimKey,
+        entityType: 'Image',
+        entityId,
+        startedAt: new Date(`${startedAt.replace(' ', 'T')}Z`),
+      })),
+      new Date('2026-11-03T00:00:00Z')
+    )
+  );
   const out = execFileSync(
     BIN!,
     [
       'local',
-      '--param_event=e',
-      `--param_userId=${U}`,
-      `--param_from=${placements.map((p) => p[3]).sort()[0]}`,
-      '--param_to=2026-11-03 00:00:00.000',
-      `--param_placements=[${placements
-        .map(([c, k, e, t]) => `(${c},${q(k)},'Image',${e},'${t}')`)
-        .join(',')}]`,
+      ...Object.entries(wire).map(([k, v]) => `--param_${k}=${v}`),
       '--query',
       `${TABLE}; ${insert}; ${hatPlacementViewsSql} FORMAT JSONEachRow`,
     ],
@@ -80,18 +91,18 @@ function views(placements: [number, string, number, string][]) {
 }
 
 describe.skipIf(!BIN)('hat placement views in ClickHouse', () => {
-  it("counts other people's views of the hat's image since it went on", () => {
+  it("counts other people's views of the hat's image since it went on", async () => {
     expect(
-      views([
+      await views([
         [1, 'k1', 10, '2026-11-01 12:00:00.000'],
         [2, 'k2', 11, '2026-11-01 00:00:00.000'],
       ])
     ).toEqual({ '1:k1': 2, '2:k2': 1 });
   });
 
-  it('counts only the latest of two open placements of one hat', () => {
+  it('counts only the latest of two open placements of one hat', async () => {
     expect(
-      views([
+      await views([
         [3, 'k3', 30, '2026-11-01 00:00:00.000'],
         [3, 'k3', 31, '2026-11-01 12:00:00.000'],
       ])
