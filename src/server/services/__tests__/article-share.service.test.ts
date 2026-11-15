@@ -440,13 +440,20 @@ describe('getArticleByShareToken: body images', () => {
         ...extra,
       },
     });
-    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([
+    const rows = [
       row(1, {}),
       row(2, { ingestion: 'Pending' }),
       row(3, { ingestion: 'Blocked' }),
       row(4, { needsReview: 'csam' }),
       row(5, { tosViolation: true }),
-    ] as never);
+    ];
+    // Only the fields the service selects come back, as from Prisma.
+    dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) => {
+      const fields = Object.keys(args.select.image.select);
+      return rows.map(({ image }) => ({
+        image: Object.fromEntries(fields.map((field) => [field, (image as any)[field]])),
+      }));
+    }) as never);
 
     const result = await read(STRANGER);
 

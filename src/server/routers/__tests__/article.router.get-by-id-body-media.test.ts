@@ -95,14 +95,21 @@ async function getById(user?: unknown) {
     coverImage: null,
     bannerImage: null,
   } as never);
-  dbMock.dbRead.imageConnection.findMany.mockResolvedValue([
+  const rows = [
     image(1, SERVABLE),
     image(2, ABOVE_LEVEL, { nsfwLevel: R }),
     image(3, PENDING, { ingestion: 'Pending' }),
     image(4, BLOCKED, { ingestion: 'Blocked' }),
     image(5, VIOLATION, { tosViolation: true }),
     image(6, CSAM_HELD, { needsReview: 'csam' }),
-  ] as never);
+  ];
+  // Only the fields the service selects come back, as from Prisma.
+  dbMock.dbRead.imageConnection.findMany.mockImplementation((async (args: any) => {
+    const fields = Object.keys(args.include.image.select);
+    return rows.map(({ image }) => ({
+      image: Object.fromEntries(fields.map((field) => [field, (image as any)[field]])),
+    }));
+  }) as never);
   const ctx = {
     acceptableOrigin: true,
     user,
