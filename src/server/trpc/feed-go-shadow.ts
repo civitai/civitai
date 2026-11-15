@@ -16,18 +16,20 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
  * request, mirror what Node saw and what it answered to that service's internal compare endpoint.
- * Node keeps serving every request. Two routes are mirrored, each behind its own flag:
+ * Node keeps serving every request. Three routes are mirrored, each behind its own flag:
  *
  * - `image.getImagesAsPostsInfinite` (tRPC; flag `feed-go-shadow`): the raw `input` and the
  *   superjson envelope the transformer wrote, captured in an AsyncLocalStorage scope;
+ * - `image.getInfinite` (tRPC; flag `feed-go-shadow-infinite`): the same capture, posted to its
+ *   own compare path (`feed_endpoint="infinite"`);
  * - `GET /api/v1/images` (REST; flag `feed-go-shadow-v1-images`): the raw query string, the path
  *   and the JSON body the handler passed to `res.json`, captured by the handler itself. A request
  *   carrying an API credential is not mirrored (`skipped_credential`): the body can echo it.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
- * the route's Flipt flag is on (unknown or uninitialized reads as off). Both routes share the
+ * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
  * sample rate and the in-flight cap; each has its own per-second bucket of the same size, so one
- * route cannot drain the other's tokens. A REST sample takes its in-flight slot and its token
+ * route cannot drain another's tokens. A REST sample takes its in-flight slot and its token
  * only once the handler has answered 200 (in `finish`): it holds nothing while it runs.
  *
  * Why the per-second token bucket (`FEED_GO_SHADOW_MAX_PER_SECOND`): the send happens after the
@@ -45,6 +47,9 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
 
 export const FEED_GO_SHADOW_PROCEDURE = 'image.getImagesAsPostsInfinite';
 export const FEED_GO_SHADOW_PATH = `/internal/shadow/${FEED_GO_SHADOW_PROCEDURE}`;
+/** The second tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_INFINITE_PROCEDURE = 'image.getInfinite';
+export const FEED_GO_SHADOW_INFINITE_PATH = `/internal/shadow/${FEED_GO_SHADOW_INFINITE_PROCEDURE}`;
 /** The REST route mirrored under its own flag, and feed-go's compare path for it. */
 export const FEED_GO_SHADOW_V1_IMAGES_ROUTE = '/api/v1/images';
 export const FEED_GO_SHADOW_V1_IMAGES_PATH = `/internal/shadow${FEED_GO_SHADOW_V1_IMAGES_ROUTE}`;
@@ -71,6 +76,8 @@ export type FeedGoShadowConfig = {
   url: string | undefined;
   /** Full compare endpoint URL for `/api/v1/images`, or undefined (disabled). */
   v1ImagesUrl: string | undefined;
+  /** Full compare endpoint URL for `image.getInfinite`, or undefined (disabled). */
+  infiniteUrl: string | undefined;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
@@ -87,6 +94,7 @@ type Env = Record<string, string | undefined>;
 export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConfig {
   let url: string | undefined;
   let v1ImagesUrl: string | undefined;
+  let infiniteUrl: string | undefined;
   const base = env.FEED_GO_SHADOW_URL?.trim();
   if (base) {
     try {
@@ -94,15 +102,18 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
         url = new URL(FEED_GO_SHADOW_PATH, parsed).toString();
         v1ImagesUrl = new URL(FEED_GO_SHADOW_V1_IMAGES_PATH, parsed).toString();
+        infiniteUrl = new URL(FEED_GO_SHADOW_INFINITE_PATH, parsed).toString();
       }
     } catch {
       url = undefined;
       v1ImagesUrl = undefined;
+      infiniteUrl = undefined;
     }
   }
   return {
     url,
     v1ImagesUrl,
+    infiniteUrl,
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(env.FEED_GO_SHADOW_TIMEOUT_MS, SHADOW_DEFAULT_TIMEOUT_MS, 1, SHADOW_MAX_TIMEOUT_MS)
@@ -189,6 +200,8 @@ export type FeedGoShadowDeps = {
   enabled: () => boolean;
   /** The `feed-go-shadow-v1-images` flag (absent: the REST route is never sampled). */
   enabledV1Images?: () => boolean;
+  /** The `feed-go-shadow-infinite` flag (absent: `image.getInfinite` is never sampled). */
+  enabledInfinite?: () => boolean;
   random?: () => number;
   fetch?: typeof fetch;
   record?: (outcome: FeedGoShadowOutcome, endpoint: FeedGoShadowEndpoint) => void;
@@ -204,6 +217,7 @@ export type FeedGoShadowDeps = {
 export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const { config, enabled } = deps;
   const enabledV1Images = deps.enabledV1Images ?? (() => false);
+  const enabledInfinite = deps.enabledInfinite ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
@@ -214,7 +228,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   let inFlight = 0;
   // A local bucket rather than `createBlockEventRateLimiter`: that one is a keyed, LRU-bounded
   // limiter for App Blocks events defaulting to Date.now; this needs one bucket on a monotonic clock.
-  // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve the other.
+  // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve another.
   const buckets = createPerSecondBuckets(FEED_GO_SHADOW_ENDPOINTS, config.maxPerSecond, now);
 
   function release(sample: FeedGoShadowSample) {
@@ -226,25 +240,55 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
   }
 
+  /** The mirrored tRPC procedures: each one's endpoint label, compare URL and flag. */
+  const trpcRoutes: Record<
+    string,
+    { endpoint: FeedGoShadowEndpoint; url: string | undefined; enabled: () => boolean }
+  > = {
+    [FEED_GO_SHADOW_PROCEDURE]: { endpoint: 'as-posts', url: config.url, enabled },
+    [FEED_GO_SHADOW_INFINITE_PROCEDURE]: {
+      endpoint: 'infinite',
+      url: config.infiniteUrl,
+      enabled: enabledInfinite,
+    },
+  };
+
+  /** The compare URL a sample of this endpoint is posted to. */
+  function urlOf(endpoint: FeedGoShadowEndpoint) {
+    if (endpoint === 'v1-images') return config.v1ImagesUrl;
+    if (endpoint === 'infinite') return config.infiniteUrl;
+    return config.url;
+  }
+
   /**
    * Decide whether this request is sampled. Returns the sample (holding one in-flight slot until
    * `finish` / the POST settles) or undefined. Never throws.
    */
   function begin(req: ShadowRequestLike): FeedGoShadowSample | undefined {
     try {
-      if (!config.url || config.rate <= 0) return undefined;
+      if (config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
-      // Exactly this one procedure, unbatched (the web client never batches it).
-      if (req.query.trpc !== FEED_GO_SHADOW_PROCEDURE || req.query.batch !== undefined)
-        return undefined;
+      // Exactly the mirrored procedures, unbatched (the web client never batches either).
+      const procedure = req.query.trpc;
+      if (typeof procedure !== 'string' || req.query.batch !== undefined) return undefined;
+      const route = Object.prototype.hasOwnProperty.call(trpcRoutes, procedure)
+        ? trpcRoutes[procedure]
+        : undefined;
+      if (!route?.url) return undefined;
       const input = req.query.input;
       if (input !== undefined && typeof input !== 'string') return undefined;
-      if (!enabled()) return undefined;
+      if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
-      if (!admit('as-posts')) return undefined;
+      if (!admit(route.endpoint)) return undefined;
       const headers = pickShadowHeaders(req);
       inFlight++;
-      return { endpoint: 'as-posts', holdsSlot: true, input: input ?? '', headers, done: false };
+      return {
+        endpoint: route.endpoint,
+        holdsSlot: true,
+        input: input ?? '',
+        headers,
+        done: false,
+      };
     } catch {
       return undefined;
     }
@@ -326,7 +370,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (inFlight === 0) return;
     try {
       const sample = storage.getStore();
-      if (!sample || sample.endpoint !== 'as-posts' || sample.captured || sample.done) return;
+      // The tRPC samples (as-posts, infinite); a REST sample captures its own body.
+      if (!sample || sample.endpoint === 'v1-images' || sample.captured || sample.done) return;
       sample.captured = wroteDevalue ? { data } : { envelope: written };
     } catch {
       /* never throw from the serializer */
@@ -356,7 +401,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
     let pending: Promise<Response>;
     try {
-      pending = doFetch((endpoint === 'v1-images' ? config.v1ImagesUrl : config.url)!, {
+      pending = doFetch(urlOf(endpoint)!, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body,
@@ -437,6 +482,9 @@ function getInstance(): FeedGoShadow {
     enabled: createCachedFlagGate(readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW)),
     enabledV1Images: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_V1_IMAGES)
+    ),
+    enabledInfinite: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_INFINITE)
     ),
   });
   return instance;
