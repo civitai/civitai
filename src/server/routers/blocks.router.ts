@@ -481,8 +481,7 @@ const TERMINAL_BLOCK_WORKFLOW_STATUSES = new Set<BlockWorkflowStatus>([
 export type BlockSubmitTelemetry = { appBlockIdLabel: string };
 /**
  * Every App Block prompt refusal, from any `kind`, answered as a failed snapshot with its code: a
- * throw reaches a block with the message alone. Each audit runs before anything is reserved, so
- * there is nothing to release here.
+ * throw reaches a block with the message alone.
  */
 const promptRefusalAsSnapshot = middleware(async ({ next }) => {
   const result = await next();

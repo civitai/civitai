@@ -36,7 +36,9 @@ function expectAuditBeforeMoney(source: string, audit: RegExp, label: string) {
   const auditAt = source.search(audit);
   expect(auditAt, `${label}: no audit call`).toBeGreaterThan(-1);
   const moneyAt = source.search(MONEY);
-  if (moneyAt !== -1) expect(auditAt, `${label}: audit after money`).toBeLessThan(moneyAt);
+  // A kind whose money step is renamed or moved out of view must fail here, not pass.
+  expect(moneyAt, `${label}: no quote, reservation or claim found`).toBeGreaterThan(-1);
+  expect(auditAt, `${label}: audit after money`).toBeLessThan(moneyAt);
 }
 
 describe('App Block prompt refusal coverage', () => {
@@ -44,11 +46,21 @@ describe('App Block prompt refusal coverage', () => {
     ['submitPassThroughStepWorkflow', /await auditPassThroughPrompts\(/],
     ['submitMultiStepWorkflow', /await auditPassThroughPrompts\(/],
     ['submitConfirmedPassThroughStepWorkflow', /await auditPassThroughPrompts\(/],
-    ['submitTrainingWorkflow', /await auditTrainingSamplePrompts\(/],
     ['submitCustomComfyWorkflow', /await auditAppBlockPrompt\(/],
     ['submitStepWorkflow', /await runStepModeration\(/],
   ])('%s audits before it quotes or reserves', (name, audit) => {
     expectAuditBeforeMoney(body(router, name), audit, name);
+  });
+
+  it('training audits in its preflight, which runs before the shared submit claims or reserves', () => {
+    expect(body(router, 'submitTrainingWorkflow')).toMatch(
+      /preflight: async[\s\S]*?await auditTrainingSamplePrompts\(/
+    );
+    expectAuditBeforeMoney(
+      body(router, 'submitConfirmedQuoteWorkflow'),
+      /await arm\.preflight\?\.\(/,
+      'submitConfirmedQuoteWorkflow'
+    );
   });
 
   it('textToImage, inline in the procedure, audits before it reserves', () => {

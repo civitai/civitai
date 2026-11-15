@@ -374,6 +374,8 @@ describe('enforce: a refusal the app can branch on', () => {
     refuseWithReasons();
     const body = { ...stepBody({ prompt: 'a calm lake' }), quoteId: `sq_${'a'.repeat(32)}` };
     await expect(submit(body)).resolves.toEqual(coded);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
   });
 
   it('a check that could not run is the unavailable code', async () => {

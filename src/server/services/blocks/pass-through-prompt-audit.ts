@@ -312,10 +312,9 @@ export class AppBlockPromptRefusalError extends TRPCError {
 }
 
 /**
- * `auditPromptServer` for an App Block submit. The gate's decision and its counting are its own;
- * this only records the app on a stored block and maps the refusal to an App Block code.
- * `refuseUnconfigured` (pass-through enforce only) also refuses a prompt the external classifier
- * could not see because it is not configured, after the gate passed it.
+ * `auditPromptServer` for an App Block submit, mapping its refusal to an App Block code.
+ * `refuseUnconfigured` (pass-through enforce only) also refuses when the external classifier is
+ * not configured.
  */
 export async function auditAppBlockPrompt(
   options: AuditPromptOptions & { appBlockId: string; stepType: string },
@@ -404,14 +403,12 @@ export async function shadowPassThroughPromptAudit(
     const externalError = verdict?.externalError != null;
     const externalSkipped =
       verdict !== null && !!collected.prompt.trim() && !isExternalModerationConfigured();
-    // In the existing `outcome` field so these rows can be counted without a new field landing.
     const outcome = externalError
       ? 'error'
       : externalSkipped
       ? 'unconfigured'
       : verdict?.outcome ?? null;
-    // What enforce does with the same verdict: an errored check refuses while the site switch is
-    // on, an unconfigured one always (`auditAppBlockPrompt`).
+    // Mirrors the refusals auditAppBlockPrompt makes in enforce.
     const checkUnavailable =
       verdict !== null &&
       verdict.outcome !== 'hard' &&
