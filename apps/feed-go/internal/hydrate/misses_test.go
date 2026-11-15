@@ -579,3 +579,60 @@ func TestWriteBackReadsPrimary(t *testing.T) {
 		t.Fatal("write-back without a primary read the replica")
 	}
 }
+
+// jsonColumn: NULL, text (as `::text` selects it) and bytes parse as JSON.parse would; any other type
+// or malformed text is an error, not a guess.
+func TestJSONColumn(t *testing.T) {
+	if v, err := jsonColumn(nil); v != nil || err != nil {
+		t.Fatalf("NULL = %#v, %v", v, err)
+	}
+	for _, in := range []any{`{"b": 1, "a": [true]}`, []byte(`{"b": 1, "a": [true]}`)} {
+		v, err := jsonColumn(in)
+		if err != nil || !reflect.DeepEqual(v, jspack.O("b", 1.0, "a", []any{true})) {
+			t.Fatalf("%T = %#v, %v", in, v, err)
+		}
+	}
+	for _, bad := range []any{42, `{"a":`} {
+		if _, err := jsonColumn(bad); err == nil {
+			t.Fatalf("%#v parsed", bad)
+		}
+	}
+}
+
+// cosmeticRecords: a cached record keeps its cached member order (cachedAt dropped), a notFound marker
+// is absent, an undecodable or debounced entry is read from the replica, and a replica failure is
+// the lookup's error.
+func TestCosmeticRecords(t *testing.T) {
+	f := basePageFixture(t)
+	f.strings[pageNS+missKey(KeyCosmetics, 701)] = jspack.Pack(jspack.O("name", "n701", "id", 701, "cachedAt", pageNow))
+	f.put(t, KeyCosmetics, 702, map[string]any{"notFound": true})
+	f.strings[pageNS+missKey(KeyCosmetics, 703)] = []byte{0xc1}
+	f.put(t, KeyCosmetics, 704, map[string]any{"debounce": true})
+	m := &missDB{records: map[int][]any{
+		703: {int64(703), "n703", "Badge", `{"z": 1, "a": 2}`, "Trophy", int64(0)},
+		704: {int64(704), "n704", "Badge", nil, "Trophy", int64(1)},
+	}}
+	s, _ := m.load(f, &MissCompute{})
+	got, err := s.cosmeticRecords(context.Background(), []int{701, 702, 703, 704, 705})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[int]jspack.Obj{
+		701: jspack.O("name", "n701", "id", 701.0),
+		703: jspack.O("id", 703, "name", "n703", "type", "Badge", "data", jspack.O("z", 1.0, "a", 2.0), "source", "Trophy", "flags", 0),
+		704: jspack.O("id", 704, "name", "n704", "type", "Badge", "data", nil, "source", "Trophy", "flags", 1),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("records\n got %#v\nwant %#v", got, want)
+	}
+	if q := m.queries("records"); !reflect.DeepEqual(q, [][]int{{703, 704, 705}}) {
+		t.Fatalf("replica asked %v, want the undecodable, debounced and absent ids", q)
+	}
+	if got, err := s.cosmeticRecords(context.Background(), nil); err != nil || len(got) != 0 {
+		t.Fatalf("no ids = %v, %v", got, err)
+	}
+	m.fail = "records"
+	if _, err := s.cosmeticRecords(context.Background(), []int{705}); !errors.Is(err, errMissDB) {
+		t.Fatalf("replica failure = %v, want it returned", err)
+	}
+}
