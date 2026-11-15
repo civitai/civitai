@@ -34,10 +34,7 @@ export async function getBlobRatingsService({
           path: { blobId },
           signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
         });
-        const verdict = response
-          ? parseBlobVerdictHeaders(response.headers, response.status)
-          : null;
-        const level = verdict?.status === 'rated' ? verdict.nsfwLevel : null;
+        const level = response?.headers.get('X-NSFW-Level')?.toLowerCase();
         return { blobId, nsfwLevel: level && ratedLevels.has(level) ? (level as NsfwLevel) : null };
       } catch (error) {
         logToAxiom({

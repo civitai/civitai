@@ -44,16 +44,21 @@ async function post(body: unknown) {
   return out;
 }
 
+const RESOLVED = {
+  media: [{ status: 'visible', url: 'https://civitai.com/api/v1/blocks/media/bm1.t' }],
+};
 const refs = (n: number) => Array.from({ length: n }, (_, i) => `bm1.r${i}`);
 
 beforeEach(() => {
-  resolveWorkflowMediaForBlockClaims.mockReset().mockResolvedValue({ items: [] });
+  resolveWorkflowMediaForBlockClaims.mockReset().mockResolvedValue(RESOLVED);
   checkBlockCatalogRateLimit.mockReset().mockResolvedValue({ allowed: true });
 });
 
 describe('POST /api/v1/blocks/workflow-media', () => {
   it('CONTROL: the maximum number of refs is accepted', async () => {
-    expect((await post({ refs: refs(WORKFLOW_MEDIA_MAX_REFS) })).status).toBe(200);
+    const r = await post({ refs: refs(WORKFLOW_MEDIA_MAX_REFS) });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual(RESOLVED);
     expect(resolveWorkflowMediaForBlockClaims).toHaveBeenCalledTimes(1);
   });
 

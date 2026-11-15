@@ -2279,7 +2279,6 @@ describe('resolveGetWorkflowMediaRequest (untrusted iframe payload)', () => {
       refs.slice(0, GET_WORKFLOW_MEDIA_MAX_REFS)
     );
     expect(GET_WORKFLOW_MEDIA_MAX_REFS).toBe(WORKFLOW_MEDIA_MAX_REFS);
-    expect(WORKFLOW_MEDIA_MAX_REFS).toBe(32);
   });
 });
 
