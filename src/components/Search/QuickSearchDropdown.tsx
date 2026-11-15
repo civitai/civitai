@@ -5,6 +5,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
+import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { IconChevronDown } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -58,8 +59,10 @@ const meilisearch = withUserHydration(
 // resilient wrapper turns that into an empty dropdown. Images go to Meili for everyone else.
 const semanticMeilisearch = withUserHydration(
   createResilientSearchClient(
-    withSemanticArticleSearch(
-      withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
+    withSemanticComicSearch(
+      withSemanticArticleSearch(
+        withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
+      )
     )
   )
 );

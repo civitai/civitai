@@ -31,11 +31,10 @@ export const HOLD_VELOCITY_CENTS = 100_000;
  * confirmed is the TERMINAL state — nothing DISBURSES it. The write-free stub cron
  * that used to aggregate these rows and the mint it was to call were both removed,
  * so no purchase-rail share is paid out anywhere, and nothing writes `paid_out` any
- * more either. 🔴 It is still READ, and by user-facing surfaces: this write is what
- * `app-collaborator-earnings.service.ts` and `getRevenueForOwner` aggregate, what the
- * two earnings panels show as their "Confirmed (unpaid)" bucket, and what
- * /apps/revenue's subtitle describes as "Confirmed earnings accrue here". Dropping or
- * repurposing it would silently zero all of those.
+ * more either. The `confirmed` status is still read: `user-app-surface.service.ts` returns
+ * it to the activity panel, and the refund/void paths in `buzz-attribution.service.ts`
+ * filter on it. What no longer reads it is any author earnings surface, since the
+ * purchase-rail share is hidden there.
  *
  * `held` rows are the actionable ops signal:
  * a human reviews them and either confirms (re-run picks them up once

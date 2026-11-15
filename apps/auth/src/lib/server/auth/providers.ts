@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import { env } from '$env/dynamic/private';
+import { outboundTimeoutSignal } from './outbound-timeout';
 // Shared cross-app contract: the provider id set is defined once in @civitai/auth (the main app references the
 // same ids to render buttons + deep-link here). This file owns the hub-only OAuth config/secrets for each.
 import type { ProviderId } from '@civitai/auth';
@@ -300,6 +301,10 @@ export function buildAuthorizeUrl(
   return url.toString();
 }
 
+/** Bound on each call to an OAuth provider during the callback, so a hung provider fails the sign-in
+ *  with an error instead of holding it for undici's 300 s header timeout. */
+const PROVIDER_FETCH_TIMEOUT_MS = 8_000;
+
 export async function exchangeCode(
   provider: ProviderDef,
   opts: { code: string; redirectUri: string; codeVerifier?: string }
@@ -325,7 +330,12 @@ export async function exchangeCode(
     body.set('client_secret', provider.clientSecret()!);
   }
 
-  const res = await fetch(provider.tokenUrl, { method: 'POST', headers, body });
+  const res = await fetch(provider.tokenUrl, {
+    method: 'POST',
+    headers,
+    body,
+    signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`[${provider.id}] token exchange failed: ${res.status}`);
   const json = (await res.json()) as { access_token?: string; scope?: string };
   if (!json.access_token) throw new Error(`[${provider.id}] no access_token in response`);
@@ -340,7 +350,10 @@ export async function fetchProfile(
 ): Promise<NormalizedProfile> {
   const headers: Record<string, string> = { authorization: `Bearer ${accessToken}` };
   if (provider.userAgent) headers['user-agent'] = provider.userAgent;
-  const res = await fetch(provider.userinfoUrl, { headers });
+  const res = await fetch(provider.userinfoUrl, {
+    headers,
+    signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`[${provider.id}] userinfo failed: ${res.status}`);
   const json = (await res.json()) as Record<string, unknown>;
   const profile = provider.mapProfile(json);
@@ -350,7 +363,10 @@ export async function fetchProfile(
   // user with a private email would create a duplicate account instead of linking. Best-effort.
   if (provider.emailsUrl && !profile.email) {
     try {
-      const eRes = await fetch(provider.emailsUrl, { headers });
+      const eRes = await fetch(provider.emailsUrl, {
+        headers,
+        signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
+      });
       if (eRes.ok) {
         const emails = (await eRes.json()) as Array<{
           email: string;

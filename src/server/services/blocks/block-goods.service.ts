@@ -1215,37 +1215,13 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
 }
 
 /**
- * ⚠️ PARTIALLY CLOSED — read which half. This block used to say goods revenue
- * was invisible to EVERY app-earnings surface. That is no longer true of the
- * owner's own revenue pages and is still true of the collaborator ones.
+ * Goods revenue reaches the app-earnings surfaces by READ, never by back-filling attribution:
  *
- * - BRIDGED: `blocks.getMyRevenue` — both `/apps/revenue` and
- *   `/apps/[appBlockId]/revenue` — now also calls `getGoodsSalesForOwner`
- *   (`src/server/services/blocks/buzz-attribution.service.ts`), a READ-side
- *   aggregate over `block_good_purchase` scoped by `app_owner_user_id`. This
- *   rail still writes NO attribution row and nothing here changed: the bridge is
- *   a second query the reporting layer runs, deliberately not a write, so it
- *   commits to nothing about whether a sale "is an attribution".
- * - STILL INVISIBLE: `getAppEarnings` and `blocks.getMyApps`, which read
- *   `app-collaborator-earnings.service.ts`. Those are the COLLABORATOR surfaces.
- *
- * ⚠️ CORRECTION, because the first version of this note gave a reason the code
- * contradicts. It said bridging them "needs an answer to how one sale divides
- * among several seats — a split nobody has specified". **There is no split to
- * specify.** `getAppEarnings` already shows the app's UNDIVIDED owner-share total
- * to every seat — its own test asserts the accepted editor reads the same
- * `shareCents` as the owner, and `AppEarningsPanel` says so on screen ("shared
- * with everyone seated on it"). The split argument is real but belongs to a
- * different axis: it is about the PAYEE on the write side, which is why
- * `app-access.call-site-ledger.test.ts` records it for `resolveBlockGoodForPurchase`
- * below. Carrying it over to a READ, where nobody receives anything, was wrong.
- *
- * The honest statement of why they are unbridged: it is UNFINISHED SCOPE, not a
- * blocked decision. Extending the collaborator panel means a second renderer, a
- * Buzz-vs-cents decision for `getMyAppsEarnings`'s `lifetimeShareCents` (which is
- * a cents field a Buzz total cannot simply be added to), and a deliberate choice
- * about whether a seated editor should see a second rail's figures. Tracked as
- * follow-on work; it is not waiting on a product answer.
+ * - `blocks.getMyRevenue` (`/apps/revenue`, `/apps/[appBlockId]/revenue`) and
+ *   `appCollaborators.getAppEarnings` (the listing editor's Earnings tab) both call
+ *   `getGoodsSalesForOwner` (`src/server/services/blocks/buzz-attribution.service.ts`), an
+ *   aggregate over `block_good_purchase` scoped by `app_owner_user_id`. This rail writes NO
+ *   attribution row, so it commits to nothing about whether a sale "is an attribution".
  *
  * `recordSpendAttribution` is workflow-anchored, so it was never a drop-in and
  * still is not.

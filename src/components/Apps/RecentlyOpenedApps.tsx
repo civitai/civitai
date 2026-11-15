@@ -29,7 +29,6 @@ export interface RecentlyOpenedAppsViewProps {
   /** M1 — record a route/title open from a recents card back into recents
    *  (re-opening from the strip moves the app to the front via the store). */
   onRecentOpen?: (block: AvailableBlock) => void;
-  earningsByAppBlockId: Map<string, number>;
   canOpenPage: boolean;
 }
 
@@ -38,7 +37,6 @@ export function RecentlyOpenedAppsView({
   subsByBlock,
   onOpen,
   onRecentOpen,
-  earningsByAppBlockId,
   canOpenPage,
 }: RecentlyOpenedAppsViewProps) {
   // Hide the entire section when there are no recents (new viewer).
@@ -55,7 +53,6 @@ export function RecentlyOpenedAppsView({
               alreadySubscribed={subsByBlock.has(block.id)}
               onOpen={onOpen}
               onRecentOpen={onRecentOpen}
-              ownedEarningCents={earningsByAppBlockId.get(block.id)}
               canOpenPage={canOpenPage}
             />
           </Grid.Col>

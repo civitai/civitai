@@ -31,7 +31,6 @@ import {
   constants,
   isNonCommercialBaseModel,
   notCommerciallyAvailableMessage,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -101,11 +100,7 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import {
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
@@ -172,10 +167,11 @@ import {
   getOrchestratorVersionAirs,
 } from '~/server/services/orchestrator/models';
 import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import { addPostImage, bustCachesForPosts, createPost } from '~/server/services/post.service';
 import { syncReviewsOfMovedPosts } from '~/server/services/resourceReview.visibility';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
+  handleLogError,
   runClickHouseRead,
   sleep,
   throwAuthorizationError,
@@ -218,14 +214,17 @@ import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
 import { purgeCache } from '~/server/cloudflare/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   getBaseModelConfig,
   getBaseModelsByGroup,
   getEcosystemTurboSettings,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
 import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
@@ -788,11 +787,14 @@ export const upsertModelVersion = async ({
     surface: 'modelVersion',
     ...patternLogIds,
   });
-  // Trigger words are part of the listing the .com face re-check reads (queued after commit).
+  // Version names and trigger words show on .com unchanged: the .com face re-check rates them
+  // (queued after commit).
   const trainedWordsChanged =
     data.trainedWords !== undefined &&
     [...new Set(data.trainedWords)].sort().join('\n') !==
       [...new Set(storedText?.trainedWords ?? [])].sort().join('\n');
+  const comTextChanged =
+    trainedWordsChanged || (data.name !== undefined && data.name !== storedText?.name);
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -879,17 +881,13 @@ export const upsertModelVersion = async ({
   }
 
   // Validate NSFW + restricted base model combination
-  if (
-    model.nsfw &&
-    data.baseModel &&
-    nsfwRestrictedBaseModels.includes(data.baseModel as BaseModel)
-  ) {
+  if (model.nsfw && data.baseModel && isMatureRestricted(data.baseModel, 'models')) {
     throw throwBadRequestError(
       `NSFW models cannot use base models with license restrictions. The base model "${
         data.baseModel
-      }" is restricted for NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`
+      }" is restricted for NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`
     );
   }
 
@@ -1067,7 +1065,7 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) {
+    if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
     }
@@ -1326,7 +1324,7 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) {
+    if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
     }
@@ -1607,14 +1605,36 @@ async function purgeModelVersionByHashCache(hashes: string[]) {
   await purgeCache({ urls });
 }
 
-// Resolve a version's file hashes then purge the by-hash edge cache. Used by
-// publish/unpublish where the ModelFile/ModelFileHash rows still exist. The
+/**
+ * Purge the edge-cached public API bodies that carry a model's showcase, once its minor or SFW-only
+ * flag or its held gallery level changes: by-hash for every file of its versions, and the model and
+ * version by-id URLs. The origin's model response goes first, so the edge cannot refill from it.
+ * URLs with a query string are left to their TTL.
+ */
+export async function purgePublicModelShowcaseEdgeCache(
+  modelId: number,
+  modelVersionIds: number[]
+) {
+  await bustPublicModelResponseCache(modelId);
+  await purgeModelVersionByHashCacheById(modelVersionIds);
+  const origin = getBaseUrl();
+  await purgeCache({
+    urls: [
+      `${origin}/api/v1/models/${modelId}`,
+      ...modelVersionIds.map((id) => `${origin}/api/v1/model-versions/${id}`),
+    ],
+  });
+}
+
+// Resolve versions' file hashes then purge the by-hash edge cache. Used by the
+// showcase purge and publish/unpublish, where the ModelFile/ModelFileHash rows still exist. The
 // delete path can't use this (the cascade removes the rows), so it snapshots
 // the hashes inside the transaction and calls purgeModelVersionByHashCache
 // directly.
-async function purgeModelVersionByHashCacheById(modelVersionId: number) {
+async function purgeModelVersionByHashCacheById(modelVersionIds: number[]) {
+  if (!modelVersionIds.length) return;
   const hashes = await dbRead.modelFileHash.findMany({
-    where: { file: { modelVersionId } },
+    where: { file: { modelVersionId: { in: modelVersionIds } } },
     select: { hash: true },
   });
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
@@ -1937,16 +1957,16 @@ export const publishModelVersionsWithEarlyAccess = async ({
     if (
       version.model.nsfw &&
       version.baseModel &&
-      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+      isMatureRestricted(version.baseModel, 'models')
     ) {
       throw throwBadRequestError(
         `Cannot publish NSFW model version "${
           version.name
         }" with restricted base model. The base model "${
           version.baseModel
-        }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-          ', '
-        )}`
+        }" does not permit NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+          'models'
+        ).join(', ')}`
       );
     }
 
@@ -2012,9 +2032,6 @@ export const publishModelVersionsWithEarlyAccess = async ({
         // await modelsSearchIndex.queueUpdate([
         //   { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
         // ]);
-        // await imagesSearchIndex.queueUpdate(
-        //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-        // );
         // await imagesMetricsSearchIndex.queueUpdate(
         //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
         // );
@@ -2099,14 +2116,14 @@ export const publishModelVersionById = async ({
   if (
     currentVersion.model.nsfw &&
     currentVersion.baseModel &&
-    nsfwRestrictedBaseModels.includes(currentVersion.baseModel as BaseModel)
+    isMatureRestricted(currentVersion.baseModel, 'models')
   ) {
     throw throwBadRequestError(
       `Cannot publish NSFW model version with restricted base model. The base model "${
         currentVersion.baseModel
-      }" does not permit NSFW content. Restricted base models: ${nsfwRestrictedBaseModels.join(
-        ', '
-      )}`
+      }" does not permit NSFW content. Restricted base models: ${matureRestrictedBaseModels(
+        'models'
+      ).join(', ')}`
     );
   }
 
@@ -2278,7 +2295,7 @@ export const publishModelVersionById = async ({
   // freshly-published version starts resolving by-hash immediately instead of
   // serving the stale not-found until the edge cache TTL expires.
   try {
-    await purgeModelVersionByHashCacheById(version.id);
+    await purgeModelVersionByHashCacheById([version.id]);
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -2292,9 +2309,6 @@ export const publishModelVersionById = async ({
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
-    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
@@ -2472,9 +2486,6 @@ export const unpublishModelVersionById = async ({
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
-    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
@@ -2488,7 +2499,7 @@ export const unpublishModelVersionById = async ({
   // Best-effort: evict the by-hash single-lookup endpoint so an unpublished
   // version stops resolving by-hash before the edge cache TTL expires.
   try {
-    await purgeModelVersionByHashCacheById(version.id);
+    await purgeModelVersionByHashCacheById([version.id]);
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -3201,7 +3212,9 @@ export function publicModelResponseKey(
   modelId: number,
   browsingLevel: number
 ): RedisKeyTemplateCache {
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
+  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
+  // so entries built by the previous code are not read.
+  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
 }
 
 // Best-effort, fail-open invalidation of the origin-side public response cache for
@@ -4139,6 +4152,9 @@ export const mergeVersions = async ({
     },
     { timeout: 60000 }
   );
+
+  const restricted = await flagImagesOnRestrictedVersions({ modelVersionIds: [targetVersionId] });
+  if (restricted.postIds.length) await bustCachesForPosts(restricted.postIds).catch(handleLogError);
 
   // Post-transaction cache busting
   const allVersionIds2 = [targetVersionId, ...sourceVersionIds];

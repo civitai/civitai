@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisCaches from '~/server/redis/caches';
 
 /**
- * The images and image-metrics search indexes write each image's tag ids into a Meilisearch
- * document that keeps them until the next reindex. A read through this process's L1 could bake in a
- * tag list from before a tag edit, so both tag steps must read past it (`{ bypassLocal: true }`).
- * Each step is driven through the processor's own `pullData`.
+ * The image-metrics search index writes each image's tag ids into a Meilisearch document that
+ * keeps them until the next reindex. A read through this process's L1 could bake in a tag list from
+ * before a tag edit, so the tag step must read past it (`{ bypassLocal: true }`). The step is driven
+ * through the processor's own `pullData`.
  */
 
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -26,7 +26,6 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   tagCache: { fetch: vi.fn(async () => ({})) },
 }));
 
-const { imagesSearchIndex } = await import('~/server/search-index/images.search-index');
 const { imagesMetricsDetailsSearchIndex } = await import(
   '~/server/search-index/metrics-images.search-index'
 );
@@ -43,17 +42,7 @@ beforeEach(() => {
   tagIdsFetch.mockClear();
 });
 
-describe("image search indexes read tag ids past this process's L1", () => {
-  it('images index, tag step', async () => {
-    const result = (await imagesSearchIndex.pullData(ctx, batch, 3, prevData())) as {
-      imageTags: Record<number, { tagIds: number[] }>;
-    };
-    expect(tagIdsFetch).toHaveBeenCalledTimes(1);
-    expect(tagIdsFetch).toHaveBeenCalledWith(IMAGES, { bypassLocal: true });
-    // The step ran to the read under test, not past an earlier branch.
-    expect(result.imageTags[9137].tagIds).toEqual([9142]);
-  });
-
+describe("the image-metrics search index reads tag ids past this process's L1", () => {
   it('image-metrics index, tag step', async () => {
     const result = (await imagesMetricsDetailsSearchIndex.pullData(ctx, batch, 2, prevData())) as {
       imageTags: Record<number, { tags: number[] }>;

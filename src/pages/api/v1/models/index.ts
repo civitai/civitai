@@ -55,6 +55,8 @@ export default MixedAuthEndpoint(async function handler(
   const region = getRegion(req);
   let browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
+  // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+  if (parsedParams.data.nsfw) res.setHeader('Cache-Control', 'private, no-store');
 
   // Handle pagination
   const { limit, page, cursor, query, ids: queryIds, ...data } = parsedParams.data;
@@ -151,9 +153,10 @@ export default MixedAuthEndpoint(async function handler(
       },
       {
         // PUBLIC endpoint: pass the existing region/nsfw-derived browsingLevel
-        // UNCHANGED, and mirror the legacy `?nsfw=true` image-filter widening.
+        // UNCHANGED, and mirror the legacy `?nsfw=true` image-filter widening, except where the
+        // region holds the level to SFW.
         browsingLevel,
-        nsfwImagePassthrough: !!parsedParams.data.nsfw,
+        nsfwImagePassthrough: !!parsedParams.data.nsfw && !isRegionRestricted(region),
         user,
         baseUrlOrigin,
         redCapable: isRedCapableHost(req.headers.host),

@@ -13,6 +13,16 @@ export interface AssistantInstructionsInput {
    * own `start_preview`. `browser` unless set.
    */
   runner?: 'browser' | 'remote';
+  /**
+   * App hibernate (the `app-hibernate` flag on): the keys of the user's sleeping apps. Unset, the
+   * instructions are exactly as before.
+   */
+  sleeping?: readonly string[];
+  /**
+   * The open app was woken from sleep (by the user, on the page) since its sandbox was created:
+   * its dependencies and build output were not kept.
+   */
+  woken?: boolean;
 }
 
 const STATE_NOTE: Record<Sandbox['state'], string> = {
@@ -252,6 +262,8 @@ export function buildAssistantInstructions({
   canPreview,
   previewHost,
   runner = 'browser',
+  sleeping,
+  woken = false,
 }: AssistantInstructionsInput): string {
   // The runner offers no tunnel tools: its start_preview does the tunnel steps itself.
   const lines = [
@@ -294,6 +306,16 @@ export function buildAssistantInstructions({
       );
     }
   }
+  if (sandbox && woken)
+    lines.push(
+      `${sandbox.app} was just woken from sleep with its files (its .env files included), but its dependencies (node_modules), build output and caches were not kept: before running, testing or building it, run cd <blockId> && npm install.`
+    );
+  if (sleeping?.length)
+    lines.push(
+      `The user also has sleeping apps: ${sleeping.join(
+        ', '
+      )}. A sleeping app keeps its files but has no sandbox; when the user asks to work on one, call wake_app with its key rather than creating a copy. list_apps lists every app with its state.`
+    );
 
   return lines.join('\n\n');
 }

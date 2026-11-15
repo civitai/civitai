@@ -18,6 +18,7 @@ import {
   useStorylineTracking,
 } from '~/components/Storyline/storyline.queries';
 import {
+  getPathTexts,
   getStorylineWalk,
   hideHiddenUsersChapters,
   parseIdListParam,
@@ -29,6 +30,8 @@ import {
   STORYLINE_VIA_PARAM,
 } from '~/components/Storyline/storyline-mode.utils';
 import { useHiddenUserIds } from '~/components/Storyline/storyline.queries';
+import type { DetailText } from '~/components/Image/Detail/detail-items';
+import { mergeDetailItems, TEXT_SLIDE_PARAM } from '~/components/Image/Detail/detail-items';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { QS } from '~/utils/qs';
 
@@ -43,12 +46,14 @@ export type ActiveStorylineMode = {
   path: StorylinePath;
   images: ImagesInfiniteModel[];
   chapterIdOfImage: (imageId: number) => number | undefined;
+  /** A text slide's chapter, by its post. */
+  chapterIdOfPost: (postId: number) => number | undefined;
   jumpToChapter: (chapterId: number) => void;
   /**
    * The mode moving the detail to an image. The URL alone cannot: it trails the carousel until it
    * settles, so it may already name the image while another is on screen.
    */
-  onSeek: (listener: (imageId: number) => void) => () => void;
+  onSeek: (listener: (slideKey: string) => void) => () => void;
   /**
    * Read on into another chapter. `from` is the chapter it continues, when that is not the end
    * of the path (a branch off an earlier stop), and `line` the reader's line it is on, the path by
@@ -80,16 +85,20 @@ function useStorylineRoute() {
   const browserRouter = useBrowserRouter();
   const chapterId = parseIdParam(browserRouter.query[STORYLINE_CHAPTER_PARAM]);
   const imageId = parseIdParam(browserRouter.query.imageId);
+  const textId = parseIdParam(browserRouter.query[TEXT_SLIDE_PARAM]);
   const viaParam = String(browserRouter.query[STORYLINE_VIA_PARAM] ?? '');
   const via = useMemo(() => parseIdListParam(viaParam), [viaParam]);
 
   const go = useCallback(
     ({
       imageId,
+      textId,
       chapterId,
       via = [],
     }: {
       imageId?: number;
+      /** A text slide anchored on `imageId`. */
+      textId?: number;
       chapterId: number | undefined;
       via?: number[];
     }) => {
@@ -111,6 +120,13 @@ function useStorylineRoute() {
         delete asQuery[STORYLINE_VIA_PARAM];
       }
       if (imageId) query.imageId = imageId;
+      if (imageId && textId) {
+        query[TEXT_SLIDE_PARAM] = textId;
+        asQuery[TEXT_SLIDE_PARAM] = textId;
+      } else if (imageId) {
+        delete query[TEXT_SLIDE_PARAM];
+        delete asQuery[TEXT_SLIDE_PARAM];
+      }
       browserRouter.replace(
         { query },
         { pathname: imageId ? `/images/${imageId}` : pathname, query: asQuery }
@@ -119,7 +135,7 @@ function useStorylineRoute() {
     [browserRouter]
   );
 
-  return { chapterId, imageId, via, go };
+  return { chapterId, imageId, textId, via, go };
 }
 
 /**
@@ -135,11 +151,19 @@ export function StorylineModeProvider({
    */
   children: (
     storylineImages: ImagesInfiniteModel[] | undefined,
-    modeKey: string
+    modeKey: string,
+    /** The path's text items and its posts in reading order, with `storylineImages`. */
+    storylineTexts?: { texts: DetailText[]; postOrder: number[] }
   ) => React.ReactNode;
 }) {
   const enabled = useStorylinesEnabled();
-  const { chapterId: routeChapterId, imageId: routeImageId, via, go } = useStorylineRoute();
+  const {
+    chapterId: routeChapterId,
+    imageId: routeImageId,
+    textId: routeTextId,
+    via,
+    go,
+  } = useStorylineRoute();
   const chapterId = enabled ? routeChapterId : undefined;
   const tracking = useStorylineTracking();
 
@@ -171,13 +195,24 @@ export function StorylineModeProvider({
   const [pendingChapterId, setPendingChapterId] = useState<number>();
   const [trusted, setTrusted] = useState<{ chapterId: number; imageId: number | undefined }>();
 
+  const storylineTexts = useMemo(
+    () => getPathTexts(path?.chapters ?? [], path?.texts ?? []),
+    [path]
+  );
   const walk = useMemo(
-    () => getStorylineWalk(path?.chapters ?? [], images),
-    [path?.chapters, images]
+    () =>
+      getStorylineWalk(
+        path?.chapters ?? [],
+        images,
+        storylineTexts.texts.length
+          ? mergeDetailItems(images, storylineTexts.texts, storylineTexts.postOrder)
+          : undefined
+      ),
+    [path?.chapters, images, storylineTexts]
   );
 
-  const seekListeners = useRef(new Set<(imageId: number) => void>());
-  const onSeek = useCallback((listener: (imageId: number) => void) => {
+  const seekListeners = useRef(new Set<(slideKey: string) => void>());
+  const onSeek = useCallback((listener: (slideKey: string) => void) => {
     seekListeners.current.add(listener);
     return () => void seekListeners.current.delete(listener);
   }, []);
@@ -192,8 +227,8 @@ export function StorylineModeProvider({
 
   const jumpToChapter = useCallback(
     (id: number) => {
-      const imageId = walk.firstImageIdByChapterId.get(id);
-      if (!imageId) {
+      const start = walk.startByChapterId.get(id);
+      if (!start) {
         // Not in the walk (its images still paging in, or past the cap): a click must still land,
         // so open the chapter from its own link.
         const chapters = path?.chapters ?? [];
@@ -205,8 +240,9 @@ export function StorylineModeProvider({
       }
       setEndOpenFor(undefined);
       setDrawerOpen(false);
-      go({ imageId, chapterId, via });
-      seekListeners.current.forEach((listener) => listener(imageId));
+      go({ imageId: start.imageId, textId: start.textId, chapterId, via });
+      const key = start.textId ? `txt:${start.textId}` : `img:${start.imageId}`;
+      seekListeners.current.forEach((listener) => listener(key));
     },
     [walk, go, chapterId, via, path?.chapters]
   );
@@ -239,7 +275,7 @@ export function StorylineModeProvider({
       pendingChapterId,
       pathEndId,
       imagesFetching,
-      firstImageIdByChapterId: walk.firstImageIdByChapterId,
+      startByChapterId: walk.startByChapterId,
     });
     if (next.kind === 'wait') return;
     setPendingChapterId(undefined);
@@ -256,9 +292,20 @@ export function StorylineModeProvider({
     setEndOpenFor(undefined);
     // The router updates synchronously and re-runs this before the cleared state lands; only
     // navigate once, or the two chase each other.
-    if (routeImageId !== next.imageId)
-      go({ imageId: next.imageId, chapterId: pendingChapterId, via });
-  }, [pendingChapterId, chapterId, pathEndId, imagesFetching, walk, go, routeImageId, via, path]);
+    if (routeImageId !== next.imageId || routeTextId !== next.textId)
+      go({ imageId: next.imageId, textId: next.textId, chapterId: pendingChapterId, via });
+  }, [
+    pendingChapterId,
+    chapterId,
+    pathEndId,
+    imagesFetching,
+    walk,
+    go,
+    routeImageId,
+    routeTextId,
+    via,
+    path,
+  ]);
 
   // The URL's chapter is trusted only for an image on its own path (not the previous chapter's,
   // still shown while this one loads), or for the image a reader was on when they took the
@@ -279,6 +326,7 @@ export function StorylineModeProvider({
       path,
       images,
       chapterIdOfImage: (imageId) => walk.chapterIdByImageId.get(imageId),
+      chapterIdOfPost: (postId) => walk.chapterIdByPostId.get(postId),
       jumpToChapter,
       onSeek,
       continueTo,
@@ -309,7 +357,11 @@ export function StorylineModeProvider({
 
   return (
     <StorylineModeContext.Provider value={value}>
-      {children(storylineImages, storylineImages ? `storyline-${chapterId}` : 'feed')}
+      {children(
+        storylineImages,
+        storylineImages ? `storyline-${chapterId}` : 'feed',
+        storylineImages ? storylineTexts : undefined
+      )}
     </StorylineModeContext.Provider>
   );
 }

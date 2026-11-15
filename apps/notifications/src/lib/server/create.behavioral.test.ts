@@ -9,8 +9,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 //   - the opt-out filter + the `-1` sentinel drop (the branch that, if inverted, delivers to users who
 //     disabled the type — a privacy/spam regression)
 //   - UPDATE-first → INSERT-ON-CONFLICT fallback (existing key vs new key)
-//   - the error swallow: a param/cast throw must be COUNTED (logged to Axiom + {queued:0}), never a false
-//     {queued:0} 202 that silently reports success while queuing nothing.
+//   - the error contract: a DB throw is logged to Axiom and rethrown, so the route answers 503 and the
+//     producer retries — never a {queued:0} 202 that reports success while queuing nothing.
 //
 // createNotification is the only entry point and every branch is reachable through it, so NO source
 // export-widening was needed — create.ts is byte-identical to origin/main.
@@ -25,7 +25,7 @@ const h = vi.hoisted(() => {
     disabledRows: [] as Array<{ userId: number }>, // UserNotificationSettings opt-out rows
     updateRows: [] as Array<{ id: number }>, // rows the UPDATE ... RETURNING id yields
     insertRows: [] as unknown[],
-    // Fault injection: throw at a specific step to exercise the catch/swallow contract.
+    // Fault injection: throw at a specific step to exercise the log-and-rethrow contract.
     throwOn: null as null | 'settings' | 'update' | 'insert',
   };
   const reset = () => {
@@ -247,14 +247,12 @@ describe('users-array merge on upsert (does not clobber concurrently-queued reci
 });
 
 // =========================================================================================================
-describe('error swallow contract (must be COUNTED, not a false success)', () => {
-  it('opt-out query throws → logs to Axiom and returns {queued:0} (no throw, no false success)', async () => {
+describe('error contract (logged AND rethrown, so the route answers 5xx and the producer retries)', () => {
+  it('opt-out query throws → logs to Axiom and rethrows (never a {queued:0} that reads as success)', async () => {
     h.state.throwOn = 'settings';
-    const ret = await createNotification(payload({ userIds: [11] }));
+    await expect(createNotification(payload({ userIds: [11] }))).rejects.toThrow('settings boom');
 
-    expect(ret).toEqual({ queued: 0 });
-    // The failure MUST surface via the Axiom warning — a bare {queued:0} with no log would be a silent
-    // false-success 202. Assert the surfacing happened, with the row key for correlation.
+    // Logged with the row key for correlation, then rethrown for the route to answer 503.
     expect(logToAxiom).toHaveBeenCalledTimes(1);
     const logged = vi.mocked(logToAxiom).mock.calls[0][0];
     expect(logged).toMatchObject({ type: 'warning', name: 'Failed to create notification' });
@@ -263,23 +261,19 @@ describe('error swallow contract (must be COUNTED, not a false success)', () => 
     expect(h.state.notifCalls).toHaveLength(0);
   });
 
-  it('UPDATE throws (e.g. a param/cast error) → surfaces to Axiom, returns {queued:0}', async () => {
+  it('UPDATE throws (e.g. a param/cast error) → logs to Axiom and rethrows', async () => {
     h.state.throwOn = 'update';
-    const ret = await createNotification(payload({ userIds: [11] }));
-
-    expect(ret).toEqual({ queued: 0 });
+    await expect(createNotification(payload({ userIds: [11] }))).rejects.toThrow('update boom');
     expect(logToAxiom).toHaveBeenCalledTimes(1);
     expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
       name: 'Failed to create notification',
     });
   });
 
-  it('INSERT throws → surfaces to Axiom, returns {queued:0}', async () => {
+  it('INSERT throws → logs to Axiom and rethrows', async () => {
     h.state.updateRows = []; // force the INSERT branch
     h.state.throwOn = 'insert';
-    const ret = await createNotification(payload({ userIds: [11] }));
-
-    expect(ret).toEqual({ queued: 0 });
+    await expect(createNotification(payload({ userIds: [11] }))).rejects.toThrow('insert boom');
     expect(logToAxiom).toHaveBeenCalledTimes(1);
   });
 

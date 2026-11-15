@@ -23,6 +23,7 @@ import { BLOCK_GOOD_PURCHASE_STATUS } from '~/shared/constants/block-goods.const
 // `isMissingGoodsTableError` below for why a local copy of it was a live outage.
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { observeBlockAuthorFee } from './author-fee';
+import { emptyAuthorFeeEarnings, type AuthorFeeEarnings } from './author-fee-earnings.service';
 import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
   computeRateCardSplit,
@@ -1545,134 +1546,13 @@ export const REFUND_WINDOWS_DAYS: Record<AttributionPaymentProvider, number> = {
 export { ACTIVE_RATE_CARD };
 
 // ---------------------------------------------------------------
-// Publisher reporting queries
-// ---------------------------------------------------------------
-
-export type RevenueSummaryBucket = {
-  count: number;
-  grossCents: number;
-  shareCents: number;
-};
-
-export type RevenueSummary = {
-  pending: RevenueSummaryBucket;
-  confirmed: RevenueSummaryBucket;
-  paidOut: RevenueSummaryBucket;
-  voided: { count: number; grossCents: number };
-};
-
-/**
- * Aggregate revenue summary for a single publisher. Optionally
- * narrowed to one app_block and/or a date range. Used by the
- * publisher-facing /apps/[appBlockId]/revenue and /apps/revenue pages.
- */
-export async function getRevenueForOwner({
-  ownerUserId,
-  appBlockId,
-  from,
-  to,
-}: {
-  ownerUserId: number;
-  appBlockId?: string;
-  from?: Date;
-  to?: Date;
-}): Promise<{
-  summary: RevenueSummary;
-  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
-}> {
-  const where = {
-    appOwnerUserId: ownerUserId,
-    ...(appBlockId ? { appBlockId } : {}),
-    ...(from || to
-      ? {
-          attributedAt: {
-            ...(from ? { gte: from } : {}),
-            ...(to ? { lte: to } : {}),
-          },
-        }
-      : {}),
-  };
-
-  // One round-trip per status bucket. groupBy here keeps the query
-  // cheap — it doesn't need to scan every row, just hit the
-  // (app_owner_user_id, attributed_at) index. The four small queries
-  // run in parallel.
-  const [pending, confirmed, paidOut, voided, topApps] = await Promise.all([
-    dbRead.blockBuzzAttribution.aggregate({
-      where: { ...where, status: 'pending' },
-      _sum: { usdAmountCents: true, appOwnerShareCents: true },
-      _count: true,
-    }),
-    dbRead.blockBuzzAttribution.aggregate({
-      where: { ...where, status: 'confirmed' },
-      _sum: { usdAmountCents: true, appOwnerShareCents: true },
-      _count: true,
-    }),
-    dbRead.blockBuzzAttribution.aggregate({
-      where: { ...where, status: 'paid_out' },
-      _sum: { usdAmountCents: true, appOwnerShareCents: true },
-      _count: true,
-    }),
-    dbRead.blockBuzzAttribution.aggregate({
-      where: { ...where, status: 'voided' },
-      _sum: { usdAmountCents: true },
-      _count: true,
-    }),
-    dbRead.blockBuzzAttribution.groupBy({
-      by: ['appBlockId'],
-      where: { ...where, status: { in: ['confirmed', 'paid_out'] } },
-      _sum: { appOwnerShareCents: true },
-      _count: true,
-      orderBy: { _sum: { appOwnerShareCents: 'desc' } },
-      take: 5,
-    }),
-  ]);
-
-  return {
-    summary: {
-      pending: {
-        count: pending._count ?? 0,
-        grossCents: pending._sum.usdAmountCents ?? 0,
-        shareCents: pending._sum.appOwnerShareCents ?? 0,
-      },
-      confirmed: {
-        count: confirmed._count ?? 0,
-        grossCents: confirmed._sum.usdAmountCents ?? 0,
-        shareCents: confirmed._sum.appOwnerShareCents ?? 0,
-      },
-      paidOut: {
-        count: paidOut._count ?? 0,
-        grossCents: paidOut._sum.usdAmountCents ?? 0,
-        shareCents: paidOut._sum.appOwnerShareCents ?? 0,
-      },
-      voided: {
-        count: voided._count ?? 0,
-        grossCents: voided._sum.usdAmountCents ?? 0,
-      },
-    },
-    topApps: (
-      topApps as Array<{
-        appBlockId: string;
-        _sum: { appOwnerShareCents: number | null };
-        _count: number;
-      }>
-    ).map((r) => ({
-      appBlockId: r.appBlockId,
-      shareCents: r._sum.appOwnerShareCents ?? 0,
-      count: r._count,
-    })),
-  };
-}
-
-// ---------------------------------------------------------------
 // DIGITAL GOODS sales — the read-side bridge onto the owner's revenue page
 // ---------------------------------------------------------------
 
 /**
  * One bucket of an owner's digital-goods sales.
  *
- * 🔴 BUZZ IS THE PRIMARY UNIT HERE AND USD IS DERIVED, which is the opposite of
- * every bucket above. It is not a style choice — cents CANNOT REPRESENT a small
+ * 🔴 BUZZ IS THE PRIMARY UNIT HERE AND USD IS DERIVED. It is not a style choice — cents CANNOT REPRESENT a small
  * sale. 1,000 Buzz = $1, so one cent is 10 Buzz, and the minimum priced good
  * (`BLOCK_GOOD_MIN_PRICE_BUZZ`) is 2 Buzz. A 10-Buzz good pays its owner 7 Buzz,
  * and `buzzSpendToUsdCents(7)` is **0** — so a cents-only line renders `$0.00`
@@ -1862,7 +1742,7 @@ export function isMissingGoodsTableError(error: unknown): boolean {
  * rail that cannot be undone once rows exist. A second read commits to nothing
  * and can be removed by deleting this function.
  *
- * 🔴 OWNERSHIP IS THE WHERE CLAUSE, exactly as in `getRevenueForOwner`:
+ * 🔴 OWNERSHIP IS THE WHERE CLAUSE, exactly as in `getAuthorFeeEarningsForOwner`:
  * `appOwnerUserId: ownerUserId` scopes every bucket, so a caller asking about an
  * app they do not own gets a truthful zero rather than someone else's revenue.
  * `app_owner_user_id` is snapshotted at purchase time, so an ex-owner keeps
@@ -1875,9 +1755,8 @@ export function isMissingGoodsTableError(error: unknown): boolean {
  * whose ledger leg failed leaves the row `paid` with `payouts` short of that
  * figure (`owesOwnerPayout`), and this aggregate cannot see the shortfall — a
  * JSONB sum is not expressible in a Prisma aggregate, and there is no re-runner
- * for those rows anyway. So `shareBuzz` is "earned", on the same reading as the
- * `confirmed` bucket above, which is also an accrual rather than a delivery. Do
- * not relabel it as "received" without measuring `payouts`.
+ * for those rows anyway. So `shareBuzz` is "earned", an accrual rather than a
+ * delivery. Do not relabel it as "received" without measuring `payouts`.
  *
  * The date range filters `created_at` — the sale's own timestamp. There is no
  * `attributed_at` on this table because there is no attribution row.
@@ -1911,9 +1790,7 @@ export async function getGoodsSalesForOwner({
     _count: true,
   });
 
-  // ONE round trip for every status bucket — one pass bucketed by the database,
-  // rather than `getRevenueForOwner`'s five single-status aggregates over the same
-  // rows.
+  // ONE round trip for every status bucket — one pass bucketed by the database.
   //
   // ⚠️ ON THE INDEX, stated precisely because the migration's own comment is
   // easy to over-read: `bgp_owner_idx` (`app_owner_user_id`, `created_at` DESC)
@@ -1927,7 +1804,7 @@ export async function getGoodsSalesForOwner({
   // — at single-digit rows it would be disk spent on nothing. The trigger to
   // revisit is a single owner crossing ~1,000 lifetime sales.
   //
-  // NO `as` CAST, deliberately, unlike `getRevenueForOwner` above. An assertion on
+  // NO `as` CAST, deliberately. An assertion on
   // a money aggregate hides exactly the mistake that matters: `_count` is a
   // COUNT-OBJECT when you select fields and a plain `number` only when you pass
   // `true`, so a cast that guessed wrong would read an object as a sale count and
@@ -1963,12 +1840,49 @@ export async function getGoodsSalesForOwner({
 }
 
 /**
+ * `read` with the ONE degradation the goods rail allows, for every caller of
+ * `getGoodsSalesForOwner` that serves a revenue page.
+ *
+ * 🔴 ONLY THE MISSING TABLE DEGRADES. `block_good_purchase` is applied by hand per
+ * environment, so a database can legitimately lack it, and unguarded that takes down the
+ * whole revenue payload, including figures that are readable. Anything else (a column
+ * rename, a bad argument, a `TypeError`) RETHROWS: catching it would report a real defect
+ * to the owner as "sales could not be loaded", indefinitely.
+ *
+ * 🔴 AND IT RETURNS A FLAGGED BUCKET, NOT ZEROS. `unreadableGoodsSales()` carries
+ * `unavailable: 'unreadable'`, which the panels branch on; `emptyGoodsSales()` would
+ * report "no sales" for a rail that was never read.
+ *
+ * Takes the read as a promise, not its arguments, so callers' tests can still stub
+ * `getGoodsSalesForOwner` at the module boundary.
+ */
+export function unreadableIfGoodsTableMissing(
+  read: Promise<GoodsSalesSummary>,
+  logContext: Record<string, unknown>
+): Promise<GoodsSalesSummary> {
+  return read.catch((error: unknown) => {
+    if (!isMissingGoodsTableError(error)) throw error;
+    logToAxiom(
+      {
+        name: 'block-goods-earnings',
+        type: 'error',
+        message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
+        ...logContext,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      'civitai-prod'
+    ).catch(() => undefined);
+    return unreadableGoodsSales();
+  });
+}
+
+/**
  * Why there is exactly ONE reason value and not two.
  *
- * `getRevenueForOwner` never *computes* ownership — it scopes every aggregate
- * with `appOwnerUserId: ownerUserId` in the WHERE clause. So a caller who asks
+ * No revenue read *computes* ownership — each scopes its aggregate with
+ * `appOwnerUserId: ownerUserId` in the WHERE clause. So a caller who asks
  * for an appBlockId they do not own gets a zero-row aggregate, and those zeros
- * are a truthful measurement ("your attributed revenue on that app is zero"),
+ * are a truthful measurement ("your revenue on that app is zero"),
  * not a fabricated one. There is no not-owned branch in the revenue path that
  * could report `notOwned`, so adding that value would declare a state nothing
  * can ever produce and force an unreachable branch into every renderer — the
@@ -1982,16 +1896,14 @@ export async function getGoodsSalesForOwner({
 export type RevenueUnavailableReason = 'notEntitled';
 
 /**
- * The PLACEHOLDER payload only — named `Empty…` deliberately. `recentAttributions: []`
- * (an empty tuple) and a REQUIRED `unavailable` mean this type can describe nothing else,
+ * The PLACEHOLDER payload only — named `Empty…` deliberately. A REQUIRED `unavailable`
+ * means this type can describe nothing else,
  * so typing the real measurement path with it would force a developer to add
  * `unavailable` to a genuine result — the exact inverse of the bug this fixes. It was
  * briefly called `RevenuePayload`, which invited precisely that.
  */
 export type EmptyRevenuePayload = {
-  summary: RevenueSummary;
-  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
-  recentAttributions: [];
+  authorFees: AuthorFeeEarnings;
   /**
    * Zeroed like every other bucket, and for the same reason: on THIS type the
    * zeros are a placeholder, and `unavailable` is what says so. A missing key
@@ -2002,17 +1914,16 @@ export type EmptyRevenuePayload = {
   /**
    * REQUIRED here, because on this type the zeroed buckets are always a placeholder.
    * The contract as seen by a CALLER is "present only when the zeros are a placeholder,
-   * absent on a genuine measurement" — a measured result comes back from
-   * `getRevenueForOwner`, which never returns this type, so it never carries the field.
+   * absent on a genuine measurement" — the measured path in `getMyRevenue` never builds
+   * this type, so it never carries the field.
    */
   unavailable: RevenueUnavailableReason;
 };
 
 /**
- * Zeroed revenue payload — the dark-behind-the-flag shape for getMyRevenue.
- * Mirrors getRevenueForOwner's `{ summary, topApps }` (+ empty attributions
- * feed) with every bucket at zero so a flag-off caller gets no data and we
- * run NO aggregate queries. Pure constant; no DB access.
+ * Zeroed revenue payload — the dark-behind-the-flag shape for getMyRevenue, with
+ * every bucket at zero so a flag-off caller gets no data and we run NO aggregate
+ * queries. Pure constant; no DB access.
  *
  * The `unavailable` discriminator is baked in rather than passed by the caller:
  * this helper exists SOLELY for the dark-flag short-circuit, so there is no
@@ -2020,55 +1931,9 @@ export type EmptyRevenuePayload = {
  * call site cannot silently omit it.
  */
 export function emptyRevenue(): EmptyRevenuePayload {
-  const zeroBucket = { count: 0, grossCents: 0, shareCents: 0 };
   return {
-    summary: {
-      pending: { ...zeroBucket },
-      confirmed: { ...zeroBucket },
-      paidOut: { ...zeroBucket },
-      voided: { count: 0, grossCents: 0 },
-    },
-    topApps: [],
-    recentAttributions: [],
+    authorFees: emptyAuthorFeeEarnings(),
     goods: emptyGoodsSales(),
     unavailable: 'notEntitled',
   };
-}
-
-/**
- * Recent attributions for the publisher dashboard's activity feed.
- * Limited to the last 50 so the response stays small; the timeseries
- * chart uses the aggregate above instead of walking individual rows.
- */
-export async function getRecentAttributionsForOwner({
-  ownerUserId,
-  appBlockId,
-  limit = 50,
-}: {
-  ownerUserId: number;
-  appBlockId?: string;
-  limit?: number;
-}) {
-  return dbRead.blockBuzzAttribution.findMany({
-    where: {
-      appOwnerUserId: ownerUserId,
-      ...(appBlockId ? { appBlockId } : {}),
-    },
-    orderBy: { attributedAt: 'desc' },
-    take: limit,
-    select: {
-      id: true,
-      attributedAt: true,
-      scope: true,
-      buzzAmount: true,
-      usdAmountCents: true,
-      appOwnerShareCents: true,
-      providerFeeCents: true,
-      status: true,
-      voidedReason: true,
-      modelId: true,
-      appBlockId: true,
-      paymentProvider: true,
-    },
-  });
 }

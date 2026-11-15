@@ -251,8 +251,8 @@ describe('the stickers a turf push carries', () => {
   it('picks each team’s newest first, then the next newest, drawable only, five at most', () => {
     // teamRank 1: Blue 6 (newest, id beats 3 at the same time), Pink 4; then Blue 3, 2, 1; Blue 7 is
     // sixth. Pink 5 is newest of all but not drawable.
-    expect(pickFeedStickers(rows).map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
-    expect(pickFeedStickers(rows)[0]).toEqual({
+    expect(pickFeedStickers(rows, 5).map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
+    expect(pickFeedStickers(rows, 5)[0]).toEqual({
       id: '6',
       userId: 106,
       team: 'Blue',
@@ -314,7 +314,8 @@ describe('the stickers a turf push carries', () => {
       string,
       { imageId: number; stickers: { id: string }[] }[]
     ];
-    expect(pushed[0].stickers.map((s) => s.id)).toEqual(['6', '4', '3', '2', '1']);
+    // The default cap is TURF_FEED_STICKERS (10): the sixth Blue hat rides along too.
+    expect(pushed[0].stickers.map((s) => s.id)).toEqual(['6', '4', '3', '2', '1', '7']);
   });
 });
 

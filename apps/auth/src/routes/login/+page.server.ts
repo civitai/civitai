@@ -15,15 +15,11 @@ import {
   isCaptchaEnabled,
   verifyCaptchaToken,
 } from '$lib/server/auth/captcha';
-import {
-  emailDomain,
-  isBlockedEmailDomain,
-  normalizeEmailAddress,
-} from '$lib/server/auth/blocklist';
+import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
+import { signupRefusal } from '$lib/server/auth/signup-rules';
 import { trackLoginRedirect } from '$lib/server/tracking';
-import { userExistsByEmail } from '$lib/server/auth/users';
 import { blockedEmailDomainSignupsTotal, emailLoginFailuresTotal } from '$lib/server/metrics';
 import { logAxiomError } from '$lib/server/axiom';
 
@@ -121,27 +117,11 @@ export const actions: Actions = {
       return fail(400, { email, captcha: true });
     }
 
-    // Only a plain address may start a new account. A returning user whose address on file is not
-    // plain (saved before this rule) still signs in with exactly that address. The lookup sits after
-    // the captcha so it is rate limited like every other one here.
-    if (!plain && !(await userExistsByEmail(email))) return fail(400, { email, invalid: true });
-
-    // 3. Blocked email domains: reject NEW signups on a blocklisted domain — an exact entry, or a
-    //    domain a moderator opted into suffix blocking — but don't retroactively lock out EXISTING
-    //    accounts when a domain is later added to either list (mirrors the exemption in step 4).
-    //    "Either list" matters: the exact list is appended weekly from upstream, while the suffix
-    //    list is hand-maintained and synced by nothing.
-    const domain = plain ? emailDomain(plain) : '';
-    if (domain && (await isBlockedEmailDomain(domain)) && !(await userExistsByEmail(email))) {
-      blockedEmailDomainSignupsTotal.inc({ path: 'email' });
-      return fail(400, { email, blockedDomain: true });
-    }
-
-    // 4. Plus-address anti-abuse: block NEW signups whose address contains '+', but let EXISTING users with a
-    //    '+' address still sign in (ports the legacy isAllowedToSignIn plus-address gate; skipped in dev).
-    if (!dev && email.includes('+') && !(await userExistsByEmail(email))) {
-      return fail(400, { email, plusBlocked: true });
-    }
+    // 3. New-account rules (plain address, blocked domain, plus address). The account lookup sits after the
+    //    captcha so it is rate limited like every other one here.
+    const refusal = await signupRefusal(email, plain);
+    if (refusal === 'blockedDomain') blockedEmailDomainSignupsTotal.inc({ path: 'email' });
+    if (refusal) return fail(400, { email, [refusal]: true });
 
     try {
       const token = await createVerificationToken(email);

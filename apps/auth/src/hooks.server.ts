@@ -48,6 +48,7 @@ const ORIGIN_CHECKS: Record<string, (request: Request, url: URL) => boolean> = {
   '/api/auth/oauth/device-deny': isHubPageRequest,
   '/login/oauth/device': isHubPageRequest,
   '/login/oauth/authorize': isHubPageRequest,
+  '/invite': isHubPageRequest,
   '/api/auth/switch': isTrustedSessionCaller,
   '/api/auth/impersonate': isTrustedSessionCaller,
   '/api/auth/impersonate/exit': isTrustedSessionCaller,

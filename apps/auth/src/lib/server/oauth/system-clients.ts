@@ -5,12 +5,12 @@ import { db } from '$lib/server/db/db';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } from '$lib/server/oauth/block-guard';
 import { SYSTEM_USER_ID } from '$lib/server/oauth/constants';
-import { isSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
+import { firstNonSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
 
 // System OAuth apps: registered apps owned by the civitai system account (User id -1), the first-party
 // convention Civitai Link already uses. Staff manage them on /admin/access; only they may skip the
 // consent screen or carry their own token limit. Nobody signs in as the system account, so these apps
-// are created and handed over here, never edited from the main site's OAuth Apps card.
+// are created, edited and handed over here, never edited from the main site's OAuth Apps card.
 
 export { SYSTEM_USER_ID };
 
@@ -21,19 +21,23 @@ export const SYSTEM_APP_SCOPE_OPTIONS = Object.entries(tokenScopeLabels)
   .map(([bit, label]) => ({ bit: Number(bit), label }))
   .filter(({ bit }) => (bit & NON_USER_SCOPES) === 0);
 
-export type SystemClientInput = {
+export type SystemClientDetails = {
   name: string;
   description: string;
   redirectUris: string[];
+};
+
+export type SystemClientInput = SystemClientDetails & {
   isConfidential: boolean;
   allowedScopes: number;
 };
 
 /**
- * Parse the register form. Redirect URIs must be absolute https, or http on a loopback host for local
- * development, matching what the hub's redirect matching expects.
+ * Parse the name, description and redirect URIs of the register and edit forms. Redirect URIs must be
+ * absolute https, or http on a loopback host for local development, matching what the hub's redirect
+ * matching expects.
  */
-export function parseSystemClientInput(data: FormData): SystemClientInput | { error: string } {
+export function parseSystemClientDetails(data: FormData): SystemClientDetails | { error: string } {
   const name = String(data.get('name') ?? '').trim();
   const description = String(data.get('description') ?? '').trim();
   if (!name || name.length > 100) return { error: 'Enter a name of up to 100 characters.' };
@@ -56,6 +60,13 @@ export function parseSystemClientInput(data: FormData): SystemClientInput | { er
     }
     if (url.hash) return { error: `Redirect URIs cannot have a #fragment: ${uri}` };
   }
+  return { name, description, redirectUris };
+}
+
+/** Parse the register form: the details, plus the app type and its scopes. */
+export function parseSystemClientInput(data: FormData): SystemClientInput | { error: string } {
+  const details = parseSystemClientDetails(data);
+  if ('error' in details) return details;
 
   const allowed = new Set(SYSTEM_APP_SCOPE_OPTIONS.map((o) => o.bit));
   let allowedScopes = TokenScope.UserRead;
@@ -66,13 +77,24 @@ export function parseSystemClientInput(data: FormData): SystemClientInput | { er
   }
 
   return {
-    name,
-    description,
-    redirectUris,
+    ...details,
     isConfidential: data.get('isConfidential') === 'true',
     allowedScopes,
   };
 }
+
+/** The origins of these redirect URIs, skipping any that do not parse (only older rows can hold one). */
+const originsOf = (redirectUris: string[]) => [
+  ...new Set(
+    redirectUris.flatMap((uri) => {
+      try {
+        return [new URL(uri).origin];
+      } catch {
+        return [];
+      }
+    })
+  ),
+];
 
 /** Register a system app. Returns its id and, for a confidential app, the secret — shown only once. */
 export async function createSystemClient(
@@ -81,7 +103,6 @@ export async function createSystemClient(
 ): Promise<{ clientId: string; clientSecret: string | null }> {
   const clientId = randomUUID();
   const clientSecret = input.isConfidential ? generateKey(48) : null;
-  const allowedOrigins = [...new Set(input.redirectUris.map((u) => new URL(u).origin))];
   await db
     .insertInto('OauthClient')
     .values({
@@ -90,7 +111,7 @@ export async function createSystemClient(
       name: input.name,
       description: input.description,
       redirectUris: input.redirectUris,
-      allowedOrigins,
+      allowedOrigins: originsOf(input.redirectUris),
       isConfidential: input.isConfidential,
       allowedScopes: input.allowedScopes,
       userId: SYSTEM_USER_ID,
@@ -128,7 +149,7 @@ export async function moveClientToSystem(
     .executeTakeFirst();
   if (!client) return null;
   const refusedRedirectUri =
-    client.skipConsent && client.redirectUris.find((uri) => !isSkipConsentRedirectUri(uri));
+    client.skipConsent && firstNonSkipConsentRedirectUri(client.redirectUris);
   if (refusedRedirectUri) return { refusedRedirectUri };
 
   const clientSecret = client.isConfidential ? generateKey(48) : null;
@@ -151,4 +172,73 @@ export async function moveClientToSystem(
     metadata: { owner: 'system', secretRotated: !!clientSecret },
   });
   return { clientSecret };
+}
+
+/** A system app as the edit page shows it, or null when the id is not a system app. */
+export async function getSystemClient(clientId: string) {
+  if (clientId.startsWith(APP_BLOCK_OAUTH_CLIENT_ID_PREFIX)) return null;
+  const client = await db
+    .selectFrom('OauthClient')
+    .select([
+      'id',
+      'name',
+      'description',
+      'redirectUris',
+      'allowedOrigins',
+      'isConfidential',
+      'skipConsent',
+    ])
+    .where('id', '=', clientId)
+    .where('userId', '=', SYSTEM_USER_ID)
+    .executeTakeFirst();
+  return client ?? null;
+}
+
+/**
+ * Change a system app's name, description and redirect URIs. Allowed origins that came from the old URIs
+ * follow the new ones; any other (an app moved from a developer's account can carry hand-set origins) stay.
+ * Returns null when the id is not a system app, `refusedRedirectUri` when the app skips consent and one of
+ * the URIs is one a skip-consent app may not have, and `conflict` when the app changed while being saved.
+ */
+export async function updateSystemClient(
+  clientId: string,
+  details: SystemClientDetails,
+  actorUserId: number
+): Promise<{ ok: true } | { refusedRedirectUri: string } | { conflict: true } | null> {
+  const current = await getSystemClient(clientId);
+  if (!current) return null;
+  const refusedRedirectUri = firstNonSkipConsentRedirectUri(details.redirectUris);
+  if (current.skipConsent && refusedRedirectUri) return { refusedRedirectUri };
+
+  const fromOldUris = new Set(originsOf(current.redirectUris));
+  const allowedOrigins = [
+    ...new Set([
+      ...current.allowedOrigins.filter((origin) => !fromOldUris.has(origin)),
+      ...originsOf(details.redirectUris),
+    ]),
+  ];
+  // Only onto the row as read: the origins are worked out from it, and skip consent was checked against it.
+  const updated = await db
+    .updateTable('OauthClient')
+    .set({ ...details, allowedOrigins })
+    .where('id', '=', clientId)
+    .where('userId', '=', SYSTEM_USER_ID)
+    .where('redirectUris', '=', current.redirectUris)
+    .where('allowedOrigins', '=', current.allowedOrigins)
+    .where('skipConsent', '=', current.skipConsent)
+    .returning('id')
+    .executeTakeFirst();
+  if (!updated) return { conflict: true };
+  logOAuthEvent({
+    type: 'client.updated',
+    userId: actorUserId,
+    clientId,
+    metadata: {
+      owner: 'system',
+      name: details.name,
+      redirectUris: details.redirectUris,
+      allowedOrigins,
+    },
+  });
+  return { ok: true };
 }

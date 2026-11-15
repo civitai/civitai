@@ -17,7 +17,7 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
   fn({ report: { create: (...args: unknown[]) => reportCreate(...args) } })
 );
 
-const { imagesSearchIndex, imagesMetricsSearchIndex } = await import('~/server/search-index');
+const { imagesMetricsSearchIndex } = await import('~/server/search-index');
 const { createReport } = await import('~/server/services/report.service');
 
 const IMAGE_ID = 1234;
@@ -42,27 +42,18 @@ beforeEach(() => {
 describe('a CSAM image report', () => {
   // The block is written through dbWrite (autocommitted, not the report's tx), so it stands even
   // when a later step throws. The avatar cache has to be refreshed whenever the block landed.
-  it.each([
-    ['images', () => imagesSearchIndex],
-    ['image metrics', () => imagesMetricsSearchIndex],
-  ])(
-    'refreshes the blocked image owner avatars even when the %s search-index queue throws',
-    async (_name, index) => {
-      vi.spyOn(imagesSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
-      vi.spyOn(imagesMetricsSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
-      vi.spyOn(index(), 'queueUpdate').mockRejectedValue(new Error('queue down'));
+  it('refreshes the blocked image owner avatars even when the search-index queue throws', async () => {
+    vi.spyOn(imagesMetricsSearchIndex, 'queueUpdate').mockRejectedValue(new Error('queue down'));
 
-      await expect(reportCsam()).rejects.toThrow('queue down');
+    await expect(reportCsam()).rejects.toThrow('queue down');
 
-      expect(dbMock.dbWrite.image.update).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: IMAGE_ID } })
-      );
-      expect(refreshProfilePicturesForImages).toHaveBeenCalledWith([IMAGE_ID]);
-    }
-  );
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: IMAGE_ID } })
+    );
+    expect(refreshProfilePicturesForImages).toHaveBeenCalledWith([IMAGE_ID]);
+  });
 
   it('refreshes the avatars once when every step succeeds', async () => {
-    vi.spyOn(imagesSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
     vi.spyOn(imagesMetricsSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
 
     await reportCsam();

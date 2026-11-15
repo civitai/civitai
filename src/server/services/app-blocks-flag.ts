@@ -1215,6 +1215,27 @@ export async function isAppBlocksAppReactionsEnabled(opts: {
 }
 
 /**
+ * Dedicated fail-closed flag for BATCH PRIVATE UPLOADS — `OPEN_MEDIA_UPLOAD_BATCH` and the three
+ * `blocks.*MediaUploadBatch*` procedures behind it (`media-upload-batch.service.ts`). A batch puts
+ * up to a day's quota of files into the viewer's account in one confirm, so it is armed on its own
+ * rather than by the runtime flag widening. The single-file `OPEN_MEDIA_UPLOAD` is not gated by it.
+ *
+ * NO moderator static floor: an ABSENT flag resolves `false` for everyone, mods included.
+ * Evaluated with the TOKEN SUBJECT'S hydrated `SessionUser`, already proven to be the session user.
+ *
+ * 🔴 SHIPS OFF. The flag is created separately in Flipt, base `enabled: false`; until it exists,
+ * `isFlipt` turns the failed evaluation into `false`, so batches stay off.
+ */
+export const APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG = 'app-blocks-batch-media-upload';
+
+export async function isAppBlocksBatchMediaUploadEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind — the
  * training estimate/submit arm of
  * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's
@@ -1599,6 +1620,51 @@ export async function isAppLimitsUpgradePromptEnabled(opts: {
     return (
       (await isFlipt(APP_LIMITS_UPGRADE_PROMPT_FLAG, String(user.id), buildFliptContext(user))) ===
       true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * APP HIBERNATE ("Sleeping" apps): the sandbox service archives an idle or LRU app into the
+ * archive store instead of deleting it, and the owner can list, wake or delete it
+ * (`src/server/services/app-hibernation/`). Off, every hibernation endpoint and procedure refuses,
+ * so nothing is archived and nothing is listed; account deletion still removes what exists.
+ *
+ * Evaluated per user (the internal routes look the user up from the request's `userId`), so a
+ * segment rollout reaches the sandbox service's calls and the user's own procedures alike. No
+ * user, an absent flag and an unreachable Flipt all evaluate `false`.
+ */
+export const APP_HIBERNATE_FLAG = 'app-hibernate';
+
+export async function isAppHibernateEnabled(opts: { user?: SessionUser | null }): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (await isFlipt(APP_HIBERNATE_FLAG, String(user.id), buildFliptContext(user))) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The in-app raise of a viewer's own per-app daily Buzz limit: the host's daily-limit dialog
+ * offers "Raise limit", and `blocks.getMyAppDailyLimit` / `blocks.raiseAppDailyLimit` answer.
+ * Checked on the server as well as the client so turning it off reaches tabs that loaded the
+ * client flags while it was on. No user, an absent flag or an unreachable Flipt: `false`.
+ * Mirrors `appDailyLimitRaise` in `feature-flags.service.ts`.
+ */
+export const APP_DAILY_LIMIT_RAISE_FLAG = 'app-daily-limit-raise';
+
+export async function isAppDailyLimitRaiseEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(APP_DAILY_LIMIT_RAISE_FLAG, String(user.id), buildFliptContext(user))) === true
     );
   } catch {
     return false;

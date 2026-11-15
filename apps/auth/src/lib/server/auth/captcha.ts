@@ -1,6 +1,7 @@
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { captchaVerificationsTotal } from '$lib/server/metrics';
+import { outboundTimeoutSignal } from './outbound-timeout';
 import { logToAxiom } from '$lib/server/axiom';
 
 // Fire-and-forget Axiom line for a captcha rejection, so the failure BREAKDOWN (which reason dominates) is
@@ -86,6 +87,9 @@ function secretFor(mode: CaptchaMode): string | undefined {
   return real || (devCaptcha() ? TEST_SECRET_PASS : undefined);
 }
 
+/** Bound on one siteverify call; Cloudflare answers in well under a second when healthy. */
+const SITEVERIFY_TIMEOUT_MS = 5_000;
+
 /** Verify a Turnstile token with Cloudflare. Returns true when captcha is disabled; false on a
  *  missing/invalid token or any verification error (fail-closed when enabled).
  *
@@ -133,6 +137,8 @@ export async function verifyCaptchaToken(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ secret, response: token, remoteip: ip }),
+      // A hung siteverify fails closed through the catch below instead of holding the sign-in.
+      signal: outboundTimeoutSignal(SITEVERIFY_TIMEOUT_MS),
     });
     if (!res.ok) {
       console.error('captcha verify rejected', { reason: 'siteverify-http', status: res.status });

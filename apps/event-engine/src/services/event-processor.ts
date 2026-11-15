@@ -61,7 +61,9 @@ export class EventProcessor {
     this.pgPool = createGuardedPgPool(
       {
         connectionString: config.postgres.connectionString,
-        max: config.cache.pgPoolMaxConnections
+        max: config.cache.pgPoolMaxConnections,
+        connectionTimeoutMillis: config.postgres.connectionTimeoutMs,
+        query_timeout: config.postgres.queryTimeoutMs
       },
       'event-processor',
       // Not `{ err }`: pg-pool sets `err.client`, and pino would serialize the whole Client.

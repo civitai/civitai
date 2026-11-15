@@ -67,7 +67,8 @@ export function staticEmbedBlock({ withoutImageCdc = false } = {}): string | nul
 
 /**
  * Whether the connector streams `needed` right now. This process's flag says nothing about the
- * connector, which the metrics watcher manages from its own env, so ask Kafka Connect.
+ * connector, which is configured elsewhere (the metrics watcher or the deployment), so ask Kafka
+ * Connect.
  */
 export async function connectorBlock(
   fetchImpl: typeof fetch = globalThis.fetch,
@@ -85,7 +86,10 @@ export async function connectorBlock(
       return `the connector could not be read (${configRes.status}/${statusRes.status})`;
     }
     const conf = (await configRes.json()) as Record<string, unknown>;
-    const tables = String(conf['table.include.list'] ?? '').split(',');
+    // Trimmed as Debezium does: a folded YAML list leaves a space before each line's first entry.
+    const tables = String(conf['table.include.list'] ?? '')
+      .split(',')
+      .map((t) => t.trim());
     const missing = needed.find((t) => !tables.includes(t));
     if (missing) return `the connector does not stream ${missing}`;
     // Listed is not flowing: a failed task streams nothing.

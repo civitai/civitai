@@ -56,6 +56,12 @@ describe('classifySucceededWithoutMedia', () => {
     );
   });
 
+  it('a step whose only blob is blocked (but reads available) is unavailable, not absent', () => {
+    const blocked = { ...blob('https://cdn/b'), blockedReason: 'Blocked' };
+    const w = wf([step({ $type: 'imageGen', name: 's1', output: { images: [blocked] } })]);
+    expect(reasonOf(w)).toBe('unavailable');
+  });
+
   it('a media step whose blobs the orchestrator reports unavailable is counted', () => {
     const w = wf([
       step({ $type: 'imageGen', name: 's1', output: { images: [blob('https://cdn/a', false)] } }),

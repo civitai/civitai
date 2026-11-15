@@ -28,7 +28,7 @@ import type { HatPose, HatSticker } from '~/components/HatTurf/hat-turf.utils';
 import { DraftSticker } from '~/components/Sticker/DraftSticker';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { useDraftGestures } from '~/components/Sticker/useDraftGestures';
-import { HAT_MAX_SCALE } from '~/server/schema/turf.schema';
+import { HAT_MAX_SCALE, TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   createStickerPlacementDraftStore,
   DraftStoreContext,
@@ -65,6 +65,8 @@ function HatTurfLive({ imageId }: { imageId: number }) {
 }
 
 const NARROW_PICTURE = 220;
+/** Hats a narrow feed card draws; wider cards draw all the feed reads (TURF_FEED_STICKERS). */
+const NARROW_DRAW_LIMIT = 3;
 const LOAD_EVENTS = ['load', 'loadedmetadata', 'resize'] as const;
 const UNDRESSED = resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false });
 
@@ -291,6 +293,10 @@ function HatTurfLayerContent({
           : next
       );
     };
+    // The containers from the picture up to the layer's parent: padding on one moves a picture that
+    // keeps its size (the detail view's sticker timeline re-centres a width-limited video), and only
+    // that container's box changes, so they are watched too.
+    let between: HTMLElement[] = [];
     const bind = () => {
       const next = parent.querySelector<HTMLElement>('img, video');
       if (next === media) return;
@@ -298,9 +304,15 @@ function HatTurfLayerContent({
         observer.unobserve(media);
         for (const event of LOAD_EVENTS) media.removeEventListener(event, measure);
       }
+      for (const el of between) observer.unobserve(el);
+      between = [];
       media = next;
       if (!media) return;
       observer.observe(media);
+      for (let el = media.parentElement; el; el = el === parent ? null : el.parentElement) {
+        between.push(el);
+        observer.observe(el);
+      }
       for (const event of LOAD_EVENTS) media.addEventListener(event, measure);
       measure();
     };
@@ -325,7 +337,8 @@ function HatTurfLayerContent({
   const mineDrawn = placed
     ? (stickers ?? []).filter((sticker) => sticker.userId !== user?.id)
     : stickers ?? [];
-  const limit = drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? 3 : 5);
+  const limit =
+    drawLimit ?? (box && box.shownWidth < NARROW_PICTURE ? NARROW_DRAW_LIMIT : TURF_FEED_STICKERS);
   const drawn = reveal.visible ? mineDrawn.slice(0, limit) : [];
   const totalShown = summary ? Object.values(summary.shown).reduce((a, b) => a + b, 0) : 0;
   const overflow = reveal.visible ? Math.max(0, totalShown - drawn.length - (placed ? 1 : 0)) : 0;
@@ -463,6 +476,8 @@ function HatTurfLayerContent({
             </div>
           )}
           {overflow > 0 &&
+            // A feed card with no way to open the rest draws no chip: it would be a count with no action.
+            (onMore || source !== 'feed') &&
             (onMore ? (
               <button
                 type="button"
@@ -482,7 +497,7 @@ function HatTurfLayerContent({
               </button>
             ) : (
               <div
-                className={clsx(classes.more, source === 'feed' && classes.moreFeed)}
+                className={classes.more}
                 data-testid="hat-turf-more"
                 title={`${overflow} more hats`}
               >

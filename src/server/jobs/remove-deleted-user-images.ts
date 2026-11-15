@@ -15,6 +15,7 @@ import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-pr
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
+import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
 /**
  * Ceiling on users reached per run, and the second of the two limits on throughput — raising the
@@ -173,6 +174,7 @@ async function drainUser(
                 AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
             )
             AND NOT ${held}
+            AND NOT ${postHoldsHeldTextSql(Prisma.raw('p.id'))}
         )
         DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
       `;

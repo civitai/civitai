@@ -211,16 +211,38 @@ export async function verifyCaptchaToken({
 }) {
   const tokenPrefix = token.slice(0, 8);
   const startedAt = Date.now();
-  const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      secret,
-      response: token,
-      remoteip: ip,
-    }),
-    signal: fetchTimeoutSignal(30_000),
-  });
+  let result: Response;
+  try {
+    result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        secret,
+        response: token,
+        remoteip: ip,
+      }),
+      signal: fetchTimeoutSignal(10_000),
+    });
+  } catch (e) {
+    // Unreachable or timed out: fail closed with the same user-facing error as a non-OK reply,
+    // rather than letting the raw network error surface as a 500.
+    logToAxiom(
+      {
+        name: 'captcha-failure',
+        type: 'error',
+        error: {
+          reason: 'siteverify-unreachable',
+          errorName: (e as Error)?.name,
+          tokenPrefix,
+          verifyLatencyMs: Date.now() - startedAt,
+          clientReportedIp: ip,
+          meta,
+        },
+      },
+      'civitai-prod'
+    ).catch(() => undefined);
+    throw upstreamFaultError('No response from captcha service');
+  }
   const verifyLatencyMs = Date.now() - startedAt;
   const cfRay = result.headers.get('cf-ray') ?? undefined;
   if (!result.ok) {
@@ -286,19 +308,22 @@ export async function verifyCaptchaToken({
   const outcome: SiteVerifyResponse = parsed.data;
   if (outcome.success) {
     if (Math.random() < 0.01) {
-      logToAxiom({
-        name: 'captcha-success-sample',
-        type: 'info',
-        error: {
-          tokenPrefix,
-          verifyLatencyMs,
-          cfRay,
-          challenge_ts: outcome.challenge_ts,
-          hostname: outcome.hostname,
-          action: outcome.action,
-          meta,
+      logToAxiom(
+        {
+          name: 'captcha-success-sample',
+          type: 'info',
+          error: {
+            tokenPrefix,
+            verifyLatencyMs,
+            cfRay,
+            challenge_ts: outcome.challenge_ts,
+            hostname: outcome.hostname,
+            action: outcome.action,
+            meta,
+          },
         },
-      }, 'civitai-prod').catch(() => undefined);
+        'civitai-prod'
+      ).catch(() => undefined);
     }
     return true;
   }

@@ -7,6 +7,8 @@ import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import { renderWithProviders } from '../../../test/component-setup';
 import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import { resetDailyLimitRaiseSuppression } from '~/components/AppBlocks/openDailyLimitRaise';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
@@ -20,11 +22,24 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
  * with an explanation and a link to raise it — with no confirm to click.
  */
 
-const { previewMutate, consentMutate, submitMutate } = vi.hoisted(() => ({
+const { previewMutate, consentMutate, submitMutate, readLimit, flags } = vi.hoisted(() => ({
   previewMutate: vi.fn(),
   consentMutate: vi.fn(),
   submitMutate: vi.fn(),
+  readLimit: vi.fn(),
+  flags: { raiseOn: false },
 }));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
+  const real = await importOriginal<typeof FeatureFlagsMod>();
+  return {
+    ...real,
+    useOptionalFeatureFlags: () => ({
+      ...(real.useOptionalFeatureFlags() ?? {}),
+      appDailyLimitRaise: flags.raiseOn,
+    }),
+  };
+});
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
@@ -39,6 +54,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     },
     {
       useUtils: () => ({
+        blocks: {
+          getMyAppDailyLimit: { fetch: readLimit, invalidate: vi.fn(async () => undefined) },
+          listMyScopeGrants: { invalidate: vi.fn(async () => undefined) },
+        },
         client: {
           blocks: {
             previewQuoteGrant: { mutate: previewMutate },
@@ -192,12 +211,37 @@ function setVisibility(state: 'visible' | 'hidden') {
 describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
+    resetDailyLimitRaiseSuppression();
+    flags.raiseOn = false;
+    readLimit.mockReset();
     previewMutate.mockReset();
     consentMutate.mockReset();
     submitMutate.mockReset();
     previewMutate.mockResolvedValue(PREVIEW);
     consentMutate.mockResolvedValue({ quoteId: QUOTE_ID, total: 1040, consented: true });
     submitMutate.mockResolvedValue({ snapshot: SNAPSHOT });
+  });
+
+  test('names the pool tried first for a yellow pick, from the SERVER’S order', async () => {
+    previewMutate.mockResolvedValue({ ...PREVIEW, fundingOrder: ['yellow', 'blue'] });
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_pool', body: BODY });
+
+    await expect.element(confirmButton()).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('block-confirmed-step-funding'))
+      .toHaveTextContent('Paid from Yellow Buzz first, then Blue.');
+  });
+
+  test('with no pick the dialog shows no pool line', async () => {
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_nopool', body: BODY });
+
+    await expect.element(confirmButton()).toBeInTheDocument();
+    await expect.element(page.getByTestId('block-confirmed-step-price')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="block-confirmed-step-funding"]')).toBeNull();
   });
 
   test('shows the SERVER’S price; confirm records consent and THEN submits', async () => {
@@ -312,6 +356,57 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     expect(consentMutate).not.toHaveBeenCalled();
     expect(submitMutate).not.toHaveBeenCalled();
     replies.stop();
+  });
+
+  describe('with the in-app raise on', () => {
+    const OVER = {
+      ...PREVIEW,
+      dailyLimit: { limit: 1500, spentToday: 600, remaining: 900 },
+      exceedsDailyLimit: true,
+    };
+    const raiseDialogs = () =>
+      useDialogStore
+        .getState()
+        .dialogs.filter((d) => String(d.id).startsWith('block-daily-limit-'));
+
+    test('nothing to raise: the explanation still opens, so the viewer is never left with nothing', async () => {
+      flags.raiseOn = true;
+      readLimit.mockResolvedValue(null);
+      previewMutate.mockResolvedValue(OVER);
+      await mount();
+      await driveToReady();
+      const replies = listenForReply();
+      postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_raise_none', body: BODY });
+      expect(await reply(replies)).toEqual({
+        requestId: 'rq_raise_none',
+        error: 'daily-limit-exceeded',
+      });
+      await expect
+        .element(page.getByTestId('block-confirmed-step-daily-limit-refusal'))
+        .toBeInTheDocument();
+      expect(readLimit).toHaveBeenCalled();
+      expect(raiseDialogs()).toHaveLength(0);
+      replies.stop();
+    });
+
+    test('a limit to raise: the raise dialog opens instead of the explanation', async () => {
+      flags.raiseOn = true;
+      readLimit.mockResolvedValue({ limit: 1500, spentToday: 600, refusedRecently: false });
+      previewMutate.mockResolvedValue(OVER);
+      await mount();
+      await driveToReady();
+      const replies = listenForReply();
+      postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_raise_some', body: BODY });
+      expect(await reply(replies)).toEqual({
+        requestId: 'rq_raise_some',
+        error: 'daily-limit-exceeded',
+      });
+      await vi.waitFor(() => expect(raiseDialogs()).toHaveLength(1));
+      expect(page.getByTestId('block-confirmed-step-daily-limit-refusal').elements()).toHaveLength(
+        0
+      );
+      replies.stop();
+    });
   });
 
   test('a daily-limit refusal AT SUBMIT (the day moved) replies the same code', async () => {

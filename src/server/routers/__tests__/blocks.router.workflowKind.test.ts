@@ -125,6 +125,10 @@ vi.mock('~/server/services/blocks/user-app-surface.service', async (importOrigin
   ...(await importOriginal<typeof SurfaceModule>()),
   recordScopeInvocation: (...a: unknown[]) => h.recordScopeInvocation(...(a as [])),
 }));
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimitModule>()),
   checkBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
@@ -260,6 +264,7 @@ type SubmitArgs = {
     metadata?: Record<string, unknown>;
     externalId?: string;
     allowMatureContent?: boolean;
+    nsfwLevel?: string;
   };
   query?: { whatif?: boolean };
 };
@@ -393,6 +398,10 @@ beforeEach(() => {
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
   // The fee's payee: an owner who is NOT the viewer (no self-dealing skip).
   dbMock.dbRead.oauthClient.findUnique.mockResolvedValue({ id: 'app_test', userId: APP_OWNER });
+  // Every Civitai version a step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
 });
 afterEach(() => envMock.reset());
 
@@ -939,6 +948,46 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
     expect(sent.metadata).toEqual({
       blockWorkflowSteps: [{ name: 'gen' }, { name: '$1', suppressOutput: true }, { name: '$2' }],
     });
+  });
+
+  describe('the resources a step names', () => {
+    const naming = (model: string) =>
+      body({ steps: [{ $type: 'echo', input: { model } }], arguments: undefined });
+
+    beforeEach(() => {
+      // Under one step's budget.
+      whatifCost = { total: 20, base: 20 };
+      h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+      dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+        where: { id: { in: number[] } };
+      }) =>
+        args.where.id.in.map((id) => ({
+          id,
+          baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
+        }))) as never);
+    });
+
+    it('holds the output to PG-13 when one is on a base model that restricts mature generation', async () => {
+      await submit(naming('urn:air:sdxl:checkpoint:civitai:1@11'));
+      expect(realSubmits()[0].body).toMatchObject({ nsfwLevel: 'pg13', allowMatureContent: false });
+    });
+
+    it('leaves a mature ceiling alone for an unrestricted base model', async () => {
+      await submit(naming('urn:air:sdxl:checkpoint:civitai:1@10'));
+      expect(realSubmits()[0].body.nsfwLevel).toBeUndefined();
+      expect(realSubmits()[0].body.allowMatureContent).not.toBe(false);
+    });
+
+    it.each(paths)(
+      '%s refuses a Hugging Face resource before any orchestrator call',
+      async (_, run) => {
+        await expect(
+          run(naming('urn:air:sdxl:checkpoint:huggingface:org/repo@main/x.safetensors'))
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+        expect(whatifs()).toHaveLength(0);
+        expect(realSubmits()).toHaveLength(0);
+      }
+    );
   });
 
   it('🔴 the fee is ONE resolved value: estimate = reservation = charge, under one type', async () => {
@@ -2633,4 +2682,58 @@ describe('inline customComfy — nodes the host does not run inline', () => {
       snapshot: { status: 'pending' },
     });
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `accountType` is PER WORKFLOW: the orchestrator takes one `currencies` list for
+// the whole workflow, so the pick sits on the body, not on a step. Asserted as the
+// literal `currencies` on the whatif AND the real submit. Each pick expects an
+// order the no-pick default cannot produce, so a path that drops it fails.
+describe("kind:'workflow' — accountType (the pool tried first)", () => {
+  const MATURE = { maxBrowsingLevel: 31 };
+  const SFW = { maxBrowsingLevel: 1 };
+  const currenciesOf = (args: SubmitArgs[]) =>
+    args.map((a) => (a.body as { currencies?: unknown }).currencies);
+  const withPick = (pick: string | undefined) =>
+    pick === undefined ? body() : body({ accountType: pick });
+  const PICKS = [
+    { name: 'a mature app, yellow pick', rating: MATURE, pick: 'yellow', want: ['yellow', 'blue'] },
+    { name: 'an SFW app, green pick', rating: SFW, pick: 'green', want: ['green', 'blue'] },
+    { name: 'an SFW app, no pick', rating: SFW, pick: undefined, want: ['blue', 'green'] },
+    { name: 'a mature app, no pick', rating: MATURE, pick: undefined, want: ['blue', 'yellow'] },
+  ] as const;
+
+  it.each(PICKS)('ESTIMATE — $name quotes with $want', async ({ rating, pick, want }) => {
+    h.authorize.mockImplementation(async () => claims(rating));
+    const { snapshot } = await estimate(withPick(pick));
+    expect(snapshot.status).toBe('pending');
+    expect(currenciesOf(whatifs())).toEqual([want]);
+  });
+
+  it.each(PICKS)(
+    'SUBMIT — $name sends $want on the quote AND the real submit',
+    async ({ rating, pick, want }) => {
+      h.authorize.mockImplementation(async () => claims(rating));
+      const { snapshot } = await submit(withPick(pick));
+      expect(snapshot.workflowId).toBe(WORKFLOW_ID);
+      expect(currenciesOf(whatifs())).toEqual([want]);
+      expect(currenciesOf(realSubmits())).toEqual([want]);
+    }
+  );
+
+  it.each([
+    ['estimate', estimate],
+    ['submit', submit],
+  ] as const)(
+    '%s — a yellow pick on an SFW app is BAD_REQUEST, nothing quoted or reserved',
+    async (_name, call) => {
+      h.authorize.mockImplementation(async () => claims(SFW));
+      await expect(call(withPick('yellow'))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: "buzz account 'yellow' is not spendable for this app's content rating",
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
 });

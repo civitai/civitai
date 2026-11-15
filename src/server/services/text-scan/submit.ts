@@ -35,6 +35,7 @@ import {
   recordTextScanSuccess,
 } from '~/server/services/text-scan/record';
 import { buildTextScanResponseFormat } from '~/server/services/text-scan/schema';
+import { submitTextCategoryScan } from '~/server/services/text-scan/category';
 import type {
   PromptIds,
   TextScanEntityType,
@@ -361,6 +362,16 @@ export async function scanEntity({
     // Every gated label, not just the narrowed ones: an earlier verdict may carry a dropped label.
     for (const pass of gatedPasses)
       await clearStaleVerdict({ entityType, entityId, pass, subject });
+    await profile.category?.write(entityId, null).catch((e) =>
+      logToAxiom({
+        name: 'text-category',
+        type: 'error',
+        message: 'category clear threw',
+        entityType,
+        entityId,
+        error: (e as Error).message,
+      })
+    );
     return { status: 'skipped', reason: 'too-short' };
   }
 
@@ -390,6 +401,27 @@ export async function scanEntity({
       })
     );
   }
+  // Skipped when the scan was unchanged (not submitted) and on the web-search-only pass; a main-pass
+  // retry resends it because the first submit may have died before the call.
+  if (profile.category && result.status === 'submitted' && !first.variant)
+    await submitTextCategoryScan({
+      entityType,
+      entityId,
+      subject,
+      hook: profile.category,
+      model: config.model,
+      maxInputChars: config.maxInputChars,
+      scanCallbackUrl: textScanCallbackUrl(),
+    }).catch((e) =>
+      logToAxiom({
+        name: 'text-category',
+        type: 'error',
+        message: 'category submit threw',
+        entityType,
+        entityId,
+        error: (e as Error).message,
+      })
+    );
   return result;
 }
 

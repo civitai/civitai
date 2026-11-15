@@ -246,13 +246,30 @@ export const isModeratorHold = (events: { type: string; actorRole: string }[]) =
   return !!latest && isSystemDispute(latest);
 };
 
+/** The codes the server writes as the comment of a Cancelled or Completed event it closed itself. */
+export const closeCommentLabel: Record<string, string> = {
+  withdrawn: 'Request withdrawn by the buyer',
+  late: 'Cancelled by the buyer after the due date',
+  overdue: 'Cancelled automatically: nothing delivered in time',
+  cancellation_unanswered: 'Cancelled automatically: the cancellation request was not answered',
+  payment_refused: 'Cancelled: the payment was refused',
+  auto: 'Completed automatically: the buyer did not respond in time',
+};
+
+const closeCommentText = (event: SheetEvent) =>
+  (event.type === 'Cancelled' || event.type === 'Completed') &&
+  event.comment &&
+  Object.hasOwn(closeCommentLabel, event.comment)
+    ? closeCommentLabel[event.comment]
+    : event.comment;
+
 /** What the accountability sheet prints for one event. */
 export function sheetEventText<T extends SheetEvent>(
   event: T,
   viewerRole: 'buyer' | 'seller' | 'moderator',
   label: string
 ) {
-  if (!isSystemDispute(event)) return { label, comment: event.comment };
+  if (!isSystemDispute(event)) return { label, comment: closeCommentText(event) };
   return {
     label: 'Held the deal for moderator review',
     comment: viewerRole === 'moderator' ? event.comment : null,

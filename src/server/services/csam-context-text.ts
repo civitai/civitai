@@ -81,8 +81,26 @@ async function readCandidates({
       .select(['id', 'detail', 'userId', 'createdAt', 'publishedAt'])
       .where('id', 'in', describedPostIds)
       .execute();
+    // A post's storyline text items are part of its text, in reading order.
+    const items = await kyselyRead
+      .selectFrom('PostText')
+      .select(['postId', 'content'])
+      .where('postId', 'in', describedPostIds)
+      .orderBy('index')
+      .orderBy('id')
+      .execute();
+    const itemTexts = new Map<number, string[]>();
+    for (const item of items) {
+      const plain = htmlToPlainText(item.content);
+      if (plain) itemTexts.set(item.postId, [...(itemTexts.get(item.postId) ?? []), plain]);
+    }
     for (const post of posts) {
-      const text = post.detail ? htmlToPlainText(post.detail) : '';
+      const text = [
+        post.detail ? htmlToPlainText(post.detail) : '',
+        ...(itemTexts.get(post.id) ?? []),
+      ]
+        .filter(Boolean)
+        .join('\n\n');
       if (!text) continue;
       candidates.push({
         source: 'postDescription',

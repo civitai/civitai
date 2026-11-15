@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import {
   Box,
   Button,
@@ -64,6 +65,7 @@ type ImageDetailStats = Pick<
   | 'heartCountAllTime'
   | 'laughCountAllTime'
   | 'cryCountAllTime'
+  | 'tippedAmountCountAllTime'
   | 'statsUnknown'
 >;
 
@@ -446,17 +448,7 @@ function ImageDetailByPropsReactions({
   userId?: number;
 }) {
   return (
-    <Metrics
-      entityType="Image"
-      entityId={imageId}
-      initial={{
-        likeCount: stats?.likeCountAllTime ?? 0,
-        dislikeCount: stats?.dislikeCountAllTime ?? 0,
-        heartCount: stats?.heartCountAllTime ?? 0,
-        laughCount: stats?.laughCountAllTime ?? 0,
-        cryCount: stats?.cryCountAllTime ?? 0,
-      }}
-    >
+    <Metrics entityType="Image" entityId={imageId} initial={imageStatsToReactionMetrics(stats)}>
       {(metrics) => (
         <Reactions
           entityId={imageId}

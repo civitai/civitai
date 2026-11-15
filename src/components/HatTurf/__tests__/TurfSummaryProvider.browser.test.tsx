@@ -166,7 +166,7 @@ describe('TurfSummaryProvider', () => {
     const hats = distinct.filter((a) => a.proc === 'getStickersForImages');
     expect(summaries.map((a) => a.input.imageIds.length)).toEqual([100, 50]);
     expect(hats.map((a) => a.input.imageIds.length)).toEqual([100, 50]);
-    expect(hats.every((a) => a.input.perImage === 5)).toBe(true);
+    expect(hats.every((a) => a.input.perImage === 10)).toBe(true);
     expect(latest!.team).toBe('blue');
     // Odd ids have turf, from either chunk; image 4 is not open.
     expect(Object.keys(latest!.images).length).toBe(75);
@@ -253,7 +253,7 @@ describe('TurfSummaryProvider', () => {
     expect(latest!.images[1].hatted).toBe(true);
     expect(latest!.images[3].leader).toBe('blue');
     await vi.waitFor(() =>
-      expect(h.fetch).toHaveBeenCalledWith({ event: 'birthday2026', imageIds: [1], perImage: 5 })
+      expect(h.fetch).toHaveBeenCalledWith({ event: 'birthday2026', imageIds: [1], perImage: 10 })
     );
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(h.fetch).toHaveBeenCalledTimes(1);

@@ -674,7 +674,7 @@ describe("permissions: today's allow/deny, on both routes", () => {
 
 // Real Postgres: the embedded one is a single session, so "parallel" requests there would only
 // interleave statements inside one connection. The unit CI job sets APPDATA_TEST_DATABASE_URL.
-describe('concurrency (real Postgres)', () => {
+describe.runIf(!!process.env.CI)('concurrency (real Postgres)', () => {
   it('APPDATA_TEST_DATABASE_URL is set, so the cases below run', () => {
     expect(REAL_PG_URL, 'the unit job must set APPDATA_TEST_DATABASE_URL').toBeTruthy();
   });

@@ -9,7 +9,7 @@ export const servableProfilePictureSql = Prisma.sql`
   AND ${imageReviewedSql('i')}
 `;
 
-type RawQueryClient = {
+export type RawQueryClient = {
   $queryRaw<T = unknown>(
     query: TemplateStringsArray,
     ...values: unknown[]

@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { Alert, Anchor, Badge, Loader, Text, ThemeIcon } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
@@ -35,6 +36,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -278,6 +280,7 @@ function ImagesCardContent({
                         </HoverActionButton>
                       </RemixMenu>
                     )}
+                    <MoreLikeThisButton image={image} />
                     {scheduled && (
                       <Tooltip label="Scheduled">
                         <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
@@ -434,14 +437,7 @@ function ImageReactions({
     <Metrics
       entityType="Image"
       entityId={image.id}
-      initial={{
-        likeCount: image.stats?.likeCountAllTime ?? 0,
-        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-        heartCount: image.stats?.heartCountAllTime ?? 0,
-        laughCount: image.stats?.laughCountAllTime ?? 0,
-        cryCount: image.stats?.cryCountAllTime ?? 0,
-        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-      }}
+      initial={imageStatsToReactionMetrics(image.stats)}
       useLive={inView !== false}
     >
       {(metrics) => {

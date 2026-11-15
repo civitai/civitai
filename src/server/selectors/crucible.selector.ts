@@ -81,6 +81,9 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       width: true,
       height: true,
       ingestion: true,
+      // Read by isCrucibleHiddenByScan; the crucible page handler drops them before responding.
+      needsReview: true,
+      tosViolation: true,
     },
   },
   heroImage: {

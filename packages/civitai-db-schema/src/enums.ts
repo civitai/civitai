@@ -561,6 +561,7 @@ export const CommentEntityType = {
   appListing: 'appListing',
   crucible: 'crucible',
   storyline: 'storyline',
+  postText: 'postText',
 } as const;
 
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
@@ -960,6 +961,7 @@ export const JobQueueType = {
   ImageStorageDelete: 'ImageStorageDelete',
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
+  CsamArchive: 'CsamArchive',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
@@ -1017,13 +1019,6 @@ export const AppealCategory = {
 } as const;
 
 export type AppealCategory = (typeof AppealCategory)[keyof typeof AppealCategory];
-
-export const ImageAxisSource = {
-  rated: 'rated',
-  moderator: 'moderator',
-} as const;
-
-export type ImageAxisSource = (typeof ImageAxisSource)[keyof typeof ImageAxisSource];
 
 export const AuctionType = {
   Model: 'Model',
@@ -1343,6 +1338,16 @@ export const ServiceOfferingStatus = {
 
 export type ServiceOfferingStatus =
   (typeof ServiceOfferingStatus)[keyof typeof ServiceOfferingStatus];
+
+export const ServiceOfferingIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+
+export type ServiceOfferingIngestionStatus =
+  (typeof ServiceOfferingIngestionStatus)[keyof typeof ServiceOfferingIngestionStatus];
 
 export const ServicePreviewKind = {
   Image: 'Image',

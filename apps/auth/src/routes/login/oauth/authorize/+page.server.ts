@@ -2,7 +2,13 @@ import { redirect, fail, error } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
-import { carriesNonUserScope, parseScopeRequest, scopeLabels } from '$lib/server/oauth/scope';
+import {
+  carriesNonUserScope,
+  hasScope,
+  parseScopeRequest,
+  scopeLabelEntries,
+} from '$lib/server/oauth/scope';
+import { getGrantedScope } from '$lib/server/oauth/granted-scope';
 import { parsePrompt } from '$lib/server/oauth/prompt';
 import { clientErrorUrl, redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
@@ -75,7 +81,12 @@ export const load: PageServerLoad = async ({ url, locals, cookies, setHeaders })
   if (!requested) return { invalid: true as const };
   const scope = requested.scope | TokenScope.UserRead;
   if (carriesNonUserScope(scope)) return { invalid: true as const };
-  const scopes = scopeLabels(scope);
+  // On a step-up, mark what this client has not been granted before. A first consent marks nothing.
+  const granted = await getGrantedScope(locals.user.id, clientId);
+  const scopes = scopeLabelEntries(scope).map(({ bit, label }) => ({
+    label,
+    isNew: granted !== null && !hasScope(granted, bit),
+  }));
 
   // Hidden-field values for the Approve form (normalized scope incl. UserRead, keeping an `openid`
   // request so the id_token survives the round-trip). Typed as a Record so the page can read individual

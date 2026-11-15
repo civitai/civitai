@@ -52,6 +52,7 @@ export const USER_MENU_LAYOUT: UserMenuNode[] = [
     item('following'),
     item('downloads'),
     item('service-requests'),
+    item('browse-services'),
     item('vault'),
     item('inventory'),
     item('bounties'),

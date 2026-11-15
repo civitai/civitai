@@ -30,11 +30,14 @@ export const placeTurfStickerSchema = z.object({
   source: z.enum(['feed', 'image-detail']).optional(),
 });
 
+/** The most hats one add puts on a flag. The picker offers 1, 5 and this, each capped at what the player has. */
+export const FLAG_HAT_MAX = 10;
+
 export const placeFlagHatsSchema = z.object({
   event: eventName,
   imageId: z.number().int().positive(),
   cosmeticId: z.number().int().positive(),
-  count: z.union([z.literal(1), z.literal(5), z.literal(10)]),
+  count: z.number().int().min(1).max(FLAG_HAT_MAX),
 });
 
 export const turfEventSchema = z.object({ event: eventName });
@@ -68,7 +71,7 @@ export const setTurfOwnerOffSchema = z.object({ event: eventName, off: z.boolean
 export const removeTurfStickerSchema = z.object({ id: z.coerce.bigint().positive() });
 
 /** Hats a feed card draws per image: what the feed reads, and what a turf push carries. */
-export const TURF_FEED_STICKERS = 5;
+export const TURF_FEED_STICKERS = 10;
 
 export const turfStickersForImagesSchema = z.object({
   event: eventName,

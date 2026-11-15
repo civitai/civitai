@@ -25,6 +25,8 @@ export type RequestParams = {
   facetFilters?: string | (string | string[])[];
   numericFilters?: string | (string | string[])[];
   filters?: string;
+  /** Set by `useSimilarImage`: "more like this" for that image, while no query is typed. */
+  similarTo?: number;
 };
 
 const BROWSING_LEVEL_CLAUSE = /\bnsfwLevel=(\d+)/g;
@@ -195,6 +197,8 @@ export function createSemanticImageSearch({
 
   return async function searchImages(indexName: string, params: RequestParams) {
     const query = params.query?.trim();
+    // A typed query replaces "more like this".
+    const imageId = query ? undefined : params.similarTo || undefined;
     const hitsPerPage = params.hitsPerPage ?? 0;
     // Disjunctive-facet requests ask for facets only.
     const refined = readFacetFilters(params.facetFilters);
@@ -205,10 +209,11 @@ export function createSemanticImageSearch({
     );
     const dates = { createdAtUnix: { min: OLDEST_POST, max: Date.now() } };
     const empty = { ...emptyResult(indexName, params), facets, facets_stats: dates };
-    if (!query || hitsPerPage === 0) return empty;
+    if ((!query && !imageId) || hitsPerPage === 0) return empty;
     if ([...refined.keys()].some((attribute) => UNSUPPORTED_FACETS.has(attribute))) return empty;
 
     const filters = {
+      imageId,
       browsingLevel: readBrowsingLevel(params.filters),
       tagNames: refined.get('tagNames'),
       usernames: refined.get('user.username'),
@@ -217,7 +222,7 @@ export function createSemanticImageSearch({
       ...readPostedRange(params.numericFilters),
     };
     const page = await fetchPage({
-      query,
+      query: query ?? '',
       filters,
       hitsPerPage,
       page: params.page,

@@ -26,8 +26,16 @@ export type DomainSyncDeps<P extends DomainPayload> = {
   store: DomainStore<P>;
   /** Null: rows needing a vector are counted, not embedded. */
   embedder: Pick<Embedder, 'embed'> | null;
+  /** What a point's vector is made from; unset, its search_text. */
+  embedInput?: EmbedInputFor<P>;
   dryRun?: boolean;
 };
+
+/**
+ * Null: the row cannot be embedded now. It is counted as failed, any point it has is deleted, and
+ * the next sync tries again.
+ */
+export type EmbedInputFor<P> = (id: number, payload: P) => EmbedInput | null;
 
 export type SyncStats = {
   eligible: number;
@@ -130,11 +138,21 @@ async function syncRound<P extends DomainPayload>(
       update.set(id, payload);
       continue;
     }
-    inputs.push({ id: String(id), text: payload.search_text });
+    const input = deps.embedInput
+      ? deps.embedInput(id, payload)
+      : { id: String(id), text: payload.search_text };
+    // Nothing to embed the new document from: the old vector must not outlive what it was made of
+    // (an image since held, say), so the point goes, and the next sync tries again.
+    if (!input) {
+      stats.failed++;
+      if (stored) remove.push(id);
+      continue;
+    }
     // Until the re-embed lands, the old vector serves with the current payload: a stale nsfwLevel
     // would let filters match what they must not. The old hash stays, so a failed re-embed is
     // retried by the next sync.
     if (stored) update.set(id, { ...payload, docHash: stored.docHash! });
+    inputs.push(input);
   }
   const writes = changedOnly(update, points);
   const reembed = new Set(inputs.map((i) => Number(i.id)));
@@ -219,12 +237,19 @@ export type Domain<P extends DomainPayload> = {
   refFromEvent: (topic: string, value: unknown) => DomainRef | null;
   /** Tables that must stream before it embeds, or an unpublish could miss the index. */
   cdcTables: string[];
-  /** The payload field listing child ids, for a child delete that carries only its own id. */
+  /** The payload field holding child ids, for a child event that carries only its own id. */
   childField?: keyof P & string;
   /** The OutboxEntity whose search.update rows name this domain's ids. */
   outboxEntity?: string;
   /** VECTOR_<NAME>_EMBED_ENABLED unset: whether it embeds. True only for models, which predate it. */
   embedByDefault?: boolean;
+  /**
+   * For a domain whose eligibility or document reads state no CDC signal covers: every `everyMs`,
+   * all ids are re-synced, so a point that no longer qualifies is deleted.
+   */
+  refresh?: { everyMs: number; batch: number };
+  /** What its vectors are made from, when not the text of search_text (3D models: the thumbnail). */
+  embedInput?: EmbedInputFor<P>;
   store: () => VectorStore<P>;
   alias: () => string;
 };

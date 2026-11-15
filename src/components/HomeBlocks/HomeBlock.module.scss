@@ -57,6 +57,15 @@
     display: none;
   }
 
+  // The Flag Race row (with .gridRow: one row, the rest in zero-height rows): as many columns as fit,
+  // stretched to fill the width, so there is never an empty column. Wide containers only; the narrow
+  // carousels below keep their fixed card widths.
+  @container not (max-width: theme('screens.md')) {
+    &.gridFlag {
+      grid-template-columns: repeat(auto-fit, minmax(336px, 1fr));
+    }
+  }
+
   @container (max-width: theme('screens.md')) {
     grid-auto-flow: column;
     grid-template-columns: repeat(calc(var(--count) / 2), 296px);

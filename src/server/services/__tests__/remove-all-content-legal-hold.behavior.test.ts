@@ -23,12 +23,10 @@ const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.ho
     beforeImages: null as (() => Promise<unknown>) | null,
   },
   indexes: Object.fromEntries(
-    ['models', 'images', 'imagesMetrics', 'articles', 'collections', 'bounties', 'users'].map(
-      (name) => [
-        name,
-        { queueUpdate: vi.fn<(rows: { id: number; action: string }[]) => Promise<undefined>>() },
-      ]
-    )
+    ['models', 'imagesMetrics', 'articles', 'collections', 'bounties', 'users'].map((name) => [
+      name,
+      { queueUpdate: vi.fn<(rows: { id: number; action: string }[]) => Promise<undefined>>() },
+    ])
   ),
   metrics: {
     user: { queueUpdate: vi.fn<(ids: unknown) => Promise<undefined>>() },
@@ -97,7 +95,6 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   modelsSearchIndex: indexes.models,
-  imagesSearchIndex: indexes.images,
   imagesMetricsSearchIndex: indexes.imagesMetrics,
   articlesSearchIndex: indexes.articles,
   collectionsSearchIndex: indexes.collections,
@@ -314,6 +311,16 @@ beforeAll(async () => {
       'utf8'
     )
   );
+  // The content wipe asks it whether a post holds held text.
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
+      ),
+      'utf8'
+    )
+  );
   await holder.db.exec(heldCopiesSchemaSql());
   // Append-only, so set once: two models CLEAN was given, one by a held owner.
   await holder.db.exec(`
@@ -336,7 +343,7 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Collection", "ModelVersion",
+    TRUNCATE "CsamReport", "Image", "PostText", "BountyBenefactor", "Collection", "ModelVersion",
       "CommentV3", "CommentV3Report", "CommentV3Reaction", "CommentTopic",
       "ModActivity", "BountyUnpaidAward", "HeldResourceReview",
       ${[...SEEDED_TABLES, ...QA_DATA].map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
@@ -463,7 +470,6 @@ function dropped() {
 }
 const NONE = {
   models: [],
-  images: [],
   imagesMetrics: [],
   articles: [],
   collections: [],
@@ -518,7 +524,6 @@ describe('removeAllContent', () => {
     }
     expect(dropped()).toEqual({
       models: [MODEL],
-      images: [CLEAN * 100, CLEAN * 100 + 1],
       imagesMetrics: [CLEAN * 100, CLEAN * 100 + 1],
       articles: [ARTICLE],
       collections: [COLLECTION],

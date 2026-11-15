@@ -19,7 +19,7 @@ import {
   collectionSchemaPatterns,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
-import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
+import { isKnownSlotId, isPageSlot, MODEL_SLOT_IDS } from '~/shared/constants/slot-registry';
 import {
   MARKETPLACE_CATEGORIES,
   isMarketplaceCategory,
@@ -453,6 +453,27 @@ function normalizeOriginLoose(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The error a manifest that declares NO surface gets, or `null` when it declares one. A surface is a
+ * non-empty `targets` array (model-page slots) or a `page` object (a full-page app). This is the
+ * same test the build pipeline's manifest check runs on every build, review and production: a
+ * manifest it refuses fails its build only after a moderator approved it, so the submission gate
+ * ({@link BlockManifestValidator.validateSubmission}) refuses it first. Only presence and type are
+ * tested here; the entries themselves are validated by `validate`.
+ */
+export function manifestSurfaceError(manifest: unknown): string | null {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return null;
+  const m = manifest as RawManifest;
+  const hasTargets = Array.isArray(m.targets) && m.targets.length > 0;
+  const hasPage = !!m.page && typeof m.page === 'object' && !Array.isArray(m.page);
+  if (hasTargets || hasPage) return null;
+  return (
+    'manifest must declare at least one surface: add a "page" object for a full-page app ' +
+    '(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ' +
+    `model-page slot app (e.g. "targets": [{ "slotId": "${MODEL_SLOT_IDS[0]}" }])`
+  );
 }
 
 function urlOriginIfPublic(raw: string): string | null {
@@ -991,7 +1012,8 @@ export class BlockManifestValidator {
   }
 
   /**
-   * SUBMISSION gate. Runs the synchronous shape/security `validate` above AND the
+   * SUBMISSION gate. Runs the synchronous shape/security `validate` above, the
+   * build pipeline's surface rule ({@link manifestSurfaceError}), AND the
    * accurate ReDoS + input-bound check on `settings` field patterns, merging the
    * errors. This is the method every manifest SUBMISSION path must call (git-push
    * webhook, developer manifest API, `blocks.updateManifest`, publish-request
@@ -1012,6 +1034,9 @@ export class BlockManifestValidator {
   ): Promise<ValidationResult> {
     const base = this.validate(manifest, app, opts);
     const errors: string[] = base.valid ? [] : [...base.errors];
+
+    const surfaceError = manifestSurfaceError(manifest);
+    if (surfaceError) errors.push(surfaceError);
 
     const settings =
       manifest && typeof manifest === 'object' && !Array.isArray(manifest)

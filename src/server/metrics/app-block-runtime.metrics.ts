@@ -228,6 +228,8 @@ export type AppBlockEndpoint =
   // catalog searches. Same bucket, different question when it fails.
   | 'gated_images'
   | 'generation_resources'
+  // Own label: a static in-memory read must not sit in generation_resources' (replica) p95.
+  | 'generation_samplers'
   // The resource-intent primitive (`POST /api/v1/blocks/resource-intent`). Its
   // OWN label rather than folding into 'generation_resources': that route is a
   // bounded id-keyed rehydrate, this one is up to two sequential vendor round trips (up to three calls)
@@ -984,17 +986,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   );
 
   // ── customComfy per-engine runtime/cost (App Blocks `customComfy` bridge) ────
-  // Instrument-ahead-of-demand for the pre-GA question "is flux2-klein's real p99
-  // approaching its 150-Buzz / 150s ceiling?". EMPTY until real customComfy volume
+  // Instrument-ahead-of-demand for the pre-GA question "is any engine's real p99
+  // approaching its ceiling?". EMPTY until real customComfy volume
   // accrues (DARK app code, mod-gated), by design.
   //
   // Cardinality: one `engine` label per recipe's engine(s) + one `recipe` label per
   // registered recipe — both small server-side enums drawn from the code-owned recipe
-  // registry (never client input). Today that spans e.g. seamless-pano-360's engines
-  // {zimage-turbo, flux2-klein, qwen-image} plus starter-comfy-txt2img's {default}, so
-  // the series count grows by a handful with each new recipe/engine — always trivially
-  // bounded regardless of the wire (labels are free-form + fail-soft, but the values
-  // are enum-resolved from the registry, so they can't blow up).
+  // registry (never client input), so the series count is bounded by recipes × engines.
   //
   // 🔴 NOT ONLY THE customComfy BRIDGE ANY MORE, AND NOT ONLY REGISTRY-DERIVED
   // LABELS. Every arm that reserves a post-paid CEILING settles through the same

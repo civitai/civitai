@@ -7,13 +7,23 @@ import type * as RegionBlocking from '~/server/utils/region-blocking';
 import { NsfwLevel } from '~/server/common/enums';
 import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
 
-const { mockGetServerAuthSession, mockGetFeatureFlagsLazy, mockRateLimit, mockRegionBlocked } =
-  vi.hoisted(() => ({
-    mockGetServerAuthSession: vi.fn(),
-    mockGetFeatureFlagsLazy: vi.fn(),
-    mockRateLimit: vi.fn(),
-    mockRegionBlocked: vi.fn(),
-  }));
+const {
+  mockGetServerAuthSession,
+  mockGetFeatureFlagsLazy,
+  mockRateLimit,
+  mockRegionBlocked,
+  mockPassthroughOn,
+} = vi.hoisted(() => ({
+  mockGetServerAuthSession: vi.fn(),
+  mockGetFeatureFlagsLazy: vi.fn(),
+  mockRateLimit: vi.fn(),
+  mockRegionBlocked: vi.fn(),
+  mockPassthroughOn: vi.fn(),
+}));
+
+vi.mock('~/server/services/site-search-passthrough', () => ({
+  isSiteSearchPassthroughOn: mockPassthroughOn,
+}));
 
 vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
   ...(await importOriginal<typeof RegionBlocking>()),
@@ -64,6 +74,7 @@ async function post(path: string[], body: unknown, headers: Record<string, strin
   // The wrapper swaps response methods on entry; keep the spies from before the call.
   const spies = {
     json: res.json as any,
+    send: res.send as any,
     status: res.status as any,
     end: res.end as any,
     setHeader: res.setHeader as any,
@@ -74,6 +85,13 @@ async function post(path: string[], body: unknown, headers: Record<string, strin
     status: spies.status.mock.calls.at(-1)?.[0] ?? res.statusCode,
     ended: spies.end.mock.calls.at(-1)?.[0],
     body: spies.json.mock.calls.at(-1)?.[0],
+    sent: spies.send.mock.calls.at(-1)?.[0],
+    contentLength: spies.setHeader.mock.calls
+      .filter(([name]: [string]) => name === 'Content-Length')
+      .at(-1)?.[1],
+    contentType: spies.setHeader.mock.calls
+      .filter(([name]: [string]) => name === 'Content-Type')
+      .at(-1)?.[1],
     cacheControl: spies.setHeader.mock.calls
       .filter(([name]: [string]) => name === 'Cache-Control')
       .at(-1)?.[1],
@@ -96,6 +114,7 @@ beforeEach(() => {
   mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true });
   mockRateLimit.mockResolvedValue({ allowed: true });
   mockRegionBlocked.mockReturnValue(false);
+  mockPassthroughOn.mockReturnValue(false);
   setEnv({ NEXT_PUBLIC_SEARCH_HOST: 'http://search.test', SEARCH_TOKEN_API_KEY: 'server-key' });
 });
 afterEach(() => {
@@ -316,5 +335,65 @@ describe('other paths', () => {
       expect((await post(path, {})).status).toBe(404);
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('passthrough (site-search-passthrough)', () => {
+  // Spacing a parse and re-serialize would rewrite, so only the upstream bytes equal it.
+  const upstream = '{ "results" : [ { "indexUid" : "users_v3", "hits" : [ { "id" : 1 } ] } ] }';
+
+  it('on: an unshaped response is sent as the upstream bytes, as JSON, still uncacheable', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.sent).toBeUndefined();
+    expect(Buffer.isBuffer(res.ended)).toBe(true);
+    expect(res.ended.toString('utf8')).toBe(upstream);
+    expect(res.contentLength).toBe(Buffer.byteLength(upstream));
+    expect(res.contentType).toBe('application/json; charset=utf-8');
+    expect(res.cacheControl).toBe('private, no-store');
+    expect(res.body).toBeUndefined();
+  });
+
+  it('on: a response with model hits is still shaped and sent through res.json', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [
+              { indexUid: MODELS_SEARCH_INDEX, hits: [{ id: 9, name: 'Red', sfwName: 'Com' }] },
+            ],
+          })
+        )
+    );
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.sent).toBeUndefined();
+    expect(res.ended).toBeUndefined();
+    expect(res.body.results[0].hits[0]).not.toHaveProperty('sfwName');
+  });
+
+  it('off: the same unshaped response goes through res.json, as before', async () => {
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.sent).toBeUndefined();
+    expect(res.ended).toBeUndefined();
+    expect(res.body).toEqual({ results: [{ indexUid: USERS_SEARCH_INDEX, hits: [{ id: 1 }] }] });
+  });
+
+  it('on: the request body is still validated, so unknown params never reach the backend', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    await post(['multi-search'], {
+      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x', hybrid: { embedder: 'e' } }],
+    });
+    expect(sentQueries()[0]).not.toHaveProperty('hybrid');
   });
 });

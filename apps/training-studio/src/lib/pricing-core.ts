@@ -1,3 +1,4 @@
+import { kohyaFamily } from './data/kohya';
 // Client-safe "from"-price sweep: one whatif per catalog card against a provided client. The shell
 // wraps it in a global redis cache (lib/server/pricing.ts); the web-component backend runs it
 // browser-side, uncached.
@@ -18,10 +19,15 @@ const WHATIF_CONCURRENCY = 4;
  *  can be a viewer's first pick under `versionPriceKey` (`cardFromPrice` reads them back). */
 export const fromPriceQuotes = () =>
   MODEL_CARDS.flatMap((card) =>
-    firstPickVersions(card).map((version, i) => ({
-      key: i === 0 ? card.type : versionPriceKey(card.type, version.key),
-      version,
-    }))
+    firstPickVersions(card).flatMap((version, i) => [
+      {
+        key: i === 0 ? card.type : versionPriceKey(card.type, version.key),
+        version,
+      },
+      ...(i === 0 && kohyaFamily(version.ecosystem)
+        ? [{ key: `kohya:${card.type}`, version: { ...version, engine: 'kohya' } }]
+        : []),
+    ])
   );
 
 /** Per-card "from" prices via live whatif quotes. PARTIAL — a model the orchestrator can't price is

@@ -76,8 +76,7 @@ describe('MiniMax H3 licence registration', () => {
   it('imposes no commercial or mature restriction', () => {
     const server = serverLicense()!;
     expect(server.nonCommercial).toBeUndefined();
-    expect(server.disableMature).toBeUndefined();
-    expect(server.restrictedNsfwLevels).toBeUndefined();
+    expect(h3Record().matureRestricted).toBeUndefined();
   });
 });
 

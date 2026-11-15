@@ -48,7 +48,6 @@ vi.mock('~/server/meilisearch/client', () => ({
 }));
 
 import unblockImages from '~/pages/api/mod/unblock-images';
-import markPoiImagesSearch from '~/pages/api/mod/mark-poi-images-search';
 import imageMetricsUpdate from '~/pages/api/mod/search/image-metrics-update';
 import backfillStuckPublishedImages from '~/pages/api/admin/temp/backfill-stuck-published-images';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -111,32 +110,6 @@ describe('/api/mod/unblock-images', () => {
       expect.objectContaining({ ids: [11] })
     );
     expect(body).toMatchObject({ updated: 1 });
-  });
-});
-
-describe('/api/mod/mark-poi-images-search', () => {
-  it('writes poi to the database even when an index write would throw, and skips retired indexes', async () => {
-    m.imagesSearch.mockResolvedValue({ hits: [{ id: 7, prompt: 'a photo of jane doe' }] });
-    m.updateDocs.mockRejectedValue(new Error('meilisearch is shut down'));
-
-    const { status } = await call(markPoiImagesSearch, { words: 'jane doe' });
-
-    expect(status).toBe(200);
-    expect(updateMany).toHaveBeenCalledWith({ where: { id: { in: [7] } }, data: { poi: true } });
-    expect(m.updateDocs).not.toHaveBeenCalled();
-  });
-
-  it('un-retired, the database write still lands before an index write that throws', async () => {
-    m.retired.metrics = false;
-    m.imagesSearch.mockResolvedValue({ hits: [{ id: 7, prompt: 'a photo of jane doe' }] });
-    m.updateDocs.mockRejectedValue(new Error('meilisearch is shut down'));
-
-    await call(markPoiImagesSearch, { words: 'jane doe' });
-
-    expect(updateMany).toHaveBeenCalledWith({ where: { id: { in: [7] } }, data: { poi: true } });
-    expect(m.updateDocs).toHaveBeenCalledWith(
-      expect.objectContaining({ indexName: 'metrics_images_v1' })
-    );
   });
 });
 

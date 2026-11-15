@@ -48,6 +48,7 @@ import {
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  WORKFLOW_METADATA_BLOCK_STEPS_KEY,
 } from '../workflow.service';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { getRecipe, REGISTERED_RECIPE_IDS } from '../recipes';
@@ -143,6 +144,82 @@ describe('snapshotFromWorkflow', () => {
     });
     const snap = snapshotFromWorkflow(wf as never);
     expect(snap.imageUrls).toEqual(['https://cdn/ok.png']);
+  });
+
+  describe('blocked outputs', () => {
+    // A videoGen output reports `available: true` even when the orchestrator has blocked it.
+    const videoWorkflow = (video: Record<string, unknown>) =>
+      fakeWorkflow({
+        steps: [
+          {
+            $type: 'videoGen',
+            name: BLOCK_STEP_NAME,
+            status: 'succeeded',
+            metadata: {},
+            output: { video: { id: 'v1', type: 'video', available: true, ...video } },
+          },
+        ],
+      });
+    const CSAM_RULE = 'Potentially ToS violating content detected';
+
+    it('CONTROL: a clean video surfaces on the snapshot and the projection', () => {
+      const wf = videoWorkflow({ url: 'https://cdn/clean.mp4', nsfwLevel: 'pg' });
+      expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/clean.mp4']);
+      expect(projectAppWorkflow(wf as never).images.map((i) => i.url)).toEqual([
+        'https://cdn/clean.mp4',
+      ]);
+    });
+
+    it('never surfaces an available blob that carries a block reason', () => {
+      const wf = videoWorkflow({
+        url: 'https://cdn/blocked.mp4',
+        nsfwLevel: 'na',
+        blockedReason: CSAM_RULE,
+      });
+      const snap = snapshotFromWorkflow(wf as never);
+      expect(snap.imageUrls ?? []).toEqual([]);
+      expect(JSON.stringify(snap)).not.toContain('blocked.mp4');
+      const projected = projectAppWorkflow(wf as never);
+      expect(projected.images).toEqual([]);
+      expect(JSON.stringify(projected)).not.toContain('blocked.mp4');
+    });
+
+    it('never surfaces a blocked image on a native step either', () => {
+      const wf = fakeWorkflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 's1',
+            status: 'succeeded',
+            metadata: {},
+            output: {
+              images: [
+                { id: 'b1', url: 'https://cdn/ok.png', available: true, type: 'image' },
+                {
+                  id: 'b2',
+                  url: 'https://cdn/blocked.png',
+                  available: true,
+                  type: 'image',
+                  nsfwLevel: 'na',
+                  blockedReason: CSAM_RULE,
+                },
+              ],
+            },
+          },
+        ],
+      });
+      expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/ok.png']);
+      expect(projectAppWorkflow(wf as never).images.map((i) => i.url)).toEqual([
+        'https://cdn/ok.png',
+      ]);
+    });
+
+    it("reads blockedReason 'none' (any case) as not blocked", () => {
+      for (const blockedReason of ['none', 'None', 'NONE']) {
+        const wf = videoWorkflow({ url: 'https://cdn/ok.mp4', nsfwLevel: 'pg', blockedReason });
+        expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/ok.mp4']);
+      }
+    });
   });
 
   it('emits a non-empty sentinel workflowId when an orchestrator id is absent', () => {
@@ -796,6 +873,79 @@ describe('resolveBlockVersionContext', () => {
   });
 });
 
+describe('buildImageWorkflowInput — an omitted sampler is the family default', () => {
+  // The literals are the CONTRACT, written out by hand from the graph files and matching what
+  // `GET /api/v1/blocks/generation-samplers` reports (sampler-options.test.ts pins the same
+  // values on that side). On `main` the submit path sent 'Euler' for every family.
+  const body = {
+    kind: 'textToImage' as const,
+    modelId: 7,
+    modelVersionId: 99,
+    params: { prompt: 'a cat', quantity: 1 },
+  };
+  const resolvedFor = (baseModel: string, checkpointVersionId = 99) => ({
+    baseModel,
+    modelType: 'Checkpoint',
+    checkpointVersionId,
+    checkpointBaseModel: baseModel,
+    additionalResourceTypes: new Map<number, string>(),
+  });
+
+  it.each([
+    // SD family: the generator preselects 'Euler a', not 'Euler'.
+    ['SDXL 1.0', 'SDXL', 'Euler a'],
+    ['SD 1.5', 'SD1', 'Euler a'],
+    // Anima offers no 'Euler' at all; its default is not its first option.
+    ['Anima', 'Anima', 'euler_ancestral'],
+    // Chroma's default happens to be 'Euler' (a control: unchanged by this fix).
+    ['Chroma', 'Chroma', 'Euler'],
+  ])('%s → %s family default %s', (baseModel, ecosystem, sampler) => {
+    const out = buildImageWorkflowInput(body as never, resolvedFor(baseModel));
+    expect(out.ecosystem).toBe(ecosystem);
+    expect(out.sampler).toBe(sampler);
+  });
+
+  it('a family with no sampler control (Flux1) gets no sampler key at all', () => {
+    const out = buildImageWorkflowInput(body as never, resolvedFor('Flux.1 D', 691639));
+    expect(out.ecosystem).toBe('Flux1');
+    expect('sampler' in out).toBe(false);
+  });
+
+  it('HiDream resolves by VERSION: Full (1772448) gets UniPC, the default Dev version none', () => {
+    const full = buildImageWorkflowInput(body as never, resolvedFor('HiDream', 1772448));
+    expect(full.ecosystem).toBe('HiDream');
+    expect(full.sampler).toBe('UniPC');
+    const dev = buildImageWorkflowInput(body as never, resolvedFor('HiDream', 1771369));
+    expect(dev.ecosystem).toBe('HiDream');
+    expect('sampler' in dev).toBe(false);
+  });
+
+  it('an SD img2img body (source image) gets the same family default', () => {
+    const out = buildImageWorkflowInput(
+      { ...body, sourceImage: { url: 'https://x/y.png', width: 512, height: 512 } } as never,
+      resolvedFor('SDXL 1.0')
+    );
+    expect(out.workflow).toBe('img2img');
+    expect(out.sampler).toBe('Euler a');
+  });
+
+  it.each([
+    ['SDXL 1.0', 99, 'DPM++ 2M Karras'],
+    ['Anima', 99, 'heun'],
+    // Explicit values pass through untouched even where the family has no control.
+    ['Flux.1 D', 691639, 'Euler'],
+  ])(
+    '%s (version %s): an explicit sampler %s is sent unchanged',
+    (baseModel, versionId, sampler) => {
+      const out = buildImageWorkflowInput(
+        { ...body, params: { ...body.params, sampler } } as never,
+        resolvedFor(baseModel, versionId)
+      );
+      expect(out.sampler).toBe(sampler);
+    }
+  );
+});
+
 describe('buildTextToImageInput', () => {
   const baseBody = {
     kind: 'textToImage' as const,
@@ -876,7 +1026,8 @@ describe('buildTextToImageInput', () => {
 
   it('defaults sampler/steps and pins workflow to txt2img', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.sampler).toBe('Euler');
+    // SDXL's family default, not a literal 'Euler' — see "omitted sampler" below.
+    expect(out.sampler).toBe('Euler a');
     expect(out.steps).toBe(25);
     expect(out.workflow).toBe('txt2img');
     expect(out.priority).toBe('low');
@@ -2122,7 +2273,7 @@ describe('buildCustomComfyWorkflowInput (translator)', () => {
       engine: 'zimage-turbo',
     });
     expect(input.trace).toBe('binary');
-    expect(input.resources[0]).toContain('z_image_turbo');
+    expect(input.resources[0]).toContain(':civitai:2168935@2442439');
     expect(input.workflow['1'].class_type).toBe('UNETLoader');
     // seed threaded into the KSampler leaf
     expect(input.workflow['9'].inputs).toMatchObject({ seed: 1 });
@@ -2142,29 +2293,13 @@ describe('createBlockCustomComfyStep (step wrapper)', () => {
   it('wraps the input as a customComfy step and stamps the resolved per-engine timeout (HH:MM:SS)', () => {
     const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
     // v1.1: the caller resolves the timeout from the params' budget and threads it.
-    const { stepTimeoutSeconds } = recipe.budgetFor({ prompt: 'a lake', engine: 'qwen-image' });
+    const { stepTimeoutSeconds } = recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' });
     const step = createBlockCustomComfyStep(input, stepTimeoutSeconds);
     expect(step.$type).toBe('customComfy');
     expect(step.name).toBe(BLOCK_CUSTOM_COMFY_STEP_NAME);
-    // qwen 180s ceiling → 00:03:00 (NOT the reference's loose 01:00:00).
-    expect(step.timeout).toBe('00:03:00');
+    // zimage 90s ceiling → 00:01:30 (NOT the reference's loose 01:00:00).
+    expect(step.timeout).toBe('00:01:30');
     expect(step.input).toBe(input);
-  });
-
-  it('formats the timeout per engine: zimage 90s → 00:01:30, flux2 150s → 00:02:30', () => {
-    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
-    expect(
-      createBlockCustomComfyStep(
-        input,
-        recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds
-      ).timeout
-    ).toBe('00:01:30');
-    expect(
-      createBlockCustomComfyStep(
-        input,
-        recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds
-      ).timeout
-    ).toBe('00:02:30');
   });
 });
 
@@ -3095,5 +3230,459 @@ describe('snapshotFromWorkflow — additionalCostBuzz', () => {
     });
     expect(snap.cost).toEqual({ total: 45, authorFee: 3 });
     expect(snap.modelSubstitutions).toHaveLength(1);
+  });
+});
+
+/**
+ * Queue position, ETA and progress on the snapshot (per step and the top-level `eta`).
+ *
+ * Every fixture value is pairwise distinct — 7 ahead, distinct timestamps, rates that are
+ * neither 0 nor 1 nor each other — so a mapper that copied the wrong field, swapped start and
+ * complete, or returned a constant cannot pass. Expectations are literals, never derived from
+ * the implementation.
+ *
+ * Encoding: a field with nothing to report is OMITTED rather than sent as `null` (this file's
+ * convention, so a snapshot with nothing new is byte-identical to before). The contract types
+ * are `?: T | null`, so absent and null mean the same thing to a block.
+ */
+describe('snapshotFromWorkflow — queue position, ETA and progress', () => {
+  const T_START = '2026-11-14T10:00:07Z';
+  const T_DONE = '2026-11-14T10:01:13Z';
+  const T_STARTED = '2026-11-14T10:00:21Z';
+  const T_COMPLETED = '2026-11-14T10:00:58Z';
+
+  /** A workflow whose steps are all recorded `kind:'workflow'` members, so each gets a `steps[]` entry. */
+  function wf(status: string, steps: Array<Record<string, unknown>>, recorded = true) {
+    return {
+      id: 'wf_eta',
+      status,
+      createdAt: '2026-11-14T09:59:00Z',
+      ...(recorded
+        ? {
+            metadata: {
+              [WORKFLOW_METADATA_BLOCK_STEPS_KEY]: steps.map((s) => ({ name: s.name as string })),
+            },
+          }
+        : {}),
+      steps,
+    } as never;
+  }
+  const QUEUE = {
+    support: 'available',
+    precedingJobs: 7,
+    estimatedStartAt: T_START,
+    estimatedCompleteAt: T_DONE,
+  };
+  const processing = (over: Record<string, unknown> = {}) => ({
+    $type: 'imageGen',
+    name: 'gen',
+    status: 'processing',
+    startedAt: T_STARTED,
+    estimatedProgressRate: 0.42,
+    ...over,
+  });
+
+  it('(a) a queued image step reports the queue, no progress, and an ETA from the queue', () => {
+    const snap = snapshotFromWorkflow(
+      wf('scheduled', [
+        { $type: 'imageGen', name: 'gen', status: 'scheduled', queuePosition: QUEUE },
+      ])
+    );
+    expect(snap.steps).toEqual([
+      {
+        name: 'gen',
+        $type: 'imageGen',
+        status: 'pending',
+        queue: {
+          precedingJobs: 7,
+          estimatedStartAt: T_START,
+          estimatedCompleteAt: T_DONE,
+          support: 'available',
+        },
+      },
+    ]);
+    expect(snap.eta).toEqual({
+      stepName: 'gen',
+      queuedAhead: 7,
+      startsAt: T_START,
+      completesAt: T_DONE,
+      progress: null,
+      support: 'available',
+    });
+  });
+
+  it('(b) a processing image step reports its progress, no queue, and an ETA with no times', () => {
+    const snap = snapshotFromWorkflow(wf('processing', [processing()]));
+    expect(snap.steps).toEqual([
+      {
+        name: 'gen',
+        $type: 'imageGen',
+        status: 'processing',
+        progress: 0.42,
+        startedAt: T_STARTED,
+      },
+    ]);
+    expect(snap.eta).toEqual({
+      stepName: 'gen',
+      queuedAhead: null,
+      startsAt: null,
+      completesAt: null,
+      progress: 0.42,
+      support: null,
+    });
+  });
+
+  // 🔴 A training step's rate is PER EPOCH: it resets to 0 at every epoch, so as a whole-step
+  // fraction it would run 0→1 many times over one run.
+  it('(c) a training step reports no progress, though the orchestrator sends a rate', () => {
+    const snap = snapshotFromWorkflow(
+      wf('processing', [
+        processing({ $type: 'training', name: 'train', estimatedProgressRate: 0.9 }),
+      ])
+    );
+    expect(snap.steps).toEqual([
+      { name: 'train', $type: 'training', status: 'processing', startedAt: T_STARTED },
+    ]);
+    expect(snap.eta).toEqual({
+      stepName: 'train',
+      queuedAhead: null,
+      startsAt: null,
+      completesAt: null,
+      progress: null,
+      support: null,
+    });
+  });
+
+  // Every image/video generation type on the allowlist reports progress, and the multi-phase or
+  // unproven ones do not. Spelled as literals so dropping one entry from the list is caught.
+  it.each(['imageGen', 'textToImage', 'videoGen'])('%s reports whole-step progress', ($type) => {
+    const snap = snapshotFromWorkflow(wf('processing', [processing({ $type })]));
+    expect(snap.eta?.progress).toBe(0.42);
+    expect(snap.steps?.[0].progress).toBe(0.42);
+  });
+  it.each(['training', 'imageResourceTraining', 'comfy', 'customComfy', 'imageUpscaler'])(
+    '%s reports no progress',
+    ($type) => {
+      const snap = snapshotFromWorkflow(wf('processing', [processing({ $type })]));
+      expect(snap.eta?.progress).toBeNull();
+      expect(snap.steps?.[0].progress).toBeUndefined();
+    }
+  );
+
+  it.each([
+    [1.7, 1],
+    [-0.2, 0],
+    [0, 0],
+    [1, 1],
+    [Number.NaN, null],
+    [Number.POSITIVE_INFINITY, null],
+    ['0.5', null],
+    [null, null],
+  ])('(d) a rate of %s reports progress %s', (rate, expected) => {
+    const snap = snapshotFromWorkflow(
+      wf('processing', [processing({ estimatedProgressRate: rate })])
+    );
+    expect(snap.eta?.progress).toBe(expected);
+    expect(snap.steps?.[0].progress ?? null).toBe(expected);
+  });
+
+  it.each([
+    [-1, null],
+    [2.5, null],
+    ['7', null],
+    [Number.NaN, null],
+    [null, null],
+    [0, 0],
+    [12, 12],
+  ])('(d) precedingJobs %s reports queuedAhead %s', (precedingJobs, expected) => {
+    const snap = snapshotFromWorkflow(
+      wf('scheduled', [
+        {
+          $type: 'imageGen',
+          name: 'gen',
+          status: 'scheduled',
+          queuePosition: { ...QUEUE, precedingJobs },
+        },
+      ])
+    );
+    expect(snap.eta?.queuedAhead).toBe(expected);
+    expect(snap.steps?.[0].queue?.precedingJobs).toBe(expected);
+    // The rest of the queue still reaches the block when only the count is unusable.
+    expect(snap.eta?.startsAt).toBe(T_START);
+  });
+
+  it('(d) a non-string timestamp is reported as null, not passed through', () => {
+    const snap = snapshotFromWorkflow(
+      wf('scheduled', [
+        {
+          $type: 'imageGen',
+          name: 'gen',
+          status: 'scheduled',
+          queuePosition: { ...QUEUE, estimatedStartAt: 1731578407000, estimatedCompleteAt: {} },
+        },
+      ])
+    );
+    expect(snap.eta).toEqual({
+      stepName: 'gen',
+      queuedAhead: 7,
+      startsAt: null,
+      completesAt: null,
+      progress: null,
+      support: 'available',
+    });
+  });
+
+  it('(e) step 1 succeeded and step 2 queued: the ETA names step 2', () => {
+    const snap = snapshotFromWorkflow(
+      wf('processing', [
+        {
+          $type: 'imageGen',
+          name: 'gen',
+          status: 'succeeded',
+          startedAt: T_STARTED,
+          completedAt: T_COMPLETED,
+        },
+        {
+          $type: 'imageUpscaler',
+          name: '$1',
+          status: 'scheduled',
+          queuePosition: { ...QUEUE, precedingJobs: 3 },
+        },
+      ])
+    );
+    expect(snap.steps).toEqual([
+      {
+        name: 'gen',
+        $type: 'imageGen',
+        status: 'succeeded',
+        startedAt: T_STARTED,
+        completedAt: T_COMPLETED,
+      },
+      {
+        name: '$1',
+        $type: 'imageUpscaler',
+        status: 'pending',
+        queue: {
+          precedingJobs: 3,
+          estimatedStartAt: T_START,
+          estimatedCompleteAt: T_DONE,
+          support: 'available',
+        },
+      },
+    ]);
+    expect(snap.eta).toEqual({
+      stepName: '$1',
+      queuedAhead: 3,
+      startsAt: T_START,
+      completesAt: T_DONE,
+      progress: null,
+      support: 'available',
+    });
+  });
+
+  // Selection order: a step with a queue wins over an EARLIER processing step (QueueItem's rule).
+  it('(e) a queued step is chosen over an earlier processing one', () => {
+    const snap = snapshotFromWorkflow(
+      wf('processing', [
+        processing({ name: 'first' }),
+        { $type: 'videoGen', name: 'second', status: 'scheduled', queuePosition: QUEUE },
+      ])
+    );
+    expect(snap.eta?.stepName).toBe('second');
+  });
+
+  // With no queue anywhere, the FIRST processing step is chosen, not the last.
+  it('(e) with no queue, the first processing step is chosen', () => {
+    const snap = snapshotFromWorkflow(
+      wf('processing', [
+        processing({ name: 'first', estimatedProgressRate: 0.61 }),
+        processing({ name: 'second', estimatedProgressRate: 0.13 }),
+      ])
+    );
+    expect(snap.eta?.stepName).toBe('first');
+    expect(snap.eta?.progress).toBe(0.61);
+  });
+
+  it('(e) a finished step carrying a stale rate reports no progress and is not the ETA', () => {
+    const snap = snapshotFromWorkflow(
+      wf('processing', [
+        processing({ name: 'done', status: 'succeeded', estimatedProgressRate: 0.8 }),
+        processing({ name: 'now', estimatedProgressRate: 0.3 }),
+      ])
+    );
+    expect(snap.steps?.map((s) => s.progress)).toEqual([undefined, 0.3]);
+    expect(snap.eta?.stepName).toBe('now');
+  });
+
+  it.each(['succeeded', 'failed', 'expired', 'canceled'])(
+    '(f) a %s workflow reports no ETA and no progress on any step',
+    (status) => {
+      const snap = snapshotFromWorkflow(
+        wf(status, [
+          processing({ name: 'gen', estimatedProgressRate: 0.55 }),
+          { $type: 'videoGen', name: 'clip', status: 'scheduled', queuePosition: QUEUE },
+        ])
+      );
+      expect(snap.eta ?? null).toBeNull();
+      expect(snap.steps?.map((s) => s.progress ?? null)).toEqual([null, null]);
+      expect(snap.steps?.map((s) => s.queue ?? null)).toEqual([null, null]);
+    }
+  );
+
+  it('(g) an older orchestrator response without these fields reports none of them', () => {
+    const snap = snapshotFromWorkflow(
+      wf('processing', [{ $type: 'imageGen', name: 'gen', status: 'processing' }])
+    );
+    expect(snap.steps).toEqual([{ name: 'gen', $type: 'imageGen', status: 'processing' }]);
+    expect(snap.eta).toEqual({
+      stepName: 'gen',
+      queuedAhead: null,
+      startsAt: null,
+      completesAt: null,
+      progress: null,
+      support: null,
+    });
+  });
+
+  it('(g) an explicitly null queuePosition, or one that is not an object, is no queue', () => {
+    for (const queuePosition of [null, 'available', 7]) {
+      const snap = snapshotFromWorkflow(
+        wf('scheduled', [{ $type: 'imageGen', name: 'gen', status: 'scheduled', queuePosition }])
+      );
+      expect(snap.steps?.[0].queue).toBeUndefined();
+      // Nothing queued and nothing processing: no ETA.
+      expect(snap.eta ?? null).toBeNull();
+    }
+  });
+
+  it('(h) an unknown step $type reports no progress', () => {
+    const snap = snapshotFromWorkflow(
+      wf('processing', [processing({ $type: 'someFutureStep', estimatedProgressRate: 0.5 })])
+    );
+    expect(snap.steps?.[0].progress).toBeUndefined();
+    expect(snap.eta?.progress).toBeNull();
+    expect(snap.eta?.stepName).toBe('gen');
+  });
+
+  // Single-step kinds (image, video, …) record no `steps[]` members, and they are most of what
+  // blocks submit — so the ETA is read off the orchestrator's steps, not off `steps[]`.
+  it('a workflow with no recorded steps still reports an ETA, without adding `steps`', () => {
+    const snap = snapshotFromWorkflow(
+      wf(
+        'scheduled',
+        [{ $type: 'imageGen', name: BLOCK_STEP_NAME, status: 'scheduled', queuePosition: QUEUE }],
+        false
+      )
+    );
+    expect(snap.steps).toBeUndefined();
+    expect(snap.eta).toEqual({
+      stepName: BLOCK_STEP_NAME,
+      queuedAhead: 7,
+      startsAt: T_START,
+      completesAt: T_DONE,
+      progress: null,
+      support: 'available',
+    });
+  });
+});
+
+/**
+ * WHOLE-SNAPSHOT contract fixtures for the SDK's own contract test: these two objects are
+ * what the SDK repo copies, so they are asserted whole here (`toStrictEqual`, so an extra
+ * key or an explicit `undefined` fails too) rather than field by field.
+ */
+describe('snapshotFromWorkflow — queue/ETA/progress contract fixtures', () => {
+  const recorded = (names: string[]) => ({
+    [WORKFLOW_METADATA_BLOCK_STEPS_KEY]: names.map((name) => ({ name })),
+  });
+
+  it('queued', () => {
+    const snap = snapshotFromWorkflow({
+      id: 'wf_contract_queued',
+      status: 'scheduled',
+      createdAt: '2026-11-14T12:00:00Z',
+      cost: { total: 24 },
+      metadata: recorded(['gen']),
+      steps: [
+        {
+          $type: 'imageGen',
+          name: 'gen',
+          status: 'scheduled',
+          queuePosition: {
+            support: 'available',
+            precedingJobs: 7,
+            estimatedStartAt: '2026-11-14T12:00:07Z',
+            estimatedCompleteAt: '2026-11-14T12:01:13Z',
+          },
+        },
+      ],
+    } as never);
+    expect(snap).toStrictEqual({
+      workflowId: 'wf_contract_queued',
+      status: 'pending',
+      cost: { total: 24 },
+      steps: [
+        {
+          name: 'gen',
+          $type: 'imageGen',
+          status: 'pending',
+          queue: {
+            precedingJobs: 7,
+            estimatedStartAt: '2026-11-14T12:00:07Z',
+            estimatedCompleteAt: '2026-11-14T12:01:13Z',
+            support: 'available',
+          },
+        },
+      ],
+      eta: {
+        stepName: 'gen',
+        queuedAhead: 7,
+        startsAt: '2026-11-14T12:00:07Z',
+        completesAt: '2026-11-14T12:01:13Z',
+        progress: null,
+        support: 'available',
+      },
+    });
+  });
+
+  it('processing', () => {
+    const snap = snapshotFromWorkflow({
+      id: 'wf_contract_processing',
+      status: 'processing',
+      createdAt: '2026-11-14T12:00:00Z',
+      cost: { total: 31 },
+      metadata: recorded(['clip']),
+      steps: [
+        {
+          $type: 'videoGen',
+          name: 'clip',
+          status: 'processing',
+          startedAt: '2026-11-14T12:00:21Z',
+          estimatedProgressRate: 0.42,
+        },
+      ],
+    } as never);
+    expect(snap).toStrictEqual({
+      workflowId: 'wf_contract_processing',
+      status: 'processing',
+      cost: { total: 31 },
+      steps: [
+        {
+          name: 'clip',
+          $type: 'videoGen',
+          status: 'processing',
+          progress: 0.42,
+          startedAt: '2026-11-14T12:00:21Z',
+        },
+      ],
+      eta: {
+        stepName: 'clip',
+        queuedAhead: null,
+        startsAt: null,
+        completesAt: null,
+        progress: 0.42,
+        support: null,
+      },
+    });
   });
 });

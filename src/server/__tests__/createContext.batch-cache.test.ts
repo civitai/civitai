@@ -22,8 +22,8 @@ vi.mock('~/server/trpc', () => ({ createCallerFactory: () => (ctx: unknown) => c
 
 const { createContext } = await import('../createContext');
 
-const cacheFor = async (query: Record<string, string>) => {
-  const req = { headers: {}, socket: {}, cookies: {}, query } as unknown as NextApiRequest;
+const cacheFor = async (query: Record<string, string>, headers: Record<string, string> = {}) => {
+  const req = { headers, socket: {}, cookies: {}, query } as unknown as NextApiRequest;
   const res = { once: vi.fn(), writableEnded: false } as unknown as NextApiResponse;
   return (await createContext({ req, res })).cache;
 };
@@ -42,6 +42,17 @@ describe('createContext cache settings', () => {
   // uncapped answer back out; the browser only batches when signed in.
   it('a signed-out streamed batch is never cached', async () => {
     expect(await cacheFor({ batch: '1' })).toMatchObject(none);
+  });
+
+  it("a verified crawler's call is never cached", async () => {
+    expect(await cacheFor({}, { 'x-civitai-verified-bot': 'googlebot' })).toMatchObject(none);
+    expect(await cacheFor({}, { 'x-civitai-verified-bot': 'bingbot' })).toMatchObject(none);
+  });
+
+  it('an unrecognised crawler value is a signed-out call and keeps the edge cache', async () => {
+    expect(await cacheFor({}, { 'x-civitai-verified-bot': 'somebot' })).toMatchObject({
+      edgeTTL: 60,
+    });
   });
 
   it('a signed-in call is never cached, batched or not', async () => {

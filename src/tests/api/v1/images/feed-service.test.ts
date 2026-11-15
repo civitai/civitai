@@ -17,6 +17,7 @@ import type * as PromClient from '~/server/prom/client';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 const h = vi.hoisted(() => ({
+  degradeOn: vi.fn(() => false),
   meiliOffCounted: [] as Array<Record<string, string>>,
   flagsAsked: [] as string[],
   available: vi.fn(() => true),
@@ -98,6 +99,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
       h.flagsAsked.push(flag);
       return false;
     }),
+    isFliptSync: (flag: string) =>
+      flag === 'feed-service-degrade' ? h.degradeOn() : actual.isFliptSync(flag as never),
   };
 });
 vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
@@ -364,6 +367,44 @@ describe('/api/v1/images served by the feed service', () => {
       expect(h.meiliOffCounted).toEqual([
         { answer: 'unavailable', reason: 'timeout', route: 'rest' },
       ]);
+    });
+
+    describe('with feed-service-degrade on', () => {
+      beforeEach(() => {
+        h.degradeOn.mockReturnValue(true);
+        delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
+      });
+      afterEach(() => {
+        h.degradeOn.mockReturnValue(false);
+        delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
+      });
+
+      it('is a retryable 503 without calling the feed once the breaker is open', async () => {
+        h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        for (let i = 0; i < 20; i++) expect((await get({})).statusCode).toBe(503);
+        expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(20);
+        h.meiliOffCounted.length = 0;
+        const res = await get({});
+        expect(res.statusCode).toBe(503);
+        expect(res.headers['retry-after']).toBe('2');
+        expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(20);
+        expect(h.meiliOffCounted).toEqual([
+          { answer: 'unavailable', reason: 'breaker', route: 'rest' },
+        ]);
+      });
+
+      it('serves the last good first page when the feed fails', async () => {
+        expect((await get({})).statusCode).toBe(200);
+        h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        h.counted.length = 0;
+        const res = await get({});
+        expect(res.statusCode).toBe(200);
+        expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+        // The feed's failure is still counted as one, and the stale page is not recorded as a
+        // page the feed served.
+        expect(h.counted).toEqual([{ outcome: 'error', reason: 'fetch', route: 'rest' }]);
+        expect(h.record).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('refuses the Random sort, which the feed does not have', async () => {
@@ -733,6 +774,35 @@ describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
       );
       await expect(getAllImagesIndex(request(undefined))).rejects.toMatchObject({
         code: 'SERVICE_UNAVAILABLE',
+      });
+    });
+
+    describe('with feed-service-degrade on', () => {
+      const anonymous = () =>
+        ({ ...request(undefined), user: undefined } as Parameters<typeof getAllImagesIndex>[0]);
+      beforeEach(() => {
+        h.degradeOn.mockReturnValue(true);
+        delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
+      });
+      afterEach(() => {
+        h.degradeOn.mockReturnValue(false);
+        delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
+      });
+
+      it('serves an anonymous visitor the last good page when the feed fails', async () => {
+        await getAllImagesIndex(anonymous());
+        h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        const r = await getAllImagesIndex(anonymous());
+        expect(r.items.map((i) => i.id)).toEqual([9, 5]);
+        expect(r.source).toBe('feed');
+      });
+
+      it("never serves a signed-in viewer an anonymous visitor's page", async () => {
+        await getAllImagesIndex(anonymous());
+        h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        await expect(getAllImagesIndex(request(undefined))).rejects.toMatchObject({
+          code: 'SERVICE_UNAVAILABLE',
+        });
       });
     });
   });

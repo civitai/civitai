@@ -55,6 +55,20 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
     ]);
   });
 
+  it('ON-SITE accepted EDITOR on a LIVE listing: Earnings too, as the invite disclosure says', () => {
+    expect(
+      editorTabsFor({
+        kind: 'onsite',
+        appBlockId: 'ab_1',
+        role: 'editor',
+        status: 'approved',
+        capabilities: onsite,
+        lastModerationAction: null,
+        hasFeedback: false,
+      })
+    ).toEqual(['details', 'media', 'manifest', 'earnings', 'collaborators', 'history']);
+  });
+
   it('OFF-SITE owner: NO Manifest and NO Media — only Details + Collaborators', () => {
     const tabs = editorTabsFor({
       kind: 'offsite',

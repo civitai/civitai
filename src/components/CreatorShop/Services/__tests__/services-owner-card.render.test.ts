@@ -16,8 +16,8 @@ const mocks = vi.hoisted(() => ({
   dealsEnabled: [] as boolean[],
 }));
 
-vi.mock('~/components/CreatorShop/Services/ReportServiceButton', () => ({
-  ReportServiceButton: () => createElement('span', null, 'Report'),
+vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
+  ServiceOfferingMenu: () => null,
 }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: ReactNode }) => children,

@@ -8,9 +8,8 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   combineFrameAxes,
   readRatingAxes,
-  writeRatedAxes,
   type RatingAxes,
-} from '~/server/services/image-axis-rating.service';
+} from '~/server/services/image-nsfw-axes';
 import {
   applyIngestionSideEffects,
   buildAndInsertScanTags,
@@ -295,6 +294,7 @@ export async function processImageScanningWorkflow({
       workflowId,
       prompt,
       negativePrompt,
+      axes: scan.axes,
       log: IMAGE_SCANNING_LOG,
     });
   } catch (error) {
@@ -337,15 +337,6 @@ export async function processImageScanningWorkflow({
       },
       'webhooks'
     ).catch(() => null);
-  }
-
-  // Its own try: a failed side effect must not cost the image its axes, nor the axes the scan.
-  if (scan.axes) {
-    try {
-      await writeRatedAxes({ imageId, axes: scan.axes, workflowId, completedAt });
-    } catch {
-      // writeRatedAxes logs its own failures.
-    }
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.

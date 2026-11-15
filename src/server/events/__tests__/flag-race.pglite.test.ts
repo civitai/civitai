@@ -27,7 +27,9 @@ vi.mock('~/server/events/turf/turf.service', () => ({
   },
 }));
 
-const { swapFlagDay, pickCutAt, flagPot } = await import('~/server/events/turf/flag-day');
+const { swapFlagDay, pickCutAt, flagPot, flagSummaryKey } = await import(
+  '~/server/events/turf/flag-day'
+);
 const { freezeEventAwards, flagRaceConfigKey } = await import(
   '~/server/events/scoring/award-results'
 );
@@ -195,6 +197,8 @@ describe('the swap', () => {
     expect(day?.imageIds).toEqual([12, 11, 13]);
     expect(await homeItems()).toEqual([12, 11, 13]);
     expect(homeBlockCacheBust).toHaveBeenCalledOnce();
+    // The cached summary of the day it replaces goes too: a frozen day is cached for minutes.
+    expect(redisMock.sysRedis.del).toHaveBeenCalledWith(flagSummaryKey(EVENT.name));
 
     expect(await swapFlagDay(EVENT, FLAGS, new Date(SWAP.getTime() + 5 * 60_000))).toBeUndefined();
     expect(await homeItems()).toEqual([12, 11, 13]);

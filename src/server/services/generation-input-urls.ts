@@ -241,6 +241,11 @@ export type GenerationInputEntryPoint =
   | 'appBlocksPassThrough'
   | 'appBlocksWorkflow'
   | 'appBlocksInlineComfy'
+  /**
+   * Not a generation: `blocks.persistGenerationSource` asking whether the private source it just
+   * wrote is usable yet, so its pending polls count apart from real refusals.
+   */
+  | 'appBlocksSourcePersist'
   | 'enhancePrompt'
   | 'comicsCostEstimate'
   | 'comicPanelJob'
@@ -255,6 +260,7 @@ const APP_BLOCK_ENTRIES = new Set<GenerationInputEntryPoint>([
   'appBlocksPassThrough',
   'appBlocksWorkflow',
   'appBlocksInlineComfy',
+  'appBlocksSourcePersist',
 ]);
 
 /** Entry points where an external host is only counted while the external-host flag is off. */

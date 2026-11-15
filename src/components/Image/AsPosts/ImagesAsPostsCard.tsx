@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import type { ThemeIconProps } from '@mantine/core';
 import {
@@ -51,6 +52,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
@@ -340,6 +342,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   </HoverActionButton>
                 </RemixMenu>
               )}
+              <MoreLikeThisButton image={image} />
             </div>
           )}
           {safe && <RemixedCardFlyout imageId={image.id} />}
@@ -376,14 +379,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             entityType="image"
             reactions={image.reactions}
             metricsUnknown={image.stats?.statsUnknown}
-            metrics={{
-              likeCount: image.stats?.likeCountAllTime,
-              dislikeCount: image.stats?.dislikeCountAllTime,
-              heartCount: image.stats?.heartCountAllTime,
-              laughCount: image.stats?.laughCountAllTime,
-              cryCount: image.stats?.cryCountAllTime,
-              tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-            }}
+            metrics={imageStatsToReactionMetrics(image.stats)}
             readonly={!safe}
             className={classes.reactions}
             targetUserId={image.user.id}
@@ -512,14 +508,7 @@ function PostCarouselSlide({
             entityType="image"
             reactions={image.reactions}
             metricsUnknown={image.stats?.statsUnknown}
-            metrics={{
-              likeCount: image.stats?.likeCountAllTime,
-              dislikeCount: image.stats?.dislikeCountAllTime,
-              heartCount: image.stats?.heartCountAllTime,
-              laughCount: image.stats?.laughCountAllTime,
-              cryCount: image.stats?.cryCountAllTime,
-              tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-            }}
+            metrics={imageStatsToReactionMetrics(image.stats)}
             readonly={!safe}
             className={classes.reactions}
             targetUserId={image.user.id}

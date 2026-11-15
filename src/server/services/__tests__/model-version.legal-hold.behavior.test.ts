@@ -81,7 +81,11 @@ vi.mock('~/server/services/orchestrator/models', () => ({
 vi.mock('~/server/services/orchestrator/scanned-file-airs', () => ({
   bustVersionScannedFileAirs: mockBustFileAirs,
 }));
-vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
+vi.mock('~/server/services/post.service', () => ({
+  addPostImage: vi.fn(),
+  createPost: vi.fn(),
+  bustCachesForPosts: mockBustCachesForPosts,
+}));
 const { mockBustPostVersionCache } = vi.hoisted(() => ({ mockBustPostVersionCache: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
@@ -112,6 +116,15 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => {
 });
 vi.mock('~/utils/storage-resolver', () => ({
   deregisterFileLocations: mockDeregisterFileLocations,
+}));
+
+const { flagImagesOnRestrictedVersions, mockBustCachesForPosts } = vi.hoisted(() => ({
+  flagImagesOnRestrictedVersions: vi.fn(async () => ({ flagged: 0, postIds: [] as number[] })),
+  mockBustCachesForPosts: vi.fn(async (_postIds: number[]) => undefined),
+}));
+vi.mock('~/server/services/restricted-images.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  flagImagesOnRestrictedVersions,
 }));
 
 import { LEGAL_HOLD_REFUSAL, OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
@@ -402,6 +415,27 @@ describe('mergeVersions', () => {
     expect((error as Error).message).toContain('deadlock detected');
     const left = await versionIds(db);
     for (const id of sourceVersionIds) expect(left).toContain(id);
+    expect(flagImagesOnRestrictedVersions).not.toHaveBeenCalled();
+  });
+
+  it("applies the restricted-base-model rule to the target version, which now holds the sources' images", async () => {
+    const { targetVersionId } = stubModel(CLEAN);
+
+    await merge(CLEAN);
+
+    expect(flagImagesOnRestrictedVersions).toHaveBeenCalledTimes(1);
+    expect(flagImagesOnRestrictedVersions).toHaveBeenCalledWith({
+      modelVersionIds: [targetVersionId],
+    });
+  });
+
+  it('refreshes the posts of the images it restricts', async () => {
+    stubModel(CLEAN);
+    flagImagesOnRestrictedVersions.mockResolvedValueOnce({ flagged: 2, postIds: [7, 8] });
+
+    await merge(CLEAN);
+
+    expect(mockBustCachesForPosts).toHaveBeenCalledWith([7, 8]);
   });
 
   it('refuses the merge of a model a held account owned before, before the transaction', async () => {

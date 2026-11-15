@@ -134,14 +134,19 @@ export function fixtureFile(path: string): () => FixtureCatalog {
 
 /**
  * The in-memory {@link SnapshotStore}, with the same per-stream bound as the Redis one. Fixture
- * mode runs on it, and so do the adapter's tests: `puts`, `touches`, `size` and `clear` are for
- * them.
+ * mode runs on it, and so do the adapter's tests: `gets`, `puts`, `touches`, `size` and `clear`
+ * are for them.
  */
-export function createMemorySnapshotStore(
-  keep: number = STATES_KEPT_PER_STREAM
-): SnapshotStore & { puts(): number; touches(): number; size(): number; clear(): void } {
+export function createMemorySnapshotStore(keep: number = STATES_KEPT_PER_STREAM): SnapshotStore & {
+  gets(): number;
+  puts(): number;
+  touches(): number;
+  size(): number;
+  clear(): void;
+} {
   const sets = new Map<string, string>();
   const streams = new Map<string, string[]>();
+  let gets = 0;
   let puts = 0;
   let touches = 0;
   const retain = (digest: string, stream: string) => {
@@ -150,7 +155,10 @@ export function createMemorySnapshotStore(
     for (const old of evicted) sets.delete(old);
   };
   return {
-    get: async (digest) => sets.get(digest) ?? null,
+    get: async (digest) => {
+      gets++;
+      return sets.get(digest) ?? null;
+    },
     put: async (digest, value, stream) => {
       puts++;
       sets.set(digest, value);
@@ -160,6 +168,7 @@ export function createMemorySnapshotStore(
       touches++;
       retain(digest, stream);
     },
+    gets: () => gets,
     puts: () => puts,
     touches: () => touches,
     size: () => sets.size,

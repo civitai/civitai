@@ -15,6 +15,8 @@ export function HatArt({
   className,
   width = 256,
   fit,
+  loading = 'lazy',
+  onError,
 }: {
   url: string;
   color?: string;
@@ -22,6 +24,9 @@ export function HatArt({
   /** Source width in px; about twice the displayed size. */
   width?: number;
   fit?: EventDecorationFit;
+  /** `eager` for art shown on a timer, where a lazy fetch starts too late. */
+  loading?: 'lazy' | 'eager';
+  onError?: () => void;
 }) {
   const box = getHatPreviewBox(fit);
   return (
@@ -57,7 +62,8 @@ export function HatArt({
               }
             : undefined
         }
-        loading="lazy"
+        loading={loading}
+        onError={onError}
         alt=""
       />
     </div>

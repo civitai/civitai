@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import type { JWTPayload } from 'jose';
 import { importJWK, SignJWT } from 'jose';
 import { env } from '~/env/server';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const BASE_URL = 'api.developer.coinbase.com';
 async function getJwt({ method, path }: { method: string; path: string }) {
@@ -57,7 +58,8 @@ export async function fetchCoinbase({
   path: string;
   body?: object;
 }) {
-  const response = await fetch(`https://${BASE_URL}${path}`, {
+  const response = await outboundFetch(`https://${BASE_URL}${path}`, {
+    timeoutMs: 30_000,
     method,
     headers: {
       Authorization: `Bearer ${await getJwt({ method, path })}`,

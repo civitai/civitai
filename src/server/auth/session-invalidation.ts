@@ -269,10 +269,11 @@ export async function refreshSession(
  * that need guaranteed invalidation (stolen-token reports, account-takeover
  * response) MUST retry after sysRedis recovery. This is symmetric with the
  * downstream read path too:
- * the refreshToken pipeline in token-refresh.ts is already fail-open on
- * read errors, so `tokenState === 'invalid'` is never observed during
- * the outage window even if a prior successful call wrote it — the
- * read itself fails open and the session continues. Throwing here would
+ * the revocation read (@civitai/auth createRevocationCheck) falls back on
+ * read errors to the markers its process had already read, so a marker
+ * written during the outage is not observed, and one written before it
+ * holds only in processes that read it before the outage; elsewhere the
+ * session continues. Throwing here would
  * not have prevented the session from staying alive; it would only have
  * 500'd the user-facing request that triggered the invalidation.
  */

@@ -90,17 +90,27 @@ describe('server submit reads the training status', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('still submits when the status read fails or times out', async () => {
+  // A failed or slow read serves the last status read in this process (see service-status.test.ts
+  // for the never-read case, which refuses).
+  it('honours the last status read when the status read fails or times out', async () => {
+    status.value = { available: true, blockedModels: [] };
+    await submitTrainingBatch('tok', [run], 1, null);
     status.read = () => Promise.reject(new Error('redis down'));
     await expect(submitTrainingBatch('tok', [run], 1, null)).resolves.toEqual({
       workflowIds: ['wf'],
     });
+
+    status.read = null;
+    status.value = { available: false, message: 'Paused for maintenance.' };
+    await expect(submitTrainingBatch('tok', [run], 1, null)).rejects.toThrow('Paused');
+    submitWorkflow.mockClear();
     vi.useFakeTimers();
     try {
       status.read = () => new Promise(() => {});
-      const pending = submitTrainingBatch('tok', [run], 1, null);
+      const pending = submitTrainingBatch('tok', [run], 1, null).catch((e: Error) => e);
       await vi.advanceTimersByTimeAsync(2500);
-      await expect(pending).resolves.toEqual({ workflowIds: ['wf'] });
+      await expect(pending).resolves.toMatchObject({ message: 'Paused for maintenance.' });
+      expect(submitWorkflow).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

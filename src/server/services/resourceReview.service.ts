@@ -15,6 +15,7 @@ import {
 } from '~/server/services/hot-reads-5.reads';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { readUserReviewsViaKysely } from '~/server/services/hot-reads-6.reads';
+import { readResourceReviewsPage } from '~/server/services/hot-reads-12.reads';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -23,7 +24,6 @@ import {
   resourceReviewSelect,
   resourceReviewSimpleSelect,
 } from '~/server/selectors/resourceReview.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   getBlockCheckOwnerIds,
@@ -189,35 +189,14 @@ export const getResourceReviewsInfinite = async ({
   }
 
   orderBy.push({ createdAt: 'desc' });
-  const items = await dbRead.resourceReview.findMany({
+  // On the replica; behind `kysely-hot-reads-12` the reviews' users (nested
+  // `userWithCosmeticsSelect`, one Prisma statement per relation) are one Kysely statement.
+  const items = await readResourceReviewsPage({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
     where: { AND },
     orderBy,
-    select: {
-      id: true,
-      modelId: true,
-      modelVersionId: true,
-      details: true,
-      createdAt: true,
-      rating: true,
-      recommended: true,
-      user: { select: userWithCosmeticsSelect },
-      // helper: { select: { imageCount: true } },
-      model: include?.includes('model')
-        ? {
-            select: { id: true, name: true },
-          }
-        : undefined,
-      modelVersion: include?.includes('model')
-        ? {
-            select: {
-              id: true,
-              name: true,
-            },
-          }
-        : undefined,
-    },
+    includeModel: !!include?.includes('model'),
   });
 
   let nextCursor: number | undefined;

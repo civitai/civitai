@@ -21,6 +21,7 @@ import {
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -203,11 +204,12 @@ const moderateTrainingData = async ({
   if (!env.ORCHESTRATOR_ENDPOINT) throw throwInternalServerError('No orchestrator endpoint');
 
   try {
-    const response = await fetch(
+    const response = await outboundFetch(
       `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/workflows/${encodeURIComponent(
         workflowId
       )}/moderation-gate`,
       {
+        timeoutMs: 30_000,
         method: 'POST',
         body: JSON.stringify({ approved: approve }),
         headers: {
@@ -246,9 +248,11 @@ const moderateTrainingData = async ({
       } else {
         // The orchestrator does not reliably fire this itself, and without it an approved or denied
         // run stays Paused in our database. A thrown fetch is the same half-done state as a refusal.
-        const hook = await fetch(
+        const hook = await outboundFetch(
           `https://api.civitai.com/webhooks/resource-training-v2/${modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
           {
+            // Our own webhook handler; generous so a slow but successful run is not reported failed.
+            timeoutMs: 120_000,
             method: 'POST',
             body: JSON.stringify({ workflowId, status }),
             headers: {

@@ -113,13 +113,20 @@ export const domainBrowsingLevelCap = ({
 }) => (!isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined);
 
 /**
+ * The verified search crawler making this request, if any: the header the API request policy
+ * sets after checking the user agent and source address. Its answers can differ from a
+ * signed-out visitor's, so the edge cache must not keep them (`createContext`).
+ */
+export const requestVerifiedCrawler = (req: Pick<NextApiRequest, 'headers'> | undefined) =>
+  parseVerifiedBotHeader(req?.headers[VERIFIED_BOT_HEADER]);
+
+/**
  * `domainBrowsingLevelCap` for a request. A verified search crawler counts as signed in
  * where mature content is allowed (the `Gated` paywall bypass) and as signed out elsewhere.
  */
 export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'features' | 'req'>) {
   const canViewNsfw = !!ctx.features.canViewNsfw;
-  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
-  const isAuthorized = !!ctx.user || (verifiedBot !== null && canViewNsfw);
+  const isAuthorized = !!ctx.user || (requestVerifiedCrawler(ctx.req) !== null && canViewNsfw);
   return domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
 }
 
@@ -188,6 +195,19 @@ export function resolveRequestBrowsingLevels(
 
   const cap = requestDomainBrowsingLevelCap(ctx);
   if (cap !== undefined) clampRequestBrowsingLevels(input, cap);
+}
+
+/**
+ * The level a listing of other people's posts is filtered to: the request's level (or, signed in,
+ * the saved preference), held to the domain cap; PG where neither says anything.
+ */
+export function relatedPostsBrowsingLevel(
+  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  requested: number | undefined
+) {
+  const levels: RequestBrowsingLevels = { browsingLevel: requested };
+  resolveRequestBrowsingLevels(levels, ctx);
+  return viewerBrowsingLevel(ctx as Context, levels.browsingLevel || publicBrowsingLevelsFlag);
 }
 
 /** The levels the public API v1 serves: every level, or only the safe ones in a restricted region. */

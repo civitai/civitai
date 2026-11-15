@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { QS } from '~/utils/qs';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 // DOCUMENTATION
 // https://documentation.tipalti.com/reference/quick-start
@@ -43,7 +44,8 @@ export class TipaltiCaller extends HttpCaller {
       return TipaltiCaller.acessToken;
     }
 
-    const response = await fetch(env.TIPALTI_API_TOKEN_URL, {
+    const response = await outboundFetch(env.TIPALTI_API_TOKEN_URL, {
+      timeoutMs: 30_000,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },

@@ -1,11 +1,11 @@
 /**
- * The registry source protocol, `Subscribe`, as `civitai/civitai-registry` defines it in
- * `spec/registry.md` @ 2709083. It has two bindings, served from one core
- * (`subscription.ts`): HTTP with server-sent events (`serve.ts`) and gRPC (`grpc.ts`).
+ * The registry protocol, `Subscribe`, as the registry spec defines it. It has two bindings,
+ * served from one core (`subscription.ts`): HTTP with server-sent events (`serve.ts`) and gRPC
+ * (`grpc.ts`).
  *
  * A subscription streams `upsert`* `live`, then `upsert`/`delete` with cursors, and `progress`
- * when the position moves with nothing to send; `end` answers a schema this source does not
- * serve.
+ * when the position moves with nothing to send; `end` answers a request this source can never
+ * serve anything for: a schema it does not serve, or `urns` none of which is of its namespace.
  */
 import type { Audience } from '~/server/registry-adapter/audience';
 
@@ -42,13 +42,11 @@ export interface SubscribeRequest {
 }
 
 /**
- * The spec's error names (`unknown_schema` is a registry's, never sent here), the auth
- * extension's two, and `unavailable` for the spec's "anything else", whose consumer reconnects
- * with backoff.
+ * The spec's error names, the auth extension's two, and `unavailable` for the spec's "anything
+ * else", whose consumer reconnects with backoff.
  */
 export type ErrorCode =
   | 'cursor_expired'
-  | 'unknown_schema'
   | 'bad_request'
   | 'slow_consumer'
   | 'unavailable'
@@ -61,7 +59,6 @@ export type ErrorCode =
  */
 export const HTTP_STATUS: Record<ErrorCode, number> = {
   cursor_expired: 410,
-  unknown_schema: 404,
   bad_request: 400,
   slow_consumer: 503,
   unavailable: 503,

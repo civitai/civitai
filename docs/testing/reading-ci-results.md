@@ -45,13 +45,18 @@ contains Actions results but no Tekton status does not cover the thing that gate
 `ESLint + Prettier (changed files)` is `skipped`, and the `App suites`, tRPC parity and schema drift
 jobs skip too. (The Windows dev-env smoke never runs on PRs; it runs on pushes to `main` and on
 dispatch: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>`.) That is the draft gate, not a broken run: the jobs start when the PR is
-marked ready (`gh pr ready <pr>`). To get a verdict while it is still a draft, add the `full-ci`
-label (`gh pr edit <pr> --add-label full-ci`). Adding it dispatches Lint (`only: all`, every job but
-ESLint) and the app suites on the branch head straight away (`.github/workflows/full-ci.yml`), and
+marked ready (`gh pr ready <pr>`). To get a full verdict while it is still a draft, add the `full-ci`
+label (`gh pr edit <pr> --add-label full-ci`) — only when the change touches code the unit or
+component suites cover and the PR is near merge-ready, not on every PR (every push while it is on
+runs the four unit shards). Adding it dispatches Lint (`only: all`, every job but
+ESLint) and the app suites on the branch head straight away (`.github/workflows/full-ci.yml`;
+nothing is dispatched when the PR's own run on that commit already started the unit shards; so a
+PR opened WITH the label gets the app suites only if its paths reach them), and
 every later push runs every Lint job, the unit shards included, in the PR run (the app suites if the
 PR's paths reach them) until the label is removed. Same-repo PRs only; it does not lift the draft
 gate on schema drift or tRPC parity. Or dispatch one on the branch, which
-runs against the branch head rather than the merge with `main`:
+runs against the branch head rather than the merge with `main` — only a suite the PR's own run on
+that commit did not run (with the label on, it ran every Lint suite a PR runs, unit shards included; read `gh pr checks <pr>`):
 
 ```bash
 gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>   # typecheck, unit, packages, component, ...
@@ -122,3 +127,34 @@ gh api repos/<owner>/<repo>/commits/$sha/check-runs -q '.total_count'
 > The workflow file already warns about the general form of this, about a different question:
 > *"Both were reasoning from the workflow's CONFIGURATION, which says nothing about whether the job
 > RUNS."* Everything above is the same lesson, arrived at from the other direction.
+
+## CI cost measurements behind the workflow comments
+
+The workflow comments state why each setting exists; the numbers that justified them live here,
+dated, because they go stale. All from the GitHub Actions REST API for `civitai/civitai`; "run
+wall" is a run's `run_started_at` to `updated_at` (it includes time queued for a runner), and
+"job-minutes" sums each job's `started_at` to `completed_at`.
+
+**`full-ci` dispatches that duplicated the PR run** (`.github/workflows/full-ci.yml`). For every
+Lint run the label dispatcher started on a day, look up the pull_request Lint runs with the same
+head SHA and check whether one has a `Unit tests (<n>)` job that was not skipped:
+
+| day | dispatcher Lint runs | already covered by the PR run | duplicate job-minutes |
+|---|---|---|---|
+| 2026-11-12 | 122 | 102 (84%), started a median 28 s after it | ~9,100 |
+| 2026-11-08 | 111 | 95 (86%) | ~8,300 |
+
+Over 2026-10-30..11-13 the dispatcher started 1,388 Lint runs. A skipped `unit` job is listed as
+plain `Unit tests`, and a run one as `Unit tests (<n>)`: no exception among the 1,931 `unit` jobs
+(78 of them skipped) of the 552 Lint runs read for those two days.
+
+**Push runs on `main`: cancel vs queue** (`concurrency` in lint.yml, apps.yml, moderator-boot.yml).
+Push runs on `main` over 2026-10-30..11-13, and a replay of the same push times with one run in
+progress plus one pending (the newest replacing an older pending one), each run taking the
+median duration of the window's completed push runs:
+
+| workflow | push runs | cancelled | completed: cancel → queue (replayed) | run wall: actual → replayed |
+|---|---|---|---|---|
+| Lint | 1,549 | 1,185 (76%) | 364 → 873 | 241h → 248h |
+| App suites | 1,502 | 999 (67%) | 503 → 978 | 191h → 205h |
+| Moderator boot | 1,106 | 365 (33%) | 741 → 1,013 | 51h → 47h |

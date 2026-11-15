@@ -483,6 +483,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
       ).resolves.toBeUndefined();
 
       expect(markedError?.text).toContain(`'{retryCount}'`);
+      // A hidden (NotFound) image keeps NotFound: Error + a locked rating would republish it.
+      expect(markedError?.text).toContain(`WHEN "ingestion" = 'NotFound'`);
       expect(markedError?.params).toContain(ImageIngestionStatus.Error);
       expect(markedError?.params).toContain(10);
       const stamped = markedError?.params.find(
@@ -675,7 +677,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
         return match ? update.params[Number(match[1]) - 1] : undefined;
       };
       return {
-        ingestion: param('ingestion'),
+        // The verdict is the ELSE arm of the NotFound guard (ingestionAfterVerdictSql).
+        ingestion: param('ingestion', `\\(CASE[\\s\\S]*?ELSE \\$(\\d+)::`),
         nsfwLevel: param('nsfwLevel'),
         // The scan's value is the ELSE arm; a stored moderator-only flag is kept over it.
         needsReview: param(
@@ -732,6 +735,22 @@ describe('image-scan-result webhook - pipeline tests', () => {
             ingestion: ImageIngestionStatus.Scanned,
             nsfwLevel: 8,
           }),
+        })
+      );
+    });
+
+    it('a clean verdict for a NotFound image is not reported as Scanned', async () => {
+      getImageState(43).ingestion = ImageIngestionStatus.NotFound;
+      await deliver(43, [scanStep(scanOutput()), hashStep]);
+
+      expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ imageId: 43, ingestion: ImageIngestionStatus.NotFound }),
+        })
+      );
+      expect(vi.mocked(signalClient.send)).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ imageId: 43, ingestion: ImageIngestionStatus.Scanned }),
         })
       );
     });

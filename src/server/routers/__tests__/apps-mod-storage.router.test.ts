@@ -1024,9 +1024,16 @@ describe('audit record', () => {
     // `before`-only row this service claims to have eliminated.
     mockPool.connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
 
-    await expect(
-      caller().purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
-    ).rejects.toThrow(/timeout exceeded/);
+    // Reaches the caller as a retryable 503 (an unreachable database is mapped by publicProcedure),
+    // with the service's own wrapper still the cause.
+    const err = (await caller()
+      .purgeApp({ userId: TARGET, appBlockId: APP_A.id, reason: 'abuse' })
+      .then(
+        () => undefined,
+        (e: unknown) => e
+      )) as { code?: string; cause?: unknown } | undefined;
+    expect(err?.code).toBe('SERVICE_UNAVAILABLE');
+    expect(String((err?.cause as Error | undefined)?.message)).toMatch(/timeout exceeded/);
 
     const created = mockDbWrite.appListingModerationEvent.create.mock.calls[0][0] as any;
 

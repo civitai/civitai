@@ -1,5 +1,4 @@
 import type * as z from 'zod';
-import { hfRepoOfAir, isRefusedHfRepo } from '~/server/services/blocks/app-base-model-licence';
 import { seamlessPano360Recipe } from './seamless-pano.recipe';
 import { starterComfyTxt2imgRecipe } from './starter-comfy-txt2img.recipe';
 
@@ -88,15 +87,16 @@ export type RecipeCivitaiResource = {
 // — an entitlement bypass. Keep every pinned version Public + Published +
 // non-early-access until that gate exists.
 //
-// v1 (`seamless-pano-360`): the pinned 360Redmond LoRA versions (model 118025) are
+// v1 (`seamless-pano-360`): the pinned 360Redmond LoRA version (model 118025) is
 // verified Public / Published / non-early-access / non-Private — safe under this
 // invariant.
 //
-// #2 (`starter-comfy-txt2img`): pins NO civitai resources at all — its only model
-// weights are huggingface staticAirs, never a civitai `modelVersionId`. So
-// `recipeCivitaiVersionIds(recipe)` returns `[]` and the entitlement gate has
-// nothing to check → it's skipped entirely, and the recipe is safe by construction
-// (there is no pinned civitai version that could bypass the belt).
+// Both recipes' base weights are `staticAirs`: official CivitaiOfficial versions,
+// pinned to a file. They are not entitlement-checked, because they are the
+// recipe's own fixed weights rather than a resource the viewer picks, and a file
+// can sit on a version (Z Image Base's text encoder) that is not itself offered
+// for generation. `app-step-resources` still resolves them for the licence block
+// and the mature cap.
 //
 // This is a DOC-INVARIANT, enforced by CODE REVIEW of each new recipe PR — NOT a
 // module-load DB check (there is no DB in this module; the registry loads at
@@ -153,7 +153,7 @@ export interface BlockRecipe<P = unknown> {
   resourceAllowlist: {
     checkpoints?: RecipeCivitaiResource[];
     loras?: RecipeCivitaiResource[];
-    /** huggingface AIRs the DiT engines pin (not gated civitai versions). */
+    /** File-pinned AIRs of official Civitai versions: the recipe's fixed base weights. */
     staticAirs: string[];
   };
   /** v1: 'pinned' (no user checkpoint). Follow-up: 'userPickedSdxl'. */
@@ -217,7 +217,7 @@ export function getRecipe(id: string): AnyBlockRecipe | undefined {
  * `assertViewerCanGeneratePageResources` (blocks.router.ts) BEFORE emitting the
  * step — so the registry can't be quietly edited to point at a gated /
  * early-access / Private resource without the entitlement belt catching it. The
- * huggingface `staticAirs` are exempt-by-construction (no civitai entitlement).
+ * `staticAirs` are not entitlement-checked (see the RESOURCE INVARIANT above).
  */
 export function recipeCivitaiVersionIds(recipe: AnyBlockRecipe): number[] {
   const { checkpoints = [], loras = [] } = recipe.resourceAllowlist;
@@ -241,17 +241,5 @@ for (const [id, recipe] of Object.entries(recipeRegistry)) {
           'Buzz ceiling (plan §5).'
       );
     }
-  }
-}
-
-// Excluded until hub task 1a1c6c4a6c010a212 lands; the submit-time check still covers it.
-const RECIPES_EXCLUDED_FROM_LICENCE_CHECK: ReadonlySet<string> = new Set(['seamless-pano-360']);
-
-for (const [id, recipe] of Object.entries(recipeRegistry) as [string, AnyBlockRecipe][]) {
-  if (RECIPES_EXCLUDED_FROM_LICENCE_CHECK.has(id)) continue;
-  for (const air of recipe.resourceAllowlist.staticAirs) {
-    const repo = hfRepoOfAir(air);
-    if (repo && isRefusedHfRepo(repo))
-      throw new Error(`recipe '${id}' pins a resource no app may use: ${air}`);
   }
 }

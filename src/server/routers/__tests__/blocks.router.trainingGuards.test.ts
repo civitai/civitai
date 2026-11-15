@@ -195,6 +195,10 @@ const repeatOverImages = (template: Record<string, unknown>) => ({
 });
 
 beforeEach(() => {
+  // Every Civitai version a step names exists, on a base model apps may use.
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+    where: { id: { in: number[] } };
+  }) => args.where.id.in.map((id) => ({ id, baseModel: 'SDXL 1.0' }))) as never);
   // Only the submit's account-restriction read gets a row; other user reads keep the default.
   dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
     select?: Record<string, boolean>;

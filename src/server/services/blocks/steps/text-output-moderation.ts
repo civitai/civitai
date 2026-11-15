@@ -795,15 +795,10 @@ export type TextOutputScreenResult =
  * selection swallow it. Recorded so nobody reads the paragraph above as covering
  * it.
  *
- * 🔴 THIS IS THE EXACT OPPOSITE OF `auditPromptServer`, AND THE ASYMMETRY IS
- * DELIBERATE — DO NOT "FIX" IT FOR CONSISTENCY. `auditPromptServer` fails SOFT:
- * it catches an `extModeration` outage internally and lets the prompt through,
- * because the text there is something the USER AUTHORED and blocking it during a
- * moderation-service outage would stop people working on their own content. The
- * text here is MODEL OUTPUT nobody has seen yet. If this failed soft, a scanner
- * outage would ship unscanned generated text to users, which is the single
- * outcome the posture exists to prevent. The next reader WILL assume the two
- * behave the same; they must not.
+ * 🔴 FAILS CLOSED ON A SCANNER OUTAGE AND HAS NO OFF-SWITCH — DO NOT MERGE WITH
+ * `auditPromptServer`, whose PROMPT_CHECK_FAIL_CLOSED governs user-authored
+ * prompts only. This is model output nobody has seen yet: failing soft would
+ * ship unscanned generated text.
  *
  * 🔴 NO VIOLATION / AUTO-MUTE COUNTER IS TOUCHED, and that is the other reason
  * `auditPromptServer` is the wrong tool here rather than merely the wrong

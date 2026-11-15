@@ -1,7 +1,9 @@
+import { newS3Client } from '~/utils/s3-client-factory';
 import { randomUUID } from 'crypto';
 import stream, { Readable } from 'stream';
 import archiver from 'archiver';
-import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import type { S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { env } from '~/env/server';
 import { getGetUrlByKey } from '~/utils/s3-utils';
@@ -39,7 +41,7 @@ export function getExportBucket(): ExportBucket | null {
     !PERSONAL_DATA_EXPORT_SECRET
   )
     return null;
-  const client = new S3Client({
+  const client = newS3Client({
     credentials: {
       accessKeyId: PERSONAL_DATA_EXPORT_KEY,
       secretAccessKey: PERSONAL_DATA_EXPORT_SECRET,

@@ -1,3 +1,6 @@
+import { getPostTextsForViewer } from '~/server/services/post-text.service';
+import { assertPostVisibleToViewer } from '~/server/services/post-viewer-visibility.service';
+import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 import { increaseDate } from '~/utils/date-helpers';
@@ -30,7 +33,6 @@ import {
   viewerBrowsingLevel,
 } from '~/server/utils/browsing-level';
 import { publishModel3D } from '~/server/services/model3d.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   handleLogError,
@@ -70,7 +72,6 @@ import {
   createPost,
   deletePost,
   getPostContestCollectionDetails,
-  getPostDetail,
   getPostResources,
   getPostResourceCovers,
   getPostsInfinite,
@@ -106,11 +107,11 @@ export const getPostsInfiniteHandler = async ({
     if (withheld) return { items: [], nextCursor: undefined };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
-      // The feed reads 0 as no filter, so an empty intersection is an empty page.
+      // An empty intersection is an empty page; passed on, the feed would read 0 as the public level.
       if (!browsingLevel) return { items: [], nextCursor: undefined };
       input = { ...input, browsingLevel };
     }
-    return await getPostsInfinite({ ...input, user: ctx.user });
+    return await getPostsInfinite({ ...input, user: ctx.user, asModerator: moderator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -622,20 +623,6 @@ export const updatePostHandler = async ({
   }
 };
 
-/**
- * The post as `post.get` serves it, or NOT_FOUND unless the viewer may see it: `getPostDetail`'s
- * visibility plus the owner's block of a non-moderator viewer.
- */
-async function assertPostVisibleToViewer({ id, user }: GetByIdInput & { user?: Context['user'] }) {
-  const post = await getPostDetail({ id, user });
-  if (!post) throw throwNotFoundError();
-  if (user && !user.isModerator) {
-    const blocked = await amIBlockedByUser({ userId: user.id, targetUserId: post.user.id });
-    if (blocked) throw throwNotFoundError();
-  }
-  return post;
-}
-
 export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const post = await assertPostVisibleToViewer({ ...input, user: ctx.user });
@@ -669,7 +656,16 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
     });
 
-    return { ...post, publishedWithApp };
+    // Storyline text items, after the post's own visibility above.
+    const texts = ctx.features.storylineText
+      ? await getPostTextsForViewer({
+          postId: post.id,
+          browsingLevel: storylineReaderLevel(ctx, undefined),
+          seesAll: !!ctx.user && (ctx.user.id === post.user.id || !!ctx.user.isModerator),
+        })
+      : [];
+
+    return { ...post, publishedWithApp, texts };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -699,7 +695,11 @@ export const deletePostHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const result = await deletePost({ ...input, deletedById: ctx.user.id });
+    const result = await deletePost({
+      ...input,
+      deletedById: ctx.user.id,
+      viewerIsModerator: ctx.user.isModerator,
+    });
     if (result) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({
@@ -769,10 +769,13 @@ export const removeResourceFromPostImageHandler = async ({
 
 export const reorderPostImagesHandler = async ({
   input,
+  ctx,
 }: {
   input: ReorderPostImagesInput;
   ctx: ProtectedContext;
 }) => {
+  // Text items move only with their flag; without it a reorder moves images alone.
+  if (input.items && !ctx.features.storylineText) throw throwAuthorizationError();
   try {
     return await reorderPostImages({ ...input });
   } catch (error) {
@@ -866,7 +869,19 @@ export const getPostResourcesHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
 
-    return resources.filter((x) => x.name !== 'vae');
+    const rows = resources.filter((x) => x.name !== 'vae');
+    const modelIds = [...new Set(rows.map((x) => x.modelId).filter(isDefined))];
+    const models = modelIds.length
+      ? await dbRead.model.findMany({
+          where: { id: { in: modelIds } },
+          select: { id: true, userId: true },
+        })
+      : [];
+    const ownerByModelId = new Map(models.map((m) => [m.id, m.userId]));
+    return rows.map((x) => ({
+      ...x,
+      modelUserId: x.modelId != null ? ownerByModelId.get(x.modelId) ?? null : null,
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

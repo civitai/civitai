@@ -66,11 +66,16 @@ vi.mock('~/server/meilisearch/client', () => ({
   MeiliCallTimeoutError: class MeiliCallTimeoutError extends Error {},
 }));
 
-vi.mock('~/server/prom/client', () => ({
-  registerCounter: () => ({ inc: vi.fn() }),
-  registerCounterWithLabels: () => ({ inc: vi.fn() }),
-  registerHistogram: () => ({ observe: vi.fn() }),
-}));
+// The checks register their metrics on the shared registry; the app shim itself pulls in the db
+// pools, so take the three registry exports from the package.
+vi.mock('~/server/prom/client', async () => {
+  const t = await import('@civitai/telemetry/client');
+  return {
+    instrumentationRegistry: t.instrumentationRegistry,
+    PROM_PREFIX: t.PROM_PREFIX,
+    registerInstrumentationMetric: t.registerInstrumentationMetric,
+  };
+});
 
 vi.mock('~/server/redis/client', () => ({
   redis: mocks.redis,

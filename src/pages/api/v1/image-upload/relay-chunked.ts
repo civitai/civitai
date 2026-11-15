@@ -7,7 +7,10 @@ import {
   type ImageUploadRelayOutcome,
 } from '~/server/prom/image-upload-relay.metrics';
 import { trackImageUpload } from '~/server/services/image-upload-action.service';
-import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
+import {
+  recordUploadKeyOwner,
+  withholdUnrecordedUploadKey,
+} from '~/server/services/image-url-ownership';
 import {
   type ImageUploadRelaySession,
   createRelaySession,
@@ -131,6 +134,11 @@ async function startSession(
 
   try {
     const { key, uploadId } = await startImageMultipartToStore({ contentType });
+    // Recorded at start, before any piece is sent, so a refusal (when on) wastes no upload.
+    if (withholdUnrecordedUploadKey(res, await recordUploadKeyOwner(key, userId))) {
+      await abortImageMultipartToStore({ key, uploadId }).catch(() => undefined);
+      return 'owner_unrecorded';
+    }
     let session: string;
     try {
       session = await createRelaySession({
@@ -270,8 +278,7 @@ async function completeSession(
     }
     // The TTL reaps it if this fails; the object is stored either way.
     await deleteRelaySession(sessionId).catch(() => undefined);
-    trackImageUpload(req, res, key);
-    await recordUploadKeyOwner(key, userId);
+    trackImageUpload(req, res, key, userId);
     res.status(200).json({ id: key });
     try {
       await logToAxiom({

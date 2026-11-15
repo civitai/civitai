@@ -4,11 +4,7 @@ import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
-import {
-  collectionsSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-} from '~/server/search-index';
+import { collectionsSearchIndex, imagesMetricsSearchIndex } from '~/server/search-index';
 import {
   getNsfwLevelRelatedEntities,
   updateCollectionsNsfwLevels,
@@ -135,6 +131,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       collectionIds: [], // Collections processed by separate job
       comicProjectIds,
       model3dIds,
+      serviceOfferingIds: relatedEntities.serviceOfferingIds,
     });
 
     const tuple: [entityIds: number[], entityType: EntityType, type: JobQueueType][] = [
@@ -303,6 +300,8 @@ const handleJobQueueCleanIfEmpty = createJob(
                   AND mv.status = 'Published'::"ModelStatus"
               )
               AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
+              -- Text items are content: a post with them is not empty.
+              AND NOT EXISTS (SELECT 1 FROM "PostText" t WHERE t."postId" = p.id)
               AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
           )
           DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)

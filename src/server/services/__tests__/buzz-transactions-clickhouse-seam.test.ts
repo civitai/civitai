@@ -69,6 +69,11 @@ import {
   streamUserBuzzTransactionsCsv,
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { getUserBuzzTransactionsMultiSchema } from '~/server/schema/buzz.schema';
+import {
+  TRANSACTION_TYPE_FILTER_OPTIONS,
+  getServerTransactionType,
+} from '~/utils/buzz-transaction-display';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 loggingMock.logToAxiom.mockResolvedValue(null);
 
@@ -150,6 +155,24 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     for (const q of sql) expect(q).toContain("type IN ('appAuthorFee','28','unknown_28')");
     // The spelling the base emitted, which matches no row the ingest MV wrote.
     for (const q of sql) expect(q).not.toContain("type = 'appAuthorFee'");
+  });
+
+  it('the /user/transactions "App Author Fee" choice reaches ClickHouse as every spelling', async () => {
+    // The page's own option, through the same mapping and input schema the request takes.
+    const option = TRANSACTION_TYPE_FILTER_OPTIONS.find((o) => o.label === 'App Author Fee');
+    expect(option).toBeDefined();
+    const input = getUserBuzzTransactionsMultiSchema.parse({
+      ...WINDOW,
+      accountTypes: [...WINDOW.accountTypes],
+      type: getServerTransactionType(option!.value),
+    });
+    expect(input.type).toBe(TransactionType.AppAuthorFee);
+
+    await getUserBuzzTransactionsMulti({ ...input, accountId: ACCOUNT_ID });
+
+    const sql = sentSql();
+    expect(sql.length).toBeGreaterThan(0);
+    for (const q of sql) expect(q).toContain("type IN ('appAuthorFee','28','unknown_28')");
   });
 
   it('keeps the filter out of the SQL entirely when no type is asked for', async () => {

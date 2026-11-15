@@ -209,6 +209,52 @@ describe('linkArticleContentImages', () => {
   });
 });
 
+describe('an owner save that leaves out an image held for review', () => {
+  const HELD = row(30, { needsReview: 'csam' });
+  const PLAIN = row(31);
+
+  beforeEach(() => {
+    // The article's connections, filtered as Prisma would: a dropped filter widens the result.
+    dbMock.dbWrite.imageConnection.findMany.mockImplementation((async ({ where }: any) => {
+      const { entityType: _type, entityId: _id, imageId, NOT, ...rest } = where;
+      if (Object.keys(rest).length) throw new Error(`unexpected filter ${Object.keys(rest)}`);
+      return [HELD, PLAIN]
+        .filter((image) => !imageId.notIn.includes(image.id))
+        .filter((image) => !NOT || image.needsReview !== NOT.image.needsReview)
+        .map((image) => ({ imageId: image.id }));
+    }) as never);
+  });
+
+  const deletedConnections = () =>
+    dbMock.dbWrite.imageConnection.deleteMany.mock.calls.flatMap(
+      ([args]: any) => args.where.imageId.in
+    );
+
+  it('🔴 keeps the held image connected to the article', async () => {
+    await linkArticleContentImages({
+      articleId: ARTICLE_ID,
+      content: '',
+      userId: AUTHOR,
+      ownerId: AUTHOR,
+      cleanupOnly: true,
+    });
+
+    expect(deletedConnections()).not.toContain(HELD.id);
+  });
+
+  it('still disconnects an image that is not held', async () => {
+    await linkArticleContentImages({
+      articleId: ARTICLE_ID,
+      content: '',
+      userId: AUTHOR,
+      ownerId: AUTHOR,
+      cleanupOnly: true,
+    });
+
+    expect(deletedConnections()).toEqual([PLAIN.id]);
+  });
+});
+
 describe('applyArticleContentChange', () => {
   const save = (userId: number) =>
     applyArticleContentChange({
@@ -357,7 +403,6 @@ const PART_OF_THE_IMAGE: Record<string, string> = {
   imageResourceNew: 'resources detected in it',
   imageTagsForReview: 'tags queued for review on it',
   caption: 'its storyline caption',
-  axisRating: 'its rating axes',
 };
 
 describe('unusedAuthorImage', () => {

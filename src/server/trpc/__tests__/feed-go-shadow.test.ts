@@ -1,0 +1,702 @@
+/**
+ * The feed-go shadow sampler (`~/server/trpc/feed-go-shadow`): which requests are sampled, what
+ * is forwarded (and what is not), the in-flight bound, and that every failure is swallowed into
+ * an outcome instead of reaching the request.
+ *
+ * Driven through `createFeedGoShadow` with injected flag / random / fetch / schedule, so each case
+ * pins one decision. The end-to-end path through the real route and transformer is
+ * `src/server/__tests__/trpc-feed-go-shadow.test.ts`.
+ */
+import superjson from 'superjson';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  createFeedGoShadow,
+  feedGoV1ShapeClass,
+  FEED_GO_SHADOW_PATH,
+  pickSessionCookies,
+  pickShadowHeaders,
+  readFeedGoShadowConfig,
+  SHADOW_DEFAULT_MAX_IN_FLIGHT,
+  SHADOW_DEFAULT_MAX_PER_SECOND,
+  SHADOW_DEFAULT_TIMEOUT_MS,
+  type FeedGoShadowConfig,
+} from '~/server/trpc/feed-go-shadow';
+
+const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
+const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
+const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
+
+function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig {
+  return {
+    url: URL_,
+    v1ImagesUrl: V1_URL,
+    rate: 1,
+    timeoutMs: 500,
+    maxInFlight: 4,
+    maxPerSecond: 1000,
+    ...overrides,
+  };
+}
+
+function request(overrides: Record<string, unknown> = {}) {
+  return {
+    method: 'GET',
+    headers: { host: 'civitai.com' },
+    query: { trpc: 'image.getImagesAsPostsInfinite', input: INPUT },
+    ...overrides,
+  } as {
+    method?: string;
+    headers: Record<string, string | string[] | undefined>;
+    query: Partial<Record<string, string | string[]>>;
+  };
+}
+
+/** A sampler whose scheduled sends run only when `flush()` is called. */
+function harness(
+  opts: {
+    config?: Partial<FeedGoShadowConfig>;
+    enabled?: boolean;
+    /** The `feed-go-shadow-v1-images` flag (default on here, as `enabled` is). */
+    v1?: boolean;
+    random?: number;
+    fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
+    now?: () => number;
+  } = {}
+) {
+  const outcomes: string[] = [];
+  const endpoints: string[] = [];
+  const encodes: Array<{ seconds: number; bytes: number }> = [];
+  const queued: Array<() => void> = [];
+  const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
+    opts.fetchImpl ?? (async () => new Response(null, { status: 202 }))
+  );
+  const shadow = createFeedGoShadow({
+    config: config(opts.config),
+    enabled: () => opts.enabled ?? true,
+    enabledV1Images: () => opts.v1 ?? true,
+    random: () => opts.random ?? 0,
+    fetch: fetchMock as unknown as typeof fetch,
+    record: (o, endpoint) => {
+      outcomes.push(o);
+      endpoints.push(endpoint);
+    },
+    recordEncode: (seconds, bytes) => void encodes.push({ seconds, bytes }),
+    now: opts.now ?? (() => 0),
+    schedule: (fn) => void queued.push(fn),
+  });
+  const flush = async () => {
+    while (queued.length) queued.shift()!();
+    // Let the fetch promise chain settle.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  };
+  return { shadow, outcomes, endpoints, encodes, fetchMock, flush, queued };
+}
+
+/** Run one request through begin → handler (serializing `written`) → finish. */
+function serve(
+  h: ReturnType<typeof harness>,
+  req = request(),
+  {
+    status = 200,
+    data = { items: [] },
+    written = superjson.serialize(data),
+    devalue = false,
+  }: {
+    status?: number;
+    data?: Parameters<typeof superjson.serialize>[0];
+    // What the transformer wrote: a superjson envelope, or a devalue string.
+    written?: unknown;
+    devalue?: boolean;
+  } = {}
+) {
+  const sample = h.shadow.begin(req);
+  h.shadow.run(sample, () => h.shadow.capture(data, written, devalue));
+  if (sample) h.shadow.finish(sample, status);
+  return sample;
+}
+
+describe('readFeedGoShadowConfig', () => {
+  it('is disabled with no URL, and defaults to rate 0', () => {
+    expect(readFeedGoShadowConfig({})).toEqual({
+      url: undefined,
+      v1ImagesUrl: undefined,
+      rate: 0,
+      timeoutMs: SHADOW_DEFAULT_TIMEOUT_MS,
+      maxInFlight: SHADOW_DEFAULT_MAX_IN_FLIGHT,
+      maxPerSecond: SHADOW_DEFAULT_MAX_PER_SECOND,
+    });
+  });
+
+  it('appends the compare path to the base URL', () => {
+    const c = readFeedGoShadowConfig({
+      FEED_GO_SHADOW_URL: 'http://feed-go.internal.test:9090',
+      FEED_GO_SHADOW_SAMPLE_RATE: '0.25',
+      FEED_GO_SHADOW_TIMEOUT_MS: '750',
+      FEED_GO_SHADOW_MAX_IN_FLIGHT: '3',
+      FEED_GO_SHADOW_MAX_PER_SECOND: '2.5',
+    });
+    expect(c).toEqual({
+      url: `http://feed-go.internal.test:9090${FEED_GO_SHADOW_PATH}`,
+      v1ImagesUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/images',
+      rate: 0.25,
+      timeoutMs: 750,
+      maxInFlight: 3,
+      maxPerSecond: 2.5,
+    });
+  });
+
+  it('rejects a non-http URL and clamps out-of-range numbers', () => {
+    const c = readFeedGoShadowConfig({
+      FEED_GO_SHADOW_URL: 'redis://x:1',
+      FEED_GO_SHADOW_SAMPLE_RATE: '7',
+      FEED_GO_SHADOW_TIMEOUT_MS: '999999',
+      FEED_GO_SHADOW_MAX_IN_FLIGHT: '-2',
+      FEED_GO_SHADOW_MAX_PER_SECOND: '0',
+    });
+    expect(c.url).toBeUndefined();
+    expect(c.v1ImagesUrl).toBeUndefined();
+    expect(c.rate).toBe(1);
+    expect(c.timeoutMs).toBe(10_000);
+    expect(c.maxInFlight).toBe(1);
+    expect(c.maxPerSecond).toBe(0.1);
+    expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_URL: 'not a url' }).url).toBeUndefined();
+    expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_SAMPLE_RATE: 'abc' }).rate).toBe(0);
+  });
+});
+
+describe('pickSessionCookies / pickShadowHeaders', () => {
+  it('keeps only the session cookies, in order, with their exact values', () => {
+    expect(
+      pickSessionCookies(
+        '_ga=GA1.2.3; __Secure-civ-token=a.b.c; theme=dark; __Host-civ-token=d.e.f; civ-device=x'
+      )
+    ).toBe('__Secure-civ-token=a.b.c; __Host-civ-token=d.e.f');
+    expect(pickSessionCookies('civ-token=plain')).toBe('civ-token=plain');
+    // A name that merely contains the session name is not a session cookie.
+    expect(pickSessionCookies('xciv-token=1; civ-token-old=2; __Secure-civitai-token=3')).toBe(
+      undefined
+    );
+    expect(pickSessionCookies(undefined)).toBeUndefined();
+  });
+
+  it('forwards exactly the headers the answer depends on', () => {
+    const headers = pickShadowHeaders(
+      request({
+        headers: {
+          host: 'civitai.green',
+          cookie: 'a=1; __Secure-civ-token=tok',
+          'cf-ipcountry': 'GB',
+          'cf-region-code': 'ENG',
+          'x-isuk': 'true',
+          'x-civitai-verified-bot': 'googlebot',
+          authorization: 'Bearer SECRET-KEY',
+          'user-agent': 'Mozilla',
+          'x-forwarded-for': '203.0.113.9',
+          'x-client-version': '5.0.1',
+        },
+      })
+    );
+    expect(headers).toEqual({
+      host: 'civitai.green',
+      cookie: '__Secure-civ-token=tok',
+      'cf-ipcountry': 'GB',
+      'cf-region-code': 'ENG',
+      'x-isuk': 'true',
+      'x-civitai-verified-bot': 'googlebot',
+      // Presence only: the credential itself never leaves the pod.
+      authorization: 'present',
+    });
+    expect(JSON.stringify(headers)).not.toContain('SECRET-KEY');
+  });
+
+  it('marks a ?token= credential as present too, and omits absent headers', () => {
+    expect(pickShadowHeaders(request({ headers: {}, query: { token: 'abc' } }))).toEqual({
+      authorization: 'present',
+    });
+    expect(pickShadowHeaders(request({ headers: { cookie: 'theme=dark' } }))).toEqual({});
+  });
+});
+
+describe('createFeedGoShadow — sampling decision', () => {
+  it('samples a GET of the procedure and POSTs input, headers and the written envelope', async () => {
+    const h = harness();
+    const data = { items: [{ id: 1, createdAt: new Date('2026-01-02T00:00:00.000Z') }] };
+    const written = superjson.serialize(data);
+    serve(h, request({ headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t; x=y' } }), {
+      data,
+      written,
+    });
+    // Nothing is sent on the request path: only once the scheduled send runs.
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    await h.flush();
+
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(URL_);
+    expect(init.method).toBe('POST');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input: INPUT,
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      node: JSON.parse(JSON.stringify(written)),
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it.each([
+    ['flag off', { enabled: false }, request()],
+    ['no URL', { config: { url: undefined } }, request()],
+    ['rate 0', { config: { rate: 0 } }, request()],
+    ['not sampled (random >= rate)', { config: { rate: 0.3 }, random: 0.3 }, request()],
+    ['POST (methodOverride)', {}, request({ method: 'POST' })],
+    ['another procedure', {}, request({ query: { trpc: 'image.getInfinite', input: INPUT } })],
+    [
+      'a batch',
+      {},
+      request({ query: { trpc: 'image.getImagesAsPostsInfinite', batch: '1', input: INPUT } }),
+    ],
+    [
+      'a multi-procedure path',
+      {},
+      request({ query: { trpc: 'image.getImagesAsPostsInfinite,user.getCreator', input: INPUT } }),
+    ],
+  ])('does not sample: %s', async (_name, opts, req) => {
+    const h = harness(opts as Parameters<typeof harness>[0]);
+    expect(serve(h, req)).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual([]);
+  });
+
+  it('samples a fraction: random below the rate is sampled, at the rate is not', () => {
+    expect(harness({ config: { rate: 0.3 }, random: 0.29 }).shadow.begin(request())).toBeDefined();
+    expect(harness({ config: { rate: 0.3 }, random: 0.3 }).shadow.begin(request())).toBeUndefined();
+  });
+});
+
+describe('createFeedGoShadow — never on the user path', () => {
+  it('drops a sample beyond maxInFlight, and frees the slot when the POST settles', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const h = harness({
+      config: { maxInFlight: 2 },
+      fetchImpl: async () => {
+        await gate;
+        return new Response(null, { status: 202 });
+      },
+    });
+    expect(serve(h)).toBeDefined();
+    expect(serve(h)).toBeDefined();
+    expect(h.shadow.inFlight()).toBe(2);
+    expect(serve(h)).toBeUndefined();
+    expect(h.outcomes).toEqual(['dropped_overload']);
+
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(2);
+    expect(h.shadow.inFlight()).toBe(2);
+    release();
+    await h.flush();
+    expect(h.shadow.inFlight()).toBe(0);
+    expect(h.outcomes).toEqual(['dropped_overload', 'sent', 'sent']);
+    expect(serve(h)).toBeDefined();
+  });
+
+  it('caps samples per second whatever the in-flight count (encode work is on the event loop)', async () => {
+    let t = 0;
+    // feed-go answers instantly, so the in-flight cap never binds: only the budget can.
+    const h = harness({ config: { maxPerSecond: 3, maxInFlight: 100 }, now: () => t });
+    for (let i = 0; i < 3; i++) {
+      expect(serve(h)).toBeDefined();
+      await h.flush();
+    }
+    expect(h.shadow.inFlight()).toBe(0);
+    expect(serve(h)).toBeUndefined();
+    expect(h.outcomes).toEqual(['sent', 'sent', 'sent', 'dropped_rate_limit']);
+    // A third of a second refills one token (3/s), and no more than one.
+    t = 334;
+    expect(serve(h)).toBeDefined();
+    expect(serve(h)).toBeUndefined();
+    // A long idle refills to one second's worth, never beyond it.
+    t = 60_000;
+    await h.flush();
+    expect([serve(h), serve(h), serve(h), serve(h)].filter(Boolean)).toHaveLength(3);
+    expect(h.fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('a budget below one per second still admits one sample', () => {
+    const h = harness({ config: { maxPerSecond: 0.1 }, now: () => 0 });
+    expect(serve(h)).toBeDefined();
+    expect(serve(h)).toBeUndefined();
+  });
+
+  it('counts the encode cost it paid, and drops the captured page once encoded', async () => {
+    let t = 0;
+    const h = harness({ now: () => (t += 5) });
+    const sample = serve(h)!;
+    expect(sample.captured).toBeDefined();
+    await h.flush();
+    const body = h.fetchMock.mock.calls[0][1].body as string;
+    expect(h.encodes).toEqual([{ seconds: 0.005, bytes: Buffer.byteLength(body) }]);
+    expect(sample.captured).toBeUndefined();
+  });
+
+  it('skips a non-200 answer and frees the slot', async () => {
+    const h = harness();
+    serve(h, request(), { status: 500 });
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('skips when nothing was captured (capture outside the sample scope)', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    h.shadow.capture({ items: [] }, superjson.serialize({ items: [] }), false); // no run() scope
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_no_capture']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('pairs each of two interleaved samples with its own input and its own response', async () => {
+    const h = harness();
+    const procedure = 'image.getImagesAsPostsInfinite';
+    const a = h.shadow.begin(request({ query: { trpc: procedure, input: 'input-A' } }))!;
+    const b = h.shadow.begin(request({ query: { trpc: procedure, input: 'input-B' } }))!;
+    const tick = () => new Promise<void>((r) => setImmediate(r));
+    // Both handlers are in flight at once; B began last but serializes FIRST, A serializes after.
+    const handlerA = h.shadow.run(a, async () => {
+      await tick();
+      await tick();
+      h.shadow.capture({ page: 'A' }, superjson.serialize({ page: 'A' }), false);
+    });
+    const handlerB = h.shadow.run(b, async () => {
+      await tick();
+      h.shadow.capture({ page: 'B' }, superjson.serialize({ page: 'B' }), false);
+    });
+    await Promise.all([handlerA, handlerB]);
+    h.shadow.finish(b, 200);
+    h.shadow.finish(a, 200);
+    await h.flush();
+
+    const pairs = h.fetchMock.mock.calls
+      .map(([, init]) => JSON.parse(init.body as string) as { input: string; node: unknown })
+      .map(({ input, node }) => [input, node]);
+    expect(pairs).toHaveLength(2);
+    expect(pairs).toEqual(
+      expect.arrayContaining([
+        ['input-A', { json: { page: 'A' } }],
+        ['input-B', { json: { page: 'B' } }],
+      ])
+    );
+    expect(h.outcomes).toEqual(['sent', 'sent']);
+  });
+
+  it('keeps the first capture of a request (one unbatched call serializes one result)', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    h.shadow.run(sample, () => {
+      h.shadow.capture({ a: 1 }, superjson.serialize({ a: 1 }), false);
+      h.shadow.capture({ a: 2 }, superjson.serialize({ a: 2 }), false);
+    });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(JSON.parse(h.fetchMock.mock.calls[0][1].body as string).node).toEqual({
+      json: { a: 1 },
+    });
+  });
+
+  it('a devalue response is captured by reference and superjson-encoded only at send time', async () => {
+    const h = harness();
+    const data = { items: [{ at: new Date('2026-02-03T04:05:06.000Z') }] };
+    const serialize = vi.spyOn(superjson, 'serialize');
+    try {
+      serve(h, request(), { data, written: 'DEVALUE-STRING', devalue: true });
+      expect(serialize).not.toHaveBeenCalled();
+      await h.flush();
+      expect(serialize).toHaveBeenCalledTimes(1);
+    } finally {
+      serialize.mockRestore();
+    }
+    const node = JSON.parse(h.fetchMock.mock.calls[0][1].body as string).node;
+    expect(node).toEqual(JSON.parse(JSON.stringify(superjson.serialize(data))));
+    expect(JSON.stringify(node)).not.toContain('DEVALUE-STRING');
+  });
+
+  it('counts a non-2xx answer as rejected', async () => {
+    const h = harness({ fetchImpl: async () => new Response('no', { status: 503 }) });
+    serve(h);
+    await h.flush();
+    expect(h.outcomes).toEqual(['rejected']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('counts a timeout and a connection error, and never throws', async () => {
+    const timeout = harness({
+      fetchImpl: async () => {
+        throw new DOMException('timed out', 'TimeoutError');
+      },
+    });
+    serve(timeout);
+    await timeout.flush();
+    expect(timeout.outcomes).toEqual(['timeout']);
+
+    const refused = harness({
+      fetchImpl: async () => {
+        throw new TypeError('fetch failed');
+      },
+    });
+    serve(refused);
+    await refused.flush();
+    expect(refused.outcomes).toEqual(['error']);
+    expect(refused.shadow.inFlight()).toBe(0);
+  });
+
+  it('a fetch that throws synchronously is counted, not thrown', async () => {
+    const h = harness({
+      fetchImpl: (() => {
+        throw new TypeError('bad url');
+      }) as never,
+    });
+    serve(h);
+    await expect(h.flush()).resolves.toBeUndefined();
+    expect(h.outcomes).toEqual(['error']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a payload that cannot be encoded is counted, not thrown', async () => {
+    const h = harness();
+    serve(h, request(), { written: { json: { n: BigInt(1) } } as never });
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_encode']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('capture is a no-op with no sample in flight', () => {
+    const h = harness();
+    expect(() => h.shadow.capture({}, {}, false)).not.toThrow();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('finish twice frees the slot once', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    h.shadow.finish(sample, 500);
+    h.shadow.finish(sample, 500);
+    expect(h.shadow.inFlight()).toBe(0);
+    expect(h.outcomes).toEqual(['skipped_status']);
+  });
+});
+
+/** A `GET /api/v1/images` request as the Next route receives it. */
+function restRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    method: 'GET',
+    url: '/api/v1/images?modelVersionId=9&limit=2',
+    headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t; x=y', 'cf-ipcountry': 'GB' },
+    query: { modelVersionId: '9', limit: '2' },
+    ...overrides,
+  } as {
+    method?: string;
+    url?: string;
+    headers: Record<string, string | string[] | undefined>;
+    query: Partial<Record<string, string | string[]>>;
+  };
+}
+
+/** Run one REST request through begin → the handler's capture of its 200 body → finish. */
+function serveRest(
+  h: ReturnType<typeof harness>,
+  req = restRequest(),
+  { status = 200, body = { items: [], metadata: {} } as unknown } = {}
+) {
+  const sample = h.shadow.beginV1Images(req);
+  if (sample) {
+    if (status === 200) h.shadow.captureV1Images(sample, body);
+    h.shadow.finish(sample, status);
+  }
+  return sample;
+}
+
+describe('createFeedGoShadow — GET /api/v1/images', () => {
+  it('POSTs the raw query string, the path, the forwarded headers and the JSON body', async () => {
+    const h = harness();
+    const body = {
+      items: [{ id: 11, createdAt: new Date('2024-03-01T10:00:00.000Z'), tags: undefined }],
+      metadata: { nextCursor: 'feed:1:2' },
+    };
+    serveRest(h, restRequest(), { body });
+    // Nothing is sent on the request path: only once the scheduled send runs.
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    await h.flush();
+
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(V1_URL);
+    expect(init.method).toBe('POST');
+    // The body as res.json writes it: a Date as its ISO string, an undefined member dropped.
+    expect(init.body).toBe(
+      '{"input":"modelVersionId=9&limit=2","path":"/api/v1/images",' +
+        '"headers":{"host":"civitai.com","cf-ipcountry":"GB","cookie":"__Secure-civ-token=t"},' +
+        '"node":{"items":[{"id":11,"createdAt":"2024-03-01T10:00:00.000Z"}],' +
+        '"metadata":{"nextCursor":"feed:1:2"}}}'
+    );
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['v1-images']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a request with no query string is mirrored with an empty input', async () => {
+    const h = harness();
+    serveRest(h, restRequest({ url: '/api/v1/images', query: {} }));
+    await h.flush();
+    expect(JSON.parse(h.fetchMock.mock.calls[0][1].body as string)).toMatchObject({
+      input: '',
+      path: '/api/v1/images',
+    });
+  });
+
+  it.each([
+    ['its flag off', { v1: false }, restRequest()],
+    ['no URL', { config: { v1ImagesUrl: undefined } }, restRequest()],
+    ['rate 0', { config: { rate: 0 } }, restRequest()],
+    ['not sampled (random >= rate)', { config: { rate: 0.3 }, random: 0.3 }, restRequest()],
+    ['a POST', {}, restRequest({ method: 'POST' })],
+  ])('does not sample: %s', async (_name, opts, req) => {
+    const h = harness(opts as Parameters<typeof harness>[0]);
+    expect(serveRest(h, req)).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual([]);
+  });
+
+  it('each route has its own flag', () => {
+    // The gallery flag alone does not sample the REST route...
+    const gallery = harness({ enabled: true, v1: false });
+    expect(gallery.shadow.beginV1Images(restRequest())).toBeUndefined();
+    expect(gallery.shadow.begin(request())).toBeDefined();
+    // ...nor the REST flag the gallery procedure.
+    const rest = harness({ enabled: false, v1: true });
+    expect(rest.shadow.begin(request())).toBeUndefined();
+    expect(rest.shadow.beginV1Images(restRequest())).toBeDefined();
+  });
+
+  it.each([
+    [
+      'a bearer header',
+      restRequest({ headers: { host: 'civitai.com', authorization: 'Bearer KEY-1' } }),
+    ],
+    [
+      'a ?token= key',
+      restRequest({
+        url: '/api/v1/images?token=KEY-1&limit=2',
+        query: { token: 'KEY-1', limit: '2' },
+      }),
+    ],
+  ])('never mirrors an API credential (%s): counted as skipped_credential', async (_name, req) => {
+    const h = harness();
+    expect(serveRest(h, req)).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_credential']);
+    expect(h.endpoints).toEqual(['v1-images']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('holds no in-flight slot while the handler runs, only once it answered 200', async () => {
+    const h = harness();
+    const sample = h.shadow.beginV1Images(restRequest())!;
+    expect(sample).toBeDefined();
+    expect(h.shadow.inFlight()).toBe(0);
+    h.shadow.captureV1Images(sample, { items: [], metadata: {} });
+    h.shadow.finish(sample, 200);
+    expect(h.shadow.inFlight()).toBe(1); // the queued send
+    await h.flush();
+    expect(h.shadow.inFlight()).toBe(0);
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it('shares the in-flight cap with the gallery procedure', async () => {
+    const h = harness({ config: { maxInFlight: 1 } });
+    // A gallery sample holds the only slot (its POST has not settled).
+    expect(h.shadow.begin(request())).toBeDefined();
+    expect(serveRest(h)).toBeDefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['dropped_overload']);
+    expect(h.endpoints).toEqual(['v1-images']);
+  });
+
+  it('has its own per-second bucket, so REST samples cannot starve the gallery', async () => {
+    const h = harness({ config: { maxPerSecond: 1 }, now: () => 0 });
+    // The REST bucket's one token is spent...
+    serveRest(h);
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent']);
+    serveRest(h);
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+    // ...and the gallery procedure's bucket is untouched.
+    expect(h.shadow.begin(request())).toBeDefined();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+  });
+
+  it('a non-200 answer is skipped and frees the slot', async () => {
+    const h = harness();
+    serveRest(h, restRequest(), { status: 503 });
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('each route captures only its own response', async () => {
+    const h = harness();
+    const sample = h.shadow.beginV1Images(restRequest())!;
+    h.shadow.run(sample, () =>
+      h.shadow.capture({ items: [] }, superjson.serialize({ items: [] }), false)
+    );
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_no_capture']);
+    // And the other way round: a gallery sample ignores the REST capture.
+    const g = h.shadow.begin(request())!;
+    h.shadow.captureV1Images(g, { items: [] });
+    h.shadow.finish(g, 200);
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_no_capture', 'skipped_no_capture']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('feedGoV1ShapeClass', () => {
+  const req = restRequest();
+  it.each([
+    ['a plain gallery page', { modelVersionId: 9 }, 200, 'ported'],
+    ['modelId with a version', { modelId: 3, modelVersionId: 9 }, 200, 'ported'],
+    ['an id batch', { ids: [1, 2] }, 200, 'unported_ids'],
+    ['one image', { imageId: 5 }, 200, 'unported_imageId'],
+    ['a model without a version', { modelId: 3 }, 200, 'unported_modelId_only'],
+    ['tags', { tags: [5] }, 200, 'unported_tags'],
+    ['base models', { baseModels: ['SDXL 1.0'] }, 200, 'unported_baseModels'],
+    ['meta', { withMeta: true }, 200, 'unported_withMeta'],
+    ['tags on images', { withTags: true }, 200, 'unported_withTags'],
+    ['a 503', { modelVersionId: 9 }, 503, 'non200'],
+  ] as const)('%s is %s', (_name, data, status, want) => {
+    expect(feedGoV1ShapeClass(req, data, status)).toBe(want);
+  });
+
+  it('a query that did not parse is non200, an API credential is api_key', () => {
+    expect(feedGoV1ShapeClass(req, null, 200)).toBe('non200');
+    expect(
+      feedGoV1ShapeClass(restRequest({ headers: { authorization: 'Bearer K' } }), {}, 200)
+    ).toBe('api_key');
+    expect(feedGoV1ShapeClass(restRequest({ query: { token: 'K' } }), { ids: [1] }, 200)).toBe(
+      'api_key'
+    );
+  });
+});

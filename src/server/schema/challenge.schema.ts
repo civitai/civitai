@@ -376,6 +376,7 @@ export const getInfiniteChallengesSchema = z.object({
 export type GetChallengeWinnersInput = z.infer<typeof getChallengeWinnersSchema>;
 export const getChallengeWinnersSchema = z.object({
   challengeId: z.number(),
+  browsingLevel: z.number().optional(),
 });
 
 // Query schema for user entry count

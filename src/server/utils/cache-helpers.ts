@@ -4,6 +4,7 @@ import { chunk } from 'lodash-es';
 // purpose: it is a pure helper with no client state, and importing it through the shim would
 // force every suite that mocks the shim to add it to its mock factory.
 import { CACHE_KEY_PREFIX, createCacheBuilders, prefixCacheKey } from '@civitai/redis';
+import { pack, unpack } from 'msgpackr';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -16,7 +17,10 @@ import {
 } from '~/server/prom/client';
 import type { RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
 import { redis, REDIS_KEYS, sysRedis } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { fetchThroughCacheStaleServedCounter } from '~/server/prom/cluster-cache-guard.metrics';
+import { env } from '~/env/server';
 
 export type CacheTarget = 'main' | 'sys';
 
@@ -101,29 +105,119 @@ type cachedQueryOptions = {
   ttl: number;
   tag: string | string[];
 };
+
+/**
+ * Per-process single-flight by key: concurrent calls for one key share the first call's `fn()`
+ * instead of each running it. Used where a cache is unavailable or missed and every caller would
+ * otherwise hit the origin (database / ClickHouse) at once — `queryCache` misses and
+ * `fetchThroughCache`'s fail-open path. An entry lives only while its `fn()` runs.
+ *
+ * 🔴 Every JOINER gets its OWN copy, decoded exactly as a cache hit is (msgpack round trip, the
+ * `redis.packed` codec): callers mutate what they get (post.service pops the cursor row off a
+ * page), and a cache hit never shares objects between callers. Not `structuredClone`: it THROWS on
+ * class instances such as `Prisma.Decimal` from a raw query, where the codec turns them into what a
+ * cache hit returns. A value the codec cannot pack is shared, as before. The first caller gets the
+ * original value, as without single-flight.
+ *
+ * The value is PACKED ONCE per flight — lazily, by the first joiner to run, so a flight nobody
+ * joins packs nothing — and each joiner UNPACKS its own copy from those bytes. The bytes are taken
+ * in the first joiner's own `.then` on the shared promise, which runs before the first caller can
+ * see the value as long as the first caller reaches it through an `async` function
+ * (`queryThroughCache`, `fetchThroughCache` — each adds ticks before its own caller resumes); every
+ * later joiner decodes the same bytes, so nothing a caller does to its value reaches a joiner.
+ * Pinned through the public API by "the first caller mutating synchronously on resolve cannot reach
+ * a joiner"; a new caller that awaits `singleFlight` directly and mutates in place must keep that.
+ */
+function createCodecCopier() {
+  // undefined: not packed yet; null: the codec could not pack it (shared, as before).
+  let packed: Buffer | null | undefined;
+  return function codecCopy<T>(value: T): T {
+    if (packed === undefined) {
+      try {
+        packed = pack(value);
+      } catch {
+        packed = null;
+      }
+    }
+    return packed === null ? value : (unpack(packed) as T);
+  };
+}
+
+export function createSingleFlight() {
+  const inFlight = new Map<
+    string,
+    { flight: Promise<unknown>; copy: ReturnType<typeof createCodecCopier> }
+  >();
+  return function singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = inFlight.get(key);
+    if (existing) return (existing.flight as Promise<T>).then(existing.copy);
+    // Promise.resolve().then(fn): a SYNCHRONOUS throw in fn is a rejection like any other, so the
+    // finally always runs and the entry is always removed.
+    const flight: Promise<T> = Promise.resolve()
+      .then(fn)
+      .finally(() => {
+        if (inFlight.get(key)?.flight === flight) inFlight.delete(key);
+      });
+    inFlight.set(key, { flight, copy: createCodecCopier() });
+    return flight;
+  };
+}
+
+/** queryCache / queryCacheRaw misses (query + write-back), by cache key. */
+const queryCacheMissFlight = createSingleFlight();
+
+/**
+ * The one body behind `queryCache` and `queryCacheRaw`: read the cached rows, else run the query and
+ * cache them. Both cache calls go through the cluster-cache guard (bounded, breaker-aware), so a
+ * cache that fails or never answers is a miss on the read and a skipped write-back — the query's
+ * rows are returned either way, never an error or a 15s wait for a cache. Concurrent misses for one
+ * key in this process run the query once (createSingleFlight).
+ */
+async function queryThroughCache<T extends object[]>(
+  run: () => Promise<T>,
+  key: string,
+  version: string | undefined,
+  query: Prisma.Sql,
+  options?: cachedQueryOptions
+): Promise<T> {
+  if (options?.ttl === 0) return run();
+
+  // this typing is not quite right, as we're creating redis keys on the fly here.
+  // These keys are minted from a free-form `key` rather than derived from REDIS_KEYS, so they
+  // don't inherit the environment prefix from the key table — apply it explicitly. Without
+  // this, previews would share these entries with production. No-op in production.
+  const cacheKey = prefixCacheKey(
+    [key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')
+  ) as RedisKeyTemplateCache;
+  const cachedData = await clusterCacheGuard.readOr(
+    'cache-helpers.queryCache get',
+    () => redis.packed.get<T>(cacheKey),
+    null,
+    { logExtra: { cache: key } }
+  );
+  if (cachedData) {
+    cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
+    return cachedData;
+  }
+
+  cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
+  return queryCacheMissFlight(cacheKey, async () => {
+    const result = await run();
+    await clusterCacheGuard.writeBestEffort(
+      'cache-helpers.queryCache set',
+      async () => {
+        await redis.packed.set(cacheKey, result, { EX: options?.ttl });
+        if (options?.tag) await tagCacheKey(cacheKey, options.tag);
+      },
+      { logExtra: { cache: key } }
+    );
+    return result;
+  });
+}
+
 export function queryCache(db: PrismaClient, key: string, version?: string) {
   return async function <T extends object[]>(query: Prisma.Sql, options?: cachedQueryOptions) {
-    if (options?.ttl === 0) return db.$queryRaw<T>(query);
-
-    // this typing is not quite right, as we're creating redis keys on the fly here.
-    // These keys are minted from a free-form `key` rather than derived from REDIS_KEYS, so they
-    // don't inherit the environment prefix from the key table — apply it explicitly. Without
-    // this, previews would share these entries with production. No-op in production.
-    const cacheKey = prefixCacheKey(
-      [key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')
-    ) as RedisKeyTemplateCache;
-    const cachedData = await redis.packed.get<T>(cacheKey);
-    if (cachedData && options?.ttl !== 0) {
-      cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-      return cachedData ?? ([] as unknown as T);
-    }
-
-    cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-    const result = await db.$queryRaw<T>(query);
-    await redis.packed.set(cacheKey, result, { EX: options?.ttl });
-
-    if (options?.tag) await tagCacheKey(cacheKey, options?.tag);
-    return result;
+    return queryThroughCache(() => db.$queryRaw<T>(query), key, version, query, options);
   };
 }
 
@@ -135,25 +229,13 @@ export function queryCache(db: PrismaClient, key: string, version?: string) {
 type RawQueryExecutor = <Row>(query: Prisma.Sql) => Promise<Row[]>;
 export function queryCacheRaw(executor: RawQueryExecutor, key: string, version?: string) {
   return async function <T extends object[]>(query: Prisma.Sql, options?: cachedQueryOptions) {
-    if (options?.ttl === 0) return (await executor<T[number]>(query)) as unknown as T;
-
-    // this typing is not quite right, as we're creating redis keys on the fly here.
-    // Same on-the-fly minting as queryCache above — apply the environment prefix explicitly.
-    const cacheKey = prefixCacheKey(
-      [key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')
-    ) as RedisKeyTemplateCache;
-    const cachedData = await redis.packed.get<T>(cacheKey);
-    if (cachedData && options?.ttl !== 0) {
-      cacheHitCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-      return cachedData ?? ([] as unknown as T);
-    }
-
-    cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-    const result = (await executor<T[number]>(query)) as unknown as T;
-    await redis.packed.set(cacheKey, result, { EX: options?.ttl });
-
-    if (options?.tag) await tagCacheKey(cacheKey, options?.tag);
-    return result;
+    return queryThroughCache(
+      async () => (await executor<T[number]>(query)) as unknown as T,
+      key,
+      version,
+      query,
+      options
+    );
   };
 }
 
@@ -261,6 +343,11 @@ type FetchThroughCacheOptions = {
   // routinely `${prefix}:${id}`, so using it directly would be unbounded label cardinality.
   // Ignored entirely unless `compress` is on (nothing else records codec time).
   cacheName?: string;
+  // OPT-IN: `true` lets an origin error during a refresh be answered with the expired entry if one
+  // is still cached (entries live ttl*2) — only while FETCH_THROUGH_CACHE_SERVE_STALE is on. Off by
+  // default for every caller, so nothing that makes a decision on the value (a balance, a
+  // permission) can be handed an expired one by the global switch alone.
+  serveStaleOnError?: boolean;
 };
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
 
@@ -283,23 +370,13 @@ type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
  * unbounded (× per-request concurrency). It is NOT cross-pod (that's what the Redis
  * lock was for and Redis is down), but it removes the per-pod multiplier, which is the
  * dominant term under a request flood. Entries are deleted as soon as the shared
- * promise settles, so the map only ever holds currently-degraded keys.
+ * promise settles, so the map only ever holds currently-degraded keys. Each caller that joins
+ * gets its own copy (see createSingleFlight).
  */
-const failOpenInFlight = new Map<string, Promise<unknown>>();
+const failOpenFlight = createSingleFlight();
 
 function fetchThroughCacheFailOpen<T>(key: string, fetchFn: () => Promise<T>): Promise<T> {
-  const existing = failOpenInFlight.get(key) as Promise<T> | undefined;
-  if (existing) return existing;
-  // Promise.resolve().then(fetchFn) so even a SYNCHRONOUS throw inside fetchFn becomes
-  // a rejected promise — guaranteeing the .finally cleanup runs and the map entry is
-  // always removed (no leaked/stuck in-flight entry).
-  const p = Promise.resolve()
-    .then(fetchFn)
-    .finally(() => {
-      failOpenInFlight.delete(key);
-    });
-  failOpenInFlight.set(key, p);
-  return p;
+  return failOpenFlight(key, fetchFn);
 }
 
 export async function fetchThroughCache<T>(
@@ -317,18 +394,24 @@ export async function fetchThroughCache<T>(
   // --- Redis READ (cache lookup) -------------------------------------------------
   // With the socketTimeout fix a stalled Redis read now THROWS (~10s) instead of
   // hanging to the 30s Traefik 504. Fail OPEN: degrade to a slow-but-working origin
-  // fetch (single-flighted per pod to avoid a DB stampede — see failOpenInFlight)
+  // fetch (single-flighted per pod to avoid a DB stampede — see failOpenFlight)
   // rather than propagating a 500 on these ~18 hot read paths. This is strictly no
   // worse than today's behavior on the same paths (a Redis stall already meant a
   // failed request); it just turns the failure mode from 500/504 into a slow 200.
+  //
+  // The read is guarded (cluster-cache-guard): bounded by REDIS_CACHE_READ_DEADLINE_MS instead of
+  // the client's 15s backstop, short-circuited while the breaker is open, and logged there.
   let cachedData: FetchThroughCacheEntity<T> | null;
   try {
     // Thread `compress` to the READ so it's symmetric with the compressed write below:
     // only a compressed caller's get attempts brotli-decompress, and only that path
     // carries the sentinel invariant. Non-compress callers read via the general path.
-    cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress, cacheName });
-  } catch (err) {
-    logSysRedisFailOpen('read-degraded', 'fetchThroughCache get (cache cluster)', err, { key });
+    cachedData = await clusterCacheGuard.call(
+      'fetchThroughCache get (cache cluster)',
+      () => redis.packed.get<FetchThroughCacheEntity<T>>(key, { compress, cacheName }),
+      { logExtra: { key } }
+    );
+  } catch {
     return fetchThroughCacheFailOpen(key, fetchFn);
   }
 
@@ -351,13 +434,16 @@ export async function fetchThroughCache<T>(
     // Try to set lock. If already locked, do nothing...
     let gotLock: boolean;
     try {
-      gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL);
-    } catch (err) {
-      // Lock acquisition itself hit a Redis error. We still have a fresh-enough
-      // intent to refresh, but the distributed lock is unavailable. Serve stale if we
-      // have it (cheapest, fully correct); otherwise fail open to a single-flighted
+      gotLock = await clusterCacheGuard.call(
+        'fetchThroughCache lock (cache cluster)',
+        () => redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL),
+        { logExtra: { key } }
+      );
+    } catch {
+      // Lock acquisition itself hit a Redis error (or the guard's deadline/breaker). We still
+      // have a fresh-enough intent to refresh, but the distributed lock is unavailable. Serve
+      // stale if we have it (cheapest, fully correct); otherwise fail open to a single-flighted
       // origin fetch (per-pod bounded) instead of throwing a 500.
-      logSysRedisFailOpen('read-degraded', 'fetchThroughCache lock (cache cluster)', err, { key });
       if (cachedData) return cachedData.data;
       return fetchThroughCacheFailOpen(key, fetchFn);
     }
@@ -388,20 +474,33 @@ export async function fetchThroughCache<T>(
   // is a real error and must propagate as before. Only the best-effort Redis writes
   // (set result, release lock) are swallowed so a Redis stall on the WRITE side never
   // turns a successful origin fetch into a 500.
+  //
+  // Serve-stale (opt-in per caller, and only while FETCH_THROUGH_CACHE_SERVE_STALE is on): an
+  // origin error during a REFRESH — there is an expired entry, since a fresh one returned above —
+  // answers with that entry instead of the error. Counted per cache name and logged. Otherwise the
+  // error propagates exactly as before.
   try {
     const data = await fetchFn();
     await writeFetchThroughEntry(key, data, { ttl, compress, cacheName }, 'fetchThroughCache');
     return data;
-  } finally {
-    // Best-effort lock release; a failure here just leaves the lock to expire via its
-    // TTL (lockTTL). Never let it mask the fetch result or throw.
-    try {
-      await redis.del(lockKey);
-    } catch (err) {
-      logSysRedisFailOpen('write-degraded', 'fetchThroughCache del-lock (cache cluster)', err, {
+  } catch (err) {
+    if (cachedData && options.serveStaleOnError === true && env.FETCH_THROUGH_CACHE_SERVE_STALE) {
+      fetchThroughCacheStaleServedCounter.inc({ cache_name: cacheName ?? 'unnamed' });
+      logSysRedisFailOpen('read-degraded', 'fetchThroughCache origin (served stale)', err, {
         key,
+        cachedAt: cachedData.cachedAt,
       });
+      return cachedData.data;
     }
+    throw err;
+  } finally {
+    // Best-effort, bounded lock release; a failure here just leaves the lock to expire via its
+    // TTL (lockTTL). Never let it mask the fetch result or throw.
+    await clusterCacheGuard.writeBestEffort(
+      'fetchThroughCache del-lock (cache cluster)',
+      () => redis.del(lockKey),
+      { logExtra: { key } }
+    );
   }
 }
 
@@ -416,11 +515,11 @@ async function writeFetchThroughEntry<T>(
   caller: string
 ) {
   const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
-  try {
-    await redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress, cacheName });
-  } catch (err) {
-    logSysRedisFailOpen('write-degraded', `${caller} set (cache cluster)`, err, { key });
-  }
+  await clusterCacheGuard.writeBestEffort(
+    `${caller} set (cache cluster)`,
+    () => redis.packed.set(key, toCache, { EX: ttl * 2 }, { compress, cacheName }),
+    { logExtra: { key } }
+  );
 }
 
 /**

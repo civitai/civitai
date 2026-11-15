@@ -53,6 +53,7 @@ vi.mock('~/server/redis/client', async () => ({
   redis: redisMock.redis,
   sysRedis: redisMock.sysRedis,
   withSysReadDeadline: redisMock.withSysReadDeadline,
+  withSysReadBreaker: redisMock.withSysReadBreaker,
 }));
 
 // The orchestrator SDK is ESM-only with directory imports Node refuses, so the unit suite stubs
@@ -60,7 +61,18 @@ vi.mock('~/server/redis/client', async () => ({
 function orchestratorClientMock() {
   return {
     // Enums
-    BuzzClientAccount: { System: 'System', User: 'User' },
+    // The four spend accounts carry the package's REAL values (`types.gen.d.ts`), so a
+    // test can assert the exact `currencies` order a submit sends. Without them
+    // `BuzzTypes.toOrchestratorType` maps every pool to `undefined`, and a test cannot
+    // tell `['yellow','blue']` from `['blue','yellow']`.
+    BuzzClientAccount: {
+      System: 'System',
+      User: 'User',
+      YELLOW: 'yellow',
+      BLUE: 'blue',
+      GREEN: 'green',
+      FAKE_RED: 'fakeRed',
+    },
     TransactionType: { Credit: 'Credit', Debit: 'Debit' },
     Priority: { Normal: 'Normal', High: 'High' },
     NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
@@ -266,7 +278,6 @@ vi.mock('~/server/prom/client', () => ({
   serviceDealUnconfirmedHoldsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),
   restrictedImageReconcileLastSuccessGauge: promMetricStub(),
-  restrictedBaseModelDivergenceGauge: promMetricStub(),
   restrictedImageOverhiddenGauge: promMetricStub(),
   missingSignedAtCounter: promMetricStub(),
   newUserCounter: promMetricStub(),

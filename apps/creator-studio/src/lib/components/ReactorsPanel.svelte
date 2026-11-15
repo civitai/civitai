@@ -12,7 +12,22 @@
   import { civitaiUrl } from '$lib/model-url';
   import { REACTOR_TYPES, type ReactorPage, type ReactorType } from '$lib/analytics/reactors';
 
-  let { endpoint, noun }: { endpoint: string; noun: string } = $props();
+  let {
+    endpoint,
+    noun,
+    types = REACTOR_TYPES,
+    title = 'Who reacted',
+    verb = 'Reacted',
+    unit = 'reactions',
+  }: {
+    endpoint: string;
+    noun: string;
+    /** One type drops the type tabs. */
+    types?: readonly ReactorType[];
+    title?: string;
+    verb?: string;
+    unit?: string;
+  } = $props();
 
   const EMOJI: Record<ReactorType, string> = { Like: '👍', Heart: '❤️', Laugh: '😂', Cry: '😢' };
   const PARAMS = ['reaction', 'after', 'before'] as const;
@@ -61,10 +76,12 @@
 </script>
 
 {#snippet loading()}
-  <span class="sr-only">Loading who reacted…</span>
-  <div class="mb-3 flex gap-1" aria-hidden="true">
-    {#each REACTOR_TYPES as t (t)}<Skeleton class="h-8 w-20" />{/each}
-  </div>
+  <span class="sr-only">Loading {title.toLowerCase()}…</span>
+  {#if types.length > 1}
+    <div class="mb-3 flex gap-1" aria-hidden="true">
+      {#each types as t (t)}<Skeleton class="h-8 w-20" />{/each}
+    </div>
+  {/if}
   <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
     {#each Array.from({ length: 9 }, (_, i) => i) as i (i)}
       <div class="flex items-center gap-2 p-1">
@@ -81,12 +98,12 @@
 <section
   bind:this={panel}
   tabindex="-1"
-  aria-label="Who reacted"
+  aria-label={title}
   class="cs-panel mt-4 scroll-mt-4 p-4 outline-none"
 >
   <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
     <p class="text-sm font-medium text-white">
-      Who reacted
+      {title}
       <span class="text-xs text-dark-2">· only you can see this · all time</span>
     </p>
     <p class="text-xs text-dark-2">Newest accounts first</p>
@@ -98,29 +115,31 @@
     {#await result}
       {@render loading()}
     {:then data}
-      {@const total = REACTOR_TYPES.reduce((s, t) => s + data.counts[t], 0)}
+      {@const total = types.reduce((s, t) => s + data.counts[t], 0)}
       {#if total === 0 || !data.reaction}
         <div class="flex h-32 items-center justify-center text-center text-sm text-dark-2">
-          No reactions to show on this {noun} yet.
+          No {unit} to show on this {noun} yet.
         </div>
       {:else}
-        <ToggleGroup.Root
-          type="single"
-          variant="outline"
-          size="sm"
-          spacing={1}
-          bind:value={() => data.reaction ?? '', (v) => v && navigate({ reaction: v })}
-          aria-label="Reaction type"
-          class="mb-3 flex-wrap"
-        >
-          {#each REACTOR_TYPES as t (t)}
-            <ToggleGroup.Item value={t} disabled={data.counts[t] === 0}>
-              <span aria-hidden="true">{EMOJI[t]}</span>
-              {t}
-              <span class="text-dark-2">{num(data.counts[t])}</span>
-            </ToggleGroup.Item>
-          {/each}
-        </ToggleGroup.Root>
+        {#if types.length > 1}
+          <ToggleGroup.Root
+            type="single"
+            variant="outline"
+            size="sm"
+            spacing={1}
+            bind:value={() => data.reaction ?? '', (v) => v && navigate({ reaction: v })}
+            aria-label="Reaction type"
+            class="mb-3 flex-wrap"
+          >
+            {#each types as t (t)}
+              <ToggleGroup.Item value={t} disabled={data.counts[t] === 0}>
+                <span aria-hidden="true">{EMOJI[t]}</span>
+                {t}
+                <span class="text-dark-2">{num(data.counts[t])}</span>
+              </ToggleGroup.Item>
+            {/each}
+          </ToggleGroup.Root>
+        {/if}
 
         {#if data.reactors.length === 0}
           <div class="flex h-32 flex-col items-center justify-center gap-2 text-sm text-dark-2">
@@ -164,7 +183,7 @@
                         >Banned</Badge
                       >{/if}
                   </div>
-                  <p class="text-xs text-dark-2">Reacted {date(r.reactedAt)}</p>
+                  <p class="text-xs text-dark-2">{verb} {date(r.reactedAt)}</p>
                 </div>
               </li>
             {/each}
@@ -174,7 +193,8 @@
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-dark-2">
           <span>
             {num(data.counts[data.reaction])}
-            {EMOJI[data.reaction]} reactions · {data.reactors.length} shown
+            {EMOJI[data.reaction]}
+            {unit} · {data.reactors.length} shown
           </span>
           <div class="flex items-center gap-1">
             <Button
@@ -210,7 +230,7 @@
     {:catch err}
       <div class="flex h-32 flex-col items-center justify-center gap-2 text-center text-sm">
         <p class="text-red-300">
-          Couldn't load who reacted. {err instanceof Error ? err.message : ''}
+          Couldn't load {title.toLowerCase()}. {err instanceof Error ? err.message : ''}
         </p>
         <div class="flex gap-2">
           <Button variant="outline" size="sm" onclick={() => retry++}>Try again</Button>

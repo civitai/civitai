@@ -78,10 +78,11 @@
   </span>
 {/snippet}
 
-{#snippet appName(c: App)}
+{#snippet appName(c: App, editable = false)}
   <span class="name">
     {c.name}
     {#if c.isVerified}<span class="badge">verified</span>{/if}
+    {#if editable}<a class="edit" href="/admin/access/{c.id}" aria-label="Edit {c.name}">Edit</a>{/if}
     <span class="cid">{c.id}</span>
   </span>
 {/snippet}
@@ -121,7 +122,7 @@
       </div>
       {#each data.system as c (c.id)}
         <div class="row system">
-          {@render appName(c)}
+          {@render appName(c, true)}
           {@render accessForm(c)}
           {#if c.isConfidential}
             <form method="POST" action="?/setSkipConsent" use:enhance={revertToggleOnFailure} class="inline-form">
@@ -380,6 +381,10 @@
     font-size: 0.72rem;
     color: #6b7177;
     font-family: ui-monospace, monospace;
+  }
+  .edit {
+    font-size: 0.75rem;
+    color: #74a7ff;
   }
   .badge {
     font-size: 0.65rem;
