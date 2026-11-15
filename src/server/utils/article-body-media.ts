@@ -16,9 +16,12 @@ export type ArticleBodyImageState = {
 export const isServableBodyImage = (image: ArticleBodyImageState) =>
   servableArticleImage(image) !== null && !image.tosViolation;
 
+/** The `needsReview` of an image held for csam review. */
+export const CSAM_HELD_REVIEW = 'csam';
+
 /** Held for csam review: withheld from everyone but moderators, its owner included. */
 export const isCsamHeldBodyImage = (image: Pick<ArticleBodyImageState, 'needsReview'>) =>
-  image.needsReview === 'csam';
+  image.needsReview === CSAM_HELD_REVIEW;
 
 /** Servable body images rated wholly within `browsingLevel` (unrated never is), by uuid. */
 export function servableBodyImageUrls(images: ArticleBodyImageState[], browsingLevel: number) {

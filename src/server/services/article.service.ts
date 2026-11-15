@@ -13,6 +13,7 @@ import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import {
+  CSAM_HELD_REVIEW,
   isCsamHeldBodyImage,
   isServableBodyImage,
   removeBodyMedia,
@@ -2537,12 +2538,14 @@ export async function linkArticleContentImages({
         ...articleOwnImageIds({ coverId: coverId ?? null, bannerId: bannerId ?? null }),
       ];
 
-      // Get orphaned connections for this article
+      // Get orphaned connections for this article. A csam-held image is withheld from its owner's
+      // editor, so their save never carries it; its connection stays while the review is open.
       const orphanedConnections = await tx.imageConnection.findMany({
         where: {
           entityType: ImageConnectionType.Article,
           entityId: articleId,
           imageId: { notIn: excludeImageIds },
+          NOT: { image: { needsReview: CSAM_HELD_REVIEW } },
         },
         select: { imageId: true },
       });
