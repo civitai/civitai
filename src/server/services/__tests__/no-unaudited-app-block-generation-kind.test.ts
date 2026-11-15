@@ -10,8 +10,8 @@ import { describe, expect, it } from 'vitest';
  */
 
 const read = (path: string) => readFileSync(resolve(__dirname, path), 'utf8');
-const router = read('../blocks.router.ts');
-const stepModeration = read('../../services/blocks/steps/moderation.ts');
+const router = read('../../routers/blocks.router.ts');
+const stepModeration = read('../blocks/steps/moderation.ts');
 
 /** A top-level function's source: from its declaration to the next top-level declaration. */
 function body(source: string, name: string): string {

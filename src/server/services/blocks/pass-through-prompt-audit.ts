@@ -281,17 +281,27 @@ export async function getPassThroughPromptAuditMode(
   // The global read runs every time so the fallback stays current; both are in-process evaluations.
   const global = await getFliptVariant(flag);
   if (global !== null) lastKnownMode = toMode(global);
-  if (userId !== undefined) {
-    const variant = await getFliptVariant(flag, String(userId), buildFliptContext({ id: userId }));
-    if (variant !== null) return toMode(variant);
-  }
-  return lastKnownMode ?? 'off';
+  const globalMode = lastKnownMode ?? 'off';
+  if (userId === undefined) return globalMode;
+  const variant = await getFliptVariant(flag, String(userId), buildFliptContext({ id: userId }));
+  // A user's segment may only make the audit stricter than the global mode, never laxer.
+  return variant === null ? globalMode : stricter(globalMode, toMode(variant));
+}
+
+const MODE_STRICTNESS: Record<PassThroughPromptAuditMode, number> = { off: 0, log: 1, enforce: 2 };
+
+function stricter(
+  a: PassThroughPromptAuditMode,
+  b: PassThroughPromptAuditMode
+): PassThroughPromptAuditMode {
+  return MODE_STRICTNESS[b] > MODE_STRICTNESS[a] ? b : a;
 }
 
 type AuditContext = {
   userId: number;
   appBlockId: string;
   isGreen: boolean;
+  /** Read only in `enforce`, so the other modes cost no user lookup. */
   loadIsModerator: () => Promise<boolean>;
 };
 
