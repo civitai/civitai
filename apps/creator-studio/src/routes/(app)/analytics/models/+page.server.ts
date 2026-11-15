@@ -13,7 +13,11 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
   const modelPerformance = await (async () => {
     if (period === 'all') {
       const floor = await getFirstVersionDate({ userId });
-      return floor ? getModelPerformance({ userId, ...allTimeWindow(floor) }) : [];
+      // A lifetime read on a big creator can be slow; failing fast shows "unavailable" instead of
+      // stacking uncached retries on every reload.
+      return floor
+        ? getModelPerformance({ userId, ...allTimeWindow(floor), maxExecutionSeconds: 10 })
+        : [];
     }
     const { range, compare: baseline } = readAnalyticsPeriod(cookies);
     return getModelPerformance({

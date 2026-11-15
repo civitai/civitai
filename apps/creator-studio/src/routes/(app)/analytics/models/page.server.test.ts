@@ -35,6 +35,7 @@ describe('/analytics/models all-time period', () => {
       to: '2026-11-13',
       compareFrom: '2023-02-14',
       compareTo: '2023-02-13',
+      maxExecutionSeconds: 10,
     });
   });
 
