@@ -1567,10 +1567,8 @@ export const upsertArticle = async ({
 
     // The save has committed: a failed cleanup is logged, and must not skip the content change below.
     try {
-      // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
-      // check it always had (owner, and no article shows it) rather than `unusedAuthorImage`.
-      // isImageOwner passes for moderators; the owner hold read at cleanup covers only the article
-      // author's images. A posted image stays with its post.
+      // A replaced or cleared cover or banner, once nothing else shows it: the author's own
+      // unposted upload only, since the hold read below covers only the author's images.
       const replacedImageIds: number[] = [];
       if (
         coverId !== undefined &&

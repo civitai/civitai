@@ -1,17 +1,13 @@
-import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { articlesSearchIndex } from '~/server/search-index';
+import { modelImageIdsSql } from '~/server/services/collection-media-index';
 
 /** The articles whose cover or banner is an image on a post of this model. */
 export async function getArticleIdsCoveredByModel(modelId: number) {
-  const modelImagesSql = Prisma.sql`
-    SELECT i.id FROM "Image" i
-    JOIN "Post" p ON p.id = i."postId"
-    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-    WHERE mv."modelId" = ${modelId}`;
+  const modelImagesSql = modelImageIdsSql(modelId);
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT a.id FROM "Article" a WHERE a."coverId" IN (${modelImagesSql})
     UNION

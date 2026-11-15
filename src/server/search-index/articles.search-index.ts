@@ -78,7 +78,7 @@ export const transformData = async ({
 }: {
   articles: Article[];
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
-  /** Cover or banner images their model withholds: indexed as if unservable. */
+  /** Cover or banner images their model withholds: a withheld cover leaves no card image. */
   modelWithheldImageIds?: Set<number>;
 }) => {
   const servable = (image: Article['coverImage']) =>
@@ -89,7 +89,11 @@ export const transformData = async ({
       // article stays searchable.
       const cover = articleRecord.coverImage;
       if (cover && (hasBlockMarker(cover) || cover.needsReview)) return null;
-      const coverImage = servable(cover) ?? servable(bannerImage);
+      // As on the feed card, a withheld cover does not fall back to the banner.
+      const coverImage =
+        cover && modelWithheldImageIds.has(cover.id)
+          ? null
+          : servable(cover) ?? servable(bannerImage);
       if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
