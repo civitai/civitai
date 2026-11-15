@@ -163,3 +163,56 @@ describe('control: re-sends that do not count', () => {
     expect(await retryCount(5)).toBe(2);
   });
 });
+
+const submitFails = (status: number) =>
+  mockCreateImageIngestionRequest.mockResolvedValueOnce({
+    data: undefined,
+    error: { title: 'Server Error', status },
+    status,
+    useImageScanning: false,
+  });
+
+describe('an Error row whose lost scan is followed by a failed submit', () => {
+  it('stops being re-sent when lost scans alternate with 429 submits', async () => {
+    const start = IMAGE_SCAN_TRANSIENT_RETRY_LIMIT - 2;
+    await insert(6, 'Error', { retryCount: start, workflowId: 'wf-lost', lastFailure: transient });
+
+    for (let run = 0; run < 8; run++) {
+      if (run % 2 === 0) submitFails(429);
+      await runCronAnHourLater(6);
+    }
+
+    expect(mockCreateImageIngestionRequest).toHaveBeenCalledTimes(3);
+    expect(await retryCount(6)).toBe(IMAGE_SCAN_TRANSIENT_RETRY_LIMIT);
+    expect(await queued(6)).toBe(false);
+  });
+
+  it('counts both the lost scan and a failed submit', async () => {
+    await insert(7, 'Error', { retryCount: 5, workflowId: 'wf-lost', lastFailure: transient });
+    submitFails(500);
+
+    await submit(7);
+
+    expect(await retryCount(7)).toBe(7);
+  });
+});
+
+describe('control: failed submits that count as before', () => {
+  it('a 429 after a recorded failure spends nothing', async () => {
+    await insert(8, 'Error', { retryCount: 5, error: transient });
+    submitFails(429);
+
+    await submit(8);
+
+    expect(await retryCount(8)).toBe(5);
+  });
+
+  it('a failed Pending submit counts once', async () => {
+    await insert(9, 'Pending', { retryCount: 1, workflowId: 'wf-lost', lastFailure: transient });
+    submitFails(500);
+
+    await submit(9);
+
+    expect(await retryCount(9)).toBe(2);
+  });
+});
