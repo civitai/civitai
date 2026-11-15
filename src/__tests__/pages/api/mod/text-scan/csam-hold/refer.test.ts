@@ -30,7 +30,7 @@ vi.mock('~/server/services/text-scan/csam-hold-decision', async (importOriginal)
 
 import handler from '~/pages/api/mod/text-scan/csam-hold/refer';
 
-function call(body: Record<string, unknown>) {
+async function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];
   let statusCode = 200;
   let payload: unknown;
@@ -46,7 +46,8 @@ function call(body: Record<string, unknown>) {
     setHeader: vi.fn(),
     end: () => res,
   } as unknown as Parameters<typeof handler>[1];
-  return handler(req, res).then(() => ({ status: statusCode, body: payload }));
+  await handler(req, res);
+  return { status: statusCode, body: payload };
 }
 
 beforeEach(() => {
