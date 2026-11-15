@@ -198,16 +198,24 @@ export function collectionItemCoversSql({
           AND ${servableImageSql}
           AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
-        -- A legacy cover string carries no image to judge, so only an article with no cover or
-        -- banner image at all (one it cannot serve drops the string too),
-        -- at a level every viewer may see.
+        -- A legacy cover string carries no rating of its own, and its readers show it to every
+        -- viewer: it goes with a servable cover or banner image at a level everyone may see, or,
+        -- with neither, an article at such a level. An image that cannot be served drops it.
         SELECT a.id, a.cover src FROM "Article" a
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${publishedArticleSql}
-          AND a."coverId" IS NULL
-          AND a."bannerId" IS NULL
-          AND (a."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
-          AND (a."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
+          AND CASE
+            WHEN a."coverId" IS NULL AND a."bannerId" IS NULL THEN
+              (a."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
+              AND (a."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
+            ELSE EXISTS (
+              SELECT 1 FROM "Image" i
+              WHERE i.id = COALESCE(a."coverId", a."bannerId")
+                AND ${servableImageSql}
+                AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
+                AND (i."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
+            )
+          END
     ), model3dItemImage AS MATERIALIZED (
         SELECT
           m3.id,

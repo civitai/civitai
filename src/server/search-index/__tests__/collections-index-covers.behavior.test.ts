@@ -67,6 +67,8 @@ const OWN_RESTRICTED_R = 48;
 const OWN_RESTRICTED_PG = 49;
 const OWN_HELD_ABOVE = 90;
 const HELD_POST_ITEM = 91;
+const ARTICLE_PENDING_COVER = 92;
+const ARTICLE_SERVABLE_COVER = 93;
 
 beforeAll(async () => {
   pg = new PGlite();
@@ -294,6 +296,15 @@ beforeAll(async () => {
       (${OWN_HELD_ABOVE}, ${STRANGER}, 180), (${HELD_POST_ITEM}, ${OWNER}, NULL);
     INSERT INTO "CollectionItem" (id, "collectionId", "imageId", "postId") VALUES
       (950, ${OWN_HELD_ABOVE}, 180, NULL), (951, ${HELD_POST_ITEM}, NULL, 82);
+    -- Articles with a legacy cover string: 85's cover image awaits review, 86's is servable.
+    INSERT INTO "Image" (id, "userId", "needsReview") VALUES (185, ${STRANGER}, 'minor'), (186, ${STRANGER}, NULL);
+    INSERT INTO "Article" (id, cover, "coverId", status, "publishedAt", availability) VALUES
+      (85, 'legacy-pending', 185, 'Published', now() - interval '1 day', 'Public'),
+      (86, 'legacy-ok', 186, 'Published', now() - interval '1 day', 'Public');
+    INSERT INTO "Collection" (id, "userId", "imageId") VALUES
+      (${ARTICLE_PENDING_COVER}, ${OWNER}, NULL), (${ARTICLE_SERVABLE_COVER}, ${OWNER}, NULL);
+    INSERT INTO "CollectionItem" (id, "collectionId", "articleId") VALUES
+      (952, ${ARTICLE_PENDING_COVER}, 85), (953, ${ARTICLE_SERVABLE_COVER}, 86);
   `);
 });
 afterAll(() => pg.close());
@@ -314,6 +325,11 @@ const pull = async (id: number) => {
 };
 
 describe('collections search index covers', () => {
+  it("indexes no legacy cover string for an article whose cover image awaits review, and keeps a servable one's", async () => {
+    expect((await pull(ARTICLE_PENDING_COVER)).itemSrcs).toEqual([]);
+    expect((await pull(ARTICLE_SERVABLE_COVER)).itemSrcs).toEqual(['legacy-ok']);
+  });
+
   it("indexes no cover above a minor model's gallery level, taking the next item image within it", async () => {
     expect(await pull(OWN_HELD_ABOVE)).toMatchObject({ cover: null, itemCovers: [] });
     expect(await pull(HELD_POST_ITEM)).toMatchObject({ cover: null, itemCovers: [181] });

@@ -93,7 +93,11 @@ beforeAll(async () => {
       }),
       (76, NULL, 45, 'legacy-banner', 'Published', now() - interval '1 day', 'Public', 'Scanned', ${
         NsfwLevel.PG
+      }),
+      (77, 50, NULL, 'legacy-x-cover', 'Published', now() - interval '1 day', 'Public', 'Scanned', ${
+        NsfwLevel.PG
       });
+    INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (50, ${STRANGER}, ${NsfwLevel.X});
     -- A stored X cover on the unheld model's post.
     INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel") VALUES (47, ${MODEL_OWNER}, 32, ${
     NsfwLevel.X
@@ -129,7 +133,8 @@ beforeAll(async () => {
       (110, ${STRANGER}, NULL, NULL, NULL, 74),
       (111, ${STRANGER}, NULL, NULL, NULL, 75),
       (112, ${STRANGER}, NULL, NULL, NULL, 76),
-      (113, ${STRANGER}, NULL, 33, NULL, NULL);
+      (113, ${STRANGER}, NULL, 33, NULL, NULL),
+      (114, ${STRANGER}, NULL, NULL, NULL, 77);
   `);
 });
 
@@ -164,11 +169,12 @@ describe("an article item's legacy cover string", () => {
   it.each([
     ['an SFW article with no cover image', 106, 'legacy-pg'],
     ['a mature article with no cover image', 107, null],
-    ['an article with a cover image', 108, null],
+    ['an article with an SFW cover image it serves', 108, 'legacy-with-image'],
     ['an unrated article', 109, null],
     ['an article at a mature level as well as an SFW one', 110, null],
     ['an article whose cover image awaits review', 111, null],
-    ['an article with a banner image', 112, null],
+    ['an article whose cover image is X', 114, null],
+    ['an article with an SFW banner image it serves', 112, 'legacy-banner'],
   ])('%s', async (_, collectionId, src) => {
     expect((await itemCovers(collectionId)).map((row) => row.src)).toEqual([src]);
   });
