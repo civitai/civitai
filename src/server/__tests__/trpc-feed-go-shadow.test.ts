@@ -439,6 +439,8 @@ describe('feed-go Go-first probe, end to end', () => {
     probeOn();
     const on = await get(PROCEDURE);
     expect(on).toEqual(off);
+    // Drain this request's probe and shadow posts, so they cannot land in the next test.
+    expect(await receivedWithin(3)).toHaveLength(3);
   });
 });
 
