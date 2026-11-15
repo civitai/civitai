@@ -81,8 +81,8 @@ type segment struct {
 // fresh writer:
 //
 //   - pagePool serves SerializeBuffer and PlainBuffer, the served answers (a feed page is a few hundred
-//     KiB). Its writers start at pageBufSize: on a 400 KiB page a cold get allocates 526 KiB in all,
-//     against 1.9 MiB of append growth from a 64 KiB start (BenchmarkSerializeColdStart).
+//     KiB). Its writers start at pageBufSize, page-sized, so a cold get does not regrow through append
+//     (BenchmarkSerializeColdStart reports what a cold get costs).
 //   - ownedPool serves Serialize and Plain, whose output is copied out (error bodies, tests). Its
 //     writers start at ownedBufSize, so a tiny body's cold get costs 16 KiB, not a page buffer.
 //

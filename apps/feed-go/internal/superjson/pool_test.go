@@ -190,9 +190,7 @@ func bigPage() Object {
 
 // BenchmarkSerializeColdStart is a serialization on a writer fresh from each pool's New (the pools are
 // emptied by every GC cycle): the page pool's on a page-sized output, the owned pool's on the smallest
-// one. Its B/op is what a cold get costs, growth included. (Measured once on a 400 KiB page, from a
-// 16 / 64 / 512 KiB start: 1.86 MiB / 1.94 MiB / 526 KiB allocated; on a 145-byte body 16 / 64 / 512
-// KiB. Hence 512 KiB for pages and 16 KiB for owned output.)
+// one. Its B/op is what a cold get costs, growth included.
 func BenchmarkSerializeColdStart(b *testing.B) {
 	for _, c := range []struct {
 		name string
