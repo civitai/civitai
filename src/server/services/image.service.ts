@@ -2303,8 +2303,14 @@ const getAllImagesUncaptured = async (
   const effectivePending = pending || (isModerator && !!pendingReviewOnly);
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
-  // Exclude unselectable browsing levels
+  // Exclude unselectable browsing levels. A mask of nothing but those (Blocked) asks for no level
+  // it may see: an empty page, as the feed answers it, not the public fallback below.
+  const requestedLevel = browsingLevel;
   browsingLevel = onlySelectableLevels(browsingLevel);
+  if (requestedLevel && !browsingLevel) {
+    noteEmptyIdsPage(input, 'unselectable-level');
+    return { items: [], nextCursor: undefined };
+  }
 
   // `applyDomainFeature` only backfills an absent `browsingLevel` on capped
   // (green) domains, so on red/blue it can arrive undefined and reach the SQL as
