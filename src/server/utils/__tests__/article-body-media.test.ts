@@ -7,7 +7,7 @@ const cdn = (path: string) => `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/
 
 const strip = (html: string) => removeBodyMedia(html, { keep: new Set([KEPT]), withheld: [HELD] });
 
-describe('removeBodyMediaExcept', () => {
+describe('removeBodyMedia', () => {
   it('keeps a servable image and the text around it', () => {
     const src = cdn(`${KEPT}/width=450/x.jpeg`);
 
@@ -25,6 +25,18 @@ describe('removeBodyMediaExcept', () => {
       expect(out.toLowerCase()).not.toContain(HELD);
       expect(out).toBe('<p>a</p>');
     }
+  });
+
+  it('🔴 drops a withheld image however its source spells the uuid', () => {
+    const encoded = [...HELD].map((c) => `%${c.charCodeAt(0).toString(16)}`).join('');
+    const out = removeBodyMedia(
+      `<p>a</p><img src="${cdn(`${encoded}/x.jpeg`)}"><edge-media url="${cdn(
+        `${encoded}/x.mp4`
+      )}"></edge-media>`,
+      { withheld: [HELD] }
+    );
+
+    expect(out).toBe('<p>a</p>');
   });
 
   it('🔴 a link to a withheld image keeps its text and loses its href', () => {
@@ -49,6 +61,42 @@ describe('removeBodyMediaExcept', () => {
     );
 
     expect(out).toBe(`<img src="${other}" />`);
+  });
+
+  it('keeps a servable video given by its full url', () => {
+    const html = `<edge-media url="${cdn(`${KEPT}/x.mp4`)}"></edge-media>`;
+
+    expect(strip(html)).toBe(html);
+  });
+
+  it('leaves other links and sources as stored', () => {
+    const html = `<p><a href="civitai://models/1">m</a></p>`;
+
+    expect(strip(html)).toBe(html);
+  });
+
+  it('an empty withheld entry withholds nothing', () => {
+    const html = `<img src="${cdn(`${KEPT}/x.jpeg`)}" /><p><a href="https://example.com">x</a></p>`;
+
+    expect(removeBodyMedia(html, { keep: new Set([KEPT]), withheld: [''] })).toBe(html);
+  });
+
+  it('🔴 drops an edge-media whose url names no uuid, even with nothing withheld', () => {
+    const out = removeBodyMedia(`<p>a</p><edge-media url="not-a-uuid"></edge-media>`, {
+      withheld: [],
+    });
+
+    expect(out).toBe('<p>a</p>');
+  });
+
+  it('🔴 given keepEdgeMedia, drops edge-media outside it and leaves images alone', () => {
+    const img = `<img src="${cdn(`${HELD}/x.jpeg`)}" />`;
+    const out = removeBodyMedia(
+      `${img}<edge-media url="${KEPT}"></edge-media><edge-media url="${HELD}"></edge-media>`,
+      { keepEdgeMedia: new Set([KEPT]), withheld: [] }
+    );
+
+    expect(out).toBe(`${img}<edge-media url="${KEPT}"></edge-media>`);
   });
 
   it('changes nothing when nothing is withheld and nothing is kept', () => {

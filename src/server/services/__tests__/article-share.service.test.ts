@@ -413,10 +413,22 @@ describe('getArticleByShareToken: body images', () => {
   });
 
   it('🔴 leaves out body images only their owner and moderators may get', async () => {
+    const uuid = (n: number) =>
+      `${n}${n}${n}${n}${n}${n}${n}${n}-${n}${n}${n}${n}-4${n}${n}${n}-8${n}${n}${n}-${String(
+        n
+      ).repeat(12)}`;
+    const content =
+      [1, 2, 3, 4, 5]
+        .map(
+          (n) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid(n)}/x.jpeg">`
+        )
+        .join('') + `<edge-media url="${uuid(6)}" type="video"></edge-media>`;
+    articles({ content });
+    shareCheck({ textHash: sharedArticleTextHash({ title: `Article ${ARTICLE}`, content }) });
     const row = (id: number, extra: Record<string, unknown>) => ({
       image: {
         id,
-        url: `uuid-${id}`,
+        url: uuid(id),
         nsfwLevel: 1,
         userId: AUTHOR,
         hash: 'h',
@@ -439,7 +451,10 @@ describe('getArticleByShareToken: body images', () => {
     const result = await read(STRANGER);
 
     expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1]);
-    expect(JSON.stringify(result)).not.toContain('csam');
+    const sent = JSON.stringify(result);
+    expect(sent).toContain(uuid(1));
+    for (const n of [2, 3, 4, 5, 6]) expect(sent).not.toContain(uuid(n));
+    expect(sent).not.toContain('csam');
   });
 });
 

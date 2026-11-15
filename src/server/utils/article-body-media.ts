@@ -1,4 +1,5 @@
 import sanitize from 'sanitize-html';
+import { keysIn } from '~/server/services/image-url-ownership';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { extractCloudflareUuid } from '~/utils/article-helpers';
@@ -32,22 +33,38 @@ export function servableBodyImageUrls(images: ArticleBodyImageState[], browsingL
 
 /**
  * Drops every `img` and `edge-media` whose source names a `withheld` uuid and, given `keep`, every
- * one whose uuid is not in it, including one with no uuid. A link naming a withheld uuid loses
- * its href.
+ * one whose uuid is not in it, including one with no uuid. `keepEdgeMedia` does the same for
+ * `edge-media` alone, which only ever holds site media; one with no uuid is always dropped. A link
+ * naming a withheld uuid loses its href.
  */
 export function removeBodyMedia(
   html: string,
-  { keep, withheld }: { keep?: ReadonlySet<string>; withheld: readonly string[] }
+  {
+    keep,
+    keepEdgeMedia = keep,
+    withheld,
+  }: {
+    keep?: ReadonlySet<string>;
+    keepEdgeMedia?: ReadonlySet<string>;
+    withheld: readonly string[];
+  }
 ) {
-  if (!html || (!keep && !withheld.length) || !/<(img|edge-media|a)\b/i.test(html)) return html;
+  const held = withheld.filter(Boolean).map((uuid) => uuid.toLowerCase());
+  if (!html || !/<(img|edge-media|a)\b/i.test(html)) return html;
+  if (!keep && !keepEdgeMedia && !held.length && !/<edge-media\b/i.test(html)) return html;
+  const heldKeys = new Set(held);
+  // keysIn reads the uuid however the url spells it, as the browser would resolve it.
   const namesWithheld = (value: string | undefined) => {
-    const lower = value?.toLowerCase() ?? '';
-    return withheld.some((uuid) => lower.includes(uuid.toLowerCase()));
+    if (!value) return false;
+    const lower = value.toLowerCase();
+    return held.some((uuid) => lower.includes(uuid)) || keysIn(value).some((k) => heldKeys.has(k));
   };
-  const kept = (uuid: string | null | undefined) => !keep || keep.has(uuid ?? '');
+  const kept = (uuid: string | null | undefined, set = keep) => !set || set.has(uuid ?? '');
   return sanitize(html, {
     allowedTags: false,
     allowedAttributes: false,
+    // Only media is removed; every other href and src is left as stored.
+    allowedSchemesAppliedToAttributes: [],
     exclusiveFilter: (frame) => {
       if (frame.tag === 'img') {
         const src = frame.attribs.src ?? '';
@@ -55,7 +72,8 @@ export function removeBodyMedia(
       }
       if (frame.tag === 'edge-media') {
         const url = frame.attribs.url ?? '';
-        return !kept(url) || namesWithheld(url);
+        const uuid = extractCloudflareUuid(url);
+        return !uuid || !kept(uuid, keepEdgeMedia) || namesWithheld(url);
       }
       return false;
     },

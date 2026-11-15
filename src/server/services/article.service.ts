@@ -877,7 +877,14 @@ export const getArticleById = async ({
     const withheld = bodyImages
       .filter((image) => !contentImages.includes(image))
       .map((image) => image.url);
-    const content = article.content && removeBodyMedia(article.content, { withheld });
+    const nonOwner = !isModerator && userId !== article.userId;
+    const content =
+      isModerator || !article.content
+        ? article.content
+        : removeBodyMedia(article.content, {
+            withheld,
+            keepEdgeMedia: nonOwner ? new Set(contentImages.map((image) => image.url)) : undefined,
+          });
     let contentJson: MixedObject | undefined;
     if (content) {
       contentJson = articleContentJson(content);

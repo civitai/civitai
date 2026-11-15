@@ -9,7 +9,7 @@ import type * as FileService from '~/server/services/file.service';
 
 /**
  * article.getById body media: whoever is not the owner or a moderator gets no uuid of a body image
- * that is unscanned, blocked, awaiting review or a violation; csam-held media is withheld from its
+ * that is unscanned, blocked, awaiting review or a violation, nor of a video with no linked row; csam-held media is withheld from its
  * owner too. A servable image above the viewer's level still comes back, for the page to blur.
  */
 
@@ -54,6 +54,8 @@ const BLOCKED = uuid(4);
 const VIOLATION = uuid(5);
 const CSAM_HELD = uuid(6);
 const ALL = [SERVABLE, ABOVE_LEVEL, PENDING, BLOCKED, VIOLATION, CSAM_HELD];
+/** In the body as a video, with no image row connected to the article. */
+const UNLINKED = uuid(7);
 
 const imageUrl = (id: string) => `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${id}/x.jpeg`;
 
@@ -84,7 +86,10 @@ async function getById(user?: unknown) {
     id: 7,
     userId: OWNER_ID,
     nsfwLevel: PG,
-    content: ALL.map((id) => `<p>${id.slice(0, 1)}</p><img src="${imageUrl(id)}">`).join(''),
+    content:
+      ALL.map((id) => `<p>${id.slice(0, 1)}</p><img src="${imageUrl(id)}">`).join('') +
+      `<edge-media url="${UNLINKED}" type="video"></edge-media>` +
+      `<edge-media url="legacy-key" type="video"></edge-media>`,
     tags: [],
     metadata: null,
     coverImage: null,
@@ -127,7 +132,8 @@ describe('article.getById body media', () => {
   ])('🔴 %s gets no uuid of unservable media', async (_, user) => {
     const sent = await getById(user);
 
-    for (const id of [PENDING, BLOCKED, VIOLATION, CSAM_HELD]) expect(sent(id)).toBe(false);
+    for (const id of [PENDING, BLOCKED, VIOLATION, CSAM_HELD, UNLINKED, 'legacy-key'])
+      expect(sent(id)).toBe(false);
   });
 
   it.each([
@@ -143,7 +149,7 @@ describe('article.getById body media', () => {
   it('🔴 the owner gets their own unscanned, blocked and violation media, but not csam-held', async () => {
     const sent = await getById(owner);
 
-    for (const id of [SERVABLE, ABOVE_LEVEL, PENDING, BLOCKED, VIOLATION])
+    for (const id of [SERVABLE, ABOVE_LEVEL, PENDING, BLOCKED, VIOLATION, UNLINKED])
       expect(sent(id)).toBe(true);
     expect(sent(CSAM_HELD)).toBe(false);
   });
@@ -151,6 +157,6 @@ describe('article.getById body media', () => {
   it('a moderator gets all of it', async () => {
     const sent = await getById(moderator);
 
-    for (const id of ALL) expect(sent(id)).toBe(true);
+    for (const id of [...ALL, UNLINKED, 'legacy-key']) expect(sent(id)).toBe(true);
   });
 });

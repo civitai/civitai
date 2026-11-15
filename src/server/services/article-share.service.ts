@@ -317,7 +317,12 @@ function toSharedArticle(
   const withheld = contentImages
     .filter((image) => !servable.includes(image))
     .map((image) => image.url);
-  const content = article.content && removeBodyMedia(article.content, { withheld });
+  const content =
+    article.content &&
+    removeBodyMedia(article.content, {
+      withheld,
+      keepEdgeMedia: new Set(servable.map((image) => image.url)),
+    });
   // The banner stands in for a missing cover.
   const coverImage = article.coverImage ?? article.bannerImage;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
