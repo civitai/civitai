@@ -3974,11 +3974,12 @@ export const getCollectionCoverImages = async ({
           imageSql,
         })}`
       : [];
-  // An article's cover string stands for the same image, so it goes with it.
+  // An article's cover string carries no rating of its own: it is served only beside a cover
+  // image that passed.
   const shown = itemImages.map(({ id, image, src }) =>
-    image && !isCoverWithinBrowsingLevel(image, browsingLevel)
-      ? { id, image: null, src: null }
-      : { id, image, src }
+    image && isCoverWithinBrowsingLevel(image, browsingLevel)
+      ? { id, image, src }
+      : { id, image: null, src: null }
   );
 
   // Use Redis cache for tag lookups (much faster than direct DB query)
