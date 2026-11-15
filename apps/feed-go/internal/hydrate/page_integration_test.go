@@ -20,7 +20,8 @@ import (
 )
 
 // pipelineCounter is a go-redis hook counting pipelines: on the cluster client one per Pipelined
-// call, on a node client one per round trip to that node.
+// call, on a node client one per run of that node client's pipeline hook chain (see the assertion
+// below: not exactly one per node a pipeline touches).
 type pipelineCounter struct{ n atomic.Int64 }
 
 func (*pipelineCounter) DialHook(next redis.DialHook) redis.DialHook          { return next }
@@ -176,7 +177,7 @@ func TestIntegrationPageMatchesPerLookupInTwoPipelines(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Page differs from the per-lookup answer:\n got %#v\nwant %#v", got, want)
 	}
-	t.Logf("pipelines: Page %d (%d node round trips), per-lookup %d (%d node round trips), %d masters",
+	t.Logf("pipelines: Page %d (%d node hook calls), per-lookup %d (%d node hook calls), %d masters",
 		pagePipelines, pageNodeTrips, lookupPipelines, lookupNodeTrips, shardCount)
 	if pagePipelines != 2 || lookupPipelines != 10 {
 		t.Fatalf("cluster pipelines: Page %d, per-lookup %d; want 2 and 10", pagePipelines, lookupPipelines)
