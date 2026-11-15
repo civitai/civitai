@@ -341,6 +341,32 @@ jobs:
       - name: Moderator hold SQL matches the main app
         run: pnpm exec vitest run --project 'unit*' src/server/services/__tests__/moderator-delete-hold-parity.test.ts
 
+      # BLOCKING, on every PR including drafts. The `*.schema-drift.test.ts` files pin the published
+      # manifest schema (public/schemas/app-block/v1.json) against the code that enforces it (the
+      # manifest validator, the scope and category constants). They live in the unit suite, which
+      # runs on a PR only with the `full-ci` label, so a schema or validator edit could otherwise
+      # merge without them. Unfiltered on purpose: they read the schema with readFileSync, so no
+      # import graph sees it, and a hand-kept list of the files they pin would go stale silently.
+      #
+      # The file list is a glob, so a new drift test joins by its name. The JSON report is counted
+      # because vitest given files it does not match runs the rest and still exits 0.
+      - name: Manifest schema drift tests
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.schema-drift.test.ts')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No *.schema-drift.test.ts files found; this step would have checked nothing."
+            exit 1
+          fi
+          printf '%s\n' "${files[@]}"
+          pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
+            --outputFile=schema-drift-report.json "${files[@]}"
+          ran=$(node -e 'console.log(require("./schema-drift-report.json").testResults.length)')
+          if [ "$ran" -ne "${#files[@]}" ]; then
+            echo "::error::vitest ran $ran of ${#files[@]} schema drift test files; each one must run."
+            exit 1
+          fi
+
       - name: Register ESLint problem matcher
         run: echo "::add-matcher::.github/problem-matchers/eslint-unix.json"
 
