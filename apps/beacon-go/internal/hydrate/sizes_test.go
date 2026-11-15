@@ -2,6 +2,10 @@ package hydrate
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -53,10 +57,15 @@ func TestCheckSizesAcceptsExactLengths(t *testing.T) {
 			t.Errorf("%s: checkSizes(%x) = %v", name, b, err)
 		}
 	}
-	// Every golden cache value (msgpackr's own bytes) passes and decodes.
-	for k, b := range goldenPacked(t) {
+	// Every msgpackr value in the fuzz seed corpus (feed-go's golden cache values) passes and decodes.
+	seeds, err := filepath.Glob(filepath.Join("testdata", "fuzz", "FuzzUnpack", "golden-*"))
+	if err != nil || len(seeds) == 0 {
+		t.Fatalf("no golden seeds: %v", err)
+	}
+	for _, f := range seeds {
+		b := seedBytes(t, f)
 		if _, err := Unpack(b); err != nil {
-			t.Errorf("golden %s: %v", k, err)
+			t.Errorf("golden %s: %v", f, err)
 		}
 	}
 }
@@ -82,4 +91,22 @@ func TestCheckSizesWideLengthBoundaries(t *testing.T) {
 			t.Errorf("%s one over %x: %v, want errTruncated", c.name, c.over, err)
 		}
 	}
+}
+
+// seedBytes reads a `go test fuzz v1` corpus file holding one []byte value.
+func seedBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 || lines[0] != "go test fuzz v1" || !strings.HasPrefix(lines[1], "[]byte(") {
+		t.Fatalf("%s: not a []byte corpus entry", path)
+	}
+	v, err := strconv.Unquote(strings.TrimSuffix(strings.TrimPrefix(lines[1], "[]byte("), ")"))
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	return []byte(v)
 }

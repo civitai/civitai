@@ -303,7 +303,7 @@ func TestRollDue(t *testing.T) {
 // Literal pulse row, written from tracker.ts track() ({...actor, ...values}) and addViewSchema's
 // shape order, independent of the generator.
 func TestPulseRowLiteral(t *testing.T) {
-	e := &Engine{Sessions: fixedUser{&auth.SessionUser{ID: 42}}, TrackerEnabled: true}
+	e := &Engine{Sessions: fixedUser{u: &auth.SessionUser{ID: 42}}, TrackerEnabled: true}
 	r := &Request{
 		Method: http.MethodPost,
 		Headers: map[string]string{
@@ -328,7 +328,7 @@ func TestPulseRowLiteral(t *testing.T) {
 
 // Literal ping row, written from tracker.ts pageView() ({userId, memberType, ip, ...rest, clamped}).
 func TestPingRowLiteral(t *testing.T) {
-	e := &Engine{Sessions: fixedUser{&auth.SessionUser{ID: 7, Tier: "free", TierSet: true}}, TrackerEnabled: true}
+	e := &Engine{Sessions: fixedUser{u: &auth.SessionUser{ID: 7, Tier: "free", TierSet: true}}, TrackerEnabled: true}
 	r := &Request{
 		Method: http.MethodPost,
 		Headers: map[string]string{
