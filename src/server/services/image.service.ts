@@ -1688,6 +1688,17 @@ function extractSubmitErrorMessage(error: unknown): string | null {
 // grew) would terminalize every image submitted during the outage.
 const PERMANENT_SUBMIT_STATUSES = [400, 415, 422];
 
+/**
+ * 1 when a submit is going out for an Error row with no recorded `error`: its last scan went out
+ * and never called back, which counts as a failed attempt, or the retry ceiling never applies.
+ * Evaluated against the row as it was before the UPDATE that embeds it. A failed non-429 submit
+ * adds it on top of its own attempt: two attempts lost, so 2.
+ */
+const lostScanAttemptSql = () => Prisma.sql`(CASE
+  WHEN "ingestion" = 'Error'::"ImageIngestionStatus" AND NOT COALESCE("scanJobs" ? 'error', FALSE)
+  THEN 1 ELSE 0
+END)`;
+
 async function markImageScanSubmitFailure({
   dbClient,
   imageId,
@@ -1735,7 +1746,11 @@ async function markImageScanSubmitFailure({
         jsonb_set(
           COALESCE("scanJobs", '{}'),
           '{retryCount}',
-          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + ${rateLimited ? 0 : 1})
+          to_jsonb(
+            COALESCE(("scanJobs"->>'retryCount')::int, 0) + ${
+              rateLimited ? 0 : 1
+            } + ${lostScanAttemptSql()}
+          )
         ),
         '{error}',
         -- A run of 429s keeps the moment it started, which bounds the cron's age-out exemption.
@@ -1854,7 +1869,11 @@ export const ingestImage = async ({
         -- The last failure moves to lastFailure, so the cron keeps this row's retry ceiling
         -- while the new scan is in flight; error itself is cleared, ending any 429 run.
         "scanJobs" = ${scanJobsJson}::jsonb || jsonb_strip_nulls(jsonb_build_object(
-          'retryCount', "scanJobs"->'retryCount',
+          'retryCount', CASE
+            WHEN ${lostScanAttemptSql()} = 1
+              THEN to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+            ELSE "scanJobs"->'retryCount'
+          END,
           'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
         )) || ${keepPermanentScanFailureSql()}
       WHERE id = ${id}
@@ -5444,6 +5463,24 @@ export const getEntityCoverImage = async ({
     exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
   });
 
+  // A blocked or ToS-violating cover is its owner's and moderators' alone.
+  const coverNotBlocked = Prisma.join(
+    [
+      Prisma.sql`(i."tosViolation" IS NOT TRUE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean)`,
+      ...imageBlockedForConditions({
+        userId: signedIn ? viewerId ?? undefined : undefined,
+        isModerator,
+      }),
+    ],
+    ' AND '
+  );
+
+  // An image on a restricted base model is not shown at R or above.
+  const baseModelAllowed = Prisma.sql`(
+    (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
+    OR NOT i."modelRestricted"
+  )`;
+
   // A taken-down model's images are its owner's and moderators' alone. Also true with no model
   // (a NULL mode), so the image and post arms keep images on no model version.
   const modelNotWithheld = Prisma.sql`(
@@ -5534,10 +5571,7 @@ export const getEntityCoverImage = async ({
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND ${imageNotFlagged}
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
+          AND ${baseModelAllowed}
           ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
 
@@ -5575,10 +5609,7 @@ export const getEntityCoverImage = async ({
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND ${imageNotFlagged}
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
+          AND ${baseModelAllowed}
           ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
 
@@ -5622,6 +5653,8 @@ export const getEntityCoverImage = async ({
           WHERE e."entityType" = 'Article'
               AND ${modelNotWithheld}
               AND ${withinHeldGallery}
+              AND ${baseModelAllowed}
+              AND ${coverNotBlocked}
           AND (
             (a.status = 'Published' AND a."publishedAt" IS NOT NULL AND a.ingestion = 'Scanned')
             OR (${signedIn}::boolean AND a."userId" = ${viewerId}) OR ${isModerator}::boolean
@@ -5657,10 +5690,7 @@ export const getEntityCoverImage = async ({
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND ${imageNotFlagged}
-            AND (
-              (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-              OR NOT i."modelRestricted"
-            )
+            AND ${baseModelAllowed}
           ORDER BY e."entityId", i."postId", i.index, i.id
         ) t
 
@@ -6988,6 +7018,7 @@ export async function updateImageAcceptableMinor({
   const image = await dbWrite.image.update({
     where: { id },
     data: { acceptableMinor },
+    select: { id: true, acceptableMinor: true },
   });
 
   // Remove it from search index if minor is true

@@ -410,6 +410,15 @@ export enum FLIPT_FEATURE_FLAGS {
   //
   // Add the key (enabled: false) to flag state before flipping it.
   PLACEMENT_SPACE_READ_CACHE = 'placement-space-read-cache',
+  // ON keeps the shared, viewer-independent home block entry (the one `getHomeBlockCached` reads
+  // from Redis) in a per-process LRU for 10s, so `homeBlock.getHomeBlock` skips the Redis read and
+  // its decode on a hit. The row read, the viewer gates and the per-row identity still run on
+  // every request. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag or an uninitialized
+  // client, which keeps the Redis-only path. Global boolean, read at most once per 5s per process.
+  // See `home-block-cache.service.ts`.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key reads as off.
+  HOME_BLOCK_SERVER_CACHE = 'home-block-server-cache',
   // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
   // that `buildFliptContext` emits from the user's opt-in setting, so background paths
   // (no request context) can gate on the same flag the request path does.

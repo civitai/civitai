@@ -215,9 +215,15 @@ export const getAllUserCollectionsHandler = async ({
         : undefined,
     ]);
 
-    if (!counts) return collections;
+    // The cover carries only the fields its client uses; the blocks route reads the service.
+    const clientCollections = collections.map(({ image, ...collection }) => {
+      if (!image) return { ...collection, image };
+      const { poi, minor, acceptableMinor, tosViolation, ...cover } = image;
+      return { ...collection, image: cover };
+    });
+    if (!counts) return clientCollections;
 
-    return collections.map((collection) => ({
+    return clientCollections.map((collection) => ({
       ...collection,
       pendingReviewCount: counts.byCollection[collection.id] ?? 0,
     }));

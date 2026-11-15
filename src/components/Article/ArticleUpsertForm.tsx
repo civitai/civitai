@@ -89,9 +89,10 @@ export function ArticleUpsertForm({ article }: Props) {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
+  const hasWithheldImage = !!(article?.coverImageWithheld || article?.bannerImageWithheld);
   const formSchema = useMemo(
-    () => articleFormSchema(!!features.articleTypography),
-    [features.articleTypography]
+    () => articleFormSchema(!!features.articleTypography, hasWithheldImage),
+    [features.articleTypography, hasWithheldImage]
   );
   const result = querySchema.safeParse(router.query);
 
