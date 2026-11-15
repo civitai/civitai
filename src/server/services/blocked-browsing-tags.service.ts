@@ -45,9 +45,14 @@ function applyAddonExclusions(
 
   input.disableMinor = input.disableMinor || resolved.disableMinor;
 
+  // Own-scoped only when the request names a creator and EVERY creator identifier it carries is the
+  // viewer: a `userId` naming someone else is their feed whatever `username` says, and vice versa.
+  const scopedById = !!input.userId;
+  const scopedByName = !!input.username;
   const isOwnScoped =
-    !!(viewer.id && input.userId && viewer.id === input.userId) ||
-    isViewerUsername(viewer, input.username);
+    (scopedById || scopedByName) &&
+    (!scopedById || !!(viewer.id && viewer.id === input.userId)) &&
+    (!scopedByName || isViewerUsername(viewer, input.username));
   if (!isOwnScoped && resolved.excludedTagIds.length) {
     input.excludedTagIds = [
       ...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds]),

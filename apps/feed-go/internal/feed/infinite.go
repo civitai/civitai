@@ -102,13 +102,26 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 	return in, nil
 }
 
-// ownScoped is applyAddonExclusions' isOwnScoped: the request is scoped to the viewer's own content
-// by id (before a username is resolved) or by name, case-insensitively.
+// ownScoped is applyAddonExclusions' isOwnScoped for this input (see ownScope).
 func (in *InfiniteInput) ownScoped(viewerID int, viewerUsername string) bool {
-	if viewerID != 0 && in.UserID != 0 && viewerID == in.UserID {
-		return true
+	return ownScope(viewerID, viewerUsername, in.UserID, in.Username)
+}
+
+// ownScope is applyAddonExclusions' isOwnScoped: the request names a creator (`userId`, before a
+// username is resolved, or `username`) and every creator identifier it carries is the viewer — the
+// id equal, the name equal case-insensitively. A `userId` naming someone else is their feed whatever
+// `username` says, and vice versa. 0 / "" is no identifier (Node's falsy checks).
+func ownScope(viewerID int, viewerUsername string, userID int, username string) bool {
+	if userID == 0 && username == "" {
+		return false
 	}
-	return viewerUsername != "" && in.Username != "" && strings.EqualFold(in.Username, viewerUsername)
+	if userID != 0 && (viewerID == 0 || userID != viewerID) {
+		return false
+	}
+	if username != "" && (viewerUsername == "" || !strings.EqualFold(username, viewerUsername)) {
+		return false
+	}
+	return true
 }
 
 // dbPath is requiresImageDbPath for the supported inputs: a post's media, or a model without a

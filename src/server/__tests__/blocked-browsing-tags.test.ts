@@ -260,6 +260,54 @@ describe('enforceBlockedBrowsingTags', () => {
     expect(input.excludedTagIds).toContain(5188);
   });
 
+  describe('own scope needs every creator identifier to name the viewer', () => {
+    type ScopedInput = {
+      userId?: number;
+      username?: string;
+      browsingLevel: number;
+      excludedTagIds?: number[];
+      disablePoi?: boolean;
+    };
+    const viewer = { id: 7, username: 'alice' };
+
+    it('applies the tag exclusions to another creator’s userId sent with the viewer’s username', async () => {
+      const input: ScopedInput = { userId: 9, username: 'alice', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTags(input, viewer);
+      expect(input.excludedTagIds).toContain(5188);
+    });
+
+    it('applies the tag exclusions to the viewer’s userId sent with another creator’s username', async () => {
+      const input: ScopedInput = { userId: 7, username: 'bob', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTags(input, viewer);
+      expect(input.excludedTagIds).toContain(5188);
+    });
+
+    it('control: the viewer’s own userId and username (any case) keep them off', async () => {
+      const input: ScopedInput = { userId: 7, username: 'Alice', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTags(input, viewer);
+      expect(input.excludedTagIds).toBeUndefined();
+      expect(input.disablePoi).toBe(true);
+    });
+
+    it('control: another creator’s userId and username apply them', async () => {
+      const input: ScopedInput = { userId: 9, username: 'bob', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTags(input, viewer);
+      expect(input.excludedTagIds).toContain(5188);
+    });
+
+    it('a viewer without a username: their own userId beside a username applies them', async () => {
+      const input: ScopedInput = { userId: 7, username: 'alice', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTags(input, { id: 7 });
+      expect(input.excludedTagIds).toContain(5188);
+    });
+
+    it('the model feed: another creator’s userId with the viewer’s username applies them', async () => {
+      const input: ScopedInput = { userId: 9, username: 'alice', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTagsForModels(input, viewer);
+      expect(input.excludedTagIds).toContain(5188);
+    });
+  });
+
   it('unions addon exclusions into a non-own feed and preserves client-sent ids', async () => {
     const input = { excludedTagIds: [42], browsingLevel: NsfwLevel.PG } as {
       excludedTagIds?: number[];

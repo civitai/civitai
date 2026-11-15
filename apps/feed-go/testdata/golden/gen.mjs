@@ -477,9 +477,12 @@ function enforceBlockedBrowsingTags(input, viewer) {
   const resolved = resolveAddons(addons, level, { isModerator: viewer.isModerator });
   input.disablePoi = input.disablePoi || resolved.disablePoi;
   input.disableMinor = input.disableMinor || resolved.disableMinor;
+  const scopedById = !!input.userId;
+  const scopedByName = !!input.username;
   const isOwnScoped =
-    !!(viewer.id && input.userId && viewer.id === input.userId) ||
-    (!!viewer.username && !!input.username && viewer.username.toLowerCase() === input.username.toLowerCase());
+    (scopedById || scopedByName) &&
+    (!scopedById || !!(viewer.id && viewer.id === input.userId)) &&
+    (!scopedByName || (!!viewer.username && input.username.toLowerCase() === viewer.username.toLowerCase()));
   if (!isOwnScoped && resolved.excludedTagIds.length)
     input.excludedTagIds = [...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds])];
   return { emptyResult: false };
@@ -1664,6 +1667,13 @@ const V1 = [
     replies: { 'levels=1&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=reactions&limit=3': { body: { items: [8001, 8007] } } },
   },
   {
+    name: 'user-id-own-with-username-signed-in',
+    description: '`userId` naming the signed-in viewer beside a `username`: this route’s viewer carries no name to match it against, so it is not their own feed and the tag exclusions apply.',
+    query: 'userId=1001&username=artist_one&limit=3',
+    viewer: 1001,
+    replies: { 'levels=1&excludedTags=9901&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=reactions&limit=3': { body: { items: [8001, 8007] } } },
+  },
+  {
     name: 'post-id-filter',
     description: '`postId`: the post’s version’s model gates it (not held); the rest caller serves a post in the requested sort.',
     query: 'postId=7005&limit=10',
@@ -1827,6 +1837,16 @@ const INFINITE = [
     input: { userId: 1001, sort: 'Newest', browsingLevel: 31, limit: 5 },
     replies: {
       'levels=1%2C2%2C4%2C8%2C16&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
+  {
+    name: 'user-id-other-creator-viewer-username',
+    description: '`userId` naming another creator beside the signed-in viewer’s own `username`: not the viewer’s own feed (every creator identifier must name the viewer), so the addon tag exclusions apply; userIds from the id.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { userId: 1001, username: 'viewer_three', sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
     },
   },
   {
