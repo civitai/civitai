@@ -9,12 +9,6 @@ import { REDIS_SYS_KEYS } from '../client';
  * test pins the exact set of leaf values below, so a change to the registry has to be a decision
  * someone made, not a side effect of a feature PR.
  *
- * It fails in both directions:
- * - a key ADDED to `REDIS_SYS_KEYS` that is not listed here, and
- * - a key listed here that is no longer in `REDIS_SYS_KEYS`.
- * The second direction also keeps the test honest: if the flattening below ever stopped finding
- * leaves, every entry would go missing and the test would fail rather than pass on an empty set.
- *
  * The list is a hand-maintained literal on purpose. Never build it from `REDIS_SYS_KEYS`.
  */
 const SYS_KEY_LEDGER = [
