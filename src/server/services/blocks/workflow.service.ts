@@ -18,7 +18,6 @@ import {
 } from './steps';
 import { mediaSlotsFromBlobs, slotFromMedia } from './steps';
 import type { OrchestratorBlobLike, StepOutputSlot, TrainedEpoch } from './steps';
-import { getModel3DPreviewNsfwLevel } from '~/shared/orchestrator/model3d-output';
 import { isNeverRatedVideoStep } from '~/shared/orchestrator/workflow-data';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restriction';
@@ -305,18 +304,106 @@ export function snapshotFromWorkflow(
  */
 function classifyOutputs(
   slots: readonly StepOutputSlot[],
-  step: { $type: string; output?: unknown; metadata?: unknown },
+  step: { $type: string; status?: string; output?: unknown; metadata?: unknown; input?: unknown },
   workflow: Workflow,
   ceiling: BlockOutputCeiling
 ): BlockWorkflowOutput[] {
-  const neverRatedVideoStep = isNeverRatedVideoStep(
-    step as Parameters<typeof isNeverRatedVideoStep>[0],
-    (workflow.metadata as { params?: Parameters<typeof isNeverRatedVideoStep>[1] } | undefined)
-      ?.params
-  );
+  const neverRatedVideo = isBlockNeverRatedVideoStep(step, workflow);
   return propagateMeshRating(slots, step, workflow).map((m) =>
-    classifyBlockOutput(m, workflow as BlockOutputWorkflowFacts, ceiling, { neverRatedVideoStep })
+    classifyBlockOutput(m, workflow as BlockOutputWorkflowFacts, ceiling, {
+      // A video from an engine the orchestrator never rates will get no rating.
+      neverRated: m.neverRated === true || (neverRatedVideo && m.type === 'video'),
+    })
   );
+}
+
+/**
+ * The orchestrator `videoGen` engines whose output is never rated, as App Blocks submits
+ * them: `input.engine` is the value the block sent, echoed back unchanged. The SAME set
+ * as the site's `NEVER_RATED_VIDEO_ECOSYSTEMS` (`GeminiOmni`, `Grok`, `Kling`, `Veo3`,
+ * `Vidu`), spelled as engines — the site reads the ECOSYSTEM from
+ * `workflow.metadata.params`, which the App Blocks submit never writes. A versioned
+ * engine (`kling-v3`, `vidu-q4`) matches by its family prefix.
+ */
+const NEVER_RATED_VIDEO_ENGINES = ['gemini-omni', 'grok', 'kling', 'veo3', 'vidu'] as const;
+
+/** Whether a step's videos will never be rated: the site's rule, or the engine the block sent. */
+export function isBlockNeverRatedVideoStep(
+  step: { $type: string; metadata?: unknown; input?: unknown },
+  workflow: Pick<Workflow, 'metadata'>
+): boolean {
+  if (step.$type !== 'videoGen') return false;
+  if (
+    isNeverRatedVideoStep(
+      step as Parameters<typeof isNeverRatedVideoStep>[0],
+      (workflow.metadata as { params?: Parameters<typeof isNeverRatedVideoStep>[1] } | undefined)
+        ?.params
+    )
+  ) {
+    return true;
+  }
+  const engine = (step.input as { engine?: unknown } | undefined)?.engine;
+  if (typeof engine !== 'string') return false;
+  const e = engine.trim().toLowerCase();
+  return NEVER_RATED_VIDEO_ENGINES.some((n) => e === n || e.startsWith(`${n}-`));
+}
+
+type MeshRating =
+  /** Every source has rated: the most severe of them. */
+  | { kind: 'rated'; rating: NonNullable<Parameters<typeof maxNsfwLevel>[0][number]> }
+  /** A source exists that has not rated yet: hold. */
+  | { kind: 'pending' }
+  /** No source exists and none can come (the step is finished): no rating will arrive. */
+  | { kind: 'never' };
+
+const FINISHED_STEP_STATUSES: ReadonlySet<string> = new Set([
+  'succeeded',
+  'failed',
+  'expired',
+  'canceled',
+]);
+
+/**
+ * What a 3D mesh in this step is rated, from its RATING SOURCES — the step's
+ * auto-`thumbnail` and every `model3DPreview` render in the workflow.
+ *
+ * 🔴 PARTIAL IS NOT RATED. `maxNsfwLevel` skips an unrated value, so taking the max over
+ * whatever has rated so far would hand a mesh `pg` from a `pg` thumbnail while a preview
+ * render that will come back `x` is still running. So: a declared thumbnail without a
+ * rating, a preview step that has not finished, or a finished preview with any unrated
+ * image makes the mesh PENDING. Only when every source has rated is the max taken. A
+ * preview step that finished with no image contributes nothing.
+ */
+function meshRatingOf(
+  step: { status?: string; output?: unknown },
+  workflow: Pick<Workflow, 'steps'>
+): MeshRating {
+  const ratings: Array<Parameters<typeof maxNsfwLevel>[0][number]> = [];
+  let sources = 0;
+  const thumbnail = (step.output as { thumbnail?: unknown } | undefined)?.thumbnail;
+  if (thumbnail && typeof thumbnail === 'object') {
+    sources += 1;
+    const level = (thumbnail as { nsfwLevel?: unknown }).nsfwLevel;
+    if (typeof level !== 'string' || level === '') return { kind: 'pending' };
+    ratings.push(level as Parameters<typeof maxNsfwLevel>[0][number]);
+  }
+  for (const preview of workflow.steps ?? []) {
+    if (preview?.$type !== 'model3DPreview') continue;
+    if (!FINISHED_STEP_STATUSES.has(preview.status)) return { kind: 'pending' };
+    const images =
+      (preview as { output?: { images?: Array<{ nsfwLevel?: unknown } | null> } }).output?.images ??
+      [];
+    for (const image of images) {
+      sources += 1;
+      const level = image?.nsfwLevel;
+      if (typeof level !== 'string' || level === '') return { kind: 'pending' };
+      ratings.push(level as Parameters<typeof maxNsfwLevel>[0][number]);
+    }
+  }
+  const rating = maxNsfwLevel(ratings);
+  if (rating) return { kind: 'rated', rating };
+  if (sources > 0) return { kind: 'pending' };
+  return FINISHED_STEP_STATUSES.has(step.status ?? '') ? { kind: 'never' } : { kind: 'pending' };
 }
 
 /**
@@ -324,33 +411,33 @@ function classifyOutputs(
  * `model`, `fbxModel`, rigged and animated variants alike). The on-site formatter
  * (`formatStepOutputs`) copies the most severe of the step's auto-`thumbnail` rating and
  * the workflow's `model3DPreview` render rating onto it; this is that rule for App
- * Blocks. Without it a mature mesh reads as unrated. Non-mesh slots are untouched.
+ * Blocks, made strict ({@link meshRatingOf}): every source must have rated, else the mesh
+ * stays unrated and is held; with no source at all on a finished step it is marked
+ * `neverRated`. Non-mesh slots are untouched.
  */
 export function propagateMeshRating(
   slots: readonly StepOutputSlot[],
-  step: { output?: unknown },
+  step: { status?: string; output?: unknown },
   workflow: Pick<Workflow, 'steps'>
 ): StepOutputSlot[] {
   if (!slots.some((s) => s.type === 'model3d')) return [...slots];
-  const thumbnail = (step.output as { thumbnail?: { nsfwLevel?: unknown } | null } | undefined)
-    ?.thumbnail?.nsfwLevel;
-  const meshRating = maxNsfwLevel([
-    typeof thumbnail === 'string'
-      ? (thumbnail as Parameters<typeof maxNsfwLevel>[0][number])
-      : null,
-    getModel3DPreviewNsfwLevel(workflow.steps as Parameters<typeof getModel3DPreviewNsfwLevel>[0]),
-  ]);
-  if (!meshRating) return [...slots];
-  return slots.map((s) =>
-    s.type === 'model3d'
-      ? {
-          ...s,
-          nsfwLevel:
-            maxNsfwLevel([s.nsfwLevel as Parameters<typeof maxNsfwLevel>[0][number], meshRating]) ??
-            null,
-        }
-      : s
-  );
+  const mesh = meshRatingOf(step, workflow);
+  return slots.map((s) => {
+    if (s.type !== 'model3d') return s;
+    if (mesh.kind === 'rated') {
+      return {
+        ...s,
+        nsfwLevel:
+          maxNsfwLevel([s.nsfwLevel as Parameters<typeof maxNsfwLevel>[0][number], mesh.rating]) ??
+          null,
+      };
+    }
+    // A source that has not rated yet: hold the mesh, whatever it carries itself.
+    if (mesh.kind === 'pending') return { ...s, nsfwLevel: null };
+    // No source at all: a rating on the mesh itself is all there is; without one, none
+    // will ever come.
+    return s.nsfwLevel ? s : { ...s, nsfwLevel: null, neverRated: true as const };
+  });
 }
 
 /** True when any entry is held for its rating — what sets `ratingPending`. */
@@ -685,9 +772,10 @@ function extractSnapshotStep(
  *
  * Output key per `$type` comes from `NATIVE_STEP_OUTPUT_KEY`.
  *
- * The availability + non-empty-url filter is `mediaFromBlobs`, the same one the
- * registry entries use, so a blob the orchestrator has not made available
- * (pending, or blocked by its moderation) is dropped identically on every path.
+ * The availability + non-empty-url filter is `mediaSlotsFromBlobs`, the slot form of the
+ * `mediaFromBlobs` the registry entries use: a blob the orchestrator has not made
+ * available yet (pending) is dropped, and a BLOCKED one keeps its position as a slot
+ * with a `blockedReason` and no url a block is given.
  */
 function nativeStepOutputMedia(step: { $type: string; output?: unknown }): StepOutputSlot[] {
   const key = (NATIVE_STEP_OUTPUT_KEY as Record<string, 'images' | 'blobs' | undefined>)[

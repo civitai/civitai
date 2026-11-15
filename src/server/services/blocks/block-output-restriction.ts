@@ -38,10 +38,15 @@ import type {
  *      `{ blocked: true }`.
  *   1. NOT RATED YET (`null` / `''`): HELD as `{ pending: true }` — no url, no rating —
  *      when its rating COULD STILL RESTRICT it ({@link ratingCouldRestrict}) and it is
- *      an output the orchestrator rates at all (`isUnratedOutput`: not audio, not a
- *      never-rated video engine). The orchestrator marks a workflow succeeded seconds
- *      before it rates the last output, so a url handed out now would be a restricted
- *      output's url a moment later. When nothing could restrict it, `{ url }`.
+ *      an output the orchestrator rates (`isUnratedOutput`: not audio). The
+ *      orchestrator marks a workflow succeeded seconds before it rates the last output,
+ *      so a url handed out now would be a restricted output's url a moment later.
+ *      When nothing could restrict it, `{ url }`.
+ *   1b. NEVER TO BE RATED (`opts.neverRated`: a never-rated video engine, an
+ *      `imageResourceTraining` sample, a mesh on a finished step with no rating
+ *      source): where a rating could restrict it, `{ restricted: true, reason:
+ *      'unrated' }` — terminal, no url, no `ratingPending`, refused like any restricted
+ *      slot; otherwise `{ url }`. A hold would never release.
  *      `'na'` is a verdict with no level (the provider moderated it): `{ url }`.
  *   2. A rating this module does not know: restricted, `'ceiling'` (fail closed).
  *   3. Above the token's `maxBrowsingLevel` ceiling: restricted, `'ceiling'`.
@@ -76,7 +81,8 @@ export function classifyBlockOutput(
   },
   workflow: BlockOutputWorkflowFacts,
   ceiling: BlockOutputCeiling,
-  opts: { neverRatedVideoStep?: boolean } = {}
+  /** `neverRated`: no rating will EVER arrive for this output (rule 1b). */
+  opts: { neverRated?: boolean } = {}
 ): BlockWorkflowOutput {
   const blockedReason = media.blockedReason;
   if (typeof blockedReason === 'string' && blockedReason.toLowerCase() !== 'none') {
@@ -85,10 +91,15 @@ export function classifyBlockOutput(
   const raw = typeof media.nsfwLevel === 'string' ? media.nsfwLevel.trim().toLowerCase() : '';
   if (raw === 'na') return { url: media.url };
   if (raw === '') {
+    // 1b. No rating will ever come: FAIL CLOSED where one could restrict it — terminal,
+    // never held, never a url.
+    if (opts.neverRated) {
+      return ratingCouldRestrict(workflow, ceiling) ? restricted('unrated') : { url: media.url };
+    }
     const holdable = isUnratedOutput(
       {
-        // A mesh is held until a thumbnail / preview rating reaches it, whatever its
-        // format — see the note above; the GLB exemption assumes a propagated rating.
+        // A mesh arrives here only while a rating source is still pending
+        // (`propagateMeshRating`), so it is held whatever its format.
         type: (KNOWN_TYPES.has(media.type ?? '') ? media.type : 'image') as
           | 'image'
           | 'video'
@@ -98,7 +109,7 @@ export function classifyBlockOutput(
         nsfwLevel: undefined,
         blockedReason: undefined,
       },
-      opts.neverRatedVideoStep ?? false
+      false
     );
     return holdable && ratingCouldRestrict(workflow, ceiling) ? PENDING : { url: media.url };
   }
@@ -196,7 +207,7 @@ export function isUnrestrictedOutput(
   return 'url' in output && typeof output.url === 'string';
 }
 
-const restricted = (reason: 'pool' | 'ceiling'): BlockWorkflowOutput => ({
+const restricted = (reason: 'pool' | 'ceiling' | 'unrated'): BlockWorkflowOutput => ({
   restricted: true,
   reason,
 });

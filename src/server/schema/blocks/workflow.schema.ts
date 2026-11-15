@@ -1138,15 +1138,19 @@ export type BlockWorkflowSnapshot = {
    * One entry per available output, in the same order `imageUrls` was built in, with
    * RESTRICTED outputs kept IN POSITION. An entry is either
    *   - `{ url, nsfwLevel? }` — within the app's ceiling. `nsfwLevel` is the
-   *     orchestrator rating (`pg`, `pg13`, `r`, `x`, `xxx`), absent while unrated; or
+   *     orchestrator rating (`pg`, `pg13`, `r`, `x`, `xxx`), absent when there is no
+   *     rating to report and none could restrict it; or
    *   - `{ restricted: true, reason }` — NO url and NO rating. `'pool'`: the Buzz that
    *     paid does not allow mature content for this viewer (the workflow's
    *     `allowMatureContent` was set false at charge time) and the output is above
    *     PG-13. `'ceiling'`: the output is above the app token's maturity ceiling, or
-   *     above a cap the site itself put on the workflow.
+   *     above a cap the site itself put on the workflow, or a `MatureContent` block.
+   *     `'unrated'`: no rating will ever arrive (a never-rated video engine, a training
+   *     sample, a 3D mesh with no rating source) and one could restrict it — terminal,
+   *     fail closed. Treat an unknown reason like `'ceiling'`.
    * Restricted urls are withheld; an app shows a locked state for such an entry and
-   * must not try to fetch it. Blocked and not-yet-available outputs are dropped, as
-   * from `imageUrls`.
+   * must not try to fetch it. Not-yet-available outputs are dropped, as from
+   * `imageUrls`; a BLOCKED one keeps its slot (below).
    *
    * 🔴 INDEXES ARE POSITIONS IN THIS LIST. `imageIndexes` on publish and post, and
    * `imageIndex` on persist, name an output by its position here — a restricted output
@@ -1641,7 +1645,8 @@ export type BlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
 /** One entry of `BlockWorkflowSnapshot.outputs` / `AppWorkflow.outputs`. */
 export type BlockWorkflowOutput =
   | { url: string; nsfwLevel?: BlockWorkflowOutputRating }
-  | { restricted: true; reason: 'pool' | 'ceiling' }
+  /** `'unrated'`: no rating will ever arrive, and one could restrict it (fail closed). */
+  | { restricted: true; reason: 'pool' | 'ceiling' | 'unrated' }
   /** Not rated yet, and its rating could still restrict it: no url until it lands. */
   | { pending: true }
   /** Blocked by moderation: keeps its position, no url, never available. */

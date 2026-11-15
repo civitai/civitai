@@ -84,6 +84,8 @@ export type StepOutputSlot = StepOutputMedia & {
   type: string | null;
   format: string | null;
   blockedReason: string | null;
+  /** No rating will EVER arrive for this output (see `classifyBlockOutput`). */
+  neverRated?: true;
 };
 
 /** {@link mediaFromBlobs}, with BLOCKED blobs kept in position — see {@link StepOutputSlot}. */
@@ -396,9 +398,9 @@ export function splitPassThroughStep(
   const sampleUrls: string[] = [];
   const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
   const { media, rest, model3d, slots } = splitPassThroughStepOutput(stripped);
-  // 🔴 These plain-string samples carry NO rating the orchestrator reports, so as
-  // output positions they are unrated images: held (`pending`) wherever a rating could
-  // still restrict them (`classifyBlockOutput`).
+  // 🔴 These plain-string samples carry NO rating, and none will ever arrive, so as
+  // output positions they are `neverRated`: restricted `'unrated'` wherever a rating
+  // could restrict them (`classifyBlockOutput`), never held.
   for (const url of sampleUrls) {
     media.push({ url, width: null, height: null, nsfwLevel: null });
     slots.push({
@@ -409,6 +411,7 @@ export function splitPassThroughStep(
       type: 'image',
       format: null,
       blockedReason: null,
+      neverRated: true,
     });
   }
   const approved =
