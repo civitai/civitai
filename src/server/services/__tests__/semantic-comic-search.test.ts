@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
 vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   recordSemanticAudit: h.recordAudit,
+  recordRefusedSemanticAudit: h.recordAudit,
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),

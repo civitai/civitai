@@ -12,6 +12,7 @@ import {
   isNonModClampOn,
   queryVerdictLevel,
   recordRefusal,
+  refusedTextCandidates,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
   type QueryStage,
@@ -101,8 +102,8 @@ export async function searchSemanticModels3D({
   };
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return audit.done(none, browsingLevel);
-  if (verdictLevel !== browsingLevel) {
+  const queryRefused = verdictLevel === 'refuse';
+  if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
   }
@@ -122,6 +123,17 @@ export async function searchSemanticModels3D({
     excludedTagIds,
     excludedUserIds,
   };
+  // Refused before any search: the audit may run it after the response, for its row only.
+  if (queryRefused)
+    return audit.refused(
+      none,
+      browsingLevel,
+      refusedTextCandidates(candidateSource, {
+        text: input.query,
+        filter,
+        viewer: { isModerator: !!user?.isModerator },
+      })
+    );
 
   const perUser = new Map<number, number>();
   let hydrated = 0;
@@ -173,6 +185,7 @@ export async function searchSemanticModels3D({
   }).catch(() => undefined);
 
   audit.candidates(search.state.first);
-  if (search.state.refused) return audit.done(none, browsingLevel);
+  if (search.state.refused)
+    return audit.refused(none, browsingLevel, async () => search.state.first ?? { ids: [] });
   return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }
