@@ -656,9 +656,9 @@ function enforceBlockedBrowsingTags(input, viewer) {
   const resolved = resolveAddons(addons, level, { isModerator: viewer.isModerator });
   input.disablePoi = input.disablePoi || resolved.disablePoi;
   input.disableMinor = input.disableMinor || resolved.disableMinor;
-  const isOwnScoped =
-    !!(viewer.id && input.userId && viewer.id === input.userId) ||
-    (!!viewer.username && !!input.username && viewer.username.toLowerCase() === input.username.toLowerCase());
+  const isOwnScoped = input.userId
+    ? !!(viewer.id && viewer.id === input.userId)
+    : !!viewer.username && !!input.username && viewer.username.toLowerCase() === input.username.toLowerCase();
   if (!isOwnScoped && resolved.excludedTagIds.length)
     input.excludedTagIds = [...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds])];
   return { emptyResult: false };
@@ -2042,6 +2042,16 @@ const INFINITE = [
     input: { userId: 1001, sort: 'Newest', browsingLevel: 31, limit: 5 },
     replies: {
       'levels=1%2C2%2C4%2C8%2C16&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
+  {
+    name: 'user-id-other-creator-viewer-username',
+    description: '`userId` naming another creator beside the signed-in viewer’s own `username`: not the viewer’s own feed (every creator identifier must name the viewer), so the addon tag exclusions apply; userIds from the id.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { userId: 1001, username: 'viewer_three', sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
     },
   },
   {

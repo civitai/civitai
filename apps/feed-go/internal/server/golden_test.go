@@ -44,7 +44,7 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 23
 	goldenMinV1       = 22
-	goldenMinInfinite = 20
+	goldenMinInfinite = 21
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
