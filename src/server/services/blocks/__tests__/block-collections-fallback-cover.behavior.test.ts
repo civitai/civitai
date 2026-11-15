@@ -13,14 +13,16 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/server/auth/session-client', () => ({ sessionClient: {} }));
-// The stored gallery level of a held post's model; by default no post is held.
+// The cached gallery level of a held post's model; by default no post is held.
 const coverLevels = vi.hoisted(() => ({ held: new Map<number, number>() }));
-vi.mock('~/server/utils/public-cover-image', () => ({
-  getCoverBrowsingLevels:
-    async (_covers: unknown[], browsingLevel: number) => (cover: { postId: number | null }) =>
-      cover.postId != null && coverLevels.held.has(cover.postId)
-        ? coverLevels.held.get(cover.postId)! & browsingLevel
-        : browsingLevel,
+// Hand-listed: the cover level helper takes only this from model.service, whose import graph is large.
+vi.mock('~/server/services/model.service', () => ({
+  getHeldLevelsByPost: async (postIds: number[]) =>
+    new Map(
+      postIds
+        .filter((id) => coverLevels.held.has(id))
+        .map((id) => [id, { level: coverLevels.held.get(id)! }])
+    ),
 }));
 
 import {
@@ -123,10 +125,15 @@ beforeAll(async () => {
       availability "Availability" NOT NULL DEFAULT 'Public',
       "modelVersionId" int
     );
-    CREATE TABLE "Model" (id int PRIMARY KEY, minor boolean NOT NULL, "sfwOnly" boolean NOT NULL);
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, minor boolean NOT NULL, "sfwOnly" boolean NOT NULL, "gallerySettings" jsonb
+    );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
-    INSERT INTO "Model" VALUES (1, false, false), (2, false, true), (3, true, false);
-    INSERT INTO "ModelVersion" VALUES (11, 1), (12, 2), (13, 3);
+    -- Model 4 is SFW-only with PG stored.
+    INSERT INTO "Model" VALUES
+      (1, false, false, NULL), (2, false, true, NULL), (3, true, false, NULL),
+      (4, false, true, '{"level": 1}');
+    INSERT INTO "ModelVersion" VALUES (11, 1), (12, 2), (13, 3), (14, 4);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       url text NOT NULL,
@@ -269,7 +276,15 @@ describe("getFallbackCoverImages on a minor or SFW-only model's post", () => {
     expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-2');
   });
 
-  it("serves no cover when the newest permitted item is above its model's stored gallery level", async () => {
+  it("takes the next item when the newest is above its model's stored gallery level", async () => {
+    await insertImage(1, onVersion(14, 1));
+    await insertImage(2, onVersion(14, 2));
+    await insertItem(10, 1, '2026-01-01');
+    await insertItem(10, 2, '2026-01-02');
+    expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-1');
+  });
+
+  it('serves no cover when the cached gallery level is stricter than the stored one', async () => {
     await insertImage(1, onVersion(12, 1));
     await insertImage(2, onVersion(12, 2));
     await insertItem(10, 1, '2026-01-01');
