@@ -95,11 +95,12 @@ name: Lint
 #
 # 🔴 THE UNIT SUITE IS THE EXCEPTION: it is verified in BATCHES, not per push (2026-11). A push
 # to `main` runs typecheck, typecheck-tests, packages and component; `unit` is skipped there.
-# unit-hourly.yml dispatches this workflow (`only: unit`) on `main` once an hour when `main`'s
-# head has moved since the last hourly run, and on red the `unit-verify` job re-runs the failed
-# files, bisects to the first bad merge commit and posts a failing `Unit tests (hourly)` commit
+# unit-batched.yml dispatches this workflow (`only: unit`) on `main` on a schedule (every 2 hours
+# as of 2026-11; its cron is the one place that sets the cadence) when `main`'s head has moved
+# since the last batch run, and on red the `unit-verify` job re-runs the failed
+# files, bisects to the first bad merge commit and posts a failing `Unit tests (main batch)` commit
 # status ON THAT COMMIT. So a unit regression still renders red on the commit that caused it,
-# within about an hour plus the run, instead of within minutes; that is the trade.
+# within about one cadence interval plus the run, instead of within minutes; that is the trade.
 # scripts/__tests__/main-branch-ci-coverage.test.ts pins this path instead of a push-reachable one.
 #
 # The push path deliberately does NOT run every job here. `eslint` is diff-vs-
@@ -258,11 +259,11 @@ permissions:
 # dispatches of DIFFERENT suites on one branch still run side by side. The
 # `dispatch-` prefix keeps these groups disjoint from the PR and push ones.
 #
-# The hourly unit dispatch (unit-hourly.yml, dispatched as github-actions[bot] with `only: unit`)
+# The batch unit dispatch (unit-batched.yml, dispatched as github-actions[bot] with `only: unit`)
 # has its own group, so a person's `only: unit` dispatch on the same ref neither cancels it nor is
 # cancelled by it.
 concurrency:
-  group: lint-${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && format('unit-hourly-{0}', github.ref) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
+  group: lint-${{ github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' && format('unit-batch-{0}', github.ref) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
@@ -620,18 +621,19 @@ jobs:
     # calls itself the canonical fix; 98-102 is a separate hookTimeout fix.
     # Don't cite a cold-cache flake as a reason to keep this job Chromium-free.
     #
-    # ── NOT RUN ON PULL REQUESTS UNLESS ASKED, NOT RUN ON PUSH; VERIFIED HOURLY ON `main` ──
+    # ── NOT RUN ON PULL REQUESTS UNLESS ASKED, NOT RUN ON PUSH; VERIFIED IN BATCHES ON `main` ──
     #
     # The `if` below skips this job on `pull_request` unless the PR carries the
     # `full-ci` label (draft or not; every push while the label is on runs it — see
     # the header), and skips it on every push to `main`. It runs on `workflow_dispatch`,
-    # where `only` still selects it — including the hourly dispatch on `main` from
-    # unit-hourly.yml, after which `unit-verify` posts the verdict as a commit status
+    # where `only` still selects it — including the batch dispatch on `main` from
+    # unit-batched.yml, after which `unit-verify` posts the verdict as a commit status
     # (on the first bad commit when red). See "THE UNIT SUITE IS THE EXCEPTION" in the header.
     #
     # Why not per push, measured over 7 days of `main` (2026-11-08..15): the push runs'
     # four shards were the biggest single cost on `main` (the PR body has the figures),
-    # and hourly batching runs them at most 24 times a day whatever the push rate.
+    # and batching runs them at most once per cadence interval (12 a day at 2 hours)
+    # whatever the push rate.
     #
     # Why, measured over 24h (448 Lint runs, 2026-10): these four shards were 59% of
     # all Lint job-minutes, ~12,400 of ~21,000, ~10,000 of it on PRs. The plan's
@@ -641,8 +643,8 @@ jobs:
     # anything, and it passed 760 of 793 shard runs (96%).
     #
     # THE TRADE, stated plainly: a unit regression is found on `main` after merge,
-    # by the next hourly run, instead of on the PR. It renders red on the commit that
-    # caused it (the bisect), up to about an hour plus the run later. The
+    # by the next batch run, instead of on the PR. It renders red on the commit that
+    # caused it (the bisect), up to one cadence interval plus the run and the bisect later. The
     # `test:lint-rules` convention guards (`src/server/services/__tests__/no-*.test.ts`)
     # run inside this suite, so they move with it.
     #
@@ -831,8 +833,8 @@ jobs:
       #
       # 🔴 RESTORE ALWAYS, SAVE ONLY ON `main`. This job runs on a pull request only
       # when it carries the `full-ci` label and no longer runs on push, so on `main` it
-      # runs as the hourly dispatch (unit-hourly.yml), which is what saves; the readers
-      # are the next hourly run, a `workflow_dispatch` on any branch (full-ci.yml
+      # runs as the batch dispatch (unit-batched.yml), which is what saves; the readers
+      # are the next batch run, a `workflow_dispatch` on any branch (full-ci.yml
       # dispatches one) and a labeled PR, all of which can read the default branch's scope.
       # A dispatch on another branch or a PR must not save: an entry saved on a
       # feature branch is scoped to that ref, readable by nothing else, and counts
@@ -1466,19 +1468,19 @@ jobs:
             exit 1
           fi
 
-  # ── THE HOURLY UNIT VERDICT, AS A COMMIT STATUS ─────────────────────────────────────────────
+  # ── THE BATCHED UNIT VERDICT, AS A COMMIT STATUS ─────────────────────────────────────────────
   #
-  # Only on the hourly dispatch (unit-hourly.yml dispatches this workflow as github-actions[bot]
+  # Only on the batch dispatch (unit-batched.yml dispatches this workflow as github-actions[bot]
   # with `only: unit`); a person's `only: unit` dispatch and full-ci.yml's `only: all` dispatch
-  # never reach it. Green: a success `Unit tests (hourly)` status on HEAD. Red: re-runs the
+  # never reach it. Green: a success `Unit tests (main batch)` status on HEAD. Red: re-runs the
   # failed files at HEAD (a pass there = flaky, nothing posted), then `git bisect run
-  # --first-parent` from the last green hourly-verified commit, and posts a FAILING status on the
+  # --first-parent` from the last green batch-verified commit, and posts a FAILING status on the
   # first bad commit naming the failed files, or on HEAD when the bisect cannot isolate one
-  # (scripts/ci/unit-hourly.mjs). That keeps a unit red rendering on the commit that caused it.
+  # (scripts/ci/unit-batched.mjs). That keeps a unit red rendering on the commit that caused it.
   # This job also IS the record: the gate skips a run when HEAD is the commit of the newest
   # finished run that has this job.
   unit-verify:
-    name: Unit verified (hourly)
+    name: Unit verified (main batch)
     needs: unit
     runs-on: ubuntu-latest
     if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.actor == 'github-actions[bot]' && inputs.only == 'unit' }}
@@ -1518,4 +1520,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           UNIT_RESULT: ${{ needs.unit.result }}
-        run: node scripts/ci/unit-hourly.mjs verify "$UNIT_RESULT" "$RUNNER_TEMP/reports"
+        run: node scripts/ci/unit-batched.mjs verify "$UNIT_RESULT" "$RUNNER_TEMP/reports"

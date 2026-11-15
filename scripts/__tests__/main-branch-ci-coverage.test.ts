@@ -30,10 +30,11 @@ import { describe, expect, it } from 'vitest';
 // keeps this green; losing main coverage does not, however it is lost.
 //
 // THE UNIT SUITE IS VERIFIED IN BATCHES, NOT PER PUSH (2026-11). Its verdict for a commit on
-// `main` comes from an hourly scheduled run that bisects a red to the first bad commit and posts
-// a failing commit status there, so a red still lands on the commit that caused it, about an hour
-// later rather than minutes. The guard for it below asserts that path (a schedule that fires at
-// least hourly, a dispatch target that runs the suite, a job that posts commit statuses) rather
+// `main` comes from a scheduled batch run (every 2 hours, operator decision 2026-11-15) that
+// bisects a red to the first bad commit and posts a failing commit status there, so a red still
+// lands on the commit that caused it, up to about 3 hours later rather than minutes. The guard for
+// it below asserts that path (a schedule that fires at least every MAX_BATCH_HOURS, a dispatch
+// target that runs the suite, a job that posts commit statuses) rather
 // than a push-reachable job. The regression above, a commit on `main` with no verdict at all, is
 // what both forms rule out.
 
@@ -181,27 +182,49 @@ describe('CI coverage for commits on main', () => {
 
   // The unit suite's verdict for `main`, batched (see the header). Each link of the chain is
   // asserted, because each one failing alone leaves `main` with no unit verdict and no red.
-  describe('the unit suite, verified hourly on main', () => {
-    const cronHourly = (cron: string) => /^\d{1,2} \* \* \* \*$/.test(cron.trim());
+  describe('the unit suite, verified in batches on main', () => {
+    // The contract: a commit on `main` gets a unit verdict within this many hours plus a run.
+    // A tighter cron passes; a wider one is a contract change and must change this number.
+    const MAX_BATCH_HOURS = 2;
+    // Hours between firings of a cron that fires at a fixed minute every N hours, else null.
+    const everyHours = (cron: string): number | null => {
+      const m = /^\d{1,2} (\*|\*\/(\d{1,2})) \* \* \*$/.exec(cron.trim());
+      if (!m) return null;
+      return m[1] === '*' ? 1 : Number(m[2]);
+    };
+    const withinContract = (cron: string) => {
+      const n = everyHours(cron);
+      return n !== null && n <= MAX_BATCH_HOURS;
+    };
+
+    it.each([
+      ['41 * * * *', 1],
+      ['41 */2 * * *', 2],
+      ['41 */3 * * *', 3],
+      ['41 3 * * *', null],
+      ['*/5 * * * *', null],
+    ])('reads the interval of %s as %s hours', (cron, want) => {
+      expect(everyHours(cron)).toBe(want);
+    });
     const schedules = (doc: Workflow) =>
       (
         ((doc.on as Record<string, unknown> | undefined)?.schedule as Array<{ cron: string }>) ?? []
       ).map((s) => s.cron);
 
-    it('a workflow fires at least hourly and runs the gate that dispatches the suite', () => {
+    it('a workflow fires at least every MAX_BATCH_HOURS and runs the gate that dispatches the suite', () => {
       const hit = workflows
-        .filter((w) => schedules(w.doc).some(cronHourly))
+        .filter((w) => schedules(w.doc).some(withinContract))
         .filter((w) =>
           Object.values(w.doc.jobs ?? {}).some((j) =>
-            runScripts(j).includes('unit-hourly.mjs gate')
+            runScripts(j).includes('unit-batched.mjs gate')
           )
         )
         .map((w) => w.file);
       expect(
         hit,
-        'no hourly scheduled workflow runs `scripts/ci/unit-hourly.mjs gate`'
+        `no workflow scheduled at least every ${MAX_BATCH_HOURS} h runs \`scripts/ci/unit-batched.mjs gate\``
       ).not.toHaveLength(0);
-      const gate = readFileSync(path.resolve(HERE, '../ci/unit-hourly.mjs'), 'utf8');
+      const gate = readFileSync(path.resolve(HERE, '../ci/unit-batched.mjs'), 'utf8');
       expect(gate).toContain("'workflow', 'run', 'lint.yml'");
       expect(gate).toContain("'only=unit'");
     });
@@ -222,7 +245,7 @@ describe('CI coverage for commits on main', () => {
       const lint = workflows.find((w) => w.file === 'lint.yml')?.doc;
       const posters = Object.values(lint?.jobs ?? {}).filter(
         (j) =>
-          runScripts(j).includes('unit-hourly.mjs verify') &&
+          runScripts(j).includes('unit-batched.mjs verify') &&
           (j.permissions as Record<string, string> | undefined)?.statuses === 'write' &&
           !unconditionallyTrue(j['continue-on-error'])
       );

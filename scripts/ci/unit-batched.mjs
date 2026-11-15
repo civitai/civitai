@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// Batched verification of the unit suite on `main`: the hourly run, and what it does on red.
+// Batched verification of the unit suite on `main`: the scheduled run, and what it does on red.
 //
 // A push to `main` does not run the `Unit tests` job (see lint.yml). Instead:
 //
-//   node scripts/ci/unit-hourly.mjs gate <ref>
-//       In unit-hourly.yml, every hour. Dispatches lint.yml `only: unit` on <ref> unless <ref>'s
-//       head is the commit the last hourly run already verified (green or red).
-//   node scripts/ci/unit-hourly.mjs verify <unit-result> <reports-dir>
+//   node scripts/ci/unit-batched.mjs gate <ref>
+//       In unit-batched.yml, on its schedule. Dispatches lint.yml `only: unit` on <ref> unless <ref>'s
+//       head is the commit the last batch run already verified (green or red).
+//   node scripts/ci/unit-batched.mjs verify <unit-result> <reports-dir>
 //       In lint.yml's `unit-verify` job, after the shards of that dispatched run. Green: a success
 //       status on HEAD. Red: re-runs the failed files at HEAD (a pass = flaky), then
 //       `git bisect run --first-parent` back to the last green verified commit, and posts a
 //       failure status on the first bad commit, or on HEAD when the bisect cannot isolate one.
-//   node <copy>/unit-hourly.mjs step <failed.json>
+//   node <copy>/unit-batched.mjs step <failed.json>
 //       git bisect run's per-commit test. Node built-ins only: bisect checks out older commits,
 //       where this file may not exist, so the caller runs a copy from outside the tree.
 //
@@ -34,20 +34,20 @@ import {
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const CONTEXT = 'Unit tests (hourly)';
-const VERIFY_JOB = 'Unit verified (hourly)';
+export const CONTEXT = 'Unit tests (main batch)';
+const VERIFY_JOB = 'Unit verified (main batch)';
 const BOT = 'github-actions[bot]';
 
-/** Should the hourly gate dispatch a run? Fails OPEN: no record or an error means run. */
+/** Should the batch gate dispatch a run? Fails OPEN: no record or an error means run. */
 export function decideRun({ head, lastVerified, inProgress = false, error }) {
   if (error) return { run: true, reason: `could not read the last verified commit (${error})` };
   if (inProgress)
-    return { run: false, reason: 'an hourly verification run is still queued or running' };
-  if (!lastVerified) return { run: true, reason: 'no hourly run has verified a commit yet' };
+    return { run: false, reason: 'a batch verification run is still queued or running' };
+  if (!lastVerified) return { run: true, reason: 'no batch run has verified a commit yet' };
   if (lastVerified === head)
     return {
       run: false,
-      reason: `HEAD ${head.slice(0, 10)} is the commit the last hourly run verified`,
+      reason: `HEAD ${head.slice(0, 10)} is the commit the last batch run verified`,
     };
   return { run: true, reason: `HEAD moved: ${lastVerified.slice(0, 10)} -> ${head.slice(0, 10)}` };
 }
@@ -145,7 +145,7 @@ function summary(lines) {
   const text = lines.join('\n');
   console.log(text);
   if (process.env.GITHUB_STEP_SUMMARY)
-    writeFileSync(process.env.GITHUB_STEP_SUMMARY, `### Unit suite, hourly\n\n${text}\n`, {
+    writeFileSync(process.env.GITHUB_STEP_SUMMARY, `### Unit suite, main batch\n\n${text}\n`, {
       flag: 'a',
     });
 }
@@ -222,7 +222,7 @@ function readReports(dir) {
 
 function bisect(green, head, failed) {
   const tmp = process.env.RUNNER_TEMP ?? '/tmp';
-  const self = join(tmp, 'unit-hourly.mjs');
+  const self = join(tmp, 'unit-batched.mjs');
   copyFileSync(fileURLToPath(import.meta.url), self);
   writeFileSync(join(tmp, 'failed.json'), JSON.stringify(failed));
   writeFileSync(LOCK_MARK, lockHash());
@@ -309,7 +309,9 @@ function verify(unitResult, reportsDir) {
     );
     if (target.state === 'failure')
       console.log(
-        `::error title=Unit suite red (hourly)::${target.sha.slice(0, 10)}: ${target.description}`
+        `::error title=Unit suite red (main batch)::${target.sha.slice(0, 10)}: ${
+          target.description
+        }`
       );
   }
   summary(lines.length ? lines : [`unit result: ${unitResult}; nothing posted.`]);
@@ -322,7 +324,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   else if (cmd === 'step') step(a);
   else {
     console.error(
-      'usage: unit-hourly.mjs gate <ref> | verify <unit-result> <reports-dir> | step <failed.json>'
+      'usage: unit-batched.mjs gate <ref> | verify <unit-result> <reports-dir> | step <failed.json>'
     );
     process.exit(2);
   }

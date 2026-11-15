@@ -1,0 +1,51 @@
+name: Unit tests (main batch)
+
+# Batched verification of the unit suite on `main`. A push to `main` does not run lint.yml's
+# `Unit tests` job; this does, on the schedule below, and only when `main` moved: it dispatches lint.yml
+# with `only: unit` on `main` unless `main`'s head is the commit the last batch run already
+# verified. lint.yml's `unit-verify` job then posts the verdict as a `Unit tests (main batch)` commit
+# status, bisecting a red to the first bad merge commit. See lint.yml's header ("THE UNIT SUITE IS
+# THE EXCEPTION") and scripts/ci/unit-batched.mjs.
+#
+# THE CADENCE IS THIS CRON LINE AND NOTHING ELSE: every 2 hours (operator decision, 2026-11-15),
+# at :41, off the top of the hour, where scheduled jobs pile up. Measured on 7 days of `main`
+# pushes, it runs the unit suite about 12 times a day instead of ~27.6 (~57% fewer unit
+# job-minutes), and the worst case from a bad merge to its red status is about 3 hours.
+# scripts/__tests__/main-branch-ci-coverage.test.ts pins the interval at 2 hours or less; going
+# wider is a contract change, so it fails until that guard is changed too.
+on:
+  schedule:
+    - cron: '41 */2 * * *'
+  # For a manual "verify main now"; it skips, like the scheduled run, when main has not moved.
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: unit-batch-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Dispatch the unit suite if main moved
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            scripts/ci/unit-batched.mjs
+            .nvmrc
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Gate and dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/unit-batched.mjs gate "$GITHUB_REF_NAME"

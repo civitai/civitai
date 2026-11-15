@@ -6,21 +6,21 @@ import {
   parseFirstBad,
   statusLine,
   statusTarget,
-} from '../ci/unit-hourly.mjs';
+} from '../ci/unit-batched.mjs';
 
-// scripts/ci/unit-hourly.mjs carries the unit suite's verdict for `main` now that a push does
-// not run it: the hourly gate decides whether `main` moved, and the verify step decides which
+// scripts/ci/unit-batched.mjs carries the unit suite's verdict for `main` now that a push does
+// not run it: the batch gate decides whether `main` moved, and the verify step decides which
 // commit the verdict lands on. A wrong answer in either is a commit on `main` with no unit red.
 
 const HEAD = 'a'.repeat(40);
 const OLD = 'b'.repeat(40);
 const BAD = 'c'.repeat(40);
 
-describe('decideRun: did main move since the last hourly verification?', () => {
-  it('skips when HEAD is the commit the last hourly run verified', () => {
+describe('decideRun: did main move since the last batch verification?', () => {
+  it('skips when HEAD is the commit the last batch run verified', () => {
     expect(decideRun({ head: HEAD, lastVerified: HEAD })).toEqual({
       run: false,
-      reason: 'HEAD aaaaaaaaaa is the commit the last hourly run verified',
+      reason: 'HEAD aaaaaaaaaa is the commit the last batch run verified',
     });
   });
 
@@ -34,7 +34,7 @@ describe('decideRun: did main move since the last hourly verification?', () => {
   it('runs when nothing has been verified yet', () => {
     expect(decideRun({ head: HEAD, lastVerified: null })).toEqual({
       run: true,
-      reason: 'no hourly run has verified a commit yet',
+      reason: 'no batch run has verified a commit yet',
     });
   });
 
@@ -42,7 +42,7 @@ describe('decideRun: did main move since the last hourly verification?', () => {
   it('skips while a verification run is still queued or running, even when HEAD moved', () => {
     expect(decideRun({ head: HEAD, lastVerified: OLD, inProgress: true })).toEqual({
       run: false,
-      reason: 'an hourly verification run is still queued or running',
+      reason: 'a batch verification run is still queued or running',
     });
   });
 
