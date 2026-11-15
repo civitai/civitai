@@ -39,9 +39,13 @@ const {
   RECORD_VOTED_PAIR_SCRIPT,
   submitVote,
 } = await import('~/server/services/crucible.service');
-const { getAnchorVotesKey, getJudgesKey, getVoteOutcomesKey, getVotedPairsKey } = await import(
-  '~/server/services/crucible-redis-keys'
-);
+const {
+  getAnchorVotesKey,
+  getDismissedPairsKey,
+  getJudgesKey,
+  getVoteOutcomesKey,
+  getVotedPairsKey,
+} = await import('~/server/services/crucible-redis-keys');
 const { MAX_CLOSURE_VOTES } = await import('~/server/services/crucible-judge-closure');
 
 const JUDGE = 42;
@@ -812,6 +816,43 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
         ([key]) => key === outcomesKey
       );
       expect(outcomeReads, 'the cap path was taken: outcomes not loaded').toHaveLength(0);
+    });
+
+    describe('the dismissed set expires with the crucible', () => {
+      const dismissTtl = () =>
+        Number(
+          redisMock.sysRedis.eval.mock.calls.find(
+            ([script]) => script === DISMISS_SERVED_PAIR_SCRIPT
+          )?.[1]?.arguments?.[1]
+        );
+      const withEndAt = async (endAt: Date | null) => {
+        const crucible = await dbMock.dbRead.crucible.findUnique();
+        dbMock.dbRead.crucible.findUnique.mockResolvedValue({ ...crucible, endAt });
+      };
+
+      it('sets the TTL to the time left until the crucible ends', async () => {
+        await withEndAt(new Date(Date.now() + 2 * 60 * 60 * 1000));
+        withEntries(10, 20);
+        await serve();
+        await dismiss(10, 20);
+        expect(Math.abs(dismissTtl() - 2 * 60 * 60), 'seconds off two hours').toBeLessThan(5);
+      });
+
+      it('falls back to the judge-key TTL for a crucible with no end', async () => {
+        await withEndAt(null);
+        withEntries(10, 20);
+        await serve();
+        await dismiss(10, 20);
+        expect(dismissTtl()).toBe(30 * 24 * 60 * 60);
+      });
+
+      it('refuses a dismissal once the crucible has ended', async () => {
+        withEntries(10, 20);
+        await serve();
+        await withEndAt(new Date(Date.now() - 1000));
+        await expect(dismiss(10, 20)).rejects.toThrow('not currently active for judging');
+        expect(await redisMock.sysRedis.sCard(getDismissedPairsKey(1, JUDGE)), 'dismissed').toBe(0);
+      });
     });
   });
 });

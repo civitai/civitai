@@ -2908,11 +2908,26 @@ export async function dismissJudgingPair({
   entryIds: [number, number];
   userId: number;
 }) {
-  if (entryA === entryB) throw throwBadRequestError('A pair needs two different entries');
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: { status: true, endAt: true },
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  const now = Date.now();
+  if (
+    crucible.status !== CrucibleStatus.Active ||
+    (crucible.endAt && now > crucible.endAt.getTime())
+  )
+    throw throwBadRequestError('This crucible is not currently active for judging');
+
+  // Nothing reads the dismissed set once judging ends, so it expires with the crucible.
+  const ttlSeconds = crucible.endAt
+    ? Math.max(1, Math.ceil((crucible.endAt.getTime() - now) / 1000))
+    : JUDGE_KEY_TTL_SECONDS;
   const dismissed = Number(
     await sysRedis.eval(DISMISS_SERVED_PAIR_SCRIPT, {
       keys: [getServedPairKey(crucibleId, userId), getDismissedPairsKey(crucibleId, userId)],
-      arguments: [createPairKey(entryA, entryB), String(JUDGE_KEY_TTL_SECONDS)],
+      arguments: [createPairKey(entryA, entryB), String(ttlSeconds)],
     })
   );
   if (!dismissed)
@@ -3333,7 +3348,8 @@ export type JudgingPairCount = {
 };
 
 /**
- * Pairs left for one judge across several crucibles: two Redis reads each, then one entries query.
+ * Pairs left for one judge across several crucibles: three Redis reads each (voted, outcome count,
+ * dismissed) plus the outcomes when the closure runs, then one entries query.
  * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
  * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
  * query off crucibles the judge never voted in, which the feed asks about most.

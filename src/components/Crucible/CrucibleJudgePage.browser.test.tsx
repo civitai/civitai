@@ -145,7 +145,22 @@ describe('crucible judge page', () => {
     await expect
       .poll(() => mocks.dismiss.mock.calls)
       .toEqual([[{ crucibleId: 2, entryIds: [10, 11] }]]);
-    await expect.poll(() => mocks.refetchPair.mock.calls.length, 'next pair requested').toBe(1);
+    await expect.poll(() => mocks.refetchPair.mock.calls.length).toBe(1);
+    expect(
+      page.getByTestId('done-state').query(),
+      'done state with a next pair to load'
+    ).toBeNull();
+  });
+
+  test("Don't show again on the last pair shows the done state", async () => {
+    mocks.refetchPair.mockClear();
+    mocks.refetchPair.mockResolvedValueOnce({ data: null });
+    await renderWithProviders(<CrucibleJudgePage id={2} />);
+    await expect.element(page.getByTestId('arena')).toHaveTextContent('pair 10');
+
+    document.querySelector<HTMLButtonElement>('[data-testid="stub-dismiss"]')?.click();
+
+    await expect.poll(() => page.getByTestId('done-state').query() !== null).toBe(true);
   });
 
   test("a double click on Don't show again dismisses once", async () => {
