@@ -560,8 +560,9 @@ export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as c
 
 /**
  * A generation input names the viewer's own upload before its scan has finished. Retry once the
- * upload's scan completes. Returned by the estimate and the submit of `kind:'step'` and
- * `kind:'workflow'` bodies as a failed snapshot's `errorCode`.
+ * upload's scan completes. Returned by the estimate and the submit of `kind:'textToImage'`,
+ * `kind:'step'` and `kind:'workflow'` bodies and inline `customComfy` graphs as a failed
+ * snapshot's `errorCode`.
  */
 export const SOURCE_SCAN_PENDING_ERROR_CODE = 'source-scan-pending' as const;
 

@@ -48,6 +48,7 @@ import {
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
   resolveNavigateRequest,
+  resolvePersistGenerationSourceRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerMultiple,
   resolveResourcePickerRequest,
@@ -5398,6 +5399,57 @@ export function PageBlockHost({
     trpcUtils,
     reportNoToken,
   ]);
+
+  // ── PERSIST_GENERATION_SOURCE → GENERATION_SOURCE_PERSISTED ────────────────
+  //
+  // The app keeps ONE output of one of its OWN finished workflows as a PRIVATE,
+  // scanned generation source (`blocks.persistGenerationSource`). NO DIALOG, unlike
+  // PUBLISH_GENERATION_OUTPUTS: nothing reaches anyone else — the row is the
+  // viewer's, has no post and is on no shared grid — and the server owns every
+  // guard (ownership, app tag, finished workflow, scan). The block sends a
+  // workflowId + index, never a url.
+  //
+  // Refused here in review mode (the mod's real session would gain a row) and
+  // before the handshake, as OPEN_IMAGE_UPLOAD is. REQUEST-style ⇒ every path with
+  // a requestId replies exactly once. `trpcUtils.client` rather than a
+  // `useMutation` so no render-time hook is added to a component tests mock by hand.
+  useEffect(() => {
+    const off = onMessage<unknown>('PERSIST_GENERATION_SOURCE', (raw) => {
+      const gate = resolvePersistGenerationSourceRequest({
+        raw,
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        ready: readGateStatus() === 'ready',
+        reviewMode,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('GENERATION_SOURCE_PERSISTED', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, workflowId, imageIndex } = gate.request;
+      if (!token) {
+        reportNoToken('PERSIST_GENERATION_SOURCE');
+        send('GENERATION_SOURCE_PERSISTED', { requestId, error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        try {
+          const result = await trpcUtils.client.blocks.persistGenerationSource.mutate({
+            blockToken: token,
+            workflowId,
+            imageIndex,
+          });
+          send('GENERATION_SOURCE_PERSISTED', { requestId, result });
+        } catch (err) {
+          send('GENERATION_SOURCE_PERSISTED', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      })();
+    });
+    return off;
+  }, [onMessage, send, token, readGateStatus, reviewMode, trpcUtils, reportNoToken]);
 
   // ── CREATE_POST_FROM_APP → CREATE_POST_RESULT ──────────────────────────────
   //

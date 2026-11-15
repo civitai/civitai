@@ -614,6 +614,37 @@ export async function checkBlockUploadAppRateLimit(
   );
 }
 
+// GENERATION-SOURCE bucket (blocks.persistGenerationSource, the server half of
+// PERSIST_GENERATION_SOURCE). One token per call: each one can fetch and store an output,
+// write a private scanned Image row and hold a scan wait of up to 30 s.
+//
+// KEYED ON THE TOKEN SUBJECT (the viewer), NOT the install: the rows are the viewer's own and
+// private, so the bound that matters is per person, and a page app's install id is shared by
+// every viewer.
+//
+// 🔴 WHY IT EXISTS BESIDE THE PROCEDURE'S 60/h `rateLimit` MIDDLEWARE: that middleware skips
+// moderators — the current flag audience — and dev, test and preview, so for exactly the
+// callers who can reach this route today it bounded nothing. This bucket has no exemption.
+// Concurrency is bounded separately (`withInFlightLimit`, 2 per user, charged first).
+//
+// 60 per 3600 s. Not data-derived; a starting value, matching the middleware's number.
+//
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file. A refused call
+// still counts toward this window.
+export const BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_MAX = 60;
+export const BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS = 3600;
+
+/** Records ONE generation-source call against `userId`'s window. Own `:gen-source-user:` key. */
+export async function checkBlockGenerationSourceUserRateLimit(
+  userId: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:gen-source-user:${userId}`,
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_MAX,
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
 // ESTIMATE-CELLS bucket (blocks.estimateWorkflowBatch). A batch estimate charges
 // the catalog bucket ONCE, like a single estimate — that is the point of it: a
 // 16-cell grid no longer spends 16 of an allowance that a page app shares between

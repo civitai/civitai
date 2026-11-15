@@ -2736,6 +2736,9 @@ export const REDIS_SYS_KEYS = {
     GENERATION_INPUT_EXTERNAL_HOST_USERS: 'system:generation-input-external-host-users',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
+    // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }: the semanticSearchAudit
+    // ClickHouse rows. Missing or 0 = off.
+    SEMANTIC_SEARCH_AUDIT: 'system:semantic-search-audit',
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
     // searches to the candidate feed service and record the comparison. Off when missing.
     FEED_SHADOW: 'system:feed-shadow',

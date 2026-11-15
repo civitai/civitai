@@ -4,8 +4,10 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
+  recordAudit: vi.fn(),
   fetched: [] as number[][],
   stripBenignPhrases: vi.fn(async (text: string) => text),
   includesInappropriate:
@@ -17,6 +19,10 @@ const h = vi.hoisted(() => ({
   evalBoolean: vi.fn<() => { enabled: unknown }>(),
   fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
 }));
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   isFlipt: h.isFlipt,
@@ -27,6 +33,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: h.stripBenignPhrases,
 }));
+vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
   includesInappropriate: h.includesInappropriate,
   includesPoi: h.includesPoi,
@@ -356,4 +363,18 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(result.items.map((a) => a.id)).toEqual([10]);
     expect(result.correctedQuery).toBe('corrected');
   });
+});
+
+describeSemanticAuditContract({
+  index: 'articles',
+  run: ({ source, user, cursor }) =>
+    searchSemanticArticles({
+      input: { query: 'guide', browsingLevel: 1, limit: 10, cursor },
+      user,
+      candidateSource: source,
+    }),
+  ids: [10, 20],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });

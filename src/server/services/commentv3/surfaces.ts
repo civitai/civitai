@@ -253,7 +253,8 @@ async function notifyPostTextOwner(comment: StoredCommentV3, ctx: ProtectedConte
   const [text] = await dbRead.$queryRawUnsafe<
     { postId: number; userId: number; title: string | null; anchorImageId: number | null }[]
   >(postTextOwnerNoticeSql, comment.entityId);
-  if (!text || text.userId === comment.userId) return;
+  // No image, no slide to open: the thread notices skip it too (`v3ThreadType`).
+  if (!text?.anchorImageId || text.userId === comment.userId) return;
   await createNotification({
     type: 'new-post-comment',
     key: `new-comment-post-text:owner:v3:${comment.id}`,

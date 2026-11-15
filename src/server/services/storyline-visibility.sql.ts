@@ -27,7 +27,7 @@ export const storylineRootVisibleText = ({ rc = 'rc', rp = 'rp', ru = 'ru' } = {
  * A Pending csam hold on text item `rt`. The hold is written before `csamHeld` is set, and not in
  * one transaction, so a failed apply leaves the item pending with the flag still false.
  */
-const postTextPendingCsamHoldText = (rt: string) =>
+export const postTextPendingCsamHoldText = (rt: string) =>
   `EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
     AND th."entityId" = ${rt}.id AND th.label = 'csam' AND th.status = 'Pending')`;
 

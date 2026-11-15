@@ -89,6 +89,8 @@ ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "postId" int, ADD COLUMN
   ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
 ALTER TABLE "Post" ADD COLUMN "userId" int, ADD COLUMN "modelVersionId" int, ADD COLUMN title text,
   ADD COLUMN "publishedAt" timestamp DEFAULT '2020-01-01', ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
+CREATE TABLE "TextScanHold"("entityType" text NOT NULL, "entityId" int NOT NULL, label text NOT NULL,
+  status text NOT NULL DEFAULT 'Pending');
 CREATE TABLE "PostText"(id int PRIMARY KEY, "postId" int NOT NULL, index int NOT NULL,
   refused boolean NOT NULL DEFAULT false, "csamHeld" boolean NOT NULL DEFAULT false,
   "nsfwLevel" int NOT NULL DEFAULT 1);
@@ -416,11 +418,16 @@ describe('notification queries on CommentV3', () => {
     it.each([
       ['refused', `UPDATE "PostText" SET refused = true WHERE id = 50`],
       ['held', `UPDATE "PostText" SET "csamHeld" = true WHERE id = 50`],
+      [
+        'under a Pending csam hold',
+        `INSERT INTO "TextScanHold"("entityType", "entityId", label) VALUES ('PostText', 50, 'csam')`,
+      ],
     ])('reach nobody once the text is %s, its owner included', async (_, change) => {
       await withTextComments(() =>
         temporarily(
           change,
-          `UPDATE "PostText" SET refused = false, "csamHeld" = false WHERE id = 50`,
+          `UPDATE "PostText" SET refused = false, "csamHeld" = false WHERE id = 50;
+           DELETE FROM "TextScanHold"`,
           async () => {
             expect(ours(await emitted('new-comment-reply'))).toEqual([]);
             expect(ours(await emitted('new-thread-response'))).toEqual([]);
@@ -704,6 +711,51 @@ describe('the detail fetcher', () => {
       [undefined, undefined],
     ]);
   });
+
+  describe('a comment on a storyline text', () => {
+    const withTextComment = (check: () => Promise<void>) =>
+      temporarily(
+        `INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('postText', 50);
+         INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "createdAt")
+           VALUES (520, 'postText', 50, 2, 'words about the text', now())`,
+        `DELETE FROM "CommentV3" WHERE id = 520;
+         DELETE FROM "CommentTopic" WHERE "entityType" = 'postText'`,
+        check
+      );
+    const previewOf = async () =>
+      (
+        await preview([
+          {
+            type: 'new-comment-reply',
+            details: { version: 3, threadType: 'postText', commentId: 520 },
+          },
+        ])
+      )[0];
+
+    it('is previewed while its text is readable (control)', async () => {
+      await withTextComment(async () =>
+        expect(await previewOf()).toEqual(['words about the text', 2])
+      );
+    });
+
+    it.each([
+      ['refused', `UPDATE "PostText" SET refused = true WHERE id = 50`],
+      ['held', `UPDATE "PostText" SET "csamHeld" = true WHERE id = 50`],
+      [
+        'under a Pending csam hold',
+        `INSERT INTO "TextScanHold"("entityType", "entityId", label) VALUES ('PostText', 50, 'csam')`,
+      ],
+    ])('carries no words once the text is %s', async (_, change) => {
+      await withTextComment(() =>
+        temporarily(
+          change,
+          `UPDATE "PostText" SET refused = false, "csamHeld" = false WHERE id = 50;
+           DELETE FROM "TextScanHold"`,
+          async () => expect((await previewOf())[0]).toBeUndefined()
+        )
+      );
+    });
+  });
 });
 
 describe('the mute menu', () => {
@@ -802,6 +854,24 @@ describe('the permalink row', () => {
           { postId: 1, userId: 1, title: 'Chapter one', anchorImageId: 10 },
         ]);
         expect((await db.pg.query(postTextOwnerNoticeSql, [99999])).rows).toEqual([]);
+        // Checked again at send time: no notice once the text is refused or held.
+        for (const [change, undo] of [
+          [
+            `UPDATE "PostText" SET refused = true WHERE id = 50`,
+            `UPDATE "PostText" SET refused = false WHERE id = 50`,
+          ],
+          [
+            `UPDATE "PostText" SET "csamHeld" = true WHERE id = 50`,
+            `UPDATE "PostText" SET "csamHeld" = false WHERE id = 50`,
+          ],
+          [
+            `INSERT INTO "TextScanHold"("entityType", "entityId", label) VALUES ('PostText', 50, 'csam')`,
+            `DELETE FROM "TextScanHold"`,
+          ],
+        ])
+          await temporarily(change, undo, async () =>
+            expect((await db.pg.query(postTextOwnerNoticeSql, [50])).rows).toEqual([])
+          );
       }
     );
   });

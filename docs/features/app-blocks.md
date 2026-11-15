@@ -720,11 +720,24 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   capability instead); that capability gate was removed from the runtime, and the
   user's own scope grant is the authority now. A token without the scope gets
   `block lacks buzz:read:self scope`.
-- **Choose the funding pool**: a workflow submit body may carry `accountType`
-  (`blue | green | yellow`). It is honored **preferred-first** while the maturity
-  policy clamp still applies (a SFW-domain block can't widen to a mature currency);
-  an out-of-set pick is rejected, absent → Auto (see
-  `resolveBlockCurrenciesForAccount`).
+- **Choose the funding pool**: a workflow body may carry `accountType`
+  (`blue | green | yellow`) — top-level on `textToImage`, on both `kind: 'step'`
+  arms (registered `step` id and pass-through `$type`) and once per
+  `kind: 'workflow'` body (the orchestrator takes one currency list per workflow,
+  so there is no per-step pick); under `params` on a `customComfy` recipe. It is
+  honored **preferred-first**: the picked pool goes first and the rest of the
+  app's allowed pools stay as fallback (an SFW app allows blue and green, a
+  mature app blue and yellow), so a pick never widens the maturity policy. An
+  out-of-set pick is a BAD_REQUEST on the estimate and the submit alike; absent →
+  Auto, blue first (see `resolveBlockCurrenciesForAccount`). The estimate prices
+  the same order the submit drains (the `customComfy` recipe estimate has no
+  price quote but refuses a disallowed pick the same way). A confirmed step quote
+  is bound to its pool: submitting it with a different `accountType` is refused
+  as a changed body, and its consent dialog names the order ("Paid from Yellow
+  Buzz first, then Blue."); with no pick the dialog has no pool line.
+  A pick does **not** guarantee an unrestricted output: when the picked pool
+  cannot cover the job the fallback pays, and a fallback to blue can still leave a
+  mature output restricted.
 - **Which pool actually paid**: the workflow status snapshot carries
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
@@ -789,10 +802,11 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
 
-### Generation input images (`kind: 'step'` and `kind: 'workflow'`)
+### Generation input images (`kind: 'textToImage'`, `kind: 'step'` and `kind: 'workflow'`)
 
 An image a generation input names must be an image stored on Civitai that has finished its
-scan and may be used as a source, the viewer's own uploads included.
+scan and may be used as a source, the viewer's own uploads included. For `kind: 'textToImage'`
+that is each `sourceImage` / `sourceImages` entry.
 
 - **Still being scanned.** An upload whose scan has not finished is refused by the estimate
   and the submit with a failed snapshot whose `errorCode` is `'source-scan-pending'`, before
@@ -803,6 +817,43 @@ scan and may be used as a source, the viewer's own uploads included.
 - **External hosts.** Image urls on hosts outside Civitai are being phased out of
   generation inputs; upload the image instead. Free text in a chat step's messages and tool
   schemas is not an image input.
+
+### Private generation sources (`PERSIST_GENERATION_SOURCE`)
+
+An app can keep one of its own finished generation outputs as a private, scanned source and
+feed it back into a later workflow (img2img, a reference image), the page host only.
+Request `PERSIST_GENERATION_SOURCE { requestId, workflowId, imageIndex }`; the answer is
+`GENERATION_SOURCE_PERSISTED { requestId, result?: { url, width, height, imageId, ready },
+error? }`, on every path. The server half is `blocks.persistGenerationSource`.
+
+- **No confirm, nothing shared.** No host dialog opens. The image is stored for the viewer
+  with no post and is stamped `blockGenerationSourceAppId`, which the app's shared grid
+  (`getImagesByIds`), the post-from-app `published` source and the "Published with" credit
+  do not accept. Use `PUBLISH_GENERATION_OUTPUTS` to put an output on the shared grid.
+- **Gates.** The app needs `ai:write:budgeted` and the signed-in viewer must be the token's
+  subject, as for publishing. The workflow must be the app's own (its `block_workflows` row
+  and app tag) and finished; unlike publishing, there is no stand-in for a missing row on a
+  dev-tunnel preview. `imageIndex` indexes the same output list
+  `queryAppWorkflows` returns; an index out of range, or an output that is not available,
+  is refused.
+- **Scanned.** The output is re-stored on Civitai (downscaled to fit 2048 px if larger; an
+  output under 64 px is refused) and goes through the normal image scan. The whole call has a
+  30-second budget: a fetch or store still running at the end of it is stopped and answered
+  with `the generation output took too long to save — try again`, and nothing is written. What
+  is left of the budget is spent waiting for the scan. Expect the reply within about 30 seconds
+  plus the workflow lookup; set the request timeout well above that. `ready: true` means a generation will accept `url` now;
+  `ready: false` means the scan has not finished yet: call again with the same
+  `workflowId` and `imageIndex`, which returns the same image without storing another, or
+  submit later (a submit before the scan finishes is refused with `'source-scan-pending'`).
+  An output the scan blocks, or holds for review, is answered with an error.
+- **`url`, `width`, `height`** are in the shape a workflow's source image takes
+  (`image.civitai.com`, 64..2048 px).
+- **Limits.** 60 per hour per viewer, moderators included, and at most 2 calls in flight per
+  viewer (a third is refused at once, and spends nothing of the hourly 60). The model slot
+  host answers with an error. Review
+  mode and a block that is not ready are answered with an error.
+- Not available on App Assistant dev-tunnel previews yet: they have no `block_workflows`
+  row, which this bridge requires.
 
 ### Inline ComfyUI graphs (`kind: 'customComfy'`, `mode: 'inline'`)
 

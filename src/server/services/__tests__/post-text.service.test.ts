@@ -57,6 +57,7 @@ const stored = (content = '<p>old</p>', csamHeld = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   w.$queryRaw.mockResolvedValue([] as never);
+  r.textScanHold.findMany.mockResolvedValue([] as never);
   w.$executeRaw.mockResolvedValue(1 as never);
   w.post.findUnique.mockResolvedValue({ userId: AUTHOR } as never);
   w.storylineChapter.findFirst.mockResolvedValue({ id: 9 } as never);
@@ -286,6 +287,38 @@ describe('what readers are shown', () => {
     );
     expect(texts.map((t) => t.id)).toEqual([1, 2, 3]);
     expect(JSON.stringify(texts)).not.toMatch(/refused words|held words/);
+  });
+
+  // A csam hold is written before `csamHeld` is set, and not in one transaction: a Pending hold
+  // with the flag still false is held all the same.
+  it('treats a text with a Pending csam hold as held, author included', async () => {
+    r.postText.findMany.mockResolvedValue(rows as never);
+    r.textScanHold.findMany.mockResolvedValue([{ entityId: 1 }] as never);
+    for (const seesAll of [false, true]) {
+      const texts = await getPostTextsForViewer({
+        postId: POST,
+        browsingLevel: NsfwLevel.PG | NsfwLevel.XXX,
+        seesAll,
+      });
+      expect(texts.map((t) => t.id)).toEqual([2]);
+    }
+    expect(
+      await getStorylineTextStubs({
+        postIds: [POST],
+        browsingLevel: NsfwLevel.PG | NsfwLevel.XXX,
+        maxNsfwLevel: NsfwLevel.XXX,
+      })
+    ).toEqual([{ id: 2, postId: POST, index: 1, nsfwLevel: NsfwLevel.XXX }]);
+    expect(r.textScanHold.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          entityType: 'PostText',
+          entityId: { in: [1, 2] },
+          label: 'csam',
+          status: 'Pending',
+        },
+      })
+    );
   });
 
   it("holds the path's stubs to the storyline ceiling, with no content", async () => {
