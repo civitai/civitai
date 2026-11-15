@@ -24,7 +24,8 @@ vi.mock('~/server/clickhouse/client', () => ({
   trackWebhookEvent: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/server/http/tipalti/tipalti.caller', () => ({
-  default: async () => ({ validateWebhookEvent }),
+  default: async () => ({}),
+  TipaltiCaller: { validateWebhookEvent },
 }));
 vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorProgramService>()),
