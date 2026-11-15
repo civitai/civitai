@@ -50,6 +50,7 @@ export type ImageModActivity = {
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
     | 'heldMedia:view'
+    | 'retractedMedia:view'
     | ReturnType<typeof shownActivity>;
 };
 

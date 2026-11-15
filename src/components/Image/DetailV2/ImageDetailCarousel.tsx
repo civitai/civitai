@@ -2,6 +2,9 @@ import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
@@ -44,6 +47,7 @@ type ImageProps = {
   name: string | null;
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
   eventDecoration?: WornDecoration;
+  ingestion?: string | null;
 };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
@@ -289,6 +293,8 @@ function ImageContent({
     defaultValue: true,
   });
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const retractedSrc = features.modRetractedMedia ? retractedMediaUrl(image, currentUser) : null;
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
@@ -339,6 +345,14 @@ function ImageContent({
             >
               <MediaHash {...image} />
             </div>
+          ) : retractedSrc ? (
+            <RetractedMedia
+              src={retractedSrc}
+              type={image.type}
+              alt={image.name ?? undefined}
+              className="max-h-full w-auto max-w-full"
+              controls={active}
+            />
           ) : (
             <EdgeMedia
               // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,
