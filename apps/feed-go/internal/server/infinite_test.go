@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -142,7 +143,7 @@ func TestInfiniteRouteIsInternalOnly(t *testing.T) {
 func TestEveryEndpointIsSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	NewMetrics(reg)
-	if len(Endpoints) != 3 || Endpoints[2] != "infinite" {
+	if want := []string{"as-posts", "v1-images", "infinite", "model-getall"}; !slices.Equal(Endpoints, want) {
 		t.Fatalf("Endpoints = %v", Endpoints)
 	}
 	for _, e := range Endpoints {

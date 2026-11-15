@@ -1193,9 +1193,15 @@ func TestGoldenV1Images(t *testing.T) {
 	}
 }
 
-// goldenSetPath replaces the value at a dotted path (array indices as numbers) in a JSON document.
-func goldenSetPath(t *testing.T, doc json.RawMessage, path string, val any) json.RawMessage {
+// goldenMutantID is the id the harness-can-fail subtests write into an expected answer; no
+// fixture holds it, so the compare has to see the difference.
+const goldenMutantID = 999999
+
+// goldenSetPath replaces the value at a dotted path (array indices as numbers) in a JSON document
+// with goldenMutantID.
+func goldenSetPath(t *testing.T, doc json.RawMessage, path string) json.RawMessage {
 	t.Helper()
+	val := goldenMutantID
 	var root any
 	if err := json.Unmarshal(doc, &root); err != nil {
 		t.Fatal(err)
@@ -1248,7 +1254,7 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("compute: %v", err)
 		}
-		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.images.0.id", 999999)
+		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.images.0.id")
 		for name, payload := range map[string][]byte{"feed-go": c.payload, "fixture": fx.Expect.Envelope} {
 			rep, err := shadow.Compare(payload, mutated)
 			if err != nil {
@@ -1271,7 +1277,7 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("computeV1: %v", err)
 		}
-		mutated := goldenSetPath(t, fx.Expect.Body, "items.0.id", 999999)
+		mutated := goldenSetPath(t, fx.Expect.Body, "items.0.id")
 		for name, payload := range map[string][]byte{"feed-go": c.payload, "fixture": fx.Expect.Body} {
 			rep, err := shadow.CompareJSON(payload, mutated)
 			if err != nil {
@@ -1294,7 +1300,7 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("computeInfinite: %v", err)
 		}
-		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.id", 999999)
+		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.id")
 		for name, payload := range map[string][]byte{"feed-go": c.payload, "fixture": fx.Expect.Envelope} {
 			rep, err := shadow.Compare(payload, mutated)
 			if err != nil {
@@ -1310,7 +1316,7 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 	})
 	t.Run("model-getall", func(t *testing.T) {
 		fx := goldenLoad(t, filepath.Join(goldenDir, "model-getall", "highest-rated-signed-out.json"))
-		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.images.0.id", 999999)
+		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.images.0.id")
 		fx.Expect.Envelope = mutated
 		// The harness must report the mismatch: run the comparison as goldenRunModels does.
 		env := goldenSetup(t, fx)
