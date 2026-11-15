@@ -5,7 +5,11 @@ const PAGE = 200;
 /** Pages per run; anything past them waits for the next day. */
 const MAX_PAGES = 20;
 
-export type CsamTextRetentionSkip = 'quoted-in-report' | 'pending-appeal' | 'evidence-hold';
+export type CsamTextRetentionSkip =
+  | 'quoted-in-report'
+  | 'pending-appeal'
+  | 'evidence-hold'
+  | 'unknown-owner';
 
 type Candidate = {
   textId: number;
@@ -49,7 +53,7 @@ export async function purgeConfirmedCsamText({
 }: { page?: number; maxPages?: number } = {}): Promise<CsamTextRetentionResult> {
   const result: CsamTextRetentionResult = {
     deleted: 0,
-    skipped: { 'quoted-in-report': 0, 'pending-appeal': 0, 'evidence-hold': 0 },
+    skipped: { 'quoted-in-report': 0, 'pending-appeal': 0, 'evidence-hold': 0, 'unknown-owner': 0 },
     stillHeld: 0,
   };
   let afterId = 0;

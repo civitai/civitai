@@ -1,8 +1,8 @@
 -- Confirmed held PostText: a hold confirmed with the "none" report choice holds for one year from
--- `csamConfirmedAt`, then `post_text_held` stops holding it on that ground (any other hold still
--- applies) and the `purge-confirmed-csam-text` job deletes it. However the row goes, the delete trigger
--- then drops the hold's copy of the text and its label-store snapshot, unless
--- `post_text_retention_skip` keeps them.
+-- `csamConfirmedAt`, then `post_text_held` stops holding it on that ground unless
+-- `post_text_retention_skip` names a reason (any other hold still applies), and the
+-- `purge-confirmed-csam-text` job deletes it. However the row goes, the delete trigger drops the hold's
+-- copy of the text and its label-store snapshot with it.
 --
 -- MANUAL APPLY, per environment, BEFORE the PR that writes the column merges. Applying early is safe
 -- for the running code: nothing deployed reads the column, and with it NULL `post_text_held` holds
@@ -20,10 +20,14 @@ CREATE INDEX IF NOT EXISTS "PostText_csamConfirmedAt_idx" ON "PostText" ("csamCo
 -- 2. Backfill from the confirmed hold's decision time.
 UPDATE "PostText" t
 SET "csamConfirmedAt" = h."decidedAt"
-FROM "TextScanHold" h
-WHERE h."entityType" = 'PostText' AND h."entityId" = t."id" AND h.label = 'csam'
-  AND h.status = 'Confirmed' AND h."decidedAt" IS NOT NULL
-  AND t."csamHeld" AND t."csamConfirmedAt" IS NULL;
+FROM (
+  SELECT "entityId", max("decidedAt") AS "decidedAt"
+  FROM "TextScanHold"
+  WHERE "entityType" = 'PostText' AND label = 'csam' AND status = 'Confirmed'
+    AND "decidedAt" IS NOT NULL
+  GROUP BY "entityId"
+) h
+WHERE h."entityId" = t."id" AND t."csamHeld" AND t."csamConfirmedAt" IS NULL;
 
 -- 3. The hold check. Same signature, so the delete trigger and the app's callers are unchanged; the
 -- confirmation time is read off the row, which a BEFORE DELETE trigger still sees.
@@ -37,8 +41,9 @@ BEGIN
   -- `csamHeld` keeps the text from readers for good. As a delete hold it stands while the hold is
   -- pending, and once confirmed until a CSAM report captured the post's text after the hold was raised
   -- (from then on that report's own retention, below, holds it). A confirmation whose report choice
-  -- was "none" holds for one year from `csamConfirmedAt`; any other choice, or none recorded, holds
-  -- until the report is filed.
+  -- was "none" holds for one year from `csamConfirmedAt`, and after it while
+  -- `post_text_retention_skip` names a reason; any other choice, or none recorded, holds until the
+  -- report is filed.
   IF csam_held AND (
     EXISTS (
       SELECT 1 FROM "TextScanHold" h
@@ -79,6 +84,7 @@ BEGIN
             AND h.status = 'Confirmed'
             AND h.meta ->> 'reportChoice' IS DISTINCT FROM 'none'
         )
+        AND post_text_retention_skip(post_id, author_id) IS NULL
       )
     )
   ) THEN
@@ -119,6 +125,9 @@ $$ LANGUAGE plpgsql VOLATILE SET search_path = public, pg_temp;
 CREATE OR REPLACE FUNCTION post_text_retention_skip(post_id INTEGER, author_id INTEGER)
 RETURNS text AS $$
 BEGIN
+  IF post_id IS NULL OR author_id IS NULL THEN
+    RETURN 'unknown-owner';
+  END IF;
   IF EXISTS (
     SELECT 1 FROM "CsamReport" r
     WHERE jsonb_typeof(r.details -> 'contextText') = 'array'

@@ -288,11 +288,35 @@ describe('the delete trigger on a confirmed "none" text', () => {
       'a released evidence hold',
       `INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${AUTHOR}, now())`,
     ],
-  ])('keeps the hold copy and snapshot of a deleted text %s', async (_, sql) => {
+  ])('refuses the delete of a text %s, keeping all three', async (_, sql) => {
     const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
     await pg.query(sql);
-    await deleteText(textId);
-    expect(await copies(textId, holdId)).toEqual({ ...KEPT, row: false });
+    await expect(deleteText(textId)).rejects.toThrow(/held/);
+    expect(await copies(textId, holdId)).toEqual(KEPT);
+  });
+
+  it('applies to a delete cascaded from the post', async () => {
+    const young = await confirmed({ confirmedDaysAgo: 300 });
+    await expect(pg.query(`DELETE FROM "Post" WHERE id = 1`)).rejects.toThrow(/held/);
+    expect(await copies(young.textId, young.holdId)).toEqual(KEPT);
+
+    const old = await confirmed({ confirmedDaysAgo: 366, postId: 2 });
+    await pg.query(`DELETE FROM "Post" WHERE id = 2`);
+    expect(await copies(old.textId, old.holdId)).toEqual({
+      row: false,
+      holdText: '',
+      snapshot: null,
+    });
+  });
+});
+
+describe('post_text_retention_skip', () => {
+  it('keeps a text whose post or owner is unknown', async () => {
+    const { rows } = await pg.query<{ a: string; b: string; c: string | null }>(
+      `SELECT post_text_retention_skip(NULL, ${AUTHOR}) AS a, post_text_retention_skip(1, NULL) AS b,
+              post_text_retention_skip(1, ${AUTHOR}) AS c`
+    );
+    expect(rows[0]).toEqual({ a: 'unknown-owner', b: 'unknown-owner', c: null });
   });
 });
 
