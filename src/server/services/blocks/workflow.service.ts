@@ -811,6 +811,8 @@ export function appBlockInstanceTag(blockInstanceId: string): string {
  *           are null when the orchestrator hasn't populated them. `nsfwLevel` is
  *           the numeric civitai browsing-level bitflag (1/2/4/8/16) mapped from
  *           the orchestrator's string rating; `null` for an unrated ('na') blob.
+ *           RESTRICTED outputs are left out, so this is a convenience view and
+ *           NOT an index space — indexes are positions in `outputs`.
  *   cost:   the workflow's realized/estimated buzz total, or null when absent.
  *   status: the block-contract status (see ORCH_STATUS_MAP) — the orchestrator's
  *           unassigned/preparing/scheduled all collapse to `pending`.
@@ -823,8 +825,10 @@ export function appBlockInstanceTag(blockInstanceId: string): string {
  *           `BlockWorkflowSnapshot.model3dOutputs`. Every url is also in `images`.
  *   outputs: OPTIONAL, same value and rule as `BlockWorkflowSnapshot.outputs`: every
  *           available output in order, RESTRICTED ones in position with no url.
- *           A restricted output is NOT in `images` — so `images` is the list
- *           `imageIndexes` index (publish and post), and `outputs` is not.
+ *           🔴 `outputs` IS THE INDEX SPACE: publish / post `imageIndexes` and
+ *           persist's `imageIndex` are positions in it (see
+ *           `projectAppWorkflowWithPositions`). `images` drops restricted outputs
+ *           and is a convenience view, NOT for indexing.
  */
 export type AppWorkflowImage = {
   url: string;
@@ -856,6 +860,30 @@ export type AppWorkflow = {
  * server resolves its `imageIndexes` against.
  */
 export function projectAppWorkflow(workflow: Workflow, ceiling: BlockOutputCeiling): AppWorkflow {
+  return projectAppWorkflowWithPositions(workflow, ceiling).workflow;
+}
+
+/**
+ * One output POSITION of a workflow — the index space of `AppWorkflow.outputs`, and the
+ * index space every `imageIndexes` / `imageIndex` (publish, post, persist) addresses.
+ * `image` is the server-side media at that position; it carries a url even when
+ * `output` is restricted, so it must NEVER be handed to a block — callers check
+ * `output` first and refuse a restricted position.
+ */
+export type AppWorkflowOutputPosition = { image: AppWorkflowImage; output: BlockWorkflowOutput };
+
+/**
+ * {@link projectAppWorkflow}, plus the server-side media at each output position.
+ *
+ * 🔴 POSITIONS ARE STABLE. Position `n` is the `n`-th available output, whatever its
+ * rating — a restricted output keeps its slot — so a rating that lands after the app
+ * read the list never moves an index. The filtered `images` list is a convenience view
+ * and is NOT an index space.
+ */
+export function projectAppWorkflowWithPositions(
+  workflow: Workflow,
+  ceiling: BlockOutputCeiling
+): { workflow: AppWorkflow; positions: AppWorkflowOutputPosition[] } {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   // Every available output, in order, before the restriction rule.
   const available: StepOutputMedia[] = [];
@@ -935,17 +963,20 @@ export function projectAppWorkflow(workflow: Workflow, ceiling: BlockOutputCeili
     unrestricted.map((m) => m.url)
   );
   return {
-    // A real LIST/GET item always carries an id; empty-string only if the
-    // orchestrator ever omits it (never for a persisted workflow).
-    workflowId: workflow.id ?? '',
-    status,
-    images: unrestricted.map(toAppWorkflowImage),
-    cost: typeof total === 'number' ? total : null,
-    createdAt: workflow.createdAt,
-    ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
-    ...(publishedModel ? { publishedModel } : {}),
-    ...(labels.length > 0 ? { model3dOutputs: labels } : {}),
-    ...(outputs.length > 0 ? { outputs } : {}),
+    workflow: {
+      // A real LIST/GET item always carries an id; empty-string only if the
+      // orchestrator ever omits it (never for a persisted workflow).
+      workflowId: workflow.id ?? '',
+      status,
+      images: unrestricted.map(toAppWorkflowImage),
+      cost: typeof total === 'number' ? total : null,
+      createdAt: workflow.createdAt,
+      ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
+      ...(publishedModel ? { publishedModel } : {}),
+      ...(labels.length > 0 ? { model3dOutputs: labels } : {}),
+      ...(outputs.length > 0 ? { outputs } : {}),
+    },
+    positions: available.map((m, i) => ({ image: toAppWorkflowImage(m), output: outputs[i] })),
   };
 }
 

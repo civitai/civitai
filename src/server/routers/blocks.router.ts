@@ -256,6 +256,7 @@ import {
   formatStepTimeout,
   isPageLoraResource,
   projectAppWorkflow,
+  projectAppWorkflowWithPositions,
   blockPollWaitSecondsInput,
   MAX_BLOCK_POLL_CONCURRENT_HOLDS,
   resolveBlockPollWaitSeconds,
@@ -267,7 +268,10 @@ import {
   WORKFLOW_METADATA_BLOCK_STEPS_KEY,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
-import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
+import {
+  blockOutputCeilingFromClaims,
+  restrictedOutputMessage,
+} from '~/server/services/blocks/block-output-restriction';
 import {
   collectBlockStepTypes,
   isRepeatStepType,
@@ -5938,8 +5942,9 @@ export const blocksRouter = router({
    * after the non-anon subject check, before any flag read, rate bucket or
    * orchestrator call.
    *
-   * The block sends `workflowId` + optional `imageIndexes` (indexes into the same
-   * ordered `images` array queryAppWorkflows exposes) — NEVER urls: the HOST
+   * The block sends `workflowId` + optional `imageIndexes` (POSITIONS in the
+   * `outputs` list queryAppWorkflows exposes; a restricted position is refused) —
+   * NEVER urls: the HOST
    * resolves the orchestrator urls SERVER-SIDE from the ownership-verified
    * workflow, fetches + re-uploads each selected output to civitai storage, and
    * creates each `Image` with DEFAULT ingestion (real NSFW scan; NO skipIngestion)
@@ -5965,8 +5970,8 @@ export const blocksRouter = router({
       z.object({
         blockToken: z.string().min(1),
         workflowId: z.string().min(1).max(64),
-        // Indexes into the workflow's available outputs (the same ordering
-        // queryAppWorkflows returns). Absent ⇒ publish ALL available outputs.
+        // Positions in the workflow's `outputs` (as queryAppWorkflows returns them).
+        // Absent ⇒ publish every available output that is not restricted.
         imageIndexes: z.number().int().nonnegative().array().max(50).optional(),
         // Advisory label (reserved; bare Image rows carry no title today).
         title: z.string().max(255).optional(),
@@ -6038,9 +6043,9 @@ export const blocksRouter = router({
         });
       }
 
-      // The SAME ordered projection queryAppWorkflows hands the block — so the
-      // block's `imageIndexes` line up exactly with what it saw. Only `available`
-      // outputs with a non-null url are present (dead/pending blobs are dropped).
+      // The SAME output positions queryAppWorkflows hands the block as `outputs` — so
+      // the block's `imageIndexes` name exactly the output it saw. Only `available`
+      // outputs with a non-null url have a position (dead/pending blobs are dropped).
       //
       // 🔴 UNWRAPPED BY `attachModeratedStepTextOutputs`, and this is the
       // HIGHEST-CONSEQUENCE of the three unwrapped `projectAppWorkflow`
@@ -6061,23 +6066,45 @@ export const blocksRouter = router({
       // `'textOutput'` step contributes NO url here to be ingested. If that gate
       // ever loosens, THIS is the call site that turns a smuggled string into
       // published content.
-      const outputs = projectAppWorkflow(workflow, blockOutputCeilingFromClaims(claims)).images;
-      if (outputs.length === 0) {
+      //
+      // 🔴 THE INDEX SPACE IS THE STABLE OUTPUT POSITIONS (`AppWorkflow.outputs`),
+      // restricted outputs included, so an index never moves when a rating lands
+      // late. A NAMED restricted position is refused before anything is fetched —
+      // never replaced by the next output. An omitted `imageIndexes` means every
+      // available output that is not restricted.
+      const { positions } = projectAppWorkflowWithPositions(
+        workflow,
+        blockOutputCeilingFromClaims(claims)
+      );
+      const isRestricted = (idx: number) => {
+        const output = positions[idx]?.output;
+        return !!output && 'restricted' in output && output.restricted === true;
+      };
+      const publishable = positions.map((_, i) => i).filter((i) => !isRestricted(i));
+      if (
+        positions.length === 0 ||
+        (input.imageIndexes === undefined && publishable.length === 0)
+      ) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'workflow has no available outputs to publish',
         });
       }
+      for (const idx of input.imageIndexes ?? []) {
+        if (idx >= 0 && idx < positions.length && isRestricted(idx)) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: restrictedOutputMessage(idx) });
+        }
+      }
       // Resolve the selection: given indexes (validated in-range) or all outputs.
       // Dedupe + cap so a block can't drive an unbounded fetch/upload fan-out.
       const PUBLISH_MAX_IMAGES = 20;
-      const rawIndexes = input.imageIndexes ?? outputs.map((_, i) => i);
-      const selected: typeof outputs = [];
+      const rawIndexes = input.imageIndexes ?? publishable;
+      const selected: Array<(typeof positions)[number]['image']> = [];
       const seenIdx = new Set<number>();
       for (const idx of rawIndexes) {
-        if (idx < 0 || idx >= outputs.length || seenIdx.has(idx)) continue;
+        if (idx < 0 || idx >= positions.length || seenIdx.has(idx)) continue;
         seenIdx.add(idx);
-        selected.push(outputs[idx]);
+        selected.push(positions[idx].image);
         if (selected.length >= PUBLISH_MAX_IMAGES) break;
       }
       if (selected.length === 0) {
@@ -6275,6 +6302,7 @@ export const blocksRouter = router({
           appBlockId: claims.appBlockId,
           workflowId: input.workflowId,
           imageIndex: input.imageIndex,
+          ceiling: blockOutputCeilingFromClaims(claims),
           // Lazily, so the durable ownership row is checked before an orchestrator token is minted.
           getWorkflow: async (workflowId) =>
             getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),

@@ -1131,6 +1131,7 @@ export type BlockWorkflowSnapshot = {
   /**
    * The available media, as urls, in production order — with every RESTRICTED output
    * removed (see {@link outputs}). Kept for back-compat; `outputs` is the full list.
+   * 🔴 NOT FOR INDEXING: an index is a position in `outputs`.
    */
   imageUrls?: string[];
   /**
@@ -1147,9 +1148,13 @@ export type BlockWorkflowSnapshot = {
    * must not try to fetch it. Blocked and not-yet-available outputs are dropped, as
    * from `imageUrls`.
    *
-   * 🔴 INDEXES. `imageIndexes` on publish and post index `AppWorkflow.images` — the
-   * same list as `imageUrls`, restricted outputs excluded — NOT this list. Decided by
-   * `classifyBlockOutput` (`services/blocks/block-output-restriction`).
+   * 🔴 INDEXES ARE POSITIONS IN THIS LIST. `imageIndexes` on publish and post, and
+   * `imageIndex` on persist, name an output by its position here — a restricted output
+   * keeps its slot, so an index never moves when a rating lands late. Naming a
+   * restricted position is refused (`output N is restricted`, BAD_REQUEST), never
+   * replaced by another output. `imageUrls` / `AppWorkflow.images` /
+   * `steps[].imageUrls` drop restricted outputs and are NOT index spaces. Restriction
+   * is decided by `classifyBlockOutput` (`services/blocks/block-output-restriction`).
    *
    * OMITTED when `imageUrls` would hold nothing and no output is restricted.
    * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
@@ -1645,7 +1650,7 @@ export type BlockWorkflowStepSnapshot = {
   name: string;
   $type: string;
   status: BlockWorkflowSnapshot['status'];
-  /** This step's unrestricted media urls — see `BlockWorkflowSnapshot.imageUrls`. */
+  /** This step's unrestricted media urls — see `BlockWorkflowSnapshot.imageUrls`. Not for indexing. */
   imageUrls?: string[];
   /**
    * This step's outputs, restricted ones in position — the same rules as

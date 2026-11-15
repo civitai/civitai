@@ -103,6 +103,15 @@ export function blockOutputCeilingFromClaims(claims: {
   };
 }
 
+/**
+ * The refusal for a publish / post / persist naming a RESTRICTED output position. One
+ * spelling for all three, so an app can match it. BAD_REQUEST: the position exists and
+ * is in range, it is simply not usable by this app; it is never replaced by another.
+ */
+export function restrictedOutputMessage(position: number): string {
+  return `output ${position} is restricted`;
+}
+
 /** True for an entry that carries a url the app may load. */
 export function isUnrestrictedOutput(
   output: BlockWorkflowOutput
