@@ -1,5 +1,6 @@
 // Package server is the HTTP surface: the public tRPC path for the one procedure, and the internal
-// shadow-compare endpoints (that procedure, and the public REST `GET /api/v1/images`).
+// shadow-compare endpoints (that procedure, `image.getInfinite`, and the public REST
+// `GET /api/v1/images`).
 package server
 
 import (
@@ -30,12 +31,19 @@ import (
 // Procedure is the one tRPC path this service answers.
 const Procedure = "image.getImagesAsPostsInfinite"
 
-// Endpoint labels: every feed_go_* series carries `endpoint`, one of these two, so CPU per call and
+// ProcedureInfinite is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
+const ProcedureInfinite = "image.getInfinite"
+
+// Endpoint labels: every feed_go_* series carries `feed_endpoint`, one of these, so CPU per call and
 // parity read per endpoint (DESIGN.md §10).
 const (
 	EndpointAsPosts  = "as-posts"  // tRPC image.getImagesAsPostsInfinite
 	EndpointV1Images = "v1-images" // REST GET /api/v1/images
+	EndpointInfinite = "infinite"  // tRPC image.getInfinite (shadow only)
 )
+
+// Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -74,6 +82,8 @@ type Server struct {
 	shadowStarts atomic.Uint64
 	// V1 serves the REST `/api/v1/images` shadow; nil = every such sample falls back.
 	V1 *feed.V1Deps
+	// Infinite serves the `image.getInfinite` shadow; nil = every such sample falls back.
+	Infinite *feed.InfiniteDeps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 
@@ -87,8 +97,9 @@ type Server struct {
 
 	// computeFn and computeV1Fn replace compute / computeV1 in the shadow path (tests only; nil in
 	// production).
-	computeFn   func(context.Context, *http.Request) (*computed, error)
-	computeV1Fn func(context.Context, *http.Request) (*computed, error)
+	computeFn         func(context.Context, *http.Request) (*computed, error)
+	computeV1Fn       func(context.Context, *http.Request) (*computed, error)
+	computeInfiniteFn func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -186,6 +197,52 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 		out.ttl = &trpc.SignedOutTTL
 	}
 	return out, nil
+}
+
+// computeInfinite answers an `image.getInfinite` request (getInfiniteImagesHandler), or returns a
+// fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
+// procedure (the same middleware runs on both). The answer is never edge-cacheable: Node does not
+// cache this procedure (its event decorations are the viewer's own), and it is only shadowed here.
+func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
+	if s.Infinite == nil {
+		return nil, fallback.New("infinite-unconfigured")
+	}
+	if r.Method != http.MethodGet {
+		return nil, fallback.New("method")
+	}
+	raw, err := trpc.ParseInput(r)
+	if err != nil {
+		return nil, fallback.Newf("input-envelope", "%v", err)
+	}
+	in, err := feed.ParseInfinite(raw)
+	if err != nil {
+		return nil, err
+	}
+	if r.Header.Get(verifiedBotHeader) != "" {
+		return nil, fallback.New("verified-bot")
+	}
+	user, err := s.Resolver.Resolve(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	authorized := user != nil && !user.Banned
+	isModerator := authorized && user.IsModerator
+	color := s.Hosts.ColorOf(r.Host)
+	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	req := feed.InfiniteRequest{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
+	if authorized {
+		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
+		req.ViewerUsername = user.Username
+	}
+	ans, err := feed.ServeInfinite(ctx, s.Infinite, req)
+	if err != nil {
+		return nil, err
+	}
+	buf, err := superjson.SerializeBuffer(ans.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}, nil
 }
 
 // computeV1 answers a REST `/api/v1/images` request (handleImagesRequest), or returns a fallback/other
@@ -393,13 +450,18 @@ func (s *Server) ShadowHandler(w http.ResponseWriter, r *http.Request) {
 	s.shadowHandler(w, r, EndpointAsPosts) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
 }
 
+// ShadowInfiniteHandler is the internal compare endpoint for the tRPC procedure `image.getInfinite`.
+func (s *Server) ShadowInfiniteHandler(w http.ResponseWriter, r *http.Request) {
+	s.shadowHandler(w, r, EndpointInfinite) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
+}
+
 // ShadowV1Handler is the internal compare endpoint for REST `GET /api/v1/images`.
 func (s *Server) ShadowV1Handler(w http.ResponseWriter, r *http.Request) {
 	s.shadowHandler(w, r, EndpointV1Images) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
 }
 
 // shadowHandler answers 202 at once and compares in the background; a full queue drops the sample.
-// Both endpoints share one queue, so the solo-phase CPU method (DESIGN.md §10.1) sees every sample.
+// Every endpoint shares one queue, so the solo-phase CPU method (DESIGN.md §10.1) sees every sample.
 func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint string) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -470,7 +532,16 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 
 // SyntheticRequest rebuilds the public request a shadow sample describes.
 func SyntheticRequest(ctx context.Context, req ShadowRequest) (*http.Request, error) {
-	u := &url.URL{Path: "/api/trpc/" + Procedure, RawQuery: url.Values{"input": {req.Input}}.Encode()}
+	return syntheticTRPCRequest(ctx, req, Procedure)
+}
+
+// SyntheticInfiniteRequest rebuilds the `image.getInfinite` request an infinite sample describes.
+func SyntheticInfiniteRequest(ctx context.Context, req ShadowRequest) (*http.Request, error) {
+	return syntheticTRPCRequest(ctx, req, ProcedureInfinite)
+}
+
+func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure string) (*http.Request, error) {
+	u := &url.URL{Path: "/api/trpc/" + procedure, RawQuery: url.Values{"input": {req.Input}}.Encode()}
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
@@ -512,11 +583,19 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	if s.computeFn != nil {
 		computeFn = s.computeFn
 	}
-	if endpoint == EndpointV1Images {
+	switch endpoint {
+	case EndpointV1Images:
 		build, computeFn = SyntheticV1Request, s.computeV1
 		compareFn, classify = shadow.CompareJSON, shadow.ClassifyJSON
 		if s.computeV1Fn != nil {
 			computeFn = s.computeV1Fn
+		}
+	case EndpointInfinite:
+		// The superjson envelope, as for the gallery; classified by image id (a flat page).
+		build, computeFn = SyntheticInfiniteRequest, s.computeInfinite
+		classify = shadow.ClassifyFlat
+		if s.computeInfiniteFn != nil {
+			computeFn = s.computeInfiniteFn
 		}
 	}
 	r, err := build(ctx, req)

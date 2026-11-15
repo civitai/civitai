@@ -18,6 +18,9 @@ type PageRequest struct {
 	// VisibleEvents is the decoration events every viewer sees; empty = no decoration read.
 	VisibleEvents map[string]bool
 	ViewerID      int // 0 = signed out: no reactions read
+	// NoProfilePictures: the include list has no 'profilePictures' (image.getInfinite adds only
+	// 'tagIds'), so the profile-picture cache is not read and every creator's is absent (Node: null).
+	NoProfilePictures bool
 }
 
 // Page is a page's hydration, each map as the lookup of the same name answers it.
@@ -60,7 +63,10 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	stage1 := NewBatch()
 	basic := s.Packed.Queue(stage1, KeyBasicUsers, users, ttlDay)
 	userCosmetics := s.Packed.Queue(stage1, KeyUserCosmetics, users, 0)
-	profilePics := s.Packed.Queue(stage1, KeyProfilePictures, users, 0)
+	var profilePics *PackedRead
+	if !req.NoProfilePictures {
+		profilePics = s.Packed.Queue(stage1, KeyProfilePictures, users, 0)
+	}
 	frames := s.Packed.Queue(stage1, KeyImageFrames, images, 0)
 	thumbs := s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)
 	tags := s.Packed.Queue(stage1, KeyTagIDs, images, 0)
@@ -75,6 +81,10 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 
 	g.Go(safe.Go(func() (err error) { out.Basic, err = s.basicUsersFrom(gctx, users, basic.Entries()); return }))
 	g.Go(safe.Go(func() (err error) {
+		if profilePics == nil {
+			out.ProfilePics = map[int]superjson.Object{}
+			return nil
+		}
 		out.ProfilePics, err = s.profilePicturesFrom(gctx, users, profilePics.Entries())
 		return
 	}))

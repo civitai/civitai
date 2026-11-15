@@ -16,10 +16,11 @@ This document covers what the service does, what it reuses, how it identifies th
 reaches it, how parity is proven before it serves anyone, and how the CPU comparison is made. The
 last sections list what is **not** at parity and what a deployment needs.
 
-A second port, the public REST endpoint `GET /api/v1/images`, runs in **shadow only** (nothing routes
-public traffic to it): §13. It shares the feed-service client, the hydration readers, the caches, the
-shadow queue and the metric families, told apart by a `feed_endpoint` label (not `endpoint`: that is a
-reserved scrape target label, which would overwrite ours).
+Two more ports run in **shadow only** (nothing routes public traffic to them): the public REST
+endpoint `GET /api/v1/images` (§13) and the tRPC procedure `image.getInfinite`, the flat image feed
+(§14). They share the feed-service client, the hydration readers, the caches, the shadow queue and
+the metric families, told apart by a `feed_endpoint` label (not `endpoint`: that is a reserved scrape
+target label, which would overwrite ours).
 
 ---
 
@@ -113,10 +114,12 @@ internal/superjson   the superjson writer the client decodes
 internal/auth        session JWS verification, revocation registry, cached session user
 internal/browsing    level flags, domain cap, browsing-settings addons, host color, region rules
 internal/feed        input parsing, the SQL, page sources, page loop, post completion, grouping and
-                     ordering, gallery gates; the REST /api/v1/images port (v1query.go, v1images.go)
+                     ordering, gallery gates; the REST /api/v1/images port (v1query.go, v1images.go);
+                     the image.getInfinite port (infinite.go)
 internal/feedsvc     the image feed service: query mapper, cursor codec, HTTP client
 internal/hydrate     read-only cache readers (msgpack) and miss paths
-internal/shadow      the comparators (superjson envelope; plain JSON for REST)
+internal/shadow      the comparators (superjson envelope; plain JSON for REST) and classifiers (by
+                     post id; by image id for the flat page and REST)
 internal/server      HTTP handlers, metrics
 internal/fallback    the fallback error and its reasons
 ```
@@ -402,8 +405,8 @@ path as serving, and compares decoded values:
 - each differing path is counted by **category** — the path with indices folded to `*`, truncated at
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
-- every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13):
-  two values, so the label at most doubles a family's cardinality;
+- every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
+  `infinite` for §14): three values, so the label at most triples a family's cardinality;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field.
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
@@ -501,9 +504,9 @@ no hash was cached — a case this service falls back on (`metrics-miss`) instea
 
 Shadow mode gives both sides the same requests. During it the Go process does nothing but handle
 shadow samples, so its CPU per call is a plain ratio. Every series below carries `feed_endpoint`; add
-`feed_endpoint="as-posts"` (or `"v1-images"`, §13) to each selector to read one endpoint. The
-whole-process ratio cannot be split by endpoint (process CPU has no label), so with both shadows on
-read the per-phase figure, which can. **That ratio is an UPPER BOUND for serving:**
+`feed_endpoint="as-posts"` (or `"v1-images"`, §13, or `"infinite"`, §14) to each selector to read one
+endpoint. The whole-process ratio cannot be split by endpoint (process CPU has no label), so with more
+than one shadow on read the per-phase figure, which can. **That ratio is an UPPER BOUND for serving:**
 each shadow sample also costs work serving never does — receiving and decoding Node's envelope (up
 to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That overhead is
 in `process_cpu_seconds_total`, so a whole-process figure below Node's is conservative, and one near
@@ -777,8 +780,10 @@ not read them, and their cache misses (a fallback on the gallery procedure) cost
 `src/server/trpc/feed-go-shadow.ts` (`beginV1Images` / `captureV1Images`), wired in the route's
 handler. Its own Flipt flag, so the REST route is enabled separately from the gallery procedure; it
 shares `FEED_GO_SHADOW_URL`, the sample rate and the in-flight cap with `feed-go-shadow`, and has its
-own per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size, so REST traffic cannot starve
-the gallery's samples. The sampling decision is made after the handler's cheap rejects (the 400 and
+own per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size, so REST traffic cannot spend
+the gallery's tokens. The in-flight cap is shared, though: while feed-go is slow to answer, REST
+samples hold slots and the gallery's are dropped as overload
+(`civitai_app_feed_go_shadow_samples_total{outcome="dropped_overload",feed_endpoint="as-posts"}`). The sampling decision is made after the handler's cheap rejects (the 400 and
 429) and its bulkhead slot, and the in-flight slot and the token are taken only once the handler has
 answered 200, so a sample holds nothing while the handler runs. A sampled 200 keeps a reference to the
 body the handler passes to `res.json`; after the handler, from `setImmediate` and never awaited, it
@@ -862,3 +867,124 @@ the per-route CPU attribution over the same window.
   falls back rather than guess;
 - milliseconds between Node's feed call and this one: `membership` / `order` diffs on busy Newest
   pages, `stats.*` value diffs, as in §7.
+
+## 14. `image.getInfinite` (tRPC, shadow only)
+
+The flat image feed (`/images`, a creator's images, a post's carousel tail, a tag page):
+`src/server/routers/image.router.ts` (`heavyProcedure`, input `getInfiniteImagesSchema`) →
+`getInfiniteImagesHandler` (`image.controller.ts`) → `getAllImagesIndex` (the feed service) or
+`getAllImages` (Postgres), then `withSharedFeedUsers`. Ported in `internal/feed/infinite.go`; compared at
+`POST /internal/shadow/image.getInfinite`. Nothing serves it publicly. It reuses the gallery port's feed
+client, page query, page cache, hydration (one cluster pipeline per stage, `hydrate.Sources.Page`), the
+REST port's post→version / version→model readers and username lookup, the session resolver and the
+domain cap.
+
+### 14.1 What the Node path does
+
+1. **Middleware.** The same `applyDomainFeature` cap as §1 (every public procedure runs it). The
+   procedure is in `NEVER_BATCH_PROCEDURES`, so the client sends it alone.
+2. **Hat Turf.** `hatSort`, `hatTurfMine`, `hideTurfHats`, `hideWornHats` are acted on only with the
+   `hatTurfFeedCard` and `hatTurfFeedSorts` features on, on an unscoped feed, and when
+   `getHatTurfFeedEvent` finds a live event; then the page comes from the turf rank
+   (`readTurfRankPage` / `readMyTurfPage`) or is filtered by `turfHiddenIds` (`fillTurfPage`).
+3. **Routing.** `requiresImageDbPath`: a `postId`, `postIds`, `collectionId`, `reactions`, `imageId`,
+   `ids`, `hidden`, a `modelId` without a version, `prioritizedUserIds` with a model, or `publishedOnly`
+   with a `userId` take `getAllImages`; a `hubId` always takes the feed; everything else takes the feed
+   when `image-index-feed` is on.
+4. **Gates** (not for a moderator): `isModelGalleryWithheld` (a taken-down model, except to its owner)
+   and `getHeldGalleryLevel` (the held level of a minor or SFW-only model), both over the models the
+   request selects by (`resolveImageModelIds`: the named model, the version's, the post's version's).
+   Withheld, or a held level that leaves nothing: `{ items: [], nextCursor: undefined }`.
+5. **One page.** No overscan, no grouping. Feed path (`getAllImagesIndex`): `prepareImageFeedRequest`
+   (`enforceBlockedBrowsingTags`: blocked tag ids stripped from `tags`, all of them blocked → an empty
+   page; the addon exclusions, the tag ones off on the viewer's own feed by id or by name; the
+   hide-challenges tag; a `username` resolved to its id, unknown → 404), the feed query
+   (`mapSearchInputToFeedQuery(input, 'primary', 'website')`, `tags` and `userIds` included), then the
+   rows by `feedHydrateQuery` (no paging, period or model scope; `tags` and the creator kept). Postgres
+   path: one `getAllImages` call; a post's media are ordered `i."index", i."id"` and paged on the index,
+   so `nextCursor` is the look-ahead row's index (a number, `0`, or `null`).
+6. **Wire.** Each image as `getAllImagesUncaptured` builds it under `stripImageForInfiniteWire` only:
+   the gallery's image plus `availability`, `meta` (`null` without `metaSelect`), `baseModel`
+   (undefined without `includeBaseModel`) and `judgeScore` (`null` outside a collection). Profile
+   pictures only when `include` holds `profilePictures` (the handler adds `tagIds` alone). The result is
+   `{ items, nextCursor, source: 'feed' }` (feed), `{ nextCursor, items, source: 'db' }` (Postgres), and
+   the bare `{ items, nextCursor }` of the gates and of an all-blocked tag scope on the feed path.
+7. **`withSharedFeedUsers`** (`image-feed-shared-users` and `trpc-fast-superjson-shared-refs` both on):
+   equal `user` objects become one shared object. superjson writes that as a referential equality, which
+   the comparator ignores; no decoded value changes, so nothing is ported.
+
+### 14.2 What is ported, and what falls back
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId`, `collectionId` and every other key in §2's right-hand column (`input-<key>`); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
+| Viewer | as §4 (signed out, cookie sessions, a banned session as signed out); the session's username for the own-feed rule | as §4 |
+| Gates | withheld, held level, a version or post that cannot be found; moderators exempt | a held model whose settings carry no level (`held-level-unset`), a settings key Node would rebuild (`gallery-settings-miss`) |
+| Tag scope | `system:blocked-browsing-tags` read from the cache cluster | that key absent (`blocked-tags-miss`) or not a `[{id}]` list (`blocked-tags-stale`): Node rebuilds it from the database |
+| Pages | the feed's page and cursor, the empty-page answers; the Postgres page for a post or a model alone | a feed failure or non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`), a feed cursor on the Postgres path (`input-cursor`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`), a username the replica does not hold (`username-miss`) |
+| Hydration | as §2 (the same `hydrate.Sources.Page`, profile pictures skipped without the include) | as §2 |
+| Config | | no `FEED_SERVICE_URL` with the index mirror on (`index-feed-unconfigured`) |
+
+### 14.3 Flags
+
+| Flag | Node effect | Here |
+|---|---|---|
+| `image-index-feed` | the feed path for every shape `requiresImageDbPath` allows | `FEED_GO_IMAGE_INDEX_FEED` (§8) |
+| features `hatTurfFeedCard`, `hatTurfFeedSorts` | the Hat Turf sorts and Show filters | not mirrored: a request carrying a hat key falls back whatever they say |
+| feature `userHubs` | a hub feed | not mirrored: `hubId` falls back |
+| `image-feed-shared-users` (+ `trpc-fast-superjson-shared-refs`) | one shared `user` per creator | no decoded difference; nothing to do |
+| `datapacket-read` | which replica the rows read, and the empty-hydrate retry | not mirrored, as §8: an empty hydrate falls back |
+| event decoration flags | as §8 (`eventDecorationViewer` is the viewer here too) | `FEED_GO_DECORATION_EVENTS`, as §8 |
+
+### 14.4 The Node sampler (flag `feed-go-shadow-infinite`, default OFF)
+
+The same mechanism as the gallery's (§7): `src/server/trpc/feed-go-shadow.ts` decides in `begin` (a GET
+of `image.getInfinite`, unbatched, its own flag on, sampled at `FEED_GO_SHADOW_SAMPLE_RATE`), the
+server transformer captures the envelope Node wrote, and `finish` posts
+`{ input, headers, node }` to `/internal/shadow/image.getInfinite` after a 200, from `setImmediate`,
+never awaited. It shares `FEED_GO_SHADOW_URL`, the sample rate and the in-flight cap with the other
+routes and has its own per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size, so it cannot
+spend the gallery's or the REST route's tokens. The bucket isolates tokens only, not in-flight slots:
+the cap is shared, so while feed-go is slow to answer, this route's samples can hold the slots and the
+other routes record `dropped_overload` (read
+`civitai_app_feed_go_shadow_samples_total{outcome="dropped_overload",feed_endpoint="as-posts"}` beside
+this route's own rate). Outcomes are counted in
+`civitai_app_feed_go_shadow_samples_total{outcome,feed_endpoint="infinite"}`, seeded at 0 for every
+outcome; the encode counters carry the label too.
+
+### 14.5 Comparison
+
+`shadow.Compare`, the superjson comparator of §7 (annotations applied, referential equalities
+ignored), classified by `shadow.ClassifyFlat`, which keys the items by image `id`: `match`, `fields`
+(same images, same order), `order` (same images), `membership` (different images), plus `unsupported`,
+`deadline`, `go_error`. Categories are the flat shape's: `items.*.<field>`, `items.*.user.<field>`,
+`items.*.stats.<count>`, `nextCursor`, `source`, truncated at the same opaque keys (`metadata`, cosmetic
+`data`, `remixOfId`).
+
+### 14.6 Measurement
+
+The shadow queue and §10.1's solo-phase method are shared, so the per-endpoint figures read with
+`feed_endpoint="infinite"`. As in §13.6, an answer computed without loading an image row (a withheld or
+held gallery, an all-blocked tag scope, a shape the feed cannot express, a feed page with no ids) is
+`served_empty` / `match_empty`, kept out of the served CPU and the match rate:
+
+```promql
+sum(rate(feed_go_shadow_phase_cpu_seconds_total{feed_endpoint="infinite",phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{feed_endpoint="infinite",phase="compute",outcome="served"}[1h]))
+
+sum(rate(feed_go_shadow_compare_total{feed_endpoint="infinite",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{feed_endpoint="infinite",result=~"match|fields|order|membership"}[1h]))
+
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="infinite",mode="shadow"}[1h])))
+```
+
+### 14.7 Known divergences
+
+- those of §9 that apply to a page of images (timing between the two feed calls, `stats.*` noise, the
+  per-viewer event-decoration gap, response headers);
+- the username lookup runs on this service's replica only (Node's hydrate reads the primary next);
+- a post scope's `nextCursor` is the look-ahead row's raw index (`0`, or `null` when that index is
+  NULL), exactly as Node's; whatever the client then does with such a cursor, both sides do the same;
+- the blocked tag list is read from its cache key and memoized in-process for 30 s (single flight, an
+  error never memoized), as Node's `createTtlMemo` does: a changed list reaches both within that
+  window, each pod on its own clock.
