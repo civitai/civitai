@@ -273,6 +273,37 @@ beforeAll(async () => {
     INSERT INTO "Image" (id, "postId", index, "nsfwLevel") VALUES
       (2031, 2021, 0, ${NsfwLevel.X}), (2032, 2021, 1, ${NsfwLevel.PG}),
       (2131, 2121, 0, ${NsfwLevel.PG13}), (2132, 2121, 1, ${NsfwLevel.PG});
+    -- Controls: unflagged model 2201 leads with an X image; SFW-only model 2301 has no stored
+    -- level, so its whole limit applies; minor model 2401 stores X, outside its limit, so its
+    -- whole limit applies; minor model 2501 stores a non-numeric level.
+    INSERT INTO "Model" (id, status, minor, "sfwOnly", "gallerySettings") VALUES
+      (2201, 'Published', false, false, '{"level": 31}'),
+      (2301, 'Published', false, true, NULL),
+      (2401, 'Published', true, false, '{"level": ${NsfwLevel.X}}'),
+      (2501, 'Published', true, false, '{"level": "PG"}');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES
+      (2211, 2201, 'Published'), (2311, 2301, 'Published'), (2411, 2401, 'Published'),
+      (2511, 2501, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES
+      (2221, 2211, now() - interval '1 day'), (2321, 2311, now() - interval '1 day'),
+      (2421, 2411, now() - interval '1 day'), (2521, 2511, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "nsfwLevel") VALUES
+      (2231, 2221, 0, ${NsfwLevel.X}),
+      (2331, 2321, 0, ${NsfwLevel.R}), (2332, 2321, 1, ${NsfwLevel.PG13}),
+      (2431, 2421, 0, ${NsfwLevel.X}), (2432, 2421, 1, ${NsfwLevel.PG13}),
+      (2531, 2521, 0, ${NsfwLevel.X}), (2532, 2521, 1, ${NsfwLevel.PG13});
+    -- Public bounty 2701 links the minor model's X image and its PG one; model 2801 stores a
+    -- level beyond int range.
+    INSERT INTO "Bounty" VALUES (2701, ${OWNER}, 'Public');
+    INSERT INTO "ImageConnection" VALUES (2031, 2701, 'Bounty'), (2032, 2701, 'Bounty');
+    INSERT INTO "Model" (id, status, minor, "gallerySettings") VALUES
+      (2801, 'Published', true, '{"level": 1e40}');
+    INSERT INTO "ModelVersion" (id, "modelId", status) VALUES (2811, 2801, 'Published');
+    INSERT INTO "Post" (id, "modelVersionId", "publishedAt") VALUES (2821, 2811, now() - interval '1 day');
+    INSERT INTO "Image" (id, "postId", index, "nsfwLevel") VALUES
+      (2831, 2821, 0, ${NsfwLevel.X}), (2832, 2821, 1, ${NsfwLevel.PG13});
+    -- An X image on published post 201, which is on no model.
+    INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES (2631, 201, ${NsfwLevel.X});
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -461,6 +492,26 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     it.each(['owner', 'moderator'] as const)('keeps the first image for the %s', async (who) => {
       expect(await coverOf(entityType, entityId, viewers[who])).toBe(heldImage);
     });
+  });
+
+  describe.each([
+    ['an unflagged model', 'Model', 2201, 2231],
+    ["an unflagged model's version", 'ModelVersion', 2211, 2231],
+    ["a post on an unflagged model's version", 'Post', 2221, 2231],
+    ["an unflagged model's image", 'Image', 2231, 2231],
+    ['an image on a post on no model', 'Image', 2631, 2631],
+    ['an SFW-only model with no stored level', 'Model', 2301, 2332],
+    ['a minor model whose stored level is outside its limit', 'Model', 2401, 2432],
+    ['a minor model whose stored level is not a number', 'Model', 2501, 2532],
+    ['a minor model whose stored level is beyond int range', 'Model', 2801, 2832],
+    ["a bounty linking a minor model's image above its gallery level", 'Bounty', 2701, 2032],
+  ] as const)('%s', (_, entityType, entityId, imageId) => {
+    it.each(['anonymous', 'stranger'] as const)(
+      'has the cover %s viewers are served',
+      async (who) => {
+        expect(await coverOf(entityType, entityId, viewers[who])).toBe(imageId);
+      }
+    );
   });
 
   it.each(['anonymous', 'stranger'] as const)(

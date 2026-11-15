@@ -5644,7 +5644,6 @@ export const getEntityCoverImage = async ({
           WHERE e."entityType" = 'Post'
             AND ${modelNotWithheld}
             AND ${withinHeldGallery}
-          AND ${withinHeldGallery}
             AND (
               (p."publishedAt" < now() AND p.availability <> 'Private')
               OR (${signedIn}::boolean AND p."userId" = ${viewerId}) OR ${isModerator}::boolean
@@ -5706,9 +5705,14 @@ export const getEntityCoverImage = async ({
             WHEN 'BountyEntry' THEN be."bountyId"
           END
           LEFT JOIN "Article" a ON e."entityType" = 'Article' AND a.id = e."entityId"
+          -- A linked image can sit on another model's post.
+          LEFT JOIN "Post" p ON p.id = i."postId"
+          LEFT JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+          LEFT JOIN "Model" m ON m.id = mv."modelId"
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND ${imageNotFlagged}
+            AND ${withinHeldGallery}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
