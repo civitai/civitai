@@ -27,6 +27,7 @@ describe('the content gate', () => {
       filter: { gate } as CandidateFilter,
       offset: 0,
       limit: 10,
+      viewer: { isModerator: false },
     });
 
   const challenge: ViewerGate = {

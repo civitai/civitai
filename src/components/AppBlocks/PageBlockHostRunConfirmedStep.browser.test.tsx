@@ -222,6 +222,28 @@ describe('PageBlockHost RUN_CONFIRMED_STEP (consent-gated over-budget step)', ()
     submitMutate.mockResolvedValue({ snapshot: SNAPSHOT });
   });
 
+  test('names the pool tried first for a yellow pick, from the SERVER’S order', async () => {
+    previewMutate.mockResolvedValue({ ...PREVIEW, fundingOrder: ['yellow', 'blue'] });
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_pool', body: BODY });
+
+    await expect.element(confirmButton()).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('block-confirmed-step-funding'))
+      .toHaveTextContent('Paid from Yellow Buzz first, then Blue.');
+  });
+
+  test('with no pick the dialog shows no pool line', async () => {
+    await mount();
+    await driveToReady();
+    postFromBlock('RUN_CONFIRMED_STEP', { requestId: 'rq_nopool', body: BODY });
+
+    await expect.element(confirmButton()).toBeInTheDocument();
+    await expect.element(page.getByTestId('block-confirmed-step-price')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="block-confirmed-step-funding"]')).toBeNull();
+  });
+
   test('shows the SERVER’S price; confirm records consent and THEN submits', async () => {
     await mount();
     await driveToReady();

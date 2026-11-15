@@ -16,9 +16,11 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
 // image fetch path returns, and that the fetch path keeps every visibility filter for an id list.
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => {
   return {
+    recordAudit: vi.fn(),
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
     stripBenignPhrases: vi.fn(async (text: string) => text),
@@ -33,6 +35,10 @@ const h = vi.hoisted(() => {
   };
 });
 
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   stripBenignPhrases: h.stripBenignPhrases,
@@ -956,4 +962,20 @@ describe('the search service call', () => {
       searchSemanticImages({ input: input({ imageId: undefined, query: 'fox' }), user: VIEWER })
     ).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
   });
+});
+
+describeSemanticAuditContract({
+  index: 'images',
+  run: ({ source, user, cursor }) => {
+    h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
+    return searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox', cursor }),
+      user,
+      candidateSource: source,
+    });
+  },
+  ids: [101, 103],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });
