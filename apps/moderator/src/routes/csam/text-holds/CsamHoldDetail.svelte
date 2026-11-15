@@ -15,6 +15,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
+  import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import FactRow from '$lib/components/minor-flags/FactRow.svelte';
   import PreviewImagesCard from '$lib/components/minor-flags/PreviewImagesCard.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
@@ -25,6 +27,14 @@
   import TriageDetailHeader from '$lib/components/triage/TriageDetailHeader.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
+  import {
+    CSAM_REPORT_CHOICE_COPY,
+    CSAM_REPORT_CHOICES,
+    CSAM_REPORT_NOT_SURE,
+    CSAM_REPORT_QUESTION,
+    isReportableChoice,
+    type CsamReportChoice,
+  } from '$lib/csam-holds/report-choice';
   import { csamReportUrl, entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_BUTTON, LINK_CLASS, dateTime, plural, shortAge } from '$lib/format';
   import { quotedPhrases } from '$lib/quoted-phrases';
@@ -111,6 +121,16 @@
   let decision = $state<CsamHoldDecision>('dismiss');
   let confirming = $state<CsamHoldDecision | null>(null);
   let confirmOpen = $state(false);
+  // Every confirm asks it afresh; a dismissal sends none.
+  let reportChoice = $state<CsamReportChoice | ''>('');
+  let referEl: HTMLFormElement | undefined = $state();
+  let referNote = $state('');
+  // The note is typed in the decision form; "Not sure" sends it along.
+  async function refer() {
+    referNote = (formEl?.elements.namedItem('note') as HTMLInputElement | null)?.value ?? '';
+    await tick();
+    referEl?.requestSubmit();
+  }
 
   // Which other holds a decision can cover. The shell remounts this component per hold, so the request
   // and the checkbox start fresh; the counts are read from the settled request when a button is pressed.
@@ -158,7 +178,8 @@
 
   const press = async (next: CsamHoldDecision) => {
     const covered = await coverageFor(next);
-    if (CSAM_HOLD_CONFIRMS[next] || covered.also.length || coversNone(covered)) {
+    reportChoice = '';
+    if (next !== 'dismiss' || covered.also.length || coversNone(covered)) {
       coverage = covered;
       confirming = next;
       confirmOpen = true;
@@ -223,7 +244,11 @@
   // The existing CSAM report form is where an NCMEC report is filed; open it for the author once the
   // removal and ban have landed. A blocked pop-up leaves the "File CSAM report" button in the header.
   const decided: SubmitFunction = (input) => {
-    const reportUserId = input.formData.get('decision') === 'remove_ban_report' ? row.userId : null;
+    const reportUserId =
+      input.formData.get('decision') === 'remove_ban_report' ||
+      isReportableChoice(input.formData.get('reportChoice') as string | null)
+        ? row.userId
+        : null;
     const inner = submit(outcome)(input);
     return async (opts) => {
       const finish = await inner;
@@ -425,6 +450,11 @@
       <input type="hidden" name="holdId" value={row.id} />
       <input type="hidden" name="textHash" value={row.textHash} />
       <input type="hidden" name="decision" value={decision} />
+      {#if decision !== 'dismiss' && reportChoice}<input
+          type="hidden"
+          name="reportChoice"
+          value={reportChoice}
+        />{/if}
       {#if also.length}<input type="hidden" name="also" value={JSON.stringify(also)} />{/if}
       <TriageDecisionBar
         compact
@@ -489,14 +519,43 @@
       <AlertDialog.Content>
         {#if confirming}
           {@const ask = confirmAsk(confirming, coverage)}
+          {@const needsChoice = confirming !== 'dismiss'}
           <AlertDialog.Header>
             <AlertDialog.Title>{ask.title}</AlertDialog.Title>
             <AlertDialog.Description>{ask.description}</AlertDialog.Description>
           </AlertDialog.Header>
+          {#if needsChoice}
+            <fieldset class="m-0 flex flex-col gap-2 border-0 p-0">
+              <legend class="mb-2 text-sm font-medium text-dark-0">{CSAM_REPORT_QUESTION}</legend>
+              <RadioGroup name="report-choice" class="gap-2" bind:value={reportChoice}>
+                {#each CSAM_REPORT_CHOICES as choice (choice)}
+                  {@const copy = CSAM_REPORT_CHOICE_COPY[choice]}
+                  <div class="flex items-start gap-2">
+                    <RadioGroupItem value={choice} id="report-choice-{choice}" class="mt-0.5" />
+                    <Label for="report-choice-{choice}" class="flex flex-col gap-0.5 font-normal">
+                      <span class="font-medium text-dark-0">{copy.title}</span>
+                      <span class="text-[13px] text-dark-2">{copy.body}</span>
+                    </Label>
+                  </div>
+                {/each}
+              </RadioGroup>
+              <p class="m-0 text-[13px] text-dark-1">{CSAM_REPORT_NOT_SURE}</p>
+            </fieldset>
+          {/if}
           <AlertDialog.Footer>
             <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+            {#if needsChoice}
+              <Button
+                variant="outline"
+                onclick={() => {
+                  confirmOpen = false;
+                  void refer();
+                }}>Not sure: send to the Moderation Lead</Button
+              >
+            {/if}
             <AlertDialog.Action
               variant="destructive"
+              disabled={needsChoice && !reportChoice}
               onclick={() => {
                 confirmOpen = false;
                 void decide(confirming!, coverage);
@@ -506,6 +565,17 @@
         {/if}
       </AlertDialog.Content>
     </AlertDialog.Root>
+    <form
+      bind:this={referEl}
+      method="POST"
+      action={actionHref('refer')}
+      use:enhance={submit(() => 'Sent to the Moderation Lead')}
+      hidden
+    >
+      <input type="hidden" name="holdId" value={row.id} />
+      <input type="hidden" name="textHash" value={row.textHash} />
+      {#if referNote}<input type="hidden" name="note" value={referNote} />{/if}
+    </form>
   {:else}
     <p class="m-0 text-sm text-dark-2">Deciding a hold needs the “File a CSAM report” permission.</p>
   {/if}

@@ -2,6 +2,7 @@
 // resolve `$app/server`.
 import { sql } from 'kysely';
 import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-filters';
+import { CSAM_REPORTABLE_CHOICES } from '$lib/csam-holds/report-choice';
 import { PREVIEW_COUNT_CAP } from '$lib/minor-flags/model-detail';
 import { dbRead } from './db';
 import { escapeLike } from './like';
@@ -33,6 +34,10 @@ export type CsamHoldRow = {
   decidedByUsername: string | null;
   decisionNote: string | null;
   decision: string | null;
+  /** The report choice recorded with a confirm: a reportable category, or `none`. */
+  reportChoice: string | null;
+  /** A pending hold a moderator sent to the Moderation Lead ("Not sure"), with when. */
+  leadReviewAt: string | null;
   /** Held again with new text after a moderator ruled on this entity. */
   redetected: boolean;
   priorHoldId: number | null;
@@ -70,7 +75,13 @@ export type CsamHoldQuery = {
   author?: number;
 };
 
-const STATUS_COLUMN = { pending: 'Pending', removed: 'Confirmed', dismissed: 'Dismissed' } as const;
+const STATUS_COLUMN = {
+  pending: 'Pending',
+  'lead-review': 'Pending',
+  removed: 'Confirmed',
+  'report-not-filed': 'Confirmed',
+  dismissed: 'Dismissed',
+} as const;
 
 const csamHolds = ({
   status,
@@ -86,6 +97,14 @@ const csamHolds = ({
     .leftJoin('User as u', 'u.id', 'h.userId')
     .where('h.label', '=', 'csam');
   if (status !== 'all') query = query.where('h.status', '=', STATUS_COLUMN[status]);
+  if (status === 'lead-review') query = query.where(sql<boolean>`h.meta ? 'needsLeadReview'`);
+  // Confirmed with a reportable choice, and no CSAM report on the author filed since the decision.
+  if (status === 'report-not-filed')
+    query = query
+      .where(sql<boolean>`h.meta ->> 'reportChoice' IN (${sql.join([...CSAM_REPORTABLE_CHOICES])})`)
+      .where(
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM "CsamReport" r WHERE r."userId" = h."userId" AND r."createdAt" >= h."decidedAt")`
+      );
   if (author !== undefined) query = query.where('h.userId', '=', author);
   if (search && 'id' in search)
     query = query.where((eb) =>
@@ -213,6 +232,8 @@ export async function listCsamHolds({
     const {
       chatId,
       decision,
+      reportChoice,
+      needsLeadReview,
       kind,
       priorHoldId,
       messageIds,
@@ -228,6 +249,8 @@ export async function listCsamHolds({
       messageIds?: unknown;
       senderId?: unknown;
       decision?: unknown;
+      reportChoice?: unknown;
+      needsLeadReview?: { at?: unknown } | null;
       kind?: unknown;
       priorHoldId?: unknown;
     };
@@ -251,6 +274,8 @@ export async function listCsamHolds({
       messageIds: chatMessageIds(messageIds),
       senderId: typeof senderId === 'number' ? senderId : null,
       decision: typeof decision === 'string' ? decision : null,
+      reportChoice: typeof reportChoice === 'string' ? reportChoice : null,
+      leadReviewAt: typeof needsLeadReview?.at === 'string' ? needsLeadReview.at : null,
     };
   });
   return { items, hasMore: rows.length > limit };

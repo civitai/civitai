@@ -9,7 +9,9 @@ const {
   getHoldCoverImages,
   getHoldContexts,
   getCleanRescans,
+  referCsamHold,
 } = vi.hoisted(() => ({
+  referCsamHold: vi.fn(),
   decideAuthorHolds: vi.fn(),
   getHoldCoverImages: vi.fn(),
   getCleanRescans: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock('$lib/server/csam-holds.service', async () => ({
   countPendingCsamHolds,
   decideCsamHold,
   decideAuthorHolds,
+  referCsamHold,
   getHoldCoverImages,
   getCleanRescans,
 }));
@@ -61,9 +64,14 @@ const loadAt = (query: string, grants: Record<string, boolean> = holder) =>
     locals: { grants },
   } as unknown as LoadEvent) as Promise<Record<string, unknown>>;
 
+/** A confirm carries the report choice the dialog requires; pass `reportChoice: ''` to leave it out. */
 const decide = (fields: Record<string, string>, grants: Record<string, boolean>) => {
   const body = new FormData();
-  for (const [key, value] of Object.entries(fields)) body.set(key, value);
+  const withChoice =
+    fields.decision && fields.decision !== 'dismiss' && !('reportChoice' in fields)
+      ? { ...fields, reportChoice: 'none' }
+      : fields;
+  for (const [key, value] of Object.entries(withChoice)) if (value) body.set(key, value);
   const event = {
     request: new Request('http://x/csam/text-holds', { method: 'POST', body }),
     locals: { grants },
@@ -279,6 +287,7 @@ describe('csam text holds decide', () => {
         holdId: 12,
         textHash: 'h-12',
         decision,
+        reportChoice: decision === 'dismiss' ? undefined : 'none',
         note: 'looked fine',
       });
     }
@@ -308,12 +317,30 @@ describe('csam text holds decide', () => {
     expect(decideCsamHold).toHaveBeenCalledTimes(2);
   });
 
+  it('refuses a confirm with no report choice, before calling the main app', async () => {
+    expect(
+      await decide({ holdId: '12', textHash: 'h-12', decision: 'remove', reportChoice: '' }, holder)
+    ).toMatchObject({ status: 400 });
+    expect(decideCsamHold).not.toHaveBeenCalled();
+  });
+
+  it('sends the picked reportable category', async () => {
+    await decide(
+      { holdId: '12', textHash: 'h-12', decision: 'remove', reportChoice: 'trafficking' },
+      holder
+    );
+    expect(decideCsamHold).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'remove', reportChoice: 'trafficking' })
+    );
+  });
+
   it('sends no note when the field is blank', async () => {
     await decide({ holdId: '12', textHash: 'h-12', decision: 'remove', note: '   ' }, holder);
     expect(decideCsamHold).toHaveBeenCalledWith({
       holdId: 12,
       textHash: 'h-12',
       decision: 'remove',
+      reportChoice: 'none',
       note: undefined,
     });
   });
@@ -378,12 +405,14 @@ describe('csam text holds decide with the author’s other holds', () => {
       holdId: 12,
       textHash: 'h-12',
       decision: 'remove_ban',
+      reportChoice: 'none',
       note: 'x',
     });
     expect(decideAuthorHolds).toHaveBeenCalledWith({
       holdId: 12,
       also: [{ holdId: 13, textHash: 'h-13' }],
       decision: 'remove_ban',
+      reportChoice: 'none',
       note: 'x',
     });
     expect(decideCsamHold.mock.invocationCallOrder[0]).toBeLessThan(
@@ -573,5 +602,38 @@ describe('splitEmptyTypes', () => {
       shown: ['Model', 'Post'],
       empty: [],
     });
+  });
+});
+
+describe('csam text holds refer', () => {
+  const refer = (fields: Record<string, string>, grants: Record<string, boolean>) => {
+    const body = new FormData();
+    for (const [key, value] of Object.entries(fields)) body.set(key, value);
+    const event = {
+      request: new Request('http://x/csam/text-holds', { method: 'POST', body }),
+      locals: { grants },
+    };
+    return actions!.refer(event as unknown as ActionEvent) as Promise<Record<string, unknown>>;
+  };
+
+  beforeEach(() => {
+    referCsamHold.mockReset();
+    referCsamHold.mockResolvedValue({ ok: true });
+  });
+
+  it('sends the hold to the Moderation Lead without deciding it', async () => {
+    expect(
+      await refer(
+        { holdId: '12', textHash: 'h-12', note: ' unsure ' },
+        { 'csam.report.file': true }
+      )
+    ).toMatchObject({ success: true, key: 12, referred: true });
+    expect(referCsamHold).toHaveBeenCalledWith({ holdId: 12, textHash: 'h-12', note: 'unsure' });
+    expect(decideCsamHold).not.toHaveBeenCalled();
+  });
+
+  it('needs the csam permission', async () => {
+    await refer({ holdId: '12', textHash: 'h-12' }, {});
+    expect(referCsamHold).not.toHaveBeenCalled();
   });
 });

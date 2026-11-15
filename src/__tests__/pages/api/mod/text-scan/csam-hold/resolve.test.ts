@@ -137,10 +137,33 @@ beforeEach(() => {
 
 describe('textScan.resolveCsamHold', () => {
   it('refuses a decision on text that changed since the moderator opened the hold', async () => {
-    const { status, body } = await call({ holdId: 12, textHash: 'h-old', decision: 'remove' });
+    const { status, body } = await call({
+      holdId: 12,
+      textHash: 'h-old',
+      decision: 'remove',
+      reportChoice: 'none',
+    });
     expect(status).toBe(409);
     expect(JSON.stringify(body)).toContain('Reload');
     expect(mocks.bulkSetCommentV3TosViolation).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses a confirm without a report choice, and a dismissal with one, before reading', async () => {
+    expect((await call({ holdId: 12, textHash: 'h-1', decision: 'remove' })).status).toBe(400);
+    expect(
+      (await call({ holdId: 12, textHash: 'h-1', decision: 'dismiss', reportChoice: 'none' }))
+        .status
+    ).toBe(400);
+    expect(
+      (
+        await call({
+          holds: [{ holdId: 12, textHash: 'h-1' }],
+          decision: 'remove',
+        })
+      ).status
+    ).toBe(400);
+    expect(findFirst).not.toHaveBeenCalled();
     expect(updateMany).not.toHaveBeenCalled();
   });
 
@@ -198,6 +221,7 @@ describe('textScan.resolveCsamHold', () => {
         holdId: 12,
         textHash: 'h-1',
         decision: 'remove',
+        reportChoice: 'imagery',
         note: 'gone',
       });
       expect(status).toBe(200);
@@ -211,13 +235,13 @@ describe('textScan.resolveCsamHold', () => {
         status: 'Confirmed',
         decidedById: 7,
         decisionNote: 'gone',
-        meta: { chatId: 3, decision: 'remove' },
+        meta: { chatId: 3, decision: 'remove', reportChoice: 'imagery' },
       });
       expect(body).toMatchObject({ holdId: 12, status: 'Confirmed', decision: 'remove' });
     });
 
     it('remove_strike: removes the content, then strikes the author', async () => {
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove_strike' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove_strike', reportChoice: 'none' });
       expect(mocks.bulkSetCommentV3TosViolation).toHaveBeenCalled();
       expect(mocks.createStrike).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -233,7 +257,7 @@ describe('textScan.resolveCsamHold', () => {
     });
 
     it('remove_ban: removes the content, then bans the author', async () => {
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban', reportChoice: 'none' });
       expect(mocks.bulkSetCommentV3TosViolation).toHaveBeenCalled();
       expect(mocks.toggleBan).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -251,7 +275,12 @@ describe('textScan.resolveCsamHold', () => {
     });
 
     it('remove_ban_report: removes and bans, and leaves the report to the existing form', async () => {
-      const { body } = await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban_report' });
+      const { body } = await call({
+        holdId: 12,
+        textHash: 'h-1',
+        decision: 'remove_ban_report',
+        reportChoice: 'none',
+      });
       expect(mocks.bulkSetCommentV3TosViolation).toHaveBeenCalled();
       expect(mocks.toggleBan).toHaveBeenCalledTimes(1);
       expect(body).toMatchObject({
@@ -264,7 +293,12 @@ describe('textScan.resolveCsamHold', () => {
 
     it('does not unban an author who is already banned', async () => {
       dbMock.dbWrite.user.findUnique.mockResolvedValue({ bannedAt: new Date() });
-      const { status } = await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban' });
+      const { status } = await call({
+        holdId: 12,
+        textHash: 'h-1',
+        decision: 'remove_ban',
+        reportChoice: 'none',
+      });
       expect(status).toBe(200);
       expect(mocks.toggleBan).not.toHaveBeenCalled();
       expect(updateMany.mock.calls[0][0].data.status).toBe('Confirmed');
@@ -274,13 +308,13 @@ describe('textScan.resolveCsamHold', () => {
   describe('removal per entity type', () => {
     it('clears the profile text of a user profile hold', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'UserProfile', entityId: 900 }));
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
       expect(mocks.clearUserProfileFields).toHaveBeenCalledWith({ userId: 900 });
     });
 
     it('soft-deletes a chat message as a moderator, auditing it', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'ChatMessage' }));
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
       expect(mocks.deleteChatMessage).toHaveBeenCalledWith({
         messageId: 55,
         actorId: 7,
@@ -297,7 +331,7 @@ describe('textScan.resolveCsamHold', () => {
       findFirst.mockResolvedValue(
         pendingHold({ entityType: 'ChatMessage', meta: { chatId: 3, messageIds: [54, 53] } })
       );
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
       expect(mocks.deleteChatMessage.mock.calls.map(([a]) => a.messageId).sort()).toEqual([
         53, 54, 55,
       ]);
@@ -305,7 +339,7 @@ describe('textScan.resolveCsamHold', () => {
 
     it('unpublishes a model as a violation and refreshes its cache', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'Model' }));
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
       expect(mocks.unpublishModelById).toHaveBeenCalledWith(
         expect.objectContaining({
           id: 55,
@@ -332,7 +366,12 @@ describe('textScan.resolveCsamHold', () => {
           status: 'Published',
           metadata: { foo: 1 },
         });
-        const { status } = await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+        const { status } = await call({
+          holdId: 12,
+          textHash: 'h-1',
+          decision: 'remove',
+          reportChoice: 'none',
+        });
         expect(status).toBe(200);
         expect(mocks.unpublishArticleById).toHaveBeenCalledTimes(1);
         expect(mocks.unpublishArticleById).toHaveBeenCalledWith(
@@ -374,7 +413,12 @@ describe('textScan.resolveCsamHold', () => {
         ],
       ])('marks %s as a violation so it cannot go live later', async (_name, row, recorded) => {
         dbMock.dbWrite.article.findUnique.mockResolvedValue({ ...row, metadata: { foo: 1 } });
-        const { status } = await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+        const { status } = await call({
+          holdId: 12,
+          textHash: 'h-1',
+          decision: 'remove',
+          reportChoice: 'none',
+        });
         expect(status).toBe(200);
         expect(mocks.unpublishArticleById).not.toHaveBeenCalled();
         expect(articleUpdate()).toHaveBeenCalledTimes(1);
@@ -399,7 +443,7 @@ describe('textScan.resolveCsamHold', () => {
           status: 'Processing',
           metadata: {},
         });
-        await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+        await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
         const lock = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0];
         expect(lock).toBeDefined();
         expect(lock).toBeLessThan(dbMock.dbWrite.article.findUnique.mock.invocationCallOrder[0]);
@@ -416,7 +460,7 @@ describe('textScan.resolveCsamHold', () => {
           const revokes = recordTx(dbMock.dbWrite.accessToken.updateMany, { count: 1 });
           const writes = recordTx(articleUpdate(), { count: 1 });
           const reads = recordTx(dbMock.dbWrite.article.findUnique, { status, metadata: {} });
-          await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+          await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
           expect(dbMock.dbWrite.accessToken.updateMany).toHaveBeenCalledWith({
             where: { resourceType: 'Article', resourceId: 55, revokedAt: null },
             data: { revokedAt: expect.any(Date) },
@@ -450,7 +494,7 @@ describe('textScan.resolveCsamHold', () => {
           scheduledAt: null,
           metadata: { foo: 1, statusBeforeViolation: 'Draft' },
         });
-        await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+        await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
         expect(mocks.unpublishArticleById).toHaveBeenCalledWith(
           expect.objectContaining({ metadata: { foo: 1 } })
         );
@@ -461,7 +505,12 @@ describe('textScan.resolveCsamHold', () => {
         ['missing', null],
       ])('records the decision for an article that is %s, without writing', async (_name, row) => {
         dbMock.dbWrite.article.findUnique.mockResolvedValue(row);
-        const { status } = await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+        const { status } = await call({
+          holdId: 12,
+          textHash: 'h-1',
+          decision: 'remove',
+          reportChoice: 'none',
+        });
         expect(status).toBe(200);
         expect(mocks.unpublishArticleById).not.toHaveBeenCalled();
         expect(articleUpdate()).not.toHaveBeenCalled();
@@ -471,7 +520,7 @@ describe('textScan.resolveCsamHold', () => {
 
     it('unpublishes a post instead of deleting it', async () => {
       findFirst.mockResolvedValue(pendingHold({ entityType: 'Post' }));
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' });
       expect(mocks.unpublishPostAsModerator).toHaveBeenCalledWith({
         id: 55,
         userId: 7,
@@ -484,7 +533,12 @@ describe('textScan.resolveCsamHold', () => {
       'refuses a removal of a %s hold, which has no removal path, before doing anything',
       async (entityType) => {
         findFirst.mockResolvedValue(pendingHold({ entityType }));
-        const { status } = await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban' });
+        const { status } = await call({
+          holdId: 12,
+          textHash: 'h-1',
+          decision: 'remove_ban',
+          reportChoice: 'none',
+        });
         expect(status).toBe(400);
         expect(mocks.toggleBan).not.toHaveBeenCalled();
         expect(updateMany).not.toHaveBeenCalled();
@@ -507,7 +561,12 @@ describe('textScan.resolveCsamHold', () => {
     ])(
       '%s is recorded in the label store as %s, in the same transaction',
       async (decision, value) => {
-        await call({ holdId: 12, textHash: 'h-1', decision });
+        await call({
+          holdId: 12,
+          textHash: 'h-1',
+          decision,
+          ...(decision === 'dismiss' ? {} : { reportChoice: 'none' }),
+        });
         expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
         expect(labelCalls()).toHaveLength(1);
         const values = labelCalls()[0].slice(1);
@@ -519,7 +578,10 @@ describe('textScan.resolveCsamHold', () => {
 
     it('records nothing when the hold was decided between the read and the write', async () => {
       updateMany.mockResolvedValue({ count: 0 });
-      expect((await call({ holdId: 12, textHash: 'h-1', decision: 'remove' })).status).toBe(409);
+      expect(
+        (await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' }))
+          .status
+      ).toBe(409);
       expect(labelCalls()).toHaveLength(0);
     });
 
@@ -531,12 +593,17 @@ describe('textScan.resolveCsamHold', () => {
         'remove_ban',
         'remove_ban_report',
       ])
-        await call({ holdId: 12, textHash: 'h-1', decision });
+        await call({
+          holdId: 12,
+          textHash: 'h-1',
+          decision,
+          ...(decision === 'dismiss' ? {} : { reportChoice: 'none' }),
+        });
       expect(dbMock.dbWrite.report.create).not.toHaveBeenCalled();
     });
 
     it('logs the decision to Axiom', async () => {
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban', reportChoice: 'none' });
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'csam-hold-decision',
@@ -544,6 +611,7 @@ describe('textScan.resolveCsamHold', () => {
           entityType: 'CommentV3',
           entityId: 55,
           decision: 'remove_ban',
+          reportChoice: 'none',
           moderatorId: 7,
         })
       );
@@ -553,9 +621,10 @@ describe('textScan.resolveCsamHold', () => {
   describe('refusals', () => {
     it('refuses a moderator without the csam permission, before reading or acting', async () => {
       mocks.hasModeratorGrant.mockResolvedValue(false);
-      expect((await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban' })).status).toBe(
-        403
-      );
+      expect(
+        (await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban', reportChoice: 'none' }))
+          .status
+      ).toBe(403);
       expect(mocks.hasModeratorGrant).toHaveBeenCalledWith(
         expect.objectContaining({ id: 7 }),
         'csam.report.file'
@@ -565,7 +634,11 @@ describe('textScan.resolveCsamHold', () => {
     });
 
     it('refuses a batch from a moderator without the csam permission, before reading or acting', async () => {
-      const batch = { holds: [{ holdId: 12, textHash: 'h-1' }], decision: 'remove' };
+      const batch = {
+        holds: [{ holdId: 12, textHash: 'h-1' }],
+        decision: 'remove',
+        reportChoice: 'none',
+      };
       mocks.hasModeratorGrant.mockResolvedValue(false);
       expect((await call(batch)).status).toBe(403);
       expect(mocks.hasModeratorGrant).toHaveBeenCalledWith(
@@ -591,9 +664,10 @@ describe('textScan.resolveCsamHold', () => {
       ['already confirmed', pendingHold({ status: 'Confirmed' })],
     ])('answers 409 when the hold is %s, without acting', async (_, row) => {
       findFirst.mockResolvedValue(row);
-      expect((await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban' })).status).toBe(
-        409
-      );
+      expect(
+        (await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban', reportChoice: 'none' }))
+          .status
+      ).toBe(409);
       expect(mocks.bulkSetCommentV3TosViolation).not.toHaveBeenCalled();
       expect(mocks.toggleBan).not.toHaveBeenCalled();
       expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
@@ -607,7 +681,9 @@ describe('textScan.resolveCsamHold', () => {
       ['remove_ban_report', 'user.ban'],
     ])('refuses %s without the %s grant, before reading or acting', async (decision, grant) => {
       mocks.hasModeratorGrant.mockImplementation(async (_, id) => id !== grant);
-      expect((await call({ holdId: 12, textHash: 'h-1', decision })).status).toBe(403);
+      expect(
+        (await call({ holdId: 12, textHash: 'h-1', decision, reportChoice: 'none' })).status
+      ).toBe(403);
       expect(mocks.hasModeratorGrant).toHaveBeenCalledWith(
         expect.objectContaining({ id: 7 }),
         grant
@@ -618,21 +694,36 @@ describe('textScan.resolveCsamHold', () => {
 
     it('does not ask for the ban or strike grant on a removal or a dismissal', async () => {
       mocks.hasModeratorGrant.mockImplementation(async (_, id) => id === 'csam.report.file');
-      expect((await call({ holdId: 12, textHash: 'h-1', decision: 'remove' })).status).toBe(200);
+      expect(
+        (await call({ holdId: 12, textHash: 'h-1', decision: 'remove', reportChoice: 'none' }))
+          .status
+      ).toBe(200);
       expect((await call({ holdId: 12, textHash: 'h-1', decision: 'dismiss' })).status).toBe(200);
     });
 
     it('refuses a strike or ban when the hold has no recorded author', async () => {
       findFirst.mockResolvedValue(pendingHold({ userId: null }));
-      expect((await call({ holdId: 12, textHash: 'h-1', decision: 'remove_strike' })).status).toBe(
-        400
-      );
+      expect(
+        (
+          await call({
+            holdId: 12,
+            textHash: 'h-1',
+            decision: 'remove_strike',
+            reportChoice: 'none',
+          })
+        ).status
+      ).toBe(400);
       expect(mocks.bulkSetCommentV3TosViolation).not.toHaveBeenCalled();
     });
 
     it('leaves the hold pending when an action fails, so the decision can be retried', async () => {
       mocks.createStrike.mockRejectedValue(new Error('strike store down'));
-      const { status } = await call({ holdId: 12, textHash: 'h-1', decision: 'remove_strike' });
+      const { status } = await call({
+        holdId: 12,
+        textHash: 'h-1',
+        decision: 'remove_strike',
+        reportChoice: 'none',
+      });
       expect(status).toBeGreaterThanOrEqual(500);
       expect(updateMany).not.toHaveBeenCalled();
       expect(labelCalls()).toHaveLength(0);
@@ -640,7 +731,7 @@ describe('textScan.resolveCsamHold', () => {
 
     it('does not strike or ban when the content could not be removed', async () => {
       mocks.bulkSetCommentV3TosViolation.mockRejectedValue(new Error('db down'));
-      await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban' });
+      await call({ holdId: 12, textHash: 'h-1', decision: 'remove_ban', reportChoice: 'none' });
       expect(mocks.toggleBan).not.toHaveBeenCalled();
     });
 

@@ -1254,6 +1254,7 @@ describe('a moderator dismissing the csam hold on a service offering', () => {
       holdId: hold.id,
       textHash: hold.textHash,
       decision,
+      reportChoice: decision === 'dismiss' ? undefined : 'none',
       actor: { id: 7 },
       tracker: {} as never,
     });

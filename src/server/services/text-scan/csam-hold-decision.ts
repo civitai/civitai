@@ -40,6 +40,19 @@ export const CSAM_HOLD_DECISIONS = [
 ] as const;
 export type CsamHoldDecision = (typeof CSAM_HOLD_DECISIONS)[number];
 
+/**
+ * The reportable category a moderator picks when confirming a csam hold, or `none`. Any category means a
+ * CSAM report is filed in the existing report form; `none` starts a held PostText's one-year retention.
+ */
+export const CSAM_REPORT_CHOICES = [
+  'enticement',
+  'trafficking',
+  'identifiable_child',
+  'imagery',
+  'none',
+] as const;
+export type CsamReportChoice = (typeof CSAM_REPORT_CHOICES)[number];
+
 const PLAN: Record<CsamHoldDecision, { remove: boolean; strike: boolean; ban: boolean }> = {
   dismiss: { remove: false, strike: false, ban: false },
   remove: { remove: true, strike: false, ban: false },
@@ -87,6 +100,8 @@ type DecideArgs = {
   /** The text hash the moderator reviewed; a rescan may have replaced the held text since. */
   textHash: string;
   decision: CsamHoldDecision;
+  /** Required with every decision but `dismiss`, and refused with it. */
+  reportChoice?: CsamReportChoice;
   note?: string;
   actor: { id: number; ip?: string };
   tracker: Tracker;
@@ -259,8 +274,14 @@ const subjectTypeOf = (entityType: string) =>
  * record are one transaction.
  */
 export async function decideCsamHold(args: DecideArgs) {
-  const { holdId, textHash, decision, note, actor, batched } = args;
+  const { holdId, textHash, decision, reportChoice, note, actor, batched } = args;
   const plan = PLAN[decision];
+  if ((decision === 'dismiss') !== (reportChoice === undefined))
+    throw throwBadRequestError(
+      decision === 'dismiss'
+        ? 'A dismissal takes no report choice.'
+        : 'Confirming a hold needs a report choice.'
+    );
 
   const hold = await dbWrite.textScanHold.findFirst({
     where: { id: holdId, label: 'csam' },
@@ -320,16 +341,21 @@ export async function decideCsamHold(args: DecideArgs) {
           meta: {
             ...((hold.meta as Prisma.JsonObject | null) ?? {}),
             decision,
+            ...(reportChoice ? { reportChoice } : {}),
           },
         },
       });
       if (count === 0) throw throwConflictError('Hold already decided or missing.');
       // A confirm sets the text's held flag and a dismissal clears it, so a confirmed text stays
-      // from readers even when its scan never marked it held.
+      // from readers even when its scan never marked it held. `csamConfirmedAt` starts the retention
+      // `post_text_held` applies to a `none` report choice.
       if (hold.entityType === 'PostText')
         await tx.postText.updateMany({
           where: { id: hold.entityId },
-          data: { csamHeld: status === 'Confirmed' },
+          data:
+            status === 'Confirmed'
+              ? { csamHeld: true, csamConfirmedAt: decidedAt }
+              : { csamHeld: false, csamConfirmedAt: null },
         });
 
       // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
@@ -379,6 +405,34 @@ export async function decideCsamHold(args: DecideArgs) {
   return { status, entityType: hold.entityType, entityId: hold.entityId, userId: hold.userId };
 }
 
+/**
+ * "Not sure": sends a pending csam hold to the Moderation Lead without deciding it. The hold stays
+ * Pending, records no report choice and starts no retention; `meta.needsLeadReview` puts it on the
+ * holds page's lead-review filter. Refused like a decision when the hold moved on or its text changed.
+ */
+export async function referCsamHoldToLead({
+  holdId,
+  textHash,
+  note,
+  actor,
+}: {
+  holdId: number;
+  textHash: string;
+  note?: string;
+  actor: { id: number };
+}) {
+  const referred = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "TextScanHold"
+    SET "meta" = (CASE WHEN jsonb_typeof("meta") = 'object' THEN "meta" ELSE '{}'::jsonb END)
+      || jsonb_build_object('needsLeadReview', jsonb_strip_nulls(jsonb_build_object(
+           'by', ${actor.id}::int, 'at', now(), 'note', ${note || null}::text)))
+    WHERE "id" = ${holdId} AND "label" = 'csam' AND "status" = 'Pending' AND "textHash" = ${textHash}
+    RETURNING "id"
+  `;
+  if (!referred.length) throw throwConflictError('Hold already decided, changed or missing.');
+  return { holdId, status: 'Pending' as const };
+}
+
 export const CSAM_HOLD_BATCH_MAX = 50;
 /** A strike or ban belongs to the author once, with the hold the moderator is on, never per hold. */
 const BATCH_DECISIONS = ['remove', 'dismiss'] as const;
@@ -386,6 +440,12 @@ const BATCH_DECISIONS = ['remove', 'dismiss'] as const;
 const holdId = z.coerce.number().int().positive().max(2147483647);
 const textHash = z.string().min(1).max(200);
 const note = z.string().trim().max(500).optional();
+
+export const referCsamHoldInput = z.object({
+  holdId,
+  textHash,
+  note: note.describe('Moderator-only note for the Moderation Lead.'),
+});
 
 export const resolveCsamHoldInput = z
   .object({
@@ -404,9 +464,24 @@ export const resolveCsamHoldInput = z
         'Several holds decided as one call and one rate-limit hit, each against its own text hash. Only `remove` and `dismiss`; at most 50.'
       ),
     decision: z.enum(CSAM_HOLD_DECISIONS),
+    reportChoice: z
+      .enum(CSAM_REPORT_CHOICES)
+      .optional()
+      .describe(
+        'Required with every decision but `dismiss`, and refused with it: the reportable category, or `none`.'
+      ),
     note: note.describe('Moderator-only note recorded on the hold.'),
   })
   .superRefine((input, ctx) => {
+    if ((input.decision === 'dismiss') !== (input.reportChoice === undefined))
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reportChoice'],
+        message:
+          input.decision === 'dismiss'
+            ? 'A dismissal takes no `reportChoice`.'
+            : '`reportChoice` is required to confirm a hold.',
+      });
     if ((input.holdId === undefined) === (input.holds === undefined))
       ctx.addIssue({ code: 'custom', message: 'Give exactly one of `holdId` and `holds`.' });
     if (input.holdId !== undefined && input.textHash === undefined)
@@ -444,6 +519,7 @@ export type CsamHoldBatchResult =
 export async function decideCsamHoldBatch({
   holds,
   decision,
+  reportChoice,
   note,
   actor,
   tracker,
@@ -451,6 +527,7 @@ export async function decideCsamHoldBatch({
 }: {
   holds: { holdId: number; textHash: string }[];
   decision: CsamHoldDecision;
+  reportChoice?: CsamReportChoice;
   note?: string;
   actor: { id: number; ip?: string };
   tracker: Tracker;
@@ -464,6 +541,7 @@ export async function decideCsamHoldBatch({
         holdId: hold.holdId,
         textHash: hold.textHash,
         decision,
+        reportChoice,
         note,
         actor,
         tracker,

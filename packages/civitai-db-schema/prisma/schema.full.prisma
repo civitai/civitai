@@ -11222,6 +11222,8 @@ model PostText {
   refused   Boolean  @default(false)
   /// Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
   csamHeld  Boolean  @default(false)
+  /// When a moderator confirmed its csam hold; cleared by a dismissal. A "none" report choice holds the text one year from here.
+  csamConfirmedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

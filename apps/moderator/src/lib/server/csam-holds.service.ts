@@ -3,6 +3,7 @@ import {
   type CsamHoldImage,
   type CsamHoldRow,
 } from './csam-holds.queries';
+import type { CsamReportChoice } from '$lib/csam-holds/report-choice';
 import { callModEndpoint } from './user-actions.service';
 
 export {
@@ -46,17 +47,26 @@ export async function decideCsamHold({
   holdId,
   textHash,
   decision,
+  reportChoice,
   note,
 }: {
   holdId: number;
   /** The hold's `textHash` as the moderator saw it; the main app refuses the decision if the text changed since. */
   textHash: string;
   decision: CsamHoldDecision;
+  /** Required by the main app with every decision but `dismiss`. */
+  reportChoice?: CsamReportChoice;
   note?: string;
 }): Promise<CsamHoldDecisionResult> {
   const result = await callModEndpoint(
     'text-scan/csam-hold/resolve',
-    { holdId, textHash, decision, ...(note ? { note } : {}) },
+    {
+      holdId,
+      textHash,
+      decision,
+      ...(reportChoice ? { reportChoice } : {}),
+      ...(note ? { note } : {}),
+    },
     'Decide hold'
   );
   if (!result.ok) {
@@ -94,11 +104,13 @@ export async function decideAuthorHolds({
   holdId,
   also,
   decision,
+  reportChoice,
   note,
 }: {
   holdId: number;
   also: AlsoDecidedHold[];
   decision: CsamHoldDecision;
+  reportChoice?: CsamReportChoice;
   note?: string;
 }): Promise<AlsoDecidedResult[]> {
   const targets = [...new Map(also.map((hold) => [hold.holdId, hold])).values()].filter(
@@ -130,7 +142,7 @@ export async function decideAuthorHolds({
 
   const batch = decidable.slice(0, BATCH_MAX);
   if (batch.length) {
-    for (const result of await decideBatch(batch, decision, note))
+    for (const result of await decideBatch(batch, decision, reportChoice, note))
       outcome.set(result.holdId, result);
   }
   return targets.map((target) => outcome.get(target.holdId)!);
@@ -139,13 +151,19 @@ export async function decideAuthorHolds({
 async function decideBatch(
   batch: AlsoDecidedHold[],
   decision: CsamHoldDecision,
+  reportChoice: CsamReportChoice | undefined,
   note: string | undefined
 ): Promise<AlsoDecidedResult[]> {
   const other = decisionForOtherHolds(decision);
   const expected = other === 'dismiss' ? 'Dismissed' : 'Confirmed';
   const response = await callModEndpoint(
     'text-scan/csam-hold/resolve',
-    { holds: batch, decision: other, ...(note ? { note } : {}) },
+    {
+      holds: batch,
+      decision: other,
+      ...(other !== 'dismiss' && reportChoice ? { reportChoice } : {}),
+      ...(note ? { note } : {}),
+    },
     'Decide holds',
     BATCH_TIMEOUT_MS
   );
@@ -174,3 +192,26 @@ async function decideBatch(
 }
 
 type BatchEntry = { holdId: number; ok: boolean; status?: string; error?: string };
+
+/** "Not sure": the main app marks the pending hold for the Moderation Lead; nothing is decided. */
+export async function referCsamHold({
+  holdId,
+  textHash,
+  note,
+}: {
+  holdId: number;
+  textHash: string;
+  note?: string;
+}): Promise<CsamHoldDecisionResult> {
+  const result = await callModEndpoint(
+    'text-scan/csam-hold/refer',
+    { holdId, textHash, ...(note ? { note } : {}) },
+    'Send hold to lead'
+  );
+  if (!result.ok) {
+    if (!result.requestNeverSent && result.status === undefined)
+      return { ok: false, error: MAY_HAVE_COMPLETED };
+    return { ok: false, error: result.error };
+  }
+  return { ok: true };
+}

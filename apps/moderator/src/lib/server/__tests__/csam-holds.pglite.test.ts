@@ -285,6 +285,52 @@ describe('listCsamHolds', () => {
   });
 });
 
+describe('the lead-review and report-not-filed views', () => {
+  beforeEach(async () => {
+    await db.exec(`CREATE TABLE "CsamReport" ("id" SERIAL PRIMARY KEY, "userId" INTEGER,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now())`);
+    await seed([
+      {
+        id: 8,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reportChoice: 'imagery' },
+      },
+      {
+        id: 9,
+        createdAt: '2026-09-12',
+        status: 'Confirmed',
+        decidedById: 11,
+        decidedAt: '2026-09-13',
+        meta: { decision: 'remove', reportChoice: 'none' },
+      },
+      {
+        id: 12,
+        createdAt: '2026-09-14',
+        meta: { needsLeadReview: { by: 11, at: '2026-09-15T00:00:00Z' } },
+      },
+    ]);
+  });
+  const ids = async (status: CsamHoldQuery['status']) =>
+    (await listCsamHolds({ ...OLDEST_PENDING, status })).items.map((h) => h.id);
+
+  it('lists only the pending holds sent to the lead, with when', async () => {
+    expect(await ids('lead-review')).toEqual([12]);
+    const [held] = (await listCsamHolds({ ...OLDEST_PENDING, status: 'lead-review' })).items;
+    expect(held).toMatchObject({ leadReviewAt: '2026-09-15T00:00:00Z', reportChoice: null });
+  });
+
+  it('lists a reportable confirm until a report on its author is filed after the decision', async () => {
+    expect(await ids('report-not-filed')).toEqual([8]);
+    await db.query(`INSERT INTO "CsamReport" ("userId", "createdAt") VALUES (10, '2026-09-01')`);
+    expect(await ids('report-not-filed')).toEqual([8]);
+    await db.query(`INSERT INTO "CsamReport" ("userId", "createdAt") VALUES (10, '2026-09-14')`);
+    expect(await ids('report-not-filed')).toEqual([]);
+  });
+});
+
 describe('re-detected holds', () => {
   it('carries the text hash the decision must echo back', async () => {
     const { items } = await listCsamHolds({ ...OLDEST_PENDING, status: 'all' });

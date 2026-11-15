@@ -52,6 +52,7 @@ describe('decideCsamHoldBatch', () => {
         { holdId: 4, textHash: 'c' },
       ],
       decision: 'remove',
+      reportChoice: 'none',
       note: 'n',
       actor,
       tracker,
@@ -104,42 +105,71 @@ describe('resolveCsamHoldInput', () => {
 
   it('keeps the single-hold shape', () => {
     expect(
-      resolveCsamHoldInput.safeParse({ holdId: 1, textHash: 'h1', decision: 'remove_ban' }).success
+      resolveCsamHoldInput.safeParse({
+        holdId: 1,
+        textHash: 'h1',
+        decision: 'remove_ban',
+        reportChoice: 'none',
+      }).success
     ).toBe(true);
-    expect(resolveCsamHoldInput.safeParse({ holdId: 1, decision: 'remove_ban' }).success).toBe(
-      false
-    );
+    expect(
+      resolveCsamHoldInput.safeParse({ holdId: 1, decision: 'remove_ban', reportChoice: 'none' })
+        .success
+    ).toBe(false);
   });
 
   it('accepts a batch of remove or dismiss', () => {
-    for (const decision of ['remove', 'dismiss'])
-      expect(resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision }).success).toBe(true);
+    expect(
+      resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision: 'remove', reportChoice: 'none' })
+        .success
+    ).toBe(true);
+    expect(resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision: 'dismiss' }).success).toBe(
+      true
+    );
   });
 
   it.each(['remove_strike', 'remove_ban', 'remove_ban_report'])(
     'refuses %s on a batch',
     (decision) => {
-      expect(resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision }).success).toBe(false);
+      expect(
+        resolveCsamHoldInput.safeParse({ holds: [hold(1)], decision, reportChoice: 'none' }).success
+      ).toBe(false);
     }
   );
 
   it('caps a batch', () => {
     const holds = (n: number) => Array.from({ length: n }, (_, i) => hold(i + 1));
     expect(
-      resolveCsamHoldInput.safeParse({ holds: holds(CSAM_HOLD_BATCH_MAX), decision: 'remove' })
-        .success
+      resolveCsamHoldInput.safeParse({
+        holds: holds(CSAM_HOLD_BATCH_MAX),
+        decision: 'remove',
+        reportChoice: 'none',
+      }).success
     ).toBe(true);
     expect(
-      resolveCsamHoldInput.safeParse({ holds: holds(CSAM_HOLD_BATCH_MAX + 1), decision: 'remove' })
+      resolveCsamHoldInput.safeParse({
+        holds: holds(CSAM_HOLD_BATCH_MAX + 1),
+        decision: 'remove',
+        reportChoice: 'none',
+      }).success
+    ).toBe(false);
+    expect(
+      resolveCsamHoldInput.safeParse({ holds: [], decision: 'remove', reportChoice: 'none' })
         .success
     ).toBe(false);
-    expect(resolveCsamHoldInput.safeParse({ holds: [], decision: 'remove' }).success).toBe(false);
   });
 
   it('needs exactly one of holdId and holds', () => {
-    expect(resolveCsamHoldInput.safeParse({ decision: 'remove' }).success).toBe(false);
     expect(
-      resolveCsamHoldInput.safeParse({ holdId: 1, holds: [hold(2)], decision: 'remove' }).success
+      resolveCsamHoldInput.safeParse({ decision: 'remove', reportChoice: 'none' }).success
+    ).toBe(false);
+    expect(
+      resolveCsamHoldInput.safeParse({
+        holdId: 1,
+        holds: [hold(2)],
+        decision: 'remove',
+        reportChoice: 'none',
+      }).success
     ).toBe(false);
   });
 });

@@ -95,6 +95,7 @@ const decide = (decision: 'dismiss' | 'remove' | 'remove_ban', note?: string, te
     holdId: 12,
     textHash,
     decision,
+    reportChoice: decision === 'dismiss' ? undefined : 'none',
     note,
     actor: { id: 7 },
     tracker: tracker as never,
@@ -124,6 +125,7 @@ describe('the csam hold decision record, against the real label store', () => {
       holdId: 12,
       textHash: 'h',
       decision: 'remove_ban_report',
+      reportChoice: 'none',
       actor: { id: 7 },
       tracker: tracker as never,
     });
@@ -184,7 +186,7 @@ describe('the csam hold decision record, against the real label store', () => {
       await decide('dismiss');
       expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
         where: { id: 31 },
-        data: { csamHeld: false },
+        data: { csamHeld: false, csamConfirmedAt: null },
       });
     });
 
@@ -194,7 +196,7 @@ describe('the csam hold decision record, against the real label store', () => {
         await decide(decision);
         expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
           where: { id: 31 },
-          data: { csamHeld: true },
+          data: { csamHeld: true, csamConfirmedAt: expect.any(Date) },
         });
       }
     );
@@ -245,6 +247,7 @@ describe("a decision applied to the author's other holds", () => {
       const results = await decideCsamHoldBatch({
         holds: [{ holdId: 13, textHash: 'h13' }],
         decision,
+        reportChoice: decision === 'dismiss' ? undefined : 'none',
         actor: { id: 7 },
         tracker: tracker as never,
       });
