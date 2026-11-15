@@ -7,11 +7,9 @@ import { getCollectionIdsCoveredByModels } from '~/server/services/collection-in
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 /**
- * The collections search document now carries no cover above a minor or SFW-only model's gallery
- * level, but the indexer applies that only to documents it rewrites. A flag or gallery-level change
- * queues the model's collections from now on; this rewrites those set before that.
- *
- * The response is read back from the queue; what `landed` proves is in `queueModelsReindex`.
+ * Backfill: the indexer applies the held cover rule only to documents it rewrites, so collections
+ * whose cover may come from a model flagged before the rule need a requeue. The response is read
+ * back from the queue; see `queueModelsReindex` for what `landed` proves.
  */
 
 const MODEL_CHUNK = 1000;
