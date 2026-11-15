@@ -13,8 +13,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
   const modelPerformance = await (async () => {
     if (period === 'all') {
       const floor = await getFirstVersionDate({ userId });
-      // A lifetime read on a big creator can be slow; failing fast shows "unavailable" instead of
-      // stacking uncached retries on every reload.
+      // A lifetime read on a big creator can be slow: fail fast and show "unavailable". Failures are
+      // not cached, so each reload retries, but every attempt is bounded.
       return floor
         ? getModelPerformance({ userId, ...allTimeWindow(floor), maxExecutionSeconds: 10 })
         : [];
