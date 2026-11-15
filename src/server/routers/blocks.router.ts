@@ -6505,7 +6505,7 @@ export const blocksRouter = router({
           appId: claims.appId,
           appBlockId: claims.appBlockId,
           browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
-          outputCeiling: { maxBrowsingLevel: 31 },
+          outputCeiling: blockOutputCeilingFromClaims(claims),
         },
         sources: input.sources,
         title: input.title,
@@ -6654,7 +6654,7 @@ export const blocksRouter = router({
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
-        outputCeiling: { maxBrowsingLevel: 31 },
+        outputCeiling: blockOutputCeilingFromClaims(claims),
       };
 
       // ── AUDIT SCOPE. Everything below runs INSIDE `recordOutcome`, so a
