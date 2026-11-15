@@ -42,7 +42,7 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 21
+	goldenMinAsPosts  = 23
 	goldenMinV1       = 22
 	goldenMinInfinite = 20
 	goldenIssuer      = "https://auth.example.test"
@@ -87,6 +87,8 @@ type goldenFixture struct {
 		CreatorPromotions string   `json:"creatorPromotions"`
 		DecorationEvents  []string `json:"decorationEvents"`
 		ImageLocation     string   `json:"imageLocation"`
+		// FrameCacheNegative is the frame-cache-negative flag the fixture's Node run had.
+		FrameCacheNegative bool `json:"frameCacheNegative"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -106,7 +108,16 @@ type goldenFixture struct {
 		Envelope  json.RawMessage `json:"envelope"`
 		Cacheable *bool           `json:"cacheable"`
 		Body      json.RawMessage `json:"body"`
+		// Writes is every cache key Node's fetches write for the request's misses (a served
+		// fixture; none when the caches are warm): a packed value, with its expiry.
+		Writes map[string]goldenWrite `json:"writes"`
 	} `json:"expect"`
+}
+
+// goldenWrite is one cache write Node makes on a miss.
+type goldenWrite struct {
+	Packed string `json:"packed"`
+	EX     int    `json:"ex"`
 }
 
 type goldenFeedReply struct {
@@ -256,6 +267,72 @@ type goldenDB struct {
 		Image     *string    `json:"image"`
 		DeletedAt goldenTime `json:"deletedAt"`
 	} `json:"users"`
+	// UserCosmetics are UserCosmetic rows, `data` as Postgres prints the jsonb (null when NULL).
+	UserCosmetics []struct {
+		UserID         int     `json:"userId"`
+		CosmeticID     int     `json:"cosmeticId"`
+		Data           *string `json:"data"`
+		Equipped       bool    `json:"equippedAt"` // equippedAt IS NOT NULL
+		EquippedToID   *int    `json:"equippedToId"`
+		EquippedToType *string `json:"equippedToType"`
+	} `json:"userCosmetics"`
+	Cosmetics []struct {
+		ID          int    `json:"id"`
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		Source      string `json:"source"`
+		Data        string `json:"data"`
+		Flags       int    `json:"flags"`
+		CreatedByID *int   `json:"createdById"`
+	} `json:"cosmetics"`
+	CosmeticShopItems []struct {
+		CosmeticID      int     `json:"cosmeticId"`
+		AddedByID       *int    `json:"addedById"`
+		Status          string  `json:"status"`
+		Meta            string  `json:"meta"`
+		RejectionReason *string `json:"rejectionReason"`
+	} `json:"cosmeticShopItems"`
+}
+
+// goldenCosmeticEvent reports whether the cosmetic's data has a string `event` (the frame and event
+// lookups' `jsonb_typeof(c.data->'event') = 'string'`).
+func goldenCosmeticEvent(db *goldenDB, id int) bool {
+	for _, c := range db.Cosmetics {
+		if c.ID == id {
+			var d map[string]any
+			_ = json.Unmarshal([]byte(c.Data), &d)
+			_, ok := d["event"].(string)
+			return ok
+		}
+	}
+	return false
+}
+
+func goldenCosmeticCreator(db *goldenDB, id int) any {
+	for _, c := range db.Cosmetics {
+		if c.ID == id {
+			return goldenPtr(c.CreatedByID)
+		}
+	}
+	return nil
+}
+
+// goldenEntityCosmetics answers the frame (event false) and event (event true) lookups: the rows on
+// one of the ids, equipped to an Image, in table order.
+func goldenEntityCosmetics(db *goldenDB, args []any, event bool, cols []string) *testkit.Rows {
+	var rows [][]any
+	for _, r := range db.UserCosmetics {
+		if r.EquippedToID == nil || !goldenHas(goldenInts(args[0]), *r.EquippedToID) || r.EquippedToType == nil ||
+			*r.EquippedToType != "Image" || goldenCosmeticEvent(db, r.CosmeticID) != event {
+			continue
+		}
+		if event {
+			rows = append(rows, []any{r.CosmeticID, *r.EquippedToID, r.UserID})
+		} else {
+			rows = append(rows, []any{r.CosmeticID, *r.EquippedToID, goldenPtr(r.Data), goldenCosmeticCreator(db, r.CosmeticID)})
+		}
+	}
+	return testkit.NewRows(cols, rows...)
 }
 
 // --- the Postgres fake: each query this service sends, answered over the fixture's tables ------
@@ -593,6 +670,39 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 			}
 			return testkit.NewRows([]string{"id"}), nil
 		}},
+		{Match: `FROM "UserCosmetic" WHERE "userId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, r := range db.UserCosmetics {
+				if goldenHas(goldenInts(args[0]), r.UserID) && r.Equipped && r.EquippedToID == nil {
+					rows = append(rows, []any{r.UserID, r.CosmeticID, goldenPtr(r.Data)})
+				}
+			}
+			return testkit.NewRows([]string{"userId", "cosmeticId", "data"}, rows...), nil
+		}},
+		{Match: `jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`, Rows: func(args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, args, false, []string{"cosmeticId", "equippedToId", "userData", "createdById"}), nil
+		}},
+		{Match: `jsonb_typeof(c.data->'event') = 'string'`, Rows: func(args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, args, true, []string{"cosmeticId", "equippedToId", "userId"}), nil
+		}},
+		{Match: `FROM "CosmeticShopItem" si`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, x := range db.CosmeticShopItems {
+				if goldenHas(goldenInts(args[0]), x.CosmeticID) {
+					rows = append(rows, []any{x.CosmeticID, goldenPtr(x.AddedByID), x.Status, x.Meta, goldenPtr(x.RejectionReason), goldenCosmeticCreator(db, x.CosmeticID)})
+				}
+			}
+			return testkit.NewRows([]string{"cosmeticId", "addedById", "status", "meta", "rejectionReason", "createdById"}, rows...), nil
+		}},
+		{Match: `SELECT id, flags FROM "Cosmetic"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, c := range db.Cosmetics {
+				if goldenHas(goldenInts(args[0]), c.ID) && c.CreatedByID != nil {
+					rows = append(rows, []any{c.ID, c.Flags})
+				}
+			}
+			return testkit.NewRows([]string{"id", "flags"}, rows...), nil
+		}},
 		{Match: `SELECT id, username, "deletedAt", image FROM "User"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
 			for _, u := range db.Users {
@@ -702,6 +812,7 @@ type goldenEnv struct {
 	server  *Server
 	feed    *goldenFeed
 	headers map[string]string
+	cache   *testkit.Redis
 }
 
 func goldenRedis(t *testing.T, entries map[string]goldenRedisEntry) *testkit.Redis {
@@ -728,6 +839,13 @@ func goldenRedis(t *testing.T, entries map[string]goldenRedisEntry) *testkit.Red
 
 func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	t.Helper()
+	return goldenSetupMode(t, fx, false)
+}
+
+// goldenSetupMode builds the server as main does: misses computed (hydrate.MissCompute), written
+// back only with writeBack.
+func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv {
+	t.Helper()
 	now := fx.Now
 	nowFn := func() time.Time { return now }
 
@@ -745,7 +863,14 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	jwks, priv := goldenJWKS(t)
 
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
-	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: db}
+	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: db, Compute: &hydrate.MissCompute{
+		WriteBack:     writeBack,
+		FrameNegative: fx.Config.FrameCacheNegative,
+		Now:           nowFn,
+	}}
+	if writeBack {
+		sources.Compute.Primary = db // the fixture's one database (the frame and event lookups read the primary)
+	}
 	resolver := &auth.Resolver{
 		Verifier:    &auth.Verifier{Issuer: goldenIssuer, JWKSURL: jwks.URL, HTTP: jwks.Client(), Now: nowFn},
 		Revocation:  &auth.Revocation{Redis: sys},
@@ -794,7 +919,7 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	if fx.Request.Session != nil {
 		headers["cookie"] = goldenCookieName + "=" + goldenToken(t, priv, fx.Request.Session.UserID, now)
 	}
-	return &goldenEnv{server: s, feed: fake, headers: headers}
+	return &goldenEnv{server: s, feed: fake, headers: headers, cache: cache}
 }
 
 // --- loading and running --------------------------------------------------------------------------
@@ -850,8 +975,74 @@ func goldenReport(t *testing.T, rep *shadow.Report, goPayload []byte) {
 	t.Logf("feed-go payload: %s", goPayload)
 }
 
+// goldenCacheState is every key of the fake cache: its value (string bytes, or a hash as sorted
+// field=value lines) and expiry.
+func goldenCacheState(r *testkit.Redis) map[string]string {
+	out := map[string]string{}
+	for _, k := range r.AllKeys() {
+		v := ""
+		if b, ok := r.String(k); ok {
+			v = "string:" + base64.StdEncoding.EncodeToString(b)
+		} else if h := r.Hash(k); h != nil {
+			fields := make([]string, 0, len(h))
+			for f, x := range h {
+				fields = append(fields, f+"="+x)
+			}
+			sort.Strings(fields)
+			v = "hash:" + strings.Join(fields, "\n")
+		}
+		out[k] = v + " ex:" + r.Expiry(k).String()
+	}
+	return out
+}
+
+// goldenWriteProblems compares what the computation changed in the cache with what Node writes on
+// the fixture's misses: nothing at all with write-back off, exactly expect.writes with it on. Each
+// difference is one problem.
+func goldenWriteProblems(fx *goldenFixture, before, after map[string]string, writeBack bool) []string {
+	var problems []string
+	want := map[string]string{}
+	if writeBack {
+		for k, w := range fx.Expect.Writes {
+			want[k] = "string:" + w.Packed + " ex:" + (time.Duration(w.EX) * time.Second).String()
+		}
+	}
+	got := map[string]string{}
+	for k, v := range after {
+		if before[k] != v {
+			got[k] = v
+		}
+	}
+	for k := range before {
+		if _, ok := after[k]; !ok {
+			got[k] = "(deleted)"
+		}
+	}
+	for k, v := range want {
+		if got[k] != v {
+			problems = append(problems, fmt.Sprintf("write-back %v: %s = %q, want Node's %q", writeBack, k, got[k], v))
+		}
+	}
+	for k, v := range got {
+		if _, ok := want[k]; !ok {
+			problems = append(problems, fmt.Sprintf("write-back %v: wrote %s = %q, which Node does not write", writeBack, k, v))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
 func goldenRunAsPosts(t *testing.T, fx *goldenFixture) {
-	env := goldenSetup(t, fx)
+	for _, writeBack := range []bool{false, true} {
+		t.Run(map[bool]string{false: "writeback-off", true: "writeback-on"}[writeBack], func(t *testing.T) {
+			goldenRunAsPostsMode(t, fx, writeBack)
+		})
+	}
+}
+
+func goldenRunAsPostsMode(t *testing.T, fx *goldenFixture, writeBack bool) {
+	env := goldenSetupMode(t, fx, writeBack)
+	before := goldenCacheState(env.cache)
 	ctx := context.Background()
 	r, err := SyntheticRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
 	if err != nil {
@@ -876,6 +1067,9 @@ func goldenRunAsPosts(t *testing.T, fx *goldenFixture) {
 		t.Fatalf("compare: %v", err)
 	}
 	goldenReport(t, rep, c.payload)
+	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
+		t.Error(p)
+	}
 	if fx.Expect.Cacheable != nil {
 		if *fx.Expect.Cacheable && c.ttl == nil {
 			t.Error("signed out: want the public cache TTL, got none")
@@ -916,8 +1110,19 @@ func goldenRunV1(t *testing.T, fx *goldenFixture) {
 	env.feed.check(t, true)
 }
 
+// goldenRunInfinite runs a fixture with write-back off and on, as goldenRunAsPosts: the procedure
+// shares the page hydrator, so its cache misses are computed and written the same way.
 func goldenRunInfinite(t *testing.T, fx *goldenFixture) {
-	env := goldenSetup(t, fx)
+	for _, writeBack := range []bool{false, true} {
+		t.Run(map[bool]string{false: "writeback-off", true: "writeback-on"}[writeBack], func(t *testing.T) {
+			goldenRunInfiniteMode(t, fx, writeBack)
+		})
+	}
+}
+
+func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
+	env := goldenSetupMode(t, fx, writeBack)
+	before := goldenCacheState(env.cache)
 	ctx := context.Background()
 	r, err := SyntheticInfiniteRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
 	if err != nil {
@@ -942,6 +1147,9 @@ func goldenRunInfinite(t *testing.T, fx *goldenFixture) {
 		t.Fatalf("compare: %v", err)
 	}
 	goldenReport(t, rep, c.payload)
+	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
+		t.Error(p)
+	}
 	if c.ttl != nil {
 		t.Errorf("image.getInfinite is never edge-cacheable here, got %+v", *c.ttl)
 	}
@@ -1056,6 +1264,41 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 			if rep.Match {
 				t.Errorf("%s: a changed image id still matches", name)
 			}
+		}
+	})
+	t.Run("cache-writes", func(t *testing.T) {
+		// The write check must see a write Node makes that feed-go does not, one it makes with another
+		// expiry, and one Node does not make: each a problem, while the fixture's own run has none.
+		fx := goldenLoad(t, filepath.Join(goldenDir, "as-posts", "cold-event-decoration.json"))
+		if len(fx.Expect.Writes) != 2 {
+			t.Fatalf("cold-event-decoration expects %d writes, want 2 (the control needs both)", len(fx.Expect.Writes))
+		}
+		env := goldenSetupMode(t, fx, true)
+		before := goldenCacheState(env.cache)
+		ctx := context.Background()
+		r, err := SyntheticRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := env.server.compute(ctx, r); err != nil {
+			t.Fatalf("compute: %v", err)
+		}
+		after := goldenCacheState(env.cache)
+		if p := goldenWriteProblems(fx, before, after, true); len(p) != 0 {
+			t.Fatalf("the fixture's own run: %v", p)
+		}
+		if p := goldenWriteProblems(fx, before, after, false); len(p) != 2 {
+			t.Fatalf("write-back off over a run that wrote: %d problems %v, want 2", len(p), p)
+		}
+		changed := *fx
+		changed.Expect.Writes = map[string]goldenWrite{}
+		for k, w := range fx.Expect.Writes {
+			w.EX++
+			changed.Expect.Writes[k] = w
+		}
+		changed.Expect.Writes["packed:caches:never-written:1"] = goldenWrite{Packed: "AA==", EX: 1}
+		if p := goldenWriteProblems(&changed, before, after, true); len(p) != 3 {
+			t.Fatalf("changed expiries and an unwritten key: %d problems %v, want 3", len(p), p)
 		}
 	})
 	t.Run("infinite", func(t *testing.T) {

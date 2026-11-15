@@ -158,3 +158,41 @@ func TestLoadServingLimits(t *testing.T) {
 		}
 	}
 }
+
+// The miss computation is on by default, write-back and the frame negative-cache mirror off; write-back
+// needs the primary (DATABASE_URL), which is read only then.
+func TestLoadCacheMissSettings(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_FRAME_CACHE_NEGATIVE", "DATABASE_URL"} {
+		t.Setenv(k, "")
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.ComputeMisses || c.CacheWriteBack || c.FrameCacheNegative || c.PrimaryDatabaseURL != "" {
+		t.Fatalf("defaults: compute %v, writeback %v, frame negative %v, primary %q; want true, false, false, unset",
+			c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	}
+	t.Setenv("DATABASE_URL", "x://primary")
+	if c, _ = Load(); c.PrimaryDatabaseURL != "" {
+		t.Fatalf("primary %q read with write-back off", c.PrimaryDatabaseURL)
+	}
+
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", "true")
+	t.Setenv("DATABASE_URL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("write-back without DATABASE_URL loaded")
+	}
+	t.Setenv("DATABASE_URL", "x://primary")
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
+	t.Setenv("FEED_GO_FRAME_CACHE_NEGATIVE", "true")
+	if c, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if c.ComputeMisses || !c.CacheWriteBack || !c.FrameCacheNegative || c.PrimaryDatabaseURL != "x://primary" {
+		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q", c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	}
+}
