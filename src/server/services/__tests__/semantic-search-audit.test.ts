@@ -207,6 +207,30 @@ describe('createSemanticSearchAudit', () => {
       );
     });
 
+    it('stops running refused searches at the per-minute cap, and resumes the next minute', async () => {
+      let at = T0;
+      const batches: SemanticAuditRow[][] = [];
+      const audit = createSemanticSearchAudit({
+        getConfig: async () => ({ ...ON, refusalCandidates: true }),
+        insert: async (rows) => {
+          batches.push(rows);
+        },
+        withheldRules: async () => new Set<string>(),
+        now: () => at,
+        flushIntervalMs: 60_000,
+        refusedRunsPerMinute: 2,
+      });
+      const run = vi.fn(async () => ({ ids: [5, 6] }));
+      for (let i = 0; i < 4; i++) await audit.recordRefused(refused(), run);
+      expect(run).toHaveBeenCalledTimes(2);
+      at += 60_000;
+      await audit.recordRefused(refused(), run);
+      expect(run).toHaveBeenCalledTimes(3);
+      await audit.flush();
+      // Capped refusals are still recorded, without ids.
+      expect(batches.flat().map((r) => r.resultIds.length)).toEqual([2, 2, 0, 0, 2]);
+    });
+
     it('records the refusal alone when the run fails', async () => {
       const { audit, batches } = harness(ON);
       await audit.recordRefused(refused(), async () => {

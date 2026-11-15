@@ -23,6 +23,9 @@ export const SEMANTIC_SEARCH_AUDIT_TABLE = 'semanticSearchAudit';
 const CONFIG_TTL_MS = 15_000;
 /** Ids kept per row; also how many a refused search is run for. */
 export const AUDIT_RESULT_IDS = 20;
+// Refused searches run for review per process per minute; past it a refusal is recorded alone, so
+// a client repeating refused queries cannot drive the extra search calls.
+export const REFUSED_RUNS_PER_MINUTE = 30;
 const MAX_QUERY_LENGTH = 1_000;
 // Only a query the audit passed keeps what was served. Every verdict withholds the ids, including
 // any added later; its row keeps the query, rule and level.
@@ -159,6 +162,7 @@ type AuditDeps = {
   random?: () => number;
   flushIntervalMs?: number;
   onError?: (error: Error, rows: number) => void;
+  refusedRunsPerMinute?: number;
 };
 
 export function createSemanticSearchAudit(
@@ -170,6 +174,19 @@ export function createSemanticSearchAudit(
     counters: { batches: batchCounter, rows: rowCounter },
   });
   const now = deps.now ?? Date.now;
+  const runCap = deps.refusedRunsPerMinute ?? REFUSED_RUNS_PER_MINUTE;
+  let runWindow = -1;
+  let runsInWindow = 0;
+  const takeRun = () => {
+    const window = Math.floor(now() / 60_000);
+    if (window !== runWindow) {
+      runWindow = window;
+      runsInWindow = 0;
+    }
+    if (runsInWindow >= runCap) return false;
+    runsInWindow++;
+    return true;
+  };
   const record = async (entry: SemanticAuditEntry) => {
     let withheld: ReadonlySet<string> | null = null;
     if (entry.guard.rules.length) withheld = await deps.withheldRules().catch(() => null);
@@ -189,7 +206,8 @@ export function createSemanticSearchAudit(
         verdictComputesRefusedIds(entry.wordVerdict) &&
         !!config?.refusalCandidates &&
         config.sampleRate > 0 &&
-        now() <= config.until;
+        now() <= config.until &&
+        takeRun();
       const computed = run ? await compute().catch(() => undefined) : undefined;
       if (!computed) return record(entry);
       return record({

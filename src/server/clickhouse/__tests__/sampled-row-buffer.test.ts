@@ -57,8 +57,8 @@ describe('createSampledRowBuffer', () => {
   });
 
   it(`sheds rows past ${MAX_BUFFERED_ROWS} while an insert is in flight, with one insert at a time`, async () => {
-    let release!: () => void;
-    const stuck = new Promise<void>((r) => (release = r));
+    let release!: (v: undefined) => void;
+    const stuck = new Promise<undefined>((r) => (release = r));
     const { buffer, inserted, counts, push } = harness(ON, { insert: () => stuck });
 
     // The 200th row starts an insert, which stays in flight.
@@ -70,7 +70,7 @@ describe('createSampledRowBuffer', () => {
     expect(counts.dropped).toBe(5);
 
     // Once the first insert settles, the rest goes in one more.
-    release();
+    release(undefined);
     await new Promise((r) => setTimeout(r, 0));
     await buffer.flush();
     expect(inserted.map((b) => b.length)).toEqual([200, MAX_BUFFERED_ROWS]);
