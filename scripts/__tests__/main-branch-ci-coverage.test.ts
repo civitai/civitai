@@ -28,6 +28,14 @@ import { describe, expect, it } from 'vitest';
 // push to `main` reaches a typecheck and the unit suite at all. Moving those
 // tiers into a different workflow, renaming the jobs, or splitting the file
 // keeps this green; losing main coverage does not, however it is lost.
+//
+// THE UNIT SUITE IS VERIFIED IN BATCHES, NOT PER PUSH (2026-11). Its verdict for a commit on
+// `main` comes from an hourly scheduled run that bisects a red to the first bad commit and posts
+// a failing commit status there, so a red still lands on the commit that caused it, about an hour
+// later rather than minutes. The guard for it below asserts that path (a schedule that fires at
+// least hourly, a dispatch target that runs the suite, a job that posts commit statuses) rather
+// than a push-reachable job. The regression above, a commit on `main` with no verdict at all, is
+// what both forms rule out.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
@@ -153,7 +161,6 @@ describe('CI coverage for commits on main', () => {
   // run is the backstop for a filter entry that is missing.
   it.each([
     ['the whole-repo typecheck', 'pnpm run typecheck'],
-    ['the unit suite', 'test:unit:run'],
     // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
     // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
     ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
@@ -170,6 +177,57 @@ describe('CI coverage for commits on main', () => {
           .join(', ') || '(none)'
       }`
     ).not.toHaveLength(0);
+  });
+
+  // The unit suite's verdict for `main`, batched (see the header). Each link of the chain is
+  // asserted, because each one failing alone leaves `main` with no unit verdict and no red.
+  describe('the unit suite, verified hourly on main', () => {
+    const cronHourly = (cron: string) => /^\d{1,2} \* \* \* \*$/.test(cron.trim());
+    const schedules = (doc: Workflow) =>
+      (
+        ((doc.on as Record<string, unknown> | undefined)?.schedule as Array<{ cron: string }>) ?? []
+      ).map((s) => s.cron);
+
+    it('a workflow fires at least hourly and runs the gate that dispatches the suite', () => {
+      const hit = workflows
+        .filter((w) => schedules(w.doc).some(cronHourly))
+        .filter((w) =>
+          Object.values(w.doc.jobs ?? {}).some((j) =>
+            runScripts(j).includes('unit-hourly.mjs gate')
+          )
+        )
+        .map((w) => w.file);
+      expect(
+        hit,
+        'no hourly scheduled workflow runs `scripts/ci/unit-hourly.mjs gate`'
+      ).not.toHaveLength(0);
+      const gate = readFileSync(path.resolve(HERE, '../ci/unit-hourly.mjs'), 'utf8');
+      expect(gate).toContain("'workflow', 'run', 'lint.yml'");
+      expect(gate).toContain("'only=unit'");
+    });
+
+    it('lint.yml runs test:unit:run on a dispatch with only: unit', () => {
+      const lint = workflows.find((w) => w.file === 'lint.yml')?.doc;
+      expect((lint?.on as Record<string, unknown>)?.workflow_dispatch).toBeDefined();
+      const runners = Object.values(lint?.jobs ?? {}).filter(
+        (j) =>
+          runScripts(j).includes('test:unit:run') &&
+          !(j.if ?? '').includes("github.event_name == 'pull_request'") &&
+          (j.if ?? '').includes("inputs.only == 'unit'")
+      );
+      expect(runners).not.toHaveLength(0);
+    });
+
+    it('a job after that dispatch posts the verdict as a commit status', () => {
+      const lint = workflows.find((w) => w.file === 'lint.yml')?.doc;
+      const posters = Object.values(lint?.jobs ?? {}).filter(
+        (j) =>
+          runScripts(j).includes('unit-hourly.mjs verify') &&
+          (j.permissions as Record<string, string> | undefined)?.statuses === 'write' &&
+          !unconditionallyTrue(j['continue-on-error'])
+      );
+      expect(posters).not.toHaveLength(0);
+    });
   });
 
   // A backstop only works if it fires whatever the commit touched. The PR trigger's `paths:`

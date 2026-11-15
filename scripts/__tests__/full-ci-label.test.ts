@@ -127,7 +127,6 @@ describe('the full-ci label', () => {
     ['lint.yml', 'packages'],
     ['lint.yml', 'component'],
     ['lint.yml', 'component-ledger'],
-    ['lint.yml', 'affected'],
     ['apps.yml', 'apps'],
     ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
@@ -140,16 +139,14 @@ describe('the full-ci label', () => {
     [
       'lint.yml',
       [
-        'affected',
         'component',
         'component-ledger',
         'eslint',
-        'miss-ledger',
-        'nightly-bisect',
         'packages',
         'typecheck',
         'typecheck-tests',
         'unit',
+        'unit-verify',
       ],
     ],
     ['apps.yml', ['apps']],
