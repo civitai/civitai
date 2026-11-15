@@ -97,12 +97,14 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
                   ))}
                 </g>
                 <circle className={classes.gap} cx="24" cy="24" r={RING_RADIUS - RING_STROKE / 2} />
+                {/* No single leader (no hats yet, or a tie): Turf's own no-team grey, not the
+                    translucent neutral, which reads as a dark hole on the chip. */}
                 <circle
-                  className={clsx(classes.discFill, !leader && classes.neutral)}
+                  className={classes.discFill}
                   cx="24"
                   cy="24"
                   r={DISC_RADIUS}
-                  fill={leader ? colorOf(leader) : undefined}
+                  fill={leader ? colorOf(leader) : FALLBACK_COLOR}
                 />
               </svg>
               <span className={classes.disc}>

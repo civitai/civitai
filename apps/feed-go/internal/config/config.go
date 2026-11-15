@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -43,6 +44,9 @@ type Config struct {
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// ImageLocation is NEXT_PUBLIC_IMAGE_LOCATION (same var as the Node app): the edge URL prefix the
+	// REST images endpoint publishes. Unset = that endpoint falls back.
+	ImageLocation string
 	// Pprof is FEED_GO_PPROF (default off): serve net/http/pprof under /debug/pprof/ on the internal
 	// listener only (never the public one).
 	Pprof bool
@@ -60,6 +64,19 @@ type Config struct {
 	// ModerationAccountID is CIVITAI_MODERATION_USER_ID: the shared moderation account, refused as a
 	// session (0 when unset or not a positive integer; the reserved username is refused regardless).
 	ModerationAccountID int
+	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
+	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
+	RequestBudget time.Duration
+	// CompletionConcurrency is FEED_GO_COMPLETION_CONCURRENCY: the lazy-post-images completion
+	// fetches one request runs at once. The default is sized for shadow load; serving may want more.
+	CompletionConcurrency int
+	// JWKSRefresh is FEED_GO_JWKS_REFRESH_MS: how often the signing keys are
+	// refetched, so a key the auth hub removed stops verifying without a restart.
+	JWKSRefresh time.Duration
+	// JWKSMaxStaleness is FEED_GO_JWKS_MAX_STALENESS_MS (default 3 × JWKSRefresh): how long the last
+	// good key set is kept while refreshes fail; past it sessions verify as signed out.
+	JWKSMaxStaleness time.Duration
+
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
 	AllowedOriginHosts map[string]bool
@@ -88,6 +105,7 @@ func Load() (*Config, error) {
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 		Pprof:            boolEnv("FEED_GO_PPROF", false),
+		ImageLocation:    os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),
@@ -109,6 +127,10 @@ func Load() (*Config, error) {
 		c.Hosts[color] = hosts
 	}
 	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
+	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
+	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
+	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond
+	c.JWKSMaxStaleness = time.Duration(positiveIntEnv("FEED_GO_JWKS_MAX_STALENESS_MS", 3*int(c.JWKSRefresh/time.Millisecond))) * time.Millisecond
 	if n := intEnv("CIVITAI_MODERATION_USER_ID", 0); n > 0 {
 		c.ModerationAccountID = n
 	}
@@ -119,13 +141,13 @@ func Load() (*Config, error) {
 	}
 	c.RegionRules = rules
 	if c.DatabaseURL == "" {
-		return nil, fmt.Errorf("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
+		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
 	}
 	if c.RedisURL == "" || c.RedisSysURL == "" {
-		return nil, fmt.Errorf("REDIS_URL and REDIS_SYS_URL are both required")
+		return nil, errors.New("REDIS_URL and REDIS_SYS_URL are both required")
 	}
 	if c.AuthJWKSURI == "" || c.AuthIssuer == "" {
-		return nil, fmt.Errorf("AUTH_JWKS_URI and AUTH_JWT_ISSUER are required")
+		return nil, errors.New("AUTH_JWKS_URI and AUTH_JWT_ISSUER are required")
 	}
 	return c, nil
 }
@@ -229,6 +251,14 @@ func boolEnv(k string, def bool) bool {
 
 func intEnv(k string, def int) int {
 	if n, err := strconv.Atoi(os.Getenv(k)); err == nil {
+		return n
+	}
+	return def
+}
+
+// positiveIntEnv is intEnv where zero or a negative value also means the default.
+func positiveIntEnv(k string, def int) int {
+	if n := intEnv(k, def); n > 0 {
 		return n
 	}
 	return def

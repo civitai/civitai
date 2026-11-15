@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as Moderation from '~/server/integrations/moderation';
 
 /**
  * With `shadow-age-prompt` on, an age-check hit on a remix source is decided by the external
@@ -25,7 +26,10 @@ vi.mock('~/server/jobs/job', () => ({
   }),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: chQuery } }));
-vi.mock('~/server/integrations/moderation', () => ({ extModeration: { moderatePrompt } }));
+vi.mock('~/server/integrations/moderation', async (importOriginal) => ({
+  ...(await importOriginal<typeof Moderation>()),
+  extModeration: { moderatePrompt },
+}));
 vi.mock('~/server/services/post.service', () => ({ bustCachesForPosts: vi.fn() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),

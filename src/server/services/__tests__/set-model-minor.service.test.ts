@@ -169,9 +169,11 @@ function mockBefore(overrides: Partial<typeof baseModelRow> & { meta?: unknown }
 }
 
 const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?');
-/** The fan-out's raw reads, without the row lock the setter takes first. */
+/** The fan-out's raw reads, without the row lock the setter takes first or the collection reindex's cover-index probe. */
 const fanOutQueries = () =>
-  mockDbWrite.$queryRaw.mock.calls.filter((call) => !sqlOf(call).includes('FOR NO KEY UPDATE'));
+  mockDbWrite.$queryRaw.mock.calls.filter(
+    (call) => !sqlOf(call).includes('FOR NO KEY UPDATE') && !sqlOf(call).includes('pg_index')
+  );
 
 function mockTracker() {
   return { entityChanges: vi.fn().mockResolvedValue(undefined) };

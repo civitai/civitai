@@ -11,6 +11,7 @@ import {
   beginSemanticAudit,
   queryVerdictLevel,
   recordRefusal,
+  refusedTextCandidates,
   isNonModClampOn,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
@@ -89,8 +90,8 @@ export async function searchSemanticArticles({
   };
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return audit.done(none, browsingLevel);
-  if (verdictLevel !== browsingLevel) {
+  const queryRefused = verdictLevel === 'refuse';
+  if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
   }
@@ -109,6 +110,17 @@ export async function searchSemanticArticles({
     userIds,
     excludedUserIds,
   };
+  // Refused before any search: the audit may run it after the response, for its row only.
+  if (queryRefused)
+    return audit.refused(
+      none,
+      browsingLevel,
+      refusedTextCandidates(candidateSource, {
+        text: input.query,
+        filter,
+        viewer: { isModerator: !!user?.isModerator },
+      })
+    );
 
   // The search page's own rule first: Qdrant only proposes candidates, and a point can outlive
   // the article's eligibility (a ban changes no article row).
@@ -188,6 +200,7 @@ export async function searchSemanticArticles({
   }).catch(() => undefined);
 
   audit.candidates(search.state.first);
-  if (search.state.refused) return audit.done(none, browsingLevel);
+  if (search.state.refused)
+    return audit.refused(none, browsingLevel, async () => search.state.first ?? { ids: [] });
   return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }

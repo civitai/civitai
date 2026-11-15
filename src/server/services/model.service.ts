@@ -1,5 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
+import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
+import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
@@ -2283,10 +2285,12 @@ export const updateModelById = async ({
       writtenMode === ModelModifier.TakenDown ||
       priorMode === ModelModifier.TakenDown ||
       priorMode === undefined
-    )
+    ) {
       void getCollectionIdsForModelImages({ modelId: id })
         .then((found) => enqueueCollectionRebuild({ ...found, source: 'model-mode-change' }))
         .catch(() => undefined);
+      void queueModelArticlesReindex(id);
+    }
   }
 
   return withoutModeratorOnlyMeta(model);
@@ -2874,6 +2878,11 @@ export async function applyModelFlagSideEffects({
   if (heldLevelChanged && !listingChanged)
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   if (minorChanged || heldLevelChanged) await purgeHeldShowcase(id, modelVersionIds);
+  // Not awaited: finding the collections can be slow, and it never throws.
+  if (minorChanged || heldLevelChanged) {
+    void queueModelCollectionsReindex([id]);
+    void queueModelArticlesReindex(id);
+  }
 }
 
 /**

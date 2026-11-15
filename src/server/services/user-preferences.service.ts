@@ -1287,8 +1287,7 @@ export async function getHiddenImagesForUser({
           nsfwLevelLocked,
           nsfwLevelReason: (metadata as { nsfwLevelReason?: string | null } | null)
             ?.nsfwLevelReason,
-          scanFailureClass: (scanJobs as { error?: { failureClass?: string } } | null)?.error
-            ?.failureClass,
+          scanJobs,
         }) &&
           rest.nsfwLevel !== NsfwLevel.Blocked &&
           !rest.tosViolation &&

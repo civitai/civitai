@@ -553,5 +553,5 @@ describe('deleted sources', () => {
 });
 
 it('the fixture moderator id is the harness default', () => {
-  expect(MOD).toBe(990001);
+  expect(MOD).toBe(990200013);
 });

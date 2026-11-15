@@ -21,15 +21,13 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
-import {
-  modelBrowsingLevelLimit,
-  nsfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getCoverBrowsingLevels } from '~/server/utils/public-cover-image';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
@@ -275,12 +273,7 @@ export async function getFallbackCoverImages(
         AND p."availability" != 'Private'
         -- Same restricted-base-model condition getAllImages applies to every row.
         AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
-        -- Within the limit of a minor or SFW-only post model; its stored gallery level is checked below.
-        AND (i."nsfwLevel" & CASE
-          WHEN m."minor" THEN ${modelBrowsingLevelLimit({ minor: true, sfwOnly: false })}::int
-          WHEN m."sfwOnly" THEN ${modelBrowsingLevelLimit({ minor: false, sfwOnly: true })}::int
-          ELSE ${browsingLevel}::int
-        END) != 0
+        AND ${heldGalleryImageSql()}
       -- Walks CollectionItem_collectionId_status_covered ("createdAt" DESC) and stops at
       -- the first item that passes, per collection.
       ORDER BY ci."createdAt" DESC
@@ -290,6 +283,8 @@ export async function getFallbackCoverImages(
   const levelOf = await getCoverBrowsingLevels(rows, browsingLevel);
   const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();
   for (const r of rows) {
+    // The SQL read the stored gallery level; the cached one can be stricter until it is rebuilt,
+    // and then the tile is a placeholder rather than the next item.
     if (r.nsfwLevel != null && !Flags.intersects(levelOf(r), r.nsfwLevel)) continue;
     if (r.collectionId != null && r.url) {
       // An unrated image stores 0; a null column read is the same "unrated" claim.

@@ -70,6 +70,8 @@ const MATURE_IMAGE_ITEM = 8038;
 const TOS_VIOLATION_IMAGE_ITEM = 8039;
 const MATURE_ARTICLE_BOTH = 8040;
 const ARTICLE_SRC_PENDING_IMAGE = 8041;
+const BLOCKED_IMAGE_ITEM = 8042;
+const UNRATED_IMAGE_ITEM = 8043;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -113,12 +115,12 @@ beforeAll(async () => {
     );
     CREATE TABLE "Model" (
       "id" integer PRIMARY KEY, "userId" integer, "status" text NOT NULL DEFAULT 'Published',
-      "deletedAt" timestamp, "availability" text NOT NULL DEFAULT 'Public', "mode" text
+      "deletedAt" timestamp, "availability" text NOT NULL DEFAULT 'Public', "mode" text, minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
     );
     CREATE TABLE "Article" (
       "id" integer PRIMARY KEY, "cover" text, "coverId" integer,
       "status" text NOT NULL DEFAULT 'Published', "publishedAt" timestamp DEFAULT now(),
-      "availability" text NOT NULL DEFAULT 'Public', "ingestion" text NOT NULL DEFAULT 'Scanned', "bannerId" integer
+      "availability" text NOT NULL DEFAULT 'Public', "ingestion" text NOT NULL DEFAULT 'Scanned', "bannerId" integer, "nsfwLevel" integer NOT NULL DEFAULT 1
     );
     CREATE TABLE "Model3D" (
       "id" integer PRIMARY KEY, "thumbnailImageId" integer,
@@ -225,6 +227,10 @@ beforeAll(async () => {
       (132, 'mature-image', 1, 16, false), (133, 'tos-violation', 1, 1, true);
     INSERT INTO "CollectionItem" ("id", "collectionId", "imageId") VALUES
       (38, ${MATURE_IMAGE_ITEM}, 132), (39, ${TOS_VIOLATION_IMAGE_ITEM}, 133);
+    INSERT INTO "Image" ("id", "url", "postId", "nsfwLevel") VALUES
+      (235, 'blocked', 1, 32), (236, 'unrated', 1, 0);
+    INSERT INTO "CollectionItem" ("id", "collectionId", "imageId") VALUES
+      (942, ${BLOCKED_IMAGE_ITEM}, 235), (943, ${UNRATED_IMAGE_ITEM}, 236);
     INSERT INTO "Image" ("id", "url", "nsfwLevel") VALUES (134, 'mature-article-cover', 8);
     INSERT INTO "Article" ("id", "cover", "coverId") VALUES (28, 'mature-both', 134);
     INSERT INTO "CollectionItem" ("id", "collectionId", "articleId") VALUES (40, ${MATURE_ARTICLE_BOTH}, 28);
@@ -428,5 +434,12 @@ describe('getCollectionCoverImages', () => {
 
   it('skips a ToS-violating cover at every level', async () => {
     expect(await coversFor(TOS_VIOLATION_IMAGE_ITEM)).toEqual([]);
+  });
+
+  it.each([
+    ['a Blocked', BLOCKED_IMAGE_ITEM],
+    ['an unrated', UNRATED_IMAGE_ITEM],
+  ])('skips %s cover even at a level that names Blocked', async (_, collectionId) => {
+    expect(await coversFor(collectionId, allBrowsingLevelsFlag | 32)).toEqual([]);
   });
 });

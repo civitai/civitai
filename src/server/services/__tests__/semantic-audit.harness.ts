@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, type Mock } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { SemanticAuditEntry } from '~/server/services/semantic-search-audit.service';
 import type { CandidateSource, GuardRead } from '~/server/services/semantic-search-client';
 import type { SessionUser } from '~/types/session';
@@ -17,7 +17,8 @@ type Run = (args: {
 /**
  * The audit contract every semantic search service keeps, run against that service's own test
  * harness. `ids` must be ids the harness hydrates for AUDIT_VIEWER; `narrowToMinor` and `refuse`
- * set the harness's word audit to a minor verdict and to a refusal.
+ * set the harness's word audit to a minor verdict and to a refusal. A refusal hands the audit its
+ * deferred run as the second argument of `recorded`.
  */
 export function describeSemanticAuditContract({
   index,
@@ -26,6 +27,7 @@ export function describeSemanticAuditContract({
   recorded,
   narrowToMinor,
   refuse,
+  ownCache = false,
 }: {
   index: SemanticAuditEntry['index'];
   run: Run;
@@ -33,10 +35,16 @@ export function describeSemanticAuditContract({
   recorded: Mock;
   narrowToMinor: () => void;
   refuse: () => void;
+  /** The service wraps the source in its own candidate cache, which sets `cacheHit` itself. */
+  ownCache?: boolean;
 }) {
   const source =
-    (guard: GuardRead & { refused?: boolean }, served = ids): CandidateSource =>
-    async ({ offset, limit }) => ({ ids: served.slice(offset, offset + limit), guard });
+    (
+      guard: (GuardRead & { refused?: boolean }) | undefined,
+      served = ids,
+      extra: Partial<Awaited<ReturnType<CandidateSource>>> = {}
+    ): CandidateSource =>
+    async ({ offset, limit }) => ({ ids: served.slice(offset, offset + limit), guard, ...extra });
   const shadowFlag: GuardRead = {
     outcome: 'flag',
     rules: ['block:rule_a'],
@@ -82,9 +90,35 @@ export function describeSemanticAuditContract({
 
     it('records a refused search, with no guard verdict and nothing served', async () => {
       refuse();
-      await run({ source: source(shadowFlag), user: AUDIT_VIEWER });
+      const result = await run({ source: source(shadowFlag), user: AUDIT_VIEWER });
+      expect(result.items).toEqual([]);
       expect(entry()?.wordVerdict).toBeTruthy();
-      expect(entry()).toMatchObject({ guard: { outcome: 'none' }, resultIds: [] });
+      expect(entry()).toMatchObject({
+        guard: { outcome: 'none' },
+        resultIds: [],
+        resultsServed: true,
+      });
+    });
+
+    it('hands the audit a run of the refused search that it may make later', async () => {
+      refuse();
+      const src = vi.fn(source(shadowFlag));
+      await run({ source: src, user: AUDIT_VIEWER });
+      expect(src).not.toHaveBeenCalled();
+      const compute = recorded.mock.calls.at(-1)?.[1] as () => Promise<{ ids: number[] }>;
+      expect((await compute()).ids).toEqual(ids);
+      expect(src).toHaveBeenCalledTimes(1);
+    });
+
+    // A cache-wrapped service's hit is pinned in semantic-candidate-cache.test.ts.
+    it.skipIf(ownCache)('records a hit on the candidate cache', async () => {
+      await run({ source: source(shadowFlag, ids, { cacheHit: true }), user: AUDIT_VIEWER });
+      expect(entry()?.cacheHit).toBe(true);
+    });
+
+    it('records a search the service sent no guard result for as unknown', async () => {
+      await run({ source: source(undefined), user: AUDIT_VIEWER });
+      expect(entry()?.guard).toMatchObject({ outcome: 'unknown', rules: [] });
     });
 
     it('records nothing for a later page', async () => {

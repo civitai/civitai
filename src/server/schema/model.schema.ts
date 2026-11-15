@@ -221,7 +221,7 @@ export const modelGallerySettingsInput = z.object({
   hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
   hiddenImages: z.record(z.string(), z.number().array()).optional(),
-  level: z.number().optional(),
+  level: z.number().int().min(0).optional(),
   pinnedPosts: z
     .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
     .optional(),
