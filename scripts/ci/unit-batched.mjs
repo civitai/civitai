@@ -250,6 +250,16 @@ function gate(ref) {
   if (d.run) gh('workflow', 'run', 'lint.yml', '--repo', repo(), '--ref', ref, '-f', 'only=unit');
 }
 
+/**
+ * Is a red a flake? Only when there were failed files, every one still exists, and the re-run of
+ * them all passes (runner returns 0). The one place a red becomes a success, so it is strict.
+ */
+export function isFlaky(failed, { exists = existsSync, runner = runFiles } = {}) {
+  if (!failed.length) return false;
+  if (!failed.every((f) => exists(f))) return false;
+  return runner(failed) === 0;
+}
+
 /** Runs the failed files at the current checkout. 0 = all pass. */
 function runFiles(files) {
   const present = files.filter((f) => existsSync(f));
@@ -360,7 +370,7 @@ function verify(unitResult, reportsDir, shards) {
     lines.push(`${failed.length} failed file(s):`, ...failed.map((f) => `- \`${f}\``), '');
     console.log('Re-running the failed files at HEAD first.');
     // Every failed file must exist and pass: a re-run of nothing is not a pass.
-    flaky = failed.every((f) => existsSync(f)) && runFiles(failed) === 0;
+    flaky = isFlaky(failed);
     if (flaky) {
       lines.push(
         `**Flaky:** they pass on a re-run at HEAD, so this is not bisected: ${failed.join(', ')}`

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   decideRun,
   headVerdict,
+  isFlaky,
   statusTargets,
   failedFiles,
   parseFirstBad,
@@ -221,6 +222,36 @@ describe('statusTargets: every status a verdict posts', () => {
       { sha: HEAD, state: 'success', description: 'Unit suite passed at this commit.' },
     ]);
     expect(statusTargets({ unitResult: 'cancelled', head: HEAD })[0].state).toBe('error');
+  });
+});
+
+// The one place a red becomes a success, so every input that could fake a pass is pinned.
+describe('isFlaky: did every failed file pass on the re-run at HEAD?', () => {
+  const all = () => true;
+  const pass = () => 0;
+  const fail = () => 1;
+
+  it('a passing re-run with every file present is flaky', () => {
+    expect(isFlaky(['src/a.test.ts', 'src/b.test.ts'], { exists: all, runner: pass })).toBe(true);
+  });
+
+  it('a failing re-run is not flaky', () => {
+    expect(isFlaky(['src/a.test.ts'], { exists: all, runner: fail })).toBe(false);
+  });
+
+  // A re-run of fewer files than failed is not a pass of the ones left out.
+  it('a failed file that no longer exists is not flaky, even if the re-run passes', () => {
+    expect(
+      isFlaky(['src/a.test.ts', 'src/gone.test.ts'], {
+        exists: (f) => f !== 'src/gone.test.ts',
+        runner: pass,
+      })
+    ).toBe(false);
+  });
+
+  // Nothing re-run is no evidence of a pass (verify never reached the re-run with no files).
+  it('an empty failed list is not flaky', () => {
+    expect(isFlaky([], { exists: all, runner: pass })).toBe(false);
   });
 });
 

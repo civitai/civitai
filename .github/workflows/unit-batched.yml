@@ -7,10 +7,9 @@ name: Unit tests (main batch)
 # status, bisecting a red to the first bad merge commit. See lint.yml's header ("THE UNIT SUITE IS
 # THE EXCEPTION") and scripts/ci/unit-batched.mjs.
 #
-# THE CADENCE IS THIS CRON LINE AND NOTHING ELSE. :41 keeps it off the top of the hour, where
-# scheduled jobs pile up. scripts/__tests__/main-branch-ci-coverage.test.ts pins the interval at
-# 2 hours or less; going
-# wider is a contract change, so it fails until that guard is changed too.
+# THE CADENCE IS THIS CRON LINE. :41 keeps it off the top of the hour.
+# scripts/__tests__/main-branch-ci-coverage.test.ts bounds the interval (MAX_BATCH_HOURS);
+# widening it fails that guard until the guard changes too.
 on:
   schedule:
     - cron: '41 */2 * * *'
