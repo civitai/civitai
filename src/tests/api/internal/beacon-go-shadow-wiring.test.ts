@@ -65,7 +65,9 @@ class FakeRes extends EventEmitter {
   send(body: string) {
     return this.end(body);
   }
-  end() {
+  body: unknown;
+  end(chunk?: unknown) {
+    this.body = chunk;
     // Node emits 'finish' once the response is flushed, after the handler's synchronous work.
     setImmediate(() => this.emit('finish'));
     return this;
