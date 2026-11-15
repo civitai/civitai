@@ -61,7 +61,7 @@ var goldenProbeCases = []goldenProbeCase{
 // golden case here).
 func TestProbeRegistryMatchesGoldenCases(t *testing.T) {
 	got := make([]string, 0, len(probes))
-	var want []string
+	want := make([]string, 0, len(goldenProbeCases))
 	for p := range probes {
 		got = append(got, p)
 	}
