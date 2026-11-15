@@ -815,6 +815,14 @@ const fixtures: Fixture[] = [
     body: JSON.stringify({ ...viewBody, details: [1] }),
   },
   {
+    // Raw text, so the integer keys arrive AFTER the named ones: a JS object literal (as in
+    // anon-basic) would already have reordered them, hiding a key-order bug.
+    name: 'details-integer-keys-reordered',
+    endpoint: 'pulse',
+    headers: basePulse,
+    body: '{"type":"ImageView","entityType":"Image","entityId":1,"details":{"b":1,"2":"x","1":true,"10":0,"01":2,"4294967295":3,"a":{"z":0,"0":1}}}',
+  },
+  {
     name: 'details-proto',
     endpoint: 'pulse',
     headers: basePulse,
