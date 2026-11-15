@@ -20,14 +20,17 @@
  *                                  caps on open subscriptions, over both bindings (`limits.ts`)
  *   REGION_RESTRICTION_CONFIG, REGION_BLOCK_CONFIG
  *                                  the site's own region lists; both are held to SFW content
- *                                  here (`request-origin.ts`), and logged at startup
+ *                                  here (`request-origin.ts`), and logged at startup. Unlike the
+ *                                  site, a request with no region (no country header) is held
+ *                                  to SFW as well
  *
  * Auth (the registry's auth extension, `auth.ts`): no token is anonymous; a civitai OAuth access
  * token is verified as every `/api/v1` route verifies it (`auth.live.ts`). Each document, app and
  * app-release stream is narrowed to the apps whose rating its token's user may read
- * (`audience.ts`; none of the mature ones from a region the site restricts to SFW), each entity still tagged with its rating, and so is the schema stream's set of
- * collection schemas (the fixed entity schemas go to everyone); the `service` stream is the same
- * for everyone.
+ * (`audience.ts`; none of the mature ones from a region the site restricts to SFW, or from a
+ * request with no region), each entity still tagged with its rating, and so is the schema
+ * stream's set of collection schemas (the fixed entity schemas go to everyone); the `service`
+ * stream is the same for everyone.
  */
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
 import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';
@@ -69,7 +72,8 @@ function main() {
     resourceUrl && issuer
       ? { resource: resourceUrl, issuers: [issuer.replace(/\/+$/, '')] }
       : undefined;
-  // The region lists in force, so a missing configuration shows in the log; never fatal.
+  // The region lists in force, and that a request with no region is held to SFW, so a missing
+  // configuration shows in the log; never fatal.
   const regions = describeRegionConfig();
   for (const line of regions.info) console.log('registry-adapter:', line);
   for (const line of regions.warn) console.warn('registry-adapter: WARNING:', line);
