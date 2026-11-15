@@ -107,7 +107,10 @@ export function buildSemanticAuditRow(
     : !entry.withholdComputedIds && verdictComputesRefusedIds(entry.wordVerdict);
   // A refused search's ids are stored only past a guard read it can check rules against.
   const refusedUnchecked = !entry.resultsServed && guard.outcome === 'unknown';
-  const withhold = !idsAllowed || withheldByGuard || refusedUnchecked;
+  // A flag or unknown read that names no rule (one the service filled no rules for) withholds.
+  const unnamedFlag =
+    (guard.outcome === 'flag' || guard.outcome === 'unknown') && guard.rules.length === 0;
+  const withhold = !idsAllowed || withheldByGuard || refusedUnchecked || unnamedFlag;
   const userId = entry.viewer?.id;
   return {
     time: formatClickhouseDateTime64(at),
