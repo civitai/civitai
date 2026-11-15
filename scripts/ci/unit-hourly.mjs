@@ -100,7 +100,8 @@ export function failedFiles(reports, root) {
 
 /** The sha `git bisect run` printed as the first bad commit, or null. */
 export function parseFirstBad(output) {
-  return /^([0-9a-f]{40}) is the first bad commit/m.exec(output)?.[1] ?? null;
+  // git 2.56 quotes the term (`is the first 'bad' commit`); older releases did not.
+  return /^([0-9a-f]{40}) is the first '?bad'? commit/m.exec(output)?.[1] ?? null;
 }
 
 const sh = (cmd, args, opts = {}) =>
