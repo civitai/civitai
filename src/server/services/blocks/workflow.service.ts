@@ -319,7 +319,7 @@ function classifyOutputs(
       // provider moderates a never-rated engine's own output, so an UNRATED video from
       // one is delivered — neither held nor locked — whatever the ceiling. A rating
       // that does arrive still meets every ceiling check.
-      unratedDelivered: neverRatedVideo && m.type === 'video',
+      unratedDelivered: false && neverRatedVideo && m.type === 'video',
     })
   );
 }
