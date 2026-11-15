@@ -37,7 +37,7 @@ func O(kv ...any) Obj {
 	}
 	o := make(Obj, 0, len(kv)/2)
 	for i := 0; i < len(kv); i += 2 {
-		o = append(o, KV{K: kv[i].(string), V: kv[i+1]})
+		o = append(o, KV{K: kv[i].(string), V: kv[i+1]}) //nolint:gosec // G602: len(kv) is even (checked above), so i+1 < len(kv)
 	}
 	return o
 }

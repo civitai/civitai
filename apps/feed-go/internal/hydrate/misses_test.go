@@ -95,14 +95,15 @@ func (m *missDB) load(f *pageFixture, c *MissCompute) (*Sources, *testkit.Redis)
 		}
 	}
 	many := func(v map[int][][]any) func(int) [][]any { return func(id int) [][]any { return v[id] } }
-	routes := []testkit.Route{
+	routes := make([]testkit.Route, 0, 6+len(db.Routes))
+	routes = append(routes,
 		m.route("users", `FROM "UserCosmetic" WHERE "userId" = ANY`, []string{"userId", "cosmeticId", "data"}, many(m.users)),
 		m.route("frames", `IS DISTINCT FROM 'string'`, []string{"cosmeticId", "equippedToId", "userData", "createdById"}, many(m.frames)),
 		m.route("events", `jsonb_typeof(c.data->'event') = 'string'`, []string{"cosmeticId", "equippedToId", "userId"}, many(m.events)),
 		m.route("listings", `FROM "CosmeticShopItem" si`, []string{"cosmeticId", "addedById", "status", "meta", "rejectionReason", "createdById"}, many(m.listings)),
 		m.route("tombstones", `SELECT id, flags FROM "Cosmetic"`, []string{"id", "flags"}, one(m.tombstones)),
 		m.route("records", `SELECT id, name, type::text AS type`, []string{"id", "name", "type", "data", "source", "flags"}, one(m.records)),
-	}
+	)
 	db.Routes = append(routes, db.Routes...)
 	r.Scripts = map[string]testkit.Script{HReplaceStampedExSource(): testkit.HReplaceStampedEx}
 	if c.Now == nil {

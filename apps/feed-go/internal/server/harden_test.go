@@ -604,7 +604,9 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true}
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true,
+		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
+		"feed_go_cache_miss_total": true}
 	checked := 0
 	for _, mf := range mfs {
 		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {

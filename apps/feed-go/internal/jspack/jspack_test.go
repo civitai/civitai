@@ -53,7 +53,8 @@ func TestFromJSONOrderAndPack(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := v.(Obj)
-	var keys, inner []string
+	keys := make([]string, 0, len(o))
+	var inner []string
 	for _, kv := range o {
 		keys = append(keys, kv.K)
 	}
