@@ -297,21 +297,23 @@ jobs:
       # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). The Fuzz step fails a
       # target whose final `execs: N` is below its floor (or missing): a run that fuzzed nothing, or
       # stalled, is not a pass.
-      # Floors: about half the LOWEST final count over three green runs (43686322270, 43686825094,
-      # 43687297743) at FUZZ_TIME=20s. Counts vary up to ~18x between runs on shared runners, so a
-      # floor from one run would flake. To change one: read the "execs" summary line the Fuzz step
-      # prints for each target over a few runs, and set the floor to about half the lowest; scale
-      # all floors with FUZZ_TIME.
+      # Floors: about half the LOWEST final count over three green runs with FUZZ_MINIMIZE=100x
+      # (43696056937, 43696476752, 43697027775) at FUZZ_TIME=20s, and never below the floor set
+      # before the minimize bound (FuzzParse keeps its 180000: half its lowest, 275844, is less).
+      # Counts varied up to ~2.1x between those runs; before the bound they varied up to ~18x,
+      # consistent with the minimization stall. To change one: read the "execs" summary line the
+      # Fuzz step prints for each target over a few runs, and set the floor to about half the
+      # lowest; scale all floors with FUZZ_TIME.
       FUZZ_TARGETS: >-
-        internal/auth:FuzzTokenFromCookieHeader:90000
-        internal/auth:FuzzVerify:25000
+        internal/auth:FuzzTokenFromCookieHeader:120000
+        internal/auth:FuzzVerify:67000
         internal/feed:FuzzParse:180000
-        internal/hydrate:FuzzUnpack:100000
-        internal/shadow:FuzzCompare:11000
-        internal/shadow:FuzzCompareJSON:6000
-        internal/superjson:FuzzAppendString:42000
-        internal/superjson:FuzzSerialize:11000
-        internal/trpc:FuzzDecodeEnvelope:100000
+        internal/hydrate:FuzzUnpack:180000
+        internal/shadow:FuzzCompare:280000
+        internal/shadow:FuzzCompareJSON:390000
+        internal/superjson:FuzzAppendString:440000
+        internal/superjson:FuzzSerialize:170000
+        internal/trpc:FuzzDecodeEnvelope:150000
     steps:
       - uses: actions/checkout@v7
 
