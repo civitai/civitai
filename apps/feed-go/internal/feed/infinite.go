@@ -7,9 +7,11 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -126,15 +128,77 @@ type InfiniteSources interface {
 // BlockedTagsKey is REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS, on the cache cluster.
 const BlockedTagsKey = "system:blocked-browsing-tags"
 
+// BlockedTagsTTL is SYSTEM_CACHE_INPROC_TTL_MS: how long getBlockedBrowsingTags' in-process memo
+// (createTtlMemo) serves a list it read before reading the cache again.
+const BlockedTagsTTL = 30 * time.Second
+
+// blockedTagsReadTimeout bounds the one shared read of a refresh (it runs detached from any one
+// caller's context, so a caller that leaves cannot fail the others waiting on it).
+const blockedTagsReadTimeout = 2 * time.Second
+
 // BlockedTags reads getBlockedBrowsingTags' list: the ids of `system:blocked-browsing-tags`. A key
 // Node would rebuild (absent or unreadable as a list) falls back, as does a read error.
+//
+// Like Node's createTtlMemo, a list read successfully is served from memory for TTL; an error is
+// never memoized (the next call reads again). Concurrent callers of an expired memo share one read
+// (single flight). The returned map is shared: callers must not modify it.
 type BlockedTags struct {
 	Cache  redis.UniversalClient
 	Prefix string
+	// TTL is the memo's lifetime (0 = BlockedTagsTTL; negative = no memo).
+	TTL time.Duration
+	// Now is the memo's clock (nil = time.Now; tests replace it).
+	Now func() time.Time
+
+	mu      sync.Mutex
+	ids     map[int]bool
+	readAt  time.Time
+	refresh singleflight.Group
 }
 
 // IDs returns the blocked tag ids.
 func (b *BlockedTags) IDs(ctx context.Context) (map[int]bool, error) {
+	ttl := b.TTL
+	if ttl == 0 {
+		ttl = BlockedTagsTTL
+	}
+	now := time.Now
+	if b.Now != nil {
+		now = b.Now
+	}
+	if ttl > 0 {
+		b.mu.Lock()
+		ids, fresh := b.ids, b.ids != nil && now().Sub(b.readAt) < ttl
+		b.mu.Unlock()
+		if fresh {
+			return ids, nil
+		}
+	}
+	ch := b.refresh.DoChan("ids", func() (any, error) {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), blockedTagsReadTimeout)
+		defer cancel()
+		ids, err := b.read(rctx)
+		if err != nil {
+			return nil, err
+		}
+		b.mu.Lock()
+		b.ids, b.readAt = ids, now()
+		b.mu.Unlock()
+		return ids, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(map[int]bool), nil
+	}
+}
+
+// read is one read of the cache key, without the memo.
+func (b *BlockedTags) read(ctx context.Context) (map[int]bool, error) {
 	raw, err := b.Cache.Get(ctx, b.Prefix+BlockedTagsKey).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, fallback.New("blocked-tags-miss")

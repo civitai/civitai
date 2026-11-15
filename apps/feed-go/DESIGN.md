@@ -708,8 +708,10 @@ not read them, and their cache misses (a fallback on the gallery procedure) cost
 `src/server/trpc/feed-go-shadow.ts` (`beginV1Images` / `captureV1Images`), wired in the route's
 handler. Its own Flipt flag, so the REST route is enabled separately from the gallery procedure; it
 shares `FEED_GO_SHADOW_URL`, the sample rate and the in-flight cap with `feed-go-shadow`, and has its
-own per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size, so REST traffic cannot starve
-the gallery's samples. The sampling decision is made after the handler's cheap rejects (the 400 and
+own per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size, so REST traffic cannot spend
+the gallery's tokens. The in-flight cap is shared, though: while feed-go is slow to answer, REST
+samples hold slots and the gallery's are dropped as overload
+(`civitai_app_feed_go_shadow_samples_total{outcome="dropped_overload",feed_endpoint="as-posts"}`). The sampling decision is made after the handler's cheap rejects (the 400 and
 429) and its bulkhead slot, and the in-flight slot and the token are taken only once the handler has
 answered 200, so a sample holds nothing while the handler runs. A sampled 200 keeps a reference to the
 body the handler passes to `res.json`; after the handler, from `setImmediate` and never awaited, it
@@ -870,7 +872,11 @@ server transformer captures the envelope Node wrote, and `finish` posts
 `{ input, headers, node }` to `/internal/shadow/image.getInfinite` after a 200, from `setImmediate`,
 never awaited. It shares `FEED_GO_SHADOW_URL`, the sample rate and the in-flight cap with the other
 routes and has its own per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size, so it cannot
-starve the gallery's or the REST route's samples. Outcomes are counted in
+spend the gallery's or the REST route's tokens. The bucket isolates tokens only, not in-flight slots:
+the cap is shared, so while feed-go is slow to answer, this route's samples can hold the slots and the
+other routes record `dropped_overload` (read
+`civitai_app_feed_go_shadow_samples_total{outcome="dropped_overload",feed_endpoint="as-posts"}` beside
+this route's own rate). Outcomes are counted in
 `civitai_app_feed_go_shadow_samples_total{outcome,feed_endpoint="infinite"}`, seeded at 0 for every
 outcome; the encode counters carry the label too.
 
@@ -907,5 +913,6 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="infinite",m
 - the username lookup runs on this service's replica only (Node's hydrate reads the primary next);
 - a post scope's `nextCursor` is the look-ahead row's raw index (`0`, or `null` when that index is
   NULL), exactly as Node's; whatever the client then does with such a cursor, both sides do the same;
-- the blocked tag list is read from its cache key only (Node memoizes it per pod for 30 s, so a changed
-  list reaches both within that window).
+- the blocked tag list is read from its cache key and memoized in-process for 30 s (single flight, an
+  error never memoized), as Node's `createTtlMemo` does: a changed list reaches both within that
+  window, each pod on its own clock.

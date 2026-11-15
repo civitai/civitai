@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -126,6 +127,83 @@ func TestBlockedTags(t *testing.T) {
 	r.SetString("ns:"+BlockedTagsKey, []byte(`[{"id":9,"name":"x"}]`))
 	if got, err := b.IDs(context.Background()); err != nil || !reflect.DeepEqual(got, map[int]bool{9: true}) {
 		t.Fatalf("ids = %v, %v", got, err)
+	}
+}
+
+// The blocked-tag list is memoized in-process for BlockedTagsTTL, as getBlockedBrowsingTags'
+// createTtlMemo: a fresh list is served without a read, an expired one is read again, an error is
+// never memoized, and concurrent callers of an expired memo share one read.
+func TestBlockedTagsMemo(t *testing.T) {
+	r := testkit.NewRedis()
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	b := &BlockedTags{Cache: r, Now: func() time.Time { return clock }}
+	ctx := context.Background()
+	// An error is not memoized: the key absent twice is two reads.
+	for i := 0; i < 2; i++ {
+		if _, err := b.IDs(ctx); fallback.Reason(err) != "blocked-tags-miss" {
+			t.Fatalf("absent key, call %d: %v", i, err)
+		}
+	}
+	if r.Calls != 2 {
+		t.Fatalf("reads after two misses = %d, want 2", r.Calls)
+	}
+	r.SetString(BlockedTagsKey, []byte(`[{"id":1,"name":"a"}]`))
+	if got, err := b.IDs(ctx); err != nil || !reflect.DeepEqual(got, map[int]bool{1: true}) {
+		t.Fatalf("first read = %v, %v", got, err)
+	}
+	// Within the TTL the cache is not read, so a changed key is not seen yet.
+	r.SetString(BlockedTagsKey, []byte(`[{"id":2,"name":"b"}]`))
+	clock = clock.Add(29 * time.Second)
+	if got, err := b.IDs(ctx); err != nil || !reflect.DeepEqual(got, map[int]bool{1: true}) || r.Calls != 3 {
+		t.Fatalf("within the TTL = %v, %v after %d reads; want the memo and 3 reads", got, err, r.Calls)
+	}
+	// Past it the next call reads the new list.
+	clock = clock.Add(2 * time.Second)
+	if got, err := b.IDs(ctx); err != nil || !reflect.DeepEqual(got, map[int]bool{2: true}) || r.Calls != 4 {
+		t.Fatalf("past the TTL = %v, %v after %d reads; want the new list and 4 reads", got, err, r.Calls)
+	}
+	// A negative TTL turns the memo off (the control: every call reads).
+	off := &BlockedTags{Cache: r, TTL: -1}
+	_, _ = off.IDs(ctx)
+	_, _ = off.IDs(ctx)
+	if r.Calls != 6 {
+		t.Fatalf("memo off: %d reads, want 6", r.Calls)
+	}
+
+	// Single flight: twenty callers of an empty memo, the read held long enough to overlap them all.
+	slow := testkit.NewRedis()
+	slow.SetString(BlockedTagsKey, []byte(`[{"id":3,"name":"c"}]`))
+	slow.Delay = 100 * time.Millisecond
+	shared := &BlockedTags{Cache: slow}
+	var wg sync.WaitGroup
+	errs := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got, err := shared.IDs(ctx)
+			if err == nil && !got[3] {
+				err = errors.New("wrong list")
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if slow.Calls != 1 {
+		t.Fatalf("concurrent callers made %d reads, want 1", slow.Calls)
+	}
+	// A caller that leaves does not fail the shared read, and gets its own context's error.
+	gone := &BlockedTags{Cache: slow}
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := gone.IDs(cctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled caller: %v", err)
 	}
 }
 

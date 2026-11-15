@@ -53,5 +53,5 @@ falls back (`index-feed-unconfigured`). The REST endpoint's shadow also needs
 Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `infinite`), so parity
 and CPU per call read per endpoint (DESIGN.md §10, §13, §14). The Node sampler for `image.getInfinite`
 is its own Flipt flag, `feed-go-shadow-infinite` (default off), sharing `FEED_GO_SHADOW_URL` and the
-rate and in-flight knobs with the other routes. It is not called `endpoint` because that is a reserved
-scrape target label: the scraper's own `endpoint` would overwrite it.
+rate and in-flight knobs with the other routes. The `feed_endpoint` label is not called `endpoint`
+because that is a reserved scrape target label: the scraper's own `endpoint` would overwrite it.
