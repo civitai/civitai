@@ -514,7 +514,7 @@ describe('🔴 round 2 — a mesh is rated only when EVERY rating source has rat
             model: mesh('rm'),
             ...(opts.thumbnail === 'absent'
               ? {}
-              : { thumbnail: image('rt', opts.thumbnail ?? 'pg13') }),
+              : { thumbnail: image('rt', opts.thumbnail === undefined ? 'pg13' : opts.thumbnail) }),
           },
         },
         ...(opts.preview === 'absent' || opts.preview === undefined
