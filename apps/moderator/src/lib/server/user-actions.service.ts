@@ -289,6 +289,7 @@ export type ModEndpoint =
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
+  | 'search-query-rule-dry-run'
   | 'storyline/lift-title-takedown'
   | 'storyline/resolve-title-appeal'
   | 'strike/create'
