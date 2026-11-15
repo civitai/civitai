@@ -229,6 +229,7 @@ import {
   fetchThroughCache,
 } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
@@ -2820,7 +2821,8 @@ export async function applyModelFlagSideEffects({
   const minorChanged = after.minor !== before.minor || after.sfwOnly !== before.sfwOnly;
 
   // Update search index if listing changes
-  if (tagsChanged || poiChanged || minorChanged) {
+  const listingChanged = tagsChanged || poiChanged || minorChanged;
+  if (listingChanged) {
     await modelTagCache.refresh(id);
     if (tagsChanged) await modelVotableTagsCache.bust(id);
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -2868,6 +2870,9 @@ export async function applyModelFlagSideEffects({
   }
 
   const heldLevelChanged = galleryBrowsingLevelChanged && (after.minor || after.sfwOnly);
+  // The search document carries the held showcase, so it is rebuilt at the new level.
+  if (heldLevelChanged && !listingChanged)
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   if (minorChanged || heldLevelChanged) await purgeHeldShowcase(id, modelVersionIds);
 }
 
@@ -6322,24 +6327,33 @@ const addReciprocalAssociations = async ({
 };
 // #endregion
 
-export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
-  const cacheKey = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
+const gallerySettingsKey = (id: number) => `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
 
-  const cachedSettings = await redis.get(cacheKey);
-  if (cachedSettings) {
-    type Cached =
-      | (Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
-          creatorHiddenUserIds?: number[];
-          sfwHeld?: boolean;
-        })
-      | { none: true };
-    // A build before the hold cached a bare null.
-    const cached = fromJson<Cached>(cachedSettings) as Cached | null;
-    // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
-    // unflagged model with no settings from a flagged one.
-    if (cached && 'none' in cached) return null;
-    if (cached?.sfwHeld !== undefined) return cached;
-  }
+type CachedGallerySettings = Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
+  creatorHiddenUserIds?: number[];
+  sfwHeld?: boolean;
+};
+
+/** A cached gallery settings entry: the settings, null for none, undefined when it must be rebuilt. */
+function parseCachedGallerySettings(raw: string | null | undefined) {
+  if (!raw) return undefined;
+  // A build before the hold cached a bare null.
+  const cached = fromJson<CachedGallerySettings | { none: true }>(raw) as
+    | CachedGallerySettings
+    | { none: true }
+    | null;
+  // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
+  // unflagged model with no settings from a flagged one.
+  if (cached && 'none' in cached) return null;
+  if (cached?.sfwHeld !== undefined) return cached;
+  return undefined;
+}
+
+export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
+  const cacheKey = gallerySettingsKey(id);
+
+  const cached = parseCachedGallerySettings(await redis.get(cacheKey));
+  if (cached !== undefined) return cached;
 
   const model = await getModel({
     id: id,
@@ -6494,17 +6508,10 @@ export async function getHeldGalleryLevel(selector: ImageModelSelector) {
   const modelIds = await resolveImageModelIds(selector);
   if (!modelIds) return 0;
 
-  // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
-  const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
-  await limitConcurrency(
-    [...modelIds].map((id) => async () => {
-      galleries.push(await getGallerySettingsByModelId({ id }));
-    }),
-    5
-  );
+  const levels = await getShowcaseHeldLevels([...modelIds].map((modelId) => ({ modelId })));
   let held: number | undefined;
-  for (const gallery of galleries)
-    if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
+  for (const level of levels.values())
+    held = Flags.intersection(held ?? allBrowsingLevelsFlag, level);
   return held;
 }
 
@@ -6550,7 +6557,10 @@ export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?
  * For each post on a minor or SFW-only model, the level its images may be served at and the model's
  * owner, who sees them whole. A post on no held model, or not yet on the replica, is absent.
  */
-export async function getHeldLevelsByPost(postIds: number[]) {
+export async function getHeldLevelsByPost(
+  postIds: number[],
+  { withOwners = true }: { withOwners?: boolean } = {}
+) {
   const held = new Map<number, { level: number; ownerId?: number }>();
   const ids = uniq(postIds);
   if (!ids.length) return held;
@@ -6561,19 +6571,17 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   if (!versionIds.length) return held;
   const versions = await versionModelCache().fetch(versionIds);
 
-  const levels = new Map<number, number>();
-  await limitConcurrency(
-    uniq(Object.values(versions).map((version) => version.modelId)).map((id) => async () => {
-      const gallery = await getGallerySettingsByModelId({ id });
-      if (gallery?.sfwHeld) levels.set(id, gallery.level);
-    }),
-    5
+  const levels = await getShowcaseHeldLevels(
+    Object.values(versions).map((version) => ({ modelId: version.modelId }))
   );
   if (!levels.size) return held;
-  const owners = await dbRead.model.findMany({
-    where: { id: { in: [...levels.keys()] } },
-    select: { id: true, userId: true },
-  });
+  // Readers that exempt no one skip the owner read.
+  const owners = withOwners
+    ? await dbRead.model.findMany({
+        where: { id: { in: [...levels.keys()] } },
+        select: { id: true, userId: true },
+      })
+    : [];
   const ownerOf = new Map(owners.map((model) => [model.id, model.userId]));
 
   for (const id of ids) {
@@ -6585,28 +6593,58 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   return held;
 }
 
+/** Who sees a held model's showcase whole: its owner or a moderator, on a session or full-access key. */
+export type HeldGalleryViewer = { id: number; isModerator: boolean };
+
 /**
- * Showcase images by model version, leaving out those above the gallery level of each version's
- * minor or SFW-only model. For reads no viewer sees whole, such as the public API. `models` maps
- * each version to its model, with the model's flags where the caller read the row: a flagged row is
- * held even when its cached gallery settings say otherwise. A model whose settings cannot be read
- * is served at SFW for this request. Never mutates `byVersion`: its entries can be the shared cache's.
+ * The viewer a tRPC read exempts from the showcase hold. An app or scoped key acting for a user is
+ * held like anyone else. Read it before any await: a request's other calls share `ctx`.
  */
-export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
-  byVersion: Record<number, E>,
-  models: Map<number, { modelId: number; minor?: boolean; sfwOnly?: boolean }>
-): Promise<Record<number, E>> {
+export function heldGalleryViewer(
+  ctx: Parameters<typeof isSessionOrFullUserKey>[0] & {
+    user?: { id: number; isModerator?: boolean | null } | null;
+  }
+): HeldGalleryViewer | undefined {
+  if (!ctx.user || !isSessionOrFullUserKey(ctx)) return undefined;
+  return { id: ctx.user.id, isModerator: !!ctx.user.isModerator };
+}
+
+/**
+ * For each minor or SFW-only model, the level its showcase images may be served at. Flags, where
+ * the caller read the row, decide on their own: a flagged row is held even when its cached gallery
+ * settings say otherwise, and an unflagged row is not read. A model whose settings cannot be read
+ * is held at SFW for this request.
+ */
+export async function getShowcaseHeldLevels(
+  models: { modelId: number; minor?: boolean; sfwOnly?: boolean }[]
+) {
   const flagsOf = new Map<number, { minor: boolean; sfwOnly: boolean }>();
-  for (const { modelId, minor, sfwOnly } of models.values())
+  for (const { modelId, minor, sfwOnly } of models)
     if (minor !== undefined && sfwOnly !== undefined) flagsOf.set(modelId, { minor, sfwOnly });
 
   const levels = new Map<number, number>();
+  const ids = uniq(models.map((m) => m.modelId)).filter((id) => {
+    const flags = flagsOf.get(id);
+    return !flags || flags.minor || flags.sfwOnly;
+  });
+  // One read for the whole page; a miss, or a failed read, is built one model at a time below.
+  const cached = new Map<number, CachedGallerySettings | null>();
+  if (ids.length) {
+    try {
+      const raws = await redis.mGet(ids.map(gallerySettingsKey));
+      ids.forEach((id, i) => {
+        const settings = parseCachedGallerySettings(raws[i]);
+        if (settings !== undefined) cached.set(id, settings);
+      });
+    } catch {
+      // Each model is then read on its own, and held at SFW if that fails too.
+    }
+  }
   await limitConcurrency(
-    uniq([...models.values()].map((m) => m.modelId)).map((id) => async () => {
+    ids.map((id) => async () => {
       const flags = flagsOf.get(id);
-      if (flags && !flags.minor && !flags.sfwOnly) return;
       try {
-        const gallery = await getGallerySettingsByModelId({ id });
+        const gallery = cached.has(id) ? cached.get(id) : await getGallerySettingsByModelId({ id });
         if (gallery?.sfwHeld) levels.set(id, gallery.level);
         else if (flags) levels.set(id, heldGalleryLevel(undefined, flags));
       } catch (error) {
@@ -6622,20 +6660,69 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
     }),
     5
   );
+  return levels;
+}
+
+/** The images a held level allows; all of them when the level is undefined. */
+export function withinHeldLevel<T extends { nsfwLevel: number }>(images: T[], level?: number) {
+  return level === undefined
+    ? images
+    : images.filter((image) => Flags.intersects(level, image.nsfwLevel));
+}
+
+/**
+ * Showcase images by model version, leaving out those above the gallery level of each version's
+ * minor or SFW-only model (see `getShowcaseHeldLevels`). `models` maps a version to its model, with
+ * the model's flags and owner where the caller read the row; a version it leaves out is resolved
+ * through the version cache. A `viewer` sees the whole showcase when they moderate or own the
+ * model; pass none where no one is exempt (the public API, the search index, results shared
+ * between viewers). Never mutates `byVersion`: its entries can be the shared cache's.
+ */
+export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: Map<number, { modelId: number; minor?: boolean; sfwOnly?: boolean; ownerId?: number }>,
+  viewer?: HeldGalleryViewer
+): Promise<Record<number, E>> {
+  if (viewer?.isModerator) return byVersion;
+  const modelOf = new Map(models);
+  const unmapped = Object.keys(byVersion)
+    .map(Number)
+    .filter((id) => !modelOf.has(id));
+  if (unmapped.length) {
+    const versions = await versionModelCache().fetch(unmapped);
+    for (const version of Object.values(versions))
+      modelOf.set(version.id, { modelId: version.modelId });
+  }
+
+  const levels = await getShowcaseHeldLevels(
+    [...modelOf.values()].filter((m) => !viewer || m.ownerId !== viewer.id)
+  );
+  const owners = new Map<number, number>();
+  if (viewer) {
+    const unknown = uniq(
+      [...modelOf.values()]
+        .filter((m) => m.ownerId === undefined && levels.has(m.modelId))
+        .map((m) => m.modelId)
+    );
+    if (unknown.length) {
+      const rows = await dbRead.model.findMany({
+        where: { id: { in: unknown } },
+        select: { id: true, userId: true },
+      });
+      for (const row of rows) owners.set(row.id, row.userId);
+    }
+  }
 
   const result: Record<number, E> = {};
   for (const [key, entry] of Object.entries(byVersion)) {
     const versionId = Number(key);
-    const modelId = models.get(versionId)?.modelId;
+    const model = modelOf.get(versionId);
+    const ownedByViewer =
+      !!viewer && !!model && (model.ownerId ?? owners.get(model.modelId)) === viewer.id;
     // A version with no model to clear it serves none of its images.
-    const level = modelId === undefined ? 0 : levels.get(modelId);
+    const level = !model ? 0 : ownedByViewer ? undefined : levels.get(model.modelId);
     result[versionId] =
-      level === undefined
-        ? entry
-        : {
-            ...entry,
-            images: entry.images.filter((image) => Flags.intersects(level, image.nsfwLevel)),
-          };
+      level === undefined ? entry : { ...entry, images: withinHeldLevel(entry.images, level) };
   }
   return result;
 }

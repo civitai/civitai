@@ -218,6 +218,7 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
           nsfw: true,
           poi: true,
           minor: true,
+          sfwOnly: true,
           meta: true,
           user: {
             select: userWithCosmeticsSelect,
@@ -226,9 +227,22 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
       },
     },
   });
-  // The tag-attaching wrapper (`getImagesForModelVersionCache`) costs a second cache
-  // round-trip for tags no auction card reads.
-  const imageData = await imagesForModelVersionsCache.fetch(entityIds);
+  // Auction cards are shared between viewers, so no one is exempt from the hold.
+  const { holdShowcaseImages } = await import('~/server/services/model.service');
+  const imageData = await holdShowcaseImages(
+    // Not the tag-attaching `getImagesForModelVersionCache`: its second round-trip fetches tags no
+    // auction card reads.
+    await imagesForModelVersionsCache.fetch(entityIds),
+    new Map(
+      mvData.map(
+        (mv) =>
+          [
+            mv.id,
+            { modelId: mv.model.id, minor: mv.model.minor, sfwOnly: mv.model.sfwOnly },
+          ] as const
+      )
+    )
+  );
   const mvById = new Map(mvData.map((d) => [d.id, d]));
 
   return data.map((b) => {
