@@ -813,6 +813,20 @@ export const articleContentImageSelect = {
   tosViolation: true,
 } satisfies Prisma.ImageSelect;
 
+/**
+ * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
+ * article's owner who uploaded it may see it. Read and save share this so a save keeps exactly what
+ * the edit form could not show.
+ */
+function modelHidesArticleImage(
+  image: { id: number; userId: number },
+  withheld: Set<number>,
+  viewerId: number | undefined,
+  articleUserId: number
+) {
+  return withheld.has(image.id) && !(viewerId === articleUserId && image.userId === articleUserId);
+}
+
 export const getArticleById = async ({
   id,
   userId,
@@ -876,9 +890,7 @@ export const getArticleById = async ({
           [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)
         );
     const hiddenByModel = (image: { id: number; userId: number } | null) =>
-      !!image &&
-      withheldByModel.has(image.id) &&
-      !(userId === article.userId && image.userId === article.userId);
+      !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
     const coverImage = viewableArticleImage(coverHidden ? null : article.coverImage, isOwnerOrMod);
@@ -1163,7 +1175,9 @@ export const upsertArticle = async ({
             })
           : [];
         const hiddenIds = new Set(
-          owners.filter((image) => image.userId !== userId).map((image) => image.id)
+          owners
+            .filter((image) => modelHidesArticleImage(image, withheld, userId, article.userId))
+            .map((image) => image.id)
         );
         if (coverId === null && article.coverId && hiddenIds.has(article.coverId))
           coverId = undefined;

@@ -284,8 +284,9 @@ export function collectionItemCoversSql({
 }
 
 /**
- * Of these image ids, the ones their model withholds from every viewer but moderators (taken down,
- * or above a minor or SFW-only model's gallery level): the rule `imageAllowedByItsModelSql` applies.
+ * Of these image ids, the ones their model withholds (taken down, or above a minor or SFW-only
+ * model's gallery level): the rule `imageAllowedByItsModelSql` applies. No viewer exemption here;
+ * callers exempt moderators and owners.
  */
 export async function getModelWithheldImageIds(
   imageIds: number[],
