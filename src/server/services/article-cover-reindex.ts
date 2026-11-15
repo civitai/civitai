@@ -27,7 +27,8 @@ export async function queueModelArticlesReindex(modelId: number) {
     const ids = await getArticleIdsCoveredByModel(modelId);
     for (const batch of chunk(ids, 500))
       await articlesSearchIndex.queueUpdate(
-        batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+        { reason: 'model-hold' }
       );
   } catch (error) {
     logToAxiom({

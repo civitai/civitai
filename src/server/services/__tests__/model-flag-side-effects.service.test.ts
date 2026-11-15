@@ -48,7 +48,8 @@ vi.mock('~/server/services/collection-index-sync', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   queueModelCollectionsReindex: mockCollectionsReindex,
 }));
-vi.mock('~/server/services/article-cover-reindex', () => ({
+vi.mock('~/server/services/article-cover-reindex', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   queueModelArticlesReindex: mockArticlesReindex,
 }));
 vi.mock('~/server/search-index', () => ({

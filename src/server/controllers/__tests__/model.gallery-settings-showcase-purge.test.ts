@@ -13,7 +13,8 @@ const {
   mockCollectionsReindex: vi.fn(async () => undefined),
   mockArticlesReindex: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/services/article-cover-reindex', () => ({
+vi.mock('~/server/services/article-cover-reindex', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   queueModelArticlesReindex: mockArticlesReindex,
 }));
 vi.mock('~/server/services/collection-index-sync', async (importOriginal) => ({

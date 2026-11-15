@@ -197,7 +197,8 @@ export const pushData = async (
 ) => {
   await updateDocs({
     indexName,
-    documents: records as any[],
+    // An explicit null: the update merges, so a document without the key keeps its stored cover.
+    documents: records.map((record) => ({ ...record, coverImage: record.coverImage ?? null })),
     batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
   });
   // `updateDocs` upserts: an article that stopped qualifying keeps its old document otherwise.
