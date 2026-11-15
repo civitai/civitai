@@ -61,9 +61,21 @@ func TestPprofOnInternalMuxOnlyWhenToggleOn(t *testing.T) {
 			t.Errorf("public %s: %d, want 404", p, code)
 		}
 	}
-	for _, p := range []string{"/metrics", "/healthz", "/internal/shadow/" + Procedure} {
+	for _, p := range []string{"/metrics", "/healthz", "/internal/shadow/" + Procedure, "/internal/shadow/api/v1/images"} {
 		if code := statusOf(public, p); code != http.StatusNotFound {
 			t.Errorf("public %s: %d, want 404 (internal routes stay internal)", p, code)
 		}
+	}
+}
+
+// The v1-images shadow is routed on the internal listener: a GET is refused by the handler itself
+// (405), not by the mux (404).
+func TestV1ImagesShadowRouteOnInternalMux(t *testing.T) {
+	internal := InternalMux(muxServer(), okHandler(), false)
+	if code := statusOf(internal, "/internal/shadow/api/v1/images"); code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /internal/shadow/api/v1/images: %d, want 405", code)
+	}
+	if code := statusOf(internal, "/internal/shadow/api/v1/nope"); code != http.StatusNotFound {
+		t.Fatalf("unknown shadow path: %d, want 404", code)
 	}
 }

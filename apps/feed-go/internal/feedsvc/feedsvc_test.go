@@ -170,3 +170,29 @@ func TestClientFetch(t *testing.T) {
 		t.Fatalf("a 400 is an answer with its status: %+v %v", a, err)
 	}
 }
+
+// The public images endpoint ('rest' caller): a post's media are paged in the requested sort, and the
+// creator filter is sent as `userIds`, between versionIds and types as URLSearchParams appends them.
+func TestMapRestCaller(t *testing.T) {
+	q := Query{Rest: true, BrowsingLevel: 1, ExcludedTagIDs: []int{5}, ModelVersionID: 9, PostID: 30, UserID: 42,
+		Types: []string{"video"}, DisableMinor: true, DisablePoi: true, ViewerID: 7, Sort: "Oldest", Period: "Week",
+		Limit: 50, CursorText: "100"}
+	got, ref := Map(q)
+	if ref != nil {
+		t.Fatalf("refused %+v", ref)
+	}
+	want := "levels=1&excludedTags=5&versionIds=9&userIds=42&types=video&excludeMinor=1&excludePoi=1&viewerId=7&postIds=30&sort=oldest&periodDays=7&limit=50&offset=100"
+	if got != want {
+		t.Fatalf("\n got %s\nwant %s", got, want)
+	}
+	// The site's own post page keeps the author's order, which the feed cannot give.
+	q.Rest = false
+	if _, ref := Map(q); ref == nil || ref.Reason != "input:postId" || ref.Rejected {
+		t.Fatalf("website postId: %+v, want the input:postId skip", ref)
+	}
+	// The completion's limit bound applies to the completion only.
+	rest := Query{Rest: true, BrowsingLevel: 1, PostID: 30, Sort: "Newest", Limit: 300}
+	if got, ref := Map(rest); ref != nil || got != "levels=1&postIds=30&sort=newest&limit=200" {
+		t.Fatalf("rest postId over the feed limit: %q %+v", got, ref)
+	}
+}

@@ -175,7 +175,12 @@ async function outcomeCounts(): Promise<Record<string, number>> {
   );
   if (!metric) return {};
   const { values } = await metric.get();
-  return Object.fromEntries(values.map((v) => [String(v.labels.outcome), v.value]));
+  // This route's series only: the REST route's (endpoint v1-images) are seeded at 0 too.
+  return Object.fromEntries(
+    values
+      .filter((v) => v.labels.endpoint === 'as-posts')
+      .map((v) => [String(v.labels.outcome), v.value])
+  );
 }
 
 const SUPERJSON_PAYLOAD = JSON.parse(JSON.stringify(superjson.serialize(PAYLOAD)));

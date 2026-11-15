@@ -46,7 +46,7 @@ func metricValue(t *testing.T, reg *prometheus.Registry, name string, labels map
 }
 
 func phaseLabels(phase, outcome string) map[string]string {
-	return map[string]string{"phase": phase, "outcome": outcome}
+	return map[string]string{"endpoint": EndpointAsPosts, "phase": phase, "outcome": outcome}
 }
 
 // nodeEnvelope is a minimal superjson page both sides answer, so the comparison is a match.
@@ -109,7 +109,7 @@ func TestShadowPhasesRecordedForServedSample(t *testing.T) {
 	})
 	post(t, s, "{}")
 	waitFor(t, "the sample to finish", func() bool {
-		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"result": "match"})
+		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointAsPosts, "result": "match"})
 		return v == 1 && len(s.ShadowQueue) == 0
 	})
 
@@ -156,7 +156,7 @@ func TestShadowPhaseCPUOnlyForPhasesNoOtherSampleOverlapped(t *testing.T) {
 	})
 	matches := func(n float64) func() bool {
 		return func() bool {
-			v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"result": "match"})
+			v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointAsPosts, "result": "match"})
 			return v == n
 		}
 	}
@@ -208,7 +208,7 @@ func TestShadowPhaseCPUExcludesSampleAdmittedAndReleasedDuringPhase(t *testing.T
 	}
 	close(release)
 	waitFor(t, "A to finish", func() bool {
-		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"result": "match"})
+		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"endpoint": EndpointAsPosts, "result": "match"})
 		return v == 1 && len(s.ShadowQueue) == 0
 	})
 

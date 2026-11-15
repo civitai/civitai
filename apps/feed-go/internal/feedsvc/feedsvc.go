@@ -4,7 +4,8 @@
 // Postgres then supplies the rows.
 //
 // Map is mapSearchInputToFeedQuery (src/server/services/feed-shadow.service.ts) for the inputs this
-// service accepts, in 'primary' mode on the 'website' route; Client is fetchFeedAnswer +
+// service accepts, in 'primary' mode on the 'website' route (the gallery) or the 'rest' route (the
+// public `/api/v1/images` endpoint, getImagesFromFeedServiceForRest); Client is fetchFeedAnswer +
 // fetchFeedPrimary (src/server/services/feed-primary.service.ts).
 package feedsvc
 
@@ -63,8 +64,15 @@ type Query struct {
 	ViewerID int
 	// PostIDs is set only by the gallery's post completion, which always takes the requested sort.
 	PostIDs []int
-	Sort    string
-	Period  string
+	// Rest is the 'rest' caller (the public images endpoint): a post's media are sorted like any other
+	// page there, so PostID is served.
+	Rest bool
+	// PostID is the input's own `postId` (the REST endpoint's `?postId=`).
+	PostID int
+	// UserID is the creator filter (`userId`, or the id a `username` resolved to), sent as `userIds`.
+	UserID int
+	Sort   string
+	Period string
 	// Limit is the per-call limit (the handler's overscan), before the feed's own clamp.
 	Limit int
 	// The cursor: CursorText when the client sent a string, else CursorNum (0 = none).
@@ -177,13 +185,19 @@ func Map(q Query) (string, *Refusal) {
 	if q.RequiringMeta {
 		return skip("flag:requiringMeta")
 	}
-	postIDs := positive(q.PostIDs)
+	// `[...postIds, postId]`: the completion's list, then the input's own post.
+	postIDs := positive(append(append([]int(nil), q.PostIDs...), q.PostID))
 	if len(postIDs) > 0 {
-		// The completion is the only caller with postIds, and it always takes the requested sort.
+		// postIdsInRequestedSort: the completion (PostIDs) always takes the requested sort; a lone
+		// postId only on the 'rest' caller (the site's own post page keeps the author's order).
+		completion := len(q.PostIDs) > 0
+		if !q.Rest && !completion {
+			return skip("input:postId")
+		}
 		if len(postIDs) > MaxPostIDs {
 			return skip(fmt.Sprintf("postIds>%d", MaxPostIDs))
 		}
-		if q.Limit > MaxLimit {
+		if completion && q.Limit > MaxLimit {
 			return skip(fmt.Sprintf("postIds:limit>%d", MaxLimit))
 		}
 	}
@@ -264,6 +278,9 @@ func Map(q Query) (string, *Refusal) {
 	}
 	if versionIDs != "" {
 		p.set("versionIds", versionIDs)
+	}
+	if q.UserID > 0 {
+		p.set("userIds", strconv.Itoa(q.UserID))
 	}
 	if len(q.Types) > 0 {
 		p.set("types", strings.Join(q.Types, ","))

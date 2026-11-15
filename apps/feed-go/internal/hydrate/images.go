@@ -137,6 +137,9 @@ type Thumbnail struct {
 	URL        any
 	NsfwLevel  int
 	HasNsfwKey bool
+	// Width and Height are the thumbnail's own dimensions (the public images endpoint publishes them).
+	Width  any
+	Height any
 }
 
 // Thumbnails is getThumbnailsForImages(videoIds). The miss path is the cache's own two queries.
@@ -179,7 +182,7 @@ func (s *Sources) Thumbnails(ctx context.Context, videoIDs []int) (map[int]Thumb
 
 func thumbFrom(m map[string]any) Thumbnail {
 	n, ok := Int(m["nsfwLevel"])
-	return Thumbnail{URL: m["url"], NsfwLevel: n, HasNsfwKey: ok}
+	return Thumbnail{URL: m["url"], NsfwLevel: n, HasNsfwKey: ok, Width: Wire(m["width"]), Height: Wire(m["height"])}
 }
 
 // Metrics is one image's metric counts (MetricService over `metrics:Image:<id>` hashes).

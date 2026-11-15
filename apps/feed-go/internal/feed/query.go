@@ -39,6 +39,11 @@ type ImagesQuery struct {
 	IDs []int
 	// PostIDs is the gallery's post completion: only these posts' images.
 	PostIDs []int
+	// PostID is the input's own `postId` (the REST endpoint): `i."postId" = <postId>`.
+	PostID int
+	// TargetUserID is the creator filter (`userId`, or the id a `username` resolved to):
+	// `i."userId" = <targetUserId>`. getAllImages marks that query personalized, so it is never cached.
+	TargetUserID int
 	// ThrowOnStatementTimeout makes a statement timeout an error instead of an empty page (the
 	// feed-service hydrate sets it, so a slow hydrate is not read as a page the filters emptied).
 	ThrowOnStatementTimeout bool
@@ -152,14 +157,25 @@ func (q *ImagesQuery) Build() Built {
 		cacheTTL = 10 * time.Minute
 		tags = append(tags, "images-model3d:"+strconv.Itoa(q.Model3DID))
 	}
+	if q.TargetUserID != 0 {
+		and = append(and, `i."userId" = `+a.add(q.TargetUserID))
+	}
 	if len(q.Generation) > 0 {
 		and = append(and, `i."generationProcess" = ANY(`+a.add(q.Generation)+`::text[]::"ImageGenerationProcess"[])`)
+	}
+	if q.PostID != 0 {
+		and = append(and, `i."postId" = `+a.add(q.PostID))
 	}
 	if len(q.PostIDs) > 0 {
 		and = append(and, `i."postId" = ANY(`+a.add(q.PostIDs)+`::int[])`)
 	}
 	if len(q.ExcludedUsers) > 0 {
 		and = append(and, `i."userId" != ALL(`+a.add(q.ExcludedUsers)+`::int[])`)
+	}
+
+	if q.TargetUserID != 0 {
+		// isPersonalized (the user-gallery path): never cached.
+		cacheTTL, tags = 0, nil
 	}
 
 	var orderBy, cursorCol, cursorOp string
