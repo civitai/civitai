@@ -122,18 +122,6 @@ const SHOP_ITEMS = [
   { cosmeticId: 304, addedById: 1009, status: 'Draft', meta: { history: [{ kind: 'reviewed', action: 'approve' }] }, rejectionReason: null },
   { cosmeticId: 304, addedById: 1010, status: 'Rejected', meta: {}, rejectionReason: 'Not theirs' },
 ];
-// ClickHouse entityMetricDailyAgg_v2 totals per image (MetricService's populate source): the same
-// counts the watcher-fed hashes hold, plus tippedCount, which no hash here carries.
-function clickhouseRowsOf(id) {
-  const hash = metricsOf(id);
-  const rows = [];
-  for (const mt of ['Cry', 'Heart', 'Laugh', 'Like', 'Collection', 'commentCount', 'tippedAmount', 'tippedCount']) {
-    const value = mt === 'tippedCount' ? (id % 5) : parseInt(hash[mt] ?? '0', 10);
-    if (value > 0) rows.push({ entityId: id, metricType: mt, value });
-  }
-  return rows;
-}
-
 /** A jsonb column's text as Postgres writes it: members ordered by key length then bytes, `", "` and
  *  `": "` separators. Prisma hands the Node code JSON.parse of exactly this. */
 function jsonbText(v) {
@@ -442,8 +430,7 @@ class Trace {
     this.models = new Set();
     this.cold = new Set(); // "prefix:id" keys the fixture holds absent (a cache miss)
     this.coldRead = new Set(); // the cold keys the mirror read (each must be)
-    this.writes = new Map(); // key -> what Node writes on the miss ({value, ex} or {hash, ex})
-    this.clickhouse = []; // the ClickHouse rows the populates read
+    this.writes = new Map(); // key -> what Node writes on the miss ({value, ex})
   }
 }
 let T; // the fixture being traced
@@ -837,27 +824,10 @@ function imageSql(q) {
 /** toImageV2Stats(shapeImageMetrics(...)) over MetricService.fetch's parse of the hash. */
 function imageStats(id) {
   const key = `metrics:Image:${id}`;
+  const hash = metricsOf(id);
+  T.hashes.set(key, hash);
   const m = {};
-  if (T.cold.has(key)) {
-    // MetricService.fetch's cold miss: the populate (fetchFromClickhouse, then hReplaceStampedEx with
-    // CACHE_TTL, or the notFound marker with MISS_CACHE_TTL), every requested id answered with
-    // `{...baseMetrics, ...results[id]}`. No recent-event marker exists, so the stamp is now.
-    T.coldRead.add(key);
-    const rows = clickhouseRowsOf(id);
-    for (const r of rows) T.clickhouse.push(r);
-    for (const mt of ['Cry', 'Heart', 'Laugh', 'Like', 'Collection', 'commentCount', 'tippedAmount', 'tippedCount']) m[mt] = 0;
-    const fields = {};
-    for (const { metricType, value } of rows) {
-      m[metricType] = value;
-      fields[metricType] = String(value);
-    }
-    const stamp = String(Math.floor(NOW.getTime() / 1000));
-    T.writes.set(key, rows.length ? { hash: { _populatedAt: stamp, ...fields }, ex: 12 * HOUR } : { hash: { _populatedAt: stamp, notFound: '1' }, ex: 5 * 60 });
-  } else {
-    const hash = metricsOf(id);
-    T.hashes.set(key, hash);
-    for (const [k, v] of Object.entries(hash)) if (k !== 'notFound' && k !== '_populatedAt') m[k] = parseInt(v, 10);
-  }
+  for (const [k, v] of Object.entries(hash)) if (k !== 'notFound' && k !== '_populatedAt') m[k] = parseInt(v, 10);
   const match = {
     reactionLike: m.Like || null,
     reactionHeart: m.Heart || null,
@@ -1746,17 +1716,6 @@ const AS_POSTS = [
     },
   },
   {
-    name: 'cold-metrics',
-    description: 'Two images with no metric hash: MetricService populates them from ClickHouse (every count, zeros included) and writes each hash back, stamped, for 12 hours.',
-    viewer: null,
-    host: HOST.green,
-    cold: ['metrics:Image:8003', 'metrics:Image:8006'],
-    input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3 },
-    replies: {
-      'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&sort=reactions&limit=6': { body: { items: [8003, 8006, 8007] } },
-    },
-  },
-  {
     name: 'fallback-sponsored-unknown-audience',
     description: 'A page that would carry a sponsored post while the creator-promotions audience is unknown here (the mirror unset).',
     fallback: 'sponsored-post',
@@ -1914,7 +1873,7 @@ function writeEntries() {
   for (const key of T.cold) if (!T.coldRead.has(key)) throw new Error(`fixture ${T.fixture}: cold key ${key} never read`);
   const out = {};
   for (const [key, w] of [...T.writes.entries()].sort()) {
-    out[key] = w.hash ? { hash: w.hash, ex: w.ex } : { value: mark(w.value), packed: packMarked(mark(w.value)), ex: w.ex };
+    out[key] = { value: mark(w.value), packed: packMarked(mark(w.value)), ex: w.ex };
   }
   return out;
 }
@@ -1998,7 +1957,6 @@ function emitAsPosts() {
       redis: redisEntries(spec.dropKeys),
       sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
       db: dbTables(),
-      clickhouse: T.clickhouse,
       expect,
     });
   }

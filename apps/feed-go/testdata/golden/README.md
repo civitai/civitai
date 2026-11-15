@@ -19,12 +19,13 @@ hosts.
 | `redis` | cache-cluster keys: `packed` (base64 of msgpackr bytes, with the readable `value`), `raw` (JSON strings such as gallery settings) or `hash` (metric hashes) |
 | `sysRedis` | system-redis keys (the browsing-settings addons) |
 | `db` | Postgres tables (`images` rows as the getAllImages SELECT returns them, plus `_resources`, their ImageResourceNew rows; `posts`, `modelVersions`, `models`, `reviews`, `reactions`, `placements`, `users`; for the cache-miss lookups `userCosmetics`, `cosmetics`, `cosmeticShopItems`, their jsonb columns as the text Postgres prints). The harness answers each query feed-go sends from these, evaluating the clauses the fixtures reach |
-| `clickhouse` | the ClickHouse rows (`entityId`, `metricType`, `value`) MetricService's populates read for the fixture's cold metric hashes |
-| `expect` | `fallback` (the reason feed-go must fall back with), or the Node answer: `envelope` (`{json, meta}`) plus `cacheable` (signed out), or `body` (REST); for tRPC also `writes`, every cache key Node's fetches write on the request's misses (`packed` + `value` + `ex`, or a metric `hash` + `ex`). The harness runs each served fixture twice: write-back off (the cache must be untouched) and on (it must change by exactly `writes`) |
+| `expect` | `fallback` (the reason feed-go must fall back with), or the Node answer: `envelope` (`{json, meta}`) plus `cacheable` (signed out), or `body` (REST); for tRPC also `writes`, every cache key Node's fetches write on the request's misses (`packed` + `value` + `ex`). The harness runs each served fixture twice: write-back off (the cache must be untouched) and on (it must change by exactly `writes`) |
 
 A `cold-*` fixture holds some cache keys absent (the spec's `cold` list): the mirror runs the cache's
-Node lookup over the `db` tables (or the ClickHouse rows) as the fetch would, and records what it
-writes.
+Node lookup over the `db` tables as the fetch would, and records what it writes. Those lookups are
+hand transcriptions of the Node code (only the encoding is msgpackr itself): a cold fixture shows
+feed-go agrees with the transcription, not with the running Node app. Shadow diffs in production are
+what prove parity.
 
 ## Where the expectations come from
 

@@ -1251,7 +1251,6 @@
       }
     ]
   },
-  "clickhouse": [],
   "expect": {
     "fallback": "bearer-token"
   }

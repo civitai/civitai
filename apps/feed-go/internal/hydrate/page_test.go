@@ -473,7 +473,7 @@ func TestBatchOnePipelinePerClient(t *testing.T) {
 	if got := none.Entries(); len(got) != 0 {
 		t.Fatalf("no ids = %#v", got)
 	}
-	if got, err := s.metricsResult(context.Background(), m); err != nil || !reflect.DeepEqual(got, map[int]Metrics{7: {"Like": 1}}) {
+	if got, err := m.result(); err != nil || !reflect.DeepEqual(got, map[int]Metrics{7: {"Like": 1}}) {
 		t.Fatalf("metrics = %v, %v", got, err)
 	}
 

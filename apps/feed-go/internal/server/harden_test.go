@@ -610,7 +610,7 @@ func TestCacheMissCounter(t *testing.T) {
 	}
 	want := map[string]float64{
 		"user-cosmetics/computed": 0, "user-cosmetics/error": 0, "image-frames/computed": 5, "image-frames/error": 0,
-		"event-decorations/computed": 0, "event-decorations/error": 0, "image-metrics/computed": 0, "image-metrics/error": 0,
+		"event-decorations/computed": 0, "event-decorations/error": 0,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("series %v, want %v", got, want)

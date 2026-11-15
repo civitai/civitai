@@ -873,7 +873,6 @@
       }
     ]
   },
-  "clickhouse": [],
   "expect": {
     "envelope": {
       "json": {

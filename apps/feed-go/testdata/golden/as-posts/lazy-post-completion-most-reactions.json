@@ -1281,7 +1281,6 @@
       }
     ]
   },
-  "clickhouse": [],
   "expect": {
     "envelope": {
       "json": {

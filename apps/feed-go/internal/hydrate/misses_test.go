@@ -105,9 +105,11 @@ func (m *missDB) load(f *pageFixture, c *MissCompute) (*Sources, *testkit.Redis)
 		m.route("records", `SELECT id, name, type::text AS type`, []string{"id", "name", "type", "data", "source", "flags"}, one(m.records)),
 	)
 	db.Routes = append(routes, db.Routes...)
-	r.Scripts = map[string]testkit.Script{HReplaceStampedExSource(): testkit.HReplaceStampedEx}
 	if c.Now == nil {
 		c.Now = func() time.Time { return pageNow }
+	}
+	if c.WriteBack && c.Primary == nil {
+		c.Primary = db // the same rows: TestWriteBackReadsPrimary tells the two apart
 	}
 	s.Compute = c
 	return s, r
@@ -410,136 +412,6 @@ func TestPageComputesEventDecorationMiss(t *testing.T) {
 	}
 }
 
-// fakeMetrics is a MetricsSource over literal rows.
-type fakeMetrics struct {
-	rows  []MetricRow
-	err   error
-	mu    sync.Mutex
-	asked [][]int
-}
-
-func (f *fakeMetrics) ImageMetrics(_ context.Context, ids []int) ([]MetricRow, error) {
-	f.mu.Lock()
-	f.asked = append(f.asked, append([]int(nil), ids...))
-	f.mu.Unlock()
-	if f.err != nil {
-		return nil, f.err
-	}
-	var out []MetricRow
-	for _, r := range f.rows {
-		for _, id := range ids {
-			if r.EntityID == id {
-				out = append(out, r)
-			}
-		}
-	}
-	return out, nil
-}
-
-// A metric-hash miss is the ClickHouse totals (an id with none: every count 0); with WriteBack, each
-// locked id's hash is replaced as MetricService.populate replaces it and the lock released.
-func TestPageComputesMetricsMiss(t *testing.T) {
-	const now = 1781524800 // pageNow
-	for _, writeBack := range []bool{false, true} {
-		t.Run(strconv.FormatBool(writeBack), func(t *testing.T) {
-			f := basePageFixture(t)
-			delete(f.hashes, "metrics:Image:13")
-			delete(f.hashes, "metrics:Image:14")
-			src := &fakeMetrics{rows: []MetricRow{{13, "Like", 4}, {13, "tippedCount", 2}, {99, "Like", 1}}}
-			obs := &observed{}
-			s, r := (&missDB{}).load(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Metrics: src, Observe: obs.observe})
-			r.SetString("{metrics:Image:13}:recent", []byte("1")) // an event within METRIC_RECENT_EVENT_TTL
-			got, err := s.Page(context.Background(), pageRequest())
-			if err != nil {
-				t.Fatalf("Page: %v (fallback %q)", err, fallback.Reason(err))
-			}
-			if want := (map[int]Metrics{11: {"Like": 3}, 12: {}, 13: {"Like": 4, "tippedCount": 2}, 14: {}}); !reflect.DeepEqual(got.Metrics, want) {
-				t.Fatalf("metrics %v, want %v", got.Metrics, want)
-			}
-			if !reflect.DeepEqual(src.asked, [][]int{{13, 14}}) {
-				t.Fatalf("ClickHouse asked %v, want one query for the misses", src.asked)
-			}
-			if o := obs.get(); o["image-metrics/computed"] != 2 {
-				t.Fatalf("observed %v", o)
-			}
-			if !writeBack {
-				wantAbsent(t, r, "metrics:Image:13", "metrics:Image:14", "metrics:lock:Image:13", "metrics:lock:Image:14")
-				return
-			}
-			if h := r.Hash("metrics:Image:13"); !reflect.DeepEqual(h, map[string]string{"_populatedAt": strconv.Itoa(now - 3600 + 900), "Like": "4", "tippedCount": "2"}) {
-				t.Fatalf("hash 13 = %v (a recent event: the early-refresh stamp)", h)
-			}
-			if h := r.Hash("metrics:Image:14"); !reflect.DeepEqual(h, map[string]string{"_populatedAt": strconv.Itoa(now), "notFound": "1"}) {
-				t.Fatalf("hash 14 = %v, want the stamped notFound marker", h)
-			}
-			if e13, e14 := r.Expiry("metrics:Image:13"), r.Expiry("metrics:Image:14"); e13 != 12*time.Hour || e14 != 5*time.Minute {
-				t.Fatalf("expiries %v %v, want 12h and 5m", e13, e14)
-			}
-			wantAbsent(t, r, "metrics:lock:Image:13", "metrics:lock:Image:14")
-		})
-	}
-}
-
-// Another holder's lock: the id is answered from the same query and neither written nor unlocked.
-func TestMetricsMissLockedElsewhere(t *testing.T) {
-	f := basePageFixture(t)
-	delete(f.hashes, "metrics:Image:13")
-	src := &fakeMetrics{rows: []MetricRow{{13, "Heart", 6}}}
-	s, r := (&missDB{}).load(f, &MissCompute{WriteBack: true, FrameNegative: true, Metrics: src})
-	r.SetString("metrics:lock:Image:13", []byte("1"))
-	got, err := s.Page(context.Background(), pageRequest())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got.Metrics[13], Metrics{"Heart": 6}) {
-		t.Fatalf("metrics 13 = %v", got.Metrics[13])
-	}
-	wantAbsent(t, r, "metrics:Image:13")
-	if !r.Has("metrics:lock:Image:13") {
-		t.Fatal("another holder's lock was released")
-	}
-}
-
-// A failed populate falls back; its locks are released, except after a server timeout (code 159),
-// when they are left to expire as Node leaves them.
-func TestMetricsMissFailure(t *testing.T) {
-	for _, c := range []struct {
-		name     string
-		err      error
-		keepLock bool
-	}{
-		{"error", errors.New("boom"), false},
-		{"server-timeout", &ClickHouseError{Status: 500, Code: 159}, true},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			f := basePageFixture(t)
-			delete(f.hashes, "metrics:Image:13")
-			obs := &observed{}
-			s, r := (&missDB{}).load(f, &MissCompute{WriteBack: true, FrameNegative: true, Metrics: &fakeMetrics{err: c.err}, Observe: obs.observe})
-			_, err := s.Page(context.Background(), pageRequest())
-			if got := fallback.Reason(err); got != "metrics-miss-failed" {
-				t.Fatalf("err %v (reason %q), want metrics-miss-failed", err, got)
-			}
-			if obs.get()["image-metrics/error"] != 1 {
-				t.Fatalf("observed %v", obs.get())
-			}
-			if r.Has("metrics:lock:Image:13") != c.keepLock {
-				t.Fatalf("lock held = %v, want %v", r.Has("metrics:lock:Image:13"), c.keepLock)
-			}
-		})
-	}
-}
-
-// No metrics source (ClickHouse not configured), or no MissCompute: the old fallback.
-func TestMetricsMissWithoutSourceFallsBack(t *testing.T) {
-	f := basePageFixture(t)
-	delete(f.hashes, "metrics:Image:13")
-	s, _ := (&missDB{}).load(f, &MissCompute{FrameNegative: true})
-	if _, err := s.Page(context.Background(), pageRequest()); fallback.Reason(err) != "metrics-miss" {
-		t.Fatalf("err %v, want metrics-miss", err)
-	}
-}
-
 // The batched Page and the per-lookup reference compute the same misses.
 func TestPageComputedMissesMatchPerLookup(t *testing.T) {
 	build := func() (*Sources, *testkit.Redis) {
@@ -549,14 +421,13 @@ func TestPageComputedMissesMatchPerLookup(t *testing.T) {
 		for _, id := range []int{12, 13, 14} {
 			f.del(KeyImageEvents, id)
 		}
-		delete(f.hashes, "metrics:Image:13")
 		f.strings[pageNS+missKey(KeyCosmetics, 602)] = jspack.Pack(jspack.O("id", 602, "name", "deco2", "type", "ContentDecoration",
 			"data", jspack.O("event", "ev", "url", "x.png"), "source", "Event", "cachedAt", pageNow))
 		m := eventsMissDB()
 		u := userCosmeticsMissDB()
 		m.users, m.listings, m.tombstones = u.users, u.listings, u.tombstones
 		m.frames = map[int][][]any{13: {{int64(504), int64(13), `{"lights": 5}`, nil}}}
-		return m.load(f, &MissCompute{FrameNegative: false, Metrics: &fakeMetrics{rows: []MetricRow{{13, "Cry", 1}}}})
+		return m.load(f, &MissCompute{FrameNegative: false})
 	}
 	s, _ := build()
 	got, err := s.Page(context.Background(), pageRequest())
@@ -571,7 +442,7 @@ func TestPageComputedMissesMatchPerLookup(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Page differs from the per-lookup answer:\n got %#v\nwant %#v", got, want)
 	}
-	if len(got.UserCosmetics[1002]) != 1 || got.Frames[13] == nil || got.Decorations[12] == nil || got.Metrics[13]["Cry"] != 1 {
+	if len(got.UserCosmetics[1002]) != 1 || got.Frames[13] == nil || got.Decorations[12] == nil {
 		t.Fatalf("misses not computed: %+v", got)
 	}
 }
@@ -627,7 +498,7 @@ func TestWithheldCosmeticIDs(t *testing.T) {
 		tombstones: map[int][]any{3: {int64(3), int64(4 | 1)}, 4: {int64(4), int64(2)}},
 	}
 	s, _ := m.load(basePageFixture(t), &MissCompute{})
-	got, err := s.withheldCosmeticIDs(context.Background(), []int{1, 2, 3, 4, 2, 0})
+	got, err := s.withheldCosmeticIDs(context.Background(), s.Replica, []int{1, 2, 3, 4, 2, 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,7 +513,69 @@ func TestWithheldCosmeticIDs(t *testing.T) {
 	if q := m.queries("tombstones"); !reflect.DeepEqual(q, [][]int{{3, 4}}) {
 		t.Fatalf("tombstone query %v, want the unlisted [3 4]", q)
 	}
-	if got, err := s.withheldCosmeticIDs(context.Background(), nil); err != nil || len(got) != 0 || len(m.queries("listings")) != 1 {
+	if got, err := s.withheldCosmeticIDs(context.Background(), s.Replica, nil); err != nil || len(got) != 0 || len(m.queries("listings")) != 1 {
 		t.Fatalf("no ids: %v, %v, %d listing queries; want none sent", got, err, len(m.queries("listings")))
+	}
+}
+
+// With write-back on, the frame and event-decoration lookups (and the frames' withheld check) read the
+// primary, as Node's do: a value read from a lagging replica would be cached for a day. With it off
+// they read the replica. Both databases hold the same rows; the test tells them apart by which one
+// is asked.
+func TestWriteBackReadsPrimary(t *testing.T) {
+	build := func(writeBack bool) (*Sources, *missDB, *missDB) {
+		f := basePageFixture(t)
+		f.del(KeyImageFrames, 13)
+		f.del(KeyImageEvents, 12)
+		f.strings[pageNS+missKey(KeyCosmetics, 602)] = jspack.Pack(jspack.O("id", 602, "name", "deco2", "type", "ContentDecoration",
+			"data", jspack.O("event", "ev", "url", "x.png"), "source", "Event", "cachedAt", pageNow))
+		rows := func() *missDB {
+			m := eventsMissDB()
+			m.frames = map[int][][]any{13: {{int64(504), int64(13), nil, int64(88)}}} // a creator cosmetic: the withheld check runs
+			m.listings = map[int][][]any{504: {{int64(504), int64(88), "Published", `{}`, nil, int64(88)}}}
+			return m
+		}
+		primary, replica := rows(), rows()
+		// The primary's routes alone: a frame or event query sent to it is answered.
+		pdb := &testkit.DB{}
+		pf := basePageFixture(t)
+		ps, _ := primary.load(pf, &MissCompute{})
+		pdb.Routes = ps.Replica.(*pageReplica).Routes
+		s, _ := replica.load(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Primary: pdb})
+		return s, primary, replica
+	}
+	for _, writeBack := range []bool{true, false} {
+		t.Run(strconv.FormatBool(writeBack), func(t *testing.T) {
+			s, primary, replica := build(writeBack)
+			got, err := s.Page(context.Background(), pageRequest())
+			if err != nil {
+				t.Fatalf("Page: %v (fallback %q)", err, fallback.Reason(err))
+			}
+			if got.Frames[13] == nil || got.Decorations[12] == nil {
+				t.Fatalf("frame 13 %v, decoration 12 %v: want both computed", got.Frames[13], got.Decorations[12])
+			}
+			on, off := primary, replica
+			if !writeBack {
+				on, off = replica, primary
+			}
+			for _, q := range []string{"frames", "listings", "events"} {
+				if len(on.queries(q)) != 1 || len(off.queries(q)) != 0 {
+					t.Errorf("write-back %v: %s queries: %d on the expected database, %d on the other; want 1 and 0",
+						writeBack, q, len(on.queries(q)), len(off.queries(q)))
+				}
+			}
+		})
+	}
+	// Write-back on with no primary configured: the lookup fails rather than read the replica.
+	f := basePageFixture(t)
+	f.del(KeyImageFrames, 13)
+	m := &missDB{}
+	s, _ := m.load(f, &MissCompute{FrameNegative: true})
+	s.Compute.WriteBack = true
+	if _, err := s.Page(context.Background(), pageRequest()); fallback.Reason(err) != "image-frame-miss-failed" {
+		t.Fatalf("no primary: %v, want image-frame-miss-failed", err)
+	}
+	if len(m.queries("frames")) != 0 {
+		t.Fatal("write-back without a primary read the replica")
 	}
 }

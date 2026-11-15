@@ -42,7 +42,7 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts = 24
+	goldenMinAsPosts = 23
 	goldenMinV1      = 22
 	goldenIssuer     = "https://auth.example.test"
 	goldenCookieName = "__Secure-civ-token"
@@ -102,28 +102,21 @@ type goldenFixture struct {
 	Redis    map[string]goldenRedisEntry `json:"redis"`
 	SysRedis map[string]goldenRedisEntry `json:"sysRedis"`
 	DB       goldenDB                    `json:"db"`
-	// ClickHouse is the rows MetricService's populates read (entityMetricDailyAgg_v2 totals).
-	ClickHouse []struct {
-		EntityID   int     `json:"entityId"`
-		MetricType string  `json:"metricType"`
-		Value      float64 `json:"value"`
-	} `json:"clickhouse"`
-	Expect struct {
+	Expect   struct {
 		Fallback  string          `json:"fallback"`
 		Envelope  json.RawMessage `json:"envelope"`
 		Cacheable *bool           `json:"cacheable"`
 		Body      json.RawMessage `json:"body"`
 		// Writes is every cache key Node's fetches write for the request's misses (a served
-		// fixture; none when the caches are warm): a packed value or a hash, with its expiry.
+		// fixture; none when the caches are warm): a packed value, with its expiry.
 		Writes map[string]goldenWrite `json:"writes"`
 	} `json:"expect"`
 }
 
 // goldenWrite is one cache write Node makes on a miss.
 type goldenWrite struct {
-	Packed string            `json:"packed"`
-	Hash   map[string]string `json:"hash"`
-	EX     int               `json:"ex"`
+	Packed string `json:"packed"`
+	EX     int    `json:"ex"`
 }
 
 type goldenFeedReply struct {
@@ -778,29 +771,6 @@ func goldenToken(t *testing.T, priv *ecdsa.PrivateKey, userID int, now time.Time
 	return input + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
-// --- ClickHouse: the fixture's rows ----------------------------------------------------------------
-
-// goldenClickHouse answers MetricService's populate from the fixture's rows, and records the ids
-// asked for.
-type goldenClickHouse struct {
-	fx    *goldenFixture
-	mu    sync.Mutex
-	asked []int
-}
-
-func (c *goldenClickHouse) ImageMetrics(_ context.Context, ids []int) ([]hydrate.MetricRow, error) {
-	c.mu.Lock()
-	c.asked = append(c.asked, ids...)
-	c.mu.Unlock()
-	var out []hydrate.MetricRow
-	for _, r := range c.fx.ClickHouse {
-		if goldenHas(ids, r.EntityID) {
-			out = append(out, hydrate.MetricRow{EntityID: r.EntityID, MetricType: r.MetricType, Value: r.Value})
-		}
-	}
-	return out, nil
-}
-
 // --- building the server --------------------------------------------------------------------------
 
 type goldenEnv struct {
@@ -845,7 +815,6 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 	nowFn := func() time.Time { return now }
 
 	cache := goldenRedis(t, fx.Redis)
-	cache.Scripts = map[string]testkit.Script{hydrate.HReplaceStampedExSource(): testkit.HReplaceStampedEx}
 	sys := goldenRedis(t, fx.SysRedis)
 	db := newGoldenPG(fx)
 
@@ -862,9 +831,11 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: db, Compute: &hydrate.MissCompute{
 		WriteBack:     writeBack,
 		FrameNegative: fx.Config.FrameCacheNegative,
-		Metrics:       &goldenClickHouse{fx: fx},
 		Now:           nowFn,
 	}}
+	if writeBack {
+		sources.Compute.Primary = db // the fixture's one database (the frame and event lookups read the primary)
+	}
 	resolver := &auth.Resolver{
 		Verifier:    &auth.Verifier{Issuer: goldenIssuer, JWKSURL: jwks.URL, HTTP: jwks.Client(), Now: nowFn},
 		Revocation:  &auth.Revocation{Redis: sys},
@@ -997,17 +968,7 @@ func goldenWriteProblems(fx *goldenFixture, before, after map[string]string, wri
 	want := map[string]string{}
 	if writeBack {
 		for k, w := range fx.Expect.Writes {
-			ex := (time.Duration(w.EX) * time.Second).String()
-			if w.Hash != nil {
-				fields := make([]string, 0, len(w.Hash))
-				for f, x := range w.Hash {
-					fields = append(fields, f+"="+x)
-				}
-				sort.Strings(fields)
-				want[k] = "hash:" + strings.Join(fields, "\n") + " ex:" + ex
-			} else {
-				want[k] = "string:" + w.Packed + " ex:" + ex
-			}
+			want[k] = "string:" + w.Packed + " ex:" + (time.Duration(w.EX) * time.Second).String()
 		}
 	}
 	got := map[string]string{}

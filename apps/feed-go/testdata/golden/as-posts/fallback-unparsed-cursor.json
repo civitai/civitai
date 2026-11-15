@@ -1250,7 +1250,6 @@
       }
     ]
   },
-  "clickhouse": [],
   "expect": {
     "fallback": "feed-cursor:unparsed"
   }

@@ -14,8 +14,7 @@ import (
 )
 
 // Redis is an in-memory redis.UniversalClient for the commands this service sends: GET, HGET,
-// HGETALL, SET, SET NX, DEL, SADD and EVAL of a registered script (Scripts), directly or in a
-// pipeline. Any other command panics (the embedded nil
+// HGETALL, SET, SET NX and SADD, directly or in a pipeline. Any other command panics (the embedded nil
 // interface), so a test never passes on a command the fake silently ignored.
 //
 // Failure modes: Err makes every command fail with it (a transport failure); KeyErr, when it returns
@@ -38,9 +37,6 @@ type Redis struct {
 
 	// Calls counts round trips (one per direct command, one per Pipelined call).
 	Calls int
-
-	// Scripts emulates EVAL, by the script's exact text (see Script).
-	Scripts map[string]Script
 }
 
 // NewRedis returns an empty fake.
@@ -368,26 +364,6 @@ func (r *Redis) setNX(key string, val any, ttl time.Duration) bool {
 	return true
 }
 
-func (r *Redis) del(key string) int64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var n int64
-	if _, ok := r.strings[key]; ok {
-		n = 1
-	}
-	if _, ok := r.hashes[key]; ok {
-		n = 1
-	}
-	if _, ok := r.sets[key]; ok {
-		n = 1
-	}
-	delete(r.strings, key)
-	delete(r.hashes, key)
-	delete(r.sets, key)
-	delete(r.ttls, key)
-	return n
-}
-
 // Has reports whether key holds a value of any type.
 func (r *Redis) Has(key string) bool {
 	r.mu.Lock()
@@ -412,44 +388,6 @@ func (r *Redis) Hash(key string) map[string]string {
 	return out
 }
 
-// ReplaceHash is the effect of hReplaceStampedEx (event-engine-common/utils/query-utils.ts) on the
-// fake: key is deleted, then holds fields, and expires after ttl. For a Script emulator.
-func (r *Redis) ReplaceHash(key string, fields map[string]string, ttl time.Duration) {
-	r.del(key)
-	r.SetHash(key, fields)
-	r.mu.Lock()
-	r.ttls[key] = ttl
-	r.mu.Unlock()
-}
-
-// Script emulates one Lua script on the fake: EVAL of a script registered in Redis.Scripts runs its
-// emulator; any other script panics.
-type Script func(r *Redis, keys []string, args []any) (any, error)
-
-// HReplaceStampedEx emulates event-engine-common's hReplaceStampedEx script: DEL KEYS[1]; stamp
-// ARGV[2] with ARGV[3], or ARGV[4] while KEYS[2] exists; HSET the stamp and ARGV[5..] pairs; EXPIRE
-// ARGV[1] seconds. Arguments are strings, as go-redis sends them.
-func HReplaceStampedEx(r *Redis, keys []string, args []any) (any, error) {
-	if len(keys) != 2 || len(args) < 4 || len(args)%2 != 0 {
-		return nil, errors.New("testkit: hReplaceStampedEx: wrong arity")
-	}
-	str := func(v any) string { s, _ := v.(string); return s }
-	secs, err := time.ParseDuration(str(args[0]) + "s")
-	if err != nil {
-		return nil, err
-	}
-	stamp := str(args[2])
-	if r.Has(keys[1]) {
-		stamp = str(args[3])
-	}
-	fields := map[string]string{str(args[1]): stamp}
-	for i := 4; i < len(args); i += 2 {
-		fields[str(args[i])] = str(args[i+1])
-	}
-	r.ReplaceHash(keys[0], fields, secs)
-	return int64(1), nil
-}
-
 func (p *pipe) SetNX(ctx context.Context, key string, val any, ttl time.Duration) *redis.BoolCmd {
 	cmd := redis.NewBoolCmd(ctx, "set", key, "nx")
 	p.cmds = append(p.cmds, cmd)
@@ -462,50 +400,6 @@ func (p *pipe) SetNX(ctx context.Context, key string, val any, ttl time.Duration
 			return
 		}
 		cmd.SetVal(p.r.setNX(key, val, ttl))
-	})
-	return cmd
-}
-
-func (p *pipe) Del(ctx context.Context, keys ...string) *redis.IntCmd {
-	cmd := redis.NewIntCmd(ctx, "del")
-	p.cmds = append(p.cmds, cmd)
-	p.ops = append(p.ops, func(failErr error) {
-		for _, key := range keys {
-			if failErr == nil {
-				failErr = p.r.keyErr(key)
-			}
-		}
-		if failErr != nil {
-			cmd.SetErr(failErr)
-			return
-		}
-		var n int64
-		for _, key := range keys {
-			n += p.r.del(key)
-		}
-		cmd.SetVal(n)
-	})
-	return cmd
-}
-
-func (p *pipe) Eval(ctx context.Context, script string, keys []string, args ...any) *redis.Cmd {
-	cmd := redis.NewCmd(ctx, "eval")
-	p.cmds = append(p.cmds, cmd)
-	emulate, ok := p.r.Scripts[script]
-	if !ok {
-		panic("testkit.Redis: EVAL of a script no emulator is registered for")
-	}
-	p.ops = append(p.ops, func(failErr error) {
-		if failErr == nil && len(keys) > 0 {
-			failErr = p.r.keyErr(keys[0])
-		}
-		if failErr != nil {
-			cmd.SetErr(failErr)
-			return
-		}
-		v, err := emulate(p.r, keys, args)
-		cmd.SetVal(v)
-		cmd.SetErr(err)
 	})
 	return cmd
 }

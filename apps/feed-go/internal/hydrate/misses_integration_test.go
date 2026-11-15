@@ -3,7 +3,7 @@
 package hydrate
 
 // The miss computations against the real Postgres (their SQL, jsonb text order, the withheld check)
-// and the real Redis Cluster (SET NX writes, the populate's Lua script). Ids live in 1_150_000..
+// and the real Redis Cluster (SET NX writes). Ids live in 1_150_000..
 // 1_150_999. Every expected cache value is msgpackr 1.11.5's bytes for the value Node's fetch writes
 // (node: `require('msgpackr').pack(v).toString('hex')`, cachedAt = 2026-06-15T12:00:00.000Z).
 
@@ -36,7 +36,7 @@ const (
 func integMissSetup(t *testing.T) *integEnv {
 	t.Helper()
 	e := integSetup(t, true)
-	e.src.Compute = &MissCompute{WriteBack: true, FrameNegative: true, Now: func() time.Time { return integMissNow }}
+	e.src.Compute = &MissCompute{WriteBack: true, FrameNegative: true, Primary: e.pool, Now: func() time.Time { return integMissNow }}
 	// The jsonb literals are written in a member order Postgres does not keep: the lookups must see
 	// the order Postgres prints (key length, then bytes), as Prisma hands it to Node.
 	integtest.Exec(t, e.pool, `DELETE FROM "Cosmetic" WHERE id BETWEEN 1150000 AND 1150999;
@@ -130,46 +130,4 @@ func TestIntegrationEventDecorationMissComputed(t *testing.T) {
 	}
 	integWantPacked(t, e, KeyImageEvents, 1150202, integWantEvent, 24*time.Hour)
 	integWantPacked(t, e, KeyImageEvents, 1150203, integWantEventMarker, time.Hour)
-}
-
-// The populate's writes through the real script: the hash replaced whole and stamped, the expiry,
-// the recent-event marker's early stamp, and the lock released.
-func TestIntegrationMetricsMissPopulate(t *testing.T) {
-	e := integSetup(t, false)
-	ctx := integtest.Ctx(t)
-	const a, b = 1150301, 1150302
-	integtest.Del(t, e.c, metricHashKey(a), metricHashKey(b), metricLockKey(a), metricLockKey(b), metricRecentKey(a))
-	// A stale field the replace must drop, and a recent event on a.
-	if err := e.c.HSet(ctx, metricHashKey(a), "Stale", "9").Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.c.Set(ctx, metricRecentKey(a), "1", time.Minute).Err(); err != nil {
-		t.Fatal(err)
-	}
-	c := &MissCompute{WriteBack: true, Now: func() time.Time { return integMissNow },
-		Metrics: &fakeMetrics{rows: []MetricRow{{a, "Like", 5}, {a, "commentCount", 2}}}}
-	got, err := c.computeMetrics(ctx, e.c, []int{a, b})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := (map[int]Metrics{a: {"Like": 5, "commentCount": 2}, b: {}}); !reflect.DeepEqual(got, want) {
-		t.Fatalf("metrics %v, want %v", got, want)
-	}
-	now := integMissNow.Unix()
-	if h := e.c.HGetAll(ctx, metricHashKey(a)).Val(); !reflect.DeepEqual(h, map[string]string{
-		"_populatedAt": strconv.FormatInt(now-3600+900, 10), "Like": "5", "commentCount": "2"}) {
-		t.Fatalf("hash a = %v", h)
-	}
-	if h := e.c.HGetAll(ctx, metricHashKey(b)).Val(); !reflect.DeepEqual(h, map[string]string{
-		"_populatedAt": strconv.FormatInt(now, 10), "notFound": "1"}) {
-		t.Fatalf("hash b = %v", h)
-	}
-	if ta, tb := e.c.TTL(ctx, metricHashKey(a)).Val(), e.c.TTL(ctx, metricHashKey(b)).Val(); ta <= 11*time.Hour || ta > 12*time.Hour || tb <= 4*time.Minute || tb > 5*time.Minute {
-		t.Fatalf("TTLs %v %v, want 12h and 5m", ta, tb)
-	}
-	for _, k := range []string{metricLockKey(a), metricLockKey(b)} { // two slots: one EXISTS each
-		if n := e.c.Exists(ctx, k).Val(); n != 0 {
-			t.Fatalf("populate lock %s left", k)
-		}
-	}
 }

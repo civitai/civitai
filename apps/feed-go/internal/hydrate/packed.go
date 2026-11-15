@@ -6,10 +6,11 @@
 // msgpack maps with string keys, Dates as the timestamp extension -1). Two marker shapes are not data:
 // `{notFound: true}` ("no row", skip the lookup) and `{debounce: true}` (a bust marker, treat as a miss).
 //
-// A miss is answered from Postgres (or ClickHouse, for the metric hashes) with the Node lookup's own
-// query. This service writes those keys back only with FEED_GO_CACHE_WRITEBACK on (default off), and
-// then exactly what the Node lookup writes (misses.go); with it off a Go bug can never poison a cache
-// the Node app reads, at the cost that a Go-only miss stays a miss. See DESIGN.md "Caches".
+// A miss is answered from Postgres with the Node lookup's own query (a metric-hash miss, which Node
+// populates from ClickHouse, falls back). This service writes those keys back only with
+// FEED_GO_CACHE_WRITEBACK on (default off), and then exactly what the Node lookup writes (misses.go);
+// with it off a Go bug can never poison a cache the Node app reads, at the cost that a Go-only miss
+// stays a miss. See DESIGN.md §3.1.
 package hydrate
 
 import (

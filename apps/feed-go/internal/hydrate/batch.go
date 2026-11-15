@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-
-	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
 // Batch collects the cache reads of one dependency stage and sends them in ONE Pipelined call per
@@ -158,10 +156,14 @@ func (s *Sources) queueMetrics(b *Batch, ids []int) *metricsRead {
 	return r
 }
 
-// hashes is the metric hashes after Exec, in id order. The first command error in command order is
-// the read failure (an HGETALL answers an absent key with an empty hash, never redis.Nil, so every
-// error here is real).
-func (r *metricsRead) hashes() ([]map[string]string, error) {
+// result is the metrics lookup's answer after Exec. The first command error in command order is the read
+// failure (an HGETALL answers an absent key with an empty hash, never redis.Nil, so every error here is real).
+// An id with no hash falls back (`metrics-miss`, counted like every fallback reason): Node populates it
+// from ClickHouse, which this service does not read.
+func (r *metricsRead) result() (map[int]Metrics, error) {
+	if len(r.ids) == 0 {
+		return map[int]Metrics{}, nil
+	}
 	hashes := make([]map[string]string, len(r.cmds))
 	for i, cmd := range r.cmds {
 		hash, err := cmd.Result()
@@ -170,33 +172,5 @@ func (r *metricsRead) hashes() ([]map[string]string, error) {
 		}
 		hashes[i] = hash
 	}
-	return hashes, nil
-}
-
-// metricsResult is getImageMetricsObject over the metrics read after Exec: every id whose hash exists
-// is answered from it; the ids with no hash are MetricService.fetch's cold misses, computed from
-// ClickHouse (computeMetrics) when s.Compute has a metrics source, else the `metrics-miss` fallback.
-func (s *Sources) metricsResult(ctx context.Context, r *metricsRead) (map[int]Metrics, error) {
-	if len(r.ids) == 0 {
-		return map[int]Metrics{}, nil
-	}
-	hashes, err := r.hashes()
-	if err != nil {
-		return nil, err
-	}
-	out, miss := splitMetricHashes(r.ids, hashes)
-	if len(miss) == 0 {
-		return out, nil
-	}
-	if s.Compute == nil || s.Compute.Metrics == nil {
-		return nil, fallback.New("metrics-miss")
-	}
-	computed, err := s.Compute.computeMetrics(ctx, s.Cache, miss)
-	if err != nil {
-		return nil, err
-	}
-	for id, m := range computed {
-		out[id] = m
-	}
-	return out, nil
+	return MetricsFromHashes(r.ids, hashes)
 }

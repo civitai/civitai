@@ -55,19 +55,22 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 }
 
 // missCompute is how hydration answers the misses of the caches Node fills on read
-// (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back); the metric
-// hashes' ClickHouse populate only with CLICKHOUSE_HOST and CLICKHOUSE_USERNAME set.
-func missCompute(cfg *config.Config, observe func(cache, result string, n int)) *hydrate.MissCompute {
+// (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back). primary is the
+// primary database, used (and opened) only with write-back on.
+func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int)) *hydrate.MissCompute {
 	if !cfg.ComputeMisses {
 		return nil
 	}
 	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe}
-	if cfg.ClickHouseURL != "" {
-		c.Metrics = hydrate.NewClickHouse(cfg.ClickHouseURL, cfg.ClickHouseUser, cfg.ClickHousePassword,
-			cfg.ClickHouseTimeout, cfg.ClickHouseMaxConcurrency)
+	if cfg.CacheWriteBack {
+		c.Primary = primary
 	}
 	return c
 }
+
+// primaryMaxConns bounds the primary pool: only the frame and event-decoration miss lookups (one
+// query each per page, plus the frames' withheld check) use it, and only with write-back on.
+const primaryMaxConns = 4
 
 func run(log *slog.Logger) error {
 	cfg, err := config.Load()
@@ -111,9 +114,22 @@ func run(log *slog.Logger) error {
 
 	packed := &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: pool}
-	sources.Compute = missCompute(cfg, metrics.ObserveCacheMiss)
+	var primary hydrate.Querier
+	if cfg.ComputeMisses && cfg.CacheWriteBack {
+		primaryCfg, err := dbpool.Config(cfg.PrimaryDatabaseURL, dbpool.Settings{MaxConns: primaryMaxConns})
+		if err != nil {
+			return err
+		}
+		primaryPool, err := pgxpool.NewWithConfig(ctx, primaryCfg)
+		if err != nil {
+			return err
+		}
+		defer primaryPool.Close()
+		primary = primaryPool
+	}
+	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss)
 	log.Info("cache misses", "compute", sources.Compute != nil, "writeback", cfg.CacheWriteBack,
-		"frameNegative", cfg.FrameCacheNegative, "metricsPopulate", sources.Compute != nil && sources.Compute.Metrics != nil)
+		"frameNegative", cfg.FrameCacheNegative)
 	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,

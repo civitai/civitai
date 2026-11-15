@@ -176,35 +176,23 @@ func metricHashKey(id int) string { return "metrics:Image:" + strconv.Itoa(id) }
 
 func metricsReadFailed(err error) error { return fallback.Newf("metrics-read-failed", "%v", err) }
 
-// MetricsFromHashes is the per-id half of ImageMetrics without a miss computation: hashes[i] is the
-// `metrics:Image:<ids[i]>` hash as HGETALL returned it. An empty hash (no key) falls back; any other
-// hash is an entry, a `notFound` marker as an entry with no counts.
+// MetricsFromHashes is the per-id half of ImageMetrics: hashes[i] is the `metrics:Image:<ids[i]>`
+// hash as HGETALL returned it. An empty hash (no key) falls back; any other hash is an entry, a
+// `notFound` marker as an entry with no counts.
 func MetricsFromHashes(ids []int, hashes []map[string]string) (map[int]Metrics, error) {
-	out, miss := splitMetricHashes(ids, hashes)
-	if len(miss) > 0 {
-		return nil, fallback.New("metrics-miss")
-	}
-	return out, nil
-}
-
-// splitMetricHashes answers every id whose hash exists (a `notFound` marker as an entry with no
-// counts: known, every count 0, see metricsRead) and returns the ids with no hash, in id order.
-func splitMetricHashes(ids []int, hashes []map[string]string) (map[int]Metrics, []int) {
 	out := make(map[int]Metrics, len(ids))
-	var miss []int
 	for i, id := range ids {
 		hash := hashes[i]
 		if len(hash) == 0 {
-			miss = append(miss, id)
-			continue
+			return nil, fallback.New("metrics-miss")
 		}
 		m, ok := ParseMetricHash(hash)
 		if !ok {
-			m = Metrics{}
+			m = Metrics{} // notFound: known, every count 0 (see above)
 		}
 		out[id] = m
 	}
-	return out, miss
+	return out, nil
 }
 
 // ParseMetricHash is MetricService.parseCachedMetrics: every field but `notFound`/`_populatedAt` is a

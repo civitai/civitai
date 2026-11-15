@@ -3,6 +3,7 @@ package hydrate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,14 +19,13 @@ const (
 	MissUserCosmetics    = "user-cosmetics"    // userCosmeticCache
 	MissImageFrames      = "image-frames"      // cosmeticEntityCaches.Image
 	MissEventDecorations = "event-decorations" // eventDecorationEntityCaches.Image
-	MissImageMetrics     = "image-metrics"     // MetricService over `metrics:Image:<id>`
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter.
-var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMetrics}
+var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read (user
-// cosmetics, image frames, event decorations, metric hashes): with the Node lookup's own query,
+// cosmetics, image frames, event decorations): with the Node lookup's own query,
 // batched once per page and cache, instead of falling back. A Sources without one falls back on
 // those misses (FEED_GO_COMPUTE_MISSES=false).
 //
@@ -38,14 +38,16 @@ type MissCompute struct {
 	// Node lookup writes it: same key, same msgpackr bytes, same expiry. Only for a miss Node would
 	// write too (no key, or an undecodable value; never inside a bust's debounce window or after a
 	// failed read), and as SET NX: a key another writer filled since the read is never overwritten.
+	// The frame and event-decoration lookups then read Primary, as Node's do (entityDB).
 	WriteBack bool
+	// Primary is the primary database (DATABASE_URL, Node's dbWrite), required with WriteBack: the
+	// frame and event-decoration lookups write what they read, so they must not read a lagging replica
+	// (an unequipped or withheld frame would be cached again for a day).
+	Primary Querier
 	// FrameNegative mirrors the `frame-cache-negative` flag (FEED_GO_FRAME_CACHE_NEGATIVE): whether the
 	// frame cache's notFound markers are live. Off, a marker is read as a miss and none is written,
 	// as Node does while the flag is off.
 	FrameNegative bool
-	// Metrics answers metric-hash misses (MetricService's ClickHouse populate); nil = they fall back
-	// (`metrics-miss`).
-	Metrics MetricsSource
 	// Observe counts computed miss ids: cache is a MissXxx label, result "computed" or "error".
 	Observe func(cache, result string, n int)
 	// Now stamps `cachedAt` / `_populatedAt` (time.Now when nil).
@@ -63,6 +65,20 @@ func (c *MissCompute) observe(cache, result string, n int) {
 	if c.Observe != nil && n > 0 {
 		c.Observe(cache, result, n)
 	}
+}
+
+// entityDB is the database the frame and event-decoration lookups read. Node reads the primary
+// (dbWrite, src/server/redis/caches.ts) and caches what it reads for a day. With WriteBack on this
+// service writes what it reads too, so it reads the primary as well; with it off nothing it reads is
+// cached, and the replica's lag only affects this one answer.
+func (s *Sources) entityDB() (Querier, error) {
+	if !s.Compute.WriteBack {
+		return s.Replica, nil
+	}
+	if s.Compute.Primary == nil {
+		return nil, errors.New("write-back needs the primary database")
+	}
+	return s.Compute.Primary, nil
 }
 
 // lookupSpec is one createCachedObject cache's write shape (src/server/redis/caches.ts).
@@ -227,7 +243,7 @@ func (s *Sources) lookupUserCosmetics(ctx context.Context, ids []int) (map[int]j
 		list = append(list, equipped{uid, cid, data})
 		cids = append(cids, cid)
 	}
-	withheld, err := s.withheldCosmeticIDs(ctx, cids)
+	withheld, err := s.withheldCosmeticIDs(ctx, s.Replica, cids)
 	if err != nil {
 		return nil, err
 	}
@@ -249,8 +265,7 @@ func (s *Sources) lookupUserCosmetics(ctx context.Context, ids []int) (map[int]j
 	return out, nil
 }
 
-// sqlImageFrames is cosmeticEntityCaches.Image's lookupFn query. Node reads the primary (dbWrite);
-// this service has the replica only (DESIGN.md §9).
+// sqlImageFrames is cosmeticEntityCaches.Image's lookupFn query, on entityDB (Node: the primary).
 const sqlImageFrames = `SELECT uc."cosmeticId", uc."equippedToId", uc."data"::text AS "userData", c."createdById"
 		FROM "UserCosmetic" uc
 		JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
@@ -263,7 +278,11 @@ const sqlImageFrames = `SELECT uc."cosmeticId", uc."equippedToId", uc."data"::te
 // without frames whose creator cosmetic is withheld. The cosmetic join is the cache's appendFn,
 // which runs on every read (joinFrames).
 func (s *Sources) lookupImageFrames(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	rows, err := s.Replica.Query(ctx, sqlImageFrames, ids)
+	db, err := s.entityDB()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(ctx, sqlImageFrames, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +308,7 @@ func (s *Sources) lookupImageFrames(ctx context.Context, ids []int) (map[int]jsp
 			created = append(created, cid)
 		}
 	}
-	withheld, err := s.withheldCosmeticIDs(ctx, created)
+	withheld, err := s.withheldCosmeticIDs(ctx, db, created) // Node: getWithheldCosmeticIds(…, dbWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -303,8 +322,8 @@ func (s *Sources) lookupImageFrames(ctx context.Context, ids []int) (map[int]jsp
 	return out, nil
 }
 
-// sqlImageEvents is eventDecorationEntityCaches.Image's lookupFn query (Node: the primary; here the
-// replica, DESIGN.md §9).
+// sqlImageEvents is eventDecorationEntityCaches.Image's lookupFn query, on entityDB (Node: the
+// primary). Its cosmetic records come from cosmeticCache, which Node reads from the replica.
 const sqlImageEvents = `SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
 		FROM "UserCosmetic" uc
 		JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
@@ -317,7 +336,11 @@ const sqlImageEvents = `SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
 // cosmetic record (cosmeticCache.fetch); a row whose cosmetic is found nowhere, or whose data is not
 // event decoration data, is skipped. The last row per image wins.
 func (s *Sources) lookupImageEvents(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	rows, err := s.Replica.Query(ctx, sqlImageEvents, ids)
+	db, err := s.entityDB()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(ctx, sqlImageEvents, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -450,14 +473,15 @@ const sqlTombstonedCosmetics = `SELECT id, flags FROM "Cosmetic" WHERE id = ANY(
 // withheldCosmeticIDs is getWithheldCosmeticIds (src/server/services/creator-shop-withheld.ts): the
 // creator-made cosmetics among ids that no holder may show. A cosmetic with a displayable listing by
 // its creator is shown; one whose creator listings are all undisplayable is withheld; one with no
-// creator listing is withheld when it carries CosmeticFlag.Withheld. No ids, no query.
-func (s *Sources) withheldCosmeticIDs(ctx context.Context, ids []int) (map[int]bool, error) {
+// creator listing is withheld when it carries CosmeticFlag.Withheld, read from db (the database its
+// caller's lookup reads, as Node passes it). No ids, no query.
+func (s *Sources) withheldCosmeticIDs(ctx context.Context, db Querier, ids []int) (map[int]bool, error) {
 	withheld := map[int]bool{}
 	ids = Unique(ids)
 	if len(ids) == 0 {
 		return withheld, nil
 	}
-	rows, err := s.Replica.Query(ctx, sqlShopListings, ids)
+	rows, err := db.Query(ctx, sqlShopListings, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +522,7 @@ func (s *Sources) withheldCosmeticIDs(ctx context.Context, ids []int) (map[int]b
 	if len(unlisted) == 0 {
 		return withheld, nil
 	}
-	rows, err = s.Replica.Query(ctx, sqlTombstonedCosmetics, unlisted)
+	rows, err = db.Query(ctx, sqlTombstonedCosmetics, unlisted)
 	if err != nil {
 		return nil, err
 	}
