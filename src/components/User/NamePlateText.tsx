@@ -13,9 +13,8 @@ type NamePlateData = NamePlateCosmetic['data'] | null | undefined;
 // attribute is set straight on the node (see `useSweepOnlyInView`) to keep scrolling free of renders.
 export const NAMEPLATE_SWEEP_CLASS =
   'animate-nameplate-sweep motion-reduce:animate-none data-[offscreen=true]:[animation-play-state:paused]';
-export const NAMEPLATE_OFFSCREEN_ATTR = 'data-offscreen';
+const NAMEPLATE_OFFSCREEN_ATTR = 'data-offscreen';
 
-/** Marks the node `data-offscreen="true"` while it is outside the viewport. */
 function useSweepOnlyInView(active: boolean) {
   const ref = useRef<HTMLParagraphElement>(null);
   useEffect(() => {

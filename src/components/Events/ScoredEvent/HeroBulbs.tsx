@@ -5,8 +5,7 @@ import styles from './HeroBulbs.module.scss';
 
 /**
  * A string of party bulbs along a hero's top edge, cycling through the given colours. Not the card
- * frame's CosmeticLights: that string runs down a card's sides in a single colour. On a phone every
- * other bulb is hidden, and the string holds still while it is off screen.
+ * frame's CosmeticLights: that string runs down a card's sides in a single colour.
  */
 export function HeroBulbs({ colors, count = 16 }: { colors: string[]; count?: number }) {
   const ref = useRef<HTMLDivElement>(null);
