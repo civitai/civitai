@@ -51,9 +51,9 @@ async function asArchiver<T>(fn: () => Promise<T>): Promise<T> {
 async function startRun(): Promise<string> {
   const r = await db.query<{ id: string }>(START, [
     'report',
-    4821937,
+    990000002,
     null,
-    31877,
+    990000001,
     'write',
     [1, 2, 6],
     'v0.2.10',
