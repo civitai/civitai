@@ -16,13 +16,20 @@ import {
 } from '~/server/flipt/client';
 import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
 import {
-  verdictKeepsServedIds,
+  AUDIT_RESULT_IDS,
+  recordRefusedSemanticAudit,
   recordSemanticAudit,
+  verdictComputesRefusedIds,
+  verdictKeepsServedIds,
+  type RefusedCandidates,
   type SemanticAuditEntry,
 } from '~/server/services/semantic-search-audit.service';
 import {
   GUARD_NONE,
+  type CandidateFilter,
+  type CandidateSource,
   type GuardRead,
+  type SearchViewer,
   type SearchCollection,
 } from '~/server/services/semantic-search-client';
 import { Flags } from '~/shared/utils/flags';
@@ -180,6 +187,14 @@ export function recordRefusal(
   track?.action({ type: 'CSAM_Help_Triggered', details: { query, index } }).catch(() => undefined);
 }
 
+/** The candidates a refused text search would have served, for its audit row only. */
+export function refusedTextCandidates(
+  source: CandidateSource,
+  { text, filter, viewer }: { text: string; filter: CandidateFilter; viewer: SearchViewer }
+): () => Promise<RefusedCandidates> {
+  return () => source({ query: { text }, filter, offset: 0, limit: AUDIT_RESULT_IDS, viewer });
+}
+
 /**
  * What one semantic search learns along the way, recorded as one row when its first page is
  * returned. Services report verdicts and candidate results to it as they happen.
@@ -197,32 +212,52 @@ export function beginSemanticAudit({
 }) {
   let wordVerdict: QueryRefusal = false;
   let withholdIds = false;
+  let withholdComputedIds = false;
   let candidates: { guard?: GuardRead; cacheHit?: boolean } | undefined;
+  const entry = (browsingLevel: number, resultIds: number[]): SemanticAuditEntry => ({
+    index,
+    viewer,
+    query: query ?? '',
+    browsingLevel,
+    wordVerdict,
+    withholdIds,
+    withholdComputedIds,
+    resultsServed: true,
+    // Called but sent no guard: a cached block stored without one.
+    guard: candidates ? candidates.guard ?? { ...GUARD_NONE, outcome: 'unknown' } : GUARD_NONE,
+    cacheHit: candidates?.cacheHit ?? false,
+    resultIds,
+  });
   return {
     verdict(refusal: QueryRefusal) {
       if (!refusal) return;
       wordVerdict ||= refusal;
       if (!verdictKeepsServedIds(refusal)) withholdIds = true;
+      if (!verdictComputesRefusedIds(refusal)) withholdComputedIds = true;
     },
     candidates(result: { guard?: GuardRead; cacheHit?: boolean } | undefined) {
       candidates ??= result;
     },
     done<R extends { items: { id: number }[] }>(result: R, browsingLevel: number): R {
       if (firstPage)
-        recordSemanticAudit({
-          index,
-          viewer,
-          query: query ?? '',
-          browsingLevel,
-          wordVerdict,
-          withholdIds,
-          // Called but sent no guard: a cached block from before the guard result, or an old service.
-          guard: candidates
-            ? candidates.guard ?? { ...GUARD_NONE, outcome: 'unknown' }
-            : GUARD_NONE,
-          cacheHit: candidates?.cacheHit ?? false,
-          resultIds: result.items.map((x) => x.id),
-        });
+        recordSemanticAudit(
+          entry(
+            browsingLevel,
+            result.items.map((x) => x.id)
+          )
+        );
+      return result;
+    },
+    /**
+     * A refused search: serves `result` (nothing) at once. The audit may then run `compute` for
+     * the candidates the search would have served, never shown to anyone.
+     */
+    refused<R extends { items: { id: number }[] }>(
+      result: R,
+      browsingLevel: number,
+      compute: () => Promise<RefusedCandidates>
+    ): R {
+      if (firstPage) recordRefusedSemanticAudit(entry(browsingLevel, []), compute);
       return result;
     },
   };
