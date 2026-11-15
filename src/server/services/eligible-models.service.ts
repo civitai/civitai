@@ -24,7 +24,7 @@ export async function getEligibleModels(
     }),
     imagesForModelVersionsCache.fetch(versionIds),
   ]);
-  // Challenge cards are shared between viewers: a held model's showcase at its gallery level.
+  // Challenge cards are shared between viewers, so no one is exempt from the hold.
   const { holdShowcaseImages } = await import('~/server/services/model.service');
   const imageCache = await holdShowcaseImages(
     cached,

@@ -227,11 +227,11 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
       },
     },
   });
-  // The tag-attaching wrapper (`getImagesForModelVersionCache`) costs a second cache
-  // round-trip for tags no auction card reads.
-  // Auction cards are shared between viewers: a held model's showcase at its gallery level.
+  // Auction cards are shared between viewers, so no one is exempt from the hold.
   const { holdShowcaseImages } = await import('~/server/services/model.service');
   const imageData = await holdShowcaseImages(
+    // Not the tag-attaching `getImagesForModelVersionCache`: its second round-trip fetches tags no
+    // auction card reads.
     await imagesForModelVersionsCache.fetch(entityIds),
     new Map(
       mvData.map(

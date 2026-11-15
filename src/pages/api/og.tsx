@@ -227,7 +227,6 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     needsReview: null,
     ingestion: 'Scanned' as const,
   };
-  // A minor or SFW-only model's card picks its image within the model's gallery level.
   const heldLevel = (
     await getShowcaseHeldLevels([{ modelId: id, minor: model.minor, sfwOnly: model.sfwOnly }])
   ).get(id);
