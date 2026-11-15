@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -221,8 +222,12 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 	env.db = &testkit.DB{Routes: []testkit.Route{
 		{Match: `as "cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			env.stmts++
+			if fx.Expect.Fallback != "" {
+				// A fallback fixture records no Node statement: only the reason is pinned.
+				return toRows(modelColumns, models), nil
+			}
 			if fx.Expect.SQL == nil {
-				return nil, fmt.Errorf("a model statement was built; the fixture expects none")
+				return nil, errors.New("a model statement was built; the fixture expects none")
 			}
 			if got, want := NormalizeSQL(sql), NormalizeSQL(fx.Expect.SQL.Text); got != want {
 				return nil, fmt.Errorf("model statement differs from Node's:\n go:   %s\n node: %s", got, want)

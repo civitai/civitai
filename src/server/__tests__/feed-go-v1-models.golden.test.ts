@@ -104,7 +104,8 @@ vi.mock('~/server/db/pgDb', () => ({
   pgDbReadLong: {},
 }));
 
-vi.mock('~/server/redis/caches', () => ({
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   // dataForModelsCache with its appendFn: a record's tags come from modelTagCache (whose appendFn
   // names them from tagCache, dropping a tag it does not hold); a model with no model-tags record
   // keeps its own.
@@ -132,12 +133,14 @@ vi.mock('~/server/redis/caches', () => ({
   userModelCountCache: { fetch: vi.fn(), bust: vi.fn() },
 }));
 
-vi.mock('~/server/services/model-file.service', () => ({
+vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getFilesForModelVersionCache: vi.fn(async (ids: number[]) => records(state.world.files, ids)),
   deleteFilesForModelVersionCache: vi.fn(),
 }));
 
-vi.mock('~/server/services/image.service', () => ({
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getImagesForModelVersion: vi.fn(),
   // imagesForModelVersionsCache with its appendFn: each image's `tags` from tagIdsForImagesCache.
   getImagesForModelVersionCache: vi.fn(async (ids: number[]) => {
@@ -153,7 +156,8 @@ vi.mock('~/server/services/image.service', () => ({
   queueImageSearchIndexUpdate: vi.fn(),
 }));
 
-vi.mock('~/server/services/hot-reads-11.reads', () => ({
+vi.mock('~/server/services/hot-reads-11.reads', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   readModelsWithVersionsStats: vi.fn(async () => {
     const s = revive(state.world.stats);
     return {
@@ -184,7 +188,8 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   getBrowsingSettingAddons: vi.fn(async () => revive(state.world.addons)),
 }));
 
-vi.mock('~/server/services/paid-access.service', () => ({
+vi.mock('~/server/services/paid-access.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getPaidAccess: vi.fn(),
   // getPaidAccess over the fixture's cached rows, then toPublicPaidAccessDto.
   getPublicPaidAccessForModelVersions: vi.fn(async (ids: number[]) => {
@@ -208,7 +213,8 @@ vi.mock('~/server/services/paid-access.service', () => ({
   bustModelSaleCache: vi.fn(),
 }));
 
-vi.mock('~/server/services/creator-program.service', () => ({
+vi.mock('~/server/services/creator-program.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getValidCreatorMembershipMap: vi.fn(
     async (ids: number[]) =>
       new Map(
@@ -227,7 +233,8 @@ vi.mock('~/server/services/creator-program.service', () => ({
   ),
 }));
 
-vi.mock('~/server/services/user.service', () => ({
+vi.mock('~/server/services/user.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   deleteBasicDataForUser: vi.fn(),
   getCosmeticsForUsers: vi.fn(async () => ({})),
   getProfilePicturesForUsers: vi.fn(async (ids: number[]) =>
@@ -235,18 +242,24 @@ vi.mock('~/server/services/user.service', () => ({
   ),
   getUserBookmarkCollections: vi.fn(async () => []),
 }));
-vi.mock('~/server/services/cosmetic.service', () => ({ getCosmeticsForEntity: vi.fn() }));
+vi.mock('~/server/services/cosmetic.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getCosmeticsForEntity: vi.fn(),
+}));
 
-vi.mock('~/server/services/model-version.service', () => ({
+vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   publicModelResponseKey: (id: number, browsingLevel: number) =>
     `packed:caches:public-model-response:v2:${id}:${browsingLevel}`,
 }));
 // The origin cache's write is not under test: a miss builds and returns the body.
-vi.mock('~/server/utils/cache-helpers', () => ({
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   fetchThroughCache: vi.fn(async (_key: string, fn: () => Promise<unknown>) => fn()),
 }));
 
-vi.mock('~/server/utils/region-blocking', () => ({
+vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   getRegion: (req: NextApiRequest) => ({
     countryCode: req.headers['cf-ipcountry'],
     regionCode: null,
@@ -254,7 +267,8 @@ vi.mock('~/server/utils/region-blocking', () => ({
   }),
   isRegionRestricted: () => !!state.fx?.config.regionRestricted,
 }));
-vi.mock('~/server/utils/endpoint-helpers', () => ({
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   PublicEndpoint: (handler: any) => (req: any, res: any) => handler(req, res),
   MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, undefined),
   handleEndpointError: (res: any, e: any) => res.status(500).json({ error: String(e) }),

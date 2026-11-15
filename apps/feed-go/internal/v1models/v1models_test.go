@@ -252,7 +252,7 @@ func TestRawQueryBaseModelPaths(t *testing.T) {
 			`ORDER BY mbm."downloadCount" DESC, mbm."thumbsUpCount" DESC, mbm."modelId"`,
 		}},
 		{"several, Newest: driven from ModelMetric", RawInput{BaseModels: []string{"Pony", "SDXL 1.0"}, BaseModelMetrics: true, Sort: SortNewest}, []string{
-			`mm."modelId" as "id"`, `'downloadCount', mbm."downloadCount"`, `mbmm."baseModel" IN ($2,$3)`,
+			`mm."modelId" as "id"`, `'downloadCount', mbm."downloadCount"`, `mbmm."baseModel" IN ($4,$5)`, // after the LATERAL's own two in the FROM
 			`LEFT JOIN LATERAL ( SELECT LEAST(SUM("downloadCount")::int, mm."downloadCount") as "downloadCount"`,
 		}},
 		{"several, a stat sort: the aggregate", RawInput{BaseModels: []string{"Pony", "SDXL 1.0"}, BaseModelMetrics: true, Sort: SortImageCount}, []string{

@@ -86,7 +86,9 @@ func newTestWorld() *testWorld {
 				meta("id", int64(7001), "name", "a.safetensors", "type", "Model", "visibility", "Public", "modelVersionId", int64(6001),
 					"hashes", []any{}, "metadata", meta("format", "SafeTensor")),
 			}), cached),
-			KeyMetricPrivacy + ":1001": meta("hideModelBuzz", false, "hideModelDownloads", false, "hideModelGenerations", false),
+			// The default addons exclude tags at every level, so the images' tag ids are read.
+			KeyTagIDsForImages + ":8001": append(meta("imageId", int64(8001), "tags", []any{int64(1)}), cached),
+			KeyMetricPrivacy + ":1001":   meta("hideModelBuzz", false, "hideModelDownloads", false, "hideModelGenerations", false),
 		},
 		raw: map[string]string{},
 		modelRow: map[string]any{
@@ -109,7 +111,7 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 	for k, v := range w.raw {
 		w.cache.SetString(k, []byte(v))
 	}
-	rows := func(cols []string, data ...[]any) *testkit.Rows { return testkit.NewRows(cols, data...) }
+	rows := testkit.NewRows
 	db := &testkit.DB{Routes: []testkit.Route{
 		{Match: `as "cursorId"`, Rows: func([]any) (*testkit.Rows, error) {
 			if w.dbErr != nil {
@@ -164,7 +166,7 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 		}},
 		{Match: `FROM "User" WHERE username`, Rows: func(args []any) (*testkit.Rows, error) {
 			if id, ok := w.usernames[args[0].(string)]; ok {
-				return rows([]string{"id"}, []any{int32(id)}), nil
+				return rows([]string{"id"}, []any{int64(id)}), nil
 			}
 			return rows([]string{"id"}), nil
 		}},

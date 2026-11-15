@@ -373,7 +373,7 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 				continue
 			}
 			lvl, _ := intOf(getVal(img, "nsfwLevel"))
-			if !(o.nsfwImagePassthrough && !o.detail) && lvl&o.level == 0 {
+			if (!o.nsfwImagePassthrough || o.detail) && lvl&o.level == 0 {
 				continue
 			}
 			id, _ := intOf(getVal(img, "id"))

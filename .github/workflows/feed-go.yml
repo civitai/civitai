@@ -310,8 +310,8 @@ jobs:
         internal/superjson:FuzzAppendString:440000
         internal/superjson:FuzzSerialize:170000
         internal/trpc:FuzzDecodeEnvelope:150000
-        internal/v1models:FuzzParseList:20000
-        internal/v1models:FuzzResolveFileName:20000
+        internal/v1models:FuzzParseList:160000
+        internal/v1models:FuzzResolveFileName:70000
     steps:
       - uses: actions/checkout@v7
 

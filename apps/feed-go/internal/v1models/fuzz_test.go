@@ -44,7 +44,7 @@ func FuzzResolveFileName(f *testing.F) {
 	for _, s := range [][3]string{
 		{"Model 5001", "v1", "model.safetensors"},
 		{"BB Bunny", "BB Bunny v2", "01HZX3J8K9M2N4P6Q7R8S9T0VW.safetensors"},
-		{"Ünï 😀", "x​", "a\"b\\c%41.zip"},
+		{"Ünï 😀", "x\u200b", "a\"b\\c%41.zip"},
 		{"", "", ""},
 	} {
 		f.Add(s[0], s[1], s[2], "Checkpoint", "Model")
