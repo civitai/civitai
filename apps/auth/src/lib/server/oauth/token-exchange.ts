@@ -140,6 +140,7 @@ export function scopeNames(scope: number): string {
 
 /** What introspection needs to tie an exchanged JWT back to the access token it came from. */
 export interface ExchangeRecord {
+  kind?: undefined;
   subjectKeyId: number;
   userId: number;
   clientId: string;
@@ -148,6 +149,17 @@ export interface ExchangeRecord {
   scopeBits: number;
   exp: number;
 }
+
+/** What introspection needs to tie a service token back to its client and resource. */
+export interface ServiceTokenRecord {
+  kind: 'service';
+  clientId: string;
+  resource: string;
+  scopeBits: number;
+  exp: number;
+}
+
+export type TokenRecord = ExchangeRecord | ServiceTokenRecord;
 
 const recordKey = (jti: string) => `${REDIS_SYS_KEYS.OAUTH.TOKEN_EXCHANGES}:${jti}` as const;
 
@@ -186,7 +198,7 @@ async function withSysRedis<T>(op: (redis: StringRedis) => Promise<T>): Promise<
 /** Store the record until a minute past the JWT's expiry. Throws when it cannot be stored. */
 export async function writeExchangeRecord(
   jti: string,
-  record: ExchangeRecord,
+  record: TokenRecord,
   nowSeconds: number
 ): Promise<void> {
   const ttl = Math.max(1, record.exp - nowSeconds + 60);
@@ -194,11 +206,11 @@ export async function writeExchangeRecord(
 }
 
 /** The record for `jti`, or null when there is none. Throws when Redis cannot answer. */
-export async function readExchangeRecord(jti: string): Promise<ExchangeRecord | null> {
+export async function readExchangeRecord(jti: string): Promise<TokenRecord | null> {
   const raw = await withSysRedis((redis) => redis.get(recordKey(jti)));
   if (raw == null) return null;
   try {
-    return JSON.parse(raw) as ExchangeRecord;
+    return JSON.parse(raw) as TokenRecord;
   } catch {
     return null;
   }

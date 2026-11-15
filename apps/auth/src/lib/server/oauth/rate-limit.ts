@@ -51,6 +51,9 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //   - token-exchange-ip: per-IP (120/min) — FAILED client-secret checks on the user token exchange. A request
 //                whose secret checks out is never charged or refused by it. With no resolvable IP the
 //                failures share one bucket, never one keyed on the claimed client id.
+//   - token-service: per-client (60/min) — service tokens (service-token.ts), charged after client auth. The
+//                per-IP `token` limit never applies to it; a request that fails client auth is not a
+//                service token request and takes the general path and its limits.
 //   - introspect-jwt: per-client (1200/min) — introspection of an exchanged JWT, charged after client auth.
 //   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
 //                once per token TTL, so this only catches a runaway host loop.
@@ -73,6 +76,7 @@ const OAUTH_RATE_LIMITS = {
   'token-exchange': { limit: 600, windowSeconds: 60 },
   'token-exchange-ip': { limit: 120, windowSeconds: 60 },
   'introspect-jwt': { limit: 1200, windowSeconds: 60 },
+  'token-service': { limit: 60, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
@@ -88,6 +92,17 @@ export async function checkOAuthRateLimit(
 ): Promise<boolean> {
   const cfg = OAUTH_RATE_LIMITS[bucket];
   return checkRateLimit(`oauth:${bucket}`, identifier, cfg.limit, cfg.windowSeconds);
+}
+
+/**
+ * Whether an IP is past the per-IP `token` limit and has used up its `token-overflow` budget of failed
+ * secret checks, so the token route checks no more secrets for it (counts nothing).
+ */
+export async function tokenSecretChecksExhausted(ip: string | null | undefined): Promise<boolean> {
+  return (
+    (await isRateLimited('oauth:token', ip, OAUTH_RATE_LIMITS.token.limit)) &&
+    (await tokenOverflowExhausted(ip))
+  );
 }
 
 /** Whether an IP has used up its `token-overflow` budget of failed secret checks (counts nothing). */

@@ -8,6 +8,7 @@ import {
   checkClientTokenRateLimit,
   checkOAuthRateLimit,
   tokenOverflowExhausted,
+  tokenSecretChecksExhausted,
 } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { logAxiomError } from '$lib/server/axiom';
@@ -24,6 +25,7 @@ import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
 import { deviceTokenGrant } from '$lib/server/oauth/device-token';
 import { handleUserTokenExchange } from '$lib/server/oauth/user-exchange';
+import { handleServiceToken, serviceTokenClient } from '$lib/server/oauth/service-token';
 import {
   parseBody,
   toOAuthRequest,
@@ -39,8 +41,8 @@ import {
 } from '$lib/server/oauth/client-auth';
 
 // POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants, the
-// worker token-exchange grant (lib/server/oauth/worker-grant.ts) and the user token exchange
-// (lib/server/oauth/user-exchange.ts).
+// worker token-exchange grant (lib/server/oauth/worker-grant.ts), the user token exchange
+// (lib/server/oauth/user-exchange.ts) and service tokens (lib/server/oauth/service-token.ts).
 // Ported from src/pages/api/auth/oauth/token.ts.
 //
 // OIDC id_token signer: undefined unless the hub ES256 keys are set (they always are when sessions
@@ -82,11 +84,18 @@ async function tokenOverflowAllowed(
 }
 
 export const POST: RequestHandler = async ({ request }) => {
-  // A form can repeat `resource`, which parseBody collapses; the user token exchange must see every value.
+  // A form can repeat `resource`, which parseBody collapses; the user token exchange and service tokens
+  // must see every value.
   const formEncoded = (request.headers.get('content-type') ?? '').includes(
     'application/x-www-form-urlencoded'
   );
   const rawForm = formEncoded ? request.clone() : null;
+  const formResources = async () =>
+    rawForm
+      ? (await rawForm.formData().catch(() => null))
+          ?.getAll('resource')
+          .map((v) => (typeof v === 'string' ? v : '')) ?? []
+      : [];
   const body = await parseBody(request);
   const clientId =
     typeof body.client_id === 'string' && body.client_id ? body.client_id : 'unknown';
@@ -102,12 +111,23 @@ export const POST: RequestHandler = async ({ request }) => {
   // A user's access token exchanged for a resource JWT has its own client auth and limits (user-exchange.ts).
   // Every other token exchange is a worker's, handled by the library's worker grant.
   if (body.grant_type === TOKEN_EXCHANGE_GRANT && body.subject_token_type === ACCESS_TOKEN_TYPE) {
-    const resources = rawForm
-      ? (await rawForm.formData().catch(() => null))
-          ?.getAll('resource')
-          .map((v) => (typeof v === 'string' ? v : '')) ?? []
-      : [];
+    const resources = await formResources();
     return handleUserTokenExchange({ request, body, resources, clientIp, formEncoded });
+  }
+
+  // client_credentials with a `resource`, from an authenticated service client, is a service token with its
+  // own limit. Any other client, or a failed client check, goes on below exactly as without `resource`. An
+  // IP that may check no more secrets on the general path is not checked here either.
+  if (
+    body.grant_type === 'client_credentials' &&
+    body.resource !== undefined &&
+    !(await tokenSecretChecksExhausted(clientIp))
+  ) {
+    const service = await serviceTokenClient(request, body);
+    if (service) {
+      const resources = await formResources();
+      return handleServiceToken({ client: service, body, resources });
+    }
   }
   const isWorkerExchange = body.grant_type === TOKEN_EXCHANGE_GRANT;
 
