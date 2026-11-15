@@ -183,7 +183,7 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 	observeLag(s.Metrics.GoFirstReceiptLag, spec.endpoint, received, req.StartedAt)
 	w.WriteHeader(http.StatusAccepted)
 	started = true
-	go func() {
+	go func() { //nolint:contextcheck // runs after the 202 on the server's background context (Close cancels it): it must outlive the request
 		defer s.shadows.Done()
 		defer func() { <-s.ProbeQueue }()
 		defer func() {
