@@ -65,7 +65,9 @@ function inScope(repoPath: string): boolean {
 /** Integer literals, bare or as an all-digit string, that look like an id and are not synthetic. */
 function unsyntheticIds(source: string): string[] {
   const found: string[] = [];
-  const literal = /(?<![\w.$#/:\\-])(['"`]?)([1-9][0-9_]*[0-9])\1(?![\w.])/g;
+  // Not part of a decimal, path, time (`12:34`), cast (`::`) or dashed token (`run-123`).
+  const literal =
+    /(?<![\w.$#/\\])(?<!\d:)(?<!::)(?<![0-9A-Za-z_]-)(['"`]?)([1-9][0-9_]*[0-9])\1(?=n\b|(?![\w.]))/g;
   for (const match of source.matchAll(literal)) {
     const digits = match[2].replace(/_/g, '');
     if (!/^\d+$/.test(digits) || digits.length > 12) continue;
@@ -104,12 +106,16 @@ describe('🔴 CSAM-path test fixtures use synthetic ids', () => {
   it.each([
     [
       'a user id and a report id as query params',
-      `db.query(START, ['report', 4821937, null, 31877]);`,
+      `db.query(START, ['report', 4000000017, null, 4000000003]);`,
     ],
-    ['an object key', `const report = { id: 52817, userId: 1834502 };`],
-    ['a SQL insert', `INSERT INTO "CsamReport" ("id", "userId") VALUES (52817, 1834502);`],
-    ['an all-digit string', `const user = { id: '1834502' };`],
-    ['a separated literal', `userId: 1_834_502,`],
+    ['an object key', `const report = { id: 4000000003, userId: 4000000017 };`],
+    ['a SQL insert', `INSERT INTO "CsamReport" ("id", "userId") VALUES (4000000003, 4000000017);`],
+    ['an all-digit string', `const user = { id: '4000000017' };`],
+    ['a separated literal', `userId: 4_000_000_017,`],
+    ['minified JSON', `{"id":4000000003,"userId":4000000017}`],
+    ['an unspaced key', `{id:4000000017}`],
+    ['a negative literal', `const x = -4000000017;`],
+    ['a bigint', `const id = 4000000017n;`],
   ])('flags %s', (_, source) => {
     expect(unsyntheticIds(source).length).toBeGreaterThan(0);
   });
@@ -121,6 +127,10 @@ describe('🔴 CSAM-path test fixtures use synthetic ids', () => {
     ['decimals and dotted versions', `const v = 'v0.2.10'; const ratio = 0.123456;`],
     ['identifiers and hex', `const user12345 = 0x1f2e3d4c; const k = 'abc12345';`],
     ['dates and SQLSTATE strings', `'2026-11-14'; code === '23505';`],
+    [
+      'times, casts and dashed tokens',
+      `'23:59:59.123456'; x::int8; 'run-4000000017'; 'abc-123456'`,
+    ],
   ])('passes %s', (_, source) => {
     expect(unsyntheticIds(source)).toEqual([]);
   });
