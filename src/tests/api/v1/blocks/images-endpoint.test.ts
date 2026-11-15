@@ -221,20 +221,24 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(input.data).not.toHaveProperty('someJunk');
   });
 
-  it.each([{ ids: '1,2' }, { imageId: '2' }, { username: 'someone' }, {}])(
-    'leaves out held images from a search that names no model (%o)',
-    async (query) => {
-      claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
-      const found = [{ id: 1 }, { id: 2 }];
-      mockRunImageSearch.mockResolvedValue({ items: found, nextCursor: undefined });
-      mockWithoutHeld.mockResolvedValue([{ id: 1 }]);
+  it.each([
+    { ids: '1,2' },
+    { imageId: '2' },
+    { username: 'someone' },
+    {},
+    { modelId: '5' },
+    { ids: '1,2', modelId: '5' },
+  ])("leaves out images above their own post's held level (%o)", async (query) => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const found = [{ id: 1 }, { id: 2 }];
+    mockRunImageSearch.mockResolvedValue({ items: found, nextCursor: undefined });
+    mockWithoutHeld.mockResolvedValue([{ id: 1 }]);
 
-      const res = await invoke(query);
+    const res = await invoke(query);
 
-      expect(mockWithoutHeld).toHaveBeenCalledWith(found);
-      expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
-    }
-  );
+    expect(mockWithoutHeld).toHaveBeenCalledWith(found);
+    expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
+  });
 
   it('forwards the selector params (type/limit/sort/modelId/postId/username)', async () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });

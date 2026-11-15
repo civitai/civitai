@@ -252,9 +252,9 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
       { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
-    // Images not selected by a model (by id, by user, or none) are each held by their own post's model.
-    const items =
-      data.modelId || data.modelVersionId || data.postId ? found : await withoutHeldImages(found);
+    // Each image is held by its own post's model: a model or version search selects by resource, so
+    // it can return images posted to another model's gallery.
+    const items = await withoutHeldImages(found);
 
     const metadata: Metadata = {
       nextCursor,
