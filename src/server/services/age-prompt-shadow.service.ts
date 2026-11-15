@@ -1,6 +1,5 @@
-import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { extModeration } from '~/server/integrations/moderation';
+import { extModeration, isExternalModerationConfigured } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import type { ExternalModerationSource } from '~/server/prom/external-moderation.metrics';
 import { auditPromptEnriched } from '~/utils/metadata/audit';
@@ -67,7 +66,7 @@ export async function decideAgeRegexHit({
   let verdict: 'flagged' | 'clean' | 'none' = 'none';
   if (withoutAge === undefined) status = 'fell-back-to-regex';
   // `moderatePrompt` answers not-flagged when unconfigured; that must not read as clean here.
-  else if (!env.EXTERNAL_MODERATION_ENDPOINT || !env.EXTERNAL_MODERATION_TOKEN) status = 'skipped';
+  else if (!isExternalModerationConfigured()) status = 'skipped';
   else {
     try {
       const { flagged } = await extModeration.moderatePrompt(prompt, source);

@@ -230,6 +230,11 @@ function recordOutcome(
   setActiveSpanAttributes({ 'moderation.outcome': outcome });
 }
 
+/** Whether `moderatePrompt` calls the classifier at all; when false it answers not-flagged. */
+export function isExternalModerationConfigured(): boolean {
+  return !!env.EXTERNAL_MODERATION_ENDPOINT && !!env.EXTERNAL_MODERATION_TOKEN;
+}
+
 export const extModeration = {
   moderatePrompt,
 };

@@ -9852,6 +9852,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
         // stricter SFW prompt audit.
         isGreen: true,
         isModerator: true,
+        appOrigin: { appBlockId: 'apb_test', stepType: 'fixture-audited-step' },
       });
     });
 

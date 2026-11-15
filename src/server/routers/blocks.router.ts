@@ -398,8 +398,9 @@ import {
 } from '~/server/utils/buzz-helpers';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import {
+  AppBlockPromptRefusalError,
+  auditAppBlockPrompt,
   auditPassThroughPrompts,
   auditTrainingSamplePrompts,
 } from '~/server/services/blocks/pass-through-prompt-audit';
@@ -478,6 +479,17 @@ const TERMINAL_BLOCK_WORKFLOW_STATUSES = new Set<BlockWorkflowStatus>([
  * the holder this middleware hands down; a failure before that is labelled `unknown`.
  */
 export type BlockSubmitTelemetry = { appBlockIdLabel: string };
+/**
+ * Every App Block prompt refusal, from any `kind`, answered as a failed snapshot with its code: a
+ * throw reaches a block with the message alone.
+ */
+const promptRefusalAsSnapshot = middleware(async ({ next }) => {
+  const result = await next();
+  if (result.ok || !(result.error instanceof AppBlockPromptRefusalError)) return result;
+  const { errorCode, appError } = result.error;
+  return { ok: true as const, marker: result.marker, data: multiStepRefusal(errorCode, appError) };
+});
+
 const recordSubmitFailures = middleware(async ({ next }) => {
   const blockSubmitTelemetry: BlockSubmitTelemetry = { appBlockIdLabel: 'unknown' };
   const result = await next({ ctx: { blockSubmitTelemetry } });
@@ -7378,6 +7390,7 @@ export const blocksRouter = router({
    */
   submitWorkflow: publicProcedure
     .use(recordSubmitFailures)
+    .use(promptRefusalAsSnapshot)
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(
@@ -7672,12 +7685,14 @@ export const blocksRouter = router({
       // generateFromGraph does). A block can't bypass moderation by submitting
       // through this path. `isGreen` (SFW prompt audit) is domain/ceiling-
       // derived so a SFW-domain block's prompts get the stricter audit.
-      await auditPromptServer({
+      await auditAppBlockPrompt({
         prompt: input.body.params.prompt,
         negativePrompt: input.body.params.negativePrompt,
         userId,
         isGreen,
         isModerator: !!user.isModerator,
+        appBlockId: claims.appBlockId,
+        stepType: 'textToImage',
       });
 
       const generateInput = buildTextToImageInput(input.body, {
@@ -10922,12 +10937,14 @@ async function submitCustomComfyWorkflow(opts: {
   // no-op — with every gate green. `collectInlineAuditText` (above) joins the
   // declared prompt AND every distinct string leaf in the graph, so a clean
   // declared prompt cannot launder a graph prompt.
-  await auditPromptServer({
+  await auditAppBlockPrompt({
     prompt: inlineBody ? inlineAuditText : params!.prompt,
     negativePrompt: inlineBody ? inlineBody.negativePrompt : recipe!.negativePrompt,
     userId,
     isGreen,
     isModerator: !!user.isModerator,
+    appBlockId: claims.appBlockId,
+    stepType: 'customComfy',
   });
 
   // ── Post-paid budget belt (plan §5.3 — THE crux) ─────────────────────────
@@ -12273,6 +12290,7 @@ async function submitStepWorkflow(opts: {
     userId,
     isGreen,
     loadIsModerator: async () => !!(await getBlockSessionUser(userId)).isModerator,
+    appBlockId: claims.appBlockId,
   });
 
   const token = await getOrchestratorToken(userId, ctx);

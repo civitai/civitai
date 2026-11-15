@@ -997,3 +997,16 @@ export function isConsentExemptScope(scope: string): boolean {
 
 /** `blocks.revokeScopes` takes at most this many scopes per call; the router schema and the client share it. */
 export const REVOKE_SCOPES_MAX_PER_CALL = 32;
+
+/**
+ * The site's prompt check refused the prompt. A failed snapshot's `errorCode` on every App Block
+ * generation submit, with `error` the refusal reasons only. Nothing is charged; resubmitting the
+ * same prompt is refused again.
+ */
+export const PROMPT_POLICY_REFUSED_ERROR_CODE = 'prompt-policy-refused' as const;
+
+/**
+ * The prompt check could not run, so nothing was submitted or charged. Retry no sooner than
+ * 30 seconds later, at most 3 times.
+ */
+export const PROMPT_CHECK_UNAVAILABLE_ERROR_CODE = 'prompt-check-unavailable' as const;
