@@ -18,7 +18,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = queueModelsReindexSchema.extend({
   cursor: z.coerce.number().int().min(0).default(0),
-  models: z.coerce.number().int().min(1).max(5000).default(1000),
+  models: z.coerce.number().int().min(1).max(5000).default(500),
 });
 
 export default WebhookEndpoint(async (req, res) => {

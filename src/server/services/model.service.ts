@@ -2875,7 +2875,6 @@ export async function applyModelFlagSideEffects({
   if (heldLevelChanged && !listingChanged)
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   if (minorChanged || heldLevelChanged) await purgeHeldShowcase(id, modelVersionIds);
-  // Collection documents carry covers judged at the gallery level too.
   // Not awaited: finding the collections can be slow, and it never throws.
   if (minorChanged || heldLevelChanged) void queueModelCollectionsReindex([id]);
 }

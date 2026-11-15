@@ -5437,14 +5437,14 @@ export const getEntityCoverImage = async ({
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
   )`;
 
-  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
-  // (a NULL mode), so the image and post arms keep images on no model version.
   // A minor or SFW-only model's image above its gallery level is its owner's and moderators'
   // alone. Placed before DISTINCT ON, so a held first image falls back to the next one.
   const withinHeldGallery = heldGalleryImageSql({
     exempt: Prisma.sql`(${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean`,
   });
 
+  // A taken-down model's images are its owner's and moderators' alone. Also true with no model
+  // (a NULL mode), so the image and post arms keep images on no model version.
   const modelNotWithheld = Prisma.sql`(
     m.mode IS DISTINCT FROM ${ModelModifier.TakenDown}::"ModelModifier"
     OR (${signedIn}::boolean AND m."userId" = ${viewerId}) OR ${isModerator}::boolean
