@@ -1,0 +1,3 @@
+# Statement-coverage floors for the unit run, checked by ci/coverage_gate.py in feed-go.yml.
+# Placeholder: set from the first CI measurement.
+total 0
