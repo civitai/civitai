@@ -5,6 +5,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import {
   canViewImageMedia,
+  keepCrawlerAnswerOutOfEdgeCache,
   viewerCanSeeImageMedia,
   withoutMedia,
   withoutMediaReferences,
@@ -163,6 +164,34 @@ describe('image.get media for a viewer', () => {
     await withViewerMedia(human, imageAt(NsfwLevel.PG));
     expect(human.cache).toMatchObject({ edgeTTL: 60, browserTTL: 60 });
   });
+});
+
+describe('keepCrawlerAnswerOutOfEdgeCache', () => {
+  const signedOut = (headerValue?: string | string[]) => ({
+    req: { headers: headerValue === undefined ? {} : { [VERIFIED_BOT_HEADER]: headerValue } },
+    cache: { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30, skip: false },
+  });
+  const run = (ctx: ReturnType<typeof signedOut>) => {
+    keepCrawlerAnswerOutOfEdgeCache(ctx as never);
+    return ctx.cache;
+  };
+  const uncached = { edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 };
+  const cached = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
+
+  it.each([['googlebot'], ['bingbot'], [['bingbot']]])(
+    'keeps a signed-out answer to the crawler %j out of the edge cache',
+    (value) => {
+      expect(run(signedOut(value))).toMatchObject(uncached);
+    }
+  );
+
+  // Only the values the crawler decision sets count: anything else is a client's guess.
+  it.each([[undefined], [''], ['1'], ['true'], ['GoogleBot'], [[]]])(
+    'leaves a signed-out answer with header %j cacheable',
+    (value) => {
+      expect(run(signedOut(value))).toMatchObject(cached);
+    }
+  );
 });
 
 describe('withoutMediaReferences', () => {
