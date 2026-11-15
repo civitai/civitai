@@ -23,6 +23,12 @@ const (
 	testPause             = time.Second
 )
 
+// These tests are not parallel, and no other test in this package may close an httptest.Server
+// while one of them pauses: httptest.Server.Close closes http.DefaultTransport's idle connections, so
+// a proxy that fell back to DefaultTransport (the regression these tests catch) would lose its stale
+// connection to another test's Close and pass. TestFallbackProxyTransport catches that regression
+// without timing.
+
 type connKey struct{}
 
 // keepAliveUpstream models a Node server whose keep-alive timeout is keepAlive, at the moment the race
@@ -39,6 +45,7 @@ type keepAliveUpstream struct {
 	conns     int // connections opened
 	dropped   int // requests dropped for arriving on a connection past its keep-alive
 	answered  int
+	received  []string // method and body of each answered request
 }
 
 func newKeepAliveUpstream(t *testing.T, keepAlive time.Duration) *keepAliveUpstream {
@@ -85,13 +92,22 @@ func (u *keepAliveUpstream) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
-	_, _ = w.Write(append([]byte(r.Method+" "), body...))
+	u.mu.Lock()
+	u.received = append(u.received, r.Method+" "+string(body))
+	u.mu.Unlock()
+	w.WriteHeader(http.StatusOK)
 }
 
 func (u *keepAliveUpstream) counts() (conns, dropped, answered int) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.conns, u.dropped, u.answered
+}
+
+func (u *keepAliveUpstream) answeredRequests() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]string(nil), u.received...)
 }
 
 func (u *keepAliveUpstream) target(t *testing.T) *url.URL {
@@ -132,18 +148,20 @@ func proxyDo(p http.Handler, method, body string) *httptest.ResponseRecorder {
 // at its own, shorter idle timeout. With DefaultTransport it would be written onto the connection the
 // upstream had closed and answered 502 (TestKeepAliveUpstreamDropsAStaleConnection).
 func TestFallbackProxyPostAfterTheUpstreamKeepAlive(t *testing.T) {
-	t.Parallel()
 	up := newKeepAliveUpstream(t, testUpstreamKeepAlive)
 	errs := &proxyErrors{}
 	p := fallbackProxy(up.target(t), testProxyIdle, errs.record)
 
-	if w := proxyDo(p, http.MethodPost, "first"); w.Code != http.StatusOK || w.Body.String() != "POST first" {
-		t.Fatalf("first POST: status %d body %q, want 200 \"POST first\"", w.Code, w.Body.String())
+	if w := proxyDo(p, http.MethodPost, "first"); w.Code != http.StatusOK {
+		t.Fatalf("first POST: status %d, want 200", w.Code)
 	}
 	time.Sleep(testPause)
-	if w := proxyDo(p, http.MethodPost, "second"); w.Code != http.StatusOK || w.Body.String() != "POST second" {
-		t.Fatalf("POST after the upstream keep-alive: status %d body %q, want 200 \"POST second\" "+
-			"(the proxy reused a connection the upstream had closed)", w.Code, w.Body.String())
+	if w := proxyDo(p, http.MethodPost, "second"); w.Code != http.StatusOK {
+		t.Fatalf("POST after the upstream keep-alive: status %d, want 200 "+
+			"(the proxy reused a connection the upstream had closed)", w.Code)
+	}
+	if got := up.answeredRequests(); len(got) != 2 || got[0] != "POST first" || got[1] != "POST second" {
+		t.Errorf("upstream answered %q, want [\"POST first\" \"POST second\"]", got)
 	}
 	if conns, dropped, answered := up.counts(); conns != 2 || dropped != 0 || answered != 2 {
 		t.Errorf("upstream saw %d connections, %d dropped and %d answered requests; want 2, 0, 2", conns, dropped, answered)
@@ -158,7 +176,6 @@ func TestFallbackProxyPostAfterTheUpstreamKeepAlive(t *testing.T) {
 // connection, cannot replay it, and answers 502, reported as an upstream error. A GET in the same
 // position is replayed on a new connection by the transport and is answered.
 func TestKeepAliveUpstreamDropsAStaleConnection(t *testing.T) {
-	t.Parallel()
 	up := newKeepAliveUpstream(t, testUpstreamKeepAlive)
 	errs := &proxyErrors{}
 	p := fallbackProxy(up.target(t), time.Hour, errs.record)
@@ -178,8 +195,11 @@ func TestKeepAliveUpstreamDropsAStaleConnection(t *testing.T) {
 		t.Fatalf("GET on a new connection: status %d, want 200", w.Code)
 	}
 	time.Sleep(testPause)
-	if w := proxyDo(p, http.MethodGet, ""); w.Code != http.StatusOK || w.Body.String() != "GET " {
-		t.Fatalf("GET on the stale connection: status %d body %q, want 200 \"GET \" (replayed)", w.Code, w.Body.String())
+	if w := proxyDo(p, http.MethodGet, ""); w.Code != http.StatusOK {
+		t.Fatalf("GET on the stale connection: status %d, want 200 (replayed on a new connection)", w.Code)
+	}
+	if got := up.answeredRequests(); len(got) != 3 || got[0] != "POST first" || got[1] != "GET " || got[2] != "GET " {
+		t.Errorf("upstream answered %q, want [\"POST first\" \"GET \" \"GET \"]", got)
 	}
 	// Connections: the first POST's, the first GET's, and the replayed GET's.
 	if conns, dropped, answered := up.counts(); conns != 3 || dropped != 2 || answered != 3 {
@@ -189,7 +209,6 @@ func TestKeepAliveUpstreamDropsAStaleConnection(t *testing.T) {
 
 // A client that has left before the Node app answers is reported as canceled, not as an upstream error.
 func TestFallbackProxyReportsACanceledClient(t *testing.T) {
-	t.Parallel()
 	up := newKeepAliveUpstream(t, testUpstreamKeepAlive)
 	errs := &proxyErrors{}
 	p := fallbackProxy(up.target(t), testProxyIdle, errs.record)
