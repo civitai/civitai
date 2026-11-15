@@ -6,10 +6,9 @@ import { HomeBlockType } from '~/shared/utils/prisma/enums';
  * The per-process L1 in front of the shared home block entry (`home-block-server-cache`).
  *
  * The viewer gates run in `getHomeBlockById` before `getHomeBlockCached` is reached (pinned in
- * home-block-collection-audience.test.ts), so what differs per viewer HERE is the row: each viewer
- * has their own clone of a system block (own id, owner and position) pointing at one source. A hit
- * must return each viewer their own row over the shared content, exactly what the uncached path
- * returns them.
+ * home-block-collection-audience.test.ts), so what differs between callers HERE is the row: two
+ * clones of a system block (own id, owner and position) pointing at one source. A hit must return
+ * each row over the shared content, exactly what the uncached path returns for it.
  */
 
 const { getHomeBlockData } = vi.hoisted(() => ({ getHomeBlockData: vi.fn() }));
@@ -19,12 +18,33 @@ vi.mock('~/server/services/home-block.service', () => ({
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
+import { cacheHitCounter, cacheMissCounter } from '@civitai/telemetry/client';
+import { homeBlockL1EvictionCounter } from '~/server/prom/home-block-l1.metrics';
 import {
+  countHomeBlockItems,
+  estimateHomeBlockBytes,
   getHomeBlockCached,
+  HOME_BLOCK_L1_TTL_MS,
   homeBlockCacheBust,
   homeBlockCacheKey,
   resetHomeBlockL1ForTests,
 } from '~/server/services/home-block-cache.service';
+
+type Readable = {
+  get(): Promise<{ values: { labels: Record<string, unknown>; value: number }[] }>;
+};
+/** The real counter's current value for this cache's series (0 before its first increment). */
+async function counted(counter: unknown) {
+  const { values } = await (counter as Readable).get();
+  return values.find((v) => v.labels.cache_name === 'home-block-l1')?.value ?? 0;
+}
+async function counters() {
+  return {
+    hit: await counted(cacheHitCounter),
+    miss: await counted(cacheMissCounter),
+    evict: await counted(homeBlockL1EvictionCounter),
+  };
+}
 
 // A fake Redis: values go through a JSON round trip, as a real store's encode/decode would.
 const store = new Map<string, string>();
@@ -32,9 +52,9 @@ const packedGet = redisMock.redis.packed.get;
 const packedSet = redisMock.redis.packed.set;
 
 let builds = 0;
-const VIEWER_A = { id: 11, userId: 1, index: 0, sourceId: 5 };
-const VIEWER_B = { id: 12, userId: 2, index: 3, sourceId: 5 };
-const leaderboard = (row: typeof VIEWER_A) => ({
+const ROW_A = { id: 11, userId: 1, index: 0, sourceId: 5 };
+const ROW_B = { id: 12, userId: 2, index: 3, sourceId: 5 };
+const leaderboard = (row: typeof ROW_A) => ({
   ...row,
   type: HomeBlockType.Leaderboard,
   metadata: {},
@@ -64,10 +84,10 @@ beforeEach(() => {
   setFlag(false);
 });
 
-async function serveBothViewers() {
-  const a1 = await getHomeBlockCached(leaderboard(VIEWER_A) as never, undefined, {});
-  const b = await getHomeBlockCached(leaderboard(VIEWER_B) as never, undefined, {});
-  const a2 = await getHomeBlockCached(leaderboard(VIEWER_A) as never, undefined, {});
+async function serveBothRows() {
+  const a1 = await getHomeBlockCached(leaderboard(ROW_A) as never, undefined, {});
+  const b = await getHomeBlockCached(leaderboard(ROW_B) as never, undefined, {});
+  const a2 = await getHomeBlockCached(leaderboard(ROW_A) as never, undefined, {});
   return [a1, b, a2];
 }
 
@@ -84,24 +104,24 @@ const EXPECTED_B = { ...EXPECTED_A, id: 12, userId: 2, index: 3 };
 
 describe('home-block-server-cache', () => {
   it('off: every call reads the shared Redis entry (the old path)', async () => {
-    const out = await serveBothViewers();
+    const out = await serveBothRows();
     expect(out).toEqual([EXPECTED_A, EXPECTED_B, EXPECTED_A]);
     expect(packedGet).toHaveBeenCalledTimes(3);
     expect(getHomeBlockData).toHaveBeenCalledTimes(1);
   });
 
-  it('on: a hit gives each viewer the same output as the uncached path, with their own row', async () => {
-    const uncached = await serveBothViewers();
+  it('on: two clone rows of one source get the uncached output, each with its own row', async () => {
+    const uncached = await serveBothRows();
 
     store.clear();
     builds = 0;
     vi.clearAllMocks();
     setFlag(true);
-    const cached = await serveBothViewers();
+    const cached = await serveBothRows();
 
     expect(cached).toEqual(uncached);
     expect(cached).toEqual([EXPECTED_A, EXPECTED_B, EXPECTED_A]);
-    // One Redis read (the cold miss), then both viewers are served from the L1.
+    // One Redis read (the cold miss), then both rows are served from the L1.
     expect(packedGet).toHaveBeenCalledTimes(1);
     expect(getHomeBlockData).toHaveBeenCalledTimes(1);
   });
@@ -112,8 +132,8 @@ describe('home-block-server-cache', () => {
       JSON.stringify({ id: 99, userId: 9, leaderboards: [{ id: 'from-redis' }] })
     );
     setFlag(true);
-    const a = await getHomeBlockCached(leaderboard(VIEWER_A) as never, undefined, {});
-    const b = await getHomeBlockCached(leaderboard(VIEWER_B) as never, undefined, {});
+    const a = await getHomeBlockCached(leaderboard(ROW_A) as never, undefined, {});
+    const b = await getHomeBlockCached(leaderboard(ROW_B) as never, undefined, {});
     expect(a).toEqual({ ...EXPECTED_A, leaderboards: [{ id: 'from-redis' }] });
     expect(b).toEqual({ ...EXPECTED_B, leaderboards: [{ id: 'from-redis' }] });
     expect(packedGet).toHaveBeenCalledTimes(1);
@@ -131,16 +151,16 @@ describe('home-block-server-cache', () => {
 
   it('on: each domain, identifier and type gets its own entry', async () => {
     setFlag(true);
-    const none = await getHomeBlockCached(leaderboard(VIEWER_A) as never, undefined, {});
-    const red = await getHomeBlockCached(leaderboard(VIEWER_A) as never, 'red' as never, {});
-    const green = await getHomeBlockCached(leaderboard(VIEWER_A) as never, 'green' as never, {});
+    const none = await getHomeBlockCached(leaderboard(ROW_A) as never, undefined, {});
+    const red = await getHomeBlockCached(leaderboard(ROW_A) as never, 'red' as never, {});
+    const green = await getHomeBlockCached(leaderboard(ROW_A) as never, 'green' as never, {});
     const otherSource = await getHomeBlockCached(
-      leaderboard({ ...VIEWER_A, sourceId: 6 }) as never,
+      leaderboard({ ...ROW_A, sourceId: 6 }) as never,
       undefined,
       {}
     );
     const otherType = await getHomeBlockCached(
-      { ...VIEWER_A, type: HomeBlockType.Announcement, metadata: {} } as never,
+      { ...ROW_A, type: HomeBlockType.Announcement, metadata: {} } as never,
       undefined,
       {}
     );
@@ -153,7 +173,7 @@ describe('home-block-server-cache', () => {
     ]);
     // And each is now held: a second round builds nothing and reads no Redis.
     vi.clearAllMocks();
-    const again = await getHomeBlockCached(leaderboard(VIEWER_A) as never, 'red' as never, {});
+    const again = await getHomeBlockCached(leaderboard(ROW_A) as never, 'red' as never, {});
     expect(again?.leaderboards).toEqual([{ id: 'board-red-2' }]);
     expect(packedGet).not.toHaveBeenCalled();
     expect(getHomeBlockData).not.toHaveBeenCalled();
@@ -175,20 +195,69 @@ describe('home-block-server-cache', () => {
 
   it('on: a bust drops this process’s entry along with the Redis one', async () => {
     setFlag(true);
-    await getHomeBlockCached(leaderboard(VIEWER_A) as never, 'red' as never, {});
+    await getHomeBlockCached(leaderboard(ROW_A) as never, 'red' as never, {});
     await homeBlockCacheBust(HomeBlockType.Leaderboard, 5);
-    const rebuilt = await getHomeBlockCached(leaderboard(VIEWER_A) as never, 'red' as never, {});
+    const rebuilt = await getHomeBlockCached(leaderboard(ROW_A) as never, 'red' as never, {});
     expect(rebuilt?.leaderboards).toEqual([{ id: 'board-red-2' }]);
     expect(getHomeBlockData).toHaveBeenCalledTimes(2);
   });
 
-  it('on: changing a served object does not change what the next viewer gets', async () => {
+  it('on: changing a served object does not change what the next row gets', async () => {
     setFlag(true);
-    const served = await getHomeBlockCached(leaderboard(VIEWER_A) as never, undefined, {});
+    const served = await getHomeBlockCached(leaderboard(ROW_A) as never, undefined, {});
     const a = served as Record<string, unknown>;
     a.leaderboards = [];
     a.extra = true;
-    const b = await getHomeBlockCached(leaderboard(VIEWER_B) as never, undefined, {});
+    const b = await getHomeBlockCached(leaderboard(ROW_B) as never, undefined, {});
     expect(b).toEqual(EXPECTED_B);
+  });
+
+  it('on: every L1 read is counted as a hit or a miss; off counts nothing', async () => {
+    const before = await counters();
+    await serveBothRows();
+    expect(await counters()).toEqual(before);
+
+    store.clear();
+    setFlag(true);
+    await serveBothRows();
+    const after = await counters();
+    expect(after.hit - before.hit).toBe(2);
+    expect(after.miss - before.miss).toBe(1);
+    expect(after.evict - before.evict).toBe(0);
+  });
+
+  it('on: an entry pushed out for room is counted as an eviction', async () => {
+    // 1,000 items each: ~3.9MB by the estimate, so the third of three overflows the 10MB budget.
+    getHomeBlockData.mockImplementation(async () => {
+      builds++;
+      return { leaderboards: Array.from({ length: 1000 }, (_, i) => ({ id: `b${builds}-${i}` })) };
+    });
+    setFlag(true);
+    const before = await counters();
+    for (const sourceId of [1, 2, 3]) {
+      await getHomeBlockCached(leaderboard({ ...ROW_A, sourceId }) as never, undefined, {});
+    }
+    expect((await counters()).evict - before.evict).toBe(1);
+
+    // The oldest one is the one that went: reading it again misses the L1 and goes to Redis.
+    vi.clearAllMocks();
+    await getHomeBlockCached(leaderboard({ ...ROW_A, sourceId: 1 }) as never, undefined, {});
+    expect(packedGet).toHaveBeenCalledTimes(1);
+    expect((await counters()).miss - before.miss).toBe(4);
+  });
+
+  it('sizes an entry by its item count, without serialising it', () => {
+    const block = {
+      metadata: {},
+      collection: { items: [{ id: 'x' }, { id: 'y' }, { id: 'z' }] },
+      leaderboards: [{ results: [7, 8] }, { results: [9] }],
+    };
+    // 3 collection items + 2 boards + 3 board results.
+    expect(countHomeBlockItems(block)).toBe(8);
+    expect(estimateHomeBlockBytes(block as never)).toBe(36_864);
+  });
+
+  it('keeps a copy for 10s, not the edge cache 60s (constant pin, see the STALENESS note)', () => {
+    expect(HOME_BLOCK_L1_TTL_MS).toBe(10_000);
   });
 });

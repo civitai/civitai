@@ -1,7 +1,7 @@
 /**
  * Per-pod L1 (in-process LRU) heap byte budget — the single source of truth for the
  * `localMaxBytes` cap of every L1-enabled cache in `caches.ts`, and the `maxSize` of the
- * standalone per-process LRUs listed with them (home blocks, experiment assignments).
+ * standalone per-process LRU listed with them (home blocks).
  *
  * Each L1 cache is byte-bounded (deterministic `roughSizeOf` estimator, see
  * `cache-helpers.ts` / `lru-cache.ts`) so a per-value size spike can never blow the
@@ -36,11 +36,10 @@ export const L1_CACHE_BYTE_BUDGETS = {
   cosmetics: 2 * MB,
   // The shared home block entries (`home-block-cache.service.ts`), one per block source and
   // domain, while `home-block-server-cache` is on. Few keys, but a collection block's items are
-  // the largest single values of any L1 here, so the byte cap is what binds.
-  homeBlocks: 6 * MB,
-  // Per-user experiment assignments (`experiments.service.ts`), while
-  // `experiments-assignments-cache` is on: a few short strings per entry.
-  experimentAssignments: 2 * MB,
+  // the largest single values of any L1 here, so the byte cap is what binds. Sized by
+  // that file's estimate (4KB + 4KB per item), not roughSizeOf: a full 56-item collection block
+  // counts ~228KB, so this holds ~44 of them, and more of the smaller block types.
+  homeBlocks: 10 * MB,
 } as const;
 
 /**
