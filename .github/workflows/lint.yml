@@ -185,6 +185,14 @@ on:
       - '!docs/**'
       - '!claudedocs/**'
       - 'docs/dev/convention-guards.md'
+  # The daily FULL run on `main`, whatever change-scoped selection does to push and PR runs (see
+  # the `affected` job). When it goes red, `nightly-bisect` names the first bad merge commit since
+  # the last green scheduled run. 10:17 UTC because that is the org's quietest hour for Actions
+  # runs (about 55 runs an hour against 150 to 240 the rest of the day, measured over 2026-11-11..14)
+  # and a scheduled run holds about ten job slots of the plan's concurrent-job limit; :17 avoids the
+  # top-of-hour cron rush. GitHub runs `schedule` on the default branch only.
+  schedule:
+    - cron: '17 10 * * *'
   # `only` runs one suite (or one unit shard) instead of the whole fan-out, for
   # dispatches that care about a single suite. Every job's `if` reads it, and so
   # does every suite step in a job that hosts several (`component` hosts geometry). On pull_request and push `inputs.only` is empty, so
@@ -248,8 +256,11 @@ permissions:
 # dispatch of the same suite on the same branch cancels the stale one, while
 # dispatches of DIFFERENT suites on one branch still run side by side. The
 # `dispatch-` prefix keeps these groups disjoint from the PR and push ones.
+#
+# The scheduled run has its own group. Sharing `refs/heads/main` with the push runs would let it
+# cancel a running push run (cancel-in-progress is true for every event but push).
 concurrency:
-  group: lint-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
+  group: lint-${{ github.event_name == 'schedule' && 'nightly' || github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
@@ -565,6 +576,86 @@ jobs:
       - name: Typecheck test files
         run: pnpm run typecheck:tests
 
+  # ── CHANGE-SCOPED TEST SELECTION, IN SHADOW MODE ─────────────────────────────────────────────
+  #
+  # Computes which `unit` and `component` test files the change can affect (vitest's own module
+  # graph, the one `vitest related` walks, plus an always-run set of tests that read the tree
+  # through fs) and hands it to `miss-ledger`, which compares it with what FAILED in the full
+  # run. Nothing is skipped: every suite still runs in full. The rules, the always-run set and the
+  # fallbacks live in scripts/ci/test-selection.mjs, in one place.
+  #
+  # Base: on a PR the merge commit's first parent; on `main` the head of the last successful push
+  # run (so commits folded by `concurrency` are included), else `github.event.before`; on a
+  # branch dispatch the merge-base with `main`; on the scheduled run none (full).
+  #
+  # ENFORCEMENT is the repo variable SELECTIVE_TESTS_ENFORCE=true, unset (off). It applies to the
+  # `unit` job on pushes to `main` only: a PR runs unit only under the `full-ci` label, which asks
+  # for the full suite by name. The `component` job stays shadow-only for now. A scoped unit run
+  # says so in an annotation, and `miss-ledger` then fails if a selected file was not reported.
+  # The scheduled run (`on: schedule`) is always full and bisects its reds (`nightly-bisect`).
+  #
+  # 7-day miss rate, from the `selective-tests-ledger` artifacts (PR body has the command).
+  affected:
+    name: Select affected tests (shadow)
+    runs-on: ubuntu-latest
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || inputs.only == 'component') }}
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      unit_scoped: ${{ steps.select.outputs.unit_scoped }}
+      unit_shards: ${{ steps.select.outputs.unit_shards }}
+      unit_shard_total: ${{ steps.select.outputs.unit_shard_total }}
+    steps:
+      # Full history for the base commit, trees and commits only: the diff is --name-status.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          submodules: true
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Select
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SELECTIVE_TESTS_ENFORCE: ${{ github.event_name == 'push' && vars.SELECTIVE_TESTS_ENFORCE == 'true' }}
+        run: |
+          base=-
+          case "$EVENT" in
+            pull_request) base=$(git rev-parse HEAD^1) ;;
+            schedule) base=- ;;
+            *)
+              if [ "$GITHUB_REF" = refs/heads/main ]; then
+                base=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/lint.yml/runs?branch=main&event=push&status=success&per_page=1" -q '.workflow_runs[0].head_sha // ""' || true)
+                base=${base:-$BEFORE}
+              else
+                base=$(git merge-base origin/main HEAD || echo -)
+              fi ;;
+          esac
+          echo "base: ${base:--}"
+          node scripts/ci/test-selection.mjs select "${base:--}" "$RUNNER_TEMP/selection.json"
+
+      - name: Upload test selection
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-selection
+          path: ${{ runner.temp }}/selection.json
+          retention-days: 3
+
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
@@ -638,7 +729,11 @@ jobs:
     #
     # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
     # draft too).
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
+    #
+    # `needs: affected` only for the enforced change-scoped mode (see the `affected` job); `!cancelled()`
+    # so a failed or skipped `affected` still runs the full suite (fail open).
+    needs: affected
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
     # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
     #
     # Measured before the change, n=12 runs of this job, from the Actions API:
@@ -692,7 +787,9 @@ jobs:
         # [1, 2, 3, 4] unless a dispatch named one shard (`only: unit-<n>`). The
         # `--shard=<n>/4` denominator below stays 4 either way, so a single
         # shard runs exactly the files it would in a full run.
-        shard: ${{ fromJSON('{"unit-1":[1],"unit-2":[2],"unit-3":[3],"unit-4":[4]}')[inputs.only || 'all'] || fromJSON('[1, 2, 3, 4]') }}
+        # `affected` hands over [1, 2, 3, 4] too, except on an ENFORCED scoped run, where it hands
+        # over as few shards as hold the selection (and the denominator with it).
+        shard: ${{ fromJSON('{"unit-1":[1],"unit-2":[2],"unit-3":[3],"unit-4":[4]}')[inputs.only || 'all'] || fromJSON(needs.affected.outputs.unit_shards || '[1, 2, 3, 4]') }}
     # Per-shard, not the whole suite. The ~3.4m estimate above is from the
     # 2026-08-25 measurement; on 2026-10-23, under heavy runner load, shards took
     # 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
@@ -703,7 +800,8 @@ jobs:
     # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
     # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
     # itself without its URL, so a shard that does not hold it pays only the container start.
-    services:
+    # Anchored: `nightly-bisect` re-runs failed unit files and needs the same services and env.
+    services: &unit-services
       redis:
         image: redis:7
         ports:
@@ -722,7 +820,7 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
-    env:
+    env: &unit-env
       ROSTER_REDIS_URL: redis://localhost:6379/15
       APPDATA_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # The same throwaway server for the hot-reads-2, placement-reads, hot-reads-3, hot-reads-5 and
@@ -842,8 +940,27 @@ jobs:
       #
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
+      #
+      # ENFORCED SCOPED RUN ONLY (`affected` says `unit_scoped`): the selected files are appended as
+      # absolute-path filters and the denominator is the number of shards `affected` planned.
+      - name: Download test selection
+        if: needs.affected.outputs.unit_scoped == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: test-selection
+          path: ${{ runner.temp }}/selection
+
       - name: Unit tests
-        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+        env:
+          SCOPED: ${{ needs.affected.outputs.unit_scoped == 'true' }}
+          SHARD_TOTAL: ${{ needs.affected.outputs.unit_shard_total || 4 }}
+        run: |
+          files=()
+          if [ "$SCOPED" = true ]; then
+            mapfile -t files < <(node scripts/ci/test-selection.mjs files "$RUNNER_TEMP/selection/selection.json" unit)
+            echo "::notice title=Unit tests SCOPED::${#files[@]} selected files on ${SHARD_TOTAL} shard(s). SCOPED, not a full verdict."
+          fi
+          pnpm run test:unit:run --shard="${{ matrix.shard }}/$SHARD_TOTAL" --reporter=default --reporter=json --outputFile=unit-report.json "${files[@]}"
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
@@ -857,8 +974,20 @@ jobs:
         # shard), but a CANCELLED run has no report to read and would render a
         # confusing red assert step on top of the cancellation. Observed on shard 3
         # of the run that shipped the `--` bug.
-        if: ${{ !cancelled() }}
+        # Its floors describe a full shard, so an enforced scoped run skips it; `miss-ledger`
+        # then checks that every selected file was reported instead.
+        if: ${{ !cancelled() && needs.affected.outputs.unit_scoped != 'true' }}
         run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
+
+      # For `miss-ledger` and `nightly-bisect`, which read which files failed. Kept briefly.
+      - name: Upload unit report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-report-${{ matrix.shard }}
+          path: unit-report.json
+          if-no-files-found: warn
+          retention-days: 3
 
       # The registry adapter's bundle, and its check that every external it loads loads under
       # this Node (`scripts/build-registry-adapter.mjs`), which no other job builds. It takes
@@ -1408,3 +1537,94 @@ jobs:
             echo "::error title=Component shard did not succeed::the component shard jobs concluded '$SHARDS'. Open the red 'Component + geometry tests (n/3)' job for the cause."
             exit 1
           fi
+
+  # ── THE MISS LEDGER FOR THE SHADOW SELECTION ────────────────────────────────────────────────
+  #
+  # One record per run: what `affected` would have run, what failed in the full run, and which
+  # failures fell OUTSIDE the selection (a miss). Printed as one `selective-tests-ledger {json}`
+  # log line, written to the step summary, and kept as the `selective-tests-ledger` artifact.
+  # It reads the reports only (no install), and never fails on a miss: shadow mode records, it
+  # does not judge. It fails only on an enforced scoped run whose selected files were not all
+  # reported, the check that replaces the shard floors there.
+  miss-ledger:
+    name: Selection ledger (shadow)
+    needs: [affected, unit, component]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && needs.affected.result == 'success' && github.event_name != 'schedule' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci/test-selection.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download selection and reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: '{test-selection,unit-report-*,component-report-*}'
+          path: ${{ runner.temp }}/in
+
+      - name: Ledger
+        run: node scripts/ci/test-selection.mjs ledger "$RUNNER_TEMP/in/test-selection/selection.json" "$RUNNER_TEMP/in" "$RUNNER_TEMP/ledger.json"
+
+      - name: Upload ledger
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: selective-tests-ledger
+          path: ${{ runner.temp }}/ledger.json
+          retention-days: 30
+
+  # ── FIRST BAD COMMIT FOR A RED SCHEDULED RUN ────────────────────────────────────────────────
+  #
+  # Only on the scheduled full run, only when `unit` or `component` went red. Re-runs the failed
+  # test files (not the suites) per merge commit between the last green scheduled run and HEAD
+  # with `git bisect run` (scripts/ci/nightly-bisect.mjs), after confirming they still fail at
+  # HEAD, and names the first bad commit in the summary and an annotation. It never fails: the
+  # red suite job is the verdict. Same services and env as `unit` (anchored there).
+  nightly-bisect:
+    name: Nightly first-bad-commit bisect
+    needs: [unit, component]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && github.event_name == 'schedule' && (needs.unit.result == 'failure' || needs.component.result == 'failure') }}
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+    services: *unit-services
+    env: *unit-env
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        if: needs.component.result == 'failure'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Download reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: '{unit-report-*,component-report-*}'
+          path: ${{ runner.temp }}/reports
+
+      - name: Bisect the failed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/nightly-bisect.mjs "$RUNNER_TEMP/reports"
