@@ -30,10 +30,10 @@ type Metrics struct {
 	// TrackerWrites counts rows sent to the tracker by table and result (tracker.Results).
 	TrackerWrites *prometheus.CounterVec
 	// Panics counts recovered panics by where they happened: serve | shadow.
-	Panics             *prometheus.CounterVec
-	RevocationFailOpen prometheus.Counter
-	JWKSRefresh        *prometheus.CounterVec
-	JWKSStale          prometheus.Counter
+	Panics               *prometheus.CounterVec
+	RevocationReadErrors prometheus.Counter
+	JWKSRefresh          *prometheus.CounterVec
+	JWKSStale            prometheus.Counter
 }
 
 // NewMetrics registers the series on reg and seeds every fixed label combination at 0, so "none"
@@ -64,9 +64,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "beacon_go_panics_total",
 			Help: "Recovered panics, by where (serve | shadow).",
 		}, []string{"where"}),
-		RevocationFailOpen: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "beacon_go_revocation_fail_open_total",
-			Help: "Revocation registry reads that failed and allowed the session (fail open, as the Node app).",
+		RevocationReadErrors: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "beacon_go_revocation_read_errors_total",
+			Help: "Revocation registry reads that failed; each such request falls back (revocation-unavailable).",
 		}),
 		JWKSRefresh: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "beacon_go_jwks_refresh_total",
@@ -78,7 +78,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}),
 	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.ShadowCompare, m.ShadowDiffs, m.TrackerWrites, m.Panics,
-		m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale)
+		m.RevocationReadErrors, m.JWKSRefresh, m.JWKSStale)
 	for _, e := range Endpoints {
 		for _, o := range []string{"served", "fallback", "error"} {
 			m.Requests.WithLabelValues(e, o)

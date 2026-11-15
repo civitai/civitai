@@ -23,20 +23,22 @@ type RevocationReader interface {
 	Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error)
 }
 
-// Revocation mirrors createRevocationCheck(): one pipelined round trip, bounded by Timeout, and FAIL
-// OPEN (not revoked) when the store is slow or down — the same trade the main app makes, so a sysredis
-// incident never signs everyone out.
+// Revocation reads the registry createRevocationCheck() reads: one pipelined round trip, bounded by
+// Timeout. When the read fails it returns the error and decides nothing. The main app does not simply
+// allow the request there: it keeps a marker cache that still denies revocations it has already seen,
+// which this service does not hold, so the caller hands the request back to the Node app instead of
+// guessing.
 type Revocation struct {
 	Redis   RevocationReader
 	Timeout time.Duration
-	// OnFailOpen is called when the read failed and the check allowed the request.
-	OnFailOpen func(err error)
+	// OnReadError is called when the read failed (the request then falls back).
+	OnReadError func(err error)
 }
 
-// IsRevoked reports whether the session has been signed out, banned or cut.
-func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
+// IsRevoked reports whether the session has been signed out, banned or cut, or the read's error.
+func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) (bool, error) {
 	if c.Jti == "" {
-		return false
+		return false, nil
 	}
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -67,12 +69,12 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 		return nil
 	})
 	if err != nil && !errors.Is(err, redis.Nil) {
-		if r.OnFailOpen != nil {
-			r.OnFailOpen(err)
+		if r.OnReadError != nil {
+			r.OnReadError(err)
 		}
-		return false
+		return false, err
 	}
-	return Decide(c, val(state), val(familyState), val(all), val(userCut), val(impUserCut), val(impCut))
+	return Decide(c, val(state), val(familyState), val(all), val(userCut), val(impUserCut), val(impCut)), nil
 }
 
 func val(cmd *redis.StringCmd) string {

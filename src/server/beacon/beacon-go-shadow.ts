@@ -249,6 +249,8 @@ export function createBeaconGoShadow(deps: BeaconGoShadowDeps) {
       const sample: BeaconGoShadowSample = {
         endpoint,
         method: req.method ?? 'GET',
+        // Held in memory only: the payload builder sends the path and a query marker (shadowTarget),
+        // never the query, which can hold an API key.
         target: req.url ?? '',
         headers: pickBeaconShadowHeaders(req),
         body,

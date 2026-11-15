@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -82,6 +83,11 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 		return nil, nil
 	}
 	claims, err := r.Verifier.Verify(ctx, token)
+	if errors.Is(err, ErrNoKeys) {
+		// No key set to verify with (cold start, or dropped as stale): the token may well be valid, and
+		// writing the request as signed out would record a wrong userId. Node verifies it instead.
+		return nil, fallback.New("jwks-unavailable")
+	}
 	if err != nil {
 		return nil, nil // not a valid session: signed out, as getHubSession treats it
 	}
@@ -89,8 +95,14 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if IsModerationAccount(claims.UserID(), "", r.ModerationAccountID) {
 		return nil, nil
 	}
-	if r.Revocation != nil && r.Revocation.IsRevoked(ctx, claims) {
-		return nil, nil
+	if r.Revocation != nil {
+		revoked, err := r.Revocation.IsRevoked(ctx, claims)
+		if err != nil {
+			return nil, fallback.Newf("revocation-unavailable", "%v", err)
+		}
+		if revoked {
+			return nil, nil
+		}
 	}
 	u, err := r.user(ctx, claims.UserID())
 	if err != nil {

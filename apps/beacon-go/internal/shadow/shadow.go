@@ -23,8 +23,10 @@ import (
 // src/server/beacon/beacon-go-shadow-payload.ts).
 type Sample struct {
 	Method string
-	// Target is `req.url` (path and query).
+	// Target is the path of `req.url`; the query is never forwarded (it can hold an API key).
 	Target string
+	// Query marks the query: "" (none), "present", or "token" (a non-empty `token` parameter).
+	Query string
 	// Headers are the `req.headers` entries the outcome depends on, as Node holds them (already
 	// folded, JS strings). Only the session cookies are forwarded from Cookie; an Authorization header
 	// is forwarded as the literal `present` (only its presence matters here).
@@ -73,6 +75,9 @@ func Decode(b []byte) (*Sample, error) {
 		return nil, ErrInvalidSample
 	}
 	if s.Target, ok = str(o, "target"); !ok {
+		return nil, ErrInvalidSample
+	}
+	if s.Query, ok = str(o, "query"); !ok || (s.Query != "" && s.Query != "present" && s.Query != "token") {
 		return nil, ErrInvalidSample
 	}
 	if s.Headers, ok = strMap(o, "headers"); !ok {
@@ -151,6 +156,10 @@ func (s *Sample) Request(ctx context.Context) (*beacon.Request, error) {
 	if target == "" || target[0] != '/' {
 		target = "/" + target
 	}
+	if s.Query == "token" {
+		// Stands in for the key the sampler withheld: the session resolver only asks whether one exists.
+		target += "?token=present"
+	}
 	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://beacon-go.shadow"+target, http.NoBody)
 	if err != nil {
 		return nil, ErrInvalidSample
@@ -163,7 +172,7 @@ func (s *Sample) Request(ctx context.Context) (*beacon.Request, error) {
 	}
 	return &beacon.Request{
 		Method:       s.Method,
-		HasQuery:     strings.Contains(s.Target, "?"),
+		HasQuery:     s.Query != "" || strings.Contains(s.Target, "?"),
 		Headers:      s.Headers,
 		Body:         []byte(s.Body),
 		BodyDecoded:  true,

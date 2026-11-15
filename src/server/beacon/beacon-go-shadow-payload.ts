@@ -122,9 +122,31 @@ export function pickBeaconResponseHeaders(res: ResponseHeadersLike) {
   return out;
 }
 
+/**
+ * `req.url` without its query string, plus a marker for the query: `''` (none), `'present'`, or
+ * `'token'` when it holds a non-empty `token` parameter (an API key). beacon-go only needs to know
+ * that a query, or a token, was there: the query itself, and above all the key, is never forwarded.
+ */
+export function shadowTarget(url: string | undefined): {
+  target: string;
+  query: '' | 'present' | 'token';
+} {
+  const raw = url ?? '';
+  const q = raw.indexOf('?');
+  if (q < 0) return { target: raw, query: '' };
+  let token = false;
+  try {
+    token = !!new URLSearchParams(raw.slice(q + 1)).get('token');
+  } catch {
+    token = false;
+  }
+  return { target: raw.slice(0, q), query: token ? 'token' : 'present' };
+}
+
 /** The POST body: the request as Node saw it, and what Node answered and wrote. */
 export function buildBeaconGoShadowPayload(parts: {
   method: string;
+  /** `req.url` as Node saw it; only its path and the shadowTarget marker are sent. */
   target: string;
   headers: Record<string, string>;
   body: string;
@@ -134,9 +156,11 @@ export function buildBeaconGoShadowPayload(parts: {
   responseBody: string;
   writes: { table: string; body: string }[];
 }): string {
+  const { target, query } = shadowTarget(parts.target);
   return JSON.stringify({
     method: parts.method,
-    target: parts.target,
+    target,
+    query,
     headers: parts.headers,
     body: parts.body,
     bodyIsString: parts.bodyIsString,

@@ -142,6 +142,8 @@ Fallback reasons (`beacon_go_fallback_total{reason}`):
 | `query-string` | the request target has a query (getServerAuthSession and the credential check read `?token=`; beacons send none) |
 | `bearer-token` | a row would be written and the request carries an `Authorization` header (an API-key session) |
 | `multiple-session-cookies`, `session-cache-miss`, `session-cache-cleared`, `session-id-mismatch`, `session-no-id`, `session-tier-type` | the session cannot be resolved exactly from the cache (the Node path would ask the hub, or the cached user is unusual) |
+| `jwks-unavailable` | a session cookie is present but no key set is held (the first fetch has not landed, or the set was dropped as stale): the token may be valid, so it is not written as signed out |
+| `revocation-unavailable` | the revocation registry read failed: Node would still deny the revocations its marker cache has seen, which this service does not hold, so it does not guess |
 | `session-roll-due` | ping only: the session's token is due a rolling refresh, which only Node can mint; Node answers with the `Set-Cookie` |
 | `url` | the Referer/Origin is outside the reproduced URL subset: a scheme other than http(s), userinfo, an IPv6 or IPv4-number host, punycode or non-ASCII, percent-encoding, backslashes, controls or spaces, or other than exactly two slashes |
 | `client-ip` | an ip candidate holding `:` reaches request-ip's IPv6 regex (lookaheads and backreferences, not reproduced) |
@@ -177,7 +179,8 @@ The sampler is `src/server/beacon/beacon-go-shadow.ts` (payload code in
 For a sampled request it captures, after the response has finished (and, for pulse, after the
 un-awaited view has settled):
 
-- the request: method, target, the headers the outcome depends on (host, origin, referer,
+- the request: method, the path (the query is never forwarded: it can hold an API key; only a
+  marker says whether there is one, and whether it holds a `token`), the headers the outcome depends on (host, origin, referer,
   user-agent, content-type, cf-ipcountry, the client-ip chain, the verified-bot header, the
   conditional-request headers), the session cookies only, `Authorization` only as `present`, and
   `req.body` as Next left it (a string as is, else its JSON, with `bodyIsString`);
@@ -230,3 +233,18 @@ Ports: 8080 (public, serve mode only), 9090 (internal: `/metrics`, `/healthz`,
 `/internal/shadow/api/internal/{ping,pulse}`). Env vars: see `.env.example`. Resource guess: CPU
 request 100m, limit 1 core; memory request 64 MiB, limit 256 MiB, per replica, to be replaced by
 measurements from the shadow phase.
+
+**Network policy.** The internal port's compare endpoints are unauthenticated and accept session
+cookies, so the Deployment needs a NetworkPolicy that admits the internal port only from the web
+pods (the sampler) and the monitoring stack (`/metrics`), and nothing else.
+
+### Before serve mode
+
+The tracker writer is a fixed pool of synchronous workers (`BEACON_GO_TRACKER_WORKERS`, default 16)
+in front of a bounded queue (`BEACON_GO_TRACKER_QUEUE`); a full queue drops the row. Before switching
+any replica to `BEACON_GO_MODE=serve`:
+
+1. size the workers from measurement: per-pod beacon rate (from the shadow phase) × the tracker's
+   p99 POST latency, with headroom, and set `BEACON_GO_TRACKER_WORKERS` to at least that;
+2. alert on `beacon_go_tracker_writes_total{result="dropped"}` increasing (any dropped row is a lost
+   page view or view), and watch `result="failed"` beside it.

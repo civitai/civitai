@@ -272,9 +272,9 @@ func TestIsRevokedReadsTheRegistry(t *testing.T) {
 		r := testkit.NewRedis()
 		c.seed(r)
 		failedOpen := false
-		rev := &Revocation{Redis: r, OnFailOpen: func(error) { failedOpen = true }}
-		if got := rev.IsRevoked(context.Background(), revocationClaims()); got != c.want {
-			t.Errorf("%s: IsRevoked = %v, want %v", c.name, got, c.want)
+		rev := &Revocation{Redis: r, OnReadError: func(error) { failedOpen = true }}
+		if got, err := rev.IsRevoked(context.Background(), revocationClaims()); got != c.want || err != nil {
+			t.Errorf("%s: IsRevoked = %v, %v; want %v, nil", c.name, got, err, c.want)
 		}
 		if failedOpen {
 			t.Errorf("%s: absent keys (redis.Nil) were reported as a failed read", c.name)
@@ -285,8 +285,8 @@ func TestIsRevokedReadsTheRegistry(t *testing.T) {
 	}
 }
 
-func TestIsRevokedFailsOpen(t *testing.T) {
-	// A revoked token, but the registry cannot be read: allowed, and reported.
+func TestIsRevokedReportsAFailedRead(t *testing.T) {
+	// A revoked token, but the registry cannot be read: no decision, the error returned and reported.
 	for _, c := range []struct {
 		name    string
 		r       *testkit.Redis
@@ -298,13 +298,14 @@ func TestIsRevokedFailsOpen(t *testing.T) {
 	} {
 		c.r.SetHash("session:token-state", map[string]string{"tok-1": "invalid"})
 		var reported error
-		rev := &Revocation{Redis: c.r, Timeout: c.timeout, OnFailOpen: func(err error) { reported = err }}
+		rev := &Revocation{Redis: c.r, Timeout: c.timeout, OnReadError: func(err error) { reported = err }}
 		start := time.Now()
-		if rev.IsRevoked(context.Background(), revocationClaims()) {
-			t.Errorf("%s: revoked, want fail open", c.name)
+		revoked, err := rev.IsRevoked(context.Background(), revocationClaims())
+		if revoked || err == nil || !strings.Contains(err.Error(), c.wantErr) {
+			t.Errorf("%s: IsRevoked = %v, %v; want false and an error containing %q", c.name, revoked, err, c.wantErr)
 		}
 		if reported == nil || !strings.Contains(reported.Error(), c.wantErr) {
-			t.Errorf("%s: OnFailOpen got %v, want an error containing %q", c.name, reported, c.wantErr)
+			t.Errorf("%s: OnReadError got %v, want an error containing %q", c.name, reported, c.wantErr)
 		}
 		if el := time.Since(start); el > 500*time.Millisecond {
 			t.Errorf("%s: took %v, the read timeout did not bound it", c.name, el)
@@ -317,7 +318,7 @@ func TestIsRevokedWithoutJtiReadsNothing(t *testing.T) {
 	r.SetString("session:user-cut:42", []byte("9999999999999"))
 	c := revocationClaims()
 	c.Jti = ""
-	if (&Revocation{Redis: r}).IsRevoked(context.Background(), c) || r.Calls != 0 {
+	if revoked, err := (&Revocation{Redis: r}).IsRevoked(context.Background(), c); revoked || err != nil || r.Calls != 0 {
 		t.Fatalf("no jti: want not revoked and no read, got %d round trips", r.Calls)
 	}
 }
@@ -339,7 +340,7 @@ func newResolveFixture(t *testing.T) *resolveFixture {
 	_, srv := newSwitchable(t, f.key)
 	f.r = &Resolver{
 		Verifier: &Verifier{Issuer: issuer, JWKSURL: srv.URL, HTTP: srv.Client(), Now: func() time.Time { return f.now }},
-		Revocation: &Revocation{Redis: f.sys, OnFailOpen: func(err error) {
+		Revocation: &Revocation{Redis: f.sys, OnReadError: func(err error) {
 			f.reports = append(f.reports, err)
 		}},
 		Sessions:    &hydrate.PackedReader{Redis: f.cache, Prefix: "ns:"},
@@ -436,17 +437,56 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-// A sysredis outage keeps a valid session signed in (fail open), as the app does.
-func TestResolveRevocationOutageFailsOpen(t *testing.T) {
+// A sysredis outage is not guessed through: the Node app would still deny revocations its marker
+// cache has seen, so the request falls back (revocation-unavailable), and the read error is reported.
+func TestResolveRevocationOutageFallsBack(t *testing.T) {
 	f := newResolveFixture(t)
 	f.session(t, 42, map[string]any{"id": 42, "username": "viewer-a"})
 	f.sys.Err = testkit.ErrDown
 	u, err := f.r.Resolve(context.Background(), request(map[string]string{"Cookie": "__Secure-civ-token=" + f.token(t, nil)}, "/x"))
-	if err != nil || u == nil || u.ID != 42 {
-		t.Fatalf("got %+v, %v; want user 42", u, err)
+	if u != nil || fallback.Reason(err) != "revocation-unavailable" {
+		t.Fatalf("got %+v, %v; want the revocation-unavailable fallback", u, err)
 	}
 	if len(f.reports) != 1 || !errors.Is(f.reports[0], testkit.ErrDown) {
-		t.Fatalf("fail-open reports = %v, want the one outage", f.reports)
+		t.Fatalf("read-error reports = %v, want the one outage", f.reports)
+	}
+}
+
+// Before the first key fetch has landed (it is in flight, so the unknown-kid refetch is rate-limited)
+// a signed-in request is not written as signed out: it falls back (jwks-unavailable). Once the set is
+// loaded the same request resolves.
+func TestResolveBeforeTheFirstKeyFetchFallsBack(t *testing.T) {
+	f := newResolveFixture(t)
+	f.session(t, 42, map[string]any{"id": 42, "username": "viewer-a"})
+	tok := f.token(t, nil)
+	// The fetch Run starts at boot: lastFetch is stamped, no key set has arrived yet.
+	f.r.Verifier.lastFetch = f.now
+	req := request(map[string]string{"Cookie": "__Secure-civ-token=" + tok}, "/x")
+	u, err := f.r.Resolve(context.Background(), req)
+	if u != nil || fallback.Reason(err) != "jwks-unavailable" {
+		t.Fatalf("cold start: got %+v, %v; want the jwks-unavailable fallback", u, err)
+	}
+	// A first fetch that FAILS also leaves no key set: still a fallback, never signed out.
+	f.r.Verifier.lastFetch = time.Time{}
+	f.r.Verifier.JWKSURL = "http://127.0.0.1:1/jwks"
+	if u, err := f.r.Resolve(context.Background(), req); u != nil || fallback.Reason(err) != "jwks-unavailable" {
+		t.Fatalf("failed first fetch: got %+v, %v; want the jwks-unavailable fallback", u, err)
+	}
+	// An invalid token is still signed out, whatever the key state: it fails before any key is needed.
+	if u, err := f.r.Resolve(context.Background(), request(map[string]string{"Cookie": "__Secure-civ-token=not.a.token"}, "/x")); u != nil || err != nil {
+		t.Fatalf("garbage token: got %+v, %v; want signed out", u, err)
+	}
+}
+
+// Past MaxStaleness the key set is dropped: a signed-in request then falls back rather than being
+// written as signed out.
+func TestResolveWithAStaleKeySetFallsBack(t *testing.T) {
+	f := newStaleFixture(t)
+	f.j.fail(http.StatusBadGateway, "down")
+	f.now = f.now.Add(31 * time.Minute)
+	_, err := f.v.Verify(context.Background(), sign(t, f.key, "ES256", baseClaims(f.now)))
+	if !errors.Is(err, ErrNoKeys) {
+		t.Fatalf("stale key set: err = %v, want ErrNoKeys", err)
 	}
 }
 

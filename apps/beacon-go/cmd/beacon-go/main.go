@@ -81,7 +81,7 @@ func run(log *slog.Logger) error {
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	metrics := server.NewMetrics(reg)
 
-	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
+	readErrors := &server.ReadErrorReporter{Log: log, Counter: metrics.RevocationReadErrors}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
 		RefreshInterval: cfg.JWKSRefresh,
@@ -103,7 +103,7 @@ func run(log *slog.Logger) error {
 	go verifier.Run(ctx)
 	resolver := &auth.Resolver{
 		Verifier:            verifier,
-		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnFailOpen: failOpen.Report},
+		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnReadError: readErrors.Report},
 		Sessions:            &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix},
 		CookieNames:         cfg.CookieNames(),
 		ModerationAccountID: cfg.ModerationAccountID,

@@ -187,7 +187,7 @@ func (v *Verifier) Run(ctx context.Context) {
 	if retry <= 0 {
 		retry = defaultRetryMin
 	}
-	var delay time.Duration // the first fetch runs at once: it warms the set before the first request
+	var delay time.Duration // the first fetch starts at once; a request that arrives before it lands gets ErrNoKeys
 	failures := 0
 	for {
 		if delay > 0 {
@@ -241,6 +241,11 @@ func jitter(d time.Duration) time.Duration {
 // ErrInvalid is returned for any token that is not a valid session.
 var ErrInvalid = errors.New("invalid session token")
 
+// ErrNoKeys is returned when the verifier holds no usable key set: none has been fetched yet (the
+// first fetch is still in flight, or failed) or the last one was dropped as stale. It says nothing
+// about the token, so a caller must not read it as "signed out".
+var ErrNoKeys = errors.New("jwks: no usable key set")
+
 func (v *Verifier) now() time.Time {
 	if v.Now != nil {
 		return v.Now()
@@ -267,6 +272,9 @@ func (v *Verifier) Verify(ctx context.Context, token string) (*Claims, error) {
 		return nil, ErrInvalid
 	}
 	key, err := v.key(ctx, header.Kid)
+	if errors.Is(err, ErrNoKeys) {
+		return nil, ErrNoKeys
+	}
 	if err != nil {
 		return nil, ErrInvalid
 	}
@@ -337,27 +345,44 @@ func (v *Verifier) key(ctx context.Context, kid string) (*ecdsa.PublicKey, error
 	v.expireIfStale()
 	v.mu.RLock()
 	k, ok := v.keys[kid]
+	loaded := v.keys != nil
 	last := v.lastFetch
 	v.mu.RUnlock()
 	if ok {
 		return k, nil
+	}
+	// unknown is the answer when no refetch finds the kid: ErrNoKeys while no key set is held.
+	unknown := func() error {
+		v.mu.RLock()
+		defer v.mu.RUnlock()
+		if v.keys == nil {
+			return ErrNoKeys
+		}
+		return fmt.Errorf("unknown kid %q", kid)
 	}
 	minRefetch := v.MinRefetch
 	if minRefetch == 0 {
 		minRefetch = 30 * time.Second
 	}
 	if !last.IsZero() && v.now().Sub(last) < minRefetch {
+		if !loaded {
+			return nil, ErrNoKeys
+		}
 		return nil, fmt.Errorf("unknown kid %q", kid)
 	}
 	if err := v.refresh(ctx); err != nil {
+		if uerr := unknown(); errors.Is(uerr, ErrNoKeys) {
+			return nil, uerr
+		}
 		return nil, err
 	}
 	v.mu.RLock()
-	defer v.mu.RUnlock()
-	if k, ok := v.keys[kid]; ok {
+	k, ok = v.keys[kid]
+	v.mu.RUnlock()
+	if ok {
 		return k, nil
 	}
-	return nil, fmt.Errorf("unknown kid %q", kid)
+	return nil, unknown()
 }
 
 type jwk struct {

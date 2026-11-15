@@ -131,7 +131,7 @@ func TestCompareErrors(t *testing.T) {
 }
 
 func TestDecodeRefusesMalformedSamples(t *testing.T) {
-	good := `{"method":"POST","target":"/api/internal/ping","headers":{},"body":"","bodyIsString":true,"node":{"status":200,"headers":{},"body":"","writes":[]}}`
+	good := `{"method":"POST","target":"/api/internal/ping","query":"","headers":{},"body":"","bodyIsString":true,"node":{"status":200,"headers":{},"body":"","writes":[]}}`
 	if _, err := Decode([]byte(good)); err != nil {
 		t.Fatalf("good sample: %v", err)
 	}
@@ -139,6 +139,8 @@ func TestDecodeRefusesMalformedSamples(t *testing.T) {
 		``, `[]`, `{}`, "\xff",
 		strings.Replace(good, `"method":"POST"`, `"method":""`, 1),
 		strings.Replace(good, `"target":"/api/internal/ping"`, `"target":1`, 1),
+		strings.Replace(good, `"query":""`, `"query":"x=1"`, 1),
+		strings.Replace(good, `"query":"",`, ``, 1),
 		strings.Replace(good, `"headers":{}`, `"headers":{"a":1}`, 1),
 		strings.Replace(good, `"body":"",`, `"body":null,`, 1),
 		strings.Replace(good, `"bodyIsString":true`, `"bodyIsString":"yes"`, 1),
@@ -155,9 +157,29 @@ func TestDecodeRefusesMalformedSamples(t *testing.T) {
 	}
 }
 
+// The query marker rebuilds what the engine needs: HasQuery, and a token for the session resolver,
+// without the key itself.
+func TestQueryMarker(t *testing.T) {
+	base := `{"method":"POST","target":"/api/internal/ping","query":"%s","headers":{},"body":"","bodyIsString":true,"node":{"status":200,"headers":{},"body":"","writes":[]}}`
+	for _, c := range []struct {
+		query    string
+		hasQuery bool
+		token    string
+	}{{"", false, ""}, {"present", true, ""}, {"token", true, "present"}} {
+		s, err := Decode([]byte(strings.Replace(base, "%s", c.query, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := s.Request(context.Background())
+		if err != nil || r.HasQuery != c.hasQuery || r.HTTP.URL.Query().Get("token") != c.token || r.HTTP.URL.Path != "/api/internal/ping" {
+			t.Errorf("query %q: HasQuery %v token %q path %q (%v)", c.query, r.HasQuery, r.HTTP.URL.Query().Get("token"), r.HTTP.URL.Path, err)
+		}
+	}
+}
+
 // A JS string can hold an unpaired surrogate; the sample keeps it (encoding/json would not).
 func TestDecodeKeepsALoneSurrogate(t *testing.T) {
-	s, err := Decode([]byte(`{"method":"POST","target":"/","headers":{},"body":"\ud800","bodyIsString":true,"node":{"status":200,"headers":{},"body":"","writes":[]}}`))
+	s, err := Decode([]byte(`{"method":"POST","target":"/","query":"","headers":{},"body":"\ud800","bodyIsString":true,"node":{"status":200,"headers":{},"body":"","writes":[]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,8 +190,8 @@ func TestDecodeKeepsALoneSurrogate(t *testing.T) {
 
 // FuzzDecode: Decode never panics, and a decoded sample always rebuilds into a request.
 func FuzzDecode(f *testing.F) {
-	f.Add(`{"method":"POST","target":"/api/internal/ping?x","headers":{"cookie":"a=1","authorization":"present"},"body":"{}","bodyIsString":false,"node":{"status":200,"headers":{},"body":"","writes":[{"table":"t","body":"{}"}]}}`)
-	f.Add(`{"method":"POST","target":"","headers":{},"body":"","bodyIsString":true,"node":{"status":0,"headers":{},"body":"","writes":[]}}`)
+	f.Add(`{"method":"POST","target":"/api/internal/ping","query":"token","headers":{"cookie":"a=1","authorization":"present"},"body":"{}","bodyIsString":false,"node":{"status":200,"headers":{},"body":"","writes":[{"table":"t","body":"{}"}]}}`)
+	f.Add(`{"method":"POST","target":"","query":"","headers":{},"body":"","bodyIsString":true,"node":{"status":0,"headers":{},"body":"","writes":[]}}`)
 	f.Fuzz(func(t *testing.T, s string) {
 		sample, err := Decode([]byte(s))
 		if err != nil {

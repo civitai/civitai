@@ -16,6 +16,7 @@ import {
   pickBeaconSessionCookies,
   pickBeaconShadowHeaders,
   shadowBody,
+  shadowTarget,
 } from '~/server/beacon/beacon-go-shadow-payload';
 
 const BASE = 'http://beacon-go.test:9090/';
@@ -173,6 +174,7 @@ describe('beacon-go shadow payload', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       method: 'POST',
       target: '/api/internal/ping',
+      query: '',
       headers: {
         host: 'www.example.test',
         referer: 'https://www.example.test/models/1',
@@ -259,6 +261,35 @@ describe('beacon-go shadow pure helpers', () => {
         headers: { 'x-forwarded-for': ['1.2.3.4', '5.6.7.8'], 'cf-ipcountry': '' },
       })
     ).toEqual({ 'x-forwarded-for': '1.2.3.4, 5.6.7.8', 'cf-ipcountry': '' });
+  });
+
+  it('never forwards the query: only a marker for whether there is one, or a token', () => {
+    expect(shadowTarget('/api/internal/ping')).toEqual({ target: '/api/internal/ping', query: '' });
+    expect(shadowTarget('/api/internal/ping?')).toEqual({
+      target: '/api/internal/ping',
+      query: 'present',
+    });
+    expect(shadowTarget('/api/internal/ping?x=1&token=')).toEqual({
+      target: '/api/internal/ping',
+      query: 'present',
+    });
+    expect(shadowTarget('/api/internal/pulse?a=1&token=secret-api-key')).toEqual({
+      target: '/api/internal/pulse',
+      query: 'token',
+    });
+    expect(shadowTarget(undefined)).toEqual({ target: '', query: '' });
+  });
+
+  it('sends the path and the marker, never the key', async () => {
+    const { shadow, fetchMock } = harness();
+    const res = new FakeRes();
+    shadow.begin(request({ url: '/api/internal/ping?token=secret-api-key' }), res, 'ping');
+    res.end();
+    res.emit('finish');
+    await flush();
+    const body = fetchMock.mock.calls[0][1].body as string;
+    expect(body).not.toContain('secret-api-key');
+    expect(JSON.parse(body)).toMatchObject({ target: '/api/internal/ping', query: 'token' });
   });
 
   it('forwards the body as Next left it: a string as is, anything else as its JSON', () => {

@@ -261,16 +261,16 @@ func TestDiffFieldIsBounded(t *testing.T) {
 	}
 }
 
-func TestFailOpenReporterRateLimitsLogs(t *testing.T) {
+func TestReadErrorReporterRateLimitsLogs(t *testing.T) {
 	var buf bytes.Buffer
 	now := time.Unix(0, 0)
 	c := prometheus.NewCounter(prometheus.CounterOpts{Name: "x"})
-	f := &FailOpenReporter{Log: slog.New(slog.NewTextHandler(&buf, nil)), Counter: c, Every: time.Second, Now: func() time.Time { return now }}
+	f := &ReadErrorReporter{Log: slog.New(slog.NewTextHandler(&buf, nil)), Counter: c, Every: time.Second, Now: func() time.Time { return now }}
 	f.Report(io.EOF)
 	f.Report(io.EOF)
 	now = now.Add(2 * time.Second)
 	f.Report(io.EOF)
-	if testutil.ToFloat64(c) != 3 || strings.Count(buf.String(), "revocation read failed open") != 2 || !strings.Contains(buf.String(), "suppressed=1") {
+	if testutil.ToFloat64(c) != 3 || strings.Count(buf.String(), "revocation read failed; requests fall back") != 2 || !strings.Contains(buf.String(), "suppressed=1") {
 		t.Fatalf("counter %v, log:\n%s", testutil.ToFloat64(c), buf.String())
 	}
 }

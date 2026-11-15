@@ -5,7 +5,7 @@ name: beacon-go
 # This workflow is its only gate, with feed-go.yml's gates: gofmt, vet, the unit tests under -race
 # with a test-count floor and coverage floors, and a build of the binary (job `test`); golangci-lint
 # (`lint`); govulncheck (`vuln`); go.mod tidiness and module checksums (`mod`); and a short run of
-# every fuzz target with an execution floor (`fuzz`). The gate scripts live in apps/beacon-go/ci.
+# every fuzz target for a fixed number of executions (`fuzz`). The gate scripts live in apps/beacon-go/ci.
 #
 # The golden tests read testdata/golden (written by testdata/golden/gen.ts from the Node code) and
 # pin the copied pathname list against src/shared/constants/pathname.constants.ts, so a change there
@@ -184,10 +184,12 @@ jobs:
       - name: go mod verify
         run: go mod verify
 
-  # Each fuzz target for a short fixed time, one at a time (`-fuzz` takes one target in one package).
-  # Their seed corpora (the f.Add seeds) also run in the plain `go test` of job `test`. A crasher is
-  # written to the package's testdata/fuzz/<Target>/ and uploaded; commit it as a regression seed with
-  # the fix.
+  # Each fuzz target for a fixed number of executions, one at a time (`-fuzz` takes one target in one
+  # package). A fixed count rather than a fixed time: a time budget makes the engine stop on a
+  # deadline, which it can report as a failure ("context deadline exceeded") with no crasher, and it
+  # made the amount of fuzzing depend on the runner's speed. Their seed corpora (testdata/fuzz plus
+  # the f.Add seeds) also run in the plain `go test` of job `test`. A crasher is written to the
+  # package's testdata/fuzz/<Target>/ and uploaded; commit it as a regression seed with the fix.
   fuzz:
     name: beacon-go fuzz
     runs-on: ubuntu-latest
@@ -197,25 +199,21 @@ jobs:
       run:
         working-directory: apps/beacon-go
     env:
-      FUZZ_TIME: 20s
       FUZZ_MINIMIZE: 100x
-      # <package dir>:<target>:<min execs>. The first step fails when this list and the Fuzz functions
+      # <package dir>:<target>:<executions>. The first step fails when this list and the Fuzz functions
       # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
-      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). The Fuzz step fails a
-      # target whose final `execs: N` is below its floor (or missing).
-      # Floors: about half the LOWEST final count observed over green runs at FUZZ_TIME with
-      # FUZZ_MINIMIZE=100x (two runs so far). Counts vary between runs on shared runners, so a floor
-      # from one run would flake. To change one, read the "execs" summary line the Fuzz step prints
-      # per target over a few runs and set the floor to about half the lowest.
+      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). Each count is about half
+      # what the target ran in 20 s on a shared runner (the earlier time-based runs), so the job takes
+      # about as long as before.
       FUZZ_TARGETS: >-
-        internal/auth:FuzzTokenFromCookieHeader:128000
-        internal/auth:FuzzVerify:77000
-        internal/beacon:FuzzCompute:176000
-        internal/beacon:FuzzURLHost:290000
-        internal/hydrate:FuzzUnpack:263000
-        internal/jsvalue:FuzzParse:604000
-        internal/jsvalue:FuzzStringToNumber:592000
-        internal/shadow:FuzzDecode:304000
+        internal/auth:FuzzTokenFromCookieHeader:130000
+        internal/auth:FuzzVerify:80000
+        internal/beacon:FuzzCompute:180000
+        internal/beacon:FuzzURLHost:300000
+        internal/hydrate:FuzzUnpack:270000
+        internal/jsvalue:FuzzParse:610000
+        internal/jsvalue:FuzzStringToNumber:600000
+        internal/shadow:FuzzDecode:310000
     steps:
       - uses: actions/checkout@v7
 
@@ -243,18 +241,21 @@ jobs:
           set -o pipefail # the go test status must survive the tee
           status=0
           for t in $FUZZ_TARGETS; do
-            IFS=: read -r pkg name floor <<< "$t"
-            echo "::group::$pkg:$name"
-            out="$RUNNER_TEMP/fuzz-$name.log"
-            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "$FUZZ_TIME" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$out"; then
-              echo "::error::$pkg:$name failed; the crasher is in the uploaded artifact ($pkg/testdata/fuzz/$name/)"
+            IFS=: read -r pkg name count <<< "$t"
+            echo "::group::$pkg:$name ($count executions)"
+            corpus="$pkg/testdata/fuzz/$name"
+            before=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "${count}x" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$RUNNER_TEMP/fuzz-$name.log"; then
               status=1
             fi
             echo "::endgroup::"
-            execs=$(grep -o 'execs: [0-9]*' "$out" | tail -n 1 | cut -d' ' -f2 || true)
-            echo "$pkg:$name execs ${execs:-none} (floor $floor)"
-            if [ -z "$execs" ] || [ "$execs" -lt "$floor" ]; then
-              echo "::error::$pkg:$name ran ${execs:-no} fuzz executions, below its floor of $floor"
+            after=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            new=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | sed '/^$/d')
+            if [ -n "$new" ]; then
+              echo "::error::$pkg:$name found a crasher, uploaded as beacon-go-fuzz-crashers: $new"
+              status=1
+            elif ! grep -q "^ok " "$RUNNER_TEMP/fuzz-$name.log"; then
+              echo "::error::$pkg:$name failed without writing a crasher (see its log above)"
               status=1
             fi
           done

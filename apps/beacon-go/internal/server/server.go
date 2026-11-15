@@ -292,9 +292,9 @@ func InternalHTTPServer(addr string, h http.Handler) *http.Server {
 	}
 }
 
-// FailOpenReporter is the revocation check's OnFailOpen: every fail-open counted, at most one warning
+// ReadErrorReporter is the revocation check's OnReadError: every failed read counted, at most one warning
 // per Every logged (with the number suppressed since).
-type FailOpenReporter struct {
+type ReadErrorReporter struct {
 	Log     *slog.Logger
 	Counter interface{ Inc() }
 	Every   time.Duration // 0 = 10 s
@@ -305,8 +305,8 @@ type FailOpenReporter struct {
 	suppressed int
 }
 
-// Report records one fail-open.
-func (f *FailOpenReporter) Report(err error) {
+// Report records one failed read.
+func (f *ReadErrorReporter) Report(err error) {
 	if f.Counter != nil {
 		f.Counter.Inc()
 	}
@@ -327,5 +327,5 @@ func (f *FailOpenReporter) Report(err error) {
 	suppressed := f.suppressed
 	f.suppressed, f.last = 0, now
 	f.mu.Unlock()
-	f.Log.Warn("revocation read failed open", "err", err, "suppressed", suppressed)
+	f.Log.Warn("revocation read failed; requests fall back", "err", err, "suppressed", suppressed)
 }

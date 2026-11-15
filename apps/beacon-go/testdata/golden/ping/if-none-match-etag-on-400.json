@@ -26,5 +26,5 @@
     "body": "",
     "writes": []
   },
-  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/ping\",\"headers\":{\"host\":\"www.example.test\",\"if-none-match\":\"W/\\\"x\\\", \\\"weftv9g98bf\\\"\"},\"body\":\"\",\"bodyIsString\":true,\"node\":{\"status\":304,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\",\"etag\":\"\\\"weftv9g98bf\\\"\"},\"body\":\"\",\"writes\":[]}}"
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/ping\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"if-none-match\":\"W/\\\"x\\\", \\\"weftv9g98bf\\\"\"},\"body\":\"\",\"bodyIsString\":true,\"node\":{\"status\":304,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\",\"etag\":\"\\\"weftv9g98bf\\\"\"},\"body\":\"\",\"writes\":[]}}"
 }
