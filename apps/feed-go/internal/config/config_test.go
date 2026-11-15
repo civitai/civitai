@@ -121,3 +121,34 @@ func TestLoadModerationAccountID(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadServingLimits(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	cases := []struct {
+		budget, concurrency, jwks string
+		wantBudget                time.Duration
+		wantConcurrency           int
+		wantJWKS                  time.Duration
+	}{
+		{"", "", "", 6 * time.Second, 4, 10 * time.Minute},
+		{"2500", "12", "30000", 2500 * time.Millisecond, 12, 30 * time.Second},
+		// Zero, negative or junk is the default, never an unbounded or zero budget.
+		{"0", "0", "0", 6 * time.Second, 4, 10 * time.Minute},
+		{"-1", "-3", "junk", 6 * time.Second, 4, 10 * time.Minute},
+	}
+	for _, c := range cases {
+		t.Setenv("FEED_GO_REQUEST_BUDGET_MS", c.budget)
+		t.Setenv("FEED_GO_COMPLETION_CONCURRENCY", c.concurrency)
+		t.Setenv("FEED_GO_JWKS_REFRESH_MS", c.jwks)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.RequestBudget != c.wantBudget || cfg.CompletionConcurrency != c.wantConcurrency || cfg.JWKSRefresh != c.wantJWKS {
+			t.Errorf("budget=%q concurrency=%q jwks=%q -> %v %d %v, want %v %d %v", c.budget, c.concurrency, c.jwks,
+				cfg.RequestBudget, cfg.CompletionConcurrency, cfg.JWKSRefresh, c.wantBudget, c.wantConcurrency, c.wantJWKS)
+		}
+	}
+}

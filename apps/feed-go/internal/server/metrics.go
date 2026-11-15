@@ -26,6 +26,13 @@ type Metrics struct {
 	// Wall time of the phases counted in ShadowPhaseCPU: against ShadowPhase's mean it shows whether
 	// the solo phases are shorter than the rest (the length bias, DESIGN.md §10.1).
 	ShadowPhaseSoloWall *prometheus.CounterVec
+
+	// Panics counts recovered panics by where (serve | shadow). Not per endpoint.
+	Panics *prometheus.CounterVec
+	// RevocationFailOpen counts session revocation reads that failed and allowed the request.
+	RevocationFailOpen prometheus.Counter
+	// JWKSRefresh counts periodic JWKS refreshes by result (ok | error).
+	JWKSRefresh *prometheus.CounterVec
 }
 
 // NewMetrics registers the series on reg.
@@ -73,12 +80,32 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_shadow_phase_solo_wall_seconds_total",
 			Help: "Wall seconds of the shadow-sample phases counted in feed_go_shadow_phase_cpu_seconds_total.",
 		}, []string{"endpoint", "phase", "outcome"}),
+		Panics: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_panics_total",
+			Help: "Recovered panics, by where they were caught (serve: a public request, answered by the fallback; shadow: a shadow sample, dropped).",
+		}, []string{"where"}),
+		RevocationFailOpen: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "feed_go_revocation_fail_open_total",
+			Help: "Session revocation reads that failed (store slow or down) and let the session through, as the app does.",
+		}),
+		JWKSRefresh: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_jwks_refresh_total",
+			Help: "Periodic JWKS refreshes by result (ok|error); an error keeps the last good key set.",
+		}, []string{"result"}),
 	}
-	// Seed the dropped counter per endpoint so "none dropped" reads 0 rather than an absent series.
+	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
+	// rather than an absent series.
 	for _, e := range []string{EndpointAsPosts, EndpointV1Images} {
 		m.ShadowDropped.WithLabelValues(e)
 	}
+	for _, w := range []string{"serve", "shadow"} {
+		m.Panics.WithLabelValues(w)
+	}
+	for _, r := range []string{"ok", "error"} {
+		m.JWKSRefresh.WithLabelValues(r)
+	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
-		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall)
+		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
+		m.Panics, m.RevocationFailOpen, m.JWKSRefresh)
 	return m
 }

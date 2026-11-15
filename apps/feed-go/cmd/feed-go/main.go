@@ -71,11 +71,13 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Deferred closes run after the shutdown sequence below (servers drained, shadow samples ended).
 	defer pool.Close()
 	cache, err := redisClient(cfg.RedisURL, cfg.RedisCluster)
 	if err != nil {
 		return err
 	}
+	defer cache.Close()
 	// The system redis is a primary/replica set, never a cluster: through its Sentinels when
 	// REDIS_SYS_SENTINELS is set, else the single REDIS_SYS_URL connection (internal/sysredis).
 	sys, err := sysredis.New(sysredis.Settings{
@@ -87,6 +89,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	defer sys.Close()
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -94,11 +97,24 @@ func run(log *slog.Logger) error {
 
 	packed := &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: pool}
+	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
+	verifier := &auth.Verifier{
+		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
+		RefreshInterval: cfg.JWKSRefresh,
+		OnRefresh: func(err error) {
+			if err != nil {
+				metrics.JWKSRefresh.WithLabelValues("error").Inc()
+				log.Warn("jwks refresh failed; keeping the last good key set", "err", err)
+				return
+			}
+			metrics.JWKSRefresh.WithLabelValues("ok").Inc()
+		},
+	}
+	// Periodic refresh, so a signing key the hub removed stops verifying; ends with ctx (SIGTERM).
+	go verifier.Run(ctx)
 	resolver := &auth.Resolver{
-		Verifier: &auth.Verifier{Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0},
-		Revocation: &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnFailOpen: func(err error) {
-			log.Warn("revocation read failed open", "err", err)
-		}},
+		Verifier:            verifier,
+		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnFailOpen: failOpen.Report},
 		Sessions:            packed,
 		CookieNames:         cfg.CookieNames(),
 		ModerationAccountID: cfg.ModerationAccountID,
@@ -114,6 +130,7 @@ func run(log *slog.Logger) error {
 			LazyPostImages:          cfg.LazyPostImages,
 			ImageIndexFeed:          cfg.ImageIndexFeed,
 			VisibleDecorationEvents: cfg.DecorationEvents,
+			CompletionConcurrency:   cfg.CompletionConcurrency,
 		},
 	}
 	// Without FEED_SERVICE_URL the Node app answers from Postgres (feedPrimaryAvailable() false: local
@@ -148,6 +165,7 @@ func run(log *slog.Logger) error {
 		ShadowQueue:    make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
+		RequestBudget:  cfg.RequestBudget,
 	}
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)
@@ -172,13 +190,13 @@ func run(log *slog.Logger) error {
 		log.Info("pprof enabled on the internal listener", "addr", cfg.InternalAddr, "path", "/debug/pprof/")
 	}
 
-	servers := []*http.Server{
-		{Addr: cfg.InternalAddr, Handler: internal, ReadHeaderTimeout: 5 * time.Second},
-	}
+	// Timeouts and header limits per listener: server.PublicHTTPServer / InternalHTTPServer (a pprof
+	// capture extends its own write deadline, so it is not cut by the internal write timeout).
+	servers := []*http.Server{server.InternalHTTPServer(cfg.InternalAddr, internal)}
 	// Without a fallback the public route could only answer the ported shapes: shadow-only deployments
 	// do not listen publicly at all.
 	if srv.Fallback != nil {
-		servers = append(servers, &http.Server{Addr: cfg.Addr, Handler: public, ReadHeaderTimeout: 5 * time.Second})
+		servers = append(servers, server.PublicHTTPServer(cfg.Addr, public, cfg.RequestBudget))
 	}
 	errs := make(chan error, len(servers))
 	for _, s := range servers {
@@ -194,8 +212,14 @@ func run(log *slog.Logger) error {
 		return err
 	case <-ctx.Done():
 	}
+	// One grace period for the whole sequence: first cancel the shadow samples and wait for them to
+	// return (they hold replica connections), then drain the listeners' in-flight requests; the
+	// deferred closes of the pool and both redis clients run after both.
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if err := srv.Close(shutdown); err != nil {
+		log.Warn("shadow samples still running at the end of the grace period", "err", err)
+	}
 	for _, s := range servers {
 		_ = s.Shutdown(shutdown)
 	}

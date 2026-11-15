@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -98,10 +99,88 @@ type Verifier struct {
 	Now         func() time.Time
 	// MinRefetch bounds how often an unknown `kid` may trigger a JWKS refetch.
 	MinRefetch time.Duration
+	// FetchTimeout bounds one JWKS fetch (0 = JWKS_TIMEOUT_MS, 2.5 s).
+	FetchTimeout time.Duration
+	// RefreshInterval is how often Run refetches the key set (0 = DefaultJWKSRefresh), jittered by
+	// ±10% so replicas do not refetch in step. RetryMin is the first retry delay after a failed
+	// refresh (0 = 5 s); each further failure doubles it, up to RefreshInterval.
+	RefreshInterval time.Duration
+	RetryMin        time.Duration
+	// OnRefresh, when set, is called after every periodic refresh with its error (nil = success).
+	OnRefresh func(err error)
 
 	mu        sync.RWMutex
 	keys      map[string]*ecdsa.PublicKey
 	lastFetch time.Time
+}
+
+// DefaultJWKSRefresh is the periodic refresh interval. Without it a signing key the hub removed stayed
+// trusted until a restart: the set was only refetched for an unknown kid.
+const DefaultJWKSRefresh = 10 * time.Minute
+
+// defaultRetryMin is the first retry delay after a failed periodic refresh.
+const defaultRetryMin = 5 * time.Second
+
+// Run refetches the key set right away and then every RefreshInterval (jittered) until ctx ends,
+// retrying a failed fetch with exponential backoff. A failed fetch keeps the last good key set (refresh
+// replaces the set only on success), so a hub outage never signs everyone out.
+func (v *Verifier) Run(ctx context.Context) {
+	interval := v.RefreshInterval
+	if interval <= 0 {
+		interval = DefaultJWKSRefresh
+	}
+	retry := v.RetryMin
+	if retry <= 0 {
+		retry = defaultRetryMin
+	}
+	var delay time.Duration // the first fetch runs at once: it warms the set before the first request
+	failures := 0
+	for {
+		if delay > 0 {
+			t := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		err := v.refresh(ctx)
+		if ctx.Err() != nil {
+			return // shutting down: not a refresh failure
+		}
+		if v.OnRefresh != nil {
+			v.OnRefresh(err)
+		}
+		if err != nil {
+			failures++
+			delay = backoff(retry, interval, failures)
+		} else {
+			failures = 0
+			delay = jitter(interval)
+		}
+	}
+}
+
+// backoff is retry·2^(failures-1), capped at limit.
+func backoff(retry, limit time.Duration, failures int) time.Duration {
+	d := retry
+	for i := 1; i < failures && d < limit; i++ {
+		d *= 2
+	}
+	return min(d, limit)
+}
+
+// jitter spreads d over [0.9d, 1.1d).
+func jitter(d time.Duration) time.Duration {
+	spread := int64(d / 5)
+	if spread <= 0 {
+		return d
+	}
+	return d - d/10 + time.Duration(rand.Int64N(spread))
 }
 
 // ErrInvalid is returned for any token that is not a valid session.
@@ -239,7 +318,11 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	v.mu.Lock()
 	v.lastFetch = v.now()
 	v.mu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond) // JWKS_TIMEOUT_MS in verify.ts
+	timeout := v.FetchTimeout
+	if timeout <= 0 {
+		timeout = 2500 * time.Millisecond // JWKS_TIMEOUT_MS in verify.ts
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.JWKSURL, nil)
 	if err != nil {
@@ -264,6 +347,10 @@ func (v *Verifier) refresh(ctx context.Context) error {
 		return err
 	}
 	keys := ParseJWKS(set.Keys)
+	if len(keys) == 0 {
+		// A set with no usable signing key would reject every session; keep the last good one.
+		return errors.New("jwks: no usable signing keys")
+	}
 	v.mu.Lock()
 	v.keys = keys
 	v.mu.Unlock()

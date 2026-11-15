@@ -131,7 +131,8 @@ internal/fallback    the fallback error and its reasons
   hydration of nine lookups of which at most five can reach Postgres at once (basic users, cosmetics
   and profile pictures on a cache miss; video thumbnails; a signed-in viewer's reactions), then a
   3D-model read when the page has any. With lazy post images on, a comparison then runs one post-count
-  query and up to `completionConcurrency` (4, `internal/feed/pager.go`) completion fetches at once,
+  query and up to `FEED_GO_COMPLETION_CONCURRENCY` (default 4, `feed.DefaultCompletionConcurrency`)
+  completion fetches at once,
   each a page query plus its hydration. So the worst case is ~4 × 4 × 5 = 80 concurrent reads, and the
   common case is far fewer (page queries plus the reads that always go to Postgres). 8 covers the
   common case with headroom and makes a burst wait instead of opening 80 pooler connections per pod.
@@ -161,9 +162,14 @@ internal/fallback    the fallback error and its reasons
   (`feed-go:getAllImages:v1:<sha256>`), but adds its keys to the **same** `tag:images-model…` sets,
   so the existing invalidation on image upload / update clears both services' entries at once.
 - **The image feed service** (`FEED_SERVICE_URL`, the same variable and value the Node pools carry):
-  `GET <base>/v1/feed?<query>` with a 5s timeout, `x-request-source: shadow` and
-  `x-replay-id: feed-go-shadow` (the feed service labels its metrics by the replay id, so shadow load
-  stays out of its live series), at most four completion fetches at once per request, the query built
+  `GET <base>/v1/feed?<query>` with a 5s timeout. The request-source headers follow the mode: a
+  shadow compute sends `x-request-source: shadow` and `x-replay-id: feed-go-shadow` (the feed service
+  labels its metrics by the replay id, so shadow load stays out of its live series); a served request
+  is the site's own traffic and sends what Node's served reads send, `x-request-source: primary` and
+  no replay id (`feedsvc.WithShadow` marks the shadow context). At most
+  `FEED_GO_COMPLETION_CONCURRENCY` (default 4) completion fetches run at once per request: Node runs
+  them all at once, and 4 is sized for shadow load; a serving deployment may want a higher value,
+  since the completions sit on the request's critical path under the request budget (§6.1). The query built
   exactly as `mapSearchInputToFeedQuery(input, 'primary', 'website')` builds it (`internal/feedsvc`,
   tests pin the literal query strings). A mapper refusal Node answers with an empty page is answered
   with an empty page here too; one Node answers with a 400 falls back. The feed's ids are hydrated
@@ -188,6 +194,13 @@ the authenticated viewer or for nobody.
 - Revocation is the same registry read as the main app (`session:token-state`, `session:family-state`,
   `session:all`, `session:user-cut:*`), one pipelined round trip, failing **open** on a slow store,
   exactly as the app does (a revoked token can be honoured for the length of a store outage on both).
+  Every fail-open is counted (`feed_go_revocation_fail_open_total`); the warning is logged at most once
+  per 10 s, with the number suppressed since the previous line.
+- The JWKS is refetched every `FEED_GO_JWKS_REFRESH_MS` (default 10 min, ±10% jitter), as well as on
+  an unknown `kid`, so a signing key the hub removed stops verifying without a restart. A failed
+  refresh — an error status, an undecodable body, or a set with no usable ES256 key — keeps the last
+  good set and retries with backoff (5 s doubling, up to the interval);
+  `feed_go_jwks_refresh_total{result}` counts both outcomes.
 - The rich session user (moderator flag, ban) is read from the shared session cache; the cached entry
   must carry the same id as the token, or the request falls back. A cleared entry falls back. A cache
   miss falls back (Node would fetch the user from the auth hub).
@@ -250,6 +263,27 @@ only this procedure, to the service. Two ways, not exclusive:
 
 Either way the service proxies anything it does not answer to the Node app, so routing a request to
 it is never less correct than not routing it — only its share of fallbacks changes.
+
+### 6.1 Limits on the serving path
+
+- **Request budget.** Each computation — a served request, and a shadow sample's compute — runs under
+  `FEED_GO_REQUEST_BUDGET_MS` (default 6 s), covering every Postgres, Redis and feed-service read it
+  makes. An answer is all or nothing: a computation still running at the budget, or one that finished
+  after it (a read that failed open on the expired context would otherwise leave a partial page), is
+  the `deadline` fallback — proxied when serving, `unsupported` with reason `deadline` in shadow. A
+  client that leaves mid-compute is the `canceled` fallback, not a deadline.
+- **Panics.** A panic in a computation, its errgroup workers included (`internal/safe`), is the
+  `panic` fallback and `feed_go_panics_total{where="serve"}`; one anywhere in a shadow sample
+  (compute or compare) is `feed_go_panics_total{where="shadow"}`, logged with its stack, and the
+  sample's queue slot is released. Neither ends the process.
+- **Listeners** (`server.PublicHTTPServer` / `InternalHTTPServer`): 5 s to read the headers, 64 KiB of
+  headers (Node accepts 16 KiB), 120 s idle keep-alive. Public: 10 s to read the request (a GET),
+  and the request budget plus 60 s to write the response, room for the Node app's answer to a
+  fallback, relayed on the same connection. Internal: 60 s to read (a shadow sample is up to 32 MiB),
+  30 s to write; pprof captures extend their own deadline (§10.2).
+- **Shutdown.** On SIGTERM, within one 15 s grace period: new shadow samples are dropped, the running
+  ones are cancelled and waited for, then both listeners drain their in-flight requests, and only then
+  are the replica pool and both Redis clients closed.
 
 ## 7. Parity first: shadow mode
 
@@ -494,8 +528,9 @@ sum(rate(process_cpu_seconds_total{job="feed-go"}[1h]))
 With `FEED_GO_PPROF=true` the internal listener (the `FEED_GO_INTERNAL_ADDR` port, never the public
 one) serves `net/http/pprof` under `/debug/pprof/`. Off by default; turning it on is an env change
 and a restart. Anything the network allows to reach the internal port can then pull profiles, and a
-`profile`/`trace` request holds its connection for the `seconds` it asks for (the internal server sets
-no write timeout), so enable it for a profiling session and turn it off after. Pull a profile through
+`profile`/`trace` request holds its connection for the `seconds` it asks for (net/http/pprof moves its
+own write deadline past the capture, so the internal listener's 30 s write timeout does not cut it),
+so enable it for a profiling session and turn it off after. Pull a profile through
 a port-forward to the pod's internal port:
 
 ```bash
