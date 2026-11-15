@@ -938,6 +938,7 @@ async function auditScanResults(args: {
         tagPrecondition && resourcePrecondition ? 'both' : tagPrecondition ? 'tag' : 'resource',
       unrated,
       routed,
+      adultTag: adultTags.length > 0,
       at,
     }).catch(() => null);
     if (unrated && !routed) {

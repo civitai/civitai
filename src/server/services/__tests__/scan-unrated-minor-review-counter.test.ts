@@ -94,7 +94,12 @@ async function run(s: Scan) {
     .mocked(logToAxiom)
     .mock.calls.map(([event]) => event as Record<string, unknown>)
     .filter((event) => event.name === MINOR_REVIEW_EVALUATED_EVENT)
-    .map(({ precondition, unrated, routed }) => ({ precondition, unrated, routed }));
+    .map(({ precondition, unrated, routed, adultTag }) => ({
+      precondition,
+      unrated,
+      routed,
+      adultTag,
+    }));
   return { minorReview: outcome.audit?.minorReview, reviewKey: outcome.reviewKey, arms, evaluated };
 }
 
@@ -262,25 +267,25 @@ describe('unrated minor review candidates', () => {
         ],
       },
       false,
-      { precondition: 'tag', unrated: true, routed: false },
+      { precondition: 'tag', unrated: true, routed: false, adultTag: false },
     ],
     [
       'resource',
       { tags: [{ name: 'scene', nsfwLevel: NsfwLevel.R }] },
       true,
-      { precondition: 'resource', unrated: false, routed: true },
+      { precondition: 'resource', unrated: false, routed: true, adultTag: false },
     ],
     [
       'resource, on an image routed to the person queue',
       { tags: [{ name: poiTag, nsfwLevel: 0 }] },
       true,
-      { precondition: 'resource', unrated: true, routed: true },
+      { precondition: 'resource', unrated: true, routed: true, adultTag: false },
     ],
     [
       'both',
       { tags: [{ name: minorTag, nsfwLevel: NsfwLevel.PG }] },
       true,
-      { precondition: 'both', unrated: true, routed: true },
+      { precondition: 'both', unrated: true, routed: true, adultTag: false },
     ],
   ])(
     'counts every image with a %s precondition',
@@ -289,6 +294,19 @@ describe('unrated minor review candidates', () => {
       expect(result.evaluated).toEqual([expected]);
     }
   );
+
+  // The tag arm skips adult-tagged images, so the count marks them for the ratio to leave out.
+  it.each([
+    ['true for an adult-tagged image', [{ name: 'adult', nsfwLevel: 0 }], true],
+    ['false without one', [{ name: styleTag, nsfwLevel: 0 }], false],
+  ])('counts adultTag %s', async (_, extra, adultTag) => {
+    const result = await run({
+      tags: [{ name: minorTag, nsfwLevel: NsfwLevel.PG }, ...extra],
+      associatedMinor: false,
+      promptMinor: false,
+    });
+    expect(result.evaluated).toEqual([expect.objectContaining({ precondition: 'tag', adultTag })]);
+  });
 
   it('counts nothing for an image with neither precondition', async () => {
     const result = await run({
@@ -310,6 +328,7 @@ describe('unrated minor review candidates', () => {
       .mock.calls.map(([e]) => e as Record<string, unknown>)
       .find((e) => e.name === MINOR_REVIEW_EVALUATED_EVENT);
     expect(Object.keys(event ?? {}).sort()).toEqual([
+      'adultTag',
       'at',
       'imageId',
       'name',
