@@ -2920,7 +2920,7 @@ export async function dismissJudgingPair({
   )
     throw throwBadRequestError('This crucible is not currently active for judging');
 
-  // Nothing reads the dismissed set once judging ends, so it expires with the crucible.
+  // TTL to endAt: dismissals only matter while judging is open.
   const ttlSeconds = crucible.endAt
     ? Math.max(1, Math.ceil((crucible.endAt.getTime() - now) / 1000))
     : JUDGE_KEY_TTL_SECONDS;
@@ -3348,8 +3348,8 @@ export type JudgingPairCount = {
 };
 
 /**
- * Pairs left for one judge across several crucibles: three Redis reads each (voted, outcome count,
- * dismissed) plus the outcomes when the closure runs, then one entries query.
+ * Pairs left for one judge across several crucibles: the judge's Redis pair state for each, then one
+ * entries query.
  * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
  * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
  * query off crucibles the judge never voted in, which the feed asks about most.
@@ -3378,7 +3378,6 @@ export async function countJudgingPairs({
       return { id, judgeEntryVotes, voted, decided };
     })
   );
-  // `decided` holds every pair the judge has acted on, dismissals included, not only votes.
   const counted = judgedOnly ? judgeState.filter(({ decided }) => decided.length > 0) : judgeState;
   if (!counted.length) return counts;
 
