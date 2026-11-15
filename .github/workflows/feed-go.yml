@@ -100,8 +100,8 @@ jobs:
           # Positive control: a count below these floors means tests stopped being discovered, not that
           # they passed. Raise the package floor when a package gains its first test.
           [ "$failed" -eq 0 ]
-          [ "$pkgs" -ge 12 ]
-          [ "$passed" -ge 131 ]
+          [ "$pkgs" -ge 13 ]
+          [ "$passed" -ge 253 ]
 
       # A cluster on the host network: a cluster node announces its own address to clients, and on the
       # services bridge network that is a container IP the runner's cluster client cannot always reach.
