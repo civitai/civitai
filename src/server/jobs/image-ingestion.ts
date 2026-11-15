@@ -497,10 +497,9 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     error: errorImages.length - errorPick.length,
   };
   const deferredByCap = deferred.userPending + deferred.backfill + deferred.rescan + deferred.error;
-  // One task list, round-robin across lanes, under one pacer and one concurrency limit: run
-  // lane by lane, each lane waits out its slowest submit (up to INGEST_IMAGE_TIMEOUT_MS) before
-  // the next starts, and against a slow orchestrator the Error lane's floor slipped past the
-  // deadline every run.
+  // One task list, round-robin across lanes, under one pacer and one concurrency limit, so each
+  // lane's floor rows take early slots: against a slow orchestrator only the first slots of a
+  // run start before the deadline.
   const picks = [userPick, backfillPick, rescanPick, errorPick];
   const lowPriorityLane = [false, true, true, true];
   const items = interleave(
@@ -631,7 +630,7 @@ export type SendPacer = { intervalMs: number; claimStart: () => number };
 /**
  * Start times for `total` submits: all at once up to INGEST_PACE_BURST, else spaced evenly
  * across INGEST_PACE_WINDOW_MS. Claimed in submit order, one per submit. A claim made after its
- * slot has passed (a slow submit held up the lane) starts now and pushes the rest back, so a
+ * slot has passed (slow submits held every concurrency slot) starts now and pushes the rest back, so a
  * stall slips the schedule instead of firing the overdue starts together; whatever slips past
  * the run deadline stays queued.
  */

@@ -252,7 +252,7 @@ describe('ingest-images retry pacing against a slow orchestrator', () => {
     const result = await runJob();
 
     // Default cap 200: Error is guaranteed 25. At 20 concurrent x 50s only ~80 submits fit in
-    // the 210s budget, so a lane-by-lane send never reached Error at all.
+    // the 210s budget, so the floor rows must be among the first to start.
     expect(result.sentError).toBe(25);
     const runBudget = 3.5 * 60 * 1000;
     for (const s of starts) expect(s.at - RUN_START.getTime()).toBeLessThan(runBudget);
