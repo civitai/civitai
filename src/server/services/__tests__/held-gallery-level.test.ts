@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -143,6 +144,25 @@ describe('getHeldGalleryLevel', () => {
     const level = await getHeldGalleryLevel({ modelIds: [3, 1] });
     expect(level).toBeDefined();
     expect(Flags.intersection(level!, ~sfwBrowsingLevelsFlag)).toBe(0);
+  });
+
+  it('reads the cached settings of every model on a page in one round trip', async () => {
+    await getHeldGalleryLevel({ modelIds: [1, 2, 3] });
+    vi.clearAllMocks();
+
+    const level = await getHeldGalleryLevel({ modelIds: [1, 2, 3] });
+
+    expect(level).toBe(models[1].level & models[2].level);
+    expect(redisMock.redis.mGet).toHaveBeenCalledTimes(1);
+    const singleReads = redisMock.redis.get.mock.calls.filter(([key]) =>
+      /^model:gallery-settings:\d+$/.test(String(key))
+    );
+    expect(singleReads).toEqual([]);
+  });
+
+  it('reads each model on its own when the batched read fails', async () => {
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    expect(await getHeldGalleryLevel({ modelIds: [1, 3] })).toBe(models[1].level);
   });
 
   it('holds nothing for a model it does not know', async () => {

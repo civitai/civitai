@@ -6327,24 +6327,33 @@ const addReciprocalAssociations = async ({
 };
 // #endregion
 
-export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
-  const cacheKey = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
+const gallerySettingsKey = (id: number) => `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
 
-  const cachedSettings = await redis.get(cacheKey);
-  if (cachedSettings) {
-    type Cached =
-      | (Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
-          creatorHiddenUserIds?: number[];
-          sfwHeld?: boolean;
-        })
-      | { none: true };
-    // A build before the hold cached a bare null.
-    const cached = fromJson<Cached>(cachedSettings) as Cached | null;
-    // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
-    // unflagged model with no settings from a flagged one.
-    if (cached && 'none' in cached) return null;
-    if (cached?.sfwHeld !== undefined) return cached;
-  }
+type CachedGallerySettings = Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
+  creatorHiddenUserIds?: number[];
+  sfwHeld?: boolean;
+};
+
+/** A cached gallery settings entry: the settings, null for none, undefined when it must be rebuilt. */
+function parseCachedGallerySettings(raw: string | null | undefined) {
+  if (!raw) return undefined;
+  // A build before the hold cached a bare null.
+  const cached = fromJson<CachedGallerySettings | { none: true }>(raw) as
+    | CachedGallerySettings
+    | { none: true }
+    | null;
+  // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
+  // unflagged model with no settings from a flagged one.
+  if (cached && 'none' in cached) return null;
+  if (cached?.sfwHeld !== undefined) return cached;
+  return undefined;
+}
+
+export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
+  const cacheKey = gallerySettingsKey(id);
+
+  const cached = parseCachedGallerySettings(await redis.get(cacheKey));
+  if (cached !== undefined) return cached;
 
   const model = await getModel({
     id: id,
@@ -6608,12 +6617,28 @@ export async function getShowcaseHeldLevels(
     if (minor !== undefined && sfwOnly !== undefined) flagsOf.set(modelId, { minor, sfwOnly });
 
   const levels = new Map<number, number>();
+  const ids = uniq(models.map((m) => m.modelId)).filter((id) => {
+    const flags = flagsOf.get(id);
+    return !flags || flags.minor || flags.sfwOnly;
+  });
+  // One read for the whole page; a miss, or a failed read, is built one model at a time below.
+  const cached = new Map<number, CachedGallerySettings | null>();
+  if (ids.length) {
+    try {
+      const raws = await redis.mGet(ids.map(gallerySettingsKey));
+      ids.forEach((id, i) => {
+        const settings = parseCachedGallerySettings(raws[i]);
+        if (settings !== undefined) cached.set(id, settings);
+      });
+    } catch {
+      // Each model is then read on its own, and held at SFW if that fails too.
+    }
+  }
   await limitConcurrency(
-    uniq(models.map((m) => m.modelId)).map((id) => async () => {
+    ids.map((id) => async () => {
       const flags = flagsOf.get(id);
-      if (flags && !flags.minor && !flags.sfwOnly) return;
       try {
-        const gallery = await getGallerySettingsByModelId({ id });
+        const gallery = cached.has(id) ? cached.get(id) : await getGallerySettingsByModelId({ id });
         if (gallery?.sfwHeld) levels.set(id, gallery.level);
         else if (flags) levels.set(id, heldGalleryLevel(undefined, flags));
       } catch (error) {
