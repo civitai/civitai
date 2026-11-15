@@ -294,6 +294,11 @@ it is never less correct than not routing it — only its share of fallbacks cha
   and the request budget plus 60 s to write the response, room for the Node app's answer to a
   fallback, relayed on the same connection. Internal: 60 s to read (a shadow sample is up to 32 MiB),
   30 s to write; pprof captures extend their own deadline (§10.2).
+- **Fallback proxy transport** (`cmd/feed-go/proxy.go`): its own transport, idle connections kept
+  3 s, below Node's 5 s default keep-alive (raising `KEEP_ALIVE_TIMEOUT` only widens the margin),
+  32 idle per host. DefaultTransport's 90 s would reuse connections Node has closed: Go replays a GET
+  on a new one, a POST becomes a 502. A request the Node app does not answer is a 502 and
+  `feed_go_fallback_proxy_errors_total{reason="upstream"}` (logged), or `reason="canceled"`.
 - **Shutdown.** On SIGTERM, within one 15 s grace period: new shadow samples are dropped, the running
   ones are cancelled and waited for, then both listeners drain their in-flight requests, and only then
   are the replica pool and both Redis clients closed.

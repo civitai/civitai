@@ -40,6 +40,10 @@ type Metrics struct {
 	JWKSRefresh *prometheus.CounterVec
 	// JWKSStale counts the times the key set was dropped for being older than its maximum staleness.
 	JWKSStale prometheus.Counter
+	// FallbackProxyErrors counts fallback requests the proxy answered 502 because the Node app could
+	// not answer them, by reason (upstream | canceled). Not per endpoint: only the as-posts
+	// procedure is served, and so proxied.
+	FallbackProxyErrors *prometheus.CounterVec
 }
 
 // NewMetrics registers the series on reg.
@@ -103,6 +107,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_jwks_stale_total",
 			Help: "Times the JWKS key set was dropped (sessions verify as signed out) because no fetch had succeeded for FEED_GO_JWKS_MAX_STALENESS_MS.",
 		}),
+		FallbackProxyErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_fallback_proxy_errors_total",
+			Help: "Fallback requests the proxy answered 502 because the Node app did not answer, by reason (upstream: unreachable or connection broken; canceled: the client left first).",
+		}, []string{"reason"}),
 	}
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
 	// rather than an absent series.
@@ -116,8 +124,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, r := range []string{"ok", "error"} {
 		m.JWKSRefresh.WithLabelValues(r)
 	}
+	for _, r := range []string{"upstream", "canceled"} {
+		m.FallbackProxyErrors.WithLabelValues(r)
+	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
-		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale)
+		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors)
 	return m
 }
