@@ -9,11 +9,6 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 
-/**
- * The collections feed serves each cover, the collection's own or one taken from its items, only
- * at a level the viewer browses and the domain serves.
- */
-
 const { mockGetAllCollections } = vi.hoisted(() => ({ mockGetAllCollections: vi.fn() }));
 
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
@@ -60,7 +55,6 @@ const GREEN_MATURE_VIEWER = {
   features: { canViewNsfw: false, isGreen: true },
 };
 
-/** The item-cover read answers only for the collections it is asked about. */
 function itemCovers(rows: ReturnType<typeof itemCover>[]) {
   dbMock.dbRead.$queryRaw.mockImplementation(
     async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -157,6 +151,29 @@ describe('getAllCollectionsInfiniteHandler cover levels', () => {
       { id: 1, own: null, items: [100] },
       { id: 3, own: null, items: [] },
     ]);
+  });
+
+  it("drops the owner's own unscanned cover and falls back to item covers", async () => {
+    const owner = { ...MATURE_VIEWER, user: { ...MATURE_VIEWER.user, id: 1 } };
+    mockGetAllCollections.mockResolvedValue([ownCover(1, 0)]);
+    itemCovers([itemCover(1, 100, NsfwLevel.PG)]);
+    expect(await feed(owner)).toEqual([{ id: 1, own: null, items: [100] }]);
+  });
+
+  it('returns no ToS flag on a served cover', async () => {
+    mockGetAllCollections.mockResolvedValue([
+      ownCover(1, NsfwLevel.PG, { tosViolation: false }),
+      noCover(3),
+    ]);
+    itemCovers([itemCover(3, 300, NsfwLevel.PG, { tosViolation: false })]);
+    const { items } = await getAllCollectionsInfiniteHandler({
+      input: { limit: 10 } as never,
+      ctx: MATURE_VIEWER as never,
+    });
+    expect(items[0].image).not.toHaveProperty('tosViolation');
+    expect(items[1].images[0]).not.toHaveProperty('tosViolation');
+    expect(items[0].image?.id).toBe(101);
+    expect(items[1].images[0]?.id).toBe(300);
   });
 
   it('never serves a Blocked-level or ToS-violating cover, even to a viewer at every level', async () => {

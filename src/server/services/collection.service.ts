@@ -6,7 +6,7 @@ import { canReadCollectionItems } from '~/server/services/collection-item-access
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
-import { uniq, uniqBy } from 'lodash-es';
+import { omit, uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import type { CoverageAudience } from '~/server/services/generation/coverage-source';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
@@ -3993,7 +3993,7 @@ export const getCollectionCoverImages = async ({
       id,
       image: image
         ? {
-            ...image,
+            ...omit(image, 'tosViolation'),
             tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
           }
         : null,

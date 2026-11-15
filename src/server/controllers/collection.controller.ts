@@ -1,3 +1,4 @@
+import { omit } from 'lodash-es';
 import { TRPCError } from '@trpc/server';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { constants } from '~/server/common/constants';
@@ -171,7 +172,7 @@ export const getAllCollectionsInfiniteHandler = async ({
           },
           image: item.image
             ? {
-                ...item.image,
+                ...omit(item.image, 'tosViolation'),
                 meta: item.image.meta as ImageMetaProps | null,
                 tags: item.image.tags.map((t) => t.tag),
               }
