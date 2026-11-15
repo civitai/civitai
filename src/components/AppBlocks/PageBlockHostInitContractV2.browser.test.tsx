@@ -37,6 +37,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   // the module wholesale, so the factory must re-declare it or the ESM link
   // fails.
   setTrpcBatchingEnabled: vi.fn(),
+  // eslint-disable-next-line local-rules/no-hand-enumerated-trpc-mock -- the inert proxy fails every test here (PageBlockHost reads hook shapes at render); converting is its own change
   trpc: {
     // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
     // hosts register the handler, so every host-rendering suite needs these
