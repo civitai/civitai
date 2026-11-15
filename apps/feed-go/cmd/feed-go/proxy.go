@@ -9,30 +9,24 @@ import (
 	"strings"
 )
 
-// forwardingHeaders are passed through to the Node app as they arrived. The Rewrite form of
-// ReverseProxy strips them from the outbound request before calling Rewrite; the Director form this
-// proxy was first written in left them untouched, so whatever downstream reads them sees what it saw
-// before.
+// forwardingHeaders are passed through to the Node app as they arrived. Rewrite strips these from the
+// outbound request; restore them so the Node app sees the inbound values.
 var forwardingHeaders = []string{"Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto"}
 
 // fallbackProxy forwards a request this service does not answer to the Node app at target, keeping
-// the original Host: the Node app derives the domain color and cookies from it. Everything else is
-// as the Director form wrote it:
+// the original Host: the Node app derives the domain color and cookies from it. In addition:
 //   - the query is forwarded byte for byte (Rewrite mode re-encodes a query holding a `;` or a bad
-//     escape before calling Rewrite; the Director form never did, as this service never parses the
-//     form);
+//     escape before calling Rewrite);
 //   - the inbound forwarding headers are passed through, except one the inbound Connection header
-//     names (hop-by-hop: the Director form's hop-by-hop removal dropped it);
+//     names (it is hop-by-hop);
 //   - the client address is appended to the inbound X-Forwarded-For chain (not SetXForwarded, which
 //     would also overwrite X-Forwarded-Host/-Proto with this hop's own values).
 //
-// ReverseProxy itself sends an empty User-Agent when the inbound request has none, in both forms.
+// ReverseProxy itself sends an empty User-Agent when the inbound request has none.
 func fallbackProxy(target *url.URL) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
 		pr.SetURL(target)
-		// The target (FEED_GO_FALLBACK_URL) is a base URL with no query of its own, so the inbound
-		// query is the whole outbound query. (A target query would be dropped here, where the
-		// Director form merged it.)
+		// The target has no query of its own; a target query would be dropped.
 		pr.Out.URL.RawQuery = pr.In.URL.RawQuery
 		pr.Out.Host = pr.In.Host
 		hop := connectionTokens(pr.In.Header)

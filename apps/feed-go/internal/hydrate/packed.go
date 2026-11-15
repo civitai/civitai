@@ -33,9 +33,8 @@ func init() {
 
 // Unpack decodes one msgpackr value into Go maps/slices. Maps decode to map[string]any.
 //
-// The bytes are checked by checkSizes first: the decoder sizes an array or map from its declared
-// length before reading any element, so 5 bytes declaring a 2^32-element array made it allocate
-// 64 GiB and the process died of an unrecoverable out-of-memory error (found by FuzzUnpack).
+// Checked first (checkSizes): the decoder allocates from a declared length before reading elements,
+// and an out-of-memory error cannot be recovered.
 func Unpack(b []byte) (any, error) {
 	if err := checkSizes(b); err != nil {
 		return nil, err

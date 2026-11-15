@@ -173,10 +173,9 @@ const (
 // DefaultCompletionConcurrency caps the completion fetches one request runs at once
 // (Config.CompletionConcurrency, FEED_GO_COMPLETION_CONCURRENCY). Node runs them all at once
 // (Promise.all); a shadow comparison only re-runs a served request, so it is held to a few at a time
-// to bound what it adds to the feed service and the pool. A serving deployment may want a higher cap:
-// the completions are on the request's critical path, so at 4 a page needing twelve of them takes
-// three round trips instead of one, against the request budget. Results land by batch index, so the
-// cap changes timing only, never the page.
+// to bound what it adds to the feed service and the pool. Serving may want a higher cap: completions
+// are on the request's critical path, so each batch of this many is another round trip against the
+// budget. Results land by batch index, so the cap changes timing only, never the page.
 const DefaultCompletionConcurrency = 4
 
 // packPostCompletions groups posts into completion fetches of at most completionPostsPerFetch posts

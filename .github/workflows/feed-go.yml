@@ -287,23 +287,19 @@ jobs:
     env:
       FUZZ_TIME: 20s
       # Minimization of each new interesting input, as a count of executions (`Nx`). The default is
-      # 60s per input: a worker minimizing reports no executions until it returns (internal/fuzz
-      # worker.minimize: its count arrives with the result, and an interrupted one returns none), so
-      # inside a 20s window a target spent most of it at 0 execs/sec once workers began minimizing,
-      # and the floors below measured that stall, not fuzzing.
+      # 60s per input, and a worker minimizing reports no executions until it returns (internal/fuzz
+      # worker.minimize; an interrupted one reports none), so within FUZZ_TIME the exec count would
+      # stall at 0/sec once workers begin minimizing.
       FUZZ_MINIMIZE: 100x
       # <package dir>:<target>:<min execs>. The first step fails when this list and the Fuzz functions
       # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
       # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). The Fuzz step fails a
       # target whose final `execs: N` is below its floor (or missing): a run that fuzzed nothing, or
       # stalled, is not a pass.
-      # Floors: about half the LOWEST final count over three green runs with FUZZ_MINIMIZE=100x
-      # (43696056937, 43696476752, 43697027775) at FUZZ_TIME=20s, and never below the floor set
-      # before the minimize bound (FuzzParse keeps its 180000: half its lowest, 275844, is less).
-      # Counts varied up to ~2.1x between those runs; before the bound they varied up to ~18x,
-      # consistent with the minimization stall. To change one: read the "execs" summary line the
-      # Fuzz step prints for each target over a few runs, and set the floor to about half the
-      # lowest; scale all floors with FUZZ_TIME.
+      # Floors: about half the LOWEST final count observed over a few green runs at FUZZ_TIME with
+      # FUZZ_MINIMIZE=100x. Counts vary between runs on shared runners, so a floor from one run would
+      # flake. To change one: read the "execs" summary line the Fuzz step prints for each target over
+      # a few runs, and set the floor to about half the lowest; scale all floors with FUZZ_TIME.
       FUZZ_TARGETS: >-
         internal/auth:FuzzTokenFromCookieHeader:120000
         internal/auth:FuzzVerify:67000

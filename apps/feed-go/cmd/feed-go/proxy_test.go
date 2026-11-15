@@ -9,8 +9,7 @@ import (
 )
 
 // TestFallbackProxyForwarding pins what the Node app receives from the fallback proxy. Expected
-// values are written out from net/http/httputil's documented Director-mode behaviour (the form this
-// proxy was first written in), not from the proxy's output: the original Host, the target's base path
+// values are written out by hand, not from the proxy's output: the original Host, the target's base path
 // joined with the request path, the query forwarded byte for byte (a raw `;` and a bad `%` escape
 // included: Rewrite mode alone would re-encode it), the inbound X-Forwarded-Host/-Proto and Forwarded
 // passed through untouched, the client address appended to the inbound X-Forwarded-For chain,
@@ -99,8 +98,7 @@ func TestFallbackProxyStartsTheForwardedChain(t *testing.T) {
 }
 
 // A forwarding header the inbound Connection header names is hop-by-hop: it is not passed through,
-// and a hop-by-hop X-Forwarded-For contributes no prior chain (the Director form's hop-by-hop removal
-// dropped both before the client address was appended).
+// and a hop-by-hop X-Forwarded-For contributes no prior chain.
 func TestFallbackProxyDropsForwardingHeadersNamedInConnection(t *testing.T) {
 	seen := make(chan *http.Request, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
