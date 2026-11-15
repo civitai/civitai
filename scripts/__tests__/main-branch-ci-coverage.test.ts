@@ -250,6 +250,16 @@ describe('CI coverage for commits on main', () => {
           !unconditionallyTrue(j['continue-on-error'])
       );
       expect(posters).not.toHaveLength(0);
+      // And when that job crashes or is cancelled, it still leaves an `error` status on HEAD.
+      const crashSteps = posters.flatMap((j) =>
+        (j.steps ?? []).filter(
+          (s) =>
+            String(s.if ?? '').includes('failure()') &&
+            String(s.if ?? '').includes('cancelled()') &&
+            String(s.run ?? '').includes('state=error')
+        )
+      );
+      expect(crashSteps).not.toHaveLength(0);
     });
   });
 

@@ -159,19 +159,24 @@ describe('statusTarget: where the verdict is posted', () => {
   });
 
   // A shard that never reported, next to a flaky file, must not read as a pass.
-  it('incomplete reports: failure on HEAD even when the failed files were flaky', () => {
+  // Infrastructure, not a suite verdict: `error`, which the gate does not count as verified.
+  it('incomplete reports: error on HEAD even when the failed files were flaky', () => {
     expect(
       statusTarget({ unitResult: 'failure', head: HEAD, failed, flaky: true, incomplete: true })
     ).toEqual({
       sha: HEAD,
-      state: 'failure',
+      state: 'error',
       description:
-        'Not every unit shard reported, or a shard failed outside its test files (timeout or setup). See the run.',
+        'Not every unit shard reported, or a shard failed outside its test files. Re-verified next batch.',
     });
   });
 
-  it.each(['cancelled', 'skipped'])('%s: nothing is posted', (unitResult) => {
-    expect(statusTarget({ unitResult, head: HEAD, failed })).toBeNull();
+  it.each(['cancelled', 'skipped'])('%s: error on HEAD, so it is re-verified', (unitResult) => {
+    expect(statusTarget({ unitResult, head: HEAD, failed })).toEqual({
+      sha: HEAD,
+      state: 'error',
+      description: `Unit suite did not finish (${unitResult}); the next batch run re-verifies.`,
+    });
   });
 
   it('keeps a long description within the 140 characters GitHub accepts', () => {
@@ -215,7 +220,7 @@ describe('statusTargets: every status a verdict posts', () => {
     expect(statusTargets({ unitResult: 'success', head: HEAD })).toEqual([
       { sha: HEAD, state: 'success', description: 'Unit suite passed at this commit.' },
     ]);
-    expect(statusTargets({ unitResult: 'cancelled', head: HEAD })).toEqual([]);
+    expect(statusTargets({ unitResult: 'cancelled', head: HEAD })[0].state).toBe('error');
   });
 });
 

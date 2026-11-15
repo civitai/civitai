@@ -1526,6 +1526,8 @@ jobs:
 
       - name: Post the verdict (bisect on red)
         id: verdict
+        # Under the job's 45: a step timeout FAILS the step, so the crash step below still runs.
+        timeout-minutes: 38
         env:
           GH_TOKEN: ${{ github.token }}
           UNIT_RESULT: ${{ needs.unit.result }}
@@ -1536,7 +1538,8 @@ jobs:
       # A crashed verification must not look like no news: `error` on HEAD, naming the step, so
       # the gate (which counts only a posted success or failure) re-verifies HEAD next time.
       - name: Post error on HEAD if this job crashed
-        if: failure()
+        # cancelled() too: a job-level timeout cancels the job, and failure() is then false.
+        if: failure() || cancelled()
         env:
           GH_TOKEN: ${{ github.token }}
           OUTCOMES: >-

@@ -72,7 +72,9 @@ failed files at HEAD; a pass there is a flake, posted as `success` on HEAD whose
 "Passed on re-run; flaky: <files>", plus a warning annotation. Otherwise it bisects first-parent
 from the last green batch-verified commit and posts `failure` on the FIRST BAD commit, naming the
 files, and on HEAD pointing at it, or only on HEAD when the bisect cannot isolate one. If that job
-crashes, its last step posts `error` on HEAD naming the step, and the next batch run re-verifies.
+crashes or times out, its last step posts `error` on HEAD naming the step; a shard that never
+reported, or a suite that did not finish, also posts `error`. The gate does not count `error` as a
+verdict, so the next batch run re-verifies.
 So read the status on the commit, and expect up to one interval (2 hours) plus a run (~20 min)
 before HEAD gets one, and up to about 3 hours for the bisect's status on the first bad commit. On
 green only HEAD gets the status; it covers every earlier commit in the batch, which get none. To

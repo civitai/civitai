@@ -93,15 +93,22 @@ export function statusTarget({
 }) {
   if (unitResult === 'success')
     return { sha: head, state: 'success', description: 'Unit suite passed at this commit.' };
-  if (unitResult !== 'failure') return null;
+  // The suite did not finish (cancelled or skipped): no verdict, so `error` and a re-verify.
+  if (unitResult !== 'failure')
+    return {
+      sha: head,
+      state: 'error',
+      description: `Unit suite did not finish (${unitResult}); the next batch run re-verifies.`,
+    };
   // A shard with no report (timeout, setup) or a red the failed files do not explain: the listed
-  // files are not the whole story, so neither a flake nor a bisect of them is a verdict.
+  // files are not the whole story, so neither a flake nor a bisect of them is a verdict. It is
+  // infrastructure, not the suite failing, so `error`: the gate re-verifies HEAD next time.
   if (incomplete)
     return {
       sha: head,
-      state: 'failure',
+      state: 'error',
       description:
-        'Not every unit shard reported, or a shard failed outside its test files (timeout or setup). See the run.',
+        'Not every unit shard reported, or a shard failed outside its test files. Re-verified next batch.',
     };
   if (!failed.length)
     return {
