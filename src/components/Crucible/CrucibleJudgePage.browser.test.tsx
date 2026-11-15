@@ -146,6 +146,9 @@ describe('crucible judge page', () => {
       .poll(() => mocks.dismiss.mock.calls)
       .toEqual([[{ crucibleId: 2, entryIds: [10, 11] }]]);
     await expect.poll(() => mocks.refetchPair.mock.calls.length).toBe(1);
+    // Let the refetch settle and React commit before asserting what did not render.
+    await mocks.refetchPair.mock.results[0]?.value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(
       page.getByTestId('done-state').query(),
       'done state with a next pair to load'

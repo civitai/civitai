@@ -9,7 +9,7 @@ import {
 import { dbMock, loggingMock, redisMock } from '~/__tests__/mocks';
 import { DEL_IF_VALUE_SCRIPT } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
-import { submitVoteSchema } from '~/server/schema/crucible.schema';
+import { dismissJudgingPairSchema, submitVoteSchema } from '~/server/schema/crucible.schema';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as CrucibleEloService from '~/server/services/crucible-elo.service';
 
@@ -748,6 +748,15 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
   describe("Don't show again", () => {
     const dismiss = (a: number, b: number) =>
       dismissJudgingPair({ crucibleId: 1, entryIds: [a, b], userId: JUDGE });
+
+    it('rejects a pair of one entry twice at the schema; two entries parse', () => {
+      expect(
+        dismissJudgingPairSchema.safeParse({ crucibleId: 1, entryIds: [10, 10] }).success
+      ).toBe(false);
+      expect(
+        dismissJudgingPairSchema.safeParse({ crucibleId: 1, entryIds: [10, 20] }).success
+      ).toBe(true);
+    });
 
     it('never serves a dismissed pair again; without the dismissal it comes back', async () => {
       withEntries(10, 20);
