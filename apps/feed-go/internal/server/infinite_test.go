@@ -17,7 +17,7 @@ import (
 
 const infiniteInput = `{"json":{"tags":[3],"limit":2}}`
 
-func postInfinite(t *testing.T, h http.Handler, path, node string) int {
+func postInfinite(t *testing.T, h http.Handler, node string) int {
 	t.Helper()
 	b, err := json.Marshal(ShadowRequest{
 		Input: infiniteInput, Headers: map[string]string{"host": "civitai.example"}, Node: json.RawMessage(node),
@@ -26,7 +26,7 @@ func postInfinite(t *testing.T, h http.Handler, path, node string) int {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(string(b))))
+	h.ServeHTTP(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/internal/shadow/"+ProcedureInfinite, strings.NewReader(string(b))))
 	return w.Code
 }
 
@@ -51,7 +51,7 @@ func TestInfiniteShadowSampleIsLabelledAndClassifiedByImage(t *testing.T) {
 		}
 	}
 	// The same images in another order: `order` (Classify, which reads postId, would say fields).
-	if code := postInfinite(t, h, "/internal/shadow/"+ProcedureInfinite, `{"json":{"items":[{"id":2},{"id":1}],"source":"feed"}}`); code != http.StatusAccepted {
+	if code := postInfinite(t, h, `{"json":{"items":[{"id":2},{"id":1}],"source":"feed"}}`); code != http.StatusAccepted {
 		t.Fatalf("code %d, want 202", code)
 	}
 	waitFor(t, "the infinite order result", result("order"))
@@ -59,10 +59,10 @@ func TestInfiniteShadowSampleIsLabelledAndClassifiedByImage(t *testing.T) {
 		t.Fatalf("synthetic request = %+v", seen)
 	}
 	// A different image: membership.
-	postInfinite(t, h, "/internal/shadow/"+ProcedureInfinite, `{"json":{"items":[{"id":1},{"id":3}],"source":"feed"}}`)
+	postInfinite(t, h, `{"json":{"items":[{"id":1},{"id":3}],"source":"feed"}}`)
 	waitFor(t, "the infinite membership result", result("membership"))
 	// Same images, same order, a field differs: fields, counted by its flat category.
-	postInfinite(t, h, "/internal/shadow/"+ProcedureInfinite, `{"json":{"items":[{"id":1},{"id":2}],"source":"db"}}`)
+	postInfinite(t, h, `{"json":{"items":[{"id":1},{"id":2}],"source":"db"}}`)
 	waitFor(t, "the infinite fields result", result("fields"))
 	if n, _ := metricValue(t, reg, "feed_go_shadow_field_diffs_total", map[string]string{"feed_endpoint": EndpointInfinite, "category": "source", "kind": "value"}); n != 1 {
 		t.Fatalf("source diff count = %v, want 1", n)
@@ -82,7 +82,7 @@ func TestInfiniteShadowSampleIsLabelledAndClassifiedByImage(t *testing.T) {
 func TestInfiniteShadowWithoutDepsFallsBack(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s := newPhaseServer(reg, 1, nil) // no Infinite deps, no test compute: the real computeInfinite runs
-	postInfinite(t, http.HandlerFunc(s.ShadowInfiniteHandler), "/internal/shadow/"+ProcedureInfinite, `{"json":{"items":[]}}`)
+	postInfinite(t, http.HandlerFunc(s.ShadowInfiniteHandler), `{"json":{"items":[]}}`)
 	waitFor(t, "the unsupported result", func() bool {
 		v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointInfinite, "result": "unsupported"})
 		return v == 1 && len(s.ShadowQueue) == 0
@@ -129,7 +129,7 @@ func TestInfiniteRouteIsInternalOnly(t *testing.T) {
 		return &computed{payload: []byte(`{"json":{"items":[]}}`)}, nil
 	}
 	internal := InternalMux(s, okHandler(), false)
-	if code := postInfinite(t, internal, "/internal/shadow/"+ProcedureInfinite, `{"json":{"items":[]}}`); code != http.StatusAccepted {
+	if code := postInfinite(t, internal, `{"json":{"items":[]}}`); code != http.StatusAccepted {
 		t.Fatalf("internal compare path: %d, want 202", code)
 	}
 	if code := statusOf(PublicMux(s), "/api/trpc/"+ProcedureInfinite); code != http.StatusNotFound {

@@ -510,12 +510,13 @@ func BuildInfiniteImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.
 		}
 		wire := make(superjson.Object, 0, len(img.Wire)+4)
 		wire = append(wire, img.Wire...)
-		img.Wire = append(wire,
+		wire = append(wire,
 			superjson.Field{Key: "availability", Val: availability},
 			superjson.Field{Key: "meta", Val: nil},
 			superjson.Field{Key: "baseModel", Val: superjson.Undefined{}},
 			superjson.Field{Key: "judgeScore", Val: nil},
 		)
+		img.Wire = wire
 	}
 	return images
 }
