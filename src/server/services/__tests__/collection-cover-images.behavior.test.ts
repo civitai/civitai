@@ -3,6 +3,10 @@ import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as RedisCaches from '~/server/redis/caches';
+import {
+  allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 // Booting PGlite (WASM Postgres) can exceed the default 10s hook timeout on a
 // contended runner.
@@ -62,6 +66,10 @@ const MODEL_ITEM_TAKEN_DOWN = 8034;
 const MODEL_ITEM_PRIVATE_VERSION = 8035;
 const MODEL_ITEM_SCHEDULED_VERSION = 8036;
 const MODEL_ITEM_DRAFT_VERSION = 8037;
+const MATURE_IMAGE_ITEM = 8038;
+const TOS_VIOLATION_IMAGE_ITEM = 8039;
+const MATURE_ARTICLE_BOTH = 8040;
+const ARTICLE_SRC_PENDING_IMAGE = 8041;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -85,7 +93,8 @@ beforeAll(async () => {
       "userId"      integer NOT NULL DEFAULT 1,
       "ingestion"   text NOT NULL DEFAULT 'Scanned',
       "needsReview" text,
-      "blockedFor"  text
+      "blockedFor"  text,
+      "tosViolation" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer, "modelVersionId" integer,
@@ -212,6 +221,16 @@ beforeAll(async () => {
     INSERT INTO "Post" ("id", "userId", "modelVersionId", "publishedAt") VALUES (16, 2, 59, now() - interval '1 day');
     INSERT INTO "Image" ("id", "url", "postId", "userId", "index") VALUES (131, 'draft-version', 16, 2, 0);
     INSERT INTO "CollectionItem" ("id", "collectionId", "modelId") VALUES (37, ${MODEL_ITEM_DRAFT_VERSION}, 49);
+    INSERT INTO "Image" ("id", "url", "postId", "nsfwLevel", "tosViolation") VALUES
+      (132, 'mature-image', 1, 16, false), (133, 'tos-violation', 1, 1, true);
+    INSERT INTO "CollectionItem" ("id", "collectionId", "imageId") VALUES
+      (38, ${MATURE_IMAGE_ITEM}, 132), (39, ${TOS_VIOLATION_IMAGE_ITEM}, 133);
+    INSERT INTO "Image" ("id", "url", "nsfwLevel") VALUES (134, 'mature-article-cover', 8);
+    INSERT INTO "Article" ("id", "cover", "coverId") VALUES (28, 'mature-both', 134);
+    INSERT INTO "CollectionItem" ("id", "collectionId", "articleId") VALUES (40, ${MATURE_ARTICLE_BOTH}, 28);
+    INSERT INTO "Image" ("id", "url", "needsReview") VALUES (135, 'pending-article-cover', 'minor');
+    INSERT INTO "Article" ("id", "cover", "coverId") VALUES (29, 'pending-src', 135);
+    INSERT INTO "CollectionItem" ("id", "collectionId", "articleId") VALUES (41, ${ARTICLE_SRC_PENDING_IMAGE}, 29);
     INSERT INTO "ModelVersion" ("id", "modelId", "index") VALUES (53, 43, 0);
     INSERT INTO "Post" ("id", "userId", "modelVersionId", "publishedAt") VALUES
       (8, 2, 53, now() - interval '1 day'),
@@ -266,10 +285,11 @@ beforeAll(async () => {
   `);
 });
 
-async function coversFor(collectionId: number) {
+async function coversFor(collectionId: number, browsingLevel = allBrowsingLevelsFlag) {
   const rows = await getCollectionCoverImages({
     collectionIds: [collectionId],
     imagesPerCollection: 10,
+    browsingLevel,
   });
   return rows.map(({ image, src }) => ({ imageId: image?.id ?? null, src }));
 }
@@ -291,9 +311,15 @@ describe('getCollectionCoverImages', () => {
     expect(await coversFor(ARTICLE_NEEDS_REVIEW)).toEqual([]);
   });
 
-  it('still returns the legacy cover string as src', async () => {
-    expect(await coversFor(ARTICLE_LEGACY_ONLY)).toEqual([{ imageId: null, src: 'legacy-only' }]);
+  it('returns the legacy cover string beside a cover image the viewer may see (control)', async () => {
     expect(await coversFor(ARTICLE_BOTH)).toEqual([{ imageId: 104, src: 'legacy-both' }]);
+  });
+
+  it.each([
+    ['has no cover image', ARTICLE_LEGACY_ONLY],
+    ['has a cover image awaiting review', ARTICLE_SRC_PENDING_IMAGE],
+  ])('drops the legacy cover string of an article that %s', async (_, collectionId) => {
+    expect(await coversFor(collectionId)).toEqual([]);
   });
 
   it('resolves a Model3D through thumbnailImageId', async () => {
@@ -342,6 +368,7 @@ describe('getCollectionCoverImages', () => {
     const rows = await getCollectionCoverImages({
       collectionIds: [SHARED_UPLOAD_OWNER_ADDED, SHARED_UPLOAD_STRANGER_ADDED],
       imagesPerCollection: 10,
+      browsingLevel: allBrowsingLevelsFlag,
     });
     expect(rows.map(({ id, image }) => [id, image?.id ?? null])).toEqual([
       [SHARED_UPLOAD_OWNER_ADDED, 118],
@@ -381,5 +408,25 @@ describe('getCollectionCoverImages', () => {
 
   it('skips a Model item whose version is a draft', async () => {
     expect(await coversFor(MODEL_ITEM_DRAFT_VERSION)).toEqual([]);
+  });
+
+  it('serves a mature cover to a viewer at that level (control)', async () => {
+    expect(await coversFor(MATURE_IMAGE_ITEM)).toEqual([{ imageId: 132, src: null }]);
+  });
+
+  it('skips a cover above the viewer level', async () => {
+    expect(await coversFor(MATURE_IMAGE_ITEM, publicBrowsingLevelsFlag)).toEqual([]);
+    expect(await coversFor(IMAGE_ITEM, publicBrowsingLevelsFlag)).toEqual([
+      { imageId: 100, src: null },
+    ]);
+  });
+
+  it("drops an article's cover string with its cover image when the image is above the viewer level", async () => {
+    expect(await coversFor(MATURE_ARTICLE_BOTH)).toEqual([{ imageId: 134, src: 'mature-both' }]);
+    expect(await coversFor(MATURE_ARTICLE_BOTH, publicBrowsingLevelsFlag)).toEqual([]);
+  });
+
+  it('skips a ToS-violating cover at every level', async () => {
+    expect(await coversFor(TOS_VIOLATION_IMAGE_ITEM)).toEqual([]);
   });
 });
