@@ -400,6 +400,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBaseModelSetType, WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import {
+  AppBlockPromptRefusalError,
   auditPassThroughPrompts,
   auditTrainingSamplePrompts,
 } from '~/server/services/blocks/pass-through-prompt-audit';
@@ -478,6 +479,18 @@ const TERMINAL_BLOCK_WORKFLOW_STATUSES = new Set<BlockWorkflowStatus>([
  * the holder this middleware hands down; a failure before that is labelled `unknown`.
  */
 export type BlockSubmitTelemetry = { appBlockIdLabel: string };
+/**
+ * Every App Block prompt refusal, from any `kind`, answered as a failed snapshot with its code: a
+ * throw reaches a block with the message alone. Each audit runs before anything is reserved, so
+ * there is nothing to release here.
+ */
+const promptRefusalAsSnapshot = middleware(async ({ next }) => {
+  const result = await next();
+  if (result.ok || !(result.error instanceof AppBlockPromptRefusalError)) return result;
+  const { errorCode, appError } = result.error;
+  return { ok: true as const, marker: result.marker, data: multiStepRefusal(errorCode, appError) };
+});
+
 const recordSubmitFailures = middleware(async ({ next }) => {
   const blockSubmitTelemetry: BlockSubmitTelemetry = { appBlockIdLabel: 'unknown' };
   const result = await next({ ctx: { blockSubmitTelemetry } });
@@ -7378,6 +7391,7 @@ export const blocksRouter = router({
    */
   submitWorkflow: publicProcedure
     .use(recordSubmitFailures)
+    .use(promptRefusalAsSnapshot)
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
     .input(

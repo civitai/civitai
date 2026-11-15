@@ -57,6 +57,14 @@ describe('origin filter', () => {
     expect(list).toMatch(/and not \(.*@\.origin\.incomplete == true/s);
   });
 
+  it('keeps a prompt an App Block submitted out of typed', async () => {
+    const [list] = await emitted(() =>
+      getGenerationRestrictions({ page: 1, limit: 20, origin: 'typed' })
+    );
+    expect(list).toContain(`jsonb_path_exists(ur."triggers", '$.origin.app'::jsonpath)`);
+    expect(list).toMatch(/and not \(.*'\$\.origin\.app'/s);
+  });
+
   it('does not exclude incomplete rows from the remix filter', async () => {
     const [list] = await emitted(() =>
       getGenerationRestrictions({ page: 1, limit: 20, origin: 'remix' })

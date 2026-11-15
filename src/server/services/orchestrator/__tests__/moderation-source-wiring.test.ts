@@ -178,7 +178,7 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
     siteNote: 'the shared-text safety audit',
     arg: { kind: 'absent' },
   },
-  'src/server/services/blocks/pass-through-prompt-audit.ts::runPromptAudit': {
+  'src/server/services/blocks/pass-through-prompt-audit.ts::auditAppBlockPrompt': {
     sites: 1,
     siteNote:
       "the block host's pre-check on a pass-through, workflow or training sample generation prompt",

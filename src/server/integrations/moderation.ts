@@ -52,6 +52,11 @@ function removeFalsePositiveTriggers(prompt: string) {
  * deadline or the verdict. It is optional and defaults to `other` so an undeclared caller can never
  * inflate the `generate` population; see `external-moderation.metrics.ts` for what each value means.
  */
+/** Whether `moderatePrompt` calls the classifier at all; when false it answers not-flagged. */
+export function isExternalModerationConfigured(): boolean {
+  return !!env.EXTERNAL_MODERATION_ENDPOINT && !!env.EXTERNAL_MODERATION_TOKEN;
+}
+
 async function moderatePrompt(
   prompt: string,
   source: ExternalModerationSource = 'other'
