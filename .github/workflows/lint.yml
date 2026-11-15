@@ -1521,4 +1521,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           UNIT_RESULT: ${{ needs.unit.result }}
-        run: node scripts/ci/unit-batched.mjs verify "$UNIT_RESULT" "$RUNNER_TEMP/reports"
+        # 4: the `unit` matrix on an `only: unit` dispatch. Fewer reports than this means a shard
+        # never finished, so the red is not treated as a flake or bisected.
+        run: node scripts/ci/unit-batched.mjs verify "$UNIT_RESULT" "$RUNNER_TEMP/reports" 4

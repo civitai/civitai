@@ -4,6 +4,7 @@ import {
   decideRun,
   failedFiles,
   parseFirstBad,
+  reportsComplete,
   statusLine,
   statusTarget,
 } from '../ci/unit-batched.mjs';
@@ -121,6 +122,18 @@ describe('statusTarget: where the verdict is posted', () => {
     ).toBe(true);
   });
 
+  // A shard that never reported, next to a flaky file, must not read as a pass.
+  it('incomplete reports: failure on HEAD even when the failed files were flaky', () => {
+    expect(
+      statusTarget({ unitResult: 'failure', head: HEAD, failed, flaky: true, incomplete: true })
+    ).toEqual({
+      sha: HEAD,
+      state: 'failure',
+      description:
+        'Not every unit shard reported, or a shard failed outside its test files (timeout or setup). See the run.',
+    });
+  });
+
   it.each(['cancelled', 'skipped'])('%s: nothing is posted', (unitResult) => {
     expect(statusTarget({ unitResult, head: HEAD, failed })).toBeNull();
   });
@@ -143,6 +156,23 @@ describe('statusTarget: where the verdict is posted', () => {
 });
 
 describe('report and bisect parsing', () => {
+  const red = (name: string) => ({ success: false, testResults: [{ name, status: 'failed' }] });
+  const green = { success: true, testResults: [{ name: '/r/src/c.test.ts', status: 'passed' }] };
+  it('reports are complete when every shard reported and each red names a failed file', () => {
+    expect(reportsComplete([red('/r/src/a.test.ts'), green, green, green], 4)).toBe(true);
+  });
+  it('reports are incomplete when a shard sent none (timeout or setup)', () => {
+    expect(reportsComplete([red('/r/src/a.test.ts'), green, green], 4)).toBe(false);
+  });
+  it('reports are incomplete when a red report has no failed file (an error outside a file)', () => {
+    expect(
+      reportsComplete(
+        [red('/r/src/a.test.ts'), { success: false, testResults: [] }, green, green],
+        4
+      )
+    ).toBe(false);
+  });
+
   it('lists failed files repo-relative, deduplicated across shards', () => {
     expect(
       failedFiles(

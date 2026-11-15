@@ -67,10 +67,26 @@ export function statusLine(prefix, files) {
  * @param flaky       the failed files passed on a re-run at HEAD
  * @param firstBad    the commit git bisect named, or null
  */
-export function statusTarget({ unitResult, head, failed = [], flaky = false, firstBad = null }) {
+export function statusTarget({
+  unitResult,
+  head,
+  failed = [],
+  flaky = false,
+  firstBad = null,
+  incomplete = false,
+}) {
   if (unitResult === 'success')
     return { sha: head, state: 'success', description: 'Unit suite passed at this commit.' };
   if (unitResult !== 'failure') return null;
+  // A shard with no report (timeout, setup) or a red the failed files do not explain: the listed
+  // files are not the whole story, so neither a flake nor a bisect of them is a verdict.
+  if (incomplete)
+    return {
+      sha: head,
+      state: 'failure',
+      description:
+        'Not every unit shard reported, or a shard failed outside its test files (timeout or setup). See the run.',
+    };
   if (!failed.length)
     return {
       sha: head,
@@ -104,6 +120,17 @@ export function failedFiles(reports, root) {
   for (const r of reports)
     for (const t of r.testResults ?? []) if (t.status === 'failed') out.add(relative(root, t.name));
   return [...out].sort();
+}
+
+/**
+ * Did the reports account for the whole red? False when fewer reports arrived than shards ran,
+ * or a report is red (`success: false`) without a single failed test file in it.
+ */
+export function reportsComplete(reports, shards) {
+  if (reports.length < shards) return false;
+  return reports.every(
+    (r) => r.success !== false || (r.testResults ?? []).some((t) => t.status === 'failed')
+  );
 }
 
 /** The sha `git bisect run` printed as the first bad commit, or null. */
@@ -268,18 +295,25 @@ function post(target) {
   );
 }
 
-function verify(unitResult, reportsDir) {
+function verify(unitResult, reportsDir, shards) {
   const root = process.cwd();
   const head = sh('git', ['rev-parse', 'HEAD']);
   const ref = process.env.GITHUB_REF_NAME;
-  const failed = unitResult === 'failure' ? failedFiles(readReports(reportsDir), root) : [];
+  const reports = unitResult === 'failure' ? readReports(reportsDir) : [];
+  const failed = failedFiles(reports, root);
+  const incomplete = unitResult === 'failure' && !reportsComplete(reports, Number(shards));
   const lines = [];
   let flaky = false;
   let firstBad = null;
-  if (failed.length) {
+  if (incomplete)
+    lines.push(
+      `Only ${reports.length} of ${shards} unit report(s), or a red no test file explains: not bisected.`
+    );
+  if (failed.length && !incomplete) {
     lines.push(`${failed.length} failed file(s):`, ...failed.map((f) => `- \`${f}\``), '');
     console.log('Re-running the failed files at HEAD first.');
-    flaky = runFiles(failed) === 0;
+    // Every failed file must exist and pass: a re-run of nothing is not a pass.
+    flaky = failed.every((f) => existsSync(f)) && runFiles(failed) === 0;
     if (flaky) {
       lines.push(
         `**Flaky:** they pass on a re-run at HEAD, so this is not bisected: ${failed.join(', ')}`
@@ -317,7 +351,7 @@ function verify(unitResult, reportsDir) {
       }
     }
   }
-  const target = statusTarget({ unitResult, head, failed, flaky, firstBad });
+  const target = statusTarget({ unitResult, head, failed, flaky, firstBad, incomplete });
   if (target) {
     post(target);
     lines.push(
@@ -334,13 +368,13 @@ function verify(unitResult, reportsDir) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [cmd, a, b] = process.argv.slice(2);
+  const [cmd, a, b, c] = process.argv.slice(2);
   if (cmd === 'gate') gate(a);
-  else if (cmd === 'verify') verify(a, b);
+  else if (cmd === 'verify') verify(a, b, c);
   else if (cmd === 'step') step(a);
   else {
     console.error(
-      'usage: unit-batched.mjs gate <ref> | verify <unit-result> <reports-dir> | step <failed.json>'
+      'usage: unit-batched.mjs gate <ref> | verify <unit-result> <reports-dir> <shards> | step <failed.json>'
     );
     process.exit(2);
   }
