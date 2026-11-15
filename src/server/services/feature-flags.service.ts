@@ -585,6 +585,9 @@ const featureFlags = createFeatureFlags({
   // The Hat Turf feed sorts and Show filters; checked TOGETHER with `hatTurfFeedCard`, so testers can
   // have them before every player does.
   hatTurfFeedSorts: { availability: ['mod'], fliptKey: 'hat-turf-feed-sorts' },
+  // One page-wide Hat Turf watch mark set instead of one per provider (turf-watch-hub.ts). Dark:
+  // Flipt is its only switch.
+  hatTurfBatchedCalls: { availability: [], fliptKey: 'hat-turf-batched-calls' },
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
