@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 type Row = {
   id: number;
-  ingestion: 'Pending' | 'Error';
+  ingestion: 'Pending' | 'Error' | 'Scanned';
   scanRequestedAt: Date | null;
   createdAt: Date;
 };
@@ -79,7 +79,7 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env }));
 
-import { ingestImages } from '~/server/jobs/image-ingestion';
+import { createSendPacer, ingestImages } from '~/server/jobs/image-ingestion';
 
 type RunResult = {
   sent: number;
@@ -158,9 +158,10 @@ describe('ingest-images per-run cap', () => {
 
 describe('ingest-images retry pacing', () => {
   it('sends a big backlog as a capped batch of the oldest rows, spaced across the run', async () => {
-    env.IMAGE_SCANNING_MAX_PER_RUN = 300;
+    env.IMAGE_SCANNING_MAX_PER_RUN = 301;
     env.IMAGE_SCANNING_RETRY_MAX_PER_RUN = 40;
-    queue.rows = rows(300, 'Pending');
+    // One already-Scanned row, so the stale prune runs and the deferred check below can see it.
+    queue.rows = [...rows(300, 'Pending'), ...rows(1, 'Scanned', 301)];
 
     const result = await runJob();
 
@@ -184,9 +185,8 @@ describe('ingest-images retry pacing', () => {
     // No more than one start in any 1s span: the burst is gone.
     expect(new Set(at.map((t) => Math.floor(t / 1000))).size).toBe(40);
 
-    // The 260 deferred rows were not pruned from the JobQueue.
-    const deleted = new Set(deletedJobQueueIds());
-    for (let id = 41; id <= 300; id++) expect(deleted.has(id)).toBe(false);
+    // The 260 deferred rows were not pruned from the JobQueue; the stale one was.
+    expect(deletedJobQueueIds()).toEqual([301]);
   });
 
   it('sends a small backlog all at once', async () => {
@@ -215,5 +215,35 @@ describe('ingest-images retry pacing', () => {
     expect(starts.filter((s) => s.id > 1000).map((s) => s.id)).toEqual(
       Array.from({ length: 10 }, (_, i) => 1001 + i)
     );
+  });
+
+  it('reserves 25 per lane at the default cap of 200, the rest in lane order', async () => {
+    env.IMAGE_SCANNING_MAX_PER_RUN = 1000;
+    queue.rows = [...rows(300, 'Pending'), ...rows(300, 'Error', 1001)];
+
+    const result = await runJob();
+
+    expect(result.sentError).toBe(25);
+    expect(result.sentUserPending).toBe(175);
+  });
+
+  it('spaces starts as one schedule across lanes, not a burst per lane', async () => {
+    env.IMAGE_SCANNING_MAX_PER_RUN = 1000;
+    // 10 + 10 is past the burst together, though neither lane is alone.
+    queue.rows = [...rows(10, 'Pending'), ...rows(10, 'Error', 1001)];
+
+    await runJob();
+
+    const at = starts.map((s) => s.at - RUN_START.getTime());
+    expect(at).toHaveLength(20);
+    const interval = PACE_WINDOW_MS / 20;
+    for (let i = 1; i < at.length; i++) expect(at[i] - at[i - 1]).toBeGreaterThanOrEqual(interval);
+  });
+});
+
+describe('createSendPacer', () => {
+  it('sends up to 16 at once and paces from 17', () => {
+    expect(createSendPacer(16).intervalMs).toBe(0);
+    expect(createSendPacer(17).intervalMs).toBe(PACE_WINDOW_MS / 17);
   });
 });

@@ -149,4 +149,29 @@ describe('sendImagesForScanBulk with a pacer', () => {
     expect(mockIngestImage.mock.calls.length).toBe(10);
     expect(result).toEqual({ sent: Array.from({ length: 10 }, (_, i) => i + 1), failed: [] });
   });
+
+  it('after a slow submit stalls a lane, the next lane keeps the spacing instead of catching up', async () => {
+    const pacer = createSendPacer(40); // one start every 4.5s
+    const starts: number[] = [];
+    mockIngestImage.mockImplementation(async ({ image }: { image: IngestImageInput }) => {
+      starts.push(Date.now());
+      // The first lane's only submit hangs for 45s: ten slots' worth.
+      if (image.id === 1) await new Promise((resolve) => setTimeout(resolve, 45_000));
+      return true;
+    });
+
+    const p = (async () => {
+      await sendImagesForScanBulk(makeImages(1), { pacer });
+      await sendImagesForScanBulk(
+        makeImages(39).map((img) => ({ ...img, id: img.id + 1 })),
+        { pacer }
+      );
+    })();
+    await vi.runAllTimersAsync();
+    await p;
+
+    expect(starts).toHaveLength(40);
+    for (let i = 1; i < starts.length; i++)
+      expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(pacer.intervalMs);
+  });
 });

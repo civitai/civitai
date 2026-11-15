@@ -548,6 +548,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     backfillLane.failed.length +
     rescanLane.failed.length +
     errorLane.failed.length;
+  // Under the cap but not started: the run deadline or a cancel came first. Stays queued.
+  const notReached = sendable - deferredByCap - totalSent - failedSends;
 
   logToAxiom(
     {
@@ -568,6 +570,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       failedSends,
       sendable,
       deferredByCap,
+      notReached,
       deferredUserPending: deferred.userPending,
       deferredBackfill: deferred.backfill,
       deferredRescan: deferred.rescan,
@@ -602,6 +605,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     failedSends,
     sendable,
     deferredByCap,
+    notReached,
     deferredUserPending: deferred.userPending,
     deferredBackfill: deferred.backfill,
     deferredRescan: deferred.rescan,
@@ -630,12 +634,22 @@ export type SendPacer = { intervalMs: number; claimStart: () => number };
 
 /**
  * Start times for `total` submits: all at once up to INGEST_PACE_BURST, else spaced evenly
- * across INGEST_PACE_WINDOW_MS. Claimed in submit order, one per submit.
+ * across INGEST_PACE_WINDOW_MS. Claimed in submit order, one per submit. A claim made after its
+ * slot has passed (a slow submit held up the lane) starts now and pushes the rest back, so a
+ * stall slips the schedule instead of firing the overdue starts together; whatever slips past
+ * the run deadline stays queued.
  */
 export function createSendPacer(total: number, startAt = Date.now()): SendPacer {
   const intervalMs = total > INGEST_PACE_BURST ? INGEST_PACE_WINDOW_MS / total : 0;
-  let claimed = 0;
-  return { intervalMs, claimStart: () => startAt + intervalMs * claimed++ };
+  let next = startAt;
+  return {
+    intervalMs,
+    claimStart: () => {
+      const at = Math.max(next, Date.now());
+      next = at + intervalMs;
+      return at;
+    },
+  };
 }
 
 export async function sendImagesForScanBulk(
