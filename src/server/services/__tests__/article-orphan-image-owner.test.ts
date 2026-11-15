@@ -557,7 +557,8 @@ describe('the article banner', () => {
   const NEW_BANNER = row(32);
   const ANOTHER_ARTICLES = row(33, { uses: ['article'] });
   const FOREIGN = row(34, { userId: SOMEONE_ELSE });
-  const IMAGES = [COVER, BANNER, NEW_BANNER, ANOTHER_ARTICLES, FOREIGN];
+  const POSTED = row(35, { postId: 500 });
+  const IMAGES = [COVER, BANNER, NEW_BANNER, ANOTHER_ARTICLES, FOREIGN, POSTED];
 
   /** The article row as the update left it, so the image predicates see the new cover and banner. */
   let saved: { coverId: number | null; bannerId: number | null };
@@ -679,9 +680,7 @@ describe('the article banner', () => {
 
     deleteImageById.mockClear();
     dbMock.dbWrite.article.count.mockImplementation((async ({ where }: any) =>
-      where.OR.some((c: any) => c.bannerId === COVER.id) && where.id.not === ARTICLE_ID
-        ? 1
-        : 0) as never);
+      where.OR.some((c: any) => c.bannerId === COVER.id) ? 1 : 0) as never);
     await save({ coverImage: NEW_BANNER });
     expect(deletedIds()).not.toContain(COVER.id);
   });
@@ -694,6 +693,35 @@ describe('the article banner', () => {
 
     expect(saved).toEqual({ coverId: NEW_BANNER.id, bannerId: null });
     expect(deletedIds()).toEqual([]);
+  });
+
+  const replaceStoredCover = async (stored: Row, next: Row) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({
+      ...((await dbMock.dbWrite.article.findUnique({} as never)) as object),
+      coverId: stored.id,
+    } as never);
+    await save({ coverImage: next });
+  };
+
+  it("🔴 keeps a replaced cover that is one of the author's posted images", async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+
+    await replaceStoredCover(POSTED, NEW_BANNER);
+
+    expect(deletedIds()).not.toContain(POSTED.id);
+  });
+
+  it('🔴 keeps a replaced cover that a later save has put back on this article', async () => {
+    // As the article row stands after the other save: it shows the old cover again. Only a count
+    // that includes this article sees that.
+    dbMock.dbWrite.article.count.mockImplementation((async ({ where }: any) =>
+      where.id === undefined && where.OR.some((c: any) => c.coverId === COVER.id)
+        ? 1
+        : 0) as never);
+
+    await replaceStoredCover(COVER, NEW_BANNER);
+
+    expect(deletedIds()).not.toContain(COVER.id);
   });
 
   describe('when a moderator replaces the cover', () => {

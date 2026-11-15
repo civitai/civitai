@@ -1518,8 +1518,9 @@ export const upsertArticle = async ({
     // The save has committed: a failed cleanup is logged, and must not skip the content change below.
     try {
       // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
-      // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
-      // Only the author's own image: the hold below is read for the author alone.
+      // check it always had (owner, and no article shows it) rather than `unusedAuthorImage`.
+      // isImageOwner passes for moderators; the owner hold read at cleanup covers only the article
+      // author's images. A posted image stays with its post.
       const replacedImageIds: number[] = [];
       if (
         coverId !== undefined &&
@@ -1530,16 +1531,14 @@ export const upsertArticle = async ({
         const isImgOwner =
           (await isImageOwner({ userId, isModerator, imageId: article.coverId })) &&
           !!(await dbWrite.image.findFirst({
-            where: { id: article.coverId, userId: result.userId },
+            where: { id: article.coverId, userId: result.userId, postId: null },
             select: { id: true },
           }));
         const shownElsewhere =
           isImgOwner &&
+          // This article too, as it stands now: a save since may have put the cover back.
           (await dbWrite.article.count({
-            where: {
-              id: { not: id },
-              OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
-            },
+            where: { OR: [{ coverId: article.coverId }, { bannerId: article.coverId }] },
           })) > 0;
         if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
       }
