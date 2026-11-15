@@ -90,14 +90,22 @@ func TestOverrides(t *testing.T) {
 
 // Node's rules, written from session-client.ts / cookies.ts / local-origin.ts.
 func TestNodeRules(t *testing.T) {
-	for in, want := range map[string]float64{"": 86_400_000, "abc": 86_400_000, "0": 86_400_000, " 60 ": 60_000, "-5": -5000, "1e3": 1_000_000} {
-		if got := UpdateAgeMs(in); got != want {
-			t.Errorf("UpdateAgeMs(%q) = %v, want %v", in, got, want)
+	ages := []struct {
+		in   string
+		want float64
+	}{{"", 86_400_000}, {"abc", 86_400_000}, {"0", 86_400_000}, {" 60 ", 60_000}, {"-5", -5000}, {"1e3", 1_000_000}}
+	for _, c := range ages {
+		if got := UpdateAgeMs(c.in); got != c.want {
+			t.Errorf("UpdateAgeMs(%q) = %v, want %v", c.in, got, c.want)
 		}
 	}
-	for in, want := range map[string]bool{"": true, "false": false, "FALSE": false, " 0 ": false, "off": false, "No": false, "nope": true, "true": true} {
-		if got := LegacyReadEnabled(in); got != want {
-			t.Errorf("LegacyReadEnabled(%q) = %v, want %v", in, got, want)
+	reads := []struct {
+		in   string
+		want bool
+	}{{"", true}, {"false", false}, {"FALSE", false}, {" 0 ", false}, {"off", false}, {"No", false}, {"nope", true}, {"true", true}}
+	for _, c := range reads {
+		if got := LegacyReadEnabled(c.in); got != c.want {
+			t.Errorf("LegacyReadEnabled(%q) = %v, want %v", c.in, got, c.want)
 		}
 	}
 	cases := []struct {

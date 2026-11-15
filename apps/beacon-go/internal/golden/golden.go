@@ -81,7 +81,7 @@ func LoadFixtures(t testing.TB, dir string) []Fixture {
 		}
 		sort.Strings(files)
 		for _, f := range files {
-			b, err := os.ReadFile(f)
+			b, err := os.ReadFile(f) //nolint:gosec // G304: a fixture path from a glob under testdata
 			if err != nil {
 				t.Fatal(err)
 			}

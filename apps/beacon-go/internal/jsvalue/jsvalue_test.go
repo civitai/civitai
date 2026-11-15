@@ -197,19 +197,22 @@ func TestParseDepthLimit(t *testing.T) {
 }
 
 func TestStringToNumberLiterals(t *testing.T) {
-	cases := map[string]float64{
-		"":      0,
-		" \n ":  0,
-		"0x10":  16,
-		"0o17":  15,
-		"0b11":  3,
-		"1e3":   1000,
-		"-1.5":  -1.5,
-		" 12\t": 12,
+	cases := []struct {
+		in   string
+		want float64
+	}{
+		{"", 0},
+		{" \n ", 0},
+		{"0x10", 16},
+		{"0o17", 15},
+		{"0b11", 3},
+		{"1e3", 1000},
+		{"-1.5", -1.5},
+		{"\u00a012\t", 12},
 	}
-	for in, want := range cases {
-		if got := StringToNumber(in); got != want {
-			t.Errorf("Number(%q) = %v, want %v", in, got, want)
+	for _, c := range cases {
+		if got := StringToNumber(c.in); got != c.want {
+			t.Errorf("Number(%q) = %v, want %v", c.in, got, c.want)
 		}
 	}
 	for _, in := range []string{"abc", "0x", "-0x1", "1_0", "0b2", "1e", "Infinityx"} {

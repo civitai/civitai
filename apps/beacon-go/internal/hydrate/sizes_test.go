@@ -96,7 +96,7 @@ func TestCheckSizesWideLengthBoundaries(t *testing.T) {
 // seedBytes reads a `go test fuzz v1` corpus file holding one []byte value.
 func seedBytes(t *testing.T, path string) []byte {
 	t.Helper()
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: a corpus path from a glob under testdata
 	if err != nil {
 		t.Fatal(err)
 	}

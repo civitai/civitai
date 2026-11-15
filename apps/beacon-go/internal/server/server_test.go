@@ -197,7 +197,7 @@ func TestShadowEndpoint(t *testing.T) {
 		t.Fatalf("invalid sample: %d", code)
 	}
 	// A mutated Node row is a mismatch.
-	if code := post(strings.Replace(fx.Shadow, `\"entityId\\\":123`, `\"entityId\\\":124`, 1)); code != http.StatusAccepted {
+	if code := post(strings.Replace(fx.Shadow, `\"entityId\":123`, `\"entityId\":124`, 1)); code != http.StatusAccepted {
 		t.Fatalf("mutated sample: %d", code)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
