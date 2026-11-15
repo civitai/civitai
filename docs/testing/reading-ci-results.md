@@ -65,17 +65,19 @@ gh workflow run apps.yml -R civitai/civitai --ref <branch>                 # app
 
 **The unit suite's verdict for a commit on `main` is a commit status, not a push run.** A push to
 `main` runs Lint without the `Unit tests` job. On a schedule (`.github/workflows/unit-batched.yml`;
-every 2 hours at :41 as of 2026-11) a gate dispatches Lint with `only: unit` on `main` if `main`'s
-head moved since the last batch run; the gate's record is the newest finished bot-dispatched Lint
-run whose `Unit verified (main batch)` job ran. That job posts `Unit tests (main batch)`: `success` on HEAD when green;
-on red it re-runs the failed files at HEAD (a pass there is a flake: `success` on HEAD whose description reads "Passed on re-run; flaky: <files>", plus a warning annotation), then
-bisects first-parent from the last green batch-verified commit and posts `failure` on the FIRST BAD
-commit, naming the files, or on HEAD when the bisect cannot isolate one. So read the status on the
-commit, and expect up to one interval (2 hours) plus a run (~20 min) before a commit gets one,
-and up to about 3 hours for the bisect's status on the first bad commit. On green
-only HEAD gets the status; it covers every earlier commit in the batch, which get none. To verify now,
-dispatch the gate: `gh workflow run unit-batched.yml -R civitai/civitai` (it skips when `main` has
-not moved).
+every 2 hours at :41 as of 2026-11) a gate dispatches Lint with `only: unit` on `main` unless
+`main`'s head already carries a POSTED `Unit tests (main batch)` verdict (`success` or `failure`).
+The `Unit verified (main batch)` job posts it: `success` on HEAD when green. On red it re-runs the
+failed files at HEAD; a pass there is a flake, posted as `success` on HEAD whose description reads
+"Passed on re-run; flaky: <files>", plus a warning annotation. Otherwise it bisects first-parent
+from the last green batch-verified commit and posts `failure` on the FIRST BAD commit, naming the
+files, and on HEAD pointing at it, or only on HEAD when the bisect cannot isolate one. If that job
+crashes, its last step posts `error` on HEAD naming the step, and the next batch run re-verifies.
+So read the status on the commit, and expect up to one interval (2 hours) plus a run (~20 min)
+before HEAD gets one, and up to about 3 hours for the bisect's status on the first bad commit. On
+green only HEAD gets the status; it covers every earlier commit in the batch, which get none. To
+verify now, dispatch the gate: `gh workflow run unit-batched.yml -R civitai/civitai` (it skips when
+`main`'s head already has a verdict).
 
 ## 2. `gh pr view --json headRefOid` can hand you the previous SHA
 

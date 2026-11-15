@@ -1478,8 +1478,10 @@ jobs:
   # --first-parent` from the last green batch-verified commit, and posts a FAILING status on the
   # first bad commit naming the failed files, or on HEAD when the bisect cannot isolate one
   # (scripts/ci/unit-batched.mjs). That keeps a unit red rendering on the commit that caused it.
-  # This job also IS the record: the gate skips a run when HEAD is the commit of the newest
-  # finished run that has this job.
+  # The gate's record is the commit status itself: it skips a run only when HEAD already carries
+  # a POSTED `success` or `failure` in this context. A bisected red therefore also posts on HEAD.
+  # If any step here fails, the last step posts `error` on HEAD naming it, so a crashed
+  # verification is visible and the next batch run re-verifies.
   unit-verify:
     name: Unit verified (main batch)
     needs: unit
@@ -1493,24 +1495,29 @@ jobs:
     services: *unit-services
     env: *unit-env
     steps:
-      - uses: actions/checkout@v7
+      - id: checkout
+        uses: actions/checkout@v7
         with:
           # Strings, not numbers: `cond && 0 || 1` is always 1, because 0 is falsy.
           fetch-depth: ${{ needs.unit.result == 'failure' && '0' || '1' }}
           submodules: ${{ needs.unit.result == 'failure' }}
 
-      - uses: pnpm/action-setup@v6
+      - id: pnpm
+        uses: pnpm/action-setup@v6
         if: needs.unit.result == 'failure'
 
-      - uses: actions/setup-node@v7
+      - id: node
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
       - name: Install
+        id: install
         if: needs.unit.result == 'failure'
         run: pnpm install --frozen-lockfile
 
       - name: Download unit reports
+        id: download
         if: needs.unit.result == 'failure'
         uses: actions/download-artifact@v7
         with:
@@ -1518,9 +1525,34 @@ jobs:
           path: ${{ runner.temp }}/reports
 
       - name: Post the verdict (bisect on red)
+        id: verdict
         env:
           GH_TOKEN: ${{ github.token }}
           UNIT_RESULT: ${{ needs.unit.result }}
         # 4: the `unit` matrix on an `only: unit` dispatch. Fewer reports than this means a shard
         # never finished, so the red is not treated as a flake or bisected.
         run: node scripts/ci/unit-batched.mjs verify "$UNIT_RESULT" "$RUNNER_TEMP/reports" 4
+
+      # A crashed verification must not look like no news: `error` on HEAD, naming the step, so
+      # the gate (which counts only a posted success or failure) re-verifies HEAD next time.
+      - name: Post error on HEAD if this job crashed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOMES: >-
+            checkout=${{ steps.checkout.outcome }}
+            setup-pnpm=${{ steps.pnpm.outcome }}
+            setup-node=${{ steps.node.outcome }}
+            install=${{ steps.install.outcome }}
+            download-reports=${{ steps.download.outcome }}
+            post-verdict=${{ steps.verdict.outcome }}
+        run: |
+          step=unknown
+          for pair in $OUTCOMES; do
+            if [ "${pair#*=}" = failure ]; then step=${pair%%=*}; break; fi
+          done
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=error -f "context=Unit tests (main batch)" \
+            -f "description=Batch verification crashed at step: $step. The next batch run re-verifies." \
+            -f "target_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "::error title=Unit batch verification crashed::step $step failed; posted error on ${GITHUB_SHA:0:10}"

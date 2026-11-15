@@ -16,11 +16,13 @@
 //       git bisect run's per-commit test. Node built-ins only: bisect checks out older commits,
 //       where this file may not exist, so the caller runs a copy from outside the tree.
 //
-// THE RECORD of what was verified is the run list itself: lint.yml runs on <ref> with
-// event=workflow_dispatch and actor=github-actions[bot]. Only this workflow's gate dispatches
-// lint.yml as the bot with `only: unit`; full-ci.yml's bot dispatches are `only: all` on PR
-// branches, never on `main`, and their `unit-verify` job is SKIPPED, so a run counts as a
-// verification only when that job concluded success or failure.
+// THE RECORD of what was verified is the `Unit tests (main batch)` commit status on HEAD: the
+// gate skips only when a success or failure was actually POSTED there (headVerdict). A crashed
+// verify job leaves `error` (its last step) or nothing, so HEAD is re-verified next time.
+// The bisect's green base is still read from the run list: lint.yml runs on <ref> dispatched by
+// github-actions[bot] (only this gate dispatches lint.yml as the bot with `only: unit` on these
+// refs; full-ci.yml's bot dispatches are `only: all` on PR branches and SKIP `unit-verify`), the
+// newest that concluded success with that job run.
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -39,18 +41,32 @@ export const CONTEXT = 'Unit tests (main batch)';
 const VERIFY_JOB = 'Unit verified (main batch)';
 const BOT = 'github-actions[bot]';
 
-/** Should the batch gate dispatch a run? Fails OPEN: no record or an error means run. */
-export function decideRun({ head, lastVerified, inProgress = false, error }) {
-  if (error) return { run: true, reason: `could not read the last verified commit (${error})` };
+/**
+ * The verdict a batch run POSTED on a commit: the state of the newest `Unit tests (main batch)`
+ * status in `statuses` (the API lists newest first), or null when there is none.
+ */
+export function headVerdict(statuses) {
+  return statuses.find((s) => s.context === CONTEXT)?.state ?? null;
+}
+
+/**
+ * Should the batch gate dispatch a run? HEAD counts as verified only when a verdict (success or
+ * failure) was actually posted on it; `error` is what a crashed verification leaves. Fails OPEN:
+ * an unreadable record means run.
+ */
+export function decideRun({ head, headState, inProgress = false, error }) {
+  if (error) return { run: true, reason: `could not read the verdict on HEAD (${error})` };
   if (inProgress)
     return { run: false, reason: 'a batch verification run is still queued or running' };
-  if (!lastVerified) return { run: true, reason: 'no batch run has verified a commit yet' };
-  if (lastVerified === head)
+  if (headState === 'success' || headState === 'failure')
     return {
       run: false,
-      reason: `HEAD ${head.slice(0, 10)} is the commit the last batch run verified`,
+      reason: `HEAD ${head.slice(0, 10)} already has a posted verdict (${headState})`,
     };
-  return { run: true, reason: `HEAD moved: ${lastVerified.slice(0, 10)} -> ${head.slice(0, 10)}` };
+  return {
+    run: true,
+    reason: `HEAD ${head.slice(0, 10)} has no posted verdict (${headState ?? 'none'})`,
+  };
 }
 
 /** One commit status line, at most GitHub's 140 characters. */
@@ -112,6 +128,27 @@ export function statusTarget({
     state: 'failure',
     description: statusLine(`Bisect could not isolate the commit; failing here: `, failed),
   };
+}
+
+/**
+ * Every status a verdict posts. A bisected red also goes on HEAD, pointing at the first bad
+ * commit: HEAD is still failing, and the HEAD status is the gate's record that HEAD was verified.
+ */
+export function statusTargets(args) {
+  const t = statusTarget(args);
+  if (!t) return [];
+  if (t.sha === args.head) return [t];
+  return [
+    t,
+    {
+      sha: args.head,
+      state: 'failure',
+      description: statusLine(
+        `Failing since first bad commit ${t.sha.slice(0, 10)}: `,
+        args.failed
+      ),
+    },
+  ];
 }
 
 /** Failed unit test files, repo-relative, from vitest JSON reports. */
@@ -187,18 +224,20 @@ function summary(lines) {
 
 function gate(ref) {
   const head = gh('api', `repos/${repo()}/commits/${ref}`, '-q', '.sha');
-  let lastVerified = null;
+  let headState = null;
   let inProgress = false;
   let error = null;
   try {
     // A run still going is not re-dispatched: in its concurrency group a new dispatch would
     // cancel it, and a red one is the long one (unit, then the bisect).
     inProgress = botRuns(ref).some((r) => r.status !== 'completed');
-    lastVerified = lastVerifiedRun(ref)?.head_sha ?? null;
+    headState = headVerdict(
+      JSON.parse(gh('api', `repos/${repo()}/commits/${head}/statuses?per_page=100`))
+    );
   } catch (err) {
     error = String(err.message).split('\n')[0];
   }
-  const d = decideRun({ head, lastVerified, inProgress, error });
+  const d = decideRun({ head, headState, inProgress, error });
   summary([`${d.run ? 'Dispatching' : 'Skipped'}: ${d.reason}.`]);
   if (d.run) gh('workflow', 'run', 'lint.yml', '--repo', repo(), '--ref', ref, '-f', 'only=unit');
 }
@@ -351,20 +390,19 @@ function verify(unitResult, reportsDir, shards) {
       }
     }
   }
-  const target = statusTarget({ unitResult, head, failed, flaky, firstBad, incomplete });
-  if (target) {
-    post(target);
-    lines.push(
-      `Posted \`${CONTEXT}\` = ${target.state} on ${target.sha.slice(0, 10)}: ${target.description}`
-    );
-    if (target.state === 'failure')
+  const targets = statusTargets({ unitResult, head, failed, flaky, firstBad, incomplete });
+  // Summary first: a POST that fails below crashes the job, and the crash step then posts
+  // `error` on HEAD, which the gate reads as "not verified".
+  for (const t of targets)
+    lines.push(`Posting \`${CONTEXT}\` = ${t.state} on ${t.sha.slice(0, 10)}: ${t.description}`);
+  summary(lines.length ? lines : [`unit result: ${unitResult}; nothing posted.`]);
+  for (const t of targets) {
+    post(t);
+    if (t.state === 'failure')
       console.log(
-        `::error title=Unit suite red (main batch)::${target.sha.slice(0, 10)}: ${
-          target.description
-        }`
+        `::error title=Unit suite red (main batch)::${t.sha.slice(0, 10)}: ${t.description}`
       );
   }
-  summary(lines.length ? lines : [`unit result: ${unitResult}; nothing posted.`]);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

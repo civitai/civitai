@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   decideRun,
+  headVerdict,
+  statusTargets,
   failedFiles,
   parseFirstBad,
   reportsComplete,
@@ -17,31 +19,65 @@ const HEAD = 'a'.repeat(40);
 const OLD = 'b'.repeat(40);
 const BAD = 'c'.repeat(40);
 
-describe('decideRun: did main move since the last batch verification?', () => {
-  it('skips when HEAD is the commit the last batch run verified', () => {
-    expect(decideRun({ head: HEAD, lastVerified: HEAD })).toEqual({
-      run: false,
-      reason: 'HEAD aaaaaaaaaa is the commit the last batch run verified',
+// HEAD counts as verified only when a batch run actually POSTED its verdict there: the newest
+// `Unit tests (main batch)` status on HEAD is success or failure. A run that crashed before
+// posting leaves none (or `error`), and the next batch run re-verifies.
+describe('headVerdict: was a verdict actually posted on HEAD?', () => {
+  const st = (context: string, state: string) => ({ context, state });
+
+  it('reads the NEWEST status in our context (the API lists newest first)', () => {
+    expect(
+      headVerdict([
+        st('Unit tests (main batch)', 'error'),
+        st('Unit tests (main batch)', 'success'),
+      ])
+    ).toBe('error');
+    expect(
+      headVerdict([
+        st('Unit tests (main batch)', 'failure'),
+        st('Unit tests (main batch)', 'error'),
+      ])
+    ).toBe('failure');
+  });
+
+  it('ignores every other context', () => {
+    expect(headVerdict([st('tekton / typecheck', 'success')])).toBeNull();
+  });
+
+  it('is null with no statuses at all', () => {
+    expect(headVerdict([])).toBeNull();
+  });
+});
+
+describe('decideRun: does HEAD need a batch run?', () => {
+  it.each(['success', 'failure'])(
+    'skips when HEAD already carries a posted %s verdict',
+    (state) => {
+      expect(decideRun({ head: HEAD, headState: state })).toEqual({
+        run: false,
+        reason: `HEAD aaaaaaaaaa already has a posted verdict (${state})`,
+      });
+    }
+  );
+
+  // The gap this closes: a verify job that crashed before posting must not count as verified.
+  it('runs when HEAD has only an error status (a crashed verification)', () => {
+    expect(decideRun({ head: HEAD, headState: 'error' })).toEqual({
+      run: true,
+      reason: 'HEAD aaaaaaaaaa has no posted verdict (error)',
     });
   });
 
-  it('runs when HEAD moved', () => {
-    expect(decideRun({ head: HEAD, lastVerified: OLD })).toEqual({
+  it('runs when HEAD has no verdict at all', () => {
+    expect(decideRun({ head: HEAD, headState: null })).toEqual({
       run: true,
-      reason: 'HEAD moved: bbbbbbbbbb -> aaaaaaaaaa',
-    });
-  });
-
-  it('runs when nothing has been verified yet', () => {
-    expect(decideRun({ head: HEAD, lastVerified: null })).toEqual({
-      run: true,
-      reason: 'no batch run has verified a commit yet',
+      reason: 'HEAD aaaaaaaaaa has no posted verdict (none)',
     });
   });
 
   // A new dispatch would cancel the running one in its concurrency group.
-  it('skips while a verification run is still queued or running, even when HEAD moved', () => {
-    expect(decideRun({ head: HEAD, lastVerified: OLD, inProgress: true })).toEqual({
+  it('skips while a verification run is still queued or running', () => {
+    expect(decideRun({ head: HEAD, headState: null, inProgress: true })).toEqual({
       run: false,
       reason: 'a batch verification run is still queued or running',
     });
@@ -49,9 +85,9 @@ describe('decideRun: did main move since the last batch verification?', () => {
 
   // Fail open: a gate that cannot read its record must not leave main unverified.
   it('runs when the record could not be read, even if it would have matched', () => {
-    expect(decideRun({ head: HEAD, lastVerified: HEAD, error: 'HTTP 502' })).toEqual({
+    expect(decideRun({ head: HEAD, headState: 'success', error: 'HTTP 502' })).toEqual({
       run: true,
-      reason: 'could not read the last verified commit (HTTP 502)',
+      reason: 'could not read the verdict on HEAD (HTTP 502)',
     });
   });
 });
@@ -152,6 +188,34 @@ describe('statusTarget: where the verdict is posted', () => {
     expect(d).toHaveLength(140);
     expect(d.endsWith('...')).toBe(true);
     expect(statusLine('x: ', ['a'])).toBe('x: a');
+  });
+});
+
+// A bisected red lands on the first bad commit AND on HEAD: HEAD is still failing, and the HEAD
+// status is what tells the gate this HEAD was verified.
+describe('statusTargets: every status a verdict posts', () => {
+  it('bisected red: the first bad commit, then HEAD pointing at it', () => {
+    expect(
+      statusTargets({ unitResult: 'failure', head: HEAD, failed: ['src/a.test.ts'], firstBad: BAD })
+    ).toEqual([
+      {
+        sha: BAD,
+        state: 'failure',
+        description: 'First bad commit. 1 failing file(s): src/a.test.ts',
+      },
+      {
+        sha: HEAD,
+        state: 'failure',
+        description: 'Failing since first bad commit cccccccccc: src/a.test.ts',
+      },
+    ]);
+  });
+
+  it('any other verdict is the single status on HEAD', () => {
+    expect(statusTargets({ unitResult: 'success', head: HEAD })).toEqual([
+      { sha: HEAD, state: 'success', description: 'Unit suite passed at this commit.' },
+    ]);
+    expect(statusTargets({ unitResult: 'cancelled', head: HEAD })).toEqual([]);
   });
 });
 
