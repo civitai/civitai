@@ -454,7 +454,6 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // `pendingImages` -> `processedIds`, so not pruned), so next run they are
   // re-pulled and handled as Error.
   if (agedOutPendingIds.length > 0) {
-    // As above: without lastFailure the class comes from `error`, else the unknown cap.
     await dbWrite.$executeRaw`
       UPDATE "Image"
       SET ingestion = 'Error'::"ImageIngestionStatus",

@@ -1691,7 +1691,8 @@ const PERMANENT_SUBMIT_STATUSES = [400, 415, 422];
 /**
  * 1 when a submit is going out for an Error row with no recorded `error`: its last scan went out
  * and never called back, which counts as a failed attempt, or the retry ceiling never applies.
- * Evaluated against the row as it was before the UPDATE that embeds it.
+ * Evaluated against the row as it was before the UPDATE that embeds it. A failed non-429 submit
+ * adds it on top of its own attempt: two attempts lost, so 2.
  */
 const lostScanAttemptSql = () => Prisma.sql`(CASE
   WHEN "ingestion" = 'Error'::"ImageIngestionStatus" AND NOT COALESCE("scanJobs" ? 'error', FALSE)
