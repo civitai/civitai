@@ -356,7 +356,6 @@ export function isBlockNeverRatedVideoStep(
   // 🔴 `input` IS THE APP'S OWN OBJECT. A re-cased twin (`Engine`) may be the key the
   // orchestrator binds, so with one present the engine is unknown: not never-rated,
   // and its outputs go through the normal hold.
-  if (hasRecasedTwin(input as Record<string, unknown>, 'engine')) return false;
   const engine = (input as { engine?: unknown }).engine;
   if (typeof engine !== 'string') return false;
   const e = engine.trim().toLowerCase();
