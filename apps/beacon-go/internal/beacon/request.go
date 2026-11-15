@@ -94,7 +94,6 @@ type bodyKind uint8
 const (
 	bodyText bodyKind = iota // the decoded string
 	bodyJSON                 // JSON.parse of it ({} when empty)
-	bodyForm                 // querystring.decode of it: always an object
 )
 
 // content-type's parse() (next/dist/compiled/content-type), whose failure parseBody answers with
@@ -226,7 +225,8 @@ func parseBody(r *Request) (parsedBody, *nextError, error) {
 		}
 		return parsedBody{kind: bodyJSON, json: v}, nil, nil
 	case "application/x-www-form-urlencoded":
-		return parsedBody{kind: bodyForm}, nil, nil
+		// Next decodes it to an object of strings, which both handlers refuse; beacons never send one.
+		return parsedBody{}, nil, fallback.New("form-body")
 	}
 	return parsedBody{kind: bodyText, text: text}, nil, nil
 }
@@ -247,10 +247,7 @@ func decodedBody(r *Request, typ string) (parsedBody, error) {
 		}
 		return parsedBody{kind: bodyJSON, json: v}, nil
 	case "application/x-www-form-urlencoded":
-		if r.BodyIsString {
-			return parsedBody{}, fallback.New("shadow-body-kind")
-		}
-		return parsedBody{kind: bodyForm}, nil
+		return parsedBody{}, fallback.New("form-body")
 	}
 	if !r.BodyIsString {
 		return parsedBody{}, fallback.New("shadow-body-kind")

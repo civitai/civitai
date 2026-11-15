@@ -185,32 +185,52 @@ func TestClampToColumn(t *testing.T) {
 	}
 }
 
-func TestFreshAndTokenList(t *testing.T) {
-	etag := sendETags["invalid request"]
-	req := func(h map[string]string) *Request { return &Request{Headers: h} }
-	cases := []struct {
-		h    map[string]string
-		want bool
-	}{
-		{map[string]string{}, false},
-		{map[string]string{"if-none-match": "*"}, true},
-		{map[string]string{"if-none-match": etag}, true},
-		{map[string]string{"if-none-match": "W/" + etag}, true},
-		{map[string]string{"if-none-match": `"other", ` + etag}, true},
-		{map[string]string{"if-none-match": `"other"`}, false},
-		{map[string]string{"if-none-match": "*", "cache-control": "no-cache"}, false},
-		{map[string]string{"if-none-match": "*", "cache-control": "max-age=0, no-cache"}, false},
-		{map[string]string{"if-none-match": "*", "cache-control": "no-cache-x"}, true},
-		{map[string]string{"if-none-match": "*", "if-modified-since": "x"}, false},
-		{map[string]string{"if-modified-since": "x"}, false},
-	}
-	for _, c := range cases {
-		if got := fresh(req(c.h), etag); got != c.want {
-			t.Errorf("fresh(%v) = %v, want %v", c.h, got, c.want)
+// The rare request shapes Node answers on paths this service does not reproduce fall back, each
+// under its own reason, and before anything else is read.
+func TestRareShapesFallBack(t *testing.T) {
+	base := func() *Request {
+		return &Request{
+			Method:  http.MethodPost,
+			Headers: map[string]string{"host": "a.test", "referer": "https://a.test/", "origin": "https://a.test"},
+			Body:    []byte(`{"path":"/"}`),
 		}
 	}
-	if got := parseTokenList(" a , b,,c "); strings.Join(got, "|") != "a|b||c" {
-		t.Fatalf("parseTokenList = %q", got)
+	cases := []struct {
+		name   string
+		mutate func(r *Request)
+		reason string
+	}{
+		{"preflight", func(r *Request) { r.Method = "OPTIONS" }, "preflight"},
+		{"if-none-match", func(r *Request) { r.Headers["if-none-match"] = "*" }, "conditional-request"},
+		{"if-modified-since", func(r *Request) { r.Headers["if-modified-since"] = "x" }, "conditional-request"},
+		{"urlencoded", func(r *Request) { r.Headers["content-type"] = "application/x-www-form-urlencoded" }, "form-body"},
+		{"urlencoded, shadow", func(r *Request) {
+			r.Headers["content-type"] = "application/x-www-form-urlencoded"
+			r.BodyDecoded = true
+		}, "form-body"},
+	}
+	e := &Engine{Sessions: fixedUser{}, TrackerEnabled: true}
+	for _, endpoint := range []string{EndpointPing, EndpointPulse} {
+		for _, c := range cases {
+			r := base()
+			c.mutate(r)
+			if _, err := e.Compute(context.Background(), endpoint, r); fallback.Reason(err) != c.reason {
+				t.Errorf("%s %s: %v, want fallback %q", endpoint, c.name, err, c.reason)
+			}
+		}
+	}
+	// Empty conditional headers are not conditional (`fresh` reads them as absent).
+	r := base()
+	r.Headers["if-none-match"], r.Headers["if-modified-since"] = "", ""
+	r.Headers["cf-connecting-ip"] = "192.0.2.1"
+	r.HTTP = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", nil)
+	if out, err := e.Compute(context.Background(), EndpointPing, r); err != nil || out.Response.Status != 200 {
+		t.Fatalf("empty conditional headers: %+v %v", out.Response, err)
+	}
+	// A 400 carries its ETag and no 304 path exists any more.
+	out := send400(wrapperHeaders(base()), "invalid input")
+	if etag, _ := out.Get("etag"); out.Status != 400 || out.Body != "invalid input" || etag != `"17fa7f31cyhd"` {
+		t.Fatalf("send400: %+v", out)
 	}
 }
 

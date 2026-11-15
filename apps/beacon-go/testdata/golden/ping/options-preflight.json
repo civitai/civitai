@@ -15,7 +15,7 @@
   },
   "session": null,
   "trackerEnabled": true,
-  "fallback": "",
+  "fallback": "preflight",
   "expect": {
     "status": 200,
     "headers": {

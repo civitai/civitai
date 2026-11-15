@@ -57,7 +57,7 @@ func TestCheckSizesAcceptsExactLengths(t *testing.T) {
 			t.Errorf("%s: checkSizes(%x) = %v", name, b, err)
 		}
 	}
-	// Every msgpackr value in the fuzz seed corpus (feed-go's golden cache values) passes and decodes.
+	// The msgpackr session-user value in the fuzz seed corpus passes and decodes.
 	seeds, err := filepath.Glob(filepath.Join("testdata", "fuzz", "FuzzUnpack", "golden-*"))
 	if err != nil || len(seeds) == 0 {
 		t.Fatalf("no golden seeds: %v", err)

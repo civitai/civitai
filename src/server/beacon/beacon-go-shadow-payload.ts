@@ -39,7 +39,6 @@ export const BEACON_GO_COPIED_HEADERS = [
   'x-civitai-verified-bot',
   'if-none-match',
   'if-modified-since',
-  'cache-control',
 ] as const;
 
 /** The response headers the endpoint decides (beacon-go's `ComparedHeaders`). */

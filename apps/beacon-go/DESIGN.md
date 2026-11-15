@@ -124,12 +124,16 @@ Row: `{...actor, ...values}`:
 
 ## 2. What beacon-go reproduces, and what it hands back
 
-Exact, byte for byte: the body parse (UTF-8, BOM strip, the three kinds, Next's empty-JSON and
-`Invalid JSON` cases), the headers above, the four response bodies and their ETags, the 304 rule, both
-schemas, `getMatchingPathname` (its list is a copy, pinned against the Node file by a test), the
-client-ip chain, `JSON.parse` / `JSON.stringify` semantics (key order, a repeated key, `__proto__`,
-lone surrogates, number formatting, `Number(string)`), header bytes read as latin-1 and repeated
-headers folded as Node folds them.
+Exact, byte for byte: the body parse (UTF-8, BOM strip, text and JSON bodies, Next's empty-JSON and
+`Invalid JSON` cases), the headers above, the four response bodies and their ETags, both schemas,
+`getMatchingPathname` (its list is a copy, pinned against the Node file by a test), the client-ip
+chain, `JSON.parse` / `JSON.stringify` semantics (key order, a repeated key, `__proto__`, lone
+surrogates, number formatting, `Number(string)`), header bytes read as latin-1 and repeated headers
+folded as Node folds them.
+
+Deliberately not reproduced, because beacons never send them: the `OPTIONS` preflight, conditional
+requests (the 304 rule) and urlencoded bodies. Each falls back under its own reason, so serve mode
+hands them to Node and the counter shows whether they ever occur.
 
 Fallback reasons (`beacon_go_fallback_total{reason}`):
 
@@ -146,6 +150,9 @@ Fallback reasons (`beacon_go_fallback_total{reason}`):
 | `body-too-large` | over Next's 1 MiB limit (Next answers 413) |
 | `json-depth` | JSON nested past 512 levels |
 | `array-body` | ping with a JSON array body (Node `String()`s it, then parses) |
+| `preflight` | an `OPTIONS` request (PublicEndpoint answers it with the CORS headers and `Access-Control-Max-Age`) |
+| `conditional-request` | a non-empty `If-None-Match` or `If-Modified-Since` (Next could answer a 400 with a 304) |
+| `form-body` | an `application/x-www-form-urlencoded` body (both handlers refuse Next's decoded object with a 400) |
 | `shadow-body-kind` | shadow only: Node's `req.body` shape disagrees with this service's Content-Type reading |
 
 Deliberately not reproduced: `isDev` (development answers 200 at once); the preview-only cookie sign-in;

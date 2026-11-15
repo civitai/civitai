@@ -16,7 +16,7 @@
   },
   "session": null,
   "trackerEnabled": true,
-  "fallback": "",
+  "fallback": "form-body",
   "expect": {
     "status": 400,
     "headers": {

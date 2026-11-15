@@ -1,7 +1,6 @@
 package beacon
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/civitai/civitai/apps/beacon-go/internal/jsvalue"
@@ -49,7 +48,6 @@ var ComparedHeaders = []string{
 	"access-control-allow-headers",
 	"access-control-allow-methods",
 	"access-control-allow-credentials",
-	"access-control-max-age",
 	"vary",
 	"cache-control",
 	"etag",
@@ -62,7 +60,6 @@ const (
 	anonymousVary       = "Authorization"
 	credentialedVary    = "Authorization, Cookie"
 	corsAllowHeaders    = "Authorization, Content-Type, *"
-	corsMaxAge          = "7200"
 	privateCacheControl = "max-age=0, private, no-cache"
 	// addPublicCacheHeaders with the default PUBLIC_CACHE_MAX_AGE (300): swr = floor(300 / 2).
 	publicCacheControl = "public, s-maxage=300, stale-while-revalidate=150"
@@ -112,9 +109,10 @@ func verifiedCrawler(r *Request) bool {
 }
 
 // wrapperHeaders are the headers PublicEndpoint sets before its handler runs, in its order: Vary,
-// then CORS (addCorsHeaders without credentials), then — unless the request is a preflight — the
-// cache directive. preflight reports an OPTIONS request, which PublicEndpoint answers itself.
-func wrapperHeaders(r *Request) (resp Response, preflight bool) {
+// then CORS (addCorsHeaders without credentials), then the cache directive. (An OPTIONS preflight,
+// which PublicEndpoint answers itself, falls back before this.)
+func wrapperHeaders(r *Request) Response {
+	var resp Response
 	credentialed := carriesCallerCredentials(r)
 	if credentialed {
 		resp.set("vary", credentialedVary)
@@ -124,91 +122,29 @@ func wrapperHeaders(r *Request) (resp Response, preflight bool) {
 	resp.set("access-control-allow-origin", "*")
 	resp.set("access-control-allow-headers", corsAllowHeaders)
 	resp.set("access-control-allow-methods", allowedMethods)
-	if r.Method == "OPTIONS" {
-		resp.set("access-control-max-age", corsMaxAge)
-		resp.Status = 200
-		return resp, true
-	}
 	if credentialed || verifiedCrawler(r) {
 		resp.set("cache-control", privateCacheControl)
 	} else {
 		resp.set("cache-control", publicCacheControl)
 	}
-	return resp, false
+	return resp
 }
 
-// sendETags are the ETags Next's res.send writes for the handlers' three string bodies: generateETag(body)
-// (next/dist/server/lib/etag.js, fnv1a52 in base 36 plus the length in base 36), computed with Next
-// 16.4.5's own function.
+// sendETags are the ETags Next's res.send writes for the handlers' three string bodies:
+// generateETag(body) (next/dist/server/lib/etag.js, fnv1a52 in base 36 plus the length in base 36),
+// computed with Next 16.4.5's own function.
 var sendETags = map[string]string{
 	"invalid request": `"weftv9g98bf"`,
 	"invalid body":    `"eueval305xc"`,
 	"invalid input":   `"17fa7f31cyhd"`,
 }
 
-// jsSpace is JS's \s: WhiteSpace and LineTerminator (RE2's \s is ASCII only).
-const jsSpace = `[\t\n\v\f\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]`
-
-// noCacheRe is fresh's CACHE_CONTROL_NO_CACHE_REGEXP, /(?:^|,)\s*?no-cache\s*?(?:,|$)/.
-var noCacheRe = regexp.MustCompile(`(?:^|,)` + jsSpace + `*?no-cache` + jsSpace + `*?(?:,|$)`)
-
-// fresh is the `fresh` package (next/dist/compiled/fresh) for a response with this ETag and no
-// Last-Modified: true sends a 304 instead of the body.
-func fresh(r *Request, etag string) bool {
-	ims, _ := r.Header("if-modified-since")
-	inm, _ := r.Header("if-none-match")
-	if ims == "" && inm == "" {
-		return false
-	}
-	if cc, _ := r.Header("cache-control"); cc != "" && noCacheRe.MatchString(cc) {
-		return false
-	}
-	if inm != "" && inm != "*" {
-		stale := true
-		for _, m := range parseTokenList(inm) {
-			if m == etag || m == "W/"+etag || "W/"+m == etag {
-				stale = false
-				break
-			}
-		}
-		if stale {
-			return false
-		}
-	}
-	// No Last-Modified is ever set, so an If-Modified-Since is always stale.
-	return ims == ""
-}
-
-// parseTokenList is fresh's parseTokenList: split on commas, dropping spaces around each token.
-func parseTokenList(s string) []string {
-	var list []string
-	start, end := 0, 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case ' ':
-			if start == end {
-				start, end = i+1, i+1
-			}
-		case ',':
-			list = append(list, s[start:end])
-			start, end = i+1, i+1
-		default:
-			end = i + 1
-		}
-	}
-	return append(list, s[start:end])
-}
-
-// send400 is Next's res.status(400).send(body) for a string body (sendData): an ETag, then 304 with
-// no body when the request is fresh for it, else the body with no Content-Type.
-func send400(r *Request, resp Response, body string) Response {
+// send400 is Next's res.status(400).send(body) for a string body (sendData): the body, its ETag, and
+// no Content-Type. (sendData's 304 for a fresh conditional request cannot arise: a conditional
+// request falls back in prologue.)
+func send400(resp Response, body string) Response {
 	resp.Headers = append([]Header(nil), resp.Headers...)
-	etag := sendETags[body]
-	resp.set("etag", etag)
-	if fresh(r, etag) {
-		resp.Status = 304
-		return resp
-	}
+	resp.set("etag", sendETags[body])
 	resp.Status = 400
 	resp.Body = body
 	return resp

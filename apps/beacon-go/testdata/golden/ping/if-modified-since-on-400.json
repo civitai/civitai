@@ -13,7 +13,7 @@
   },
   "session": null,
   "trackerEnabled": true,
-  "fallback": "",
+  "fallback": "conditional-request",
   "expect": {
     "status": 400,
     "headers": {

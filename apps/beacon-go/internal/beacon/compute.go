@@ -83,12 +83,23 @@ func (e *Engine) Compute(ctx context.Context, endpoint string, r *Request) (Outc
 	return Outcome{}, fallback.New("unknown-endpoint")
 }
 
-// prologue is what runs before either handler body: Next's body parser (whose ApiErrors Next answers
-// itself) and PublicEndpoint's headers (which answer an OPTIONS preflight). done reports a finished
-// outcome.
+// prologue is what runs before either handler body: the rare request shapes left to the Node app (a
+// query string, an OPTIONS preflight, a conditional request), Next's body parser (whose ApiErrors
+// Next answers itself) and PublicEndpoint's headers. done reports a finished outcome.
 func prologue(r *Request) (pb parsedBody, resp Response, out Outcome, done bool, err error) {
 	if r.HasQuery {
 		return pb, resp, out, true, fallback.New("query-string")
+	}
+	if r.Method == "OPTIONS" {
+		// PublicEndpoint answers a preflight itself; browsers never send one for these beacons.
+		return pb, resp, out, true, fallback.New("preflight")
+	}
+	// A conditional request can turn a 400 into Next's 304 (sendData's `fresh` check); beacons never
+	// send one.
+	ims, _ := r.Header("if-modified-since")
+	inm, _ := r.Header("if-none-match")
+	if ims != "" || inm != "" {
+		return pb, resp, out, true, fallback.New("conditional-request")
 	}
 	pb, nerr, err := parseBody(r)
 	if err != nil {
@@ -97,11 +108,7 @@ func prologue(r *Request) (pb parsedBody, resp Response, out Outcome, done bool,
 	if nerr != nil {
 		return pb, resp, Outcome{Response: Response{Status: nerr.status, Body: nerr.body}}, true, nil
 	}
-	resp, preflight := wrapperHeaders(r)
-	if preflight {
-		return pb, resp, Outcome{Response: resp}, true, nil
-	}
-	return pb, resp, out, false, nil
+	return pb, wrapperHeaders(r), out, false, nil
 }
 
 // Ping is src/pages/api/internal/ping.ts.
@@ -110,7 +117,7 @@ func (e *Engine) Ping(ctx context.Context, r *Request) (Outcome, error) {
 	if done {
 		return out, err
 	}
-	invalid := func() Outcome { return Outcome{Response: send400(r, resp, "invalid request")} }
+	invalid := func() Outcome { return Outcome{Response: send400(resp, "invalid request")} }
 
 	// `req.headers.referer ? new URL(req.headers.referer) : undefined`; a throw is a 400.
 	referer, _ := r.Header("referer")
@@ -131,15 +138,13 @@ func (e *Engine) Ping(ctx context.Context, r *Request) (Outcome, error) {
 		return invalid(), nil
 	}
 
-	// JSON.parse(req.body): a string body is parsed; an object (a JSON or urlencoded body) is
+	// JSON.parse(req.body): a string body is parsed; an object (a JSON body) is
 	// String()-ed to "[object Object]" and throws; a number, boolean or null re-parses to itself and
 	// fails the schema. Either way a 400. An array String()s to its joined elements: not reproduced.
 	var text string
 	switch pb.kind {
 	case bodyText:
 		text = pb.text
-	case bodyForm:
-		return invalid(), nil
 	case bodyJSON:
 		switch pb.json.Kind {
 		case jsvalue.String:
@@ -233,10 +238,10 @@ func (e *Engine) Pulse(ctx context.Context, r *Request) (Outcome, error) {
 	}
 	host, hostOK := r.Header("host")
 	if sourceHost == "" || !hostOK || sourceHost != host {
-		return Outcome{Response: send400(r, resp, "invalid request")}, nil
+		return Outcome{Response: send400(resp, "invalid request")}, nil
 	}
 
-	invalidBody := func() Outcome { return Outcome{Response: send400(r, resp, "invalid body")} }
+	invalidBody := func() Outcome { return Outcome{Response: send400(resp, "invalid body")} }
 	var parsed jsvalue.Value
 	switch pb.kind {
 	case bodyText:
@@ -248,9 +253,6 @@ func (e *Engine) Pulse(ctx context.Context, r *Request) (Outcome, error) {
 			return invalidBody(), nil
 		}
 		parsed = v
-	case bodyForm:
-		// querystring.decode's object holds strings only, and entityId must be a number.
-		return Outcome{Response: send400(r, resp, "invalid input")}, nil
 	case bodyJSON:
 		parsed = pb.json
 		if parsed.Kind == jsvalue.String {
@@ -266,7 +268,7 @@ func (e *Engine) Pulse(ctx context.Context, r *Request) (Outcome, error) {
 	}
 	values, ok := parseAddView(parsed)
 	if !ok {
-		return Outcome{Response: send400(r, resp, "invalid input")}, nil
+		return Outcome{Response: send400(resp, "invalid input")}, nil
 	}
 	if !e.TrackerEnabled {
 		return Outcome{Response: end200(resp)}, nil

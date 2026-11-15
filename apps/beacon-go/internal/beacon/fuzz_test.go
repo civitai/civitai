@@ -14,8 +14,8 @@ import (
 
 // FuzzCompute: request parsing (body decode, content type, JSON, the schemas, the referer / origin
 // host, the client-ip chain) never panics on any request, and every answer is one the Node handler
-// can give: 200 with at most one row for the endpoint's table, 304, or a 400 with one of its four
-// bodies; anything else is a fallback with a reason.
+// can give: 200 with at most one row for the endpoint's table, or a 400 with one of its four bodies;
+// anything else (an OPTIONS preflight, a conditional request, ...) is a fallback with a reason.
 func FuzzCompute(f *testing.F) {
 	f.Add(true, "POST", "https://a.test/models/1", "a.test", "", "192.0.2.1", `{"path":"/models/1","duration":5}`)
 	f.Add(false, "POST", "https://a.test", "a.test", "application/json", "192.0.2.1", `{"type":"ImageView","entityType":"Image","entityId":1,"details":{"1":2}}`)
@@ -58,10 +58,6 @@ func FuzzCompute(f *testing.F) {
 				if w.Table != table || err != nil || !v.IsPlainObject() {
 					t.Fatalf("row %s %q: %v", w.Table, w.Body, err)
 				}
-			}
-		case 304:
-			if out.Response.Body != "" || len(out.Writes) != 0 {
-				t.Fatal("304 with a body or a write")
 			}
 		case 400:
 			switch out.Response.Body {

@@ -525,6 +525,7 @@ const fixtures: Fixture[] = [
     endpoint: 'ping',
     headers: { ...basePing, 'content-type': 'application/x-www-form-urlencoded' },
     body: 'path=%2F',
+    fallback: 'form-body',
   },
   {
     name: 'bad-content-type-is-text',
@@ -547,24 +548,34 @@ const fixtures: Fixture[] = [
       'c328e282f09f98' +
       Buffer.from('"}').toString('hex'),
   },
-  { name: 'options-preflight', endpoint: 'ping', method: 'OPTIONS', headers: basePing, body: '' },
+  {
+    name: 'options-preflight',
+    endpoint: 'ping',
+    method: 'OPTIONS',
+    headers: basePing,
+    body: '',
+    fallback: 'preflight',
+  },
   {
     name: 'if-none-match-star-on-400',
     endpoint: 'ping',
     headers: { host: HOST, 'if-none-match': '*' },
     body: '',
+    fallback: 'conditional-request',
   },
   {
     name: 'if-none-match-etag-on-400',
     endpoint: 'ping',
     headers: { host: HOST, 'if-none-match': 'W/"x", "weftv9g98bf"' },
     body: '',
+    fallback: 'conditional-request',
   },
   {
     name: 'if-none-match-no-cache',
     endpoint: 'ping',
     headers: { host: HOST, 'if-none-match': '*', 'cache-control': 'max-age=0, no-cache' },
     body: '',
+    fallback: 'conditional-request',
   },
   {
     name: 'if-modified-since-on-400',
@@ -575,6 +586,7 @@ const fixtures: Fixture[] = [
       'if-none-match': '*',
     },
     body: '',
+    fallback: 'conditional-request',
   },
   { name: 'get-method', endpoint: 'ping', method: 'GET', headers: basePing, body: '' },
   {
@@ -910,6 +922,7 @@ const fixtures: Fixture[] = [
     endpoint: 'pulse',
     headers: { ...basePulse, 'content-type': 'application/x-www-form-urlencoded' },
     body: 'type=ImageView&entityType=Image&entityId=1',
+    fallback: 'form-body',
   },
   { name: 'array-body', endpoint: 'pulse', headers: basePulse, body: '[1,2]' },
   {
