@@ -41,10 +41,11 @@ vi.mock('~/server/clickhouse/client', () => ({
     action = mockAction;
   },
 }));
-// The Tracker lives in ./tracker; serve it from the client mock above, as before.
-vi.mock('~/server/clickhouse/tracker', async () => {
+// The Tracker lives in ./tracker; serve it from the client mock above, as before. The rest of
+// ./tracker stays real: this file reads the real `ActionType` from it.
+vi.mock('~/server/clickhouse/tracker', async (importOriginal) => {
   const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
-  return { Tracker: client.Tracker };
+  return { ...(await importOriginal<Record<string, unknown>>()), Tracker: client.Tracker };
 });
 
 // Imported AFTER the mock is declared (vi.mock is hoisted, so this is the mocked Tracker).

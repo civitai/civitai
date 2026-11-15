@@ -54,11 +54,8 @@ vi.mock('~/server/services/text-scan/actions/model-poi-minor', async (importOrig
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
-// The Tracker lives in ./tracker; serve it from the client mock above, as before.
-vi.mock('~/server/clickhouse/tracker', async () => {
-  const client = (await import('~/server/clickhouse/client')) as Record<string, unknown>;
-  return { Tracker: client.Tracker };
-});
+// ./tracker is NOT mocked here: the text-scan actions this file drives (model-nsfw, model-poi-minor)
+// always imported the real Tracker from it and call its methods, and the class stub above has none.
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
 vi.mock('~/server/metrics', () => ({ modelMetrics: {} }));
 vi.mock('~/server/redis/caches', () => ({
