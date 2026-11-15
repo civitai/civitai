@@ -1,6 +1,7 @@
 import type { SessionUser } from '~/types/session';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
+import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { Flags } from '~/shared/utils/flags';
 import { getSponsoredModel } from '~/server/services/promotion.service';
@@ -2475,6 +2476,7 @@ export const updateGallerySettingsHandler = async ({
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
       // Not awaited: finding the collections can be slow, and it never throws.
       void queueModelCollectionsReindex([id]);
+      void queueModelArticlesReindex(id);
       await purgeHeldShowcase(id);
     }
 
