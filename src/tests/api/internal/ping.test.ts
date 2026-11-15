@@ -41,6 +41,9 @@ vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     pageView = mockPageView;
   },
+  // The handler hands this to the beacon-go shadow sampler, which is off here (no
+  // BEACON_GO_SHADOW_URL), so it is never called.
+  trackerSends: () => true,
 }));
 
 // getMatchingPathname maps the request path to a page id; a match dispatches the
