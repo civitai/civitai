@@ -5370,7 +5370,13 @@ export const blocksRouter = router({
       // carries no text field and its `images` are posture-gated, so a text step
       // contributes nothing — not even a url), not this sentence.
       const snapshot = await attachModeratedStepTextOutputs(
-        snapshotFromWorkflow(workflow, blockOutputCeilingFromClaims(claims)),
+        snapshotFromWorkflow(
+          workflow,
+          blockOutputCeilingFromClaims({
+            maxBrowsingLevel: claims.maxBrowsingLevel,
+            viewerBrowsingLevel: claims.maxBrowsingLevel,
+          })
+        ),
         workflow,
         {
           userId,
