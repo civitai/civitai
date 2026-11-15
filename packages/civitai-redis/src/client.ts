@@ -3090,8 +3090,6 @@ export const REDIS_SYS_KEYS = {
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
-    // Per judge: `winner>loser` for each vote, so pairs implied by their own votes can be skipped.
-    VOTE_OUTCOMES: 'crucible:vote-outcomes',
     // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
     ANCHOR_VOTES: 'crucible:anchor-votes',
     SERVED_PAIR: 'crucible:served-pair',
@@ -3541,6 +3539,12 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+    /*
+      Use: a judge's own votes, so pairs those votes already decide by transitivity are not served.
+      Structure: set of `winner>loser`, key = `crucible:vote-outcomes:${crucibleId}:${userId}`,
+      TTL 30d. A cache: a lost or missing set only serves a pair the judge could have skipped.
+     */
+    VOTE_OUTCOMES: 'crucible:vote-outcomes',
   },
   BOT_CACHE: {
     /*

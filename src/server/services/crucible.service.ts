@@ -2799,14 +2799,24 @@ export const submitEntry = async ({
  */
 async function getJudgePairKeys(crucibleId: number, userId: number) {
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
-  const [voted = [], outcomeCount = 0] = await Promise.all([
+  const [voted = [], outcomes] = await Promise.all([
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
-    sysRedis.sCard(outcomesKey),
+    loadVoteOutcomes(outcomesKey).catch((error: unknown) => {
+      // A cache: without it the judge is only served pairs they could have skipped.
+      log(`Failed to read vote outcomes for crucible ${crucibleId}, user ${userId}: ${error}`);
+      return undefined;
+    }),
   ]);
-  // Past the cap the closure is skipped anyway, so the outcomes are not loaded.
-  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return { voted, decided: voted };
-  const outcomes = (await sysRedis.sMembers(outcomesKey)) ?? [];
+  if (!outcomes) return { voted, decided: voted };
   return { voted, decided: decidedPairKeys(voted, outcomes) };
+}
+
+/** The judge's outcomes, or undefined when there are none or more than the closure handles. */
+async function loadVoteOutcomes(outcomesKey: RedisKeyTemplateCache) {
+  const outcomeCount = await redis.sCard(outcomesKey);
+  // Past the cap the closure is skipped anyway, so the outcomes are not loaded.
+  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return undefined;
+  return (await redis.sMembers(outcomesKey)) ?? [];
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -3844,10 +3854,10 @@ export const submitVote = async ({
   await Promise.all([
     // A lost outcome only means this judge is served a pair they could have skipped.
     (async () => {
-      await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
-      await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
+      await redis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
+      await redis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
       // At most once per judge and crucible: concurrent votes can both read past 201 and skip it.
-      if ((await sysRedis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
+      if ((await redis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
         logToAxiom({
           type: 'info',
           name: 'crucible-closure-cap',
