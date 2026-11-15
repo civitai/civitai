@@ -41,6 +41,10 @@ beforeAll(async () => {
       'utf8'
     )
   );
+  // Recorded through the `$executeRaw` mock; its SQL is pinned in csam-text-retention.pglite.test.ts.
+  await db.pg.exec(
+    `CREATE FUNCTION post_text_sync_csam_hold(text_id INTEGER) RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql`
+  );
 });
 afterAll(async () => {
   await db.pg.close();
@@ -179,33 +183,27 @@ describe('the csam hold decision record, against the real label store', () => {
         textHash: 'h',
         meta: null,
       });
-      dbMock.dbWrite.postText.updateMany.mockReset().mockResolvedValue({ count: 1 });
+      dbMock.dbWrite.$executeRaw.mockClear();
     });
 
-    it('is released by a dismissal', async () => {
-      await decide('dismiss');
-      expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
-        where: { id: 31 },
-        data: { csamHeld: false, csamConfirmedAt: null },
-      });
-    });
+    /** The text's held state is recomputed from its holds in the decision's transaction. */
+    const syncs = () =>
+      dbMock.dbWrite.$executeRaw.mock.calls
+        .filter(([strings]) =>
+          (strings as readonly string[]).join('?').includes('post_text_sync_csam_hold')
+        )
+        .map(([, id]) => id);
 
-    it.each(['remove', 'remove_ban'] as const)(
-      'is held from readers by a %s decision, even if its scan never marked it held',
+    it.each(['dismiss', 'remove', 'remove_ban'] as const)(
+      'recomputes its held state after a %s decision',
       async (decision) => {
         await decide(decision);
-        expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
-          where: { id: 31 },
-          data: { csamHeld: true, csamConfirmedAt: expect.any(Date) },
-        });
+        expect(syncs()).toEqual([31]);
       }
     );
 
     it('stays held when removed, its content kept', async () => {
       await decide('remove');
-      expect(dbMock.dbWrite.postText.updateMany).not.toHaveBeenCalledWith(
-        expect.objectContaining({ data: { csamHeld: false } })
-      );
       expect(dbMock.dbWrite.postText.delete).not.toHaveBeenCalled();
       // The control: the removal was decided and recorded.
       expect(await labels()).toEqual([

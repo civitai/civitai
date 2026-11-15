@@ -262,6 +262,27 @@ describe('purgeConfirmedCsamText', () => {
   });
 });
 
+it('reaches a purgeable text behind more kept ones than its page budget', async () => {
+  await pg.query(`INSERT INTO "Post" ("id", "userId") VALUES (3, ${AUTHOR + 1})`);
+  await pg.query(`INSERT INTO "Appeal" ("userId", status) VALUES ($1, 'Pending')`, [AUTHOR]);
+  await confirmed({ confirmedDaysAgo: 366 });
+  await confirmed({ confirmedDaysAgo: 366, postId: 2 });
+  const other = await pg.query<{ id: number }>(
+    `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "csamConfirmedAt", "updatedAt")
+     VALUES (3, ${AUTHOR + 1}, 0, 'x', true, ${ago(366)}, now()) RETURNING id`
+  );
+  await pg.query(
+    `INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "meta", "decidedAt")
+     VALUES ('PostText', $1, 'csam', 'Confirmed', '{"reportChoice":"none"}', ${ago(366)})`,
+    [other.rows[0].id]
+  );
+
+  expect(await purgeConfirmedCsamText({ page: 1, maxPages: 1 })).toMatchObject({
+    deleted: 1,
+    skipped: { 'pending-appeal': 2 },
+  });
+});
+
 describe('the delete trigger on a confirmed "none" text', () => {
   it('drops the hold copy and snapshot when the author deletes it after the year', async () => {
     const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
@@ -317,6 +338,61 @@ describe('post_text_retention_skip', () => {
               post_text_retention_skip(1, ${AUTHOR}) AS c`
     );
     expect(rows[0]).toEqual({ a: 'unknown-owner', b: 'unknown-owner', c: null });
+  });
+});
+
+describe('post_text_sync_csam_hold', () => {
+  async function text() {
+    const { rows } = await pg.query<{ id: number }>(
+      `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "updatedAt")
+       VALUES (1, ${AUTHOR}, 0, 'x', true, now()) RETURNING id`
+    );
+    return rows[0].id;
+  }
+  const hold = (textId: number, status: string, decidedDaysAgo: number | null) =>
+    pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "decidedAt")
+       VALUES ('PostText', $1, 'csam', $2, ${
+         decidedDaysAgo === null ? 'NULL' : ago(decidedDaysAgo)
+       })`,
+      [textId, status]
+    );
+  async function synced(textId: number) {
+    await pg.query(`SELECT post_text_sync_csam_hold($1)`, [textId]);
+    const { rows } = await pg.query<{ held: boolean; days: number | null }>(
+      `SELECT "csamHeld" AS held,
+              extract(day FROM (now() AT TIME ZONE 'UTC') - "csamConfirmedAt")::int AS days
+       FROM "PostText" WHERE id = $1`,
+      [textId]
+    );
+    return rows[0];
+  }
+
+  it("keeps another hold's confirmation when one hold is dismissed", async () => {
+    const id = await text();
+    await hold(id, 'Confirmed', 400);
+    await hold(id, 'Dismissed', 0);
+    expect(await synced(id)).toEqual({ held: true, days: 400 });
+  });
+
+  it('clears a text whose only hold is dismissed', async () => {
+    const id = await text();
+    await hold(id, 'Dismissed', 0);
+    expect(await synced(id)).toEqual({ held: false, days: null });
+  });
+
+  it('stays held, unconfirmed, while another hold is pending', async () => {
+    const id = await text();
+    await hold(id, 'Pending', null);
+    await hold(id, 'Dismissed', 0);
+    expect(await synced(id)).toEqual({ held: true, days: null });
+  });
+
+  it('dates the confirmation from the earliest confirmed hold', async () => {
+    const id = await text();
+    await hold(id, 'Confirmed', 10);
+    await hold(id, 'Confirmed', 400);
+    expect(await synced(id)).toEqual({ held: true, days: 400 });
   });
 });
 

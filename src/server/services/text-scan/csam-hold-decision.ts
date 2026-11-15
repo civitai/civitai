@@ -346,17 +346,11 @@ export async function decideCsamHold(args: DecideArgs) {
         },
       });
       if (count === 0) throw throwConflictError('Hold already decided or missing.');
-      // A confirm sets the text's held flag and a dismissal clears it, so a confirmed text stays
-      // from readers even when its scan never marked it held. `csamConfirmedAt` starts the retention
-      // `post_text_held` applies to a `none` report choice.
+      // Held while any of the text's csam holds is pending or confirmed, so a confirmed text stays from
+      // readers even when its scan never marked it held. `csamConfirmedAt`, the earliest confirmation,
+      // starts the retention `post_text_held` applies to a `none` report choice.
       if (hold.entityType === 'PostText')
-        await tx.postText.updateMany({
-          where: { id: hold.entityId },
-          data:
-            status === 'Confirmed'
-              ? { csamHeld: true, csamConfirmedAt: decidedAt }
-              : { csamHeld: false, csamConfirmedAt: null },
-        });
+        await tx.$executeRaw`SELECT post_text_sync_csam_hold(${hold.entityId}::int)`;
 
       // Records nothing and returns NULL on bad input rather than raising, so a bad record never undoes the
       // decision; it lands in `label_store.record_failure`.

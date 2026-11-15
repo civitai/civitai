@@ -5255,11 +5255,11 @@ export type PostText = {
    */
   refused: Generated<boolean>;
   /**
-   * Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
+   * Set by a CSAM verdict and held for review. Cleared only when no csam hold on it is pending or confirmed, never by a scan.
    */
   csamHeld: Generated<boolean>;
   /**
-   * When a moderator confirmed its csam hold; cleared by a dismissal. A "none" report choice holds the text one year from here.
+   * The earliest confirmation among its csam holds (`post_text_sync_csam_hold`). A "none" report choice holds the text one year from here.
    */
   csamConfirmedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;

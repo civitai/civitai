@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 
 const PAGE = 200;
-/** Pages per run; anything past them waits for the next day. */
+/** Pages per run; purgeable texts past them wait for the next run. */
 const MAX_PAGES = 20;
 
 export type CsamTextRetentionSkip =
@@ -11,18 +11,8 @@ export type CsamTextRetentionSkip =
   | 'evidence-hold'
   | 'unknown-owner';
 
-type Candidate = {
-  textId: number;
-  skip: CsamTextRetentionSkip | null;
-};
-
-/**
- * The confirmed held PostText whose "none" report choice is a year old, with what keeps it
- * (`post_text_retention_skip`). `post_text_held` refuses the delete on its own grounds too.
- */
-const candidatesSql = (afterId: number, limit: number) => Prisma.sql`
-  SELECT t.id AS "textId",
-    post_text_retention_skip(t."postId", t."userId") AS "skip"
+/** Confirmed held PostText whose "none" report choice is a year old. */
+const dueSql = Prisma.sql`
   FROM "PostText" t
   WHERE t."csamHeld"
     AND t."csamConfirmedAt" <= (now() AT TIME ZONE 'UTC') - interval '1 year'
@@ -31,9 +21,23 @@ const candidatesSql = (afterId: number, limit: number) => Prisma.sql`
       WHERE h."entityType" = 'PostText' AND h."entityId" = t.id AND h.label = 'csam'
         AND h.status = 'Confirmed' AND h.meta ->> 'reportChoice' = 'none'
     )
+`;
+
+/** Due texts nothing keeps (`post_text_retention_skip`), so kept ones never use up the page budget. */
+const purgeableSql = (afterId: number, limit: number) => Prisma.sql`
+  SELECT t.id AS "textId"
+  ${dueSql}
+    AND post_text_retention_skip(t."postId", t."userId") IS NULL
     AND t.id > ${afterId}
   ORDER BY t.id
   LIMIT ${limit}
+`;
+
+const skipCountsSql = Prisma.sql`
+  SELECT s.skip, count(*)::int AS "count"
+  FROM (SELECT post_text_retention_skip(t."postId", t."userId") AS skip ${dueSql}) s
+  WHERE s.skip IS NOT NULL
+  GROUP BY s.skip
 `;
 
 export type CsamTextRetentionResult = {
@@ -56,12 +60,16 @@ export async function purgeConfirmedCsamText({
     skipped: { 'quoted-in-report': 0, 'pending-appeal': 0, 'evidence-hold': 0, 'unknown-owner': 0 },
     stillHeld: 0,
   };
+  const skips = await dbWrite.$queryRaw<{ skip: CsamTextRetentionSkip; count: number }[]>(
+    skipCountsSql
+  );
+  for (const { skip, count } of skips) result.skipped[skip] = count;
+
   let afterId = 0;
   for (let i = 0; i < maxPages; i++) {
-    const rows = await dbWrite.$queryRaw<Candidate[]>(candidatesSql(afterId, page));
-    for (const row of rows) {
-      if (row.skip) result.skipped[row.skip]++;
-      else if (await purgeOne(row)) result.deleted++;
+    const rows = await dbWrite.$queryRaw<{ textId: number }[]>(purgeableSql(afterId, page));
+    for (const { textId } of rows) {
+      if (await purgeOne(textId)) result.deleted++;
       else result.stillHeld++;
     }
     if (rows.length < page) break;
@@ -70,7 +78,7 @@ export async function purgeConfirmedCsamText({
   return result;
 }
 
-async function purgeOne({ textId }: Candidate): Promise<boolean> {
+async function purgeOne(textId: number): Promise<boolean> {
   try {
     // The delete trigger drops the hold's copy and the label-store snapshot in the same statement, or
     // raises while any hold applies.
