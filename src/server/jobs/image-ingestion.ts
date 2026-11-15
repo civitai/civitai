@@ -78,6 +78,17 @@ const INGEST_RUN_BUDGET_MS = 3.5 * 60 * 1000;
 // per-run pull is already capped by IMAGE_SCANNING_MAX_PER_RUN).
 const INGEST_SUBMIT_CONCURRENCY = 20;
 
+// The orchestrator's scan slot (48-80 concurrent, fleet-wide) refuses work when full instead of
+// queueing it, so a run that creates its workflows in one burst fills the slot and the refusals
+// come back as the next run's Error retries. Above INGEST_PACE_BURST submits, starts are spaced
+// evenly across INGEST_PACE_WINDOW_MS: in-flight scans ≈ start rate × scan time. The window ends
+// inside INGEST_RUN_BUDGET_MS, so the deadline still decides the last start.
+const INGEST_PACE_BURST = 16;
+const INGEST_PACE_WINDOW_MS = 3 * 60 * 1000;
+// Share of IMAGE_SCANNING_RETRY_MAX_PER_RUN each lane is guaranteed before the rest goes in lane
+// order.
+const INGEST_LANE_FLOOR = 25;
+
 // remove-blocked-images stops starting retracting deletes past this, so the run ends inside its
 // 30-minute lock: a second run taking the lock would double the retractions in flight. A chunk is
 // five rounds of `MAX_IN_FLIGHT_RETRACTIONS` rows, each a storage delete of up to
@@ -213,6 +224,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     )
       img.failureClass = classifyImageScanFailure({ reason: img.failureReason });
   }
+
+  // `id = ANY(...)` returns rows in no set order; queue order (oldest first) decides which rows
+  // the per-run send cap reaches, so the ones it defers lead the next run's pull.
+  const queuePosition = new Map(imageIds.map((id, i) => [id, i]));
+  images.sort((a, b) => (queuePosition.get(a.id) ?? 0) - (queuePosition.get(b.id) ?? 0));
 
   // Filter based on status and retry logic
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
@@ -466,18 +482,45 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Lanes are sent in priority order (user uploads first, error last). Each honors
   // the shared run deadline + cancellation and stops starting new submits once the
   // budget is spent, so the run always reaches the metric/return tail below.
-  const userLane = await sendImagesForScanBulk(pendingUserUploads, { deadline, ctx });
-  const backfillLane = await sendImagesForScanBulk(pendingBackfill, {
+  // Rows past the per-run send cap are not attempted: they stay queued (they are in
+  // `processedIds`, so never pruned) with scanRequestedAt and retryCount untouched.
+  const [userPick, backfillPick, rescanPick, errorPick] = allocateSendCap(
+    [pendingUserUploads, pendingBackfill, rescanImages, errorImages],
+    env.IMAGE_SCANNING_RETRY_MAX_PER_RUN
+  );
+  const sendable =
+    pendingUserUploads.length + pendingBackfill.length + rescanImages.length + errorImages.length;
+  const deferred = {
+    userPending: pendingUserUploads.length - userPick.length,
+    backfill: pendingBackfill.length - backfillPick.length,
+    rescan: rescanImages.length - rescanPick.length,
+    error: errorImages.length - errorPick.length,
+  };
+  const deferredByCap = deferred.userPending + deferred.backfill + deferred.rescan + deferred.error;
+  // One schedule across all four lanes, so the spacing holds through lane changes.
+  const pacer = createSendPacer(
+    userPick.length + backfillPick.length + rescanPick.length + errorPick.length
+  );
+
+  const userLane = await sendImagesForScanBulk(userPick, { deadline, ctx, pacer });
+  const backfillLane = await sendImagesForScanBulk(backfillPick, {
     lowPriority: true,
     deadline,
     ctx,
+    pacer,
   });
-  const rescanLane = await sendImagesForScanBulk(rescanImages, {
+  const rescanLane = await sendImagesForScanBulk(rescanPick, {
     lowPriority: true,
     deadline,
     ctx,
+    pacer,
   });
-  const errorLane = await sendImagesForScanBulk(errorImages, { lowPriority: true, deadline, ctx });
+  const errorLane = await sendImagesForScanBulk(errorPick, {
+    lowPriority: true,
+    deadline,
+    ctx,
+    pacer,
+  });
 
   const sentUserPendingIds = userLane.sent;
   const sentBackfillIds = backfillLane.sent;
@@ -495,6 +538,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
   imageIngestCronCounter.inc({ bucket: 'agedOutPending' }, agedOutPendingIds.length);
   imageIngestCronCounter.inc({ bucket: 'submitInFlight' }, submitInFlightCount);
+  imageIngestCronCounter.inc({ bucket: 'deferredByCap' }, deferredByCap);
 
   // Failed sends = images whose submit was attempted and returned/threw failure,
   // across every lane. Images not reached this run (budget/cancel) are neither sent
@@ -522,6 +566,12 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       waitingForRetry: waitingForRetryIds.size,
       staleRemoved: staleIds.length,
       failedSends,
+      sendable,
+      deferredByCap,
+      deferredUserPending: deferred.userPending,
+      deferredBackfill: deferred.backfill,
+      deferredRescan: deferred.rescan,
+      deferredError: deferred.error,
     },
     'webhooks'
   ).catch(() => null);
@@ -550,15 +600,50 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
     failedSends,
+    sendable,
+    deferredByCap,
+    deferredUserPending: deferred.userPending,
+    deferredBackfill: deferred.backfill,
+    deferredRescan: deferred.rescan,
+    deferredError: deferred.error,
   };
 });
 
+/**
+ * Splits the per-run send cap across lanes given in priority order. Each lane first gets a
+ * floor (so a large Pending or backfill backlog can't starve the Error lane every run), then
+ * the rest of the cap goes to lanes in order. Returns each lane's head: rows arrive oldest first.
+ */
+export function allocateSendCap<T>(lanes: T[][], cap: number): T[][] {
+  const floor = Math.min(INGEST_LANE_FLOOR, Math.floor(cap / lanes.length));
+  const take = lanes.map((lane) => Math.min(lane.length, floor));
+  let left = cap - take.reduce((sum, n) => sum + n, 0);
+  for (let i = 0; i < lanes.length && left > 0; i++) {
+    const extra = Math.min(lanes[i].length - take[i], left);
+    take[i] += extra;
+    left -= extra;
+  }
+  return lanes.map((lane, i) => lane.slice(0, take[i]));
+}
+
+export type SendPacer = { intervalMs: number; claimStart: () => number };
+
+/**
+ * Start times for `total` submits: all at once up to INGEST_PACE_BURST, else spaced evenly
+ * across INGEST_PACE_WINDOW_MS. Claimed in submit order, one per submit.
+ */
+export function createSendPacer(total: number, startAt = Date.now()): SendPacer {
+  const intervalMs = total > INGEST_PACE_BURST ? INGEST_PACE_WINDOW_MS / total : 0;
+  let claimed = 0;
+  return { intervalMs, claimStart: () => startAt + intervalMs * claimed++ };
+}
+
 export async function sendImagesForScanBulk(
   images: IngestImageInput[],
-  options?: { lowPriority?: boolean; deadline?: number; ctx?: JobContext }
+  options?: { lowPriority?: boolean; deadline?: number; ctx?: JobContext; pacer?: SendPacer }
 ): Promise<{ sent: number[]; failed: number[] }> {
   if (!images.length) return { sent: [], failed: [] };
-  const { lowPriority, deadline, ctx } = options ?? {};
+  const { lowPriority, deadline, ctx, pacer } = options ?? {};
 
   const sent: number[] = [];
   const failed: number[] = [];
@@ -572,6 +657,15 @@ export async function sendImagesForScanBulk(
     // neither sent nor failed — it stays queued and is retried next run.
     if (deadline && Date.now() >= deadline) return;
     if (ctx?.status === 'canceled') return;
+    if (pacer) {
+      const startAt = pacer.claimStart();
+      if (deadline && startAt >= deadline) return;
+      const wait = startAt - Date.now();
+      if (wait > 0) {
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        if (ctx?.status === 'canceled') return;
+      }
+    }
 
     let imageSuccess = false;
     try {
