@@ -50,7 +50,7 @@ type WriteMock = {
     findUnique: ReturnType<typeof vi.fn>;
   };
   // On-site delist/relist flip the backing AppBlock's status in the same tx.
-  appBlock: { updateMany: ReturnType<typeof vi.fn> };
+  appBlock: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
   appListingModerationEvent: {
     create: ReturnType<typeof vi.fn>;
     // republish reads the LATEST event on the primary inside the tx.
@@ -99,7 +99,11 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
       deleteMany: vi.fn(async () => ({ count: 1 })),
       findUnique: vi.fn(async () => null),
     },
-    appBlock: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    appBlock: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      // Restoring a block reads its slug to check the app's open review holds.
+      findUnique: vi.fn(async () => ({ blockId: 'held-app' })),
+    },
     appListingModerationEvent: {
       create: vi.fn(async (a: { data: unknown }) => a.data),
       findFirst: vi.fn(async () => null),
@@ -249,6 +253,8 @@ beforeEach(() => {
   mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
   mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
   mockWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+  mockWrite.appBlock.findUnique.mockResolvedValue({ blockId: 'held-app' });
+  mockWrite.$queryRaw.mockImplementation(async () => []);
   // Default the in-tx purge primary read to a valid offsite listing (overridden
   // per-test where the snapshot status is load-bearing).
   mockWrite.appListing.findUnique.mockResolvedValue(offsiteListing('removed'));
@@ -1822,6 +1828,43 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
     });
   });
 
+  function openHoldForRepublish() {
+    mockWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('app_publish_request_holds') ? [{ id: 12, slug: 'held-app' }] : []
+    );
+  }
+
+  it('🔴 the owner republishing an on-site app is refused, and the block stays suspended', async () => {
+    openHoldForRepublish();
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/open review hold/),
+    });
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the holds cannot be read', async () => {
+    mockWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (strings.join('?').includes('app_publish_request_holds'))
+        throw new Error('relation "app_publish_request_holds" does not exist');
+      return [];
+    });
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+
   it('🔴 ON-SITE republish FORBIDDEN when the last event is a MOD delist — no listing flip AND no block flip', async () => {
     mockWrite.appListing.findUnique.mockResolvedValueOnce(
       ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
@@ -2774,5 +2817,33 @@ describe('live restore on relist', () => {
       republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(live.restore).not.toHaveBeenCalled();
+  });
+});
+
+describe('restoring a block refuses while the app has an open review hold', () => {
+  // Every hold read answers one open hold; every other raw read answers nothing.
+  function openHold() {
+    mockWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('app_publish_request_holds') ? [{ id: 12, slug: 'held-app' }] : []
+    );
+  }
+
+  it('🔴 a moderator relist of an on-site app is refused, and the block stays suspended', async () => {
+    openHold();
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    await expect(
+      relistListing({
+        input: { appListingId: APP_ID, reason: 'appeal upheld' },
+        reviewerUserId: REVIEWER,
+      })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/open review hold/),
+    });
+    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appBlock.findUnique).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID },
+      select: { blockId: true },
+    });
   });
 });

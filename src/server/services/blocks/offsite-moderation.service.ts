@@ -34,6 +34,7 @@ import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import { readListingMediaSplit } from '~/server/services/blocks/listing-media-split.service';
+import { getOpenHoldsBySlug } from '~/server/services/blocks/publish-request-holds.service';
 import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
@@ -551,11 +552,41 @@ async function flipBackingBlockStatus(
   opts: { isOnsite: boolean; appBlockId: string | null; from: string; to: string }
 ): Promise<boolean> {
   if (!opts.isOnsite || !opts.appBlockId) return false;
+  if (opts.to === 'approved') await assertNoOpenReviewHold(tx, opts.appBlockId);
   const flip = await tx.appBlock.updateMany({
     where: { id: opts.appBlockId, status: opts.from },
     data: { status: opts.to },
   });
   return flip.count > 0;
+}
+
+/**
+ * A block suspended over an open review hold (the late-hold re-suspend) stays suspended until a
+ * moderator clears the hold, whichever path would restore it. Fails closed when the holds cannot
+ * be read, as approve does.
+ */
+async function assertNoOpenReviewHold(tx: Prisma.TransactionClient, appBlockId: string) {
+  const block = await tx.appBlock.findUnique({
+    where: { id: appBlockId },
+    select: { blockId: true },
+  });
+  if (!block) return;
+  let open: number;
+  try {
+    open = (await getOpenHoldsBySlug(tx, [block.blockId])).length;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[offsite-moderation] hold read failed; refusing to restore the block', err);
+    throw new OffsiteModerationError(
+      'FORBIDDEN',
+      "Could not read this app's review holds, so it cannot be restored. Try again, or ask an engineer to check the review-holds tables."
+    );
+  }
+  if (open)
+    throw new OffsiteModerationError(
+      'FORBIDDEN',
+      'This app has an open review hold. A moderator must clear it on the review page before the app can be restored.'
+    );
 }
 
 /**
