@@ -1230,6 +1230,39 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(mockFallbackCovers).toHaveBeenCalledWith([21, 20], 3);
   });
 
+  it("mode=mine: a cover flagged minor is not served on the subject's own collection", async () => {
+    claimsBox.claims = fakeClaims({
+      scopes: ['collections:read:self', 'collections:read:private'],
+    });
+    mockUserCollections.mockResolvedValueOnce([
+      {
+        id: 23,
+        name: 'Own minor cover',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: { ...SCANNED, minor: true, url: 'own23', type: 'image', nsfwLevel: 1 },
+      },
+      {
+        id: 24,
+        name: 'Own clean cover',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: { ...SCANNED, url: 'own24', type: 'image', nsfwLevel: 1 },
+      },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(new Map());
+    mockItemCount.mockResolvedValueOnce([]);
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const byId = Object.fromEntries((res._json() as any).items.map((i: any) => [i.id, i]));
+    expect(byId[23].coverImageUrl).toBeNull();
+    expect(byId[24].coverImageUrl).toBe('edge:own24');
+  });
+
   it('the item never carries a bare `nsfwLevel` key (that name means the COLLECTION bitmask)', async () => {
     // Invariant guard, not regression coverage — it also held before this change.
     // The collection-level `nsfwLevel` is OR-ed over items and cannot separate a

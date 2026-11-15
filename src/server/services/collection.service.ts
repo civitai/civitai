@@ -67,6 +67,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readCollectionByIdViaKysely,
@@ -694,6 +695,14 @@ export const getUserCollectionsWithPermissions = async <
             id: {
               in: collectionImageIds,
             },
+          },
+          // The blocks collections route gates covers on these (`PublicCollectionImageFields`).
+          select: {
+            ...imageSelect,
+            poi: true,
+            minor: true,
+            acceptableMinor: true,
+            tosViolation: true,
           },
         })
       : [];

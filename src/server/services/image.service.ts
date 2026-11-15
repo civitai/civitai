@@ -1688,6 +1688,17 @@ function extractSubmitErrorMessage(error: unknown): string | null {
 // grew) would terminalize every image submitted during the outage.
 const PERMANENT_SUBMIT_STATUSES = [400, 415, 422];
 
+/**
+ * 1 when a submit is going out for an Error row with no recorded `error`: its last scan went out
+ * and never called back, which counts as a failed attempt, or the retry ceiling never applies.
+ * Evaluated against the row as it was before the UPDATE that embeds it. A failed non-429 submit
+ * adds it on top of its own attempt: two attempts lost, so 2.
+ */
+const lostScanAttemptSql = () => Prisma.sql`(CASE
+  WHEN "ingestion" = 'Error'::"ImageIngestionStatus" AND NOT COALESCE("scanJobs" ? 'error', FALSE)
+  THEN 1 ELSE 0
+END)`;
+
 async function markImageScanSubmitFailure({
   dbClient,
   imageId,
@@ -1735,7 +1746,11 @@ async function markImageScanSubmitFailure({
         jsonb_set(
           COALESCE("scanJobs", '{}'),
           '{retryCount}',
-          to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + ${rateLimited ? 0 : 1})
+          to_jsonb(
+            COALESCE(("scanJobs"->>'retryCount')::int, 0) + ${
+              rateLimited ? 0 : 1
+            } + ${lostScanAttemptSql()}
+          )
         ),
         '{error}',
         -- A run of 429s keeps the moment it started, which bounds the cron's age-out exemption.
@@ -1854,7 +1869,11 @@ export const ingestImage = async ({
         -- The last failure moves to lastFailure, so the cron keeps this row's retry ceiling
         -- while the new scan is in flight; error itself is cleared, ending any 429 run.
         "scanJobs" = ${scanJobsJson}::jsonb || jsonb_strip_nulls(jsonb_build_object(
-          'retryCount', "scanJobs"->'retryCount',
+          'retryCount', CASE
+            WHEN ${lostScanAttemptSql()} = 1
+              THEN to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+            ELSE "scanJobs"->'retryCount'
+          END,
           'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
         )) || ${keepPermanentScanFailureSql()}
       WHERE id = ${id}
@@ -6999,6 +7018,7 @@ export async function updateImageAcceptableMinor({
   const image = await dbWrite.image.update({
     where: { id },
     data: { acceptableMinor },
+    select: { id: true, acceptableMinor: true },
   });
 
   // Remove it from search index if minor is true

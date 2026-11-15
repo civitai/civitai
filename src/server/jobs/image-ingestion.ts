@@ -111,10 +111,10 @@ type IngestImageRow = IngestImageInput & {
   ingestion: string;
   retryCount: number | null;
   /**
-   * Reason-derived failure class stamped by the scan webhook
-   * (`scanJobs.error.failureClass`, or `scanJobs.lastFailure` once a re-submit has cleared
-   * the error), used to pick the Error retry ceiling.
-   * Null for images that have never errored or errored before classification shipped.
+   * Reason-derived failure class stamped by the scan webhook, used to pick the Error retry
+   * ceiling: `COALESCE(scanJobs.error, scanJobs.lastFailure).failureClass`, so `error` wins and
+   * `lastFailure` (where a re-submit moves the error) is the fallback.
+   * Null for images with neither, or that errored before classification shipped.
    */
   failureClass: string | null;
   /** `scanJobs.error.reason`, to reclassify a row stamped before a reason pattern was added. */
@@ -320,8 +320,9 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Error retries use a reason-aware ceiling: transient infra churn (Siglip
   // container instability, 5xx, timeouts, expiry) keeps retrying under a higher
   // bounded cap; permanent (unscannable media) gives up almost immediately;
-  // unknown keeps the historical 9-cap. retryCount increments on every failed attempt
-  // (not on a 429), so the cap is a hard backstop against re-flooding the scanner.
+  // unknown keeps the historical 9-cap. retryCount increments on every failed attempt (not on
+  // a 429), and on each re-send of an Error row whose last scan never called back, so the cap
+  // is a hard backstop against re-flooding the scanner.
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&
@@ -431,7 +432,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     .map((img) => img.id);
   if (exhaustedRescanIds.length > 0) {
     // The flip to Error re-queues the row (the Image scan-queue trigger). Dropping lastFailure
-    // gives it the unknown cap, so an earlier episode's class does not re-open its retries.
+    // keeps an earlier episode's class from re-opening its retries: the row takes its class
+    // from `error` if it has one, else the unknown cap.
     await dbWrite.$executeRaw`
       UPDATE "Image"
       SET ingestion = 'Error'::"ImageIngestionStatus",
@@ -452,7 +454,6 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // `pendingImages` -> `processedIds`, so not pruned), so next run they are
   // re-pulled and handled as Error.
   if (agedOutPendingIds.length > 0) {
-    // As above, dropping lastFailure gives the row the unknown cap, not an earlier episode's.
     await dbWrite.$executeRaw`
       UPDATE "Image"
       SET ingestion = 'Error'::"ImageIngestionStatus",
