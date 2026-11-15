@@ -1,23 +1,21 @@
 /**
- * One watch mark set for the whole page, shared by every TurfSummaryProvider on it for the same event
- * (the `hatTurfBatchedCalls` flag). Without it each provider, one per home block or feed, keeps its
- * own set, its own 30s re-mark and its own scroll-burst spacing, so a page with several blocks sends
- * several `hatTurf.watch` calls per interval, and their scroll marks share one per-caller rate limit
- * without knowing of each other. With it the page sends the union of its on-screen ids, at most
- * MAX_IDS_PER_MARK per call, once per interval.
- *
- * Same timing rules as the per-provider watcher (TurfSummaryProvider's TurfWatcher): new ids go out
- * together after a short wait and at most once per `minGapMs`; the whole set is re-marked every
- * `refreshMs`. Two more, because a lapsed mark means pushes are missed and nothing re-reads them:
- * - a failed mark is sent once more after `retryMs` (plus up to `retryJitterMs`), never twice;
- * - when the page becomes visible again (a hidden tab's timers are throttled, so its marks may have
- *   lapsed), the whole set is re-marked at once and every subscriber hears every watched id, so
- *   each provider re-reads what has gone stale.
- * Plain timers and an injected `send`, so it is testable without React.
+ * Shared by every TurfSummaryProvider on the page for one event (hatTurfBatchedCalls), so several
+ * blocks send one mark set instead of one call each and share one scroll-burst spacing. A failed
+ * mark is retried once, and a page becoming visible re-marks everything, because a lapsed mark
+ * misses pushes that nothing re-reads.
  */
+import { backoffDelay } from '~/utils/backoff';
 
 /** The `imageIds` cap on `watchTurfImagesSchema` (MAX_TURF_IMAGES_PER_MARK on the server). */
 export const MAX_IDS_PER_MARK = 50;
+
+/**
+ * Must stay under half of TURF_WATCH_TTL_MS (turf-watch.ts), so one missed re-mark does not lapse
+ * the marks. Pinned by turf-watch-hub.test.ts.
+ */
+export const BATCHED_WATCH_REFRESH_MS = 40_000;
+export const BATCHED_WATCH_RETRY_MS = 5_000;
+export const BATCHED_WATCH_RETRY_JITTER_MS = 1_000;
 
 export type TurfWatchHubOptions = {
   event: string;
@@ -33,7 +31,6 @@ export type TurfWatchHubOptions = {
   retryMs: number;
   retryJitterMs: number;
   now?: () => number;
-  random?: () => number;
   /** Calls back when the page becomes visible; returns the way to stop. Defaults to `document`. */
   onVisible?: (callback: () => void) => () => void;
 };
@@ -64,12 +61,11 @@ export class TurfWatchHub {
   constructor({
     event,
     now = () => Date.now(),
-    random = Math.random,
     onVisible = documentVisible,
     ...rest
   }: TurfWatchHubOptions) {
     this.event = event;
-    this.options = { ...rest, now, random };
+    this.options = { ...rest, now };
     this.refreshTimer = setInterval(() => this.markAll(), rest.refreshMs);
     this.stopVisible = onVisible(() => this.resume());
   }
@@ -145,11 +141,11 @@ export class TurfWatchHub {
     if (!sent) return;
     sent.catch(() => {
       if (!retry || this.disposed) return;
-      const { retryMs, retryJitterMs, random } = this.options;
+      const { retryMs, retryJitterMs } = this.options;
       const timer = setTimeout(() => {
         this.retryTimers.delete(timer);
         if (!this.disposed) this.sendOne(input, false);
-      }, retryMs + random() * retryJitterMs);
+      }, backoffDelay(0, { baseMs: retryMs, jitterMs: retryJitterMs }));
       this.retryTimers.add(timer);
     });
   }

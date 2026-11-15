@@ -64,9 +64,7 @@ export const hatTurfRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input }) => getTurfStickersForImages(input.event, input.imageIds, input.perImage)),
   // Marks images as on screen so their count changes are pushed (turf-watch.ts). Called on view and
-  // every 30s while in view (under `hatTurfBatchedCalls`: every 40s, one call for the whole
-  // page's on-screen ids); no Postgres on this path. The 50-id input cap and the rate limit apply
-  // per call either way.
+  // re-marked while in view; no Postgres on this path. The input cap and rate limit apply per call.
   watch: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(watchTurfImagesSchema)

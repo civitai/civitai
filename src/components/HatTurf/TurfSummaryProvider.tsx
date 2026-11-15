@@ -13,7 +13,12 @@ import type { HatTurfFeedArm } from '~/components/HatTurf/useHatTurfFeed';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { applyTurfPush, readTurfPush } from '~/components/HatTurf/hat-turf.utils';
 import type { HatSticker, TurfSummary } from '~/components/HatTurf/hat-turf.utils';
-import { retainTurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
+import {
+  BATCHED_WATCH_REFRESH_MS,
+  BATCHED_WATCH_RETRY_JITTER_MS,
+  BATCHED_WATCH_RETRY_MS,
+  retainTurfWatchHub,
+} from '~/components/HatTurf/turf-watch-hub';
 import type { TurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -27,15 +32,6 @@ const SUMMARY_CHUNK = 100;
 /** At most 50 images per mark call. Re-marked every 30s; must stay under TURF_WATCH_TTL_MS. */
 const WATCH_BATCH = 50;
 const WATCH_REFRESH_MS = 30_000;
-// With `hatTurfBatchedCalls`: the page's one shared mark set (turf-watch-hub.ts) re-marks every 40s.
-// The re-mark only keeps the marks alive (TURF_WATCH_TTL_MS, 90s, on the server); a count change on
-// a marked image is pushed the moment it happens. A lapsed mark misses pushes, so the interval
-// leaves room for one miss (two intervals, 80s, still under 90s), and a hidden tab's throttled
-// timers (woken about once a minute) still re-mark every 60s or so. The hub also retries a failed
-// mark once, and re-marks and catches up everything when the page becomes visible again.
-export const BATCHED_WATCH_REFRESH_MS = 40_000;
-export const BATCHED_WATCH_RETRY_MS = 5_000;
-export const BATCHED_WATCH_RETRY_JITTER_MS = 1_000;
 // Cards mount a few at a time while scrolling; their marks go out together.
 const WATCH_COALESCE_MS = 250;
 // Newly mounted cards wait at least this long after a mark for the next, so a scroll stays under
@@ -491,7 +487,6 @@ function TurfHubWatcher({
   useEffect(() => {
     const held = retainTurfWatchHub({
       event,
-      // The hub retries a rejected mark once, then drops it.
       send: (input) => utils.client.hatTurf.watch.mutate(input),
       refreshMs: BATCHED_WATCH_REFRESH_MS,
       coalesceMs: WATCH_COALESCE_MS,

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { TurfWatchHub, retainTurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
+import {
+  BATCHED_WATCH_REFRESH_MS,
+  TurfWatchHub,
+  retainTurfWatchHub,
+} from '~/components/HatTurf/turf-watch-hub';
+import { TURF_WATCH_TTL_MS } from '~/server/events/turf/turf-watch';
 
 type Sent = { event: string; imageIds: number[] };
 
@@ -11,13 +16,25 @@ const options = (sent: Sent[], event = 'birthday2026') => ({
   minGapMs: 2_000,
   retryMs: 5_000,
   retryJitterMs: 1_000,
-  random: () => 0.5,
   // No page here: visibility is driven by hand where a test needs it.
   onVisible: () => () => undefined,
 });
 
-beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
+beforeEach(() => {
+  vi.useFakeTimers();
+  // Fixed jitter: backoffDelay reads Math.random.
+  vi.spyOn(Math, 'random').mockReturnValue(0.5);
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe('BATCHED_WATCH_REFRESH_MS', () => {
+  test('two re-mark intervals fit inside one server mark lifetime, so one miss never lapses', () => {
+    expect(BATCHED_WATCH_REFRESH_MS * 2).toBeLessThan(TURF_WATCH_TTL_MS);
+  });
+});
 
 describe('TurfWatchHub', () => {
   test('two providers on one page: one mark with the union of their on-screen ids', () => {

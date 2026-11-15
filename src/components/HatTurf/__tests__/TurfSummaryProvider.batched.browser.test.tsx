@@ -73,6 +73,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 
 import { cleanup } from 'vitest-browser-react';
 import { TurfSummaryProvider, useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
+import { retainTurfWatchHub } from '~/components/HatTurf/turf-watch-hub';
 import { renderWithProviders } from '../../../../test/component-setup';
 
 const probes: Record<string, ReturnType<typeof useTurfFeed>> = {};
@@ -100,6 +101,38 @@ const watchCards = () => [
   probes.b!.watch(2),
   probes.b!.watch(3),
 ];
+
+/**
+ * The page's hub for `event` right now, read through the registry and held only for this call. It is
+ * the same object while a provider still holds that hub, and a new one once the last holder has
+ * released (and so disposed) it.
+ */
+const currentHub = (event: string) => {
+  const held = retainTurfWatchHub({
+    event,
+    send: () => undefined,
+    refreshMs: 40_000,
+    coalesceMs: 250,
+    minGapMs: 2_000,
+    retryMs: 5_000,
+    retryJitterMs: 1_000,
+    onVisible: () => () => undefined,
+  });
+  held.release();
+  return held.hub;
+};
+
+const setVisibility = async (state: 'visible' | 'hidden') => {
+  // Pinned, so the test does not depend on whether the test browser's page counts as visible.
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+  try {
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(100);
+  } finally {
+    // Back to the prototype's getter.
+    delete (document as { visibilityState?: unknown }).visibilityState;
+  }
+};
 
 const calls = (fn: { mock: { calls: unknown[][] } }) =>
   fn.mock.calls.map(([input]) => (input as { imageIds: number[] }).imageIds);
@@ -189,15 +222,20 @@ describe('TurfSummaryProvider watch marks', () => {
     stopB2();
   });
 
-  test('flag on: unmounting the page stops the marks', async () => {
+  test('flag on: unmounting the page disposes its hub, with cards still watching', async () => {
     h.flags = { hatTurfBatchedCalls: true };
     await mountPage();
+    // Never stopped: the cards are still on screen when the page goes.
     watchCards();
     await vi.advanceTimersByTimeAsync(1_000);
+    const before = currentHub('birthday2026');
+    expect(before.watched()).toEqual([1, 2, 3]);
     cleanup();
     h.hubMark.mockClear();
     await vi.advanceTimersByTimeAsync(180_000);
     expect(h.hubMark).not.toHaveBeenCalled();
+    // A leaked hub would still be registered (and returned here); a disposed one is gone.
+    expect(currentHub('birthday2026')).not.toBe(before);
   });
 
   test('flag on: ids marked again go to every provider, and each reads only its own', async () => {
@@ -232,22 +270,25 @@ describe('TurfSummaryProvider watch marks', () => {
     const stops = [probes.a!.watch(1), probes.a!.watch(2), probes.b!.watch(3)];
     await vi.advanceTimersByTimeAsync(1_000);
     h.hubMark.mockClear();
-    // Pinned, so the test does not depend on whether the test browser's page counts as visible.
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      get: () => 'visible',
-    });
-    try {
-      document.dispatchEvent(new Event('visibilitychange'));
-      await vi.advanceTimersByTimeAsync(100);
-    } finally {
-      // Back to the prototype's getter.
-      delete (document as { visibilityState?: unknown }).visibilityState;
-    }
+    await setVisibility('visible');
     expect(h.hubMark.mock.calls.map(([input]) => input)).toEqual([
       { event: 'birthday2026', imageIds: [1, 2, 3] },
     ]);
     expect(sortedCalls(h.fetchSummaries)).toEqual([[1, 2], [3]]);
+    stops.forEach((stop) => stop());
+  });
+
+  // The negative control for the case above: going hidden is a visibilitychange too.
+  test('flag on: page going hidden re-marks nothing and reads nothing', async () => {
+    h.flags = { hatTurfBatchedCalls: true };
+    await mountPage([1, 2], [3]);
+    const stops = [probes.a!.watch(1), probes.a!.watch(2), probes.b!.watch(3)];
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.hubMark.mockClear();
+    await setVisibility('hidden');
+    expect(h.hubMark).not.toHaveBeenCalled();
+    expect(h.fetchSummaries).not.toHaveBeenCalled();
+    expect(h.fetchStickers).not.toHaveBeenCalled();
     stops.forEach((stop) => stop());
   });
 
@@ -281,11 +322,13 @@ describe('TurfSummaryProvider watch marks', () => {
       </TurfSummaryProvider>
     );
     const screen = await renderWithProviders(tree('event-one'));
+    // Never stopped before the change: the cards stay on screen across it.
     const stops = [probes.a!.watch(1), probes.a!.watch(2)];
     await vi.advanceTimersByTimeAsync(1_000);
     expect(h.hubMark.mock.calls.map(([input]) => input)).toEqual([
       { event: 'event-one', imageIds: [1, 2] },
     ]);
+    const oldHub = currentHub('event-one');
     await screen.rerender(tree('event-two'));
     await vi.advanceTimersByTimeAsync(1_000);
     expect(h.hubMark.mock.calls.map(([input]) => input)).toEqual([
@@ -298,6 +341,9 @@ describe('TurfSummaryProvider watch marks', () => {
     expect(h.hubMark.mock.calls.map(([input]) => input)).toEqual([
       { event: 'event-two', imageIds: [1, 2] },
     ]);
+    // Disposed, not leaked: the registry no longer hands out the old event's hub.
+    expect(currentHub('event-one')).not.toBe(oldHub);
+    expect(currentHub('event-two').watched()).toEqual([1, 2]);
     stops.forEach((stop) => stop());
   });
 });
