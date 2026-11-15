@@ -1555,7 +1555,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          sparse-checkout: scripts/ci/test-selection.mjs
+          sparse-checkout: |
+            scripts/ci/test-selection.mjs
+            .nvmrc
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
