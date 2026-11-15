@@ -54,6 +54,7 @@
           name: i.name,
           caption: i.caption,
           previewWorkflowId: i.workflowId,
+          repeats: i.repeats,
         }))
       );
       open = false;

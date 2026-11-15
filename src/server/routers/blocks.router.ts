@@ -3,6 +3,7 @@ import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
 import * as z from 'zod';
+import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
   APP_STORAGE_COLLECTION_NAME_RE,
@@ -6518,7 +6519,7 @@ export const blocksRouter = router({
           userId,
           appId: claims.appId,
           appBlockId: claims.appBlockId,
-          browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
+          browsingLevel: resolveViewerBrowsingLevel(claims),
           outputCeiling: blockOutputCeilingFromClaims(claims),
         },
         sources: input.sources,
@@ -6667,7 +6668,7 @@ export const blocksRouter = router({
         userId,
         appId: claims.appId,
         appBlockId: claims.appBlockId,
-        browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
+        browsingLevel: resolveViewerBrowsingLevel(claims),
         outputCeiling: blockOutputCeilingFromClaims(claims),
       };
 
@@ -7141,6 +7142,35 @@ export const blocksRouter = router({
         '~/server/services/blocks/block-gated-images-read.service'
       );
       return resolveGatedImagesForBlockClaims({ claims, imageIds: input.imageIds });
+    }),
+
+  /**
+   * `GET_WORKFLOW_MEDIA`: stored workflow media refs → viewer-bound media URLs,
+   * judged for this token's viewer. Body shared with the REST twin
+   * (`/api/v1/blocks/workflow-media`); token check and rate limit stay here for
+   * the bridge guards, as for `getImagesByIds`.
+   */
+  getWorkflowMedia: publicProcedure
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        refs: z.string().min(1).max(2048).array().min(1).max(WORKFLOW_MEDIA_MAX_REFS),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`, as `getImagesByIds`.
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { resolveWorkflowMediaForBlockClaims } = await import(
+        '~/server/services/blocks/block-media-serving'
+      );
+      return resolveWorkflowMediaForBlockClaims({ claims, refs: input.refs });
     }),
 
   /**
