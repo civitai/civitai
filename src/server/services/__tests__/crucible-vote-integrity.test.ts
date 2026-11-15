@@ -44,12 +44,32 @@ const JUDGE_ENTRY_VOTES_KEY = `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:1:${
 const vote = (winnerEntryId = 10, loserEntryId = 20) =>
   submitVote({ crucibleId: 1, winnerEntryId, loserEntryId, userId: JUDGE });
 
-/** In-memory stand-in for the sysRedis commands the vote path uses, with Redis semantics. */
+/** Set commands with Redis semantics over `sets`, installed on one client's mock. */
+const fakeSetCommands = (client: typeof redisMock.sysRedis, sets: Map<string, Set<string>>) => {
+  client.sAdd.mockImplementation(async (key: string, value: string) => {
+    const set = sets.get(key) ?? new Set<string>();
+    sets.set(key, set);
+    if (set.has(value)) return 0;
+    set.add(value);
+    return 1;
+  });
+  client.sRem.mockImplementation(async (key: string, value: string) =>
+    sets.get(key)?.delete(value) ? 1 : 0
+  );
+  client.sMembers.mockImplementation(async (key: string) => [...(sets.get(key) ?? [])]);
+  client.sCard.mockImplementation(async (key: string) => sets.get(key)?.size ?? 0);
+};
+
+/**
+ * In-memory stand-in for the Redis commands the vote path uses, with Redis semantics. The cache
+ * cluster (`redis`) gets its own sets, so a key written to one client is never read from the other.
+ */
 const useFakeRedis = () => {
   const strings = new Map<string, string>();
   const sets = new Map<string, Set<string>>();
   const hashes = new Map<string, Map<string, number>>();
   const { sysRedis } = redisMock;
+  fakeSetCommands(redisMock.redis, new Map<string, Set<string>>());
   sysRedis.set.mockImplementation(async (key: string, value: string) => {
     sets.delete(key);
     strings.set(key, value);
@@ -76,18 +96,7 @@ const useFakeRedis = () => {
       return 1;
     }
   );
-  sysRedis.sAdd.mockImplementation(async (key: string, value: string) => {
-    const set = sets.get(key) ?? new Set<string>();
-    sets.set(key, set);
-    if (set.has(value)) return 0;
-    set.add(value);
-    return 1;
-  });
-  sysRedis.sRem.mockImplementation(async (key: string, value: string) =>
-    sets.get(key)?.delete(value) ? 1 : 0
-  );
-  sysRedis.sMembers.mockImplementation(async (key: string) => [...(sets.get(key) ?? [])]);
-  sysRedis.sCard.mockImplementation(async (key: string) => sets.get(key)?.size ?? 0);
+  fakeSetCommands(sysRedis, sets);
   sysRedis.hIncrBy.mockImplementation(async (key: string, field: string, by: number) => {
     const hash = hashes.get(key) ?? new Map<string, number>();
     hashes.set(key, hash);
@@ -582,8 +591,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     expect([['10', '30'].join(), ['20', '40'].join()]).toContain(String(await serve()));
   });
 
-  const outcomes = () =>
-    redisMock.sysRedis.sMembers(`${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:1:${JUDGE}`);
+  const outcomes = () => redisMock.redis.sMembers(getVoteOutcomesKey(1, JUDGE));
 
   it('records no outcome for a vote that was refused or failed', async () => {
     withEntries(10, 20, 30);
@@ -601,26 +609,60 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
 
   it('still accepts a vote whose outcome could not be stored', async () => {
     withEntries(10, 20, 30);
-    const sAdd = redisMock.sysRedis.sAdd.getMockImplementation()!;
-    redisMock.sysRedis.sAdd.mockImplementation(async (key: string, value: string) => {
-      if (key.startsWith(REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES)) throw new Error('redis down');
-      return sAdd(key, value);
-    });
+    redisMock.redis.sAdd.mockRejectedValue(new Error('redis down'));
 
     await expect(judge(10, 20)).resolves.toBeUndefined();
     expect(processVote).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the outcomes on the cache cluster, never on sysRedis', async () => {
+    withEntries(10, 20, 30);
+    await judge(10, 20);
+
+    expect(await outcomes(), 'outcomes on the cache cluster').toEqual(['10>20']);
+    const { sysRedis } = redisMock;
+    const sysOutcomeCalls = Object.entries({
+      sAdd: sysRedis.sAdd,
+      sCard: sysRedis.sCard,
+      sMembers: sysRedis.sMembers,
+      expire: sysRedis.expire,
+    }).flatMap(([command, fn]) =>
+      fn.mock.calls.filter(([key]) => key === getVoteOutcomesKey(1, JUDGE)).map(() => command)
+    );
+    expect(sysOutcomeCalls, 'sysRedis commands on the outcomes key').toEqual([]);
+  });
+
+  it('skips a pair from outcomes read off the cache cluster', async () => {
+    withEntries(10, 20, 30);
+    // Voted 10-20 and 20-30, with only their outcomes on the cache cluster, as after a deploy that
+    // moved the key.
+    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
+    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
+    await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '10>20');
+    await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '20>30');
+
+    expect(await serve(), 'pair served after A>B, B>C').toBeNull();
+  });
+
+  it('still serves pairs when the outcomes cannot be read', async () => {
+    withEntries(10, 20, 30);
+    await judge(10, 20);
+    await judge(20, 30);
+    redisMock.redis.sCard.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.sMembers.mockRejectedValue(new Error('redis down'));
+
+    // Without the outcomes nothing is decided, so the one unvoted pair is served again.
+    expect(await serve(), 'pair served without outcomes').toEqual([10, 30]);
+    expect(await getJudgingProgress({ crucibleId: 1, userId: JUDGE })).toMatchObject({
+      remainingPairs: 1,
+      judgedPairs: 2,
+    });
+  });
+
   it('decides only from this judge’s votes, never another judge’s', async () => {
     withEntries(10, 20, 30);
-    await redisMock.sysRedis.sAdd(
-      `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:1:${JUDGE + 1}`,
-      '10>20'
-    );
-    await redisMock.sysRedis.sAdd(
-      `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:1:${JUDGE + 1}`,
-      '20>30'
-    );
+    await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE + 1), '10>20');
+    await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE + 1), '20>30');
     await judge(10, 20);
 
     expect(await serve(), 'next pair for this judge').not.toBeNull();
@@ -679,7 +721,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     withEntries(10, 20, 30);
     const outcomesKey = getVoteOutcomesKey(1, JUDGE);
     for (let i = 0; i < MAX_CLOSURE_VOTES; i++)
-      await redisMock.sysRedis.sAdd(outcomesKey, `${1000 + i}>${2000 + i}`);
+      await redisMock.redis.sAdd(outcomesKey, `${1000 + i}>${2000 + i}`);
     await judge(10, 20); // the 201st outcome
     await judge(10, 30);
     expect(processVote).toHaveBeenCalledTimes(2);
@@ -688,9 +730,9 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
       ([entry]) => (entry as { name?: string }).name === 'crucible-closure-cap'
     );
     expect(capLogs, 'closure-cap logs').toHaveLength(1);
-    redisMock.sysRedis.sMembers.mockClear();
+    redisMock.redis.sMembers.mockClear();
     await serve();
-    const outcomeReads = redisMock.sysRedis.sMembers.mock.calls.filter(
+    const outcomeReads = redisMock.redis.sMembers.mock.calls.filter(
       ([key]) => key === outcomesKey
     );
     expect(outcomeReads, 'outcome set reads past the cap').toHaveLength(0);
