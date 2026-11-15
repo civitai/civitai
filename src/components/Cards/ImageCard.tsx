@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ImageBuzzTip, Reactions } from '~/components/Reaction/Reactions';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
@@ -115,13 +116,7 @@ function ImageCardActionRow({ data }: { data: ImagesInfiniteModel }) {
           entityType="image"
           reactions={data.reactions}
           metricsUnknown={data.stats?.statsUnknown}
-          metrics={{
-            likeCount: data.stats?.likeCountAllTime,
-            dislikeCount: data.stats?.dislikeCountAllTime,
-            heartCount: data.stats?.heartCountAllTime,
-            laughCount: data.stats?.laughCountAllTime,
-            cryCount: data.stats?.cryCountAllTime,
-          }}
+          metrics={imageStatsToReactionMetrics(data.stats)}
           targetUserId={data.user.id}
           abbreviate
           disableBuzzTip

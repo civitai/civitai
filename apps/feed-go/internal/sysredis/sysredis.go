@@ -109,7 +109,7 @@ func sentinelAddrs(raw string) ([]string, error) {
 		out = append(out, net.JoinHostPort(host, port))
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("REDIS_SYS_SENTINELS is set but names no sentinel")
+		return nil, errors.New("REDIS_SYS_SENTINELS is set but names no sentinel")
 	}
 	return out, nil
 }

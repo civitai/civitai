@@ -32,7 +32,7 @@ const { membershipCodeStatus } = await import('$lib/membership-code');
 const compile = async () => {
   captured.length = 0;
   capturedParams.length = 0;
-  await listSupportMembershipCodes(8675309);
+  await listSupportMembershipCodes(990100034);
   expect(captured).toHaveLength(1);
   return { sql: captured[0], params: capturedParams[0] };
 };
@@ -43,7 +43,7 @@ describe('listSupportMembershipCodes SQL', () => {
     expect(sql).toContain('from "RedeemableCode"');
     const user = /"userId" = \$(\d+)/.exec(sql);
     expect(user).not.toBeNull();
-    expect(params[Number(user![1]) - 1]).toBe(8675309);
+    expect(params[Number(user![1]) - 1]).toBe(990100034);
   });
 
   it('only support codes', async () => {

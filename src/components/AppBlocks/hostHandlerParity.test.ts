@@ -134,6 +134,7 @@ function sendsOf(
 const NACK_ONLY_ERRORS: Partial<Record<InventoryType, string>> = {
   OPEN_BUZZ_PURCHASE: 'a refused or dismissed purchase replies { purchased: false }',
   OPEN_CHECKPOINT_PICKER: 'a dismiss replies a bare { requestId }',
+  REQUEST_DAILY_LIMIT_RAISE: 'a refused, unavailable or dismissed raise replies { raised: false }',
 };
 
 type ReplyPin = {
@@ -327,7 +328,11 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       //     NACK_ONLY_ERRORS. Those get no error reply except the dispatcher's NACK, which the
       //     sweep above pins.
       const unforwarded = requestTypes.filter((t) => !forwarded.has(t)).sort();
-      expect(unforwarded).toHaveLength(21);
+      // 22: REQUEST_DAILY_LIMIT_RAISE and OPEN_MEDIA_UPLOAD_BATCH each joined the 20; the batch's
+      // replies are pinned by PageBlockHostMediaUploadBatch.browser.test.tsx.
+      // 23: PERSIST_GENERATION_SOURCE, pinned by PageBlockHostGenerationSource.browser.test.tsx.
+      // 24: GET_WORKFLOW_MEDIA, pinned by PageBlockHostWorkflowMedia.browser.test.tsx.
+      expect(unforwarded).toHaveLength(24);
       const pins = pinsFromTestSources();
       expect(pins.length).toBeGreaterThanOrEqual(30);
       expect([...new Set(pins.map((p) => p.type))].sort()).toEqual(unforwarded);

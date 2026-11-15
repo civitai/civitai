@@ -31,6 +31,20 @@ export function useStorylinesEnabled() {
   return !!useFeatureFlags().storylines;
 }
 
+/**
+ * The storyline a post is a chapter of, if any: one cache entry per post and browsing level,
+ * shared by the entry chip, the post page's chapter card and image detail's text slides.
+ */
+export function useStorylineForPost(postId: number | null | undefined, { enabled = true } = {}) {
+  const storylinesOn = useStorylinesEnabled();
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const { data } = trpc.storyline.getForPosts.useQuery(
+    { postIds: postId ? [postId] : [], browsingLevel },
+    { enabled: enabled && storylinesOn && !!postId, staleTime: 60_000 }
+  );
+  return postId ? data?.[postId] : undefined;
+}
+
 export function useHiddenUserIds() {
   const hiddenUsers = useHiddenPreferencesData()?.hiddenUsers;
   return useMemo(() => new Set((hiddenUsers ?? []).map((u) => u.id)), [hiddenUsers]);

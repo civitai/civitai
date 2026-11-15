@@ -34,15 +34,8 @@ export const BLOCK_HIDE_READ_TIMEOUT_MS = 5_000;
 export const BLOCK_HIDE_MAX_COMMENTS = 10_000;
 export const BLOCK_HIDE_BATCH_SIZE = 1_000;
 
-/**
- * Types whose enum value a later hand-applied migration adds: casting them before it lands would
- * fail every block. No comment can exist on them until then.
- */
-export const SECTION_TYPES_AWAITING_ENUM: readonly CommentEntityType[] = ['postText'];
-
 export const blockHideCandidatesSql = `WITH owned (t, id) AS (
 ${Object.entries(SECTION_OWNERS)
-  .filter(([type]) => !SECTION_TYPES_AWAITING_ENUM.includes(type as CommentEntityType))
   .map(
     ([type, owned]) => `  SELECT '${type}'::"CommentEntityType", x.id FROM (${owned('$2')}) x (id)`
   )

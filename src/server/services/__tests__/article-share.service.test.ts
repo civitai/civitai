@@ -411,6 +411,58 @@ describe('getArticleByShareToken: body images', () => {
       })
     );
   });
+
+  it('🔴 leaves out body images only their owner and moderators may get', async () => {
+    const uuid = (n: number) =>
+      `${n}${n}${n}${n}${n}${n}${n}${n}-${n}${n}${n}${n}-4${n}${n}${n}-8${n}${n}${n}-${String(
+        n
+      ).repeat(12)}`;
+    const content =
+      [1, 2, 3, 4, 5]
+        .map(
+          (n) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid(n)}/x.jpeg">`
+        )
+        .join('') + `<edge-media url="${uuid(6)}" type="video"></edge-media>`;
+    articles({ content });
+    shareCheck({ textHash: sharedArticleTextHash({ title: `Article ${ARTICLE}`, content }) });
+    const row = (id: number, extra: Record<string, unknown>) => ({
+      image: {
+        id,
+        url: uuid(id),
+        nsfwLevel: 1,
+        userId: AUTHOR,
+        hash: 'h',
+        width: 8,
+        height: 10,
+        ingestion: 'Scanned',
+        needsReview: null,
+        tosViolation: false,
+        ...extra,
+      },
+    });
+    const rows = [
+      row(1, {}),
+      row(2, { ingestion: 'Pending' }),
+      row(3, { ingestion: 'Blocked' }),
+      row(4, { needsReview: 'csam' }),
+      row(5, { tosViolation: true }),
+    ];
+    // Only the fields the service selects come back, as from Prisma.
+    dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) => {
+      const fields = Object.keys(args.select.image.select);
+      return rows.map(({ image }) => ({
+        image: Object.fromEntries(fields.map((field) => [field, (image as any)[field]])),
+      }));
+    }) as never);
+
+    const result = await read(STRANGER);
+
+    expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1]);
+    const sent = JSON.stringify(result);
+    expect(sent).toContain(uuid(1));
+    for (const n of [2, 3, 4, 5, 6]) expect(sent).not.toContain(uuid(n));
+    expect(sent).not.toContain('csam');
+  });
 });
 
 describe('createArticleShareLink', () => {

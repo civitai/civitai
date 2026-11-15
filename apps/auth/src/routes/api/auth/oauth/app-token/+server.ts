@@ -9,7 +9,11 @@ import { hasScope, isScopeGrantable } from '$lib/server/oauth/scope';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { createAppAccessToken } from '$lib/server/oauth/token-helpers';
-import { APP_TOKEN_DEFAULT_TTL, APP_TOKEN_MAX_TTL } from '$lib/server/oauth/constants';
+import {
+  APP_TOKEN_DEFAULT_TTL,
+  APP_TOKEN_MAX_TTL,
+  SERVICE_GRANT,
+} from '$lib/server/oauth/constants';
 
 // Consent is re-checked here (not trusted from the caller) so a leaked AUTH_INTERNAL_TOKEN can't mint beyond
 // what the user granted.
@@ -43,10 +47,12 @@ export const POST: RequestHandler = async ({ request }) => {
 
   const client = await db
     .selectFrom('OauthClient')
-    .select(['allowedScopes', 'accessMode'])
+    .select(['allowedScopes', 'accessMode', 'grants'])
     .where('id', '=', clientId)
     .executeTakeFirst();
   if (!client) return bad('invalid_client', 'Unknown client');
+  // A service client acts only as itself, never for a user.
+  if (client.grants.includes(SERVICE_GRANT)) return bad('invalid_client', 'Unknown client');
   if (client.accessMode === 'disabled') {
     return bad('access_denied', 'This application is not currently available.', 403);
   }

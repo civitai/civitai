@@ -7,7 +7,6 @@ import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { sAddCappedWithExpireGe, sAddWithExpireGe } from '~/server/redis/atomic';
-import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
@@ -16,9 +15,8 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { isUsageLimitRef, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { middleware } from '~/server/trpc';
 import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
-import { acquireConcurrencySlot, type ConcurrencySlot } from '~/server/utils/concurrency-slots';
+import { type InFlightLimit, withInFlightLimit } from '~/server/utils/in-flight-limit';
 import type { RateLimit } from '~/server/utils/rate-limit-window';
-import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -199,53 +197,16 @@ export function rateLimit<TInput = any>(
   });
 }
 
-export type InFlightLimit = {
-  /** Procedures given the same bucket share one per-user limit. */
-  bucket: string;
-  limit: number;
-  /** A request still running after this stops counting against the limit. */
-  ttlMs: number;
-  /** A store slower than this is treated as failed, so a stalled Redis cannot stall the request. */
-  acquireTimeoutMs: number;
-  errorMessage: string;
-};
-const ACQUIRE_TIMED_OUT: ConcurrencySlot = { acquired: false, reason: 'unavailable' };
+export type { InFlightLimit } from '~/server/utils/in-flight-limit';
+
 /**
  * Caps a user's concurrent requests (`rateLimit` caps rate). Admits when the store fails or takes
- * longer than `acquireTimeoutMs`.
+ * longer than `acquireTimeoutMs`. The body is `withInFlightLimit`.
  */
-export function inFlightLimit({
-  bucket,
-  limit,
-  ttlMs,
-  acquireTimeoutMs,
-  errorMessage,
-}: InFlightLimit) {
+export function inFlightLimit(options: InFlightLimit) {
   return middleware(async ({ ctx, next }) => {
     if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-
-    const key = `${REDIS_KEYS.TRPC.IN_FLIGHT}:${bucket}:${ctx.user.id}`;
-    const acquiring = acquireConcurrencySlot(key, limit, ttlMs);
-    const slot = await withTimeoutFallback(acquiring, acquireTimeoutMs, ACQUIRE_TIMED_OUT, () => {
-      // A slot granted after we stopped waiting would otherwise count until its TTL.
-      void acquiring.then((late) => (late.acquired ? late.release() : undefined));
-    });
-    if (!slot.acquired) {
-      if (slot.reason === 'full')
-        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: errorMessage });
-      logSysRedisFailOpen('read-degraded', 'middleware.trpc.inFlightLimit', slot.error, {
-        bucket,
-        userId: ctx.user.id,
-      });
-      return await next();
-    }
-
-    try {
-      return await next();
-    } finally {
-      // Not awaited: the work is done, and a stalled store must not hold the response.
-      void slot.release();
-    }
+    return await withInFlightLimit({ ...options, userId: ctx.user.id }, () => next());
   });
 }
 

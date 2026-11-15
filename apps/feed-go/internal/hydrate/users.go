@@ -16,10 +16,9 @@ type BasicUser struct {
 	DeletedAt any // time.Time or nil
 }
 
-// BasicUsers is getBasicDataForUsers: cache `basic-users` (stale served), miss -> the same Prisma select.
-func (s *Sources) BasicUsers(ctx context.Context, ids []int) (map[int]BasicUser, error) {
-	ids = Unique(ids)
-	got := s.Packed.Get(ctx, KeyBasicUsers, ids, ttlDay)
+// basicUsersFrom is getBasicDataForUsers over the `basic-users` cache's answer got for (unique) ids
+// (stale entries served): the misses are read from the replica with the same Prisma select.
+func (s *Sources) basicUsersFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]BasicUser, error) {
 	out := make(map[int]BasicUser, len(ids))
 	for id, e := range got {
 		if e.NotFound {
@@ -52,21 +51,21 @@ func basicUserFrom(id int, m map[string]any) BasicUser {
 	return u
 }
 
-// UserCosmetics is getCosmeticsForUsers: the per-user equipped list joined with the cosmetic records.
-// Returns, per user id, the wire array `[{cosmeticId, data, cosmetic}]`.
-//
-// The user-cosmetics miss path (which drops withheld creator cosmetics) is not ported: a miss falls back.
-func (s *Sources) UserCosmetics(ctx context.Context, ids []int) (map[int][]any, error) {
-	ids = Unique(ids)
-	got := s.Packed.Get(ctx, KeyUserCosmetics, ids, 0)
+// equippedCosmetic is one entry of a user's cached equipped list.
+type equippedCosmetic struct {
+	cosmeticID int
+	data       any
+}
+
+// userCosmeticsFrom is getCosmeticsForUsers' first half over the user-cosmetics cache's answer got
+// for (unique) ids: each user's equipped list, and the cosmetic ids to join (unordered, possibly
+// repeated). The user-cosmetics miss path (which drops withheld creator cosmetics) is not ported: any
+// miss falls back.
+func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic, []int, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
-		return nil, fallback.Newf("user-cosmetics-miss", "%d ids", len(miss))
+		return nil, nil, fallback.Newf("user-cosmetics-miss", "%d ids", len(miss))
 	}
-	type equipped struct {
-		cosmeticID int
-		data       any
-	}
-	perUser := map[int][]equipped{}
+	perUser := map[int][]equippedCosmetic{}
 	var cosmeticIDs []int
 	for id, e := range got {
 		if e.NotFound {
@@ -79,14 +78,18 @@ func (s *Sources) UserCosmetics(ctx context.Context, ids []int) (map[int][]any, 
 				continue
 			}
 			cid, _ := Int(m["cosmeticId"])
-			perUser[id] = append(perUser[id], equipped{cosmeticID: cid, data: m["data"]})
+			perUser[id] = append(perUser[id], equippedCosmetic{cosmeticID: cid, data: m["data"]})
 			cosmeticIDs = append(cosmeticIDs, cid)
 		}
 	}
-	cosmetics, err := s.Cosmetics(ctx, cosmeticIDs)
-	if err != nil {
-		return nil, err
-	}
+	return perUser, cosmeticIDs, nil
+}
+
+// joinUserCosmetics is getCosmeticsForUsers' second half: per user id, the wire array
+// `[{cosmeticId, data, cosmetic}]`, each equipped entry with its cosmetic record, or undefined when
+// the record exists nowhere. cosmetics is cosmeticsFrom's answer for (at least) the ids
+// userCosmeticsFrom returned; a record is a pure function of its id, so extra ids change nothing.
+func joinUserCosmetics(perUser map[int][]equippedCosmetic, cosmetics map[int]superjson.Object) map[int][]any {
 	out := make(map[int][]any, len(perUser))
 	for uid, list := range perUser {
 		arr := make([]any, 0, len(list))
@@ -103,17 +106,13 @@ func (s *Sources) UserCosmetics(ctx context.Context, ids []int) (map[int][]any, 
 		}
 		out[uid] = arr
 	}
-	return out, nil
+	return out
 }
 
-// Cosmetics is cosmeticCache.fetch: `{id, name, type, data, source, flags?}` per cosmetic id.
-func (s *Sources) Cosmetics(ctx context.Context, ids []int) (map[int]superjson.Object, error) {
-	ids = Unique(ids)
+// cosmeticsFrom is cosmeticCache.fetch (`{id, name, type, data, source, flags?}` per cosmetic id) over
+// the cache's answer got for (unique) ids, stale entries served: the misses are read from the replica.
+func (s *Sources) cosmeticsFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]superjson.Object, error) {
 	out := make(map[int]superjson.Object, len(ids))
-	if len(ids) == 0 {
-		return out, nil
-	}
-	got := s.Packed.Get(ctx, KeyCosmetics, ids, ttlDay)
 	for id, e := range got {
 		if !e.NotFound {
 			out[id] = Pick(e.Value, "id", "name", "type", "data", "source", "flags")
@@ -139,11 +138,10 @@ func (s *Sources) Cosmetics(ctx context.Context, ids []int) (map[int]superjson.O
 // profilePictureColumns is the profile-pictures:v2 lookup's select list, in order.
 var profilePictureColumns = []string{"id", "name", "url", "nsfwLevel", "hash", "userId", "ingestion", "type", "width", "height", "metadata"}
 
-// ProfilePictures is getProfilePicturesForUsers. The miss path runs the cache's own lookup query:
-// the user's profile picture, only when it is servable (src/server/services/profile-picture.sql.ts).
-func (s *Sources) ProfilePictures(ctx context.Context, ids []int) (map[int]superjson.Object, error) {
-	ids = Unique(ids)
-	got := s.Packed.Get(ctx, KeyProfilePictures, ids, 0)
+// profilePicturesFrom is getProfilePicturesForUsers over the cache's answer got for (unique) ids. The
+// miss path runs the cache's own lookup query on the replica: the user's profile picture, only when it
+// is servable (src/server/services/profile-picture.sql.ts).
+func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]superjson.Object, error) {
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
@@ -183,7 +181,9 @@ func ImageReviewedSQL(alias string) string {
 	     AND ` + a + `."ingestion" NOT IN ('Blocked'::"ImageIngestionStatus", 'NotFound'::"ImageIngestionStatus")
 	     AND NOT (` + a + `."ingestion" = 'Error'::"ImageIngestionStatus"
 	              AND (COALESCE(` + a + `."metadata"->>'nsfwLevelReason','') = 'Knights Vote'
-	                   OR COALESCE(` + a + `."scanJobs"->'error'->>'failureClass','') = 'permanent'))))`
+	                   OR COALESCE(` + a + `."scanJobs"->'error'->>'failureClass','') = 'permanent'
+	                   OR COALESCE(` + a + `."scanJobs"->'lastFailure'->>'failureClass','') = 'permanent'
+	                   OR COALESCE(` + a + `."scanJobs"->'permanentFailure' = 'true'::jsonb, FALSE)))))`
 }
 
 // Unique returns ids without duplicates or zeros, keeping first-seen order.

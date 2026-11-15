@@ -53,7 +53,9 @@ export type BlockActionCode =
   | 'goods.purchase'
   // An app setting or clearing the viewer's reaction on an image (`blocks.setReactionFromApp`).
   // Written only when the reaction actually changed — a no-op set writes nothing.
-  | 'reaction.set';
+  | 'reaction.set'
+  // The VIEWER changed their own daily Buzz limit for the app (source `viewer-consent`).
+  | 'limit.change';
 
 export type BlockActionDetail = {
   /** Stable action code (see BlockActionCode). Free-form on the wire for fwd-compat. */
@@ -156,6 +158,9 @@ export type BlockActionDetail = {
   reaction?: string;
   /** For a `reaction.set`: true when the app ADDED the reaction, false when it removed it. */
   reacted?: boolean;
+  /** For a `limit.change`: the daily limit before and after; `null` means no limit. */
+  previousLimit?: number | null;
+  limit?: number | null;
 };
 
 /**
@@ -322,6 +327,13 @@ export function describeBlockAction(
       return detail.reacted === false
         ? `Removed ${what}${describeSubject(detail, names)}${failed}`
         : `Added ${what}${describeSubject(detail, names)}${failed}`;
+    }
+    case 'limit.change': {
+      const name = (v: number | null | undefined) =>
+        typeof v === 'number' ? `${v.toLocaleString('en-US')} Buzz` : 'no limit';
+      return `You changed this app's daily Buzz limit from ${name(detail.previousLimit)} to ${name(
+        detail.limit
+      )}`;
     }
     default:
       // Unknown / forward-compat action code — safe generic line.

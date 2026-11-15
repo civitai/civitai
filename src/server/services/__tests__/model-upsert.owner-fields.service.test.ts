@@ -166,7 +166,11 @@ vi.mock('~/server/services/text-scan/actions/model-nsfw', async (importOriginal)
 import { MODERATION_FLOW_META_KEYS } from '~/server/utils/minor-flag-meta';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
-import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import type { ModelMeta, ModelUpsertInput } from '~/server/schema/model.schema';
+import {
+  comFaceIntentTextHash,
+  reusableComFaceIntent,
+} from '~/server/services/model-com-face-intent.service';
 import {
   copyGallerySettingsToAllModelsByUser,
   heldGalleryLevel,
@@ -464,6 +468,121 @@ describe('comFaceRemoved', () => {
       meta: { comFaceRemoved: sent, hideBuzz: true } as ModelUpsertInput['meta'],
     });
     expect(updateData().meta).toEqual({ comFaceRemoved: MARKER, hideBuzz: true });
+  });
+});
+
+// Lifting the intent check's own lock is a ruling on the intent; lifting any other lock is a ruling on
+// the rating only, which must not clear the face but must not be undone by a re-lock either.
+describe('a moderator lifting the nsfw lock', () => {
+  const words = ['trigger'];
+  const listingHash = comFaceIntentTextHash({
+    name: storedModel.name,
+    description: storedModel.description,
+    triggerWords: words,
+  });
+  const detection = {
+    detected: true,
+    reason: 'r',
+    textHash: listingHash,
+    at: '2026-11-01T00:00:00.000Z',
+    priorSystemNsfwLock: { source: 'text-scan', at: '2026-10-01T00:00:00.000Z' },
+    laterVerdict: { source: 'xguard-text-moderation', at: '2026-11-02T00:00:00.000Z' },
+  };
+  const intentLock = { source: 'com-face-intent', at: '2026-11-01T00:00:00.000Z' };
+
+  beforeEach(() => {
+    mockDbWrite.modelVersion.findMany.mockImplementation((async (args: {
+      select?: { trainedWords?: boolean };
+    }) => (args.select?.trainedWords ? [{ trainedWords: words }] : [])) as never);
+  });
+
+  const unlock = (edit: { name?: string; description?: string } = {}) =>
+    upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: [],
+      ...edit,
+    });
+
+  it("overturns the stored detection when the lock lifted is the intent check's own", async () => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { systemNsfwLock: intentLock, comFaceIntent: detection },
+    });
+    await unlock();
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toMatchObject({ detected: true, textHash: listingHash });
+    expect(meta.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
+    expect(meta.comFaceIntent).not.toHaveProperty('priorSystemNsfwLock');
+    expect(meta.comFaceIntent).not.toHaveProperty('laterVerdict');
+    expect(reusableComFaceIntent(meta, listingHash)).toEqual({ detected: false, reason: 'r' });
+    expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
+  });
+
+  it.each([
+    ['a text-scan lock', { systemNsfwLock: { source: 'text-scan', at: 'x' } }],
+    ['a lock with no system marker', {}],
+  ])('keeps the detection and only suppresses the re-lock when lifting %s', async (_, marker) => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { ...marker, comFaceIntent: detection },
+    });
+    await unlock();
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toEqual(detection);
+    expect(reusableComFaceIntent(meta, listingHash)).toEqual({ detected: true, reason: 'r' });
+    expect(meta.comFaceIntentRelockSuppressed).toEqual({
+      textHash: listingHash,
+      at: expect.any(String),
+    });
+  });
+
+  // Text the same save writes has never been read by the check: it must be judged, not allowed.
+  it('stores no verdict for text the unlock save also edits', async () => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { systemNsfwLock: intentLock, comFaceIntent: detection },
+    });
+    const edited = { name: 'Renamed', description: 'Rewritten' };
+    await unlock(edited);
+    const editedHash = comFaceIntentTextHash({ ...edited, triggerWords: words });
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toEqual(detection);
+    expect(reusableComFaceIntent(meta, editedHash)).toBeNull();
+  });
+
+  it('keys the re-lock suppression to the text the save leaves', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    const edited = { name: 'Renamed', description: 'Rewritten' };
+    await unlock(edited);
+    expect((updateData().meta as ModelMeta).comFaceIntentRelockSuppressed?.textHash).toBe(
+      comFaceIntentTextHash({ ...edited, triggerWords: words })
+    );
+  });
+
+  it("writes nothing on an owner's save (control)", async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, lockedProperties: [] });
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toEqual(detection);
+    expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
+  });
+
+  it('writes nothing when the save keeps the lock (control)', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['nsfw'],
+    });
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toEqual(detection);
+    expect(meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
   });
 });
 

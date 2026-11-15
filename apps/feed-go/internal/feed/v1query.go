@@ -1,0 +1,406 @@
+package feed
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+)
+
+// QueryParam is one key of Next's `req.query`: its values in order (a repeated key collects them).
+type QueryParam struct {
+	Key    string
+	Values []string
+}
+
+// V1Input is the `/api/v1/images` query (imagesEndpointSchema in src/pages/api/v1/images/index.ts)
+// for the supported subset, after the schema's defaults and transforms.
+type V1Input struct {
+	Limit          int // 0-200, default 100
+	Page           int // 0 = absent (falsy)
+	PostID         int
+	ModelID        int
+	ModelVersionID int
+	UserID         int
+	Username       string // "" = absent (falsy)
+	Period         string
+	Sort           string
+	// BrowsingLevel and Nsfw are the schema's two maturity inputs; nil = undefined.
+	BrowsingLevel *int
+	Nsfw          *int
+	Cursor        string // "" = none (the REST cursor always parses as a string)
+	Type          string // "" = none
+	RequiringMeta bool
+	// Query is req.query in Object.keys order, for nextPage.
+	Query []QueryParam
+}
+
+// The schema keys. Any other key is ignored by the schema but kept in nextPage.
+var v1SchemaKeys = map[string]bool{
+	"limit": true, "page": true, "postId": true, "modelId": true, "modelVersionId": true, "imageId": true,
+	"ids": true, "username": true, "userId": true, "period": true, "sort": true, "nsfw": true,
+	"browsingLevel": true, "tags": true, "cursor": true, "type": true, "baseModels": true, "withMeta": true,
+	"requiringMeta": true, "flatMeta": true, "withTags": true,
+}
+
+var (
+	v1Periods  = map[string]bool{"Day": true, "Week": true, "Month": true, "Year": true, "AllTime": true}
+	v1Types    = map[string]bool{"image": true, "video": true, "audio": true}
+	digitsRE   = regexp.MustCompile(`^[0-9]{1,10}$`)
+	usernameRE = regexp.MustCompile(`^[A-Za-z0-9_]*$`)
+)
+
+// v1Sorts are the ImageSort values the feed service serves. Every other sort is answered with a 400 on
+// this route (the mapper's `sort:` refusal), so it is never sampled; it falls back here.
+var v1Sorts = map[string]bool{
+	SortMostReactions: true, SortMostComments: true, SortMostCollected: true, SortNewest: true, SortOldest: true,
+}
+
+// nsfwLevelMapDeprecated (src/shared/constants/browsingLevel.constants.ts).
+var nsfwDeprecatedLevels = map[string]int{
+	"None":    browsing.PG,
+	"Soft":    browsing.PG | browsing.PG13,
+	"Mature":  browsing.PG | browsing.PG13 | browsing.R,
+	"X":       browsing.PG | browsing.PG13 | browsing.R | browsing.X | browsing.XXX,
+	"Blocked": browsing.Blocked,
+}
+
+// zod's stringbool defaults, compared case-insensitively.
+var (
+	stringboolTrue  = map[string]bool{"true": true, "1": true, "yes": true, "on": true, "y": true, "enabled": true}
+	stringboolFalse = map[string]bool{"false": true, "0": true, "no": true, "off": true, "n": true, "disabled": true}
+)
+
+// ParseSearch splits a raw query string as URLSearchParams does (`&`-separated, `+` as a space,
+// percent-decoding), then collects it the way Next builds `req.query` (searchParamsToUrlQuery: a
+// repeated key becomes an array, in first-seen key order). A malformed escape or a non-UTF-8 value
+// falls back: URLSearchParams and Node's querystring disagree there.
+func ParseSearch(raw string) ([]QueryParam, error) {
+	raw = strings.TrimPrefix(raw, "?")
+	var out []QueryParam
+	index := map[string]int{}
+	for _, seg := range strings.Split(raw, "&") {
+		if seg == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(seg, "=")
+		key, err := formDecode(k)
+		if err != nil {
+			return nil, err
+		}
+		val, err := formDecode(v)
+		if err != nil {
+			return nil, err
+		}
+		if i, ok := index[key]; ok {
+			out[i].Values = append(out[i].Values, val)
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, QueryParam{Key: key, Values: []string{val}})
+	}
+	return objectKeyOrder(out), nil
+}
+
+func formDecode(s string) (string, error) {
+	s = strings.ReplaceAll(s, "+", " ")
+	if !strings.Contains(s, "%") {
+		if !utf8.ValidString(s) {
+			return "", fallback.New("v1-query-encoding")
+		}
+		return s, nil
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '%' {
+			b.WriteByte(s[i])
+			continue
+		}
+		if i+2 >= len(s) || !isHex(s[i+1]) || !isHex(s[i+2]) {
+			return "", fallback.New("v1-query-encoding")
+		}
+		n, _ := strconv.ParseUint(s[i+1:i+3], 16, 8)
+		b.WriteByte(byte(n))
+		i += 2
+	}
+	out := b.String()
+	if !utf8.ValidString(out) {
+		return "", fallback.New("v1-query-encoding")
+	}
+	return out, nil
+}
+
+func isHex(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// objectKeyOrder is Object.keys order: array-index keys ("0", "17", …, no leading zero, below 2^32-1)
+// first in ascending numeric order, then every other key in insertion order.
+func objectKeyOrder(params []QueryParam) []QueryParam {
+	var idx, rest []QueryParam
+	for _, p := range params {
+		if isArrayIndex(p.Key) {
+			idx = append(idx, p)
+		} else {
+			rest = append(rest, p)
+		}
+	}
+	if len(idx) == 0 {
+		return params
+	}
+	// Insertion sort: a handful of keys at most.
+	for i := 1; i < len(idx); i++ {
+		for j := i; j > 0; j-- {
+			a, _ := strconv.ParseUint(idx[j-1].Key, 10, 64)
+			b, _ := strconv.ParseUint(idx[j].Key, 10, 64)
+			if a <= b {
+				break
+			}
+			idx[j-1], idx[j] = idx[j], idx[j-1]
+		}
+	}
+	return append(idx, rest...)
+}
+
+func isArrayIndex(k string) bool {
+	if k == "" || len(k) > 10 || (len(k) > 1 && k[0] == '0') {
+		return false
+	}
+	n, err := strconv.ParseUint(k, 10, 64)
+	return err == nil && n < 1<<32-1
+}
+
+// ParseV1 is imagesEndpointSchema.safeParse(req.query) plus the routing runImageSearch does, for the
+// supported subset. Shapes not ported, and every input Node answers with a 400, fall back.
+func ParseV1(raw string) (*V1Input, error) {
+	params, err := ParseSearch(raw)
+	if err != nil {
+		return nil, err
+	}
+	vals := map[string]string{}
+	for _, p := range params {
+		if !v1SchemaKeys[p.Key] {
+			continue
+		}
+		if len(p.Values) > 1 {
+			// An array reaches a scalar schema member: a 400.
+			return nil, fallback.New("v1-input-duplicate")
+		}
+		vals[p.Key] = p.Values[0]
+	}
+	has := func(k string) bool { _, ok := vals[k]; return ok }
+
+	// Shapes taking a path this service does not port.
+	switch {
+	case has("ids"):
+		// `ids` forces the legacy Postgres path (runImageSearch's useLegacyMethod).
+		return nil, fallback.New("v1-ids")
+	case has("imageId"):
+		return nil, fallback.New("v1-image-id")
+	case has("tags"):
+		return nil, fallback.New("v1-tags")
+	case has("baseModels"):
+		return nil, fallback.New("v1-base-models")
+	}
+
+	in := &V1Input{Limit: 100, Period: "AllTime", Sort: SortMostReactions, Query: params}
+	num := func(k string, dst *int) error {
+		v, ok := vals[k]
+		if !ok {
+			return nil
+		}
+		n, err := v1Int(v)
+		if err != nil {
+			return err
+		}
+		*dst = n
+		return nil
+	}
+	for k, dst := range map[string]*int{
+		"limit": &in.Limit, "page": &in.Page, "postId": &in.PostID, "modelId": &in.ModelID,
+		"modelVersionId": &in.ModelVersionID, "userId": &in.UserID,
+	} {
+		if err := num(k, dst); err != nil {
+			return nil, err
+		}
+	}
+	if in.Limit > 200 {
+		return nil, fallback.New("v1-input-number")
+	}
+	if has("userId") && in.UserID == 0 {
+		// `userId=0` is not nullish, so no username is looked up for the feed, while getAllImages
+		// still resolves the username for the hydrate: not ported.
+		return nil, fallback.New("v1-user-zero")
+	}
+	if in.ModelID != 0 && in.ModelVersionID == 0 {
+		// A modelId without a version takes the legacy Postgres path.
+		return nil, fallback.New("v1-model-only")
+	}
+	if v, ok := vals["username"]; ok {
+		if !usernameRE.MatchString(v) {
+			return nil, fallback.New("v1-input-username")
+		}
+		in.Username = v
+	}
+	if v, ok := vals["period"]; ok {
+		if !v1Periods[v] {
+			return nil, fallback.New("v1-input-period")
+		}
+		in.Period = v
+	}
+	if v, ok := vals["sort"]; ok {
+		if !v1Sorts[v] {
+			return nil, fallback.New("v1-sort")
+		}
+		in.Sort = v
+	}
+	if v, ok := vals["nsfw"]; ok {
+		if lvl, ok := nsfwDeprecatedLevels[v]; ok {
+			in.Nsfw = &lvl
+		} else {
+			b, err := stringbool(v)
+			if err != nil {
+				return nil, err
+			}
+			if b {
+				lvl := browsing.NSFWLevels
+				in.Nsfw = &lvl
+			}
+		}
+	}
+	if v, ok := vals["browsingLevel"]; ok {
+		n, err := v1Int(v)
+		if err != nil {
+			return nil, err
+		}
+		in.BrowsingLevel = &n
+	}
+	in.Cursor = vals["cursor"]
+	if v, ok := vals["type"]; ok {
+		if !v1Types[v] {
+			return nil, fallback.New("v1-input-type")
+		}
+		in.Type = v
+	}
+	bools := map[string]*bool{}
+	var withMeta, withTags, flatMeta bool
+	bools["withMeta"], bools["withTags"], bools["flatMeta"], bools["requiringMeta"] = &withMeta, &withTags, &flatMeta, &in.RequiringMeta
+	for k, dst := range bools {
+		if v, ok := vals[k]; ok {
+			b, err := stringbool(v)
+			if err != nil {
+				return nil, err
+			}
+			*dst = b
+		}
+	}
+	if withMeta {
+		// The meta read is the brotli-compressed image-meta cache: not ported.
+		return nil, fallback.New("v1-with-meta")
+	}
+	if withTags {
+		return nil, fallback.New("v1-with-tags")
+	}
+	return in, nil
+}
+
+// v1Int accepts the plain decimal integers numericString turns into the same integer; anything Number()
+// reads otherwise (fractions, exponents, hex, blanks, signs) falls back.
+func v1Int(v string) (int, error) {
+	if !digitsRE.MatchString(v) {
+		return 0, fallback.New("v1-input-number")
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n > 1<<31-1 {
+		return 0, fallback.New("v1-input-number")
+	}
+	return n, nil
+}
+
+func stringbool(v string) (bool, error) {
+	l := strings.ToLower(v)
+	switch {
+	case stringboolTrue[l]:
+		return true, nil
+	case stringboolFalse[l]:
+		return false, nil
+	}
+	return false, fallback.New("v1-input-bool")
+}
+
+// AssertFeedOffsetCursor is runImageSearch's assertFeedOffsetCursor: a cursor that is neither the feed's
+// own nor an `<offset>[|<anything>]` in range is a 400 (a fallback here).
+func AssertFeedOffsetCursor(cursor string) error {
+	if cursor == "" {
+		return nil
+	}
+	if feedsvc.ParseCursor(cursor) != "" {
+		return nil
+	}
+	m := feedOffsetCursorRE.FindStringSubmatch(cursor)
+	if m == nil {
+		return fallback.New("v1-cursor")
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil || n < 0 || n > 1<<31-1 {
+		return fallback.New("v1-cursor")
+	}
+	return nil
+}
+
+var feedOffsetCursorRE = regexp.MustCompile(`^(-?\d+)(?:\|[^|]*)?$`)
+
+// StrictURIEncode is query-string's strict encoding: encodeURIComponent, then `!'()*` escaped too.
+func StrictURIEncode(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&15])
+	}
+	return b.String()
+}
+
+// QSStringify is QS.stringify (src/utils/qs.ts: query-string with skipEmptyString, skipNull, sort false)
+// for req.query-shaped values: each value `key=value`, an empty string skipped, keys in order.
+func QSStringify(params []QueryParam) string {
+	var parts []string
+	for _, p := range params {
+		for _, v := range p.Values {
+			if v == "" {
+				continue
+			}
+			parts = append(parts, StrictURIEncode(p.Key)+"="+StrictURIEncode(v))
+		}
+	}
+	return strings.Join(parts, "&")
+}
+
+// withParam sets key to value, in place when present (a JS property assignment keeps its position),
+// else appended — then re-applies Object.keys order (an array-index key moves forward).
+func withParam(params []QueryParam, key, value string) []QueryParam {
+	out := make([]QueryParam, 0, len(params)+1)
+	found := false
+	for _, p := range params {
+		if p.Key == key {
+			out = append(out, QueryParam{Key: key, Values: []string{value}})
+			found = true
+			continue
+		}
+		out = append(out, p)
+	}
+	if !found {
+		out = append(out, QueryParam{Key: key, Values: []string{value}})
+	}
+	return objectKeyOrder(out)
+}

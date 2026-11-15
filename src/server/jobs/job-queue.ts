@@ -131,6 +131,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       collectionIds: [], // Collections processed by separate job
       comicProjectIds,
       model3dIds,
+      serviceOfferingIds: relatedEntities.serviceOfferingIds,
     });
 
     const tuple: [entityIds: number[], entityType: EntityType, type: JobQueueType][] = [

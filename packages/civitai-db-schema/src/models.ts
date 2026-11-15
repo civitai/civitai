@@ -270,6 +270,8 @@ export type StorylineFollowScope = "Canon" | "Endorsed" | "Everything";
 
 export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
 
+export type ServiceOfferingIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
 
 export type ServiceBuzzType = "yellow" | "blue" | "green";
@@ -1406,6 +1408,9 @@ export interface ModActivity {
   createdAt: Date;
   host: string | null;
   credential: string | null;
+  reviewBatchId: string | null;
+  reviewTier: string | null;
+  declaredSuspect: boolean | null;
 }
 
 export interface ModThreadClaim {
@@ -1789,6 +1794,7 @@ export interface Image {
   appSubListingPendingImages?: AppSubListing[];
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
+  serviceOfferingCovers?: ServiceOffering[];
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
@@ -2935,6 +2941,22 @@ export interface AppUserScopeGrant {
   revokedScopes: string[];
   revokedScopesAt: Date | null;
   buzzBudgetPerDay: number | null;
+}
+
+export interface AppBlockUploadBatch {
+  id: number;
+  userId: number;
+  appBlockId: string;
+  appId: string;
+  blockId: string;
+  version: string | null;
+  itemCount: number;
+  totalBytes: bigint;
+  presignCount: number;
+  presignCounts: number[];
+  blobKeys: string[];
+  createdAt: Date;
+  expiresAt: Date;
 }
 
 export interface AppDeveloperTermsAcceptance {
@@ -6893,10 +6915,15 @@ export interface ServiceOffering {
   title: string;
   description: string;
   coverImageId: number | null;
+  coverImage?: Image | null;
   price: number;
   acceptsBlue: boolean;
   previewKind: ServicePreviewKind;
   maxNsfwLevel: number;
+  declaredNsfwLevel: number | null;
+  ingestion: ServiceOfferingIngestionStatus;
+  scanWorkflowId: string | null;
+  scannedAt: Date | null;
   deliveryDays: number;
   revisionsIncluded: number;
   maxOpenDeals: number | null;

@@ -9,8 +9,13 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
   RATING_DISPUTE = 'rating-dispute',
+  // Kill switch for minting review sheet batches; off answers 503.
+  REVIEW_BATCHES_MINT = 'review-batches-mint',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
+  // Remix sweep and post scan: an age-check hit goes to the external classifier instead of
+  // blocking. Off when Flipt is unreachable.
+  SHADOW_AGE_PROMPT = 'shadow-age-prompt',
   // Percentage rollout keyed on the file id: the share of files whose mini response leads with
   // the content-hash download url. Each file's url changes once over the ramp. Create the key in
   // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
@@ -23,16 +28,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // clamp). DISABLED LIFTS THE CLAMP: non-moderators search at their own browsing level. A missing
   // key, an evaluation error or no Flipt client all keep the clamp ON (`isNonModClampOn`).
   SEMANTIC_SEARCH_NONMOD_CLAMP = 'semantic-search-nonmod-clamp',
+  // On: semantic searches send the search service the request id and the viewer's levels and
+  // moderator status, and key the candidate cache on the guard's mode and version. Create the key
+  // (disabled) before this deploys: a missing key logs on every eval.
+  SEMANTIC_SEARCH_AUDIT = 'semantic-search-audit',
   // On: the image feed's feed-service call runs behind a circuit breaker, and an anonymous first
   // page the feed fails to answer is served from that pod's last good copy (10 min) instead of a
   // 503 (`~/server/services/feed-primary-degrade`). DEFAULT-OFF: `isFliptSync` returns null for an
   // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
   // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
   FEED_SERVICE_DEGRADE = 'feed-service-degrade',
-  // Off-switch for the image feed's shorter feed-service budget: on puts it back from 2.5s to 5s
-  // (`FEED_PRIMARY_TIMEOUT_MS`). Off, unknown or an uninitialised client keep 2.5s. Global boolean,
-  // read at most once per 5s per process (`createCachedFlagGate`).
-  FEED_SERVICE_TIMEOUT_WIDEN = 'feed-service-timeout-widen',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -118,6 +123,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // means WAIT FOREVER, so such an environment must set a non-zero value before flipping.
   // Failures surface as pg errors, not Prisma P2024/P1008.
   KYSELY_HOT_READS_11 = 'kysely-hot-reads-11',
+  // `userWithCosmeticsSelect` (the user, profile picture and equipped cosmetics) as one Kysely
+  // statement on `model.getSimple` and `resourceReview.getInfinite` (hot-reads-12.db.ts).
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (kyselyRead), or `pgDbWrite`
+  // (kyselyWrite) when the replication-lag check sent `model.getSimple` to the primary. Those
+  // pools' acquire wait is `DATABASE_CONNECTION_TIMEOUT` (default 0); with IS_DATAPACKET set,
+  // getClient (src/server/db/db-helpers.ts) turns 0 into 5s, and without it 0 means WAIT FOREVER,
+  // so such an environment must set a non-zero value before flipping. Failures surface as pg
+  // errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_12 = 'kysely-hot-reads-12',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
@@ -250,6 +265,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // written. DEFAULT-OFF. Global boolean, read at most once per 5s per process; also needs
   // FEED_GO_SHADOW_URL and FEED_GO_SHADOW_SAMPLE_RATE > 0. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW = 'feed-go-shadow',
+  // The same mirror for the public REST `GET /api/v1/images` (the query string, the headers, Node's
+  // JSON body), to feed-go's `/internal/shadow/api/v1/images`. Its own flag so the REST route is
+  // enabled separately from the gallery procedure. DEFAULT-OFF. Global boolean, read at most once
+  // per 5s per process; shares FEED_GO_SHADOW_URL and the rate / in-flight / per-second knobs with
+  // FEED_GO_SHADOW. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_V1_IMAGES = 'feed-go-shadow-v1-images',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -562,11 +583,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // state (enabled: false) before this code serves traffic.
   SSR_CLIENT_ONLY_SECTIONS = 'ssr-client-only-sections',
 
-  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
-  // or unreachable: every link answers 404 and no link is minted.
+  // Download links (`/api/download/l/<id>`, the mint at `/api/v1/download-links`, and the provider
+  // links mini hands out on `?downloadLink=1`). Off, unknown or unreachable: every link answers 404
+  // and no link is minted.
   //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
-  // must exist in flag state (enabled: false) before this code serves traffic.
+  // 🔴 BOOLEAN ONLY, no entityId, with context `mode`: `api` (the mint route and its links) or
+  // `provider` (mini's links), so a rule can turn on one without the other. The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
   DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
   // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented

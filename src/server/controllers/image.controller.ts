@@ -1,3 +1,4 @@
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
 import {
@@ -51,7 +52,9 @@ import {
   keepPendingAppealFlags,
 } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
-import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
+import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
+import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
@@ -60,6 +63,7 @@ import {
   getHeldGalleryLevel,
   isModelGalleryWithheld,
   getHeldLevelsByPost,
+  holdShowcaseImages,
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
@@ -87,7 +91,10 @@ import {
 } from '~/server/utils/image-media-visibility';
 import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
 import { eventViewerOf } from '~/server/events/event-viewer';
-import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  getNsfwLevelDeprecatedReverseMapping,
+} from '~/shared/constants/browsingLevel.constants';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -389,16 +396,60 @@ export const getImagesForModelVersionHandler = async ({
   ctx: Context;
 }) => {
   if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
-  const byVersion = await getImagesForModelVersionCache([input.id]);
+  const [byVersion, version] = await Promise.all([
+    getImagesForModelVersionCache([input.id]),
+    dbRead.modelVersion.findUnique({
+      where: { id: input.id },
+      select: { modelId: true, model: { select: { userId: true, minor: true, sfwOnly: true } } },
+    }),
+  ]);
+  // A minor or SFW-only model's showcase is held at its gallery level, as in the gallery.
+  const wholeShowcase =
+    moderatorView(ctx) || (!!version && galleryOwnerId(ctx) === version.model.userId);
+  // A version with no row has no model to clear it, so it serves none of its images.
+  const shown = wholeShowcase
+    ? byVersion
+    : !version
+    ? {}
+    : await holdShowcaseImages(
+        byVersion,
+        new Map([
+          [
+            input.id,
+            {
+              modelId: version.modelId,
+              minor: version.model.minor,
+              sfwOnly: version.model.sfwOnly,
+            },
+          ],
+        ])
+      );
+  // Not resolved at the viewer's own level (the request carries none), so at the strictest level
+  // a viewer here could pick.
+  const settings = resolveStrictestPoiMinor(
+    await getBrowsingSettingAddons(),
+    requestServableLevels(ctx),
+    { isModerator: moderatorView(ctx) }
+  );
+  // Moderator and owner exemptions on the same credentials as the hold.
+  const exemptViewer = galleryOwnerId(ctx) !== undefined ? ctx.user : undefined;
   // Any version id can be asked for, so the cap applies per image.
   keepCrawlerAnswerOutOfEdgeCache(ctx);
   return Object.fromEntries(
-    Object.entries(byVersion).map(([versionId, entry]) => [
+    Object.entries(shown).map(([versionId, entry]) => [
       versionId,
       {
         ...entry,
-        images: entry.images.filter((image) =>
-          canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
+        images: filterImagesForViewer(
+          entry.images.filter((image) =>
+            canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
+          ),
+          {
+            browsingLevel: allBrowsingLevelsFlag,
+            disablePoi: settings.disablePoi,
+            disableMinor: settings.disableMinor,
+            viewer: exemptViewer,
+          }
         ),
       },
     ])

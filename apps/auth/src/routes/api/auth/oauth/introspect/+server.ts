@@ -7,6 +7,12 @@ import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { basicCredentials, parseBody } from '$lib/server/oauth/http';
 import { carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
 import { getClientIp } from '$lib/server/auth/request';
+import { authenticatedConfidentialClient } from '$lib/server/oauth/client-auth';
+import {
+  introspectAccessTokenJwt,
+  isAccessTokenJwt,
+  isAnyIntrospector,
+} from '$lib/server/oauth/jwt-introspection';
 
 // POST /api/auth/oauth/introspect — RFC 7662 token introspection.
 //
@@ -18,8 +24,9 @@ import { getClientIp } from '$lib/server/auth/request';
 //
 // NOT a public endpoint. The caller must be a CONFIDENTIAL client on OAUTH_INTROSPECTION_CLIENT_IDS
 // (answered for user access tokens) or OAUTH_WORKER_INTROSPECTION_CLIENT_IDS (answered for `Worker`
-// tokens); every other outcome is 401 invalid_client. Any token miss — unknown, expired, wrong type,
-// absent, owned by a disabled account, a single-purpose client-credentials token, a blocked worker
+// tokens); every other outcome is 401 invalid_client. A JWT from the user token exchange (`typ: at+jwt`)
+// is answered instead for the introspectors its resource lists (lib/server/oauth/jwt-introspection.ts).
+// Any token miss — unknown, expired, wrong type, absent, owned by a disabled account, a single-purpose client-credentials token, a blocked worker
 // device, or a token kind this caller may not see — is 200 {active:false}, never a distinguishing error.
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
@@ -51,6 +58,13 @@ export const POST: RequestHandler = async ({ request }) => {
 
   const seesAccess = clientIdList(env.OAUTH_INTROSPECTION_CLIENT_IDS).has(clientId);
   const seesWorker = clientIdList(env.OAUTH_WORKER_INTROSPECTION_CLIENT_IDS).has(clientId);
+
+  // A JWT from the user token exchange is answered for the introspectors its resource lists.
+  const token = typeof body.token === 'string' ? body.token : '';
+  if (token && isAccessTokenJwt(token)) {
+    return introspectExchangedJwt(request, body, token, seesAccess || seesWorker);
+  }
+
   if (!clientId || !clientSecret || (!seesAccess && !seesWorker)) return invalidClient();
 
   const client = await db
@@ -72,7 +86,6 @@ export const POST: RequestHandler = async ({ request }) => {
     return rateLimited();
   }
 
-  const token = typeof body.token === 'string' ? body.token : '';
   if (!token) return json({ active: false }, { headers: NO_STORE });
 
   const now = new Date();
@@ -124,6 +137,45 @@ export const POST: RequestHandler = async ({ request }) => {
     { headers: NO_STORE }
   );
 };
+
+/**
+ * Introspection of an exchanged JWT. The caller authenticates as a confidential client and must be an
+ * introspector of some resource, or on one of the introspection lists; anything else is invalid_client.
+ * A token check that cannot be decided is a 503 the caller retries, never active. So is a client lookup
+ * that fails before the caller is known: it says nothing about the token, and a 401 would read as a
+ * bad secret.
+ */
+async function introspectExchangedJwt(
+  request: Request,
+  body: Record<string, unknown>,
+  token: string,
+  onIntrospectionList: boolean
+): Promise<Response> {
+  const unavailable = () =>
+    json(
+      { error: 'temporarily_unavailable' },
+      { status: 503, headers: { ...NO_STORE, 'Retry-After': '5' } }
+    );
+  let client: Awaited<ReturnType<typeof authenticatedConfidentialClient>>;
+  let introspector: boolean;
+  try {
+    client = await authenticatedConfidentialClient(request, body);
+    introspector = client ? await isAnyIntrospector(client.id) : false;
+  } catch {
+    return unavailable();
+  }
+  if (!client || (!introspector && !onIntrospectionList)) {
+    return json({ error: 'invalid_client' }, { status: 401, headers: NO_STORE });
+  }
+  if (!(await checkOAuthRateLimit('introspect-jwt', client.id))) {
+    return json({ error: 'rate_limited' }, { status: 429, headers: NO_STORE });
+  }
+
+  const result = await introspectAccessTokenJwt(token, client.id);
+  if (result.kind === 'indeterminate') return unavailable();
+  if (result.kind === 'inactive') return json({ active: false }, { headers: NO_STORE });
+  return json(result.body, { headers: NO_STORE });
+}
 
 /**
  * The introspection body for a live `Worker` token, or null. Live: unexpired, its device not blocked, and

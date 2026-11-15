@@ -380,7 +380,9 @@ export async function withoutHeldImages<T extends Pick<ShapedImage, 'postId' | '
   // Loaded on demand: the model service's import graph is large.
   const { getHeldLevelsByPost } = await import('~/server/services/model.service');
   const postIdOf = (image: T) => (typeof image.postId === 'number' ? image.postId : undefined);
-  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined));
+  const held = await getHeldLevelsByPost(items.map(postIdOf).filter(isDefined), {
+    withOwners: false,
+  });
   return items.filter((image) => {
     const postId = postIdOf(image);
     const hold = postId ? held.get(postId) : undefined;

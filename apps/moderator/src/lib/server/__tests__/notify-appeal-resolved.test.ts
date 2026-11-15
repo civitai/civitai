@@ -14,12 +14,12 @@ describe('notifyAppealResolved', () => {
   it('keys the notification by appeal, not only by image', async () => {
     await notifyAppealResolved({
       appeal: { id: 555, userId: 1 },
-      entityId: 128489949,
+      entityId: 990100036,
       status: 'Rejected',
     });
 
     expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 1, key: 'entity-appeal-resolved:Image:128489949:555' })
+      expect.objectContaining({ userId: 1, key: 'entity-appeal-resolved:Image:990100036:555' })
     );
   });
 

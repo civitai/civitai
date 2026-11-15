@@ -455,6 +455,8 @@ async function getImages(imageIds?: number[]) {
 
 export async function getUserIpInfo(report: Partial<CsamReportProps>) {
   if (!report.userId || !report.type || !clickhouse) return [];
+  // Interpolated into ClickHouse SQL below.
+  const userId = Number(report.userId);
 
   let captureEvents: CsamReportUserActivity[] = await clickhouse.$query<{
     ip: string;
@@ -466,7 +468,8 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
       type,
       time
     FROM userActivities
-    WHERE userId = ${report.userId} AND (type = 'Registration' OR type = 'Login')
+    WHERE (targetUserId = ${userId} OR (userId = ${userId} AND targetUserId != ${userId}))
+      AND (type = 'Registration' OR type = 'Login')
   `);
 
   switch (report.type) {
@@ -486,7 +489,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
             postId,
             time
           FROM posts
-          WHERE userId = ${report.userId} AND type = 'Create' AND postId IN [${postIds.join(',')}]
+          WHERE userId = ${userId} AND type = 'Create' AND postId IN [${postIds.join(',')}]
         `)
         ).map(({ postId, ...data }) => ({
           ...data,
@@ -509,7 +512,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
             modelVersionId,
             time
           FROM modelVersionEvents
-          WHERE userId = ${report.userId} AND type = 'Create' AND modelVersionId = ${modelVersionId}
+          WHERE userId = ${userId} AND type = 'Create' AND modelVersionId = ${modelVersionId}
         `)
         ).map(({ modelVersionId, ...data }) => ({
           ...data,

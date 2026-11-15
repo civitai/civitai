@@ -396,7 +396,9 @@ async function issueToken(token: Token, client: Client, user: User): Promise<Tok
   const scope = stringToScope(token.scope as unknown as string);
 
   if (isClientCredentialsUser(user)) {
-    const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL);
+    const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL, {
+      clientCredentials: true,
+    });
     return {
       accessToken: access.accessToken,
       accessTokenExpiresAt: access.expiresAt,

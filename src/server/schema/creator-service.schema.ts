@@ -13,6 +13,7 @@ import {
   SERVICE_TITLE_MIN,
 } from '~/shared/constants/creator-service.constants';
 import { ServicePreviewKind } from '~/shared/utils/prisma/enums';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import type { ServiceOfferingTakedownReason } from '~/server/common/moderation-helpers';
 import { serviceOfferingTakedownReasons } from '~/server/common/moderation-helpers';
 
@@ -44,7 +45,8 @@ export const upsertServiceOfferingSchema = z.object({
   revisionsIncluded: z.number().int().min(0).max(SERVICE_REVISIONS_MAX),
   maxOpenDeals: z.number().int().min(SERVICE_OPEN_DEALS_MIN).max(SERVICE_OPEN_DEALS_MAX),
   previewKind: z.enum(ServicePreviewKind),
-  maxNsfwLevel: z
+  // The seller's rating. The offering's shown rating is never below what its content checks find.
+  declaredNsfwLevel: z
     .number()
     .int()
     .refine((value) => (SERVICE_OFFERING_RATINGS as readonly number[]).includes(value), {
@@ -53,6 +55,8 @@ export const upsertServiceOfferingSchema = z.object({
     // No schema default: an update that omits it must leave the rating alone, never reset a
     // mature offering to PG-13 (which shows everywhere). A new offering gets the default on create.
     .optional(),
+  // null removes the cover; omitted leaves it as it is.
+  coverImage: imageReferenceInputSchema.nullish(),
   // Saves as a draft unless set; publishing goes through the same sell gate as activating.
   publish: z.boolean().default(false),
   // The seller-terms version the seller ticked; publishing is refused without the current one.

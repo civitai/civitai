@@ -121,6 +121,11 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   // way on every machine, rather than whatever the flag client resolves to locally.
   isAppBlocksAuthorEnabled: async () => false,
 }));
+// The held-image filter reads post and model caches; this table is about admission, not images.
+vi.mock('~/server/services/image-search.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/services/image-search.service')>()),
+  withoutHeldImages: async <T>(items: T[]) => items,
+}));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: (...a: unknown[]) => h.isRevoked(...a) },
 }));
@@ -6211,7 +6216,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       200,
-      { snapshot: { workflowId: 'wf_1', status: 'processing' } },
+      { snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true } },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
       [
@@ -6532,7 +6537,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'rate limited': X(
       200,
-      { snapshot: { workflowId: 'wf_1', status: 'processing' } },
+      { snapshot: { workflowId: 'wf_1', status: 'processing', throttled: true } },
       true,
       ['checkBlockPollRateLimit("bki_char", 42)'],
       [

@@ -1576,7 +1576,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const submitFailuresTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_submit_failures_total',
-    'App Block blocks.submitWorkflow calls that FAILED, thrown or returned as a failed snapshot, by app and reason (validation = input refused; ecosystem_unavailable = the chosen ecosystem is hidden or disabled; insufficient_buzz = the per-call budget, a workflow ceiling or the viewer funds refused it; rate_limited = a submit limiter refused it; server_error = the server or orchestrator could not answer; other = anything else, e.g. a scope or consent refusal). app_block_id is dev for every dev token and unknown when the call failed before its token was verified',
+    'App Block blocks.submitWorkflow calls that FAILED, thrown or returned as a failed snapshot, by app and reason (validation = input refused; prompt_refused = the site prompt check refused the prompt; ecosystem_unavailable = the chosen ecosystem is hidden or disabled; insufficient_buzz = the per-call budget, a workflow ceiling or the viewer funds refused it; rate_limited = a submit limiter refused it; server_error = the server or orchestrator could not answer; other = anything else, e.g. a scope or consent refusal). app_block_id is dev for every dev token and unknown when the call failed before its token was verified',
     ['app_block_id', 'reason']
   );
 

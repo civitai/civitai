@@ -12,6 +12,7 @@ import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/ac
 import { unpublishArticleById } from '~/server/services/article.service';
 import { violationMetadata } from '~/server/services/text-scan/public-content';
 import { deleteChatMessage } from '~/server/services/chat.service';
+import { requeueBlockedServiceOffering } from '~/server/services/service-offering-moderation.adapter';
 import { bulkSetCommentV3TosViolation } from '~/server/services/commentv3/moderation.service';
 import {
   CSAM_HOLD_POST_UNPUBLISH_REASON,
@@ -23,7 +24,11 @@ import { createStrike } from '~/server/services/strike.service';
 import { clearUserProfileFields, toggleBan } from '~/server/services/user.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
 import type { EntityType } from '~/shared/utils/prisma/enums';
-import { ArticleStatus, StrikeReason } from '~/shared/utils/prisma/enums';
+import {
+  ArticleStatus,
+  ServiceOfferingIngestionStatus,
+  StrikeReason,
+} from '~/shared/utils/prisma/enums';
 
 /** What a moderator can do with a pending csam hold. `dismiss` is "do nothing". */
 export const CSAM_HOLD_DECISIONS = [
@@ -55,6 +60,7 @@ const REMOVABLE_ENTITY_TYPES = [
   'Post',
   'Model',
   'Article',
+  'ServiceOffering',
   'PostText',
 ] as const;
 const isRemovable = (type: string): type is (typeof REMOVABLE_ENTITY_TYPES)[number] =>
@@ -199,6 +205,13 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
       await tracker.article({ type: 'Unpublish', articleId: entityId, nsfw: false });
       return;
     }
+    case 'ServiceOffering':
+      // Hidden, not deleted: the offering and its text stay for the record.
+      await dbWrite.serviceOffering.updateMany({
+        where: { id: entityId, ingestion: { not: ServiceOfferingIngestionStatus.Blocked } },
+        data: { ingestion: ServiceOfferingIngestionStatus.Blocked },
+      });
+      return;
   }
 }
 
@@ -348,6 +361,20 @@ export async function decideCsamHold(args: DecideArgs) {
     );
     throw error;
   }
+
+  // A block for this queue files no report, so its dismiss is the way out. The requeue still refuses
+  // while another hold or an undismissed verdict applies; the reconcile job settles what it lets out.
+  if (decision === 'dismiss' && hold.entityType === 'ServiceOffering')
+    await requeueBlockedServiceOffering(hold.entityId).catch((error) =>
+      logToAxiom({
+        name: 'text-scan',
+        type: 'error',
+        message: 'csam hold dismiss requeue failed',
+        holdId,
+        entityId: hold.entityId,
+        errorName: error instanceof Error ? error.name : typeof error,
+      }).catch(() => null)
+    );
 
   return { status, entityType: hold.entityType, entityId: hold.entityId, userId: hold.userId };
 }

@@ -132,9 +132,9 @@ export async function updateByStripeConnectAccount({
         category: NotificationCategory.System,
         key: `creators-program-payments-enabled:${crypto.randomUUID()}`,
         details: {},
-      }).catch(() => {
+      }).catch((error) => {
         // The row is already written: a throw here would fail the webhook after the write.
-        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+        log({ method: 'createNotification', error, userId: userPaymentConfig.userId });
       });
     }
   } else if (stripeAccount.requirements?.disabled_reason) {
@@ -154,9 +154,9 @@ export async function updateByStripeConnectAccount({
         category: NotificationCategory.System,
         key: `creators-program-rejected-stripe:${crypto.randomUUID()}`,
         details: {},
-      }).catch(() => {
+      }).catch((error) => {
         // The row is already written: a throw here would fail the webhook after the write.
-        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+        log({ method: 'createNotification', error, userId: userPaymentConfig.userId });
       });
     }
   } else if (stripeAccount.details_submitted) {
@@ -295,6 +295,14 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
   }
 }
 
+/** The row no longer held the state the caller expected; nothing was written or sent. */
+export class TipaltiStaleWriteError extends Error {
+  constructor() {
+    super('Stored Tipalti state changed before the write');
+    this.name = 'TipaltiStaleWriteError';
+  }
+}
+
 export async function updateByTipaltiAccount({
   tipaltiAccountId,
   tipaltiAccountStatus,
@@ -302,6 +310,7 @@ export async function updateByTipaltiAccount({
   tipaltiWithdrawalMethod,
   unpayableReasons,
   userId,
+  expect,
 }: {
   tipaltiAccountId?: string;
   tipaltiAccountStatus: TipaltiStatus;
@@ -309,12 +318,15 @@ export async function updateByTipaltiAccount({
   tipaltiWithdrawalMethod?: CashWithdrawalMethod;
   unpayableReasons?: string[];
   userId?: number;
+  /** Write only if the row still holds this state; otherwise throw TipaltiStaleWriteError. */
+  expect?: { tipaltiAccountStatus: string; tipaltiPaymentsEnabled: boolean };
 }) {
-  const userPaymentConfig = await dbWrite.userPaymentConfiguration.findUnique({
+  const found = await dbWrite.userPaymentConfiguration.findUnique({
     where: { tipaltiAccountId, userId },
   });
 
-  if (!userPaymentConfig) throw throwBadRequestError('User tipalti account not found');
+  if (!found) throw throwBadRequestError('User tipalti account not found');
+  let userPaymentConfig: UserPaymentConfiguration = found;
 
   let updated: UserPaymentConfiguration = userPaymentConfig;
 
@@ -324,12 +336,33 @@ export async function updateByTipaltiAccount({
     tipaltiWithdrawalMethod,
   };
 
-  updated = await dbWrite.userPaymentConfiguration.update({
-    where: { tipaltiAccountId, userId },
-    data: {
-      ...data,
-    },
-  });
+  if (expect) {
+    const { count } = await dbWrite.userPaymentConfiguration.updateMany({
+      where: {
+        tipaltiAccountId,
+        userId,
+        tipaltiAccountStatus: expect.tipaltiAccountStatus,
+        tipaltiPaymentsEnabled: expect.tipaltiPaymentsEnabled,
+      },
+      data,
+    });
+    if (count === 0) throw new TipaltiStaleWriteError();
+    // The write landed only on the expected state, so that is what the edges below compare against.
+    userPaymentConfig = { ...userPaymentConfig, ...expect };
+    updated = {
+      ...userPaymentConfig,
+      tipaltiAccountStatus,
+      tipaltiPaymentsEnabled,
+      ...(tipaltiWithdrawalMethod !== undefined && { tipaltiWithdrawalMethod }),
+    };
+  } else {
+    updated = await dbWrite.userPaymentConfiguration.update({
+      where: { tipaltiAccountId, userId },
+      data: {
+        ...data,
+      },
+    });
+  }
 
   // Both notifications are edge-triggered. Tipalti re-sends payeeDetailsChanged for a payee whose
   // state has not moved, and the uuid `key` dedupes nothing, so testing the state rather than the
@@ -342,7 +375,10 @@ export async function updateByTipaltiAccount({
         category: NotificationCategory.System,
         key: `creators-program-payments-enabled:${crypto.randomUUID()}`,
         details: {},
-      }).catch();
+      }).catch((error) => {
+        // The row is already written: a throw here would hide that from the caller.
+        log({ method: 'createNotification', error, userId: userPaymentConfig.userId });
+      });
     }
   } else if (isBlockedTipaltiStatus(tipaltiAccountStatus)) {
     if (!isBlockedTipaltiStatus(userPaymentConfig.tipaltiAccountStatus)) {
@@ -352,8 +388,8 @@ export async function updateByTipaltiAccount({
         category: NotificationCategory.System,
         key: `creators-program-rejected-tipalti:${crypto.randomUUID()}`,
         details: {},
-      }).catch(() => {
-        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+      }).catch((error) => {
+        log({ method: 'createNotification', error, userId: userPaymentConfig.userId });
       });
     }
   }

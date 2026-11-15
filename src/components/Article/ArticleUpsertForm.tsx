@@ -515,8 +515,8 @@ export function ArticleUpsertForm({ article }: Props) {
               label="Cover Image"
               description={
                 features.articleTypography
-                  ? `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight} when there is no banner. Optional if you add a banner: without a cover, cards crop the banner once it has been reviewed.`
-                  : `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}. Keep the subject near the top center.`
+                  ? 'Portrait 7:9, e.g. 1400 x 1800. Cards crop it from the top. Optional if you add a banner.'
+                  : 'Portrait 7:9, e.g. 1400 x 1800. Cards crop it from the top; keep the subject near the top center.'
               }
               cardCrop={aspectRatioMap.portrait}
               previewWidth={constants.article.coverImageWidth}
@@ -533,7 +533,7 @@ export function ArticleUpsertForm({ article }: Props) {
               <InputSimpleImageUpload
                 name="bannerImage"
                 label="Banner Image"
-                description={`Optional. Shown across the full width of the top of your article. Cards use your cover image, or this banner if there is no cover. Use a wide 4:1 image, ${constants.article.bannerImageWidth} x ${constants.article.bannerImageHeight} suggested.`}
+                description="Optional. Wide 4:1, e.g. 2400 x 600, across the top of your article. Cards use it when there is no cover."
                 aspectRatio={
                   constants.article.bannerImageHeight / constants.article.bannerImageWidth
                 }

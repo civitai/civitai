@@ -29,6 +29,7 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'Collection',
   'Storyline',
   'ImageCaption',
+  'ServiceOffering',
   'PostText',
   'ModelRules',
 ] as const satisfies readonly TextScanEntityType[];

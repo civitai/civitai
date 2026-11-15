@@ -300,7 +300,7 @@ const copyableRecord = (r: Prisma.Sql) => Prisma.sql`coalesce(
   OR (
     ${r}."removalLabel" = ANY(${RATED_COPY_LABELS}::text[])
     AND ${r}."removalNsfw" IN ('None', 'Soft')
-    AND coalesce(${r}."aiNsfwLevel", 0) IN (0, 1, 2)
+    AND ${r}."aiNsfwLevel" IN (1, 2)
   ),
   false
 )`;

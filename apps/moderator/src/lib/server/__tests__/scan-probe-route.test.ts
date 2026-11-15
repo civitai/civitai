@@ -31,7 +31,7 @@ vi.mock('$lib/server/scan-probe/service', () => ({
 }));
 vi.mock('$lib/server/scan-probe/runs', () => ({
   recentOwnRuns: async () => [],
-  trippedRuns: async () => [{ id: '9', imageId: 777009 }],
+  trippedRuns: async () => [{ id: '9', imageId: 990100021 }],
   resetBreaker,
   abandonInFlight,
   inFlightRuns: async () => [],
@@ -44,7 +44,7 @@ const GRANT = { 'image.scanProbe.run': true };
 
 const runEvent = (
   grants: Record<string, boolean>,
-  fields: Record<string, string> = { ids: '777001', understood: 'on' }
+  fields: Record<string, string> = { ids: '990100014', understood: 'on' }
 ) => {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.set(k, v);
@@ -84,7 +84,7 @@ describe('load', () => {
   it('control: an admin sees which run and image tripped it', async () => {
     expect(await loadAs(['moderator:admin'])).toMatchObject({
       stopped: true,
-      tripped: [{ id: '9', imageId: 777009 }],
+      tripped: [{ id: '9', imageId: 990100021 }],
     });
   });
 });
@@ -105,7 +105,7 @@ describe('run action', () => {
   });
 
   it('refuses a holder who has not acknowledged that a hit acts on the real image', async () => {
-    expect(await actions.run(runEvent(GRANT, { ids: '777001' }))).toMatchObject({
+    expect(await actions.run(runEvent(GRANT, { ids: '990100014' }))).toMatchObject({
       status: 400,
       data: { error: expect.stringContaining('acts on the real image') },
     });
@@ -132,7 +132,7 @@ describe('run action', () => {
 
   it('control: a holder who acknowledged reaches the probe as themselves', async () => {
     await actions.run(runEvent(GRANT));
-    expect(runProbe).toHaveBeenCalledWith(42, [777001]);
+    expect(runProbe).toHaveBeenCalledWith(42, [990100014]);
   });
 });
 

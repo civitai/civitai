@@ -1068,6 +1068,14 @@ export const ServiceOfferingStatus = {
 } as const;
 export type ServiceOfferingStatus =
   (typeof ServiceOfferingStatus)[keyof typeof ServiceOfferingStatus];
+export const ServiceOfferingIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+export type ServiceOfferingIngestionStatus =
+  (typeof ServiceOfferingIngestionStatus)[keyof typeof ServiceOfferingIngestionStatus];
 export const ServicePreviewKind = {
   Image: 'Image',
   Video: 'Video',

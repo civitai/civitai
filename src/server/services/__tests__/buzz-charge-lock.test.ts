@@ -10,10 +10,12 @@ import {
   CHARGE_RECORD_TRANSACTION_TIMEOUT_MS,
   CHARGE_STATEMENT_TIMEOUT,
   CHARGE_STATEMENT_TIMEOUT_MS,
+  recordKeyedCharge,
   recordStepError,
   refundUnlessRecorded,
   withChargeKeyLock,
 } from '~/server/services/buzz-charge-lock';
+import { createFakeAdvisoryLocks } from './charge-lock.fake';
 
 // Literal: the user-facing contract.
 const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
@@ -146,6 +148,97 @@ describe('refundUnlessRecorded', () => {
       code: 'INTERNAL_SERVER_ERROR',
       message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
     });
+  });
+});
+
+// After a failed record, each refund attempt is its own short lock transaction that re-checks
+// whether another request recorded the charge. One transaction held across the attempts (and their
+// pauses) would outlast its deadline; a record check made once, before the loop, would refund a
+// charge another request recorded between attempts.
+describe('recordKeyedCharge refund attempts', () => {
+  const KEY = 'refund-attempts-key';
+  let locks = createFakeAdvisoryLocks();
+
+  beforeEach(() => {
+    locks = createFakeAdvisoryLocks();
+    dbMock.dbWrite.$transaction.mockImplementation(((
+      cb: (t: unknown) => Promise<unknown>,
+      options?: { timeout?: number }
+    ) => locks.transaction(cb, {}, options)) as never);
+  });
+
+  const run = (opts: {
+    findRecorded: () => Promise<unknown>;
+    refund: () => Promise<unknown>;
+    refundAttempts: number;
+  }) =>
+    recordKeyedCharge(
+      KEY,
+      { userId: 1 },
+      {
+        findRecorded: opts.findRecorded,
+        isRefunded: async () => false,
+        record: async () => {
+          throw new Error('write failed');
+        },
+        refund: opts.refund,
+        refundAttempts: opts.refundAttempts,
+      }
+    );
+
+  it('takes a new lock per attempt, re-checks the record each time, and holds no lock while pausing', async () => {
+    // At each record check: transactions open, and locks taken so far.
+    const checks: { open: number; taken: number }[] = [];
+    // Sampled mid-pause: 100ms after a failed attempt, inside the shortest pause (250ms).
+    const openMidPause: Promise<number>[] = [];
+    const refund = vi.fn(async () => {
+      if (refund.mock.calls.length < 3) {
+        openMidPause.push(new Promise((resolve) => setTimeout(() => resolve(locks.open()), 100)));
+        throw new Error('buzz down');
+      }
+    });
+
+    await expect(
+      run({
+        findRecorded: async () => {
+          checks.push({ open: locks.open(), taken: locks.taken().length });
+          return null;
+        },
+        refund,
+        refundAttempts: 3,
+      })
+    ).rejects.toThrow('write failed');
+
+    // The record's own transaction, then one per refund attempt.
+    expect(locks.taken()).toEqual([KEY, KEY, KEY, KEY]);
+    expect(checks).toEqual([
+      { open: 1, taken: 1 },
+      { open: 1, taken: 2 },
+      { open: 1, taken: 3 },
+      { open: 1, taken: 4 },
+    ]);
+    expect(refund).toHaveBeenCalledTimes(3);
+    expect(await Promise.all(openMidPause)).toEqual([0, 0]);
+  });
+
+  it('stops with nothing refunded when another request records the charge between attempts', async () => {
+    let check = 0;
+    const refund = vi.fn(async () => {
+      throw new Error('buzz down');
+    });
+
+    await expect(
+      run({
+        // The record check, attempt 1: not recorded; attempt 2: recorded elsewhere.
+        findRecorded: async () => (++check >= 3 ? { id: 1 } : null),
+        refund,
+        refundAttempts: 3,
+      })
+    ).rejects.toThrow('write failed');
+
+    expect(check).toBe(3);
+    expect(refund).toHaveBeenCalledTimes(1);
+    expect(locks.taken()).toEqual([KEY, KEY, KEY]);
   });
 });
 

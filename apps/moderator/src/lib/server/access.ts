@@ -219,6 +219,7 @@ export const NAVIGATION: NavLink[] = [
         label: 'Training Data Review',
         countKey: 'trainingDataReview',
       },
+      { path: '/audit/app-upload-batches', label: 'App Upload Batches' },
       { path: '/audit/relabel', label: 'Removal Label Relabel' },
       { path: '/audit/text-relabel', label: 'Automated Text Relabel' },
     ],
