@@ -211,6 +211,16 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'model-page-design-system-markup',
   },
+  // SSR-CPU trial: for a signed-in viewer's full page load, a route that adopts it
+  // (`~/server/utils/ssr-skip-prefetch`) keeps only the data its 404, access and redirect decisions
+  // need, skips every other prefetch, and server-renders its content as a loading shell that the
+  // client fills after hydration. Anonymous visitors, verified bots and `/_next/data` requests are
+  // never in the trial. `[]`: dark and fails CLOSED when the key is absent or Flipt is down, so the
+  // `ssr-signed-in-skip-prefetch` rollout is the only on-switch. OFF = the full render, unchanged.
+  ssrSignedInSkipPrefetch: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch',
+  },
   // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
   // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
   // on-switch.

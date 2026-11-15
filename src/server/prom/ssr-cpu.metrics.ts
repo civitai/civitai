@@ -7,8 +7,16 @@ import {
 } from '@civitai/telemetry/client';
 import { pageRouteLabel } from '~/server/utils/page-routes';
 import { SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import type { SsrPrefetchCohort } from '~/shared/constants/ssr-prefetch-cohort.constants';
+import {
+  isSsrPrefetchCohort,
+  SSR_PREFETCH_COHORT_REQ_KEY,
+} from '~/shared/constants/ssr-prefetch-cohort.constants';
 
 export const SSR_CPU_METRIC = PROM_PREFIX + 'ssr_cpu_seconds_total';
+export const SSR_PREFETCH_COHORT_CPU_METRIC =
+  PROM_PREFIX + 'ssr_prefetch_cohort_render_cpu_seconds_total';
+export const SSR_PREFETCH_COHORT_RENDERS_METRIC = PROM_PREFIX + 'ssr_prefetch_cohort_renders_total';
 
 export type SsrRequestKind = 'html' | 'data' | 'shell';
 
@@ -29,6 +37,49 @@ function cpuSecondsCounter(): Counter<'route' | 'phase' | 'kind'> {
         registers: [instrumentationRegistry],
       })
   );
+}
+
+/**
+ * The `ssrSignedInSkipPrefetch` A/B (`~/server/utils/ssr-skip-prefetch`): the same render-phase CPU
+ * as `ssr_cpu_seconds_total`, for only the requests in the trial's population (signed-in full page
+ * loads of an adopting route), split by arm. Kept off the main metric so its `kind="html"` series
+ * mean what they meant before. Per-render CPU = rate(cpu) / rate(renders), per route and cohort.
+ */
+function cohortCpuCounter(): Counter<'route' | 'cohort'> {
+  return registerInstrumentationMetric(
+    SSR_PREFETCH_COHORT_CPU_METRIC,
+    () =>
+      new client.Counter({
+        name: SSR_PREFETCH_COHORT_CPU_METRIC,
+        help:
+          'Main-thread CPU seconds spent rendering a page (phase=render, as ssr_cpu_seconds_total) ' +
+          'for requests in the ssrSignedInSkipPrefetch trial population, by page route and arm ' +
+          '(cohort=skip: loading-shell render; cohort=full: the flag is off)',
+        labelNames: ['route', 'cohort'] as const,
+        registers: [instrumentationRegistry],
+      })
+  );
+}
+
+function cohortRendersCounter(): Counter<'route' | 'cohort'> {
+  return registerInstrumentationMetric(
+    SSR_PREFETCH_COHORT_RENDERS_METRIC,
+    () =>
+      new client.Counter({
+        name: SSR_PREFETCH_COHORT_RENDERS_METRIC,
+        help:
+          'Page renders counted into ssr_prefetch_cohort_render_cpu_seconds_total, by page route ' +
+          'and ssrSignedInSkipPrefetch arm',
+        labelNames: ['route', 'cohort'] as const,
+        registers: [instrumentationRegistry],
+      })
+  );
+}
+
+/** The trial arm `getServerSideProps` marked the request with, or `undefined` outside the trial. */
+export function ssrPrefetchCohort(req: object): SsrPrefetchCohort | undefined {
+  const value = (req as { [SSR_PREFETCH_COHORT_REQ_KEY]?: unknown })[SSR_PREFETCH_COHORT_REQ_KEY];
+  return isSsrPrefetchCohort(value) ? value : undefined;
 }
 
 type RequestLike = {
@@ -67,14 +118,15 @@ export function ssrRequestKind(req: RequestLike): SsrRequestKind {
 export async function measureRenderCpu<T>(
   route: string,
   kind: SsrRequestKind,
-  render: () => Promise<T>
+  render: () => Promise<T>,
+  cohort?: SsrPrefetchCohort
 ): Promise<T> {
   if (typeof window !== 'undefined') return render();
   const start = cpuNow();
   try {
     return await render();
   } finally {
-    if (start) recordRenderCpu(route, kind, start);
+    if (start) recordRenderCpu(route, kind, start, cohort);
   }
 }
 
@@ -87,13 +139,21 @@ function cpuNow(): NodeJS.CpuUsage | undefined {
   }
 }
 
-function recordRenderCpu(route: string, kind: SsrRequestKind, start: NodeJS.CpuUsage) {
+function recordRenderCpu(
+  route: string,
+  kind: SsrRequestKind,
+  start: NodeJS.CpuUsage,
+  cohort: SsrPrefetchCohort | undefined
+) {
   try {
     const { user, system } = process.threadCpuUsage(start);
-    cpuSecondsCounter().inc(
-      { route: pageRouteLabel(route), phase: 'render', kind },
-      (user + system) / 1e6
-    );
+    const seconds = (user + system) / 1e6;
+    const routeLabel = pageRouteLabel(route);
+    cpuSecondsCounter().inc({ route: routeLabel, phase: 'render', kind }, seconds);
+    if (cohort) {
+      cohortCpuCounter().inc({ route: routeLabel, cohort }, seconds);
+      cohortRendersCounter().inc({ route: routeLabel, cohort });
+    }
   } catch {
     // Losing one sample is fine.
   }
