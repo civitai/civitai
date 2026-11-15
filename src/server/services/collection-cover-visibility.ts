@@ -52,6 +52,22 @@ function withinHeldGallerySql(exempt: Prisma.Sql = Prisma.sql`FALSE`) {
 }
 
 /**
+ * The image `"Image" i` on post `"Post" p` is allowed by its model, for every viewer: on no
+ * taken-down model, and within a minor or SFW-only model's gallery level. True for no post or a post
+ * on no model.
+ */
+const withinItsModelSql = Prisma.sql`(${notOnTakenDownModelSql} AND ${withinHeldGallerySql()})`;
+
+/** `withinItsModelSql` for the image with id `imageId`; true when that image is on no post. */
+export function imageAllowedByItsModelSql(imageId: Prisma.Sql) {
+  return Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id = ${imageId} AND NOT ${withinItsModelSql}
+  )`;
+}
+
+/**
  * Whether an image may be shown as a collection's cover to someone who doesn't own it, as SQL over
  * `"Image" i` with `"Post" p` LEFT JOINed on `i."postId"`. The image must be scanned, not awaiting
  * review and not removed. A posted image needs its post published, not Private and on no
@@ -129,8 +145,7 @@ export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLev
       LEFT JOIN "Post" p ON p.id = i."postId"
       WHERE i.id = COALESCE(a."coverId", a."bannerId")
         AND ${servableImageSql}
-        AND ${notOnTakenDownModelSql}
-        AND ${withinHeldGallerySql()}
+        AND ${withinItsModelSql}
         AND (i."nsfwLevel" & ${imageLevels}::int) <> 0
         AND (i."nsfwLevel" & ~${imageLevels}::int) = 0
     )
@@ -195,8 +210,7 @@ export function collectionItemCoversSql({
             AND ${servableImageSql}
             AND p."publishedAt" < now()
             AND p."availability" != 'Private'
-            AND ${notOnTakenDownModelSql}
-            AND ${withinHeldGallerySql()}
+            AND ${withinItsModelSql}
       ) t
       WHERE t.rn = 1
     ), modelItemImage AS MATERIALIZED (
@@ -232,8 +246,7 @@ export function collectionItemCoversSql({
         LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${servableImageSql}
-          AND ${notOnTakenDownModelSql}
-          AND ${withinHeldGallerySql()}
+          AND ${withinItsModelSql}
           AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
         -- A legacy cover string carries no rating of its own, and its readers show it to every

@@ -26,13 +26,35 @@ const PENDING_BANNER_ONLY = 2;
 const FLAGGED_BANNER_ONLY = 3;
 const COVER_AND_BANNER = 4;
 const NEITHER = 5;
+const COVER_ON_TAKEN_DOWN = 6;
+const COVER_ABOVE_GALLERY = 7;
+const BANNER_ON_TAKEN_DOWN = 8;
+const COVER_ON_LIVE = 9;
 
 let pg: PGlite;
 
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
-    CREATE TABLE "Image" (id int PRIMARY KEY, ingestion text NOT NULL, "needsReview" text);
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, mode text, minor boolean NOT NULL DEFAULT false,
+      "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
+    );
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, ingestion text NOT NULL, "needsReview" text, "postId" int,
+      "nsfwLevel" int NOT NULL DEFAULT 1
+    );
+    -- Model 50 is taken down, 51 is minor with a PG gallery level, 52 is live and unflagged.
+    INSERT INTO "Model" (id, mode, minor, "gallerySettings") VALUES
+      (50, 'TakenDown', false, NULL), (51, NULL, true, '{"level": 1}'), (52, NULL, false, NULL);
+    INSERT INTO "ModelVersion" VALUES (60, 50), (61, 51), (62, 52);
+    INSERT INTO "Post" VALUES (70, 60), (71, 61), (72, 62);
+    -- 20 on the taken-down model, 21 PG-13 on the minor model, 22 a banner on the taken-down
+    -- model, 23 PG-13 on the live model.
+    INSERT INTO "Image" (id, ingestion, "postId", "nsfwLevel") VALUES
+      (20, 'Scanned', 70, 1), (21, 'Scanned', 71, 2), (22, 'Scanned', 70, 1), (23, 'Scanned', 72, 2);
     CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int, "bannerId" int);
     INSERT INTO "Image" (id, ingestion, "needsReview") VALUES
       (${COVER}, 'Scanned', NULL),
@@ -44,7 +66,11 @@ beforeAll(async () => {
       (${PENDING_BANNER_ONLY}, NULL, ${BANNER_PENDING}),
       (${FLAGGED_BANNER_ONLY}, NULL, ${BANNER_NEEDS_REVIEW}),
       (${COVER_AND_BANNER}, ${COVER}, ${BANNER}),
-      (${NEITHER}, NULL, NULL);
+      (${NEITHER}, NULL, NULL),
+      (${COVER_ON_TAKEN_DOWN}, 20, ${BANNER}),
+      (${COVER_ABOVE_GALLERY}, 21, NULL),
+      (${BANNER_ON_TAKEN_DOWN}, NULL, 22),
+      (${COVER_ON_LIVE}, 23, NULL);
   `);
 });
 afterAll(() => pg.close());
@@ -69,6 +95,18 @@ describe('article card cover', () => {
 
   it('prefers the cover over the banner', async () => {
     expect(await cardCoverId(COVER_AND_BANNER)).toBe(COVER);
+  });
+
+  it.each([
+    ['its cover is on a taken-down model, without falling back to the banner', COVER_ON_TAKEN_DOWN],
+    ["its cover is above its minor model's gallery level", COVER_ABOVE_GALLERY],
+    ['its only banner is on a taken-down model', BANNER_ON_TAKEN_DOWN],
+  ])('🔴 gives no image when %s', async (_, id) => {
+    expect(await cardCoverId(id)).toBeNull();
+  });
+
+  it('keeps a cover on a live, unflagged model', async () => {
+    expect(await cardCoverId(COVER_ON_LIVE)).toBe(23);
   });
 
   it('gives no image when there is neither', async () => {

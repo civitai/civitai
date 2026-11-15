@@ -82,6 +82,7 @@ import {
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
+import { imageAllowedByItsModelSql } from '~/server/services/collection-cover-visibility';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -208,12 +209,16 @@ export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
 /**
  * The image a card shows for an article `a`: its cover, else its banner once servable. The article
  * page hides a banner that is not scanned or awaits review, so a card must not show one either.
+ * Either is dropped when its model withholds it (taken down, or above a minor or SFW-only model's
+ * gallery level); a withheld cover does not fall back to the banner, as on the entity cover read.
  */
-export const articleCardCoverIdSql = Prisma.sql`COALESCE(
-  a."coverId",
-  (SELECT b.id FROM "Image" b
-    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
-)`;
+export const articleCardCoverIdSql = Prisma.sql`CASE
+  WHEN a."coverId" IS NOT NULL THEN
+    CASE WHEN ${imageAllowedByItsModelSql(Prisma.sql`a."coverId"`)} THEN a."coverId" END
+  ELSE (SELECT b.id FROM "Image" b
+    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL
+      AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)})
+END`;
 
 export const getArticles = async ({
   limit,
