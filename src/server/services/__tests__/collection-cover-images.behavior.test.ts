@@ -69,6 +69,7 @@ const MODEL_ITEM_DRAFT_VERSION = 8037;
 const MATURE_IMAGE_ITEM = 8038;
 const TOS_VIOLATION_IMAGE_ITEM = 8039;
 const MATURE_ARTICLE_BOTH = 8040;
+const ARTICLE_SRC_PENDING_IMAGE = 8041;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -227,6 +228,9 @@ beforeAll(async () => {
     INSERT INTO "Image" ("id", "url", "nsfwLevel") VALUES (134, 'mature-article-cover', 8);
     INSERT INTO "Article" ("id", "cover", "coverId") VALUES (28, 'mature-both', 134);
     INSERT INTO "CollectionItem" ("id", "collectionId", "articleId") VALUES (40, ${MATURE_ARTICLE_BOTH}, 28);
+    INSERT INTO "Image" ("id", "url", "needsReview") VALUES (135, 'pending-article-cover', 'minor');
+    INSERT INTO "Article" ("id", "cover", "coverId") VALUES (29, 'pending-src', 135);
+    INSERT INTO "CollectionItem" ("id", "collectionId", "articleId") VALUES (41, ${ARTICLE_SRC_PENDING_IMAGE}, 29);
     INSERT INTO "ModelVersion" ("id", "modelId", "index") VALUES (53, 43, 0);
     INSERT INTO "Post" ("id", "userId", "modelVersionId", "publishedAt") VALUES
       (8, 2, 53, now() - interval '1 day'),
@@ -307,9 +311,15 @@ describe('getCollectionCoverImages', () => {
     expect(await coversFor(ARTICLE_NEEDS_REVIEW)).toEqual([]);
   });
 
-  it('still returns the legacy cover string as src', async () => {
-    expect(await coversFor(ARTICLE_LEGACY_ONLY)).toEqual([{ imageId: null, src: 'legacy-only' }]);
+  it('returns the legacy cover string beside a cover image the viewer may see (control)', async () => {
     expect(await coversFor(ARTICLE_BOTH)).toEqual([{ imageId: 104, src: 'legacy-both' }]);
+  });
+
+  it.each([
+    ['has no cover image', ARTICLE_LEGACY_ONLY],
+    ['has a cover image awaiting review', ARTICLE_SRC_PENDING_IMAGE],
+  ])('drops the legacy cover string of an article that %s', async (_, collectionId) => {
+    expect(await coversFor(collectionId)).toEqual([]);
   });
 
   it('resolves a Model3D through thumbnailImageId', async () => {
