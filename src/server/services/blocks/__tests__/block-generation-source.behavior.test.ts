@@ -345,6 +345,59 @@ describe('ownership: refused before anything is fetched or written', () => {
     expect(createImage).not.toHaveBeenCalled();
   });
 
+  it('🔴 refuses an output STILL BEING RATED before anything is fetched or written', async () => {
+    const held = workflow({
+      allowMatureContent: false,
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [
+              { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320 },
+              { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            ],
+          },
+        },
+      ],
+    });
+    await expect(persist({ imageIndex: 0 }, held)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'output 0 is still being rated, try again shortly',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(createImage).not.toHaveBeenCalled();
+    expect(holder.stored).toHaveLength(0);
+  });
+
+  it('refuses a BLOCKED position by the unavailable message, never shifting', async () => {
+    const blocked = workflow({
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [
+              {
+                url: ALLOWED_OUTPUT,
+                available: true,
+                width: 640,
+                height: 320,
+                nsfwLevel: 'pg',
+                blockedReason: 'Moderated',
+              },
+              { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+            ],
+          },
+        },
+      ],
+    });
+    await expect(persist({ imageIndex: 0 }, blocked)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: GENERATION_SOURCE_OUTPUT_UNAVAILABLE_MESSAGE,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(createImage).not.toHaveBeenCalled();
+  });
+
   it('a restricted output still holds its position: index 2 of two outputs is out of range', async () => {
     // Index 2 is out of range (two positions), not "the second unrestricted output".
     await expect(persist({ imageIndex: 2 }, restricted())).rejects.toMatchObject({

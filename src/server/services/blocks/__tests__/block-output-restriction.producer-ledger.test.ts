@@ -77,6 +77,33 @@ const OBJECT_LEDGER: Record<string, string> = {
     TOKEN,
 };
 
+/**
+ * Every production `outputCeiling:` VALUE (the post actor's field, F5): the
+ * `ceiling:`-property scan above cannot see it, because the property is spelled
+ * differently and sits in an object literal rather than a call argument. A type
+ * annotation (`outputCeiling: BlockOutputCeiling;`) is a declaration, not a value.
+ */
+const OUTPUT_CEILING_LEDGER: Record<string, string> = {
+  'src/server/routers/blocks.router.ts::previewPostFromApp': TOKEN,
+  'src/server/routers/blocks.router.ts::createPostFromApp': TOKEN,
+};
+
+function scanOutputCeilingValues() {
+  const source = scanSource(ROOT);
+  const found: Record<string, string> = {};
+  for (const file of source.files) {
+    const code = source.code.get(file)!;
+    for (const m of code.matchAll(/\boutputCeiling\s*:\s*([^,\n}]+)/g)) {
+      const value = m[1].replace(/\s+/g, '');
+      if (/^[A-Z][\w.]*;?$/.test(value)) continue;
+      const key = `${file}::${enclosing(code, m.index!)}`;
+      if (key in found) throw new Error(`two outputCeiling values in one declaration: ${key}`);
+      found[key] = value;
+    }
+  }
+  return found;
+}
+
 /** The `ceiling:` property of the call opening at `open`, or null. */
 function ceilingProperty(code: string, open: number): string | null {
   let depth = 0;
@@ -199,6 +226,17 @@ describe('snapshot and listing producers — the ceiling each one passes', () =>
     expect(Object.keys(objectCallers).length).toBeGreaterThanOrEqual(3);
     expect(objectCallers).toStrictEqual(
       Object.fromEntries(Object.entries(OBJECT_LEDGER).map(([k, v]) => [k, v.replace(/\s+/g, '')]))
+    );
+  });
+
+  it('F5: the post actor outputCeiling is the token ceiling at every site', () => {
+    const values = scanOutputCeilingValues();
+    // POSITIVE CONTROL: both actor sites were found.
+    expect(Object.keys(values).length).toBeGreaterThanOrEqual(2);
+    expect(values).toStrictEqual(
+      Object.fromEntries(
+        Object.entries(OUTPUT_CEILING_LEDGER).map(([k, v]) => [k, v.replace(/\s+/g, '')])
+      )
     );
   });
 

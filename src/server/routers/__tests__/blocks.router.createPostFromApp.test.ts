@@ -554,6 +554,31 @@ describe('write trust', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 🔴 F5 — the post actor's OUTPUT CEILING is the token's own claim, at BOTH actor sites.
+// It decides which output positions are restricted; an all-levels constant there would
+// type-check and hand a post every restricted output. Levels 3 and 7 are pairwise
+// distinct and distinct from the all-levels flag (31), so a constant cannot pass both.
+describe('post actor outputCeiling is the token ceiling', () => {
+  it.each([3, 7])(
+    'previewPostFromApp and createPostFromApp pass maxBrowsingLevel %i',
+    async (level) => {
+      mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ maxBrowsingLevel: level }));
+      await caller().previewPostFromApp(INPUT);
+      await caller().createPostFromApp(INPUT);
+      expect(mockPreviewBlockPost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actor: expect.objectContaining({ outputCeiling: { maxBrowsingLevel: level } }),
+        })
+      );
+      expect(mockResolveBlockPostSources).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actor: expect.objectContaining({ outputCeiling: { maxBrowsingLevel: level } }),
+        })
+      );
+    }
+  );
+});
+
 describe('rate buckets', () => {
   it('charges the POST bucket once per call, and the PUBLISH bucket by image count', async () => {
     mockResolveBlockPostSources.mockResolvedValue([

@@ -362,6 +362,76 @@ describe.each(CASES)('restricted outputs never reach %s', (_label, maxBrowsingLe
   });
 });
 
+describe('🔴 F1 — an output still being rated is held, and naming it is refused', () => {
+  /** The middle output has no rating yet; an SFW token's rating could still restrict it. */
+  function unratedMiddle() {
+    const workflow = restrictedWorkflow({ allowMatureContent: undefined });
+    const blobs = (workflow.steps[0].output as { blobs: Array<Record<string, unknown>> }).blobs;
+    delete blobs[1].nsfwLevel;
+    return workflow;
+  }
+
+  beforeEach(() => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockGetWorkflow.mockResolvedValue(unratedMiddle());
+  });
+
+  it('pollWorkflow holds it: no url, ratingPending set', async () => {
+    const { snapshot } = await READS.pollWorkflow();
+    expect(snapshot.outputs).toStrictEqual([
+      { url: OK_A, nsfwLevel: 'pg' },
+      { pending: true },
+      { url: OK_B, nsfwLevel: 'pg13' },
+    ]);
+    expect(snapshot.ratingPending).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain(SECRET);
+  });
+
+  it('publish of the pending position, or of "every output", is refused and writes nothing', async () => {
+    for (const imageIndexes of [[1], undefined]) {
+      await expect(
+        caller({ id: VIEWER }).publishGenerationOutputs({
+          blockToken: 'tok',
+          workflowId: OWN_ID,
+          ...(imageIndexes ? { imageIndexes } : {}),
+        })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'output 1 is still being rated, try again shortly',
+      });
+    }
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('a rated position beside it still publishes', async () => {
+    await caller({ id: VIEWER }).publishGenerationOutputs({
+      blockToken: 'tok',
+      workflowId: OWN_ID,
+      imageIndexes: [2],
+    });
+    expect(
+      mockPersistBlockWorkflowOutputImage.mock.calls.map(
+        (c) => (c[0] as { imageUrl: string }).imageUrl
+      )
+    ).toStrictEqual([OK_B]);
+  });
+
+  it('publish of a BLOCKED position is refused', async () => {
+    const workflow = restrictedWorkflow({ allowMatureContent: undefined });
+    const blobs = (workflow.steps[0].output as { blobs: Array<Record<string, unknown>> }).blobs;
+    blobs[1].blockedReason = 'Moderated';
+    mockGetWorkflow.mockResolvedValue(workflow);
+    await expect(
+      caller({ id: VIEWER }).publishGenerationOutputs({
+        blockToken: 'tok',
+        workflowId: OWN_ID,
+        imageIndexes: [1],
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'output 1 is not available' });
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+});
+
 describe('CONTROL: the same workflow, mature content allowed', () => {
   it('a mature app is handed the R output in position', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ maxBrowsingLevel: 1 | 2 | 4 | 8 | 16 }));

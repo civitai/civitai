@@ -786,6 +786,42 @@ describe('🔴 a RESTRICTED output keeps its position, and naming it is REFUSED'
     expect(out).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
   });
 
+  it('🔴 F1: a position still being rated is refused by name, and "every output" waits for it', async () => {
+    for (const imageIndexes of [[0], undefined]) {
+      await expectRejection(
+        resolveBlockPostSources({
+          sources: [
+            { kind: 'workflow', workflowId: 'wf_1', ...(imageIndexes ? { imageIndexes } : {}) },
+          ],
+          actor: ACTOR,
+          getWorkflow: vi.fn().mockResolvedValue(workflowWith(undefined)),
+        }),
+        'BAD_REQUEST',
+        'output 0 is still being rated, try again shortly'
+      );
+    }
+  });
+
+  it('F3: a BLOCKED position keeps its slot and naming it is refused', async () => {
+    const wf = workflowWith('pg');
+    (wf.steps[0].output.images[0] as Record<string, unknown>).blockedReason = 'Moderated';
+    await expectRejection(
+      resolveBlockPostSources({
+        sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [0] }],
+        actor: ACTOR,
+        getWorkflow: vi.fn().mockResolvedValue(wf),
+      }),
+      'BAD_REQUEST',
+      'workflow has no available outputs to post'
+    );
+    const out = await resolveBlockPostSources({
+      sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [1] }],
+      actor: ACTOR,
+      getWorkflow: vi.fn().mockResolvedValue(wf),
+    });
+    expect(out).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
+  });
+
   it('resolveOwnedWorkflowOutputs marks the restricted slot with NO url', async () => {
     const slots = await resolveOwnedWorkflowOutputs({
       userId: VIEWER_USER_ID,
