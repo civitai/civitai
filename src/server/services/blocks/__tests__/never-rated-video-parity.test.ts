@@ -25,7 +25,6 @@ const NEVER_RATED_ECOSYSTEM_TO_ENGINE: Readonly<Record<string, string>> = {
   Grok: 'grok',
   Kling: 'kling',
   Veo3: 'veo3',
-  Vidu: 'vidu',
 };
 
 type SiteWorkflowParams = Parameters<typeof isNeverRatedVideoStep>[1];
