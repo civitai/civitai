@@ -1034,7 +1034,7 @@ describe('claimListing', () => {
     mockWrite.user.findUnique.mockResolvedValueOnce(null);
     await expect(
       claimListing({
-        input: { appListingId: APP_ID, targetUserId: 999999, reason: GOOD_REASON },
+        input: { appListingId: APP_ID, targetUserId: 990100026, reason: GOOD_REASON },
         reviewerUserId: REVIEWER,
       })
     ).rejects.toMatchObject({ name: 'OffsiteModerationError', code: 'INVALID_TARGET_USER' });
