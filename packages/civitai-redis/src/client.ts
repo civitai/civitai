@@ -2608,6 +2608,13 @@ export const REDIS_SYS_KEYS = {
      * block-quote-grant.service.
      */
     STEP_QUOTE: 'system:blocks:step-quote',
+    /**
+     * Per-viewer UTC-day quota for App Blocks batch private uploads (`OPEN_MEDIA_UPLOAD_BATCH`),
+     * across all apps: `system:blocks:media-upload-batch-daily:<items|bytes>:<userId>:<yyyy-mm-dd>`.
+     * INCRBY reserve-and-refund on `sysRedis`, first-write EX ~2 days, fail-CLOSED. See
+     * media-upload-batch.service.
+     */
+    MEDIA_UPLOAD_BATCH_DAILY: 'system:blocks:media-upload-batch-daily',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
@@ -2730,6 +2737,9 @@ export const REDIS_SYS_KEYS = {
     GENERATION_INPUT_EXTERNAL_HOST_USERS: 'system:generation-input-external-host-users',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
+    // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }: the semanticSearchAudit
+    // ClickHouse rows. Missing or 0 = off.
+    SEMANTIC_SEARCH_AUDIT: 'system:semantic-search-audit',
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
     // searches to the candidate feed service and record the comparison. Off when missing.
     FEED_SHADOW: 'system:feed-shadow',
@@ -2820,6 +2830,11 @@ export const REDIS_SYS_KEYS = {
     // WITHOUT writing the hub's own `.civitai.com` session, which is civitai.com's session too.
     // `domain` is the spoke's registrable domain, not a full redirect_uri — see apps/auth pending-authz.ts.
     PENDING_AUTHZ: 'session:pending-authz',
+  },
+  OAUTH: {
+    // `oauth:xchg:${jti}` → JSON record of one exchanged access token, read by introspection.
+    // Expires a minute after the token does.
+    TOKEN_EXCHANGES: 'oauth:xchg',
   },
   JOB: 'job',
   SEARCH_INDEX_CLEANUP: {
@@ -3224,6 +3239,8 @@ const REDIS_KEYS_UNPREFIXED = {
     CREATOR_ENGAGEMENT_RANKING: 'packed:caches:creator-engagement-ranking:v1',
     // `<prefix>:<userId>` — the 30-day reacted-image candidates, shared by every ranking type.
     CREATOR_ENGAGEMENT_CANDIDATES: 'packed:caches:creator-engagement-candidates:v1',
+    // `<prefix>:<event>:<userId>:<placements hash>` — each placed hat's views where it is now.
+    EVENT_HAT_PLACEMENT_STATS: 'packed:caches:event-hat-placement-stats:v1',
     // `<prefix>:ip-blacklist` / `<prefix>:user-blacklist` — the raw KeyValue row the
     // download routes check. See download-blocklist.service.ts.
     DOWNLOAD_BLOCKLIST: 'packed:caches:download-blocklist',

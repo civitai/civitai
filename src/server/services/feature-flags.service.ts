@@ -463,8 +463,12 @@ const featureFlags = createFeatureFlags({
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
+  // Semantic search on the challenges feed. Dark: Flipt is its only switch.
+  semanticChallengeSearch: { availability: [], fliptKey: 'semantic-challenge-search' },
   // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
+  // The semantic storyline search endpoint. Dark: Flipt is its only switch.
+  semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -582,6 +586,9 @@ const featureFlags = createFeatureFlags({
   // The Hat Turf feed sorts and Show filters; checked TOGETHER with `hatTurfFeedCard`, so testers can
   // have them before every player does.
   hatTurfFeedSorts: { availability: ['mod'], fliptKey: 'hat-turf-feed-sorts' },
+  // One page-wide Hat Turf watch mark set instead of one per provider (turf-watch-hub.ts). Dark:
+  // Flipt is its only switch.
+  hatTurfBatchedCalls: { availability: [], fliptKey: 'hat-turf-batched-calls' },
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
@@ -767,6 +774,7 @@ const featureFlags = createFeatureFlags({
   retoolToggleModerator: ['granted'],
   // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
   knightsEnqueue: ['granted'],
+  textScanPromptPublish: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.

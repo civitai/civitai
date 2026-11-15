@@ -248,15 +248,19 @@ const settleSkipped = (offeringId: number, reason: SkipReason, readAt?: Date) =>
         }
       );
 
-const xguard = (offeringId: number, content: string, forceRescan?: boolean) => () =>
-  submitTextModeration({
-    entityType: ENTITY_TYPE,
-    entityId: offeringId,
-    content,
-    labels: ['nsfw'],
-    priority: 'low',
-    forceRescan,
-  });
+/** `fresh`: a new submit, not the retry cron's, so the check gets a full retry budget again. */
+const xguard =
+  (offeringId: number, content: string, { fresh = false, forceRescan = false } = {}) =>
+  () =>
+    submitTextModeration({
+      entityType: ENTITY_TYPE,
+      entityId: offeringId,
+      content,
+      labels: ['nsfw'],
+      priority: 'low',
+      forceRescan,
+      rearmRetries: fresh,
+    });
 
 /** Queues the title and description for the content check; the adapter below applies the result. */
 export async function scanServiceOffering(offeringId: number, { forceRescan = false } = {}) {
@@ -273,7 +277,10 @@ export async function scanServiceOffering(offeringId: number, { forceRescan = fa
         entityId: offeringId,
         force: forceRescan,
         onActiveSkip: (reason) => settleSkipped(offeringId, reason, offering.updatedAt),
-        xguard: xguard(offeringId, buildServiceOfferingModerationText(offering), forceRescan),
+        xguard: xguard(offeringId, buildServiceOfferingModerationText(offering), {
+          fresh: true,
+          forceRescan,
+        }),
       })
     );
   } catch (e) {

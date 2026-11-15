@@ -17,19 +17,37 @@ export const REQUESTABLE_LOCKS = Object.keys(requestableLockLabels) as Requestab
 export const isRequestableLock = (value: unknown): value is RequestableLock =>
   typeof value === 'string' && (REQUESTABLE_LOCKS as string[]).includes(value);
 
-/** Stored on `Appeal.context`: the locked settings the owner asked about. */
-export type LockReviewContext = { kind: typeof LOCK_REVIEW_KIND; locks: RequestableLock[] };
+/** A lock review of an nsfw lock the listing intent check added when the owner tried to add a
+ *  civitai.com version: a job re-judges it before a moderator sees it. */
+export const COM_FACE_INTENT_DISPUTE = 'comFaceIntent';
 
-export const lockReviewContext = (locks: RequestableLock[]): LockReviewContext => ({
+/** Stored on `Appeal.context`: the locked settings the owner asked about. */
+export type LockReviewContext = {
+  kind: typeof LOCK_REVIEW_KIND;
+  locks: RequestableLock[];
+  dispute?: typeof COM_FACE_INTENT_DISPUTE;
+};
+
+export const lockReviewContext = (
+  locks: RequestableLock[],
+  dispute?: LockReviewContext['dispute']
+): LockReviewContext => ({
   kind: LOCK_REVIEW_KIND,
   locks: REQUESTABLE_LOCKS.filter((key) => locks.includes(key)),
+  ...(dispute && { dispute }),
 });
 
 /** The lock review an appeal's `context` describes, or null when it is a flag appeal. */
 export function parseLockReviewContext(context: unknown): LockReviewContext | null {
-  const value = context as { kind?: unknown; locks?: unknown } | null | undefined;
+  const value = context as
+    | { kind?: unknown; locks?: unknown; dispute?: unknown }
+    | null
+    | undefined;
   if (value?.kind !== LOCK_REVIEW_KIND || !Array.isArray(value.locks)) return null;
-  return lockReviewContext(value.locks.filter(isRequestableLock));
+  return lockReviewContext(
+    value.locks.filter(isRequestableLock),
+    value.dispute === COM_FACE_INTENT_DISPUTE ? COM_FACE_INTENT_DISPUTE : undefined
+  );
 }
 
 export type LockReviewModelFlags = {

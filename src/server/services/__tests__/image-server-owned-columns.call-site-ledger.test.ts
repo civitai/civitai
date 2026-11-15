@@ -235,6 +235,12 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: [],
     serverColumns: [],
   },
+  // `metadata` is built before the call from the staged bytes' own metadata and the source ref.
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage': {
+    calls: 1,
+    spreads: [],
+    serverColumns: [],
+  },
   'src/server/services/creator-service-deal-file.service.ts#createScanImage': {
     calls: 1,
     spreads: [],

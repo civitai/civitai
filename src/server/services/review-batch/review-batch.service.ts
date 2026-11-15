@@ -1,14 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { createHash } from 'crypto';
-import { suspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
+import { reviewSuspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
 import {
   imageAuditContentHash,
   imageRoutesHeld,
-  matchesSuspectTerm,
   newReviewBatchId,
   parseBlockedForPatterns,
-  parseSuspectTerms,
   REVIEW_BATCH_TTL_SECONDS,
   REVIEW_MEDIA_ORIGIN,
   reviewBatchHash,
@@ -46,7 +44,7 @@ export const holdsHeldGrant = (user: SessionUser) => !!getFeatureFlags({ user })
 /** Each image's Postgres signals, read on the primary so a report filed a moment ago counts. */
 export async function readImageSignals(ids: number[]): Promise<Map<number, ImageSignalRow>> {
   const rows = await dbWrite.$queryRaw<ImageSignalRow[]>`
-    SELECT i.id, ${Prisma.raw(suspectImageSql('i'))} AS suspect,
+    SELECT i.id, ${Prisma.raw(reviewSuspectImageSql('i'))} AS suspect,
       ${Prisma.raw(unreadableImageSql('i'))} AS unreadable, i."blockedFor"
     FROM "Image" i
     WHERE i.id IN (${Prisma.join(ids)})
@@ -88,15 +86,6 @@ export async function readScannerHits(
   }
 }
 
-let termsRaw: string | undefined;
-let terms: string[] | null = null;
-function suspectTerms() {
-  if (env.REVIEW_SHEET_SUSPECT_TERMS !== termsRaw) {
-    termsRaw = env.REVIEW_SHEET_SUSPECT_TERMS;
-    terms = parseSuspectTerms(termsRaw);
-  }
-  return terms;
-}
 let patternsRaw: string | undefined;
 let patterns: ReturnType<typeof parseBlockedForPatterns> = null;
 function blockedForPatterns() {
@@ -107,19 +96,9 @@ function blockedForPatterns() {
   return patterns;
 }
 
-/**
- * Whether the batch is declared suspect: by its minter, by having no source card, or by its source
- * text naming a suspect term. With no term list every batch is declared.
- */
-export function isDeclared(input: { suspect: boolean; source: string; sourceText: string[] }) {
-  const list = suspectTerms();
-  return (
-    input.suspect ||
-    !input.source.trim() ||
-    input.sourceText.length === 0 ||
-    !list ||
-    matchesSuspectTerm(input.sourceText, list)
-  );
+/** Whether the batch is declared suspect: by its minter, or by having no source card. */
+export function isDeclared(input: { suspect: boolean; source: string }) {
+  return input.suspect || !input.source.trim();
 }
 
 /** Held when the batch is declared or any image has, or cannot be shown not to have, a signal. */
@@ -139,7 +118,6 @@ export type MintInput = {
   viewer: number;
   suspect: boolean;
   source: string;
-  sourceText: string[];
   seat?: string;
   idempotencyKey?: string;
 };

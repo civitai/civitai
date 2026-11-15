@@ -165,6 +165,7 @@
     { value: 'com', label: 'Only on civitai.com' },
     { value: 'red', label: 'Only on civitai.red' },
     { value: 'com-face', label: 'Customized for civitai.com' },
+    { value: 'com-ready', label: 'Can be listed on civitai.com' },
   ];
   const feeOptions = [
     { value: '', label: 'All fees' },
@@ -612,6 +613,21 @@
         <PricingSlotHistory slots={data.caps.pricingSlots} />
       </div>
     </details>
+  </div>
+{/if}
+
+{#if data.comReadyCount > 0 && view.query.site !== 'com-ready'}
+  <div
+    class="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-dark-4 bg-dark-6 px-4 py-3"
+  >
+    <p class="flex-1 text-sm text-dark-1">
+      {data.comReadyCount === 1
+        ? '1 of your mature models is only on civitai.red. Give it a civitai.com version to list it there too.'
+        : `${data.comReadyCount} of your mature models are only on civitai.red. Give them a civitai.com version to list them there too.`}
+    </p>
+    <Button variant="outline" size="sm" onclick={() => navigate({ site: 'com-ready', page: null })}>
+      Show them
+    </Button>
   </div>
 {/if}
 

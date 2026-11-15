@@ -10,11 +10,12 @@ import { shapeComicHit } from '~/server/services/site-search.service';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
+  beginSemanticAudit,
   queryVerdictLevel,
   recordRefusal,
+  refusedTextCandidates,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
-  type QueryRefusal,
   type QueryStage,
   type QueryTracker,
   isNonModClampOn,
@@ -26,6 +27,8 @@ import {
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
+  auditedTextCandidates,
+  viewerExcludedUserIds,
 } from '~/server/services/semantic-search-client';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -87,6 +90,12 @@ export async function searchSemanticComics({
   const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
     isModerator: user?.isModerator,
   });
+  const audit = beginSemanticAudit({
+    index: 'comics',
+    viewer: user,
+    query: input.query,
+    firstPage: !input.cursor,
+  });
   const refusalOf = async (text: string, stage: QueryStage) => {
     const refusal = await semanticQueryRefusal(text, {
       browsingLevel,
@@ -94,27 +103,34 @@ export async function searchSemanticComics({
       isModerator: user?.isModerator,
     });
     recordRefusal(track, refusal, text, 'comics_semantic', stage);
+    audit.verdict(refusal);
     return refusal;
   };
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return none;
-  browsingLevel = verdictLevel;
+  const queryRefused = verdictLevel === 'refuse';
+  if (!queryRefused) browsingLevel = verdictLevel;
 
-  const excludedUserIds = [
-    ...new Set(
-      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
-    ),
-  ];
+  const excludedUserIds = viewerExcludedUserIds(hidden);
   const excluded = new Set(excludedUserIds);
   const filter: CandidateFilter = {
     gate: { kind: 'level', nsfwLevels: levelsWithin(browsingLevel) },
     excludedUserIds,
     anyOf: { genre: input.genres?.length ? input.genres : undefined },
   };
+  // Refused before any search: the audit may run it after the response, for its row only.
+  if (queryRefused)
+    return audit.refused(
+      none,
+      browsingLevel,
+      refusedTextCandidates(candidateSource, {
+        text: input.query,
+        filter,
+        viewer: { isModerator: !!user?.isModerator },
+      })
+    );
 
   const perUser = new Map<number, number>();
-  let returned = 0;
   let hydrated = 0;
   const hydrate: Hydrate<ComicSearchIndexRecord> = async (ids) => {
     // The index's own rows and rule: Qdrant only proposes candidates, and a point can outlive the
@@ -139,21 +155,15 @@ export async function searchSemanticComics({
     return kept;
   };
 
-  let correctedQuery: string | undefined;
-  let correctedRefusal: QueryRefusal | undefined;
+  const search = auditedTextCandidates({
+    source: candidateSource,
+    viewer: { isModerator: !!user?.isModerator },
+    text: input.query,
+    filter,
+    audit: (correction) => refusalOf(correction, 'correction'),
+  });
   const page = await collectPage({
-    candidates: async (offset, limit) => {
-      const result = await candidateSource({ query: { text: input.query }, filter, offset, limit });
-      // The service embeds its spelling correction, not the text audited above.
-      if (correctedRefusal === undefined && result.correctedQuery !== undefined)
-        correctedRefusal =
-          result.correctedQuery !== input.query &&
-          (await refusalOf(result.correctedQuery, 'correction'));
-      if (correctedRefusal) return [];
-      correctedQuery ??= result.correctedQuery;
-      returned += result.ids.length;
-      return result.ids;
-    },
+    candidates: search.candidates,
     hydrate,
     offset: input.cursor ?? 0,
     limit: input.limit,
@@ -163,11 +173,13 @@ export async function searchSemanticComics({
   logToAxiom({
     type: 'info',
     name: 'semantic-comic-search',
-    returned,
+    returned: search.state.returned,
     hydrated,
     shown: page.items.length,
   }).catch(() => undefined);
 
-  if (correctedRefusal) return none;
-  return { ...page, correctedQuery };
+  audit.candidates(search.state.first);
+  if (search.state.refused)
+    return audit.refused(none, browsingLevel, async () => search.state.first ?? { ids: [] });
+  return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }

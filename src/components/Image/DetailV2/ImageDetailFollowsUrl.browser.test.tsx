@@ -124,12 +124,12 @@ function Detail() {
   useEffect(() => {
     mounted.count += 1;
   }, []);
-  const { images, index, navigate } = useImageDetailContext();
+  const { images, items, index, navigateTo } = useImageDetailContext();
   const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
   const handleSettle = useCarouselUrlSync({
-    images,
+    items,
     index,
-    navigate,
+    navigate: navigateTo,
     carouselNavigate: carouselNavigation.navigate,
   });
   return (

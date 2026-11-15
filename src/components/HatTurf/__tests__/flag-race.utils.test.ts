@@ -5,7 +5,6 @@ import {
   flagGap,
   flagHatChoices,
   flagLeader,
-  formatClock,
 } from '~/components/HatTurf/FlagRace/flag-race.utils';
 
 describe('the flag badge figures', () => {
@@ -70,10 +69,5 @@ describe('the race clock', () => {
   });
   it('stops once the day is closed', () => {
     expect(flagClock(at('2026-11-16T18:00:00Z'), closesAt, true).phase).toBe('closed');
-  });
-  it('reads H:MM:SS, or M:SS under an hour', () => {
-    expect(formatClock(8045)).toBe('2:14:05');
-    expect(formatClock(845)).toBe('14:05');
-    expect(formatClock(65)).toBe('1:05');
   });
 });

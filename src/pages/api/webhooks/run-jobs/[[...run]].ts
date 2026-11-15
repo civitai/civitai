@@ -156,6 +156,7 @@ import { trainingDataScanHealJob } from '~/server/jobs/training-data-scan-heal';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { comFaceRecheckJob } from '~/server/jobs/com-face-recheck';
+import { comFaceIntentDisputesJob } from '~/server/jobs/com-face-intent-disputes';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
@@ -244,6 +245,7 @@ export const jobs: Job[] = [
   searchIndexCleanupJob,
   searchIndexQueueDrainJob,
   comFaceRecheckJob,
+  comFaceIntentDisputesJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,

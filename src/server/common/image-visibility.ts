@@ -1,10 +1,51 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { ImageScanFailureClass } from '~/server/services/image-scan-failure';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 
 export { KNIGHTS_VOTE_NSFW_LEVEL_REASON };
-const PERMANENT_SCAN_FAILURE = 'permanent';
+const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
+
+/**
+ * Whether a scan's media failed permanently. A re-submit moves `scanJobs.error` to
+ * `scanJobs.lastFailure` and a later error lands beside it, so either can carry the class;
+ * `scanJobs.permanentFailure` keeps it once a later write would drop or replace both.
+ */
+const permanentScanFailureSql = (t: Prisma.Sql) => Prisma.sql`(
+  COALESCE(${t}."scanJobs"->'error'->>'failureClass', '') = ${PERMANENT_SCAN_FAILURE}
+  OR COALESCE(${t}."scanJobs"->'lastFailure'->>'failureClass', '') = ${PERMANENT_SCAN_FAILURE}
+  OR COALESCE(${t}."scanJobs"->'permanentFailure' = 'true'::jsonb, FALSE)
+)`;
+
+/**
+ * `{"permanentFailure": true}` when an `Image` row's `scanJobs` shows a permanent failure, else
+ * `{}`. Append it in every UPDATE that writes, drops or replaces `error` / `lastFailure`.
+ */
+export const keepPermanentScanFailureSql = () => Prisma.sql`(CASE
+  WHEN ${permanentScanFailureSql(Prisma.raw('"Image"'))}
+  THEN '{"permanentFailure": true}'::jsonb
+  ELSE '{}'::jsonb
+END)`;
+
+/** TS twin of `permanentScanFailureSql`, over an image's `scanJobs` value. */
+export const hasPermanentScanFailure = (scanJobs: unknown) => {
+  if (!scanJobs || typeof scanJobs !== 'object') return false;
+  const { error, lastFailure, permanentFailure } = scanJobs as {
+    error?: unknown;
+    lastFailure?: unknown;
+    permanentFailure?: unknown;
+  };
+  return (
+    permanentFailure === true ||
+    [error, lastFailure].some(
+      (failure) =>
+        !!failure &&
+        typeof failure === 'object' &&
+        (failure as { failureClass?: unknown }).failureClass === PERMANENT_SCAN_FAILURE
+    )
+  );
+};
 
 /**
  * Whether an image carries a block. A scan error or a rescan request moves `ingestion` off
@@ -60,7 +101,7 @@ export const imageReviewedSql = (alias = 'i') => {
         ${t}."ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
         AND (
           COALESCE(${t}."metadata"->>'nsfwLevelReason', '') = ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}
-          OR COALESCE(${t}."scanJobs"->'error'->>'failureClass', '') = ${PERMANENT_SCAN_FAILURE}
+          OR ${permanentScanFailureSql(t)}
         )
       )
     )
@@ -101,20 +142,17 @@ export const isImageReviewed = ({
   ingestion,
   nsfwLevelLocked,
   nsfwLevelReason,
-  scanFailureClass,
+  scanJobs,
 }: {
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   nsfwLevelReason: string | null | undefined;
-  scanFailureClass: string | null | undefined;
+  scanJobs: unknown;
 }) => {
   if (ingestion === ImageIngestionStatus.Scanned) return true;
   if (!nsfwLevelLocked || ingestionStatesModRatingCannotOverride.includes(ingestion)) return false;
   if (ingestion !== ImageIngestionStatus.Error) return true;
-  return (
-    nsfwLevelReason !== KNIGHTS_VOTE_NSFW_LEVEL_REASON &&
-    scanFailureClass !== PERMANENT_SCAN_FAILURE
-  );
+  return nsfwLevelReason !== KNIGHTS_VOTE_NSFW_LEVEL_REASON && !hasPermanentScanFailure(scanJobs);
 };
 
 /**

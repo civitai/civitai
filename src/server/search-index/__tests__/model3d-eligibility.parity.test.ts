@@ -119,10 +119,14 @@ const spec: ParitySpec = {
     model(13, 'poi', { poi: 'true' }),
     model(14, 'bannedOwner', { userId: '2', thumbnail: `2, 'Scanned', NULL, false, NULL` }),
     model(15, 'deletedOwner', { userId: '3', thumbnail: `3, 'Scanned', NULL, false, NULL` }),
-    // The owner held while the thumbnail belongs to someone clean: only the model's owner gate sees it.
-    model(16, 'ownerReported', { userId: '4' }),
-    model(17, 'ownerSecondaryReported', { userId: '5' }),
-    model(18, 'ownerEvidenceHold', { userId: '6' }),
+    // A held owner with their own thumbnail, as eligibility requires; with someone else's, the row
+    // would fall to thumbnailOtherOwner and prove nothing about the hold.
+    model(16, 'ownerReported', { userId: '4', thumbnail: `4, 'Scanned', NULL, false, NULL` }),
+    model(17, 'ownerSecondaryReported', {
+      userId: '5',
+      thumbnail: `5, 'Scanned', NULL, false, NULL`,
+    }),
+    model(18, 'ownerEvidenceHold', { userId: '6', thumbnail: `6, 'Scanned', NULL, false, NULL` }),
     model(19, 'thumbnailBlockedCsam', { thumbnail: `1, 'Scanned', NULL, false, 'CSAM'` }),
     model(21, 'thumbnailListed', {}),
     model(22, 'thumbnailListedAsText', {}),

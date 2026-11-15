@@ -146,7 +146,10 @@ vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) 
 
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { DOC_STORE_READ_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
+import {
+  DOC_STORE_READ_RATE_LIMIT_MAX,
+  reserveSharedWrite,
+} from '~/server/utils/shared-storage-rate-limit';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createDocStore, createDocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { DEFAULT_DOC_STORE_LIMITS, DocStoreError } from '~/server/services/apps/doc-store.types';
@@ -1234,10 +1237,12 @@ describe('rate limits: separate buckets', () => {
     });
   });
 
-  it('shared document writes spend the existing shared write budget (burst 10); private writes do not', async () => {
+  it("shared document writes spend the document store's own shared write budget (burst 30); private writes do not", async () => {
     const { A } = freshApps();
+    // Room for more documents than the burst, so the store's own ceiling cannot be what refuses.
+    h.store = createDocStore({ db: harness.db, limits: DEFAULT_DOC_STORE_LIMITS });
     const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 30; i++) {
       expect(
         (await call({ token: v1, method: 'PUT', path: `/posts/p${i}`, body: { data: {} } })).status
       ).toBe(200);
@@ -1245,7 +1250,7 @@ describe('rate limits: separate buckets', () => {
     const refused = await call({
       token: v1,
       method: 'PUT',
-      path: '/posts/p10',
+      path: '/posts/p30',
       body: { data: {} },
     });
     expect(refused.status).toBe(429);
@@ -1256,6 +1261,58 @@ describe('rate limits: separate buckets', () => {
     expect(
       (await call({ token: v1, method: 'PUT', path: '/prefs/k', body: { data: {} } })).status
     ).toBe(200);
+  });
+
+  it('info reports the document store budget: 30 burst, 300 a day', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const info = (await call({ token: v1, method: 'GET', path: '' })).body as {
+      limits: { rate: Record<string, number> };
+    };
+    expect(info.limits.rate).toMatchObject({ sharedWritesBurst: 30, sharedWritesPerDay: 300 });
+  });
+
+  it('an exhausted legacy shared-KV budget for the same (viewer, app) does not refuse document writes', async () => {
+    const { A } = freshApps();
+    // Room for more documents than the burst, so the store's own ceiling cannot be what refuses.
+    h.store = createDocStore({ db: harness.db, limits: DEFAULT_DOC_STORE_LIMITS });
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    // The legacy surface reserves on the same (user, app block id) pair the store resolves to.
+    for (let i = 0; i < 10; i++) {
+      expect((await reserveSharedWrite(VIEWER_IDS.v1, A.id)).allowed).toBe(true);
+    }
+    expect((await reserveSharedWrite(VIEWER_IDS.v1, A.id)).allowed).toBe(false);
+    for (let i = 0; i < 30; i++) {
+      expect(
+        (await call({ token: v1, method: 'PUT', path: `/posts/q${i}`, body: { data: {} } })).status
+      ).toBe(200);
+    }
+    const refused = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/q30',
+      body: { data: {} },
+    });
+    expect(refused.status).toBe(429);
+  });
+
+  it('an exhausted document store budget leaves the legacy shared-KV budget whole', async () => {
+    const { A } = freshApps();
+    // Room for more documents than the burst, so the store's own ceiling cannot be what refuses.
+    h.store = createDocStore({ db: harness.db, limits: DEFAULT_DOC_STORE_LIMITS });
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    for (let i = 0; i < 30; i++) {
+      expect(
+        (await call({ token: v1, method: 'PUT', path: `/posts/r${i}`, body: { data: {} } })).status
+      ).toBe(200);
+    }
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/posts/r30', body: { data: {} } })).status
+    ).toBe(429);
+    for (let i = 0; i < 10; i++) {
+      expect((await reserveSharedWrite(VIEWER_IDS.v1, A.id)).allowed).toBe(true);
+    }
+    expect((await reserveSharedWrite(VIEWER_IDS.v1, A.id)).allowed).toBe(false);
   });
 
   it('a shared write refused by the store is charged as a rejection, and a refused body is not charged at all', async () => {
@@ -1483,8 +1540,10 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     });
   });
 
-  it('a refused write is refunded to the burst: 5 not_author refusals, then 6 writes all land', async () => {
+  it('a refused write is refunded to the burst: 5 not_author refusals, then 30 writes all land', async () => {
     const { A } = freshApps();
+    // Room for more documents than the burst, so the store's own ceiling cannot be what refuses.
+    h.store = createDocStore({ db: harness.db, limits: DEFAULT_DOC_STORE_LIMITS });
     const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
     const owned = await call({
@@ -1498,7 +1557,8 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       const r = await call({ token: v2, method: 'PUT', path: '/posts/owned', body: { data: {} } });
       expect(r.status).toBe(403);
     }
-    for (let i = 0; i < 6; i++) {
+    // Had the refusals spent their tokens, only 25 of these would land.
+    for (let i = 0; i < 30; i++) {
       const r = await call({
         token: v2,
         method: 'PUT',
@@ -1528,6 +1588,8 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
 
   it('a write that landed spends its token even if presenting it fails afterwards', async () => {
     const { A } = freshApps();
+    // Room for more documents than the burst, so the store's own ceiling cannot be what refuses.
+    h.store = createDocStore({ db: harness.db, limits: DEFAULT_DOC_STORE_LIMITS });
     const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     // The username lookup for the showAuthor collection runs after the store has committed.
     dbMock.dbRead.user.findMany.mockRejectedValueOnce(new Error('replica blip'));
@@ -1543,16 +1605,16 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       A.id,
     ]);
     expect(rows).toEqual([{ n: 5 }]);
-    // Five landed writes spent five of the 10-token burst: five more land, the sixth is refused.
-    // Refunding a landed write would let the sixth through (and rejections would not bind yet).
-    for (let i = 5; i < 10; i++) {
+    // Five landed writes spent five of the 30-token burst: 25 more land, the 26th is refused.
+    // Refunding a landed write would let the 26th through (and rejections would not bind yet).
+    for (let i = 5; i < 30; i++) {
       const r = await call({ token: v1, method: 'PUT', path: `/posts/l${i}`, body: { data: {} } });
       expect(r.status).toBe(200);
     }
     const refused = await call({
       token: v1,
       method: 'PUT',
-      path: '/posts/l10',
+      path: '/posts/l30',
       body: { data: {} },
     });
     expect(refused.status).toBe(429);

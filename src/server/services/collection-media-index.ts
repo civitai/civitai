@@ -242,19 +242,23 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean, db
  *
  * Reads through `dbWrite` by default so a just-committed transaction is visible — the
  * replica may still be behind, and a missed row here is a permanently stale document, not
- * a late one. A bulk caller with no write of its own to see passes `dbRead`. Never throws: callers run this immediately before their delete, so an exception
- * would cancel the deletion the user actually asked for.
+ * a late one. A bulk caller with no write of its own to see passes `dbRead`. Does not throw by
+ * default: callers run this immediately before their delete, so an exception would cancel the
+ * deletion the user actually asked for. A caller that must tell a partial or failed lookup from
+ * "no collections" passes `throwOnError`, which also throws when the cover leg cannot run.
  */
 export async function getCollectionIdsForImages({
   imageIds,
   source = 'unknown',
   cap = DEFAULT_COLLECTION_CAP,
   db = dbWrite,
+  throwOnError = false,
 }: {
   imageIds: number[];
   source?: string;
   cap?: number;
   db?: typeof dbWrite;
+  throwOnError?: boolean;
 }): Promise<CollectionsToRebuild> {
   const uniqueImageIds = [...new Set(imageIds)];
   if (!uniqueImageIds.length) return EMPTY;
@@ -273,7 +277,10 @@ export async function getCollectionIdsForImages({
       `could not determine whether "${COVER_INDEX_NAME}" is usable; continuing without the cover leg`,
       error
     );
+    if (throwOnError) throw error;
   }
+  if (!withCover && throwOnError)
+    throw new Error(`"${COVER_INDEX_NAME}" is not present and valid: the cover leg cannot run`);
 
   if (!withCover)
     logToAxiom({
@@ -292,6 +299,7 @@ export async function getCollectionIdsForImages({
       'failed to resolve collections for removed images',
       error
     );
+    if (throwOnError) throw error;
     return EMPTY;
   }
 }
@@ -359,9 +367,18 @@ export async function getCollectionIdsForModelCascade({
   }
 }
 
+/** The ids of the images on any post of a model's versions, whoever posted them, as a subquery. */
+export function modelImageIdsSql(modelId: number) {
+  return Prisma.sql`
+    SELECT i.id FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE mv."modelId" = ${modelId}`;
+}
+
 /**
- * Collections whose document shows a model's images: its own item, and the items and covers drawn
- * from any post on its versions, whoever posted it. A taken-down model's images leave every
+ * Collections whose document shows a model's images: its own item, and the items, article items and
+ * covers drawn from any post on its versions, whoever posted it. A taken-down model's images leave every
  * collection cover, and a restored model's come back, so entering or leaving TakenDown rebuilds
  * these.
  *
@@ -381,11 +398,7 @@ export async function getCollectionIdsForModelImages({
   withCover?: boolean;
 }): Promise<CollectionsToRebuild & { failed?: boolean }> {
   withCover ??= await isCoverLegUsable(source);
-  const modelImagesSql = Prisma.sql`
-    SELECT i.id FROM "Image" i
-    JOIN "Post" p ON p.id = i."postId"
-    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-    WHERE mv."modelId" = ${modelId}`;
+  const modelImagesSql = modelImageIdsSql(modelId);
   const coverLeg = withCover
     ? Prisma.sql`
         UNION
@@ -403,6 +416,12 @@ export async function getCollectionIdsForModelImages({
             WHERE mv."modelId" = ${modelId})
         UNION
         SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."imageId" IN (${modelImagesSql})
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."coverId" IN (${modelImagesSql}))
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."bannerId" IN (${modelImagesSql}))
         ${coverLeg}
       ) x
       LIMIT ${cap + 1}

@@ -127,6 +127,28 @@ export const BLOCK_PUBLISHED_APP_ID_META_KEY =
 export const BLOCK_UPLOADED_APP_ID_META_KEY =
   'blockUploadedAppId' as const satisfies BlockProvenanceMetadataKey;
 
+/**
+ * Provenance marker for a workflow output an app kept as a PRIVATE generation source
+ * (`PERSIST_GENERATION_SOURCE`), stamped by {@link persistBlockGenerationSourceImage}.
+ *
+ * 🔴 DELIBERATELY NOT {@link BLOCK_PUBLISHED_APP_ID_META_KEY} AND NOT IN
+ * {@link BLOCK_POSTABLE_APP_ID_META_KEYS}. The published key is what puts a row on the app's
+ * CROSS-USER shared grid (`getBlockGatedImagesByIds`), and the postable set is what lets the app
+ * post it; a private source must reach neither. The only reader is the owner-bound idempotency
+ * lookup in `block-generation-source.service.ts`. `block-image-provenance-readers.test.ts` pins
+ * that set.
+ */
+export const BLOCK_GENERATION_SOURCE_APP_ID_META_KEY =
+  'blockGenerationSourceAppId' as const satisfies BlockProvenanceMetadataKey;
+
+/**
+ * Which output a private generation source was made from, as `<workflowId>#<imageIndex>`: the
+ * idempotency key for a repeat `PERSIST_GENERATION_SOURCE`. Not server-owned on its own, so it is
+ * only ever read together with {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} (which is) and the
+ * row's owner: a row that matches all three was written by the writer below for that viewer.
+ */
+export const BLOCK_GENERATION_SOURCE_REF_META_KEY = 'blockGenerationSourceRef' as const;
+
 /** The provenance keys a post-from-app `published` source accepts. Never the gated read's set. */
 export const BLOCK_POSTABLE_APP_ID_META_KEYS = [
   BLOCK_PUBLISHED_APP_ID_META_KEY,
@@ -141,6 +163,18 @@ export const BLOCK_POSTABLE_APP_ID_META_KEYS = [
  * {@link isAllowedOutputHost} BEFORE its socket opens.
  */
 const MAX_OUTPUT_REDIRECTS = 3;
+
+/** Refusal for a generation-output fetch or store that ran past its caller's deadline. */
+export const GENERATION_OUTPUT_DEADLINE_MESSAGE =
+  'the generation output took too long to save — try again';
+
+const generationOutputDeadlineError = () =>
+  new TRPCError({ code: 'TIMEOUT', message: GENERATION_OUTPUT_DEADLINE_MESSAGE });
+
+/** Throws the deadline refusal when `signal` (the caller's deadline) has fired. */
+export function throwIfGenerationOutputDeadlinePassed(signal?: AbortSignal) {
+  if (signal?.aborted) throw generationOutputDeadlineError();
+}
 
 /**
  * Is this a supported still-image by MAGIC BYTES (not by the url/extension or a
@@ -173,7 +207,12 @@ const SUPPORTED_IMAGE_CONTENT_TYPE: Record<ImageMagicFormat, string> = {
  * client-correctable upstream problem — BAD_REQUEST.
  */
 export async function fetchGenerationOutputImage(
-  imageUrl: string
+  imageUrl: string,
+  /**
+   * The caller's deadline. Bounds every hop and the body read on top of the per-hop 60 s
+   * timeout; when it fires the fetch fails with the TIMEOUT refusal. Absent: per-hop only.
+   */
+  signal?: AbortSignal
 ): Promise<{ bytes: Buffer; contentType: string }> {
   // The real output blob url 301s to a SAME-host content url, so we FOLLOW
   // redirects manually (up to MAX_OUTPUT_REDIRECTS hops) instead of the browser
@@ -186,6 +225,7 @@ export async function fetchGenerationOutputImage(
   let currentUrl = imageUrl;
   let hops = 0;
   for (;;) {
+    throwIfGenerationOutputDeadlinePassed(signal);
     if (!isAllowedOutputHost(currentUrl)) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -196,9 +236,12 @@ export async function fetchGenerationOutputImage(
     try {
       hopResponse = await fetch(currentUrl, {
         redirect: 'manual', // follow manually so we can re-validate each hop's host
-        signal: AbortSignal.timeout(60_000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+          : AbortSignal.timeout(60_000),
       });
     } catch {
+      throwIfGenerationOutputDeadlinePassed(signal);
       throw new TRPCError({
         code: 'BAD_REQUEST',
         message: 'could not fetch the generation output to publish',
@@ -249,7 +292,13 @@ export async function fetchGenerationOutputImage(
   if (Number.isFinite(declaredLen) && declaredLen > BLOCK_IMAGE_MAX_BYTES) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output is too large' });
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    throwIfGenerationOutputDeadlinePassed(signal);
+    throw error;
+  }
   if (bytes.byteLength === 0 || bytes.byteLength > BLOCK_IMAGE_MAX_BYTES) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output is too large' });
   }
@@ -280,6 +329,7 @@ export async function stageGenerationOutputImage({
   height,
   source,
   transform,
+  signal,
 }: {
   imageUrl: string;
   width: number | null;
@@ -288,8 +338,13 @@ export async function stageGenerationOutputImage({
   source: string;
   /** Rewrites the bytes before they are stored; `width` / `height` are then measured from the result. */
   transform?: (bytes: Buffer) => Promise<Buffer>;
+  /**
+   * The caller's deadline, passed to the fetch and the store PUT. Past it nothing more is
+   * stored and the TIMEOUT refusal is thrown. Absent: unchanged behaviour.
+   */
+  signal?: AbortSignal;
 }) {
-  const fetched = await fetchGenerationOutputImage(imageUrl);
+  const fetched = await fetchGenerationOutputImage(imageUrl, signal);
   const bytes = transform ? await transform(fetched.bytes) : fetched.bytes;
   const contentType = transform ? sniffSupportedImage(bytes) : fetched.contentType;
   if (!contentType)
@@ -300,7 +355,17 @@ export async function stageGenerationOutputImage({
 
   // The store the browser-direct upload path uses, so the scanner can read it; `key` is a fresh
   // uuid (satisfies `imageSchema.url`).
-  const { key } = await uploadImageBufferToStore(bytes, { contentType });
+  throwIfGenerationOutputDeadlinePassed(signal);
+  let key: string;
+  try {
+    ({ key } = await uploadImageBufferToStore(
+      bytes,
+      signal ? { contentType, signal } : { contentType }
+    ));
+  } catch (error) {
+    throwIfGenerationOutputDeadlinePassed(signal);
+    throw error;
+  }
 
   // The placeholder an on-site upload gets from the browser preprocessor; without it `MediaHash`
   // draws nothing while the image loads. A failure only loses the placeholder.
@@ -383,6 +448,103 @@ export async function persistBlockWorkflowOutputImage(opts: {
     // NO postId, NO modelVersionId, NO skipIngestion → a bare, real-scanned Image row.
   });
   return { imageId: image.id };
+}
+
+/**
+ * App Blocks `PERSIST_GENERATION_SOURCE` — the PRIVATE sibling of
+ * {@link persistBlockWorkflowOutputImage}: the same server-side fetch → store → `createImage`
+ * (DEFAULT ingestion, so a REAL scan; no post), but stamped
+ * {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} instead of the published key, so the row is
+ * never on the app's shared grid and is not postable. The caller resolves `imageUrl` from the
+ * ownership-verified workflow; the iframe never supplies it.
+ *
+ * The bytes are fitted inside the workflow source-image bounds (`DIM_MAX`, downscaled only, aspect
+ * kept), and the returned width and height are measured from the stored bytes, because the caller
+ * hands them to the app as the source's dimension hints, which `blockSourceImageSchema` bounds to
+ * `DIM_MIN`..`DIM_MAX`. An output with a side below `DIM_MIN` is refused.
+ */
+export async function persistBlockGenerationSourceImage(opts: {
+  imageUrl: string;
+  width: number | null;
+  height: number | null;
+  userId: number;
+  /** OauthClient id of the app (the token's appId) — provenance marker. */
+  appId: string;
+  /** {@link BLOCK_GENERATION_SOURCE_REF_META_KEY}. */
+  ref: string;
+  /** The request's deadline: bounds the fetch and the store; past it no row is written. */
+  signal?: AbortSignal;
+}): Promise<{ imageId: number; url: string; width: number; height: number }> {
+  const { imageUrl, width, height, userId, appId, ref, signal } = opts;
+  let measured: { width: number; height: number } | undefined;
+  const staged = await stageGenerationOutputImage({
+    imageUrl,
+    width,
+    height,
+    source: 'block-generation-source',
+    signal,
+    transform: async (bytes) => {
+      const fitted = await fitGenerationSourceBounds(bytes);
+      measured = fitted.size;
+      return fitted.bytes;
+    },
+  });
+  if (!measured) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output has no dimensions' });
+  }
+
+  // The last point the deadline can stop the write: past it the stored object is left
+  // unreferenced (as for any refused upload) and no row is created.
+  throwIfGenerationOutputDeadlinePassed(signal);
+  const metadata = { ...staged.metadata, [BLOCK_GENERATION_SOURCE_REF_META_KEY]: ref };
+  const { createImage } = await import('~/server/services/image.service');
+  const image = await createImage({
+    url: staged.url,
+    type: 'image',
+    mimeType: staged.mimeType,
+    hash: staged.hash,
+    width: measured.width,
+    height: measured.height,
+    metadata,
+    blockProvenance: { key: BLOCK_GENERATION_SOURCE_APP_ID_META_KEY, appId },
+    userId,
+    // NO postId, NO modelVersionId, NO skipIngestion → a bare, real-scanned, private Image row.
+  });
+  return { imageId: image.id, url: staged.url, width: measured.width, height: measured.height };
+}
+
+/**
+ * The bytes unchanged when both sides are within `DIM_MAX`, otherwise downscaled to fit inside it
+ * (aspect kept), with the size of what is returned. Refuses a side below `DIM_MIN`.
+ */
+export async function fitGenerationSourceBounds(
+  bytes: Buffer
+): Promise<{ bytes: Buffer; size: { width: number; height: number } }> {
+  const { default: sharp } = await import('sharp');
+  const { DIM_MAX, DIM_MIN } = await import('~/server/schema/blocks/workflow.schema');
+  const { width, height } = await sharp(bytes).metadata();
+  if (!width || !height) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output has no dimensions' });
+  }
+  let out = bytes;
+  let size = { width, height };
+  if (width > DIM_MAX || height > DIM_MAX) {
+    out = await sharp(bytes)
+      .resize({ width: DIM_MAX, height: DIM_MAX, fit: 'inside', withoutEnlargement: true })
+      .toBuffer();
+    const resized = await sharp(out).metadata();
+    if (!resized.width || !resized.height) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output has no dimensions' });
+    }
+    size = { width: resized.width, height: resized.height };
+  }
+  if (size.width < DIM_MIN || size.height < DIM_MIN) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `generation output is too small to use as a source (under ${DIM_MIN}px)`,
+    });
+  }
+  return { bytes: out, size };
 }
 
 /**

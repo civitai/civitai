@@ -533,6 +533,38 @@ read that file. As of this writing the families are:
   answer as a dismissal. `OPEN_IMAGE_UPLOAD` is unchanged for its existing modes; its
   `purpose: 'trainingData'` mode is described under "Training runs". Logic:
   `src/components/AppBlocks/mediaUploadLogic.ts` and `mediaUploadRun.ts`.
+- **Batch media upload** (page host only, no scope, behind the
+  `app-blocks-batch-media-upload` flag): `OPEN_MEDIA_UPLOAD_BATCH`
+  (→ `MEDIA_UPLOAD_BATCH_RESULT`) uploads many files the app already holds (a
+  dataset to caption, say) as private generation inputs, behind ONE confirm in
+  host chrome ("Upload 80 images (312 MB) for <app>?"). Request
+  `{ requestId, purpose: 'generationSource', items: [{ kind, bytes, mimeType? }] }`,
+  1 to 1,200 items and at most 10 GB in total. Each item is checked exactly as an
+  `OPEN_MEDIA_UPLOAD` bytes upload is, before the confirm, and a refused item is
+  answered for that item only; nothing uploads until the viewer confirms. There is
+  no per-minute window: the host uploads at most 3 files at a time, and the
+  server charges a per-viewer daily quota across all apps (1,200 files and 10 GB
+  per UTC day) when the batch starts. The byte half is charged on the sizes the
+  host declares (the bytes go straight to the orchestrator, whose own per-file
+  limits apply); the file count is enforced by the server, which mints at most
+  three upload URLs per declared file (a first try, one upload retry, and a
+  spare for a URL whose answer was lost); recording a file is idempotent. The host reads its current block token for
+  every call, so a batch can outlive the token it started with. Every upload URL is minted with the
+  viewer's own orchestrator token, so every file gets the orchestrator's content
+  scan, and a blocked file is answered as an error for that item. Each batch is
+  recorded for moderators (`app_block_upload_batches`: viewer, app, file count,
+  size, the blob keys, and an `expires_at` 30 days after it started; a file whose
+  record still fails after 3 attempts is answered as an error and can be missing
+  from the row), viewable in
+  the moderator app under Audit → App Upload Batches. The answer is
+  `{ requestId, results, expiresAt }` with one `{ index, selected }` or
+  `{ index, error }` per item, `{ requestId }` when the viewer declined (or in
+  review mode / not ready), or `{ requestId, error }` when the whole batch was
+  refused. The files keep the orchestrator's default consumer-blob retention,
+  so they are kept for at least 30 days (`expires_at` is that lower bound, not
+  a deletion time; nothing pins a file's expiry yet). Logic:
+  `src/components/AppBlocks/mediaUploadBatchLogic.ts` and
+  `src/server/services/blocks/media-upload-batch.service.ts`.
 - **Model file contents** (page host only, no scope, session-authed): the host
   resolves the file as the signed-in viewer through the site's download gate,
   fetches it in the viewer's tab and posts back only parsed content; the app never
@@ -688,11 +720,24 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   capability instead); that capability gate was removed from the runtime, and the
   user's own scope grant is the authority now. A token without the scope gets
   `block lacks buzz:read:self scope`.
-- **Choose the funding pool**: a workflow submit body may carry `accountType`
-  (`blue | green | yellow`). It is honored **preferred-first** while the maturity
-  policy clamp still applies (a SFW-domain block can't widen to a mature currency);
-  an out-of-set pick is rejected, absent → Auto (see
-  `resolveBlockCurrenciesForAccount`).
+- **Choose the funding pool**: a workflow body may carry `accountType`
+  (`blue | green | yellow`) — top-level on `textToImage`, on both `kind: 'step'`
+  arms (registered `step` id and pass-through `$type`) and once per
+  `kind: 'workflow'` body (the orchestrator takes one currency list per workflow,
+  so there is no per-step pick); under `params` on a `customComfy` recipe. It is
+  honored **preferred-first**: the picked pool goes first and the rest of the
+  app's allowed pools stay as fallback (an SFW app allows blue and green, a
+  mature app blue and yellow), so a pick never widens the maturity policy. An
+  out-of-set pick is a BAD_REQUEST on the estimate and the submit alike; absent →
+  Auto, blue first (see `resolveBlockCurrenciesForAccount`). The estimate prices
+  the same order the submit drains (the `customComfy` recipe estimate has no
+  price quote but refuses a disallowed pick the same way). A confirmed step quote
+  is bound to its pool: submitting it with a different `accountType` is refused
+  as a changed body, and its consent dialog names the order ("Paid from Yellow
+  Buzz first, then Blue."); with no pick the dialog has no pool line.
+  A pick does **not** guarantee an unrestricted output: when the picked pool
+  cannot cover the job the fallback pays, and a fallback to blue can still leave a
+  mature output restricted.
 - **Which pool actually paid**: the workflow status snapshot carries
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
@@ -757,10 +802,11 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
 
-### Generation input images (`kind: 'step'` and `kind: 'workflow'`)
+### Generation input images (`kind: 'textToImage'`, `kind: 'step'` and `kind: 'workflow'`)
 
 An image a generation input names must be an image stored on Civitai that has finished its
-scan and may be used as a source, the viewer's own uploads included.
+scan and may be used as a source, the viewer's own uploads included. For `kind: 'textToImage'`
+that is each `sourceImage` / `sourceImages` entry.
 
 - **Still being scanned.** An upload whose scan has not finished is refused by the estimate
   and the submit with a failed snapshot whose `errorCode` is `'source-scan-pending'`, before
@@ -771,6 +817,59 @@ scan and may be used as a source, the viewer's own uploads included.
 - **External hosts.** Image urls on hosts outside Civitai are being phased out of
   generation inputs; upload the image instead. Free text in a chat step's messages and tool
   schemas is not an image input.
+
+### Prompt refusals (every generation `kind`)
+
+When the site's prompt check refuses a generation submit's prompt, on any `kind`, the submit
+returns the refusal as a failed snapshot an app can branch on, before anything is quoted or
+reserved. This is the same over the bridge and over `POST /api/v1/blocks/workflows/submit`, which
+answers `200` with the snapshot where it used to answer `400`:
+
+- `errorCode: 'prompt-policy-refused'`: the check refused the prompt. `error` is the refusal
+  reasons (`Your prompt was flagged: …`) and nothing else; show it and stop. Resubmitting the same
+  prompt, or retrying it on another model, is refused again.
+- `errorCode: 'prompt-check-unavailable'`: the check could not run. Nothing was submitted or
+  charged. Retry no sooner than 30 seconds later, at most 3 times.
+
+A stored refusal records the App Block that submitted it, so moderators reviewing it see that an
+app sent the prompt. The submit-failure metric counts these as `prompt_refused`.
+
+### Private generation sources (`PERSIST_GENERATION_SOURCE`)
+
+An app can keep one of its own finished generation outputs as a private, scanned source and
+feed it back into a later workflow (img2img, a reference image), the page host only.
+Request `PERSIST_GENERATION_SOURCE { requestId, workflowId, imageIndex }`; the answer is
+`GENERATION_SOURCE_PERSISTED { requestId, result?: { url, width, height, imageId, ready },
+error? }`, on every path. The server half is `blocks.persistGenerationSource`.
+
+- **No confirm, nothing shared.** No host dialog opens. The image is stored for the viewer
+  with no post and is stamped `blockGenerationSourceAppId`, which the app's shared grid
+  (`getImagesByIds`), the post-from-app `published` source and the "Published with" credit
+  do not accept. Use `PUBLISH_GENERATION_OUTPUTS` to put an output on the shared grid.
+- **Gates.** The app needs `ai:write:budgeted` and the signed-in viewer must be the token's
+  subject, as for publishing. The workflow must be the app's own (its `block_workflows` row
+  and app tag) and finished; unlike publishing, there is no stand-in for a missing row on a
+  dev-tunnel preview. `imageIndex` indexes the same output list
+  `queryAppWorkflows` returns; an index out of range, or an output that is not available,
+  is refused.
+- **Scanned.** The output is re-stored on Civitai (downscaled to fit 2048 px if larger; an
+  output under 64 px is refused) and goes through the normal image scan. The whole call has a
+  30-second budget: a fetch or store still running at the end of it is stopped and answered
+  with `the generation output took too long to save — try again`, and nothing is written. What
+  is left of the budget is spent waiting for the scan. Expect the reply within about 30 seconds
+  plus the workflow lookup; set the request timeout well above that. `ready: true` means a generation will accept `url` now;
+  `ready: false` means the scan has not finished yet: call again with the same
+  `workflowId` and `imageIndex`, which returns the same image without storing another, or
+  submit later (a submit before the scan finishes is refused with `'source-scan-pending'`).
+  An output the scan blocks, or holds for review, is answered with an error.
+- **`url`, `width`, `height`** are in the shape a workflow's source image takes
+  (`image.civitai.com`, 64..2048 px).
+- **Limits.** 60 per hour per viewer, moderators included, and at most 2 calls in flight per
+  viewer (a third is refused at once, and spends nothing of the hourly 60). The model slot
+  host answers with an error. Review
+  mode and a block that is not ready are answered with an error.
+- Not available on App Assistant dev-tunnel previews yet: they have no `block_workflows`
+  row, which this bridge requires.
 
 ### Inline ComfyUI graphs (`kind: 'customComfy'`, `mode: 'inline'`)
 
@@ -928,6 +1027,28 @@ only the one in front counts down; the others start their wait when they come to
 is the model's own format (`glb`, `fbx`, …) and `variant` the output field it came from
 (`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). The same field is on
 `QUERY_APP_WORKFLOWS` items.
+
+**Queue position, ETA and progress.** A non-terminal snapshot carries
+`eta: { stepName, queuedAhead, startsAt, completesAt, progress, support }` for the step
+the viewer is waiting on: the first step the orchestrator reports as queued, else the
+first processing step. While queued, `queuedAhead` is the number of jobs ahead,
+`startsAt` / `completesAt` are the orchestrator's estimates (ISO-8601) and `support` is
+`available`, `unavailable` (no worker can take it right now) or `unsupported`; `progress`
+is null. While running those four are null and `progress` is 0..1. Each `steps[]` entry
+(`kind:'workflow'`) carries the same per step as `queue`, `progress`, `startedAt` and
+`completedAt`. `progress` is reported only for image and video generation steps
+(`textToImage`, `imageGen`, `videoGen`); other types, training among them, report a
+fraction that restarts at each phase, so they get none. A field with nothing to report
+is omitted, and a terminal snapshot has no `eta`; read absent as null. All of it is an
+estimate. A held poll (`waitSeconds`) returns as soon as the workflow or one of its steps
+changes, not only when it finishes, so the block re-polls to keep these current.
+
+**Throttled polls.** A poll the host could not serve — the poll rate limit refused it, or
+the host's request failed without an answer — is answered with
+`{ workflowId, status: 'processing', throttled: true }`: a poll the host could not serve;
+keep the previous snapshot's values (its `eta`, progress, images). The same placeholder
+answers a cancel the rate limit refused; the cancel was not issued. A real snapshot never
+carries `throttled`.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 

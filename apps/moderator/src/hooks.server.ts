@@ -36,11 +36,12 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   login     → no valid session  → redirect to the hub login, returning here afterward
 //   forbidden → signed in, not mod → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated moderator → populate locals.user and continue
-// Public paths that must resolve without a session — the brand favicon (also prerendered at build,
-// where there is no cookie) and the sign-in routes. Everything else is gated.
-const SHEET_EXCHANGE_PATHS = new Set([
+
+const SHEET_SIGN_IN_OUT_PATHS = new Set([
   '/api/held-media/auth/exchange',
   '/api/review-media/auth/exchange',
+  // Sign out carries only the review cookie, which it ends.
+  '/api/review-media/auth/signout',
 ]);
 
 const noStore = (status: number, extra: Record<string, string> = {}) =>
@@ -68,7 +69,7 @@ async function handleBatchRoute(
 
   const session = await (tier === 'held'
     ? resolveHeldSession(token).then(
-        (s) => s && { user: s.user, batches: s.batch ? [s.batch] : [] }
+        (s) => s && { user: s.user, batches: s.batch ? [s.batch] : [], join: undefined }
       )
     : resolveReviewSession(token)
   ).catch(() => {
@@ -80,12 +81,14 @@ async function handleBatchRoute(
 
   event.locals.user = session.user;
   event.locals.heldCredential = 'sheet';
-  event.locals.reviewSheet = { tier, batches: session.batches };
+  event.locals.reviewSheet = { tier, batches: session.batches, join: session.join };
   applyGrants(await loadPageAccessGrants());
   event.locals.grants = resolvePermissions(session.user);
   return resolve(event);
 }
 
+// Public paths that must resolve without a session — the brand favicon (also prerendered at build,
+// where there is no cookie) and the sign-in and sign-out routes. Everything else is gated.
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
   '/logout',
@@ -160,10 +163,10 @@ export const init: ServerInit = async () => {
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
-  // The sheets' code exchanges carry no session. A batch route answers to its tier's sheet cookie
-  // alone. The held cookie also stands in for the web session on the held image route, only when
-  // there is no valid web session. Outside these routes and the exchanges, both are ignored.
-  if (SHEET_EXCHANGE_PATHS.has(event.url.pathname) && event.request.method === 'POST')
+  // The sheets' sign-in and sign-out carry no web session. A batch route answers to its tier's sheet
+  // cookie alone. The held cookie also stands in for the web session on the held image route, only
+  // when there is no valid web session. Outside these routes and sign-in/out, both are ignored.
+  if (SHEET_SIGN_IN_OUT_PATHS.has(event.url.pathname) && event.request.method === 'POST')
     return resolve(event);
   const batchTier = batchPathTier(event.url.pathname);
   if (batchTier) return handleBatchRoute(event, resolve, batchTier);

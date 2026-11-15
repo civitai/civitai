@@ -2,6 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   heldPostTextPostIds,
   heldTextError,
+  hiddenPostTextIds,
   unheldPostTextUpdateSql,
 } from '~/server/services/post-text-hold';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -130,7 +131,8 @@ export async function deletePostText({
   return { id };
 }
 
-const readableTextWhere = { refused: false, csamHeld: false, nsfwLevel: { not: 0 } } as const;
+/** Rated rows only. Whether a text is hidden is decided on the primary (`hiddenPostTextIds`). */
+const ratedTextWhere = { nsfwLevel: { not: 0 } } as const;
 
 /**
  * The text items a reader is shown on these chapter posts, without content: which slides exist.
@@ -148,18 +150,28 @@ export async function getStorylineTextStubs({
 }) {
   if (!postIds.length) return [];
   const rows = await dbRead.postText.findMany({
-    where: { postId: { in: postIds }, ...readableTextWhere },
-    select: { id: true, postId: true, index: true, nsfwLevel: true, refused: true },
+    where: { postId: { in: postIds }, ...ratedTextWhere },
+    select: { id: true, postId: true, index: true, nsfwLevel: true },
   });
+  const hidden = await hiddenPostTextIds(rows.map((row) => row.id));
   return rows
-    .filter((row) => isImageCaptionShown(row, { browsingLevel, maxNsfwLevel, failClosed: true }))
+    .filter((row) => !hidden.has(row.id))
+    .filter((row) =>
+      isImageCaptionShown(
+        { ...row, refused: false },
+        { browsingLevel, maxNsfwLevel, failClosed: true }
+      )
+    )
     .map(({ id, postId, index, nsfwLevel }) => ({ id, postId, index, nsfwLevel }));
 }
 
 /**
- * A post's text items as `post.get` serves them, for a viewer the caller has already let see the
- * post. Its author and moderators get every row; anyone else only scanned, unrefused, unheld text
- * within `browsingLevel` (no storyline ceiling: `post.get` is not storyline-scoped).
+ * A post's text items as `post.get` serves them to the reader surfaces (reader, image detail, post
+ * page), for a viewer the caller has already let see the post. A refused or held text is never
+ * served here, its author and moderators included: they review it in the editor and Mod Studio.
+ * The author and moderators also get unscanned text, which the page marks as pending review;
+ * anyone else only scanned text within `browsingLevel` (no storyline ceiling: `post.get` is not
+ * storyline-scoped).
  */
 export async function getPostTextsForViewer({
   postId,
@@ -171,18 +183,35 @@ export async function getPostTextsForViewer({
   seesAll: boolean;
 }) {
   const rows = await dbRead.postText.findMany({
-    where: { postId, ...(seesAll ? {} : readableTextWhere) },
-    select: { id: true, index: true, content: true, nsfwLevel: true, refused: true },
+    where: {
+      postId,
+      ...(seesAll ? {} : ratedTextWhere),
+    },
+    select: {
+      id: true,
+      index: true,
+      content: true,
+      nsfwLevel: true,
+    },
   });
+  // The replica row supplies the words and the rating; the primary says which are hidden.
+  const hidden = await hiddenPostTextIds(rows.map((row) => row.id));
   return rows
-    .filter(
-      (row) =>
-        seesAll ||
-        isImageCaptionShown(row, {
-          browsingLevel,
-          maxNsfwLevel: getHighestBrowsingLevelBit(browsingLevel),
-          failClosed: true,
-        })
-    )
+    .map((row) => ({ ...row, refused: false, csamHeld: hidden.has(row.id) }))
+    .filter((row) => isPostTextShownToViewer(row, { browsingLevel, seesAll }))
     .map(({ id, index, content, nsfwLevel }) => ({ id, index, content, nsfwLevel }));
+}
+
+/** The row rule of `getPostTextsForViewer`, which a text's comment thread shares. */
+export function isPostTextShownToViewer(
+  row: { refused: boolean; csamHeld: boolean; nsfwLevel: number },
+  { browsingLevel, seesAll }: { browsingLevel: number; seesAll: boolean }
+) {
+  if (row.refused || row.csamHeld) return false;
+  if (seesAll) return true;
+  return isImageCaptionShown(row, {
+    browsingLevel,
+    maxNsfwLevel: getHighestBrowsingLevelBit(browsingLevel),
+    failClosed: true,
+  });
 }

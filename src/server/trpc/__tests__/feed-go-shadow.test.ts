@@ -11,6 +11,7 @@ import superjson from 'superjson';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
+  feedGoV1ShapeClass,
   FEED_GO_SHADOW_PATH,
   pickSessionCookies,
   pickShadowHeaders,
@@ -22,10 +23,19 @@ import {
 } from '~/server/trpc/feed-go-shadow';
 
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
+const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
 const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
 
 function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig {
-  return { url: URL_, rate: 1, timeoutMs: 500, maxInFlight: 4, maxPerSecond: 1000, ...overrides };
+  return {
+    url: URL_,
+    v1ImagesUrl: V1_URL,
+    rate: 1,
+    timeoutMs: 500,
+    maxInFlight: 4,
+    maxPerSecond: 1000,
+    ...overrides,
+  };
 }
 
 function request(overrides: Record<string, unknown> = {}) {
@@ -46,12 +56,15 @@ function harness(
   opts: {
     config?: Partial<FeedGoShadowConfig>;
     enabled?: boolean;
+    /** The `feed-go-shadow-v1-images` flag (default on here, as `enabled` is). */
+    v1?: boolean;
     random?: number;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
     now?: () => number;
   } = {}
 ) {
   const outcomes: string[] = [];
+  const endpoints: string[] = [];
   const encodes: Array<{ seconds: number; bytes: number }> = [];
   const queued: Array<() => void> = [];
   const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(
@@ -60,9 +73,13 @@ function harness(
   const shadow = createFeedGoShadow({
     config: config(opts.config),
     enabled: () => opts.enabled ?? true,
+    enabledV1Images: () => opts.v1 ?? true,
     random: () => opts.random ?? 0,
     fetch: fetchMock as unknown as typeof fetch,
-    record: (o) => void outcomes.push(o),
+    record: (o, endpoint) => {
+      outcomes.push(o);
+      endpoints.push(endpoint);
+    },
     recordEncode: (seconds, bytes) => void encodes.push({ seconds, bytes }),
     now: opts.now ?? (() => 0),
     schedule: (fn) => void queued.push(fn),
@@ -72,7 +89,7 @@ function harness(
     // Let the fetch promise chain settle.
     for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
   };
-  return { shadow, outcomes, encodes, fetchMock, flush, queued };
+  return { shadow, outcomes, endpoints, encodes, fetchMock, flush, queued };
 }
 
 /** Run one request through begin → handler (serializing `written`) → finish. */
@@ -102,6 +119,7 @@ describe('readFeedGoShadowConfig', () => {
   it('is disabled with no URL, and defaults to rate 0', () => {
     expect(readFeedGoShadowConfig({})).toEqual({
       url: undefined,
+      v1ImagesUrl: undefined,
       rate: 0,
       timeoutMs: SHADOW_DEFAULT_TIMEOUT_MS,
       maxInFlight: SHADOW_DEFAULT_MAX_IN_FLIGHT,
@@ -119,6 +137,7 @@ describe('readFeedGoShadowConfig', () => {
     });
     expect(c).toEqual({
       url: `http://feed-go.internal.test:9090${FEED_GO_SHADOW_PATH}`,
+      v1ImagesUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/images',
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,
@@ -135,6 +154,7 @@ describe('readFeedGoShadowConfig', () => {
       FEED_GO_SHADOW_MAX_PER_SECOND: '0',
     });
     expect(c.url).toBeUndefined();
+    expect(c.v1ImagesUrl).toBeUndefined();
     expect(c.rate).toBe(1);
     expect(c.timeoutMs).toBe(10_000);
     expect(c.maxInFlight).toBe(1);
@@ -469,5 +489,230 @@ describe('createFeedGoShadow — never on the user path', () => {
     h.shadow.finish(sample, 500);
     expect(h.shadow.inFlight()).toBe(0);
     expect(h.outcomes).toEqual(['skipped_status']);
+  });
+});
+
+/** A `GET /api/v1/images` request as the Next route receives it. */
+function restRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    method: 'GET',
+    url: '/api/v1/images?modelVersionId=9&limit=2',
+    headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t; x=y', 'cf-ipcountry': 'GB' },
+    query: { modelVersionId: '9', limit: '2' },
+    ...overrides,
+  } as {
+    method?: string;
+    url?: string;
+    headers: Record<string, string | string[] | undefined>;
+    query: Partial<Record<string, string | string[]>>;
+  };
+}
+
+/** Run one REST request through begin → the handler's capture of its 200 body → finish. */
+function serveRest(
+  h: ReturnType<typeof harness>,
+  req = restRequest(),
+  { status = 200, body = { items: [], metadata: {} } as unknown } = {}
+) {
+  const sample = h.shadow.beginV1Images(req);
+  if (sample) {
+    if (status === 200) h.shadow.captureV1Images(sample, body);
+    h.shadow.finish(sample, status);
+  }
+  return sample;
+}
+
+describe('createFeedGoShadow — GET /api/v1/images', () => {
+  it('POSTs the raw query string, the path, the forwarded headers and the JSON body', async () => {
+    const h = harness();
+    const body = {
+      items: [{ id: 11, createdAt: new Date('2024-03-01T10:00:00.000Z'), tags: undefined }],
+      metadata: { nextCursor: 'feed:1:2' },
+    };
+    serveRest(h, restRequest(), { body });
+    // Nothing is sent on the request path: only once the scheduled send runs.
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    await h.flush();
+
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(V1_URL);
+    expect(init.method).toBe('POST');
+    // The body as res.json writes it: a Date as its ISO string, an undefined member dropped.
+    expect(init.body).toBe(
+      '{"input":"modelVersionId=9&limit=2","path":"/api/v1/images",' +
+        '"headers":{"host":"civitai.com","cf-ipcountry":"GB","cookie":"__Secure-civ-token=t"},' +
+        '"node":{"items":[{"id":11,"createdAt":"2024-03-01T10:00:00.000Z"}],' +
+        '"metadata":{"nextCursor":"feed:1:2"}}}'
+    );
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['v1-images']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a request with no query string is mirrored with an empty input', async () => {
+    const h = harness();
+    serveRest(h, restRequest({ url: '/api/v1/images', query: {} }));
+    await h.flush();
+    expect(JSON.parse(h.fetchMock.mock.calls[0][1].body as string)).toMatchObject({
+      input: '',
+      path: '/api/v1/images',
+    });
+  });
+
+  it.each([
+    ['its flag off', { v1: false }, restRequest()],
+    ['no URL', { config: { v1ImagesUrl: undefined } }, restRequest()],
+    ['rate 0', { config: { rate: 0 } }, restRequest()],
+    ['not sampled (random >= rate)', { config: { rate: 0.3 }, random: 0.3 }, restRequest()],
+    ['a POST', {}, restRequest({ method: 'POST' })],
+  ])('does not sample: %s', async (_name, opts, req) => {
+    const h = harness(opts as Parameters<typeof harness>[0]);
+    expect(serveRest(h, req)).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual([]);
+  });
+
+  it('each route has its own flag', () => {
+    // The gallery flag alone does not sample the REST route...
+    const gallery = harness({ enabled: true, v1: false });
+    expect(gallery.shadow.beginV1Images(restRequest())).toBeUndefined();
+    expect(gallery.shadow.begin(request())).toBeDefined();
+    // ...nor the REST flag the gallery procedure.
+    const rest = harness({ enabled: false, v1: true });
+    expect(rest.shadow.begin(request())).toBeUndefined();
+    expect(rest.shadow.beginV1Images(restRequest())).toBeDefined();
+  });
+
+  it.each([
+    [
+      'a bearer header',
+      restRequest({ headers: { host: 'civitai.com', authorization: 'Bearer KEY-1' } }),
+    ],
+    [
+      'a ?token= key',
+      restRequest({
+        url: '/api/v1/images?token=KEY-1&limit=2',
+        query: { token: 'KEY-1', limit: '2' },
+      }),
+    ],
+  ])('never mirrors an API credential (%s): counted as skipped_credential', async (_name, req) => {
+    const h = harness();
+    expect(serveRest(h, req)).toBeUndefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_credential']);
+    expect(h.endpoints).toEqual(['v1-images']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('holds no in-flight slot while the handler runs, only once it answered 200', async () => {
+    const h = harness();
+    const sample = h.shadow.beginV1Images(restRequest())!;
+    expect(sample).toBeDefined();
+    expect(h.shadow.inFlight()).toBe(0);
+    h.shadow.captureV1Images(sample, { items: [], metadata: {} });
+    h.shadow.finish(sample, 200);
+    expect(h.shadow.inFlight()).toBe(1); // the queued send
+    await h.flush();
+    expect(h.shadow.inFlight()).toBe(0);
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it('shares the in-flight cap with the gallery procedure', async () => {
+    const h = harness({ config: { maxInFlight: 1 } });
+    // A gallery sample holds the only slot (its POST has not settled).
+    expect(h.shadow.begin(request())).toBeDefined();
+    expect(serveRest(h)).toBeDefined();
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['dropped_overload']);
+    expect(h.endpoints).toEqual(['v1-images']);
+  });
+
+  it('has its own per-second bucket, so REST samples cannot starve the gallery', async () => {
+    const h = harness({ config: { maxPerSecond: 1 }, now: () => 0 });
+    // The REST bucket's one token is spent...
+    serveRest(h);
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent']);
+    serveRest(h);
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+    // ...and the gallery procedure's bucket is untouched.
+    expect(h.shadow.begin(request())).toBeDefined();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+  });
+
+  it('a non-200 answer is skipped and nothing is sent', async () => {
+    const h = harness();
+    serveRest(h, restRequest(), { status: 503 });
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status']);
+  });
+
+  it('a capture after a non-200 finish is ignored', async () => {
+    const h = harness();
+    const sample = h.shadow.beginV1Images(restRequest())!;
+    h.shadow.finish(sample, 503);
+    h.shadow.captureV1Images(sample, { items: [{ id: 1 }], metadata: {} });
+    expect(sample.captured).toBeUndefined();
+    // A second finish of the same sample does nothing either.
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status']);
+  });
+
+  it('each route captures only its own response', async () => {
+    const h = harness();
+    // A gallery sample held open keeps inFlight > 0, so the transformer's capture gets past its
+    // "nothing in flight" shortcut and only the endpoint guard can refuse the REST sample.
+    const g = h.shadow.begin(request())!;
+    expect(h.shadow.inFlight()).toBe(1);
+    const sample = h.shadow.beginV1Images(restRequest())!;
+    h.shadow.run(sample, () =>
+      h.shadow.capture({ items: [] }, superjson.serialize({ items: [] }), false)
+    );
+    expect(sample.captured).toBeUndefined();
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_no_capture']);
+    // And the other way round: a gallery sample ignores the REST capture.
+    h.shadow.captureV1Images(g, { items: [] });
+    h.shadow.finish(g, 200);
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_no_capture', 'skipped_no_capture']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('feedGoV1ShapeClass', () => {
+  const req = restRequest();
+  it.each([
+    ['a plain gallery page', { modelVersionId: 9 }, 200, 'ported'],
+    ['modelId with a version', { modelId: 3, modelVersionId: 9 }, 200, 'ported'],
+    ['an id batch', { ids: [1, 2] }, 200, 'unported_ids'],
+    ['one image', { imageId: 5 }, 200, 'unported_imageId'],
+    ['a model without a version', { modelId: 3 }, 200, 'unported_modelId_only'],
+    ['tags', { tags: [5] }, 200, 'unported_tags'],
+    ['base models', { baseModels: ['SDXL 1.0'] }, 200, 'unported_baseModels'],
+    ['meta', { withMeta: true }, 200, 'unported_withMeta'],
+    ['tags on images', { withTags: true }, 200, 'unported_withTags'],
+    ['a 503', { modelVersionId: 9 }, 503, 'non200'],
+  ] as const)('%s is %s', (_name, data, status, want) => {
+    expect(feedGoV1ShapeClass(req, data, status)).toBe(want);
+  });
+
+  it('a query that did not parse is non200, an API credential is api_key', () => {
+    expect(feedGoV1ShapeClass(req, null, 200)).toBe('non200');
+    expect(
+      feedGoV1ShapeClass(restRequest({ headers: { authorization: 'Bearer K' } }), {}, 200)
+    ).toBe('api_key');
+    expect(feedGoV1ShapeClass(restRequest({ query: { token: 'K' } }), { ids: [1] }, 200)).toBe(
+      'api_key'
+    );
   });
 });

@@ -81,8 +81,10 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/poi-flag/flag-match': () => import('~/pages/api/mod/poi-flag/flag-match'),
   '/api/mod/poi-flag/revert': () => import('~/pages/api/mod/poi-flag/revert'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
+  '/api/mod/review-batches': () => import('~/pages/api/mod/review-batches'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
   '/api/mod/review/set-exclude': () => import('~/pages/api/mod/review/set-exclude'),
+  '/api/mod/search-query-rule-dry-run': () => import('~/pages/api/mod/search-query-rule-dry-run'),
   '/api/mod/storyline/lift-title-takedown': () =>
     import('~/pages/api/mod/storyline/lift-title-takedown'),
   '/api/mod/storyline/resolve-title-appeal': () =>

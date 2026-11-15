@@ -9,6 +9,7 @@ import {
   LISTING_SCREENSHOT_WIDTH,
   listingCoverUrl,
   listingIconUrl,
+  listingMediaEdgeUrl,
 } from '~/server/services/blocks/listing-media-url';
 import {
   allBrowsingLevelsFlag,
@@ -231,7 +232,7 @@ export function gatedListingScreenshots(
     const url = visibleUrl(s.image, ceiling);
     if (!url) continue;
     out.push({
-      url: getEdgeUrl(url, { width: LISTING_SCREENSHOT_WIDTH }),
+      url: listingMediaEdgeUrl(url, LISTING_SCREENSHOT_WIDTH),
       caption: s.caption ?? null,
     });
   }
@@ -254,7 +255,7 @@ export function gatedListingCoverUrl(
   if (coverUrl) return listingCoverUrl({ url: coverUrl }, null);
   for (const s of screenshots) {
     const url = visibleUrl(s.image, ceiling);
-    if (url) return getEdgeUrl(url, { width: LISTING_COVER_WIDTH });
+    if (url) return listingMediaEdgeUrl(url, LISTING_COVER_WIDTH);
   }
   return null;
 }
@@ -323,7 +324,7 @@ export function projectListingMedia(
       for (const s of row.screenshots) {
         if (!s.image?.url) continue;
         screenshots.push({
-          url: getEdgeUrl(s.image.url, { width: LISTING_SCREENSHOT_WIDTH }),
+          url: listingMediaEdgeUrl(s.image.url, LISTING_SCREENSHOT_WIDTH),
           caption: s.caption ?? null,
         });
       }
@@ -332,7 +333,7 @@ export function projectListingMedia(
       iconUrl: listingIconUrl(row.icon),
       coverUrl: listingCoverUrl(
         row.cover,
-        firstShot ? getEdgeUrl(firstShot, { width: LISTING_COVER_WIDTH }) : null
+        firstShot ? listingMediaEdgeUrl(firstShot, LISTING_COVER_WIDTH) : null
       ),
       screenshots,
     };
@@ -374,6 +375,10 @@ export type ListingSocialImage = { url: string; nsfwLevel: number };
  *
  * The level travels with the url so the page's `Meta` can apply its own, host-independent
  * safe-level check as a second belt (`Meta`'s `imageNsfwLevel`).
+ *
+ * 🔴 JPEG ON PURPOSE: these urls are built WITHOUT `optimized`, unlike every on-page listing
+ * image (`listingMediaEdgeUrl`). Link-preview scrapers are not all WebP-capable, and a social
+ * card has no card background for a lost alpha channel to show through.
  */
 export function listingSocialImage(
   row: ListingMediaRow,

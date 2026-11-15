@@ -100,6 +100,19 @@ describe('AI Services grants for a restricted account', () => {
     expect(h.inserts).toHaveLength(2);
   });
 
+  it("names a user's tokens oauth:<client>, and only a client_credentials token oauth-cc:", async () => {
+    h.user = inGoodStanding;
+    await createOAuthTokenPair(USER, 'third-party', AI);
+    await createAppAccessToken(USER, 'app', AI, 600);
+    await createAppAccessToken(USER, 'app', AI, 600, { clientCredentials: true });
+    expect(h.inserts.map((row) => row.name)).toEqual([
+      'oauth:third-party',
+      'oauth-refresh:third-party',
+      'oauth:app',
+      'oauth-cc:app',
+    ]);
+  });
+
   it.each([
     ['muted', muted],
     ['banned', banned],

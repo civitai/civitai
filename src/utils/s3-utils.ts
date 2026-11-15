@@ -202,19 +202,19 @@ export async function getImageUploadProbeBackend(): Promise<{
  */
 export async function uploadImageBufferToStore(
   data: Uint8Array | Buffer,
-  opts?: { contentType?: string }
+  /** `signal` aborts the PUT (an AWS SDK `abortSignal`); absent, the call is unchanged. */
+  opts?: { contentType?: string; signal?: AbortSignal }
 ): Promise<{ key: string; backend: ImageUploadBackend }> {
   const { s3, bucket, backend } = await getImageUploadBackend();
   const key = randomUUID();
   const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Body: bytes,
-      ...(opts?.contentType ? { ContentType: opts.contentType } : {}),
-    })
-  );
+  const put = new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Body: bytes,
+    ...(opts?.contentType ? { ContentType: opts.contentType } : {}),
+  });
+  await (opts?.signal ? s3.send(put, { abortSignal: opts.signal }) : s3.send(put));
   await registerStoredImage(key, backend, bytes.byteLength);
   return { key, backend };
 }

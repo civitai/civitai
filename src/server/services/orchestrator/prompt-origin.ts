@@ -24,9 +24,13 @@ export type PromptOrigin = {
     // Read from the user's own workflows, which they can modify, so never server-verified.
     verified: false;
   };
+  /** Submitted through an App Block, so the app, not the viewer, may have written the prompt. */
+  app?: AppPromptOrigin;
   /** A lookup failed or timed out: missing evidence is not evidence of absence. */
   incomplete?: true;
 };
+
+export type AppPromptOrigin = { appBlockId: string; stepType: string };
 
 export type BuildPromptOriginOptions = {
   prompt: string;
@@ -253,7 +257,9 @@ export async function attachPromptOrigin({
   ...lookup
 }: AttachPromptOriginOptions): Promise<void> {
   try {
-    const origin = await buildPromptOrigin(lookup);
+    const built = await buildPromptOrigin(lookup);
+    // Written when the entry was created; the lookup cannot know it.
+    const origin: PromptOrigin = entry.origin?.app ? { ...built, app: entry.origin.app } : built;
 
     const attempt = async (): Promise<boolean> => {
       try {

@@ -8,12 +8,13 @@ import { getArticles } from '~/server/services/article.service';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
+  beginSemanticAudit,
   queryVerdictLevel,
   recordRefusal,
+  refusedTextCandidates,
   isNonModClampOn,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
-  type QueryRefusal,
   type QueryStage,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
@@ -27,6 +28,8 @@ import {
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
+  auditedTextCandidates,
+  viewerExcludedUserIds,
 } from '~/server/services/semantic-search-client';
 import { Flags } from '~/shared/utils/flags';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -69,6 +72,12 @@ export async function searchSemanticArticles({
   const addonsFor = (level: number) =>
     resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
   let addons = addonsFor(browsingLevel);
+  const audit = beginSemanticAudit({
+    index: 'articles',
+    viewer: user,
+    query: input.query,
+    firstPage: !input.cursor,
+  });
   const refusalOf = async (text: string, stage: QueryStage) => {
     const refusal = await semanticQueryRefusal(text, {
       browsingLevel,
@@ -76,21 +85,18 @@ export async function searchSemanticArticles({
       isModerator: user?.isModerator,
     });
     recordRefusal(track, refusal, text, 'articles_semantic', stage);
+    audit.verdict(refusal);
     return refusal;
   };
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return none;
-  if (verdictLevel !== browsingLevel) {
+  const queryRefused = verdictLevel === 'refuse';
+  if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
   }
 
-  const excludedUserIds = [
-    ...new Set(
-      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
-    ),
-  ];
+  const excludedUserIds = viewerExcludedUserIds(hidden);
   const excludedTagIds = [
     ...new Set([
       ...addons.excludedTagIds,
@@ -104,6 +110,17 @@ export async function searchSemanticArticles({
     userIds,
     excludedUserIds,
   };
+  // Refused before any search: the audit may run it after the response, for its row only.
+  if (queryRefused)
+    return audit.refused(
+      none,
+      browsingLevel,
+      refusedTextCandidates(candidateSource, {
+        text: input.query,
+        filter,
+        viewer: { isModerator: !!user?.isModerator },
+      })
+    );
 
   // The search page's own rule first: Qdrant only proposes candidates, and a point can outlive
   // the article's eligibility (a ban changes no article row).
@@ -123,7 +140,6 @@ export async function searchSemanticArticles({
     );
 
   const perUser = new Map<number, number>();
-  let returned = 0;
   let hydrated = 0;
   const hydrate: Hydrate<HydratedArticle> = async (ids) => {
     const allowed = await eligible(ids);
@@ -160,21 +176,15 @@ export async function searchSemanticArticles({
     return kept;
   };
 
-  let correctedQuery: string | undefined;
-  let correctedRefusal: QueryRefusal | undefined;
+  const search = auditedTextCandidates({
+    source: candidateSource,
+    viewer: { isModerator: !!user?.isModerator },
+    text: input.query,
+    filter,
+    audit: (correction) => refusalOf(correction, 'correction'),
+  });
   const page = await collectPage({
-    candidates: async (offset, limit) => {
-      const result = await candidateSource({ query: { text: input.query }, filter, offset, limit });
-      // The service embeds its spelling correction, not the text audited above.
-      if (correctedRefusal === undefined && result.correctedQuery !== undefined)
-        correctedRefusal =
-          result.correctedQuery !== input.query &&
-          (await refusalOf(result.correctedQuery, 'correction'));
-      if (correctedRefusal) return [];
-      correctedQuery ??= result.correctedQuery;
-      returned += result.ids.length;
-      return result.ids;
-    },
+    candidates: search.candidates,
     hydrate,
     offset: input.cursor ?? 0,
     limit: input.limit,
@@ -184,11 +194,13 @@ export async function searchSemanticArticles({
   logToAxiom({
     type: 'info',
     name: 'semantic-article-search',
-    returned,
+    returned: search.state.returned,
     hydrated,
     shown: page.items.length,
   }).catch(() => undefined);
 
-  if (correctedRefusal) return none;
-  return { ...page, correctedQuery };
+  audit.candidates(search.state.first);
+  if (search.state.refused)
+    return audit.refused(none, browsingLevel, async () => search.state.first ?? { ids: [] });
+  return audit.done({ ...page, correctedQuery: search.state.correctedQuery }, browsingLevel);
 }

@@ -17,6 +17,25 @@ const MAX_REDIRECTS = 5;
 /** Characters of a response body read at all: far above any docs page, and a bound on the work. */
 export const DOCS_BODY_MAX_CHARS = 1_000_000;
 
+/** The in-sandbox setup guide, which replaces the workstation prompt for an assistant in the sandbox. */
+export const IN_SANDBOX_GUIDE = `https://${DOCS_HOST}/agent-setup/in-sandbox.md`;
+
+/**
+ * The agent-onboarding link users paste (`civitai.com/agent-onboarding`, with or without the scheme,
+ * `www.` or a trailing slash). It is on civitai.com, so read_docs would refuse it, and it redirects to
+ * the workstation prompt, which tells an agent to install the CLI and sign in; read_docs reads the
+ * in-sandbox guide instead.
+ */
+const AGENT_ONBOARDING =
+  /^(?:https?:\/\/)?(?:www\.)?civitai\.com\/agent-onboarding\/?(?:[?#].*)?$/i;
+
+/** {@link IN_SANDBOX_GUIDE} when `raw` is the agent-onboarding link, else null. */
+export function docsAliasOf(raw: unknown): URL | null {
+  return typeof raw === 'string' && AGENT_ONBOARDING.test(raw.trim())
+    ? new URL(IN_SANDBOX_GUIDE)
+    : null;
+}
+
 /** The docs page `raw` names, as read_docs fetches it (no fragment); null when it is not one. */
 export function docsUrlOf(raw: unknown, base?: URL): URL | null {
   if (typeof raw !== 'string' || raw.length > 2_000) return null;
@@ -137,7 +156,10 @@ export function createDocsTool(options: DocsToolOptions = {}): AssistantTool {
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: `A https://${DOCS_HOST}/ address.` },
+        url: {
+          type: 'string',
+          description: `A https://${DOCS_HOST}/ address. civitai.com/agent-onboarding reads ${IN_SANDBOX_GUIDE}.`,
+        },
         offset: {
           type: 'integer',
           minimum: 0,
@@ -148,7 +170,7 @@ export function createDocsTool(options: DocsToolOptions = {}): AssistantTool {
       required: ['url'],
     },
     async execute(input, context?: { signal?: AbortSignal }) {
-      const url = docsUrlOf(input.url);
+      const url = docsAliasOf(input.url) ?? docsUrlOf(input.url);
       if (!url)
         throw new DocsReadError(
           `read_docs reads only https://${DOCS_HOST}/ pages; ${JSON.stringify(
