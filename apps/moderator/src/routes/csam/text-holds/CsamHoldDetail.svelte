@@ -28,7 +28,7 @@
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { imageReveal } from '$lib/csam-holds/image-reveal.svelte';
   import {
-    CSAM_REPORT_CHOICE_COPY,
+    reportChoiceCopy,
     CSAM_REPORT_CHOICES,
     CSAM_REPORT_NOT_SURE,
     CSAM_REPORT_QUESTION,
@@ -529,7 +529,7 @@
               <legend class="mb-2 text-sm font-medium text-dark-0">{CSAM_REPORT_QUESTION}</legend>
               <RadioGroup name="report-choice" class="gap-2" bind:value={reportChoice}>
                 {#each CSAM_REPORT_CHOICES as choice (choice)}
-                  {@const copy = CSAM_REPORT_CHOICE_COPY[choice]}
+                  {@const copy = reportChoiceCopy(choice, row.entityType)}
                   <div class="flex items-start gap-2">
                     <RadioGroupItem value={choice} id="report-choice-{choice}" class="mt-0.5" />
                     <Label for="report-choice-{choice}" class="flex flex-col gap-0.5 font-normal">

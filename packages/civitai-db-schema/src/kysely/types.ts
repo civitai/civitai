@@ -5259,7 +5259,7 @@ export type PostText = {
    */
   csamHeld: Generated<boolean>;
   /**
-   * The earliest confirmation among its csam holds (`post_text_sync_csam_hold`). A "none" report choice holds the text one year from here.
+   * The latest confirmation among its csam holds (`post_text_sync_csam_hold`). A "none" report choice holds the text one year from here.
    */
   csamConfirmedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;

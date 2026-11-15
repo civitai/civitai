@@ -17,11 +17,11 @@ ALTER TABLE "PostText" ADD COLUMN IF NOT EXISTS "csamConfirmedAt" TIMESTAMP(3);
 CREATE INDEX IF NOT EXISTS "PostText_csamConfirmedAt_idx" ON "PostText" ("csamConfirmedAt")
   WHERE "csamConfirmedAt" IS NOT NULL;
 
--- 2. Backfill from the earliest confirmed hold's decision time, as `post_text_sync_csam_hold` sets it.
+-- 2. Backfill from the latest confirmed hold's decision time, as `post_text_sync_csam_hold` sets it.
 UPDATE "PostText" t
 SET "csamConfirmedAt" = h."decidedAt"
 FROM (
-  SELECT "entityId", min("decidedAt") AS "decidedAt"
+  SELECT "entityId", max("decidedAt") AS "decidedAt"
   FROM "TextScanHold"
   WHERE "entityType" = 'PostText' AND label = 'csam' AND status = 'Confirmed'
     AND "decidedAt" IS NOT NULL
@@ -182,7 +182,7 @@ END;
 $$ LANGUAGE plpgsql SET search_path = public, pg_temp;
 
 -- 6. A text's held flag and confirmation time, recomputed from all of its csam holds after each
--- decision: held while any hold is pending or confirmed, confirmed at the earliest confirmation. So a
+-- decision: held while any hold is pending or confirmed, confirmed at the latest confirmation. So a
 -- dismissal of one hold leaves what another hold gave.
 CREATE OR REPLACE FUNCTION post_text_sync_csam_hold(text_id INTEGER)
 RETURNS void AS $$
@@ -193,7 +193,7 @@ RETURNS void AS $$
           AND h.status IN ('Pending', 'Confirmed')
       ),
       "csamConfirmedAt" = (
-        SELECT min(h."decidedAt") FROM "TextScanHold" h
+        SELECT max(h."decidedAt") FROM "TextScanHold" h
         WHERE h."entityType" = 'PostText' AND h."entityId" = t."id" AND h.label = 'csam'
           AND h.status = 'Confirmed'
       ),

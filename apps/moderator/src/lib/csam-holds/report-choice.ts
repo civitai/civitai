@@ -13,7 +13,7 @@ export const isReportableChoice = (choice: string | null | undefined) =>
 
 export const CSAM_REPORT_QUESTION = 'Does this text fall in a reportable category?';
 
-export const CSAM_REPORT_CHOICE_COPY: Record<CsamReportChoice, { title: string; body: string }> = {
+const CSAM_REPORT_CHOICE_COPY: Record<CsamReportChoice, { title: string; body: string }> = {
   enticement: {
     title: '1. Enticement or solicitation of a minor',
     body: 'The author tries to persuade, induce or entice someone they believe is a minor into sexual activity. (18 U.S.C. 2422(b))',
@@ -32,8 +32,19 @@ export const CSAM_REPORT_CHOICE_COPY: Record<CsamReportChoice, { title: string; 
   },
   none: {
     title: 'None of these',
-    body: 'Confirm with no report. The text stays hidden and undeletable for 1 year from today, then it is deleted, unless an appeal, a law-enforcement request or a register hold is open.',
+    body: 'Confirm with no report.',
   },
 };
+
+/** Only a held PostText is deleted after its retention; other hold types keep their content as before. */
+const NONE_RETENTION =
+  'The text stays hidden and undeletable for 1 year from today, then it is deleted, unless an appeal, a law-enforcement request or a register hold is open.';
+
+/** The copy for a choice on a hold of this entity type. */
+export function reportChoiceCopy(choice: CsamReportChoice, entityType: string) {
+  const copy = CSAM_REPORT_CHOICE_COPY[choice];
+  if (choice !== 'none' || entityType !== 'PostText') return copy;
+  return { ...copy, body: `${copy.body} ${NONE_RETENTION}` };
+}
 
 export const CSAM_REPORT_NOT_SURE = "Not sure? Don't pick None. Send it to the Moderation Lead.";

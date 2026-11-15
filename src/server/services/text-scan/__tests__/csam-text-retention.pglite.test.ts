@@ -388,11 +388,11 @@ describe('post_text_sync_csam_hold', () => {
     expect(await synced(id)).toEqual({ held: true, days: null });
   });
 
-  it('dates the confirmation from the earliest confirmed hold', async () => {
+  it('dates the confirmation from the latest confirmed hold', async () => {
     const id = await text();
-    await hold(id, 'Confirmed', 10);
     await hold(id, 'Confirmed', 400);
-    expect(await synced(id)).toEqual({ held: true, days: 400 });
+    await hold(id, 'Confirmed', 10);
+    expect(await synced(id)).toEqual({ held: true, days: 10 });
   });
 });
 
