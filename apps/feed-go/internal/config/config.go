@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -140,13 +141,13 @@ func Load() (*Config, error) {
 	}
 	c.RegionRules = rules
 	if c.DatabaseURL == "" {
-		return nil, fmt.Errorf("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
+		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
 	}
 	if c.RedisURL == "" || c.RedisSysURL == "" {
-		return nil, fmt.Errorf("REDIS_URL and REDIS_SYS_URL are both required")
+		return nil, errors.New("REDIS_URL and REDIS_SYS_URL are both required")
 	}
 	if c.AuthJWKSURI == "" || c.AuthIssuer == "" {
-		return nil, fmt.Errorf("AUTH_JWKS_URI and AUTH_JWT_ISSUER are required")
+		return nil, errors.New("AUTH_JWKS_URI and AUTH_JWT_ISSUER are required")
 	}
 	return c, nil
 }

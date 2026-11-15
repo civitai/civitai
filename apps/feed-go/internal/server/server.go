@@ -369,12 +369,12 @@ const maxShadowBody = 32 << 20
 
 // ShadowHandler is the internal compare endpoint for the tRPC procedure.
 func (s *Server) ShadowHandler(w http.ResponseWriter, r *http.Request) {
-	s.shadowHandler(w, r, EndpointAsPosts)
+	s.shadowHandler(w, r, EndpointAsPosts) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
 }
 
 // ShadowV1Handler is the internal compare endpoint for REST `GET /api/v1/images`.
 func (s *Server) ShadowV1Handler(w http.ResponseWriter, r *http.Request) {
-	s.shadowHandler(w, r, EndpointV1Images)
+	s.shadowHandler(w, r, EndpointV1Images) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
 }
 
 // shadowHandler answers 202 at once and compares in the background; a full queue drops the sample.

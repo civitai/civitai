@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -57,14 +58,14 @@ func (r *Rows) Next() bool {
 
 func (r *Rows) Values() ([]any, error) {
 	if r.i < 0 || r.i >= len(r.Data) {
-		return nil, fmt.Errorf("testkit.Rows: Values outside a row")
+		return nil, errors.New("testkit.Rows: Values outside a row")
 	}
 	return append([]any(nil), r.Data[r.i]...), nil
 }
 
 func (r *Rows) Scan(dest ...any) error {
 	if r.i < 0 || r.i >= len(r.Data) {
-		return fmt.Errorf("testkit.Rows: Scan outside a row")
+		return errors.New("testkit.Rows: Scan outside a row")
 	}
 	row := r.Data[r.i]
 	if len(dest) != len(row) {

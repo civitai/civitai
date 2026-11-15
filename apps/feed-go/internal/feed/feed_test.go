@@ -161,9 +161,10 @@ func TestBuildPostAndSort(t *testing.T) {
 	// but the post-level fields come from image 3 (the first as fetched).
 	p := buildPost(10, []Image{img(3, 10, 1, 4, 77, 5, t0), img(2, 10, 0, 1, 77, 1, t0)}, SortNewest,
 		map[int]Review{77: {Rating: 5, ID: 9}}, false, false)
-	ids := []int64{}
 	imgs, _ := p.wire.Get("images")
-	for _, w := range imgs.([]any) {
+	list := imgs.([]any)
+	ids := make([]int64, 0, len(list))
+	for _, w := range list {
 		v, _ := w.(superjson.Object).Get("id")
 		ids = append(ids, v.(int64))
 	}
@@ -188,7 +189,7 @@ func TestBuildPostAndSort(t *testing.T) {
 		buildPost(3, []Image{img(13, 3, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false, false),
 	}
 	sortPosts(posts, SortMostReactions)
-	order := []int64{}
+	order := make([]int64, 0, len(posts))
 	for _, p := range posts {
 		v, _ := p.wire.Get("postId")
 		order = append(order, v.(int64))
@@ -213,7 +214,7 @@ func TestBuildImagesPublishedFilter(t *testing.T) {
 	}
 	hy := &Hydrated{}
 	got := BuildImages(rows, hy, Viewer{ID: 6}, now)
-	ids := []int{}
+	ids := make([]int, 0, len(got))
 	for _, i := range got {
 		ids = append(ids, i.ID)
 	}

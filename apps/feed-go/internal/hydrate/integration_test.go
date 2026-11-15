@@ -457,7 +457,7 @@ func TestIntegrationImageMetrics(t *testing.T) {
 	e := integSetup(t, false)
 	ctx := integtest.Ctx(t)
 	ids := []int{1106001, 1106002, 1106003, 1106004, 1106005, 1106006}
-	var keys []string
+	keys := make([]string, 0, len(ids)+1)
 	masters := map[string]bool{}
 	for _, id := range ids {
 		k := "metrics:Image:" + strconv.Itoa(id)
@@ -620,7 +620,7 @@ func TestIntegrationReactions(t *testing.T) {
 	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1111001, 1111002}) {
 		t.Fatalf("ids = %v, want [1111001 1111002] (only the viewer's reactions)", ids)
 	}
-	var first []string
+	first := make([]string, 0, len(got[1111001]))
 	for _, r := range got[1111001] {
 		first = append(first, integPlain(t, r))
 	}

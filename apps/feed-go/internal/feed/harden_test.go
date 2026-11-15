@@ -94,7 +94,7 @@ func (panickingPosts) Page(context.Context, Cursor, int) ([]Image, Cursor, error
 }
 func (panickingPosts) Posts(context.Context, []int, int) ([]Image, error) {
 	var m map[int]int
-	m[1] = 1 // assignment to a nil map
+	m[1] = 1 //nolint:govet,staticcheck // nilness, SA5000: the nil-map write is deliberate, the test needs a runtime panic
 	return nil, nil
 }
 

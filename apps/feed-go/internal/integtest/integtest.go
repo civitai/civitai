@@ -71,12 +71,12 @@ func Cluster(t *testing.T) *redis.ClusterClient {
 	}); err != nil {
 		t.Fatalf("ping masters: %v", err)
 	}
-	slots, err := c.ClusterSlots(ctx).Result()
+	shards, err := c.ClusterShards(ctx).Result()
 	if err != nil {
-		t.Fatalf("CLUSTER SLOTS: %v", err)
+		t.Fatalf("CLUSTER SHARDS: %v", err)
 	}
-	if len(slots) < 2 {
-		t.Fatalf("want a cluster of >= 2 masters, CLUSTER SLOTS lists %d ranges", len(slots))
+	if len(shards) < 2 {
+		t.Fatalf("want a cluster of >= 2 masters, CLUSTER SHARDS lists %d shards", len(shards))
 	}
 	return c
 }

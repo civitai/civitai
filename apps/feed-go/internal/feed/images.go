@@ -303,12 +303,12 @@ func BuildImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []
 				continue
 			}
 		}
-		out = append(out, buildImage(r, hy, viewer))
+		out = append(out, buildImage(r, hy))
 	}
 	return out
 }
 
-func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
+func buildImage(r RawImage, hy *Hydrated) Image {
 	thumb, hasThumb := hy.Thumbs[r.ID]
 	nsfw := r.NsfwLevel
 	if hasThumb && thumb.NsfwLevel > nsfw {

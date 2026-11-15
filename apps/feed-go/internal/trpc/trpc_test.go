@@ -1,7 +1,9 @@
 package trpc
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,7 +14,7 @@ func TestParseInputSuperjson(t *testing.T) {
 	// What the web client sends for a model gallery page with an undefined cursor.
 	in := `{"json":{"modelId":7,"modelVersionId":9,"limit":50,"sort":"Newest","browsingLevel":31,"cursor":null},` +
 		`"meta":{"values":{"cursor":["undefined"]},"v":1}}`
-	r := httptest.NewRequest(http.MethodGet, "/api/trpc/image.getImagesAsPostsInfinite?input="+url.QueryEscape(in), nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/image.getImagesAsPostsInfinite?input="+url.QueryEscape(in), nil)
 	got, err := ParseInput(r)
 	if err != nil {
 		t.Fatal(err)
@@ -29,8 +31,8 @@ func TestParseInputSuperjson(t *testing.T) {
 }
 
 func TestParseInputRefusesBatchAndBadEnvelope(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/api/trpc/a,b?batch=1&input=%7B%7D", nil)
-	if _, err := ParseInput(r); err != ErrBatched {
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/a,b?batch=1&input=%7B%7D", nil)
+	if _, err := ParseInput(r); !errors.Is(err, ErrBatched) {
 		t.Fatalf("batched: err = %v, want ErrBatched", err)
 	}
 	if _, err := DecodeEnvelope([]byte(`"devalue-string"`)); err == nil {

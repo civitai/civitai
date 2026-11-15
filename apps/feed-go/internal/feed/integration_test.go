@@ -448,7 +448,7 @@ func TestIntegrationGallerySettings(t *testing.T) {
 		2102005: `null`,
 		2102006: `{"sfwHeld":false,"pinnedPosts":{}}`,
 	}
-	var keys []string
+	keys := make([]string, 0, len(values))
 	for id := range values {
 		keys = append(keys, g.Prefix+"model:gallery-settings:"+strconv.Itoa(id))
 	}
