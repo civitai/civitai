@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
   feedGoV1ShapeClass,
+  FEED_GO_SHADOW_INFINITE_PATH,
   FEED_GO_SHADOW_PATH,
   pickSessionCookies,
   pickShadowHeaders,
@@ -25,17 +26,20 @@ import {
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
 const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPostsInfinite';
+const INF_URL = 'http://feed-go.test:9090/internal/shadow/image.getInfinite';
 const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
 
 function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig {
   return {
     url: URL_,
     v1ImagesUrl: V1_URL,
+    infiniteUrl: INF_URL,
     rate: 1,
     timeoutMs: 500,
     maxInFlight: 4,
     maxPerSecond: 1000,
     probeUrl: PROBE_URL,
+    probeInfiniteUrl: undefined,
     probeRate: 0,
     ...overrides,
   };
@@ -61,6 +65,8 @@ function harness(
     enabled?: boolean;
     /** The `feed-go-shadow-v1-images` flag (default on here, as `enabled` is). */
     v1?: boolean;
+    /** The `feed-go-shadow-infinite` flag (default OFF here, as in production). */
+    infinite?: boolean;
     random?: number;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
     now?: () => number;
@@ -77,6 +83,7 @@ function harness(
     config: config(opts.config),
     enabled: () => opts.enabled ?? true,
     enabledV1Images: () => opts.v1 ?? true,
+    enabledInfinite: () => opts.infinite ?? false,
     random: () => opts.random ?? 0,
     fetch: fetchMock as unknown as typeof fetch,
     record: (o, endpoint) => {
@@ -123,11 +130,13 @@ describe('readFeedGoShadowConfig', () => {
     expect(readFeedGoShadowConfig({})).toEqual({
       url: undefined,
       v1ImagesUrl: undefined,
+      infiniteUrl: undefined,
       rate: 0,
       timeoutMs: SHADOW_DEFAULT_TIMEOUT_MS,
       maxInFlight: SHADOW_DEFAULT_MAX_IN_FLIGHT,
       maxPerSecond: SHADOW_DEFAULT_MAX_PER_SECOND,
       probeUrl: undefined,
+      probeInfiniteUrl: undefined,
       probeRate: 0,
     });
   });
@@ -144,11 +153,13 @@ describe('readFeedGoShadowConfig', () => {
     expect(c).toEqual({
       url: `http://feed-go.internal.test:9090${FEED_GO_SHADOW_PATH}`,
       v1ImagesUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/images',
+      infiniteUrl: 'http://feed-go.internal.test:9090/internal/shadow/image.getInfinite',
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,
       maxPerSecond: 2.5,
       probeUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getImagesAsPostsInfinite',
+      probeInfiniteUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getInfinite',
       probeRate: 0.5,
     });
   });
@@ -164,6 +175,7 @@ describe('readFeedGoShadowConfig', () => {
     expect(c.url).toBeUndefined();
     expect(c.v1ImagesUrl).toBeUndefined();
     expect(c.probeUrl).toBeUndefined();
+    expect(c.infiniteUrl).toBeUndefined();
     expect(c.rate).toBe(1);
     expect(c.timeoutMs).toBe(10_000);
     expect(c.maxInFlight).toBe(1);
@@ -260,7 +272,23 @@ describe('createFeedGoShadow — sampling decision', () => {
     ['rate 0', { config: { rate: 0 } }, request()],
     ['not sampled (random >= rate)', { config: { rate: 0.3 }, random: 0.3 }, request()],
     ['POST (methodOverride)', {}, request({ method: 'POST' })],
+    // image.getInfinite with its own flag off (the gallery flag does not sample it).
     ['another procedure', {}, request({ query: { trpc: 'image.getInfinite', input: INPUT } })],
+    [
+      'an unmirrored procedure',
+      { infinite: true },
+      request({ query: { trpc: 'image.get', input: INPUT } }),
+    ],
+    [
+      'a prototype key as the procedure',
+      { infinite: true },
+      request({ query: { trpc: 'constructor', input: INPUT } }),
+    ],
+    [
+      'image.getInfinite with no URL',
+      { infinite: true, config: { infiniteUrl: undefined } },
+      request({ query: { trpc: 'image.getInfinite', input: INPUT } }),
+    ],
     [
       'a batch',
       {},
@@ -695,6 +723,88 @@ describe('createFeedGoShadow — GET /api/v1/images', () => {
     h.shadow.finish(g, 200);
     await h.flush();
     expect(h.outcomes).toEqual(['skipped_no_capture', 'skipped_no_capture']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('createFeedGoShadow — image.getInfinite', () => {
+  const infiniteRequest = (overrides: Record<string, unknown> = {}) =>
+    request({ query: { trpc: 'image.getInfinite', input: INPUT }, ...overrides });
+
+  it('POSTs the raw input, the forwarded headers and the written envelope to its own path', async () => {
+    const h = harness({ enabled: false, infinite: true });
+    const data = {
+      items: [{ id: 8001, createdAt: new Date('2026-01-02T00:00:00.000Z') }],
+      source: 'feed',
+    };
+    const written = superjson.serialize(data);
+    const sample = serve(
+      h,
+      infiniteRequest({ headers: { host: 'civitai.com', cookie: 'a=b; __Secure-civ-token=t' } }),
+      { data, written }
+    );
+    expect(sample?.endpoint).toBe('infinite');
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(INF_URL);
+    expect(url.endsWith(FEED_GO_SHADOW_INFINITE_PATH)).toBe(true);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input: INPUT,
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      node: JSON.parse(JSON.stringify(written)),
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['infinite']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('has its own flag: the gallery flag does not sample it, nor its flag the gallery', () => {
+    const gallery = harness({ enabled: true, infinite: false });
+    expect(gallery.shadow.begin(infiniteRequest())).toBeUndefined();
+    expect(gallery.shadow.begin(request())?.endpoint).toBe('as-posts');
+    const infinite = harness({ enabled: false, infinite: true });
+    expect(infinite.shadow.begin(request())).toBeUndefined();
+    expect(infinite.shadow.begin(infiniteRequest())?.endpoint).toBe('infinite');
+  });
+
+  it('shares the in-flight cap with the gallery procedure', async () => {
+    const h = harness({ infinite: true, config: { maxInFlight: 1 } });
+    expect(h.shadow.begin(request())).toBeDefined();
+    expect(h.shadow.begin(infiniteRequest())).toBeUndefined();
+    expect(h.outcomes).toEqual(['dropped_overload']);
+    expect(h.endpoints).toEqual(['infinite']);
+  });
+
+  it('has its own per-second bucket, so it cannot starve the gallery', async () => {
+    const h = harness({ infinite: true, config: { maxPerSecond: 1 }, now: () => 0 });
+    serve(h, infiniteRequest());
+    await h.flush();
+    serve(h, infiniteRequest());
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+    expect(h.endpoints).toEqual(['infinite', 'infinite']);
+    // The gallery procedure's bucket is untouched.
+    expect(h.shadow.begin(request())?.endpoint).toBe('as-posts');
+  });
+
+  it('a non-200 answer is skipped and frees the slot', async () => {
+    const h = harness({ infinite: true });
+    serve(h, infiniteRequest(), { status: 400 });
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.endpoints).toEqual(['infinite']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('ignores the REST capture (a tRPC sample is captured by the transformer)', async () => {
+    const h = harness({ infinite: true });
+    const sample = h.shadow.begin(infiniteRequest())!;
+    h.shadow.captureV1Images(sample, { items: [] });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_no_capture']);
     expect(h.fetchMock).not.toHaveBeenCalled();
   });
 });

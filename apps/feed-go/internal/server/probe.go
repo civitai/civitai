@@ -48,6 +48,7 @@ const (
 const (
 	CacheSessionUser     = "session-user"
 	CacheGallerySettings = "gallery-settings"
+	CacheBlockedTags     = "blocked-tags" // image.getInfinite only
 )
 
 var preHydrateMissReasons = map[string]string{
@@ -55,12 +56,14 @@ var preHydrateMissReasons = map[string]string{
 	"session-cache-cleared":  CacheSessionUser,     // a cleared entry is refetched the same way
 	"gallery-settings-miss":  CacheGallerySettings, // the settings are rebuilt from the database
 	"gallery-settings-stale": CacheGallerySettings, // a key from before the SFW hold is rebuilt
+	"blocked-tags-miss":      CacheBlockedTags,     // the blocked-tag list is rebuilt from the database
+	"blocked-tags-stale":     CacheBlockedTags,     // a value Node would replace
 }
 
 // probeCaches is every `cache` label value, in report order.
 func probeCaches() []string {
-	out := make([]string, 0, 2+len(hydrate.PageCaches))
-	out = append(out, CacheSessionUser, CacheGallerySettings)
+	out := make([]string, 0, 3+len(hydrate.PageCaches))
+	out = append(out, CacheSessionUser, CacheGallerySettings, CacheBlockedTags)
 	for _, c := range hydrate.PageCaches {
 		out = append(out, c.Name)
 	}
@@ -90,9 +93,13 @@ type probeSpec struct {
 }
 
 // probes is the registry, by procedure. A ported procedure plugs in with one entry (its endpoint
-// label and its run).
+// label and its run); ProbeEndpoints lists the labels for seeding.
+// ProbeEndpoints are the feed_endpoint labels the registered probes report under.
+var ProbeEndpoints = []string{EndpointAsPosts, EndpointInfinite}
+
 var probes = map[string]probeSpec{
-	Procedure: {endpoint: EndpointAsPosts, run: (*Server).probeAsPosts},
+	Procedure:         {endpoint: EndpointAsPosts, run: (*Server).probeAsPosts},
+	ProcedureInfinite: {endpoint: EndpointInfinite, run: (*Server).probeInfinite},
 }
 
 // probeAsPosts resolves an image.getImagesAsPostsInfinite page exactly as compute does — the same
@@ -109,6 +116,23 @@ func (s *Server) probeAsPosts(ctx context.Context, req ProbeRequest, rec *hydrat
 		return err
 	}
 	_, err = feed.Serve(ctx, probeDeps(s.Deps, rec), freq)
+	return err
+}
+
+// probeInfinite is probeAsPosts for image.getInfinite: computeInfinite's steps (prepareInfinite,
+// feed.ServeInfinite) over the same deps with the same two swaps.
+func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
+	r, err := SyntheticInfiniteRequest(ctx, ShadowRequest{Input: req.Input, Headers: req.Headers})
+	if err != nil {
+		return err
+	}
+	ireq, err := s.prepareInfinite(ctx, r)
+	if err != nil {
+		return err
+	}
+	d := *s.Infinite
+	d.Deps = probeDeps(s.Infinite.Deps, rec)
+	_, err = feed.ServeInfinite(ctx, &d, ireq)
 	return err
 }
 

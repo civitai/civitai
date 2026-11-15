@@ -44,15 +44,45 @@ func cacheState(r *testkit.Redis) map[string]string {
 	return out
 }
 
-// runGoldenProbe runs the as-posts probe of fx's request on env, synchronously, and classifies it.
-func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture) (string, []string, error) {
+// goldenProbeCase is one registered procedure's golden fixtures: its probe and its serving compute.
+type goldenProbeCase struct {
+	dir, procedure string
+	min            int
+	serve          func(*Server, context.Context, *http.Request) (*computed, error)
+	request        func(context.Context, ShadowRequest) (*http.Request, error)
+}
+
+var goldenProbeCases = []goldenProbeCase{
+	{"as-posts", Procedure, goldenMinAsPosts, (*Server).compute, SyntheticRequest},
+	{"infinite", ProcedureInfinite, goldenMinInfinite, (*Server).computeInfinite, SyntheticInfiniteRequest},
+}
+
+// The registry holds exactly the procedures the golden cases cover (a new registration needs its
+// golden case here).
+func TestProbeRegistryMatchesGoldenCases(t *testing.T) {
+	var got, want []string
+	for p := range probes {
+		got = append(got, p)
+	}
+	for _, c := range goldenProbeCases {
+		want = append(want, c.procedure)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("registered probes %v, golden-covered %v", got, want)
+	}
+}
+
+// runGoldenProbe runs the registered probe of fx's request on env, synchronously, and classifies it.
+func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture, procedure string) (string, []string, error) {
 	t.Helper()
 	checker, ok := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 	if !ok {
 		t.Fatal("the golden hydrator has no presence check")
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker}
-	err := env.server.probeAsPosts(context.Background(), ProbeRequest{Input: fx.Request.Input, Headers: env.headers}, rec)
+	err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: fx.Request.Input, Headers: env.headers}, rec)
 	result, missed := classifyProbe(err, rec.Misses())
 	return result, missed, err
 }
@@ -71,19 +101,26 @@ func missReasonCache(reason string) string {
 	return ""
 }
 
-// The probe over every golden as-posts request, against what serving does with the same request:
+// The probe over every golden request of each registered procedure, against what serving does with
+// the same request:
 // a served fixture is would_serve, with the feed service asked exactly the queries Node sends (the
 // page ids are resolved as serving resolves them); a fixture serving falls back on with a cache-miss
 // reason is would_miss on that cache; any other fallback is unsupported. Never a write.
-func TestProbeGoldenAsPosts(t *testing.T) {
+func TestProbeGolden(t *testing.T) {
+	for _, gc := range goldenProbeCases {
+		t.Run(gc.dir, func(t *testing.T) { probeGoldenDir(t, gc) })
+	}
+}
+
+func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 	seen := map[string]int{}
-	for _, path := range goldenFiles(t, "as-posts", goldenMinAsPosts) {
+	for _, path := range goldenFiles(t, gc.dir, gc.min) {
 		fx := goldenLoad(t, path)
 		t.Run(fx.Name, func(t *testing.T) {
 			env := goldenSetup(t, fx)
 			cache := goldenCache(t, env)
 			before := cacheState(cache)
-			result, missed, err := runGoldenProbe(t, env, fx)
+			result, missed, err := runGoldenProbe(t, env, fx, gc.procedure)
 			if after := cacheState(cache); !reflect.DeepEqual(after, before) {
 				t.Fatalf("the probe wrote to the cache:\n before %v\n after  %v", before, after)
 			}
@@ -108,8 +145,13 @@ func TestProbeGoldenAsPosts(t *testing.T) {
 			}
 		})
 	}
-	// Positive control: the fixtures reached all three outcomes.
-	for _, r := range []string{ProbeWouldServe, ProbeWouldMiss, ProbeUnsupported} {
+	// Positive control: the fixtures reached the outcomes (as-posts has a cache-miss fixture; the
+	// infinite fixtures have none, so would_miss is reached for it by the next test only).
+	outcomes := []string{ProbeWouldServe, ProbeUnsupported}
+	if gc.dir == "as-posts" {
+		outcomes = append(outcomes, ProbeWouldMiss)
+	}
+	for _, r := range outcomes {
 		if seen[r] == 0 {
 			t.Errorf("no fixture probed %s: %v", r, seen)
 		}
@@ -120,6 +162,9 @@ func TestProbeGoldenAsPosts(t *testing.T) {
 var goldenPerIDKey = regexp.MustCompile(`^(.*):(\d+)$`)
 
 func goldenKeyCache(key string) string {
+	if key == feed.BlockedTagsKey {
+		return CacheBlockedTags
+	}
 	m := goldenPerIDKey.FindStringSubmatch(key)
 	if m == nil {
 		return ""
@@ -144,9 +189,15 @@ func goldenKeyCache(key string) string {
 // (a miss Go fills from the replica), the probe must say would_serve. So a cache whose Reason drifts
 // from what Page does — or a fallback miss the probe cannot see — fails here.
 func TestProbeAgreesWithServeOnEachCacheMiss(t *testing.T) {
+	for _, gc := range goldenProbeCases {
+		t.Run(gc.dir, func(t *testing.T) { probeAgreesOnEachCacheMiss(t, gc) })
+	}
+}
+
+func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 	missCompared := map[string]int{}
 	serveCompared := map[string]int{}
-	for _, path := range goldenFiles(t, "as-posts", goldenMinAsPosts) {
+	for _, path := range goldenFiles(t, gc.dir, gc.min) {
 		fx := goldenLoad(t, path)
 		if fx.Expect.Fallback != "" {
 			continue
@@ -167,12 +218,12 @@ func TestProbeAgreesWithServeOnEachCacheMiss(t *testing.T) {
 					}
 				}
 				served := goldenSetup(t, &cold)
-				r, err := SyntheticRequest(context.Background(), ShadowRequest{Input: cold.Request.Input, Headers: served.headers})
+				r, err := gc.request(context.Background(), ShadowRequest{Input: cold.Request.Input, Headers: served.headers})
 				if err != nil {
 					t.Fatal(err)
 				}
-				_, serveErr := served.server.compute(context.Background(), r)
-				result, missed, probeErr := runGoldenProbe(t, goldenSetup(t, &cold), &cold)
+				_, serveErr := gc.serve(served.server, context.Background(), r)
+				result, missed, probeErr := runGoldenProbe(t, goldenSetup(t, &cold), &cold, gc.procedure)
 				reason := fallback.Reason(serveErr)
 				switch {
 				case serveErr == nil:
@@ -201,9 +252,13 @@ func TestProbeAgreesWithServeOnEachCacheMiss(t *testing.T) {
 		}
 	}
 	// Positive controls: every cache Go falls back on was compared at least once, and so was a cache
-	// Go fills from the replica (else the would_serve arm proves nothing).
-	for _, c := range []string{CacheSessionUser, CacheGallerySettings, hydrate.CacheUserCosmetics, hydrate.CacheImageFrames,
-		hydrate.CacheTagIDs, hydrate.CacheEventDecorations, hydrate.CacheMetrics} {
+	// Go fills from the replica (else the would_serve arm proves nothing). The as-posts fixtures
+	// reach every one; the infinite fixtures, the per-image caches every page reads.
+	required := []string{hydrate.CacheUserCosmetics, hydrate.CacheImageFrames, hydrate.CacheTagIDs, hydrate.CacheMetrics}
+	if gc.dir == "as-posts" {
+		required = append(required, CacheSessionUser, CacheGallerySettings, hydrate.CacheEventDecorations)
+	}
+	for _, c := range required {
 		if missCompared[c] == 0 {
 			t.Errorf("no golden request compared a %s miss (compared: %v)", c, missCompared)
 		}

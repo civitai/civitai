@@ -42,10 +42,11 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts = 21
-	goldenMinV1      = 22
-	goldenIssuer     = "https://auth.example.test"
-	goldenCookieName = "__Secure-civ-token"
+	goldenMinAsPosts  = 21
+	goldenMinV1       = 22
+	goldenMinInfinite = 19
+	goldenIssuer      = "https://auth.example.test"
+	goldenCookieName  = "__Secure-civ-token"
 )
 
 // goldenHosts are the fixtures' synthetic domains (SERVER_DOMAIN_GREEN/BLUE/RED).
@@ -160,6 +161,8 @@ type goldenImage struct {
 		ModelVersionID int  `json:"modelVersionId"`
 		Detected       bool `json:"detected"`
 	} `json:"_resources"`
+	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures only: the tag scope).
+	Tags []int `json:"_tags"`
 }
 
 // goldenImageColumns is the getAllImages SELECT list, in the order scanRows scans it.
@@ -191,7 +194,9 @@ func goldenJSONVal(r json.RawMessage) any {
 	return string(r)
 }
 
-func (g goldenImage) row() []any {
+// row is the image as the getAllImages SELECT returns it; cursor is its cursor column (the id, or a
+// post-scoped query's index).
+func (g goldenImage) row(cursor any) []any {
 	return []any{
 		g.ID, goldenPtr(g.Name), goldenPtr(g.URL), g.NsfwLevel, goldenPtr(g.Width), goldenPtr(g.Height),
 		goldenPtr(g.Hash), g.HideMeta, g.HasMeta, g.HasPositivePrompt, goldenPtr(g.OnSite),
@@ -199,7 +204,7 @@ func (g goldenImage) row() []any {
 		g.Type, goldenJSONVal(g.Metadata), g.Ingestion, goldenPtr(g.BlockedFor), goldenTimeVal(g.ScannedAt),
 		goldenPtr(g.NeedsReview), g.UserID, g.PostID, goldenPtr(g.PostTitle), goldenPtr(g.Index),
 		goldenTimeVal(g.PublishedAt), goldenPtr(g.UnpublishedAt), goldenPtr(g.ModelVersionID),
-		goldenPtr(g.Model3DID), g.Availability, g.Minor, g.Poi, g.AcceptableMinor, g.ID,
+		goldenPtr(g.Model3DID), g.Availability, g.Minor, g.Poi, g.AcceptableMinor, cursor,
 	}
 }
 
@@ -265,7 +270,8 @@ var (
 	goldenReTarget    = regexp.MustCompile(` AND i\."userId" = \$(\d+)`)
 	goldenReExclUsers = regexp.MustCompile(`i\."userId" != ALL\(\$(\d+)::int\[\]\)`)
 	goldenReTypes     = regexp.MustCompile(`i\.type = ANY\(\$(\d+)::text`)
-	goldenReCursor    = regexp.MustCompile(`\(\((?:i\."id"|irr\."imageId") (<=|>=) \$(\d+)\)\)`)
+	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
+	goldenReTags      = regexp.MustCompile(`WHERE "tagId" = ANY\(\$(\d+)::int\[\]\) AND "disabled" = FALSE`)
 	goldenReLimit     = regexp.MustCompile(`LIMIT \$(\d+)\s*$`)
 	goldenReMinorOwn  = regexp.MustCompile(`\(i\."minor" != TRUE OR i\."userId" = \$(\d+)\)`)
 	goldenReRRModel   = regexp.MustCompile(`rr\."modelId" = \$(\d+)`)
@@ -343,6 +349,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 	exclUsers, hasExcl := goldenArg(args, goldenReExclUsers, sql)
 	types, hasTypes := goldenArg(args, goldenReTypes, sql)
 	minorOwner, hasMinorOwner := goldenArg(args, goldenReMinorOwn, sql)
+	tags, hasTags := goldenArg(args, goldenReTags, sql)
 	minorAll := strings.Contains(sql, `(i."minor" != TRUE)`)
 	published := strings.Contains(sql, `(p."publishedAt" < now())`)
 	if !hasLevel {
@@ -377,6 +384,15 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		if hasTarget && img.UserID != goldenInt(target) {
 			continue
 		}
+		if hasTags {
+			carries := false
+			for _, t := range img.Tags {
+				carries = carries || goldenHas(goldenInts(tags), t)
+			}
+			if !carries {
+				continue
+			}
+		}
 		if hasExcl && goldenHas(goldenInts(exclUsers), img.UserID) {
 			continue
 		}
@@ -399,18 +415,33 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		kept = append(kept, img)
 	}
 	asc := strings.Contains(sql, `ORDER BY i."id" ASC`)
+	// A post's own media: ORDER BY i."index", i."id", and the index is the cursor column.
+	byIndex := strings.Contains(sql, `ORDER BY i."index", i."id"`)
+	indexOf := func(img goldenImage) int {
+		if img.Index == nil {
+			return 0
+		}
+		return *img.Index
+	}
 	sort.SliceStable(kept, func(a, b int) bool {
-		if asc {
+		switch {
+		case byIndex && indexOf(kept[a]) != indexOf(kept[b]):
+			return indexOf(kept[a]) < indexOf(kept[b])
+		case asc || byIndex:
 			return kept[a].ID < kept[b].ID
 		}
 		return kept[a].ID > kept[b].ID
 	})
 	if m := goldenReCursor.FindStringSubmatch(sql); m != nil {
-		n, _ := strconv.Atoi(m[2])
+		n, _ := strconv.Atoi(m[3])
 		c := goldenInt(args[n-1])
 		var paged []goldenImage
 		for _, img := range kept {
-			if (m[1] == "<=" && img.ID <= c) || (m[1] == ">=" && img.ID >= c) {
+			v := img.ID
+			if m[1] == `i."index"` {
+				v = indexOf(img)
+			}
+			if (m[2] == "<=" && v <= c) || (m[2] == ">=" && v >= c) {
 				paged = append(paged, img)
 			}
 		}
@@ -420,7 +451,11 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 		kept = kept[:goldenInt(limit)]
 	}
 	for _, img := range kept {
-		out = append(out, img.row())
+		var cursor any = img.ID
+		if strings.Contains(sql, `i."index" "cursorId"`) {
+			cursor = goldenPtr(img.Index)
+		}
+		out = append(out, img.row(cursor))
 	}
 	return testkit.NewRows(goldenImageColumns, out...), nil
 }
@@ -749,7 +784,8 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 		NodeProduction: true,
 		Now:            nowFn,
 	}
-	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, V1: v1}
+	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: &feed.BlockedTags{Cache: cache}}
+	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}
 	for k, v := range fx.Request.Headers {
@@ -880,10 +916,49 @@ func goldenRunV1(t *testing.T, fx *goldenFixture) {
 	env.feed.check(t, true)
 }
 
+func goldenRunInfinite(t *testing.T, fx *goldenFixture) {
+	env := goldenSetup(t, fx)
+	ctx := context.Background()
+	r, err := SyntheticInfiniteRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := env.server.computeInfinite(ctx, r)
+	if want := fx.Expect.Fallback; want != "" {
+		if err == nil {
+			t.Fatalf("served; want fallback %q", want)
+		}
+		if got := fallback.Reason(err); got != want {
+			t.Fatalf("fallback reason %q (%v), want %q", got, err, want)
+		}
+		env.feed.check(t, false)
+		return
+	}
+	if err != nil {
+		t.Fatalf("computeInfinite: %v (fallback reason %q)", err, fallback.Reason(err))
+	}
+	rep, err := shadow.Compare(c.payload, fx.Expect.Envelope)
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	goldenReport(t, rep, c.payload)
+	if c.ttl != nil {
+		t.Errorf("image.getInfinite is never edge-cacheable here, got %+v", *c.ttl)
+	}
+	env.feed.check(t, true)
+}
+
 func TestGoldenAsPosts(t *testing.T) {
 	for _, path := range goldenFiles(t, "as-posts", goldenMinAsPosts) {
 		fx := goldenLoad(t, path)
 		t.Run(fx.Name, func(t *testing.T) { goldenRunAsPosts(t, fx) })
+	}
+}
+
+func TestGoldenInfinite(t *testing.T) {
+	for _, path := range goldenFiles(t, "infinite", goldenMinInfinite) {
+		fx := goldenLoad(t, path)
+		t.Run(fx.Name, func(t *testing.T) { goldenRunInfinite(t, fx) })
 	}
 }
 
@@ -980,6 +1055,32 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 			}
 			if rep.Match {
 				t.Errorf("%s: a changed image id still matches", name)
+			}
+		}
+	})
+	t.Run("infinite", func(t *testing.T) {
+		fx := goldenLoad(t, filepath.Join(goldenDir, "infinite", "global-signed-out-most-reactions.json"))
+		env := goldenSetup(t, fx)
+		ctx := context.Background()
+		r, err := SyntheticInfiniteRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := env.server.computeInfinite(ctx, r)
+		if err != nil {
+			t.Fatalf("computeInfinite: %v", err)
+		}
+		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.id", 999999)
+		for name, payload := range map[string][]byte{"feed-go": c.payload, "fixture": fx.Expect.Envelope} {
+			rep, err := shadow.Compare(payload, mutated)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rep.Match {
+				t.Errorf("%s: a changed image id still matches", name)
+			}
+			if got := shadow.ClassifyFlat(rep, payload, mutated); got != "membership" {
+				t.Errorf("%s: a changed image id classifies %q, want membership", name, got)
 			}
 		}
 	})

@@ -23,6 +23,7 @@ func InternalMux(s *Server, metrics http.Handler, withPprof bool) *http.ServeMux
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/internal/shadow/"+Procedure, s.ShadowHandler)
 	mux.HandleFunc("/internal/shadow"+V1ImagesPath, s.ShadowV1Handler)
+	mux.HandleFunc("/internal/shadow/"+ProcedureInfinite, s.ShadowInfiniteHandler)
 	mux.HandleFunc(ProbePathPrefix, s.ProbeHandler)
 	if withPprof {
 		// Registered explicitly: importing net/http/pprof also registers these on http.DefaultServeMux,

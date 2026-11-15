@@ -82,6 +82,10 @@ func PageCacheNamed(name string) (PageCache, bool) {
 // A read that failed (a shard down, the context ended) is an error: a miss it cannot tell from one.
 func (s *Sources) Presence(ctx context.Context, req PageRequest) (map[string]int, error) {
 	users, images, videos := Unique(req.UserIDs), Unique(req.ImageIDs), Unique(req.VideoIDs)
+	profileUsers := users
+	if req.NoProfilePictures {
+		profileUsers = nil
+	}
 	stage1 := NewBatch()
 	reads := []struct {
 		name string
@@ -90,7 +94,8 @@ func (s *Sources) Presence(ctx context.Context, req PageRequest) (map[string]int
 	}{
 		{CacheBasicUsers, users, s.Packed.Queue(stage1, KeyBasicUsers, users, ttlDay)},
 		{CacheUserCosmetics, users, s.Packed.Queue(stage1, KeyUserCosmetics, users, 0)},
-		{CacheProfilePictures, users, s.Packed.Queue(stage1, KeyProfilePictures, users, 0)},
+		// As Page: the profile pictures only when the include list asks for them.
+		{CacheProfilePictures, profileUsers, s.Packed.Queue(stage1, KeyProfilePictures, profileUsers, 0)},
 		{CacheImageFrames, images, s.Packed.Queue(stage1, KeyImageFrames, images, 0)},
 		{CacheThumbnails, videos, s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)},
 		{CacheTagIDs, images, s.Packed.Queue(stage1, KeyTagIDs, images, 0)},

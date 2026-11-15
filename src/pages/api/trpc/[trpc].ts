@@ -341,10 +341,11 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // The response write format (superjson vs devalue) is decided per request from the
   // client headers — see `~/server/trpc/response-write-format`.
   //
-  // feed-go shadow (flag `feed-go-shadow`, default off): a sampled `image.getImagesAsPostsInfinite`
-  // request runs with a capture scope, and after the handler has written the response its input,
-  // the headers the answer depends on and the captured body are POSTed to feed-go's internal
-  // compare endpoint from `setImmediate`, never awaited. See `~/server/trpc/feed-go-shadow`.
+  // feed-go shadow (flags `feed-go-shadow` and `feed-go-shadow-infinite`, default off): a sampled
+  // `image.getImagesAsPostsInfinite` or `image.getInfinite` request runs with a capture scope, and
+  // after the handler has written the response its input, the headers the answer depends on and
+  // the captured body are POSTed to feed-go's internal compare endpoint for that procedure from
+  // `setImmediate`, never awaited. See `~/server/trpc/feed-go-shadow`.
   //
   // Go-first probe (flag `feed-go-gofirst-probe`, default off): for a sampled request, BEFORE the
   // handler computes the page, feed-go is asked which caches a Go-first serve would find cold. It

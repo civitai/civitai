@@ -69,6 +69,7 @@ func TestPresenceReadsTheKeysPageReads(t *testing.T) {
 		{"every lookup", pageRequest()},
 		{"no visible event", func() PageRequest { r := pageRequest(); r.VisibleEvents = nil; return r }()},
 		{"no video", func() PageRequest { r := pageRequest(); r.VideoIDs = nil; return r }()},
+		{"no profile pictures (image.getInfinite)", func() PageRequest { r := pageRequest(); r.NoProfilePictures = true; return r }()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, r, _ := basePageFixture(t).load()

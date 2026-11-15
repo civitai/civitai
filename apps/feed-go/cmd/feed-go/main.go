@@ -161,6 +161,13 @@ func run(log *slog.Logger) error {
 		// The Node app this service shadows is the production build (isProd): nextPage on https://<host>.
 		NodeProduction: true,
 	}
+	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
+	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
+	infinite := &feed.InfiniteDeps{
+		Deps:    deps,
+		Sources: sources,
+		Blocked: &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix},
+	}
 	srv := &server.Server{
 		Resolver:    resolver,
 		Deps:        deps,
@@ -173,6 +180,7 @@ func run(log *slog.Logger) error {
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
+		Infinite:       infinite,
 		RequestBudget:  cfg.RequestBudget,
 	}
 	if cfg.FallbackURL != "" {

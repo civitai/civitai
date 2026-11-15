@@ -12,6 +12,7 @@ import { createFeedGoShadow, type FeedGoShadowConfig } from '~/server/trpc/feed-
 
 const SHADOW_URL = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPostsInfinite';
+const PROBE_INF_URL = 'http://feed-go.test:9090/internal/probe/image.getInfinite';
 const INPUT = '{"json":{"modelVersionId":9,"limit":20}}';
 const STARTED_AT = 1_763_200_000_123.25;
 
@@ -19,11 +20,13 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
   return {
     url: SHADOW_URL,
     v1ImagesUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/images',
+    infiniteUrl: 'http://feed-go.test:9090/internal/shadow/image.getInfinite',
     rate: 1,
     timeoutMs: 500,
     maxInFlight: 4,
     maxPerSecond: 1000,
     probeUrl: PROBE_URL,
+    probeInfiniteUrl: PROBE_INF_URL,
     probeRate: 1,
     ...overrides,
   };
@@ -62,6 +65,7 @@ function harness(
     config: config(opts.config),
     enabled: () => opts.shadow ?? true,
     enabledV1Images: () => true,
+    enabledInfinite: () => true,
     enabledProbe: () => opts.probe ?? true,
     random: opts.random ?? (() => 0),
     fetch: fetchMock as unknown as typeof fetch,
@@ -79,7 +83,8 @@ function harness(
     while (queued.length) queued.shift()!();
     await settle();
   };
-  const probeCalls = () => fetchMock.mock.calls.filter(([url]) => url === PROBE_URL);
+  const probeCalls = () =>
+    fetchMock.mock.calls.filter(([url]) => url === PROBE_URL || url === PROBE_INF_URL);
   return { shadow, probeOutcomes, shadowOutcomes, fetchMock, probeCalls, flush, settle };
 }
 
@@ -192,6 +197,29 @@ describe('the Go-first probe', () => {
     expect(h.probeCalls()).toHaveLength(0);
     expect(h.probeOutcomes).toEqual(['dropped_overload']);
     expect(h.shadowOutcomes).toEqual(['sent']);
+  });
+
+  it('probes an image.getInfinite sample at its own probe path', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request({ query: { trpc: 'image.getInfinite', input: INPUT } }));
+    expect(sample?.endpoint).toBe('infinite');
+    h.shadow.probe(sample);
+    await h.settle();
+    const calls = h.probeCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe(PROBE_INF_URL);
+    expect(JSON.parse(calls[0][1].body as string)).toEqual({
+      input: INPUT,
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      startedAt: STARTED_AT,
+    });
+    // No infinite probe URL: not probed.
+    const off = harness({ config: { probeInfiniteUrl: undefined } });
+    off.shadow.probe(
+      off.shadow.begin(request({ query: { trpc: 'image.getInfinite', input: INPUT } }))
+    );
+    await off.settle();
+    expect(off.probeCalls()).toHaveLength(0);
   });
 
   it('runs at most once per sample, and never for a REST sample', async () => {
