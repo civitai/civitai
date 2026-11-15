@@ -2303,8 +2303,7 @@ const getAllImagesUncaptured = async (
   const effectivePending = pending || (isModerator && !!pendingReviewOnly);
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
-  // Exclude unselectable browsing levels. A mask of nothing but those (Blocked) asks for no level
-  // it may see: an empty page, as the feed answers it, not the public fallback below.
+  // Exclude unselectable browsing levels. A mask of only those must not reach the public fallback below.
   const requestedLevel = browsingLevel;
   browsingLevel = onlySelectableLevels(browsingLevel);
   if (requestedLevel && !browsingLevel) {
