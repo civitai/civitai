@@ -151,7 +151,6 @@ const routeModules = compat.createRouteModuleLoader(
  */
 let applyApiPolicy = null;
 const relativeProjectDir = path.relative(process.cwd(), dir);
-const API_ROUTE_PAGE = Symbol.for(served.API_ROUTE_PAGE_REQ_KEY);
 
 // --- request handling -----------------------------------------------------------------------------
 
@@ -172,13 +171,10 @@ async function handle(req, res) {
   // Under Next the undecodable-path DecodeError is thrown while routes are still being resolved,
   // before the routing headers are applied, so the 400 carries none of them. A plain 404 is
   // answered after they are applied.
-  const pathname = (req.url || '/').split('?', 1)[0];
-  const matched = matchPage(pathname);
+  const matched = served.matchRequestPage(matchPage, req);
   if (matched.decodeError) return compat.sendBadRequest(res);
   compat.applyRoutingHeaders(res, routed.headers);
   if (matched.notFound) return compat.sendNotFound(res);
-  // The page this request is for, read by the per-route request counter when the response closes.
-  req[API_ROUTE_PAGE] = matched.page;
 
   compat.fillForwardedHeaders(req, { hostname, port: listenPort });
   compat.stripInternalQuery(req);

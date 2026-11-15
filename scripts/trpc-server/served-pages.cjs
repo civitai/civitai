@@ -76,6 +76,18 @@ function resolveProfile(value) {
   return PROFILES.includes(name) ? name : null;
 }
 
+/**
+ * Matches `req`'s path with `matchPage` (`createPageMatcher` in `./next-compat.cjs`) and returns the
+ * result. A matched page is also stored on `req` under `API_ROUTE_PAGE_REQ_KEY`, for the per-route
+ * request counter; an unmatched or undecodable path stores nothing.
+ */
+function matchRequestPage(matchPage, req) {
+  const pathname = (req.url || '/').split('?', 1)[0];
+  const matched = matchPage(pathname);
+  if (typeof matched.page === 'string') req[Symbol.for(API_ROUTE_PAGE_REQ_KEY)] = matched.page;
+  return matched;
+}
+
 /** Whether this server must apply the proxy's API policy before `page`'s route runs. */
 function needsApiPolicy(page) {
   return PROXY_POLICY_PREFIXES.some((prefix) => page.startsWith(prefix));
@@ -106,5 +118,6 @@ module.exports = Object.freeze({
   DEFAULT_PROFILE,
   resolveProfile,
   needsApiPolicy,
+  matchRequestPage,
   servedPages,
 });
