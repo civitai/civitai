@@ -39,10 +39,10 @@ const rows: Row[] = [
   { id: 16, minor: true, nsfwLevel: 8 },
   { id: 17, minor: true, nsfwLevel: 1 },
   { id: 18 },
-  { id: 19 },
+  { id: 19, blockedFor: 'AiNotVerified' },
   { id: 20 },
   { id: 21, blockedFor: 'AiNotVerified' },
-  { id: 22 },
+  { id: 22, blockedFor: 'AiNotVerified' },
   { id: 23 },
   { id: 24 },
 ];
@@ -136,7 +136,7 @@ describe('getRetractedMedia', () => {
     expect(await served(18)).toBe(false);
   });
 
-  it('refuses an image whose owner is under an evidence hold', async () => {
+  it('refuses an AiNotVerified image whose owner is under an evidence hold', async () => {
     expect(await served(19)).toBe(false);
   });
 
@@ -148,7 +148,7 @@ describe('getRetractedMedia', () => {
     expect(await served(21)).toBe(false);
   });
 
-  it('refuses an image whose owner is a report’s secondary user', async () => {
+  it('refuses an AiNotVerified image whose owner is a report’s secondary user', async () => {
     expect(await served(22)).toBe(false);
   });
 

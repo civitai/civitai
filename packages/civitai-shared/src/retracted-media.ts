@@ -41,7 +41,6 @@ export function retractedImageSql(image: string): string {
   return `(
     ${i}.ingestion = 'Blocked'
     AND (${i}."blockedFor" IS NULL OR ${i}."blockedFor" IN (${reasons}))
-    AND ${i}."needsReview" IS DISTINCT FROM 'csam'
     AND ((${i}."needsReview" IS DISTINCT FROM 'minor' AND ${i}.minor IS NOT TRUE)
       OR ${i}."nsfwLevel" IN (${levels}))
     AND NOT EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = ${i}.id)
@@ -60,7 +59,8 @@ export function retractedImageSql(image: string): string {
       WHERE CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END
         = (${i}.id)::text
     )
-    -- IS NOT TRUE, not NOT: the fragment is NULL for a row with no review flag.
+    -- Covers a csam review flag. IS NOT TRUE, not NOT: the fragment is NULL for a row with no
+    -- review flag.
     AND ${heldImageSql(i)} IS NOT TRUE
   )`;
 }
