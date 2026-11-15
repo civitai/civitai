@@ -121,13 +121,21 @@ func TestServeHTTPWithoutFallbackIs503(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code = %d, want 503", w.Code)
 	}
+	// tRPC's error envelope: the superjson-wrapped error shape.
 	var body struct {
 		Error struct {
-			Message string `json:"message"`
+			JSON struct {
+				Message string `json:"message"`
+				Data    struct {
+					Code       string `json:"code"`
+					HTTPStatus int    `json:"httpStatus"`
+				} `json:"data"`
+			} `json:"json"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Error.Message != "unavailable" {
-		t.Fatalf("body = %s (%v), want a tRPC error envelope", w.Body.String(), err)
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Error.JSON.Message != "unavailable" ||
+		body.Error.JSON.Data.Code != "INTERNAL_SERVER_ERROR" || body.Error.JSON.Data.HTTPStatus != 503 {
+		t.Fatalf("body = %s (%v), want the tRPC INTERNAL_SERVER_ERROR envelope", w.Body.String(), err)
 	}
 }
 
