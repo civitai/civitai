@@ -36,7 +36,7 @@ import {
  *  4 survivor pass 1 degraded to a per-user count ........ 'keeps the unruled sibling’s own evidence'
  *  5 survivor pass 2's fallback removed .................. 'a ruled row keeps the evidence…'
  *  6 the retry gate back on "a name came back" ........... 'the run still lands, ungrouped, when…'
- *  7 the 990100005 CODE gate dropped ........................ 'translates a missing-unique-index error…'
+ *  7 the 42703 CODE gate dropped ........................ 'translates a missing-unique-index error…'
  *  8 `report.ts`'s measured figure back to 251 .......... 'the figure `report.ts` reports as MEASURED'
  *  9 the backstop retry removed entirely ................ 'INVARIANT GUARD — the backstop still fires'
  * 10 the scoped delete inverted to `is not null` ........ 'keeps the ruling, the ruler and the row…'
@@ -199,7 +199,7 @@ describe('recordAbuseVerdict — which rows move', () => {
     await expect(
       service.recordAbuseVerdict({
         runId: ids.today,
-        findingId: 990100013,
+        findingId: 990100026,
         verdict: 'tp',
         verdictBy: 'mod-a',
       })
@@ -637,7 +637,7 @@ describe('a deployment whose DDL has not been applied', () => {
  *
  * The window is real and open-ended — a human runs the file — and three detectors post through it
  * every day, two of which send no `groupKey` at all. Before the capability probe, `group_key: null`
- * was in the INSERT column list unconditionally, so EVERY report from EVERY detector raised 990100005,
+ * was in the INSERT column list unconditionally, so EVERY report from EVERY detector raised 42703,
  * rolled its whole transaction back, logged a warning naming a feature it was not using, and redid
  * the write. Measured here by counting the statements that actually reach the server.
  */
@@ -650,7 +650,7 @@ describe('the pre-DDL window costs the untouched detectors nothing', () => {
    * 🔴 TRANSACTIONS, NOT INSERTS — and the difference is the whole measurement.
    *
    * A mutant that removes the capability probe still issues exactly ONE findings INSERT, because the
-   * statement that raises 990100005 on a pre-DDL table is the DELETE that scopes itself by `verdict`,
+   * statement that raises 42703 on a pre-DDL table is the DELETE that scopes itself by `verdict`,
    * which runs BEFORE any insert. Counting inserts therefore reported 1 for both the fixed and the
    * broken code, i.e. it measured nothing. What the cost actually is — a whole transaction rolled
    * back and redone — is visible as a second `begin`, which is what this counts.
@@ -681,7 +681,7 @@ describe('the pre-DDL window costs the untouched detectors nothing', () => {
     });
 
     // 🔴 The literals. ONE transaction and ONE findings insert: the second of each is the redo the
-    // old 990100005 round trip forced on every report from every detector, for a feature two of the
+    // old 42703 round trip forced on every report from every detector, for a feature two of the
     // three do not use. A positive control on both counters is the sibling case below.
     expect(transactions(query)).toBe(1);
     expect(findingInserts(query)).toBe(1);
@@ -734,13 +734,13 @@ describe('the pre-DDL window costs the untouched detectors nothing', () => {
   });
 
   it('🔴 an UNRELATED missing column is not reported as a group_key problem', async () => {
-    // Same error code, different fault, opposite remedy. The old branch caught EVERY 990100005 and
+    // Same error code, different fault, opposite remedy. The old branch caught EVERY 42703 and
     // answered "abuse_detection_finding has no group_key column — apply schema.sql", pointing the
     // operator at a file that would not fix this, and logging it just before the real error.
     //
     // 🔴 THE REPORT HERE CARRIES A GROUP KEY, DELIBERATELY. With a keyless report the misleading
     // warning is suppressed by the OTHER guard, so the case passed against a mutant that caught
-    // every 990100005 — green for the wrong reason, and measured: that mutant survived until this
+    // every 42703 — green for the wrong reason, and measured: that mutant survived until this
     // fixture carried a key.
     await db.exec(`ALTER TABLE abuse_detection_finding
       ADD COLUMN verdict text, ADD COLUMN verdict_by text,
@@ -763,13 +763,13 @@ describe('the pre-DDL window costs the untouched detectors nothing', () => {
       message: expect.stringContaining('"action"'),
     });
     // Not diagnosed as this feature's problem. 🔴 This line is NOT what kills the "catch every
-    // 990100005" mutant — measured: under that mutant the warning is emitted only AFTER the retry
+    // 42703" mutant — measured: under that mutant the warning is emitted only AFTER the retry
     // succeeds, and the retry cannot succeed while `action` is still missing, so nothing is logged
     // either way. It is a guard against the message MOVING back before the write, not the one
     // holding this property.
     expect(warn).not.toHaveBeenCalled();
     // 🔴 THIS is the killing assertion, and it reads `expected 2 to be 1` under that mutant. A retry
-    // cannot help here — the column is still missing — so catching every 990100005 buys a second
+    // cannot help here — the column is still missing — so catching every 42703 buys a second
     // rolled-back transaction and arrives at the identical error.
     expect(transactions(query)).toBe(1);
   });
@@ -877,7 +877,7 @@ describe('missingColumnFromError', () => {
     expect(service.missingColumnFromError(e)).toBeNull();
   });
 
-  it('answers null for a 990100005 whose message it does not recognise', () => {
+  it('answers null for a 42703 whose message it does not recognise', () => {
     // The safe direction: an unparsed failure propagates rather than being retried past.
     expect(
       service.missingColumnFromError(Object.assign(new Error('no idea'), { code: '42703' }))
@@ -1062,7 +1062,7 @@ describe('🔴 a replay of a payload that repeats a user keeps both findings', (
  * language, the regex misses, and a gate written as "retry only when a name came back" turns the
  * whole backstop OFF — reporting then fails where it previously degraded.
  */
-describe('a 990100005 whose message cannot be parsed still degrades', () => {
+describe('a 42703 whose message cannot be parsed still degrades', () => {
   it('the run still lands, ungrouped, when the column name is unreadable', async () => {
     await db.exec(`ALTER TABLE abuse_detection_finding
       DROP COLUMN verdict, DROP COLUMN verdict_by, DROP COLUMN verdict_at, DROP COLUMN group_key;`);

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
  * The model and model-version sources build their `IN` list as a RAW fragment, and Kysely splices raw
  * into `where(..., 'in', ...)` VERBATIM — it only parenthesises a real subquery builder. Without the
  * fragment's own parens the emitted SQL is `where "i"."id" in SELECT ...`, which Postgres rejects with
- * 990100009 before it runs anything, so both sources 500 outright.
+ * 42601 before it runs anything, so both sources 500 outright.
  *
  * A real compile is the only thing that catches this: the shape typechecks, lints, and a hand-rolled
  * chain fake cannot see it. So `dbRead` here is real Kysely on a driver that never connects, and the
@@ -38,14 +38,14 @@ const run = async (fn: () => Promise<unknown>) => {
 
 describe('bulk image sources that build their IN list as raw SQL', () => {
   it('parenthesises the model union so Postgres can parse it', async () => {
-    for (const statement of await run(() => getImagesForModel(990100048, { limit: 200 }))) {
+    for (const statement of await run(() => getImagesForModel(990100032, { limit: 200 }))) {
       expect(statement).toContain('in (');
       expect(statement).not.toMatch(/in\s+SELECT/i);
     }
   });
 
   it('parenthesises the model-version union too', async () => {
-    for (const statement of await run(() => getImagesForModelVersion(990100050, { limit: 200 }))) {
+    for (const statement of await run(() => getImagesForModelVersion(990100033, { limit: 200 }))) {
       expect(statement).toContain('in (');
       expect(statement).not.toMatch(/in\s+SELECT/i);
     }
@@ -54,12 +54,12 @@ describe('bulk image sources that build their IN list as raw SQL', () => {
 
 describe('the removed filter', () => {
   it('narrows the count as well as the rows, so paging and the total describe the same set', async () => {
-    const statements = await run(() => getImagesForModel(990100048, { removed: 'only' }));
+    const statements = await run(() => getImagesForModel(990100032, { removed: 'only' }));
     for (const statement of statements) expect(statement).toMatch(/"i"\."ingestion" = \$\d+/);
   });
 
   it('adds no predicate when unset', async () => {
-    for (const statement of await run(() => getImagesForModel(990100048, {})))
+    for (const statement of await run(() => getImagesForModel(990100032, {})))
       expect(statement).not.toMatch(/"i"."ingestion" (=|!=|<>) /);
   });
 });

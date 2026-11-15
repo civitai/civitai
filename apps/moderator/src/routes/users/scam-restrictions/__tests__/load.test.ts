@@ -79,9 +79,9 @@ beforeEach(() => {
 
 describe('scam restrictions load', () => {
   it('lists only pending scam restrictions, a bare number searched as a user id', async () => {
-    await run('?q=990100001&page=2');
+    await run('?q=12345&page=2');
     expect(getGenerationRestrictions).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'scam', status: 'Pending', userId: 990100001, page: 2 })
+      expect.objectContaining({ type: 'scam', status: 'Pending', userId: 12345, page: 2 })
     );
   });
 

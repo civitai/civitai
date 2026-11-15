@@ -74,7 +74,7 @@ const emitted = () => {
 /**
  * Every subquery in these statements is a raw fragment, and Kysely splices raw verbatim. Losing a
  * fragment's own parens yields `select select …` or `in select …` — legal-looking text that Postgres
- * rejects with 990100009 before running anything.
+ * rejects with 42601 before running anything.
  */
 const noBareSubquery = (sql: string) => {
   expect(sql).not.toMatch(/\bin\s+select\b/i);

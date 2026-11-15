@@ -38,14 +38,7 @@ beforeEach(() => {
   runs.mockReset().mockResolvedValue({
     runs: [run(1)],
     truncated: false,
-    charges: {
-      count: 3,
-      buzz: 990100020,
-      first: null,
-      last: null,
-      unmatched: [],
-      truncated: false,
-    },
+    charges: { count: 3, buzz: 99999, first: null, last: null, unmatched: [], truncated: false },
   });
   models
     .mockReset()
@@ -79,7 +72,7 @@ describe('loraSectionFor', () => {
 
   it('never puts spend, params or anything beyond the summary in the payload', async () => {
     const res = JSON.stringify(await loraSectionFor({ userId: 7 }, reads));
-    for (const leak of ['charges', 'buzz', '1234', '990100020', 'params', 'kohya', 'history'])
+    for (const leak of ['charges', 'buzz', '1234', '99999', 'params', 'kohya', 'history'])
       expect(res).not.toContain(leak);
   });
 

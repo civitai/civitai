@@ -431,7 +431,7 @@ describe('flowChecklist', () => {
     ],
     [
       'weights over the most',
-      { ...good, tiers: [{ ...good.tiers[0], weight: 990100061 }, good.tiers[1]] },
+      { ...good, tiers: [{ ...good.tiers[0], weight: 2_147_483_647 }, good.tiers[1]] },
       TEAMS,
     ],
     [
@@ -448,7 +448,7 @@ describe('flowChecklist', () => {
     ['tier missing', { ...good, contents: [...good.contents, row(f.pin.id, 'nope')] }, TEAMS],
     [
       'reward does not exist',
-      { ...good, contents: [...good.contents, row(990100020, 'uncommon')] },
+      { ...good, contents: [...good.contents, row(990100008, 'uncommon')] },
       TEAMS,
     ],
     ['a box in a box', { ...good, contents: [...good.contents, row(aBox.id, 'uncommon')] }, TEAMS],

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * its own cap. Three defects came from treating them as one thing, and each was invisible in a way the
  * next one was not.
  *
- * ONE cap across both sides let the busy side eat it — measured on user 990100015, all 200 rows of a
+ * ONE cap across both sides let the busy side eat it — measured on one busy user, all 200 rows of a
  * 90-day window were receipts spanning two days, so every one of its 128 payments was invisible.
  *
  * ONE client-side filter over that page could only shrink what was already fetched, so selecting a type

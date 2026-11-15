@@ -15,15 +15,15 @@ describe('getLatestAppeal', () => {
 
     const result = await getLatestAppeal({
       entityType: EntityType.Image,
-      entityId: 990100046,
-      userId: 990100027,
+      entityId: 990100031,
+      userId: 990100013,
     });
 
     expect(mockFindFirst).toHaveBeenCalledWith({
       where: {
         entityType: EntityType.Image,
-        entityId: 990100046,
-        userId: 990100027,
+        entityId: 990100031,
+        userId: 990100013,
         category: null,
       },
       orderBy: { id: 'desc' },
@@ -37,8 +37,8 @@ describe('getLatestAppeal', () => {
 
     const result = await getLatestAppeal({
       entityType: EntityType.Model,
-      entityId: 990100046,
-      userId: 990100027,
+      entityId: 990100031,
+      userId: 990100013,
     });
 
     expect(result).toBeNull();

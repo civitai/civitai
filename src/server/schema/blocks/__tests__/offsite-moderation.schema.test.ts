@@ -13,7 +13,7 @@ import {
  *
  * Pins: the reason enum, the details bound, the mod-queue limit cap (≤50), AND
  * that the schema tuples equal the migration CHECK sets (a drift would let the
- * proc write a value the DB's `app_listing_reports_*_check` CHECK rejects — 990100004).
+ * proc write a value the DB's `app_listing_reports_*_check` CHECK rejects — 23514).
  */
 
 describe('APP_LISTING_REPORT_REASONS — matches the migration CHECK set', () => {

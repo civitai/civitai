@@ -348,7 +348,7 @@ describe('rewardReportReporters multiplier', () => {
     reporterIds = [42, 7];
 
     await expect(
-      rewardReportReporters({ reportId: 990100019, reporterIds })
+      rewardReportReporters({ reportId: 990100007, reporterIds })
     ).resolves.toBeUndefined();
 
     expect(axiom).toHaveBeenCalledTimes(1);
@@ -358,7 +358,7 @@ describe('rewardReportReporters multiplier', () => {
     // this test exists for.
     expect(payload.type).toBe('error');
     expect(payload.event).toBe('reportAccepted rewards write failed');
-    expect(payload.reportId).toBe(990100019);
+    expect(payload.reportId).toBe(990100007);
     expect(payload.reporterIds).toEqual([42, 7]);
     // safeError's fields land alongside the marker rather than instead of it.
     expect(payload.message).toBe('clickhouse unreachable');

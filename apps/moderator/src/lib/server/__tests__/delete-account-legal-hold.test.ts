@@ -22,7 +22,7 @@ vi.mock('$app/server', () => ({
 
 const { deleteAccountHold } = await import('../user-actions.service');
 
-const TARGET = 990100052;
+const TARGET = 990100034;
 let urls: string[];
 let respond: () => Response | Promise<Response>;
 const json = (body: unknown, status = 200) =>

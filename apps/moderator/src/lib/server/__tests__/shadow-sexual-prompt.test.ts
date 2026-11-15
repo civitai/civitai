@@ -180,7 +180,7 @@ describe('row mapping', () => {
         ? [{ total: '120' }]
         : [
             {
-              imageId: '990100065',
+              imageId: '9007199254',
               currentNsfwLevel: 1,
               wouldNsfwLevel: 4,
               score: 0.5,
@@ -193,7 +193,7 @@ describe('row mapping', () => {
       total: 120,
       rows: [
         {
-          imageId: 990100065,
+          imageId: 9007199254,
           currentNsfwLevel: 1,
           wouldNsfwLevel: 4,
           score: 0.5,

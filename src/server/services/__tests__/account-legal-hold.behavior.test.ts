@@ -60,7 +60,7 @@ const IMAGE_ON_INTERNAL_REPORT = 16; // their image is listed on a report naming
 const ALREADY_DELETED = 17;
 const IMAGE_ON_OLD_REPORT = 18; // their image is listed on an archived report sent over a year ago
 const IMAGE_PAST_INT_RANGE = 19; // a pending report lists their image, whose id is past int range
-const BIG_IMAGE_ID = 990100066;
+const BIG_IMAGE_ID = 10_000_000_019;
 const EXPIRED_MARKER = 20;
 const EXTENDED_MARKER = 21;
 const RELEASED_WITH_REPORT = 22; // a released marker, and a pending report naming them
@@ -234,7 +234,7 @@ beforeEach(async () => {
       (NULL, now() - interval '400 days', now(), '{}', '[{"id": ${IMAGE_ON_OLD_REPORT * 100}}]'),
       -- Pending, naming nobody, with image lists no job writes. Every lookup reads past them.
       (NULL, NULL, NULL, '{}', '{}'),
-      (NULL, NULL, NULL, '{}', '[null, 5, {"id": null}, {"id": "abc"}, {"id": 990100067}]'),
+      (NULL, NULL, NULL, '{}', '[null, 5, {"id": null}, {"id": "abc"}, {"id": 99999999999}]'),
       (NULL, NULL, NULL, '{}', '[{"id": 12345678901234567890}]'),
       (NULL, NULL, NULL, '{}', '[{"id": ${BIG_IMAGE_ID}}]');
     INSERT INTO "Image" (id, "userId", "needsReview", "blockedFor") VALUES
@@ -683,10 +683,7 @@ describe('isLegalHoldAbort', () => {
   it.each<[string, unknown]>([
     ['nothing', null],
     ['a connection failure', new Error('connection reset')],
-    [
-      'another raw-query failure',
-      { code: 'P2010', meta: { code: '990100003', message: 'duplicate' } },
-    ],
+    ['another raw-query failure', { code: 'P2010', meta: { code: '23505', message: 'duplicate' } }],
     [
       'another missing relation',
       { code: 'P2010', meta: { code: '42P01', message: 'relation "Other" does not exist' } },

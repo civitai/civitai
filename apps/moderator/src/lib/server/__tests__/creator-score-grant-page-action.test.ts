@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const grantCreatorScore = vi.hoisted(() =>
   vi.fn(async (_input: { userId: number; amount: number; reason: string }) => ({
     ok: true as const,
-    total: 990100053,
+    total: 10_014_899,
   }))
 );
 
@@ -30,7 +30,7 @@ const { actions } = await import('../../../routes/retool/user-lookup/[section]/+
 
 const event = (amount: number, grants: Record<string, boolean>) => {
   const form = new FormData();
-  form.set('userId', '990100052');
+  form.set('userId', '990100034');
   form.set('amount', String(amount));
   form.set('reason', 'Contest judge');
   return {
@@ -61,7 +61,7 @@ describe('grantCreatorScore action', () => {
   it('sends 100,000 from a large-grant holder to the endpoint', async () => {
     const result = await actions.grantCreatorScore(event(100_000, LARGE));
     expect(grantCreatorScore).toHaveBeenCalledWith({
-      userId: 990100052,
+      userId: 990100034,
       amount: 100_000,
       reason: 'Contest judge',
     });
@@ -69,7 +69,7 @@ describe('grantCreatorScore action', () => {
   });
 
   it('refuses 1,000,001 even from a large-grant holder', async () => {
-    const result = await actions.grantCreatorScore(event(990100041, LARGE));
+    const result = await actions.grantCreatorScore(event(990100027, LARGE));
     expect(result).toMatchObject({ status: 400 });
     expect(grantCreatorScore).not.toHaveBeenCalled();
   });

@@ -25,7 +25,7 @@ const body = (over: Record<string, unknown> = {}) => ({
   game: {
     slug: 'kraken-cove',
     title: 'Kraken Cove',
-    authorUserId: 990100001,
+    authorUserId: 12345,
     official: false,
     visibility: 'public',
     url: 'https://games.civitai.com/?game=kraken-cove',

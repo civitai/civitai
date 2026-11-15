@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The audit page's reads before the hand-applied table is usable: absent (42P01) or present without
- * this app's grant (990100004) both read as "unavailable", so the page shows its notice instead of a 500.
+ * this app's grant (42501) both read as "unavailable", so the page shows its notice instead of a 500.
  * Any other failure still throws.
  */
 
