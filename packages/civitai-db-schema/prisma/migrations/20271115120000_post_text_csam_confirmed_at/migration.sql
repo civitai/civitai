@@ -1,6 +1,8 @@
 -- Confirmed held PostText: a hold confirmed with the "none" report choice holds for one year from
 -- `csamConfirmedAt`, then `post_text_held` stops holding it on that ground (any other hold still
--- applies) and the `purge-confirmed-csam-text` job deletes it.
+-- applies) and the `purge-confirmed-csam-text` job deletes it. However the row goes, the delete trigger
+-- then drops the hold's copy of the text and its label-store snapshot, unless
+-- `post_text_retention_skip` keeps them.
 --
 -- MANUAL APPLY, per environment, BEFORE the PR that writes the column merges. Applying early is safe
 -- for the running code: nothing deployed reads the column, and with it NULL `post_text_held` holds
@@ -112,3 +114,60 @@ BEGIN
   RETURN marked;
 END;
 $$ LANGUAGE plpgsql VOLATILE SET search_path = public, pg_temp;
+
+-- 4. What keeps a deleted text's copies past its retention. The purge job reports the same reasons.
+CREATE OR REPLACE FUNCTION post_text_retention_skip(post_id INTEGER, author_id INTEGER)
+RETURNS text AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM "CsamReport" r
+    WHERE jsonb_typeof(r.details -> 'contextText') = 'array'
+      AND r.details -> 'contextText' @> jsonb_build_array(jsonb_build_object('postId', post_id))
+  ) THEN
+    RETURN 'quoted-in-report';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "Appeal" a WHERE a."userId" = author_id AND a.status = 'Pending') THEN
+    RETURN 'pending-appeal';
+  END IF;
+  -- Any evidence hold row, released or not. Without the table, keep.
+  IF to_regclass('public."EvidenceHold"') IS NULL THEN
+    RETURN 'evidence-hold';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "EvidenceHold" e WHERE e."userId" = author_id) THEN
+    RETURN 'evidence-hold';
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE SET search_path = public, pg_temp;
+
+-- 5. The delete trigger: refuses a held text as before; a confirmed "none" text past its year takes its
+-- hold copy and label-store snapshot with it, in the same statement.
+CREATE OR REPLACE FUNCTION post_text_keep_held() RETURNS trigger AS $$
+BEGIN
+  IF post_text_held(OLD."id", OLD."csamHeld", OLD."postId", OLD."userId") THEN
+    RAISE EXCEPTION 'PostText % cannot be deleted while it is held', OLD."id";
+  END IF;
+  IF OLD."csamHeld"
+    AND OLD."csamConfirmedAt" IS NOT NULL
+    AND OLD."csamConfirmedAt" <= (now() AT TIME ZONE 'UTC') - interval '1 year'
+    AND NOT EXISTS (
+      SELECT 1 FROM "TextScanHold" h
+      WHERE h."entityType" = 'PostText' AND h."entityId" = OLD."id" AND h.label = 'csam'
+        AND h.status = 'Confirmed'
+        AND h.meta ->> 'reportChoice' IS DISTINCT FROM 'none'
+    )
+    AND post_text_retention_skip(OLD."postId", OLD."userId") IS NULL
+  THEN
+    UPDATE "TextScanHold" h
+    SET "text" = '',
+        "meta" = (CASE WHEN jsonb_typeof(h."meta") = 'object' THEN h."meta" ELSE '{}'::jsonb END)
+          || jsonb_build_object('retentionPurgedAt', now())
+    WHERE h."entityType" = 'PostText' AND h."entityId" = OLD."id" AND h.label = 'csam'
+      AND h.status = 'Confirmed';
+    IF to_regprocedure('label_store.exclude(text,text,text)') IS NOT NULL THEN
+      PERFORM label_store.exclude('post_text_text', OLD."id"::text, 'retention');
+    END IF;
+  END IF;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql SET search_path = public, pg_temp;

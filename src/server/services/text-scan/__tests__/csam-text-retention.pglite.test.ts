@@ -149,6 +149,21 @@ describe('post_text_held: a confirmed hold with no report', () => {
     await expect(deleteText(textId)).rejects.toThrow(/held/);
   });
 
+  it('reads the confirmation time off the row being deleted', async () => {
+    const { textId } = await confirmed({ confirmedDaysAgo: 366 });
+    await pg.query(`UPDATE "PostText" SET "csamConfirmedAt" = ${ago(10)} WHERE id = $1`, [textId]);
+    await expect(deleteText(textId)).rejects.toThrow(/held/);
+    await pg.query(`UPDATE "PostText" SET "csamConfirmedAt" = ${ago(366)} WHERE id = $1`, [textId]);
+    await deleteText(textId);
+  });
+
+  it('holds a reportable choice past the year while a later report on the author is unsent', async () => {
+    const { textId } = await confirmed({ confirmedDaysAgo: 800, reportChoice: 'imagery' });
+    await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [AUTHOR]);
+    await expect(deleteText(textId)).rejects.toThrow(/held/);
+    expect((await purgeConfirmedCsamText()).deleted).toBe(0);
+  });
+
   it('holds a reportable choice, or none recorded, past the year until a report is filed', async () => {
     const reportable = await confirmed({ confirmedDaysAgo: 800, reportChoice: 'imagery' });
     const unrecorded = await confirmed({ confirmedDaysAgo: 800, reportChoice: null, postId: 2 });
@@ -244,6 +259,40 @@ describe('purgeConfirmedCsamText', () => {
       deleted: 1,
       skipped: { 'pending-appeal': 2 },
     });
+  });
+});
+
+describe('the delete trigger on a confirmed "none" text', () => {
+  it('drops the hold copy and snapshot when the author deletes it after the year', async () => {
+    const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
+    await deleteText(textId);
+    expect(await copies(textId, holdId)).toEqual({ row: false, holdText: '', snapshot: null });
+  });
+
+  it('drops nothing inside the year', async () => {
+    const { textId, holdId } = await confirmed({ confirmedDaysAgo: 300 });
+    await expect(deleteText(textId)).rejects.toThrow(/held/);
+    expect(await copies(textId, holdId)).toEqual(KEPT);
+  });
+
+  it.each([
+    [
+      'quoted in a report',
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", details)
+       VALUES (999, ${ago(800)}, ${ago(
+        700
+      )}, '{"contextText":[{"source":"postDescription","postId":1}]}')`,
+    ],
+    ['a pending appeal', `INSERT INTO "Appeal" ("userId", status) VALUES (${AUTHOR}, 'Pending')`],
+    [
+      'a released evidence hold',
+      `INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${AUTHOR}, now())`,
+    ],
+  ])('keeps the hold copy and snapshot of a deleted text %s', async (_, sql) => {
+    const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
+    await pg.query(sql);
+    await deleteText(textId);
+    expect(await copies(textId, holdId)).toEqual({ ...KEPT, row: false });
   });
 });
 
