@@ -47,7 +47,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, index int NOT NULL DEFAULT 0,
       ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
-      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false
+      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false, "tosViolation" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Article" (
       id int PRIMARY KEY, "coverId" int, "bannerId" int, cover text, status text,
@@ -98,6 +98,8 @@ beforeAll(async () => {
         NsfwLevel.PG
       });
     INSERT INTO "Image" (id, "userId", "nsfwLevel") VALUES (50, ${STRANGER}, ${NsfwLevel.X});
+    -- A ToS-violating PG image on the unheld model's post.
+    INSERT INTO "Image" (id, "userId", "postId", "tosViolation") VALUES (51, ${MODEL_OWNER}, 32, true);
     -- A stored X cover on the unheld model's post.
     INSERT INTO "Image" (id, "userId", "postId", "nsfwLevel") VALUES (47, ${MODEL_OWNER}, 32, ${
     NsfwLevel.X
@@ -134,7 +136,8 @@ beforeAll(async () => {
       (111, ${STRANGER}, NULL, NULL, NULL, 75),
       (112, ${STRANGER}, NULL, NULL, NULL, 76),
       (113, ${STRANGER}, NULL, 33, NULL, NULL),
-      (114, ${STRANGER}, NULL, NULL, NULL, 77);
+      (114, ${STRANGER}, NULL, NULL, NULL, 77),
+      (115, ${MODEL_OWNER}, 51, NULL, NULL, NULL);
   `);
 });
 
@@ -160,6 +163,7 @@ describe('a cover drawn from an item of a minor or SFW-only model', () => {
     ['a model item', 103, 41],
     ['a model item for an unheld model', 105, 44],
     ['a post item on an SFW-only model with no stored level', 113, 49],
+    ['a ToS-violating image item', 115, null],
   ])('%s takes the first image within the gallery level', async (_, collectionId, image) => {
     expect((await itemCovers(collectionId)).map((row) => row.image)).toEqual([image]);
   });

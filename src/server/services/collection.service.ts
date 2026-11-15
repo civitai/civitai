@@ -22,7 +22,6 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { hasBlockMarker } from '~/server/common/image-visibility';
-import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   bustContestCollectionItemsCache,
@@ -142,6 +141,7 @@ import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
   collectionItemCoversSql,
   getServableCoverCollectionIds,
+  isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
 import {
   assertImagesVisibleToViewer,
@@ -3920,21 +3920,6 @@ type CollectionImageRaw = {
   image: ImageProps | null;
   src: string | null;
 };
-
-/**
- * Whether a cover may be served at `browsingLevel`: rated within it, and never Blocked or a ToS
- * violation, whatever the level.
- */
-export function isCoverWithinBrowsingLevel(
-  image: { nsfwLevel?: number | null; tosViolation?: boolean | null },
-  browsingLevel: number
-) {
-  return (
-    !image.tosViolation &&
-    image.nsfwLevel !== NsfwLevel.Blocked &&
-    isRatingWithinCap(image.nsfwLevel, browsingLevel)
-  );
-}
 
 export const getCollectionCoverImages = async ({
   collectionIds,

@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -16,11 +17,15 @@ const baseModelAllowedSql = Prisma.sql`(
   OR NOT i."modelRestricted"
 )`;
 
-/** Scanned, not awaiting review, not removed, allowed by its base model: as SQL over `"Image" i`. */
+/**
+ * Scanned, not awaiting review, not removed or a ToS violation, allowed by its base model: as SQL
+ * over `"Image" i`.
+ */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
+  AND i."tosViolation" IS NOT TRUE
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
   AND ${baseModelAllowedSql}
 )`;
@@ -295,6 +300,23 @@ export async function getServableCoverCollectionIds(
       AND ${withinHeldGallerySql(modelOwnerSql)}
   `;
   return new Set(rows.map((r) => r.collectionId));
+}
+
+/**
+ * Whether a cover may be served at `browsingLevel`: rated within it, and never Blocked or a ToS
+ * violation, whatever the level. Narrower than `isPublicCoverImage`, the public API's rule: the
+ * app shows its viewers images that rule refuses (POI, minor), and its covers carry only these
+ * fields. Servability is judged in SQL first (`servableCollectionCoverSql`).
+ */
+export function isCoverWithinBrowsingLevel(
+  image: { nsfwLevel?: number | null; tosViolation?: boolean | null },
+  browsingLevel: number
+) {
+  return (
+    !image.tosViolation &&
+    image.nsfwLevel !== NsfwLevel.Blocked &&
+    isRatingWithinCap(image.nsfwLevel, browsingLevel)
+  );
 }
 
 /**
