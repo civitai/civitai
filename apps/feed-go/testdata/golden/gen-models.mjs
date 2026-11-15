@@ -63,6 +63,7 @@ const { resolveBrowsingSettingsAddons } = await repo(
 );
 const { isBlockedTagName } = await repo('src/server/utils/blocked-browsing-tags.ts');
 const { isViewerUsername } = await repo('src/utils/is-viewer.ts');
+const dayjs = (await repo('src/shared/utils/dayjs.ts')).default;
 const { isModelWithheld } = await repo('src/shared/utils/model-withhold.ts');
 const { postgresSlugify } = await repo('src/utils/string-helpers.ts');
 
@@ -243,7 +244,7 @@ const MODELS = {
     type: 'LORA',
     coverImageId: 8031, // on its other version
     rank: rank(80, 70),
-    lastVersionAt: day(11),
+    lastVersionAt: day(11, 10, 125),
     versions: [version(6003, 'Pony', { covered: false }), version(6004, 'Illustrious')],
   }),
   5003: model(5003, 1002, {
@@ -520,6 +521,19 @@ function pgText(v) {
   return String(v);
 }
 
+/** The values parseCursor (src/server/utils/pagination-helpers.ts, not exported) binds for a string
+ *  cursor, transcribed with the real dayjs: a token with `-` that is not an integer is
+ *  dayjs.utc(token).toDate(), any other parseInt(token, 10). The fixture records them so the harness
+ *  checks the instant feed-go binds, not only the cursor string it was handed. */
+function boundCursor(cursor) {
+  if (typeof cursor !== 'string') return null;
+  return cursor
+    .split('|')
+    .map((tok) =>
+      tok.includes('-') && !/^-?\d+$/.test(tok) ? dayjs.utc(tok).toDate() : parseInt(tok, 10)
+    );
+}
+
 /** The page query: the fixture's next page, checked against the cursor Node sends. */
 function pageQuery(input, take) {
   const page = T.pages.shift();
@@ -536,7 +550,7 @@ function pageQuery(input, take) {
       cursorId: SORT_FIELDS[input.sort](m).map(pgText).join('|'),
     };
   });
-  T.pagesOut.push({ cursor, rows: rows.map(mark) });
+  T.pagesOut.push({ cursor, bound: mark(boundCursor(cursor)), rows: rows.map(mark) });
   return rows;
 }
 
@@ -1088,11 +1102,20 @@ const SPECS = [
   {
     name: 'newest-timestamp-cursor',
     description:
-      'Newest: the cursor is a timestamp (with milliseconds) and an id, as Postgres writes it in CONCAT.',
+      'Newest: the cursor is a timestamp with a 3-digit fraction and an id, as Postgres writes it in CONCAT; the instant bound is the one the row holds.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Newest', limit: 1, browsingLevel: 31, cursor: '2026-06-11 10:00:00.125|5002' },
+    pages: [{ cursor: '2026-06-11 10:00:00.125|5002', ids: [5002, 5004] }],
+  },
+  {
+    name: 'fallback-short-fraction-cursor',
+    description:
+      'A cursor timestamp with a 1- or 2-digit fraction (250 ms written ".25"): Node binds it as 25 ms (a Node bug, fixed separately), so feed-go falls back until that fix ships.',
     host: HOST.blue,
     viewer: 1003,
     input: { sort: 'Newest', limit: 1, browsingLevel: 31, cursor: '2026-06-12 10:00:00.25|5001' },
-    pages: [{ cursor: '2026-06-12 10:00:00.25|5001', ids: [5001, 5002] }],
+    fallback: 'short-fraction-cursor',
   },
   {
     name: 'base-model-single-moderator',

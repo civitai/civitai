@@ -199,10 +199,10 @@ func newEnv(pages ...[]testRow) *env {
 	cache.SetString("system:blocked-browsing-tags", []byte(`[{"id":1,"name":"Blocked Tag"}]`))
 	e.deps = &Deps{
 		DB: e.db, Sources: e.sources, Gallery: &fakeGallery{settings: map[int]*feed.GallerySettings{}},
-		Addons: func(context.Context) []browsing.Addon { return nil },
-		Cache:  cache,
-		Config: Config{CoverageNext: true, LoadingOpenToAll: true, BaseModelMetrics: true, ImagesSlim: true},
-		Now:    func() time.Time { return testNow },
+		Addons:  func(context.Context) []browsing.Addon { return nil },
+		Blocked: &feed.BlockedTags{Cache: cache},
+		Config:  Config{CoverageNext: true, LoadingOpenToAll: true, BaseModelMetrics: true, ImagesSlim: true},
+		Now:     func() time.Time { return testNow },
 	}
 	return e
 }
@@ -500,22 +500,15 @@ func TestServeTagFilter(t *testing.T) {
 	}
 	// The blocked list read falls back when the key is absent.
 	e = newEnv()
-	e.deps.Cache = testkit.NewRedis()
+	e.deps.Blocked = &feed.BlockedTags{Cache: testkit.NewRedis()}
 	in.Tag = "x"
 	if _, err := serve(t, e, in, nil); fallback.Reason(err) != "blocked-tags-miss" {
 		t.Fatalf("absent blocked list: %v", err)
 	}
-}
-
-func TestParseBlockedTagNames(t *testing.T) {
-	got, err := ParseBlockedTagNames([]byte(`[{"id":1,"name":"Foo"},{"id":2,"name":"bar"}]`))
-	if err != nil || !reflect.DeepEqual(got, map[string]bool{"foo": true, "bar": true}) {
-		t.Fatalf("%v %v", got, err)
-	}
-	for _, bad := range []string{`null`, `{}`, `[{"id":1}]`, `nope`} {
-		if _, err := ParseBlockedTagNames([]byte(bad)); fallback.Reason(err) != "blocked-tags-stale" {
-			t.Errorf("%s: %v", bad, err)
-		}
+	e = newEnv()
+	e.deps.Blocked = nil
+	if _, err := serve(t, e, in, nil); fallback.Reason(err) != "blocked-tags-unconfigured" {
+		t.Fatalf("no blocked-tag reader: %v", err)
 	}
 }
 

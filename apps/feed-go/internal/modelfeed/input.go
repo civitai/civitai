@@ -89,7 +89,7 @@ type Input struct {
 
 // unsupportedKeys are input keys that change the answer in ways not ported. Present with a truthy
 // value (isEmpty: not null, false, 0, "" or []), they make the request fall back with reason
-// `input-<key>`. Keys getModelsRaw never reads (favorites, rating, excludedModelIds,
+// `input-<key>`; `ids` falls back whenever it is present (Parse). Keys getModelsRaw never reads (favorites, rating, excludedModelIds,
 // excludedImageIds, collectionItemStatus, collectionTagId without a collection) are ignored, as zod's
 // strip and the destructuring leave them.
 var unsupportedKeys = []string{
@@ -105,6 +105,12 @@ var unsupportedKeys = []string{
 // subset is a fallback, and so is a value the schema itself rejects (Node answers it with its own
 // BAD_REQUEST, which the sampler never mirrors).
 func Parse(m map[string]any) (*Input, error) {
+	// `ids` changes the answer whenever it is present at all: commaDelimitedNumberArray turns [] into
+	// [], "" into [0] and null into [], and getModelsRaw's hidePrivateModels is `!ids && …`, so even
+	// an empty list shows private models (and "" filters to model 0). None of that is ported.
+	if _, ok := m["ids"]; ok {
+		return nil, fallback.New("input-ids")
+	}
 	for _, k := range unsupportedKeys {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.New("input-" + k)

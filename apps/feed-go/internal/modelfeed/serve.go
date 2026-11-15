@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
@@ -71,11 +69,10 @@ type Deps struct {
 	Gallery Gallery
 	// Addons returns the browsing-settings addons (system redis, or the defaults).
 	Addons func(context.Context) []browsing.Addon
-	// Cache is the cache cluster, for the blocked browsing tags key; Prefix its key prefix.
-	Cache  redis.UniversalClient
-	Prefix string
-	Config Config
-	Now    func() time.Time
+	// Blocked is the blocked browsing tag list, shared with image.getInfinite (one memo, as in Node).
+	Blocked *feed.BlockedTags
+	Config  Config
+	Now     func() time.Time
 }
 
 // Viewer is the session user; nil in a Request when signed out or banned.
@@ -250,7 +247,10 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 	}
 	// enforceBlockedBrowsingTagsForModels: a blocked tag name is an empty page; then the addons.
 	if in.Tag != "" {
-		blocked, err := blockedTagNames(ctx, d)
+		if d.Blocked == nil {
+			return nil, fallback.New("blocked-tags-unconfigured")
+		}
+		blocked, err := d.Blocked.Names(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -402,45 +402,6 @@ func subtractMonths(t time.Time, n int) time.Time {
 		day = last
 	}
 	return time.Date(first.Year(), first.Month(), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
-}
-
-// blockedTagsKey is REDIS_KEYS.SYSTEM.BLOCKED_BROWSING_TAGS, on the cache cluster.
-const blockedTagsKey = "system:blocked-browsing-tags"
-
-// blockedTagNames is getBlockedBrowsingTags' names, lowercased. A key Node would rebuild from the
-// database (absent, or not a JSON array) falls back.
-func blockedTagNames(ctx context.Context, d *Deps) (map[string]bool, error) {
-	if d.Cache == nil {
-		return nil, fallback.New("blocked-tags-unconfigured")
-	}
-	raw, err := d.Cache.Get(ctx, d.Prefix+blockedTagsKey).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return nil, fallback.New("blocked-tags-miss")
-	}
-	if err != nil {
-		return nil, fallback.Newf("blocked-tags-read-failed", "%v", err)
-	}
-	return ParseBlockedTagNames(raw)
-}
-
-// ParseBlockedTagNames reads a cached `[{id, name}]` list's names, lowercased.
-func ParseBlockedTagNames(raw []byte) (map[string]bool, error) {
-	var list []map[string]any
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	if err := dec.Decode(&list); err != nil || list == nil {
-		return nil, fallback.New("blocked-tags-stale")
-	}
-	out := make(map[string]bool, len(list))
-	for _, t := range list {
-		name, ok := t["name"].(string)
-		if !ok {
-			// `t.name.toLowerCase()` throws on a nameless entry: a 500 this service does not mimic.
-			return nil, fallback.New("blocked-tags-stale")
-		}
-		out[strings.ToLower(name)] = true
-	}
-	return out, nil
 }
 
 // tagIDByName is `dbRead.tag.findUnique({ where: { name } })` (Tag.name is citext): 0 = no such tag,

@@ -17,13 +17,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/integtest"
 )
 
 // integSeedModels resets the fixture:
 //
 //	3101001 owner 3101901 Checkpoint  thumbsUp 50 download 10  2026-06-12 10:00:00.25  Pony + SDXL metrics, tag 3101801, SafeTensor file, timed early access
-//	3101002 owner 3101902 LORA        thumbsUp 50 download 10  2026-06-11 10:00:00     SDXL metrics, permanent paid access on sale, allowCommercialUse {None}
+//	3101002 owner 3101902 LORA        thumbsUp 50 download 10  2026-06-11 10:00:00.125 SDXL metrics, permanent paid access on sale, allowCommercialUse {None}
 //	3101003 owner 3101902 Checkpoint  thumbsUp 40 download 30  2026-06-10              Archived
 //	3101004 owner 3101902 Checkpoint  thumbsUp 30 download 40  2026-06-09              Private
 //	3101005 owner 3101901 Checkpoint  thumbsUp 20 download 50  NULL                    nsfwLevel 4 (R), Pony metrics
@@ -52,7 +53,7 @@ func integSeedModels(t *testing.T, pool *pgxpool.Pool) {
 		INSERT INTO "ModelMetric" ("modelId", "userId", "thumbsUpCount", "downloadCount", "thumbsDownCount", "commentCount",
 		    "collectedCount", "tippedAmountCount", "nsfwLevel", status, availability, mode, "lastVersionAt", "hotScore") VALUES
 		  (3101001, 3101901, 50, 10, 1, 2, 3, 4, 1, 'Published', 'Public', NULL, '2026-06-12 10:00:00.25', 9),
-		  (3101002, 3101902, 50, 10, 0, 0, 0, 0, 1, 'Published', 'Public', NULL, '2026-06-11 10:00:00', 9),
+		  (3101002, 3101902, 50, 10, 0, 0, 0, 0, 1, 'Published', 'Public', NULL, '2026-06-11 10:00:00.125', 9),
 		  (3101003, 3101902, 40, 30, 0, 0, 0, 0, 1, 'Published', 'Public', 'Archived', '2026-06-10 00:00:00', 5),
 		  (3101004, 3101902, 30, 40, 0, 0, 0, 0, 1, 'Published', 'Private', NULL, '2026-06-09 00:00:00', 4),
 		  (3101005, 3101901, 20, 50, 0, 0, 0, 0, 4, 'Published', 'Public', NULL, NULL, 3),
@@ -165,14 +166,22 @@ func TestIntegrationModelPageCursors(t *testing.T) {
 	integWant(t, "from the first", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 31, Cursor: "50|10|3101001"})),
 		[]int{3101001, 3101002, 3101005})
 
-	// Newest: a timestamp token with milliseconds, the NULL lastVersionAt last (and its cursor `|id`).
+	// Newest: timestamp tokens as Postgres writes them (the fraction's trailing zeros trimmed), the
+	// NULL lastVersionAt last (and its cursor `|id`).
 	newest := integPage(t, pool, PageQuery{Take: 5, Sort: SortNewest, BrowsingLevel: 31})
 	integWant(t, "newest", integIDs(newest), []int{3101001, 3101002, 3101005})
-	integWant(t, "newest cursors", integCursors(newest), []string{"2026-06-12 10:00:00.25|3101001", "2026-06-11 10:00:00|3101002", "|3101005"})
-	integWant(t, "newest from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortNewest, BrowsingLevel: 31, Cursor: "2026-06-12 10:00:00.25|3101001"})),
-		[]int{3101001, 3101002})
+	integWant(t, "newest cursors", integCursors(newest), []string{"2026-06-12 10:00:00.25|3101001", "2026-06-11 10:00:00.125|3101002", "|3101005"})
+	// A 2-digit fraction (250 ms written ".25") is one Node binds as 25 ms: until Node is fixed it
+	// falls back rather than serve a page Node would not.
+	if _, err := (&PageQuery{Take: 5, Sort: SortNewest, BrowsingLevel: 31, Cursor: "2026-06-12 10:00:00.25|3101001"}).Build(); fallback.Reason(err) != "short-fraction-cursor" {
+		t.Fatalf("newest from a .25 cursor: %v, want the short-fraction-cursor fallback", err)
+	}
+	// A 3-digit fraction is served, and binds the instant the row holds: the equality branch finds the
+	// cursor row itself (a misread millisecond would start the page at 3101005).
+	integWant(t, "newest from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortNewest, BrowsingLevel: 31, Cursor: "2026-06-11 10:00:00.125|3101002"})),
+		[]int{3101002, 3101005})
 	// Oldest takes the OR predicate.
-	integWant(t, "oldest", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortOldest, BrowsingLevel: 31, Cursor: "2026-06-11 10:00:00|3101002"})),
+	integWant(t, "oldest", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortOldest, BrowsingLevel: 31, Cursor: "2026-06-11 10:00:00.125|3101002"})),
 		[]int{3101002, 3101001})
 	// Hot: hotScore DESC, id ASC.
 	integWant(t, "hot", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31, Cursor: "9|3101002"})),

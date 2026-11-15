@@ -130,6 +130,42 @@ func TestBlockedTags(t *testing.T) {
 	}
 }
 
+func TestParseBlockedTagNames(t *testing.T) {
+	got, err := ParseBlockedTagNames([]byte(`[{"id":1,"name":"Foo"},{"id":2,"name":"bar"}]`))
+	if err != nil || !reflect.DeepEqual(got, map[string]bool{"foo": true, "bar": true}) {
+		t.Fatalf("%v %v", got, err)
+	}
+	for _, bad := range []string{`null`, `{}`, `[{"id":1}]`, `nope`} {
+		if _, err := ParseBlockedTagNames([]byte(bad)); fallback.Reason(err) != "blocked-tags-stale" {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+}
+
+// Names and IDs share one memo (one read serves both), and an entry only one of them cannot use
+// fails only that one.
+func TestBlockedTagsNamesShareTheMemo(t *testing.T) {
+	r := testkit.NewRedis()
+	r.SetString(BlockedTagsKey, []byte(`[{"id":9,"name":"Mixed Case"},{"id":10}]`))
+	b := &BlockedTags{Cache: r}
+	ctx := context.Background()
+	if _, err := b.Names(ctx); fallback.Reason(err) != "blocked-tags-stale" {
+		t.Fatalf("names with a nameless entry: %v, want blocked-tags-stale", err)
+	}
+	if got, err := b.IDs(ctx); err != nil || !reflect.DeepEqual(got, map[int]bool{9: true, 10: true}) {
+		t.Fatalf("ids = %v, %v", got, err)
+	}
+	// The memo holds the list read above: a new value is not read within the TTL.
+	r.SetString(BlockedTagsKey, []byte(`[{"id":11,"name":"Other"}]`))
+	if _, err := b.Names(ctx); fallback.Reason(err) != "blocked-tags-stale" {
+		t.Fatalf("names within the TTL: %v, want the memoized list's blocked-tags-stale", err)
+	}
+	fresh := &BlockedTags{Cache: r}
+	if got, err := fresh.Names(ctx); err != nil || !reflect.DeepEqual(got, map[string]bool{"other": true}) {
+		t.Fatalf("names = %v, %v", got, err)
+	}
+}
+
 // The blocked-tag list is memoized in-process for BlockedTagsTTL, as getBlockedBrowsingTags'
 // createTtlMemo: a fresh list is served without a read, an expired one is read again, an error is
 // never memoized, and concurrent callers of an expired memo share one read.

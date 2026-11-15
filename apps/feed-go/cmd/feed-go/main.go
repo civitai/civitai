@@ -164,10 +164,11 @@ func run(log *slog.Logger) error {
 	}
 	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
 	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
+	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	infinite := &feed.InfiniteDeps{
 		Deps:    deps,
 		Sources: sources,
-		Blocked: &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix},
+		Blocked: blocked,
 	}
 	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
 	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
@@ -176,8 +177,7 @@ func run(log *slog.Logger) error {
 		Sources: sources,
 		Gallery: deps.Gallery,
 		Addons:  deps.Addons.Addons,
-		Cache:   cache,
-		Prefix:  cfg.CacheKeyPrefix,
+		Blocked: blocked,
 		Config: modelfeed.Config{
 			BaseModelMetrics:        cfg.BaseModelFeedMetrics,
 			ImagesSlim:              cfg.ModelImagesSlim,

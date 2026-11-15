@@ -16,7 +16,7 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
  * request, mirror what Node saw and what it answered to that service's internal compare endpoint.
- * Node keeps serving every request. Three routes are mirrored, each behind its own flag:
+ * Node keeps serving every request. Four routes are mirrored, each behind its own flag:
  *
  * - `image.getImagesAsPostsInfinite` (tRPC; flag `feed-go-shadow`): the raw `input` and the
  *   superjson envelope the transformer wrote, captured in an AsyncLocalStorage scope;

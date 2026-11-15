@@ -61,7 +61,7 @@ func TestBuildHighestRatedFirstPage(t *testing.T) {
 // Newest with a cursor: the split form (equality branch first, then the strict tuple compare), each
 // branch limited, and the outer limit; the timestamp token bound as a time.
 func TestBuildNewestCursorSplits(t *testing.T) {
-	stmt := build(t, PageQuery{Take: 2, Sort: SortNewest, BrowsingLevel: 31, Cursor: "2026-06-15 10:00:00.5|42", ViewerID: 7, IsModerator: true})
+	stmt := build(t, PageQuery{Take: 2, Sort: SortNewest, BrowsingLevel: 31, Cursor: "2026-06-15 10:00:00.375|42", ViewerID: 7, IsModerator: true})
 	got := norm(stmt.Text)
 	for _, frag := range []string{
 		`(mm."lastVersionAt" = $2 AND mm."modelId" <= $3)`,
@@ -82,7 +82,7 @@ func TestBuildNewestCursorSplits(t *testing.T) {
 	if strings.Contains(got, `'Private'`) {
 		t.Error("moderator: no availability clause")
 	}
-	ts := time.Date(2026, 6, 15, 10, 0, 0, 500_000_000, time.UTC)
+	ts := time.Date(2026, 6, 15, 10, 0, 0, 375_000_000, time.UTC)
 	wantArgs := []any{ts, ts, int64(42), 31, 3}
 	if !reflect.DeepEqual(stmt.Args, wantArgs) {
 		t.Fatalf("args %#v, want %#v", stmt.Args, wantArgs)
@@ -219,6 +219,8 @@ func TestParseCursor(t *testing.T) {
 		{" 7|0", []any{int64(7), int64(0)}},
 		{"2026-06-15 10:00:00|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC), int64(3)}},
 		{"2026-06-15 10:00:00.123456|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 123_000_000, time.UTC), int64(3)}},
+		{"2026-06-15 10:00:00.125|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 125_000_000, time.UTC), int64(3)}},
+		{"2026-06-15T10:00:00.040|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 40_000_000, time.UTC), int64(3)}},
 	}
 	for _, c := range ok {
 		got, err := parseCursor(two, c.cursor)
@@ -229,6 +231,12 @@ func TestParseCursor(t *testing.T) {
 	for _, bad := range []string{"12", "1|2|3", "|5", "abc|5", "-5|1", "2147483648|1", "2026-13-45 00:00:00|1", "1-2|3"} {
 		if _, err := parseCursor(two, bad); fallback.Reason(err) != "model-cursor" {
 			t.Errorf("parseCursor(%q): %v, want the model-cursor fallback", bad, err)
+		}
+	}
+	// A 1- or 2-digit fraction is one Node's dayjs misreads (".25" as 25 ms): its own fallback.
+	for _, short := range []string{"2026-06-15 10:00:00.25|3", "2026-06-15 10:00:00.5|3", "2026-06-15T10:00:00.07|3"} {
+		if _, err := parseCursor(two, short); fallback.Reason(err) != "short-fraction-cursor" {
+			t.Errorf("parseCursor(%q): %v, want the short-fraction-cursor fallback", short, err)
 		}
 	}
 }

@@ -71,8 +71,11 @@ public.
 `isGenerationEligible`, `toPublicApiVersionFlags`, `isMatureRestricted`, the addon resolution, the
 blocked-tag check, `postgresSlugify`) and transcribes only the orchestration that reads the database
 and the caches. The page query is an external system to it, as the feed service is to `gen.mjs`: a
-fixture's `db.modelPages` lists, per call, the cursor Node sent and the rows Postgres answered, and
-the Go harness fails when feed-go asks for a page with another cursor, asks for more pages, or fewer.
+fixture's `db.modelPages` lists, per call, the cursor Node sent, the values Node's `parseCursor`
+binds for it (`bound`: an instant per date token, read with the real dayjs, or an integer), and the
+rows Postgres answered. The Go harness fails when a bound value is not among feed-go's query
+arguments (so a token both sides receive but read as different instants is caught), when feed-go
+asks for more pages, or fewer.
 The SQL itself is pinned by `internal/modelfeed`'s unit tests and run against Postgres by its
 integration tests. Extra keys: `config` holds the model flag mirrors; `db` holds `paidAccess`,
 `coverImages`, `tags` (by name) and `creators` (by username). Raise `goldenMinModels` with the count.

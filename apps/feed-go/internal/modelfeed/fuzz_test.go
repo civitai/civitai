@@ -13,7 +13,8 @@ import (
 // key; and the page query it builds either parses its cursor or refuses with the cursor fallback.
 // Seed corpus: testdata/fuzz/FuzzParse.
 func FuzzParse(f *testing.F) {
-	f.Add([]byte(`{"json":{"sort":"Newest","limit":32,"cursor":"2026-06-12 10:00:00.25|5001","baseModels":["Pony","SDXL 1.0"]}}`))
+	f.Add([]byte(`{"json":{"sort":"Newest","limit":32,"cursor":"2026-06-12 10:00:00.125|5001","baseModels":["Pony","SDXL 1.0"]}}`))
+	f.Add([]byte(`{"json":{"sort":"Newest","limit":32,"cursor":"2026-06-12 10:00:00.25|5001"}}`))
 	f.Add([]byte(`{"json":{"types":"LORA","fileFormats":["SafeTensor"],"username":"Some User","tagname":"anime","allowCommercialUse":"Sell"}}`))
 	f.Add([]byte(`{"json":{"query":"x","collectionId":3}}`))
 	f.Add([]byte(`{"json":{"cursor":"|5","sort":"Oldest","earlyAccess":"yes","archived":1}}`))
@@ -48,7 +49,7 @@ func FuzzParse(f *testing.F) {
 		}
 		q := PageQuery{Take: in.Limit, Cursor: in.Cursor, Sort: in.Sort, BrowsingLevel: lv, Types: in.Types,
 			BaseModels: in.BaseModels, FileFormats: in.FileFormats, CheckpointType: in.CheckpointType}
-		if _, err := q.Build(); err != nil && fallback.Reason(err) != "model-cursor" {
+		if _, err := q.Build(); err != nil && fallback.Reason(err) != "model-cursor" && fallback.Reason(err) != "short-fraction-cursor" {
 			t.Fatalf("Build(%s): %v", raw, err)
 		}
 	})

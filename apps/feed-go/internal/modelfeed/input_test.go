@@ -64,6 +64,10 @@ func TestParseFallbacks(t *testing.T) {
 		{`{"json":{"followed":true}}`, "input-followed"},
 		{`{"json":{"newCreators":true}}`, "input-newCreators"},
 		{`{"json":{"ids":[1]}}`, "input-ids"},
+		// Node: [] stays [] and "" becomes [0], each truthy, so both turn off hidePrivateModels.
+		{`{"json":{"ids":[]}}`, "input-ids"},
+		{`{"json":{"ids":""}}`, "input-ids"},
+		{`{"json":{"ids":null}}`, "input-ids"},
 		{`{"json":{"status":["Draft"]}}`, "input-status"},
 		{`{"json":{"pending":true}}`, "input-pending"},
 		{`{"json":{"supportsGeneration":true}}`, "input-supportsGeneration"},
@@ -89,7 +93,7 @@ func TestParseFallbacks(t *testing.T) {
 
 // The zero values of the unsupported keys are no filter in Node (`if (collectionId)` and friends).
 func TestParseIgnoresFalsyUnsupportedKeys(t *testing.T) {
-	_, err := parseJSON(t, `{"json":{"query":"","collectionId":0,"hidden":false,"ids":[],"status":[],"pending":false}}`)
+	_, err := parseJSON(t, `{"json":{"query":"","collectionId":0,"hidden":false,"status":[],"pending":false}}`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

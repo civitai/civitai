@@ -711,6 +711,7 @@
     "modelPages": [
       {
         "cursor": null,
+        "bound": null,
         "rows": [
           {
             "id": 5001,
@@ -766,7 +767,7 @@
               "$date": "2026-06-01T10:00:00.000Z"
             },
             "lastVersionAt": {
-              "$date": "2026-06-11T10:00:00.000Z"
+              "$date": "2026-06-11T10:00:00.125Z"
             },
             "publishedAt": {
               "$date": "2026-06-02T10:00:00.000Z"
@@ -1014,7 +1015,7 @@
             "nsfwLevel": 1,
             "status": "Published",
             "createdAt": "2026-06-01T10:00:00.000Z",
-            "lastVersionAt": "2026-06-11T10:00:00.000Z",
+            "lastVersionAt": "2026-06-11T10:00:00.125Z",
             "publishedAt": "2026-06-02T10:00:00.000Z",
             "locked": false,
             "mode": null,

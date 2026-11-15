@@ -473,6 +473,7 @@
     "modelPages": [
       {
         "cursor": null,
+        "bound": null,
         "rows": [
           {
             "id": 5009,

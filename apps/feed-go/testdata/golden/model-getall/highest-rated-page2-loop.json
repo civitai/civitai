@@ -1165,6 +1165,11 @@
     "modelPages": [
       {
         "cursor": "90|100|5001",
+        "bound": [
+          90,
+          100,
+          5001
+        ],
         "rows": [
           {
             "id": 5001,
@@ -1318,6 +1323,11 @@
       },
       {
         "cursor": "4|4|5009",
+        "bound": [
+          4,
+          4,
+          5009
+        ],
         "rows": [
           {
             "id": 5009,
@@ -1373,7 +1383,7 @@
               "$date": "2026-06-01T10:00:00.000Z"
             },
             "lastVersionAt": {
-              "$date": "2026-06-11T10:00:00.000Z"
+              "$date": "2026-06-11T10:00:00.125Z"
             },
             "publishedAt": {
               "$date": "2026-06-02T10:00:00.000Z"
@@ -1683,7 +1693,7 @@
             "nsfwLevel": 1,
             "status": "Published",
             "createdAt": "2026-06-01T10:00:00.000Z",
-            "lastVersionAt": "2026-06-11T10:00:00.000Z",
+            "lastVersionAt": "2026-06-11T10:00:00.125Z",
             "publishedAt": "2026-06-02T10:00:00.000Z",
             "locked": false,
             "mode": null,
