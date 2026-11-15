@@ -63,7 +63,7 @@ func integPage(t *testing.T, e *integEnv) (PageRequest, []string) {
 		  (1113002, 'integ-page-db-user', 'integ-page-db-avatar', NULL, 1113122);
 		INSERT INTO "Cosmetic" (id, name, type, source, data, flags) VALUES
 		  (1113202, 'integ-page-c2', 'NamePlate', 'Purchase', '{"url": "integ-c2"}', 5),
-		  (1113205, 'integ-page-c5', 'ContentDecoration', 'Purchase', '{"url": "integ-c5"}', NULL);
+		  (1113205, 'integ-page-c5', 'ContentDecoration', 'Purchase', '{"url": "integ-c5"}', 0);
 		INSERT INTO "ImageReaction" (id, "imageId", "userId", reaction) VALUES
 		  (1113301, 1113101, 1113001, 'Like'), (1113302, 1113102, 1113003, 'Cry');`)
 	now := time.Now()
