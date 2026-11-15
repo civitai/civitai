@@ -17,6 +17,31 @@ export const DEFAULT_PAGE_SIZE = 20;
  */
 const NUMERIC_CURSOR_TOKEN = /^-?\d+$/;
 
+/**
+ * The seconds and fraction of a date-time cursor token. Captures `YYYY-MM-DD[T ]HH:MM:SS` and
+ * the digits after its decimal point, and nothing past them (a `Z` or offset stays as it was).
+ */
+const CURSOR_TIMESTAMP_FRACTION = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\.(\d+)/;
+
+/**
+ * Rewrites a cursor timestamp's fractional seconds to exactly three digits (milliseconds).
+ *
+ * Postgres drops trailing zeros when it renders a timestamp, so `CONCAT(timestamp, '|', id)`
+ * emits 250 ms as `10:00:00.25` and 200 ms as `10:00:00.2`. dayjs reads the digits after the
+ * point as a whole number of milliseconds when the token has no zone suffix, so `.25` became
+ * 25 ms and `.2` became 2 ms, and the next page started from the wrong place: rows skipped on a
+ * descending sort, repeated on an ascending one.
+ *
+ * Right-padding with zeros reads the digits as a fraction of a second. Digits past the third are
+ * dropped (`.123456` is 123 ms), which is what dayjs did already; a JS Date holds no finer value.
+ */
+function normalizeCursorTimestamp(value: string) {
+  return value.replace(
+    CURSOR_TIMESTAMP_FRACTION,
+    (_, head: string, fraction: string) => `${head}.${fraction.padEnd(3, '0').slice(0, 3)}`
+  );
+}
+
 export function getPagination(limit: number, page: number | undefined) {
   const take = limit > 0 ? limit : undefined;
   const skip = page && take ? (page - 1) * take : undefined;
@@ -200,10 +225,12 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     // and `'--5'` as valid dates and still binds a Date to an `int` column. A
     // structural fix requires the date branch to demand a date SHAPE and route
     // everything else numeric; that needs the formats a real
-    // `CONCAT(timestamp, '|', id)` actually emits, which has not been observed
-    // against a database — guessing them would turn a 500 into broken pagination.
+    // `CONCAT(timestamp, '|', id)` actually emits. One property of that format is
+    // now pinned against a real Postgres (the fraction loses its trailing zeros,
+    // see `normalizeCursorTimestamp` and `get-models-raw.cursor-fraction.pglite.test.ts`),
+    // but the full shape is not — guessing it would turn a 500 into broken pagination.
     if (value.includes('-') && !NUMERIC_CURSOR_TOKEN.test(value)) {
-      const parsed = dayjs.utc(value);
+      const parsed = dayjs.utc(normalizeCursorTimestamp(value));
       if (!parsed.isValid())
         throwBadRequestError(`Invalid cursor: unparseable date value "${value}"`);
       result[fields[i].field] = parsed.toDate();
