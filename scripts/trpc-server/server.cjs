@@ -151,6 +151,7 @@ const routeModules = compat.createRouteModuleLoader(
  */
 let applyApiPolicy = null;
 const relativeProjectDir = path.relative(process.cwd(), dir);
+const API_ROUTE_PAGE = Symbol.for(served.API_ROUTE_PAGE_REQ_KEY);
 
 // --- request handling -----------------------------------------------------------------------------
 
@@ -176,6 +177,8 @@ async function handle(req, res) {
   if (matched.decodeError) return compat.sendBadRequest(res);
   compat.applyRoutingHeaders(res, routed.headers);
   if (matched.notFound) return compat.sendNotFound(res);
+  // The page this request is for, read by the per-route request counter when the response closes.
+  req[API_ROUTE_PAGE] = matched.page;
 
   compat.fillForwardedHeaders(req, { hostname, port: listenPort });
   compat.stripInternalQuery(req);
