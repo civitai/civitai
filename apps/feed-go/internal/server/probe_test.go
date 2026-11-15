@@ -60,7 +60,8 @@ var goldenProbeCases = []goldenProbeCase{
 // The registry holds exactly the procedures the golden cases cover (a new registration needs its
 // golden case here).
 func TestProbeRegistryMatchesGoldenCases(t *testing.T) {
-	var got, want []string
+	got := make([]string, 0, len(probes))
+	var want []string
 	for p := range probes {
 		got = append(got, p)
 	}
