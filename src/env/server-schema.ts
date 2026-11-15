@@ -549,8 +549,8 @@ export const serverSchema = z
     // Most scan submits one `ingest-images` run makes, across all its lanes; the rest stay queued
     // for later runs. Above a small burst they are spaced evenly over the run, so the cron's
     // in-flight scans stay well below the orchestrator's scan slot, which refuses work when full
-    // rather than queueing it. 200 covers an ordinary run (~70-140 retries); at a 5s scan that is
-    // ~6 in flight. Retry capacity is this x 12 per hour; raise it to drain a backlog faster.
+    // rather than queueing it. Sized above an ordinary run's retries, so only a backlog is held
+    // back. Retry capacity is this x 12 per hour; raise it to drain a backlog faster.
     IMAGE_SCANNING_RETRY_MAX_PER_RUN: z.coerce.number().int().positive().default(200),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),

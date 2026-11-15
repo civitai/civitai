@@ -14,7 +14,7 @@ import {
   newRetractionGate,
 } from '~/server/services/image-cacher-retraction';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import {
   classifyImageScanFailure,
@@ -78,14 +78,14 @@ const INGEST_RUN_BUDGET_MS = 3.5 * 60 * 1000;
 // per-run pull is already capped by IMAGE_SCANNING_MAX_PER_RUN).
 const INGEST_SUBMIT_CONCURRENCY = 20;
 
-// The orchestrator's scan slot (48-80 concurrent, fleet-wide) refuses work when full instead of
+// The orchestrator's scan slot (a fixed number of concurrent scans, fleet-wide) refuses work when full instead of
 // queueing it, so a run that creates its workflows in one burst fills the slot and the refusals
 // come back as the next run's Error retries. Above INGEST_PACE_BURST submits, starts are spaced
 // evenly across INGEST_PACE_WINDOW_MS: in-flight scans ≈ start rate × scan time. The window ends
 // inside INGEST_RUN_BUDGET_MS, so the deadline still decides the last start.
 const INGEST_PACE_BURST = 16;
 const INGEST_PACE_WINDOW_MS = 3 * 60 * 1000;
-// Share of IMAGE_SCANNING_RETRY_MAX_PER_RUN each lane is guaranteed before the rest goes in lane
+// Rows each lane is guaranteed per run (capped at cap / lane count) before the rest goes in lane
 // order.
 const INGEST_LANE_FLOOR = 25;
 
@@ -479,9 +479,9 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     `;
   }
 
-  // Lanes are sent in priority order (user uploads first, error last). Each honors
-  // the shared run deadline + cancellation and stops starting new submits once the
-  // budget is spent, so the run always reaches the metric/return tail below.
+  // The cap is split in lane priority order (user uploads first, error last). The sends honor
+  // the run deadline + cancellation and stop starting new submits once the budget is spent, so
+  // the run always reaches the metric/return tail below.
   // Rows past the per-run send cap are not attempted: they stay queued (they are in
   // `processedIds`, so never pruned) with scanRequestedAt and retryCount untouched.
   const [userPick, backfillPick, rescanPick, errorPick] = allocateSendCap(
@@ -497,30 +497,26 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     error: errorImages.length - errorPick.length,
   };
   const deferredByCap = deferred.userPending + deferred.backfill + deferred.rescan + deferred.error;
-  // One schedule across all four lanes, so the spacing holds through lane changes.
-  const pacer = createSendPacer(
-    userPick.length + backfillPick.length + rescanPick.length + errorPick.length
+  // One task list, round-robin across lanes, under one pacer and one concurrency limit: run
+  // lane by lane, each lane waits out its slowest submit (up to INGEST_IMAGE_TIMEOUT_MS) before
+  // the next starts, and against a slow orchestrator the Error lane's floor slipped past the
+  // deadline every run.
+  const picks = [userPick, backfillPick, rescanPick, errorPick];
+  const lowPriorityLane = [false, true, true, true];
+  const items = interleave(
+    picks.map((pick, lane) => pick.map((image) => ({ image, lowPriority: lowPriorityLane[lane] })))
   );
-
-  const userLane = await sendImagesForScanBulk(userPick, { deadline, ctx, pacer });
-  const backfillLane = await sendImagesForScanBulk(backfillPick, {
-    lowPriority: true,
+  const { sent, failed } = await sendScanItems(items, {
     deadline,
     ctx,
-    pacer,
+    pacer: createSendPacer(items.length),
   });
-  const rescanLane = await sendImagesForScanBulk(rescanPick, {
-    lowPriority: true,
-    deadline,
-    ctx,
-    pacer,
-  });
-  const errorLane = await sendImagesForScanBulk(errorPick, {
-    lowPriority: true,
-    deadline,
-    ctx,
-    pacer,
-  });
+  const sentSet = new Set(sent);
+  const failedSet = new Set(failed);
+  const [userLane, backfillLane, rescanLane, errorLane] = picks.map((pick) => ({
+    sent: pick.filter((img) => sentSet.has(img.id)).map((img) => img.id),
+    failed: pick.filter((img) => failedSet.has(img.id)).map((img) => img.id),
+  }));
 
   const sentUserPendingIds = userLane.sent;
   const sentBackfillIds = backfillLane.sent;
@@ -652,12 +648,35 @@ export function createSendPacer(total: number, startAt = Date.now()): SendPacer 
   };
 }
 
-export async function sendImagesForScanBulk(
+/** Round-robin merge: the first of each list, then the second of each, and so on. */
+function interleave<T>(lists: T[][]): T[] {
+  const out: T[] = [];
+  const longest = Math.max(0, ...lists.map((list) => list.length));
+  for (let i = 0; i < longest; i++)
+    for (const list of lists) if (i < list.length) out.push(list[i]);
+  return out;
+}
+
+type SendOptions = { deadline?: number; ctx?: JobContext; pacer?: SendPacer };
+type ScanItem = { image: IngestImageInput; lowPriority?: boolean };
+
+export function sendImagesForScanBulk(
   images: IngestImageInput[],
-  options?: { lowPriority?: boolean; deadline?: number; ctx?: JobContext; pacer?: SendPacer }
+  options?: SendOptions & { lowPriority?: boolean }
 ): Promise<{ sent: number[]; failed: number[] }> {
-  if (!images.length) return { sent: [], failed: [] };
-  const { lowPriority, deadline, ctx, pacer } = options ?? {};
+  const lowPriority = options?.lowPriority;
+  return sendScanItems(
+    images.map((image) => ({ image, lowPriority })),
+    options
+  );
+}
+
+async function sendScanItems(
+  items: ScanItem[],
+  options?: SendOptions
+): Promise<{ sent: number[]; failed: number[] }> {
+  if (!items.length) return { sent: [], failed: [] };
+  const { deadline, ctx, pacer } = options ?? {};
 
   const sent: number[] = [];
   const failed: number[] = [];
@@ -666,7 +685,7 @@ export async function sendImagesForScanBulk(
   // in-batch retry). A single pass per run: a failed/timed-out submit leaves the
   // image Error/Pending, so it is retried on the NEXT cron run after the cooldown —
   // in-run resends just tripled the time under failure and burned the run budget.
-  const tasks = images.map((image) => async () => {
+  const tasks = items.map(({ image, lowPriority }) => async () => {
     // Out of budget or canceled/superseded: don't start this submit. The image is
     // neither sent nor failed — it stays queued and is retried next run.
     if (deadline && Date.now() >= deadline) return;
@@ -676,7 +695,7 @@ export async function sendImagesForScanBulk(
       if (deadline && startAt >= deadline) return;
       const wait = startAt - Date.now();
       if (wait > 0) {
-        await new Promise((resolve) => setTimeout(resolve, wait));
+        await sleep(wait);
         if (ctx?.status === 'canceled') return;
       }
     }

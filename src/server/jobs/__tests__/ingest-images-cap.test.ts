@@ -182,8 +182,6 @@ describe('ingest-images retry pacing', () => {
     expect(at[0]).toBe(0);
     for (let i = 1; i < at.length; i++) expect(at[i] - at[i - 1]).toBeGreaterThanOrEqual(interval);
     expect(at[at.length - 1]).toBeLessThan(PACE_WINDOW_MS);
-    // No more than one start in any 1s span: the burst is gone.
-    expect(new Set(at.map((t) => Math.floor(t / 1000))).size).toBe(40);
 
     // The 260 deferred rows were not pruned from the JobQueue; the stale one was.
     expect(deletedJobQueueIds()).toEqual([301]);
@@ -238,6 +236,26 @@ describe('ingest-images retry pacing', () => {
     expect(at).toHaveLength(20);
     const interval = PACE_WINDOW_MS / 20;
     for (let i = 1; i < at.length; i++) expect(at[i] - at[i - 1]).toBeGreaterThanOrEqual(interval);
+  });
+});
+
+describe('ingest-images retry pacing against a slow orchestrator', () => {
+  it('sends the Error lane floor before the deadline even when every submit takes 50s', async () => {
+    env.IMAGE_SCANNING_MAX_PER_RUN = 1000;
+    queue.rows = [...rows(300, 'Pending'), ...rows(300, 'Error', 1001)];
+    mockIngestImage.mockImplementation(async ({ image }: { image: { id: number } }) => {
+      starts.push({ id: image.id, at: Date.now() });
+      await new Promise((resolve) => setTimeout(resolve, 50_000));
+      return true;
+    });
+
+    const result = await runJob();
+
+    // Default cap 200: Error is guaranteed 25. At 20 concurrent x 50s only ~80 submits fit in
+    // the 210s budget, so a lane-by-lane send never reached Error at all.
+    expect(result.sentError).toBe(25);
+    const runBudget = 3.5 * 60 * 1000;
+    for (const s of starts) expect(s.at - RUN_START.getTime()).toBeLessThan(runBudget);
   });
 });
 
