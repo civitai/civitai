@@ -3082,7 +3082,6 @@ export const REDIS_SYS_KEYS = {
     OPTION_PRICES: 'remix-app:option-prices',
     // Bumped after every mod write; the registry cache key carries it.
     REGISTRY_GENERATION: 'remix-app:registry-generation',
-    LEDGER_PROBE: 'remix-app:ledger-probe-dummy',
   },
   MESSAGE_AS_CIVITAI: {
     IDEMPOTENCY: 'message-as-civitai:idempotency',
