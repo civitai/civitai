@@ -995,7 +995,11 @@ const featureFlags = createFeatureFlags({
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
   // Storylines: text items between a chapter's images (PostText), their slides and threads.
-  storylineText: { availability: ['mod', 'granted'], fliptKey: 'storyline-text' },
+  storylineText: {
+    availability: ['mod', 'granted'],
+    fliptKey: 'storyline-text',
+    fliptKeyRequired: true,
+  },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.
@@ -1123,6 +1127,10 @@ type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 
+/** Flipt has a client to answer with. Not live: it is down, or a stub module leaves the accessor out. */
+const fliptIsLive = (mod: FliptModule) =>
+  'getFliptClientSync' in mod && mod.getFliptClientSync() !== null;
+
 function loadFliptModule(): Promise<FliptModule | null> {
   if (_fliptModule) return Promise.resolve(_fliptModule);
   if (typeof window !== 'undefined') return Promise.resolve(null);
@@ -1217,6 +1225,8 @@ const hasFeature = (
       }
       return fliptResult;
     }
+    // A live client that cannot answer has no such key: a flag that requires one is off.
+    if (feature.fliptKeyRequired && fliptIsLive(_fliptModule)) return false;
     // Flipt unavailable — fall through to static evaluation below
   }
 
@@ -1676,9 +1686,11 @@ export async function isFliptDecisive(keys: FeatureFlagKey[], user: SessionUser)
   if (flipt) await flipt.ensureFliptInitialized();
   const context = buildFliptContext(user);
   return keys.every((key) => {
-    const fliptKey = featureFlags[key].fliptKey;
+    const { fliptKey, fliptKeyRequired } = featureFlags[key];
     if (!fliptKey || envOverriddenFlags.has(key)) return true;
-    return !!_fliptModule && _fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null;
+    if (!_fliptModule) return false;
+    if (_fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null) return true;
+    return !!fliptKeyRequired && fliptIsLive(_fliptModule);
   });
 }
 
@@ -1813,6 +1825,11 @@ type FeatureFlag = {
   badge?: string;
   regions?: GeoRestrictions; // Optional geo restrictions
   fliptKey?: string; // Optional Flipt flag key for remote toggling
+  /**
+   * The flag is off while Flipt is up and has no `fliptKey` flag. Without it a missing key falls back
+   * to `availability`, as an outage does; an outage still does.
+   */
+  fliptKeyRequired?: boolean;
 };
 
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties
