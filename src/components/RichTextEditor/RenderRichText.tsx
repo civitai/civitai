@@ -191,7 +191,9 @@ export function RenderRichText({
             ),
             spoilerRun: ({ children }) => <SpoilerText>{children}</SpoilerText>,
             spoilerBlock: ({ children }) => <SpoilerBlock>{children}</SpoilerBlock>,
-            civitaiEmbed: ({ node }) => <CivitaiEmbedBlock items={node.attrs.items} />,
+            civitaiEmbed: ({ node }) => (
+              <CivitaiEmbedBlock items={node.attrs.items} display={node.attrs.display} />
+            ),
             embed: ({ node }) => {
               const src = node.attrs.src as string | null;
               const provider = isAllowedPlayerUrl(src);
