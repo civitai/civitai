@@ -58,7 +58,7 @@ const LEDGER: Record<string, string> = {
   'src/server/services/blocks/workflow.service.ts::projectAppWorkflow::projectAppWorkflowWithPositions':
     'ceiling',
   // The author's activity view: reads only a COUNT of every output (restricted ones
-  // included), never a url, so the fail-closed SFW ceiling is passed.
+  // included), never a url, so the fail-closed (PG) ceiling is passed.
   'src/server/services/app-assistant/app-activity.service.ts::generationOf::projectAppWorkflow':
     'blockOutputCeilingFromClaims({})',
 };

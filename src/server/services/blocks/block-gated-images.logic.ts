@@ -1,5 +1,10 @@
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { Flags } from '~/shared/utils/flags';
+import {
+  effectiveBrowsingCeiling,
+  onlySelectableLevels,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /**
  * App Blocks (Phase-1 seam) — the PURE per-VIEWER display decision for the
@@ -162,4 +167,24 @@ export function classifyGatedImageForViewer(
  */
 export function isLevelWithinCeiling(nsfwLevel: number, ceiling: number): boolean {
   return nsfwLevel === 0 || Flags.intersects(nsfwLevel, ceiling);
+}
+
+/**
+ * A viewer's browsing-level ceiling from the block token: the domain ceiling
+ * (`maxBrowsingLevel`) intersected with the viewer's own level
+ * (`viewerBrowsingLevel`), clamped to selectable levels. Fails closed to PG when
+ * either claim is absent, zero or non-selectable, so a malformed or legacy token
+ * can only ever hide more. It is ALSO the App Blocks output ceiling
+ * (`blockOutputCeilingFromClaims`), so a workflow output and a gated image are judged
+ * at the same level.
+ */
+export function resolveViewerBrowsingLevel(claims: {
+  maxBrowsingLevel?: number | null;
+  viewerBrowsingLevel?: number | null;
+}): number {
+  if (typeof claims.maxBrowsingLevel !== 'number') return publicBrowsingLevelsFlag;
+  const selectable = onlySelectableLevels(
+    effectiveBrowsingCeiling(claims.maxBrowsingLevel, claims.viewerBrowsingLevel)
+  );
+  return selectable || publicBrowsingLevelsFlag;
 }

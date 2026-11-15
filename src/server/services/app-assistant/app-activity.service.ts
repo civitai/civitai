@@ -73,7 +73,7 @@ export function workflowError(workflow: Workflow, status: GenerationStatus): str
 export function generationOf(workflow: Workflow): GenerationActivity {
   const status = GENERATION_STATUS[workflow.status] ?? 'pending';
   // The count is of every available output, restricted ones included, so the
-  // ceiling does not move it; SFW is the fail-closed one to pass.
+  // ceiling does not move it; the fail-closed one (PG) is passed.
   const projected = projectAppWorkflow(workflow, blockOutputCeilingFromClaims({}));
   return {
     kind: 'generation',

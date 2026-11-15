@@ -567,7 +567,7 @@ describe('post actor outputCeiling is the viewer-clamped token ceiling', () => {
     ['a PG+R+X viewer on a domain to R', { maxBrowsingLevel: 7, viewerBrowsingLevel: 13 }, 5],
     ['a token without a viewer level', { maxBrowsingLevel: 7 }, 1],
   ] as const)(
-    '%s: previewPostFromApp and createPostFromApp pass maxBrowsingLevel %#',
+    '%s: previewPostFromApp and createPostFromApp pass the clamped ceiling',
     async (_label, over, level) => {
       mockAuthorizeBlockBridgeToken.mockResolvedValue(claims(over));
       await caller().previewPostFromApp(INPUT);

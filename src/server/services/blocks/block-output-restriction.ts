@@ -1,10 +1,8 @@
 import type { Workflow } from '@civitai/orchestration-client';
 import { isUnratedOutput } from '~/shared/orchestrator/workflow-data';
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  allowMatureContentForCeiling,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
+import { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-gated-images.logic';
 import type {
   BlockWorkflowOutput,
   BlockWorkflowOutputRating,
@@ -30,8 +28,9 @@ import type {
  * THE DECISION, in order — it mirrors the on-site generator's blob rules in
  * `shared/orchestrator/workflow-data.ts` (`holdUnrated` / `PENDING_RATING` for an
  * output not rated yet, `NSFW_CAPPED` for a site cap, `canUpgrade` for
- * `allowMatureContent === false`), with the app token's ceiling in place of the site's
- * domain and viewer settings:
+ * `allowMatureContent === false`), with the token's viewer ceiling (the domain ceiling
+ * cut to the viewer's own browsing level) in place of the site's domain and viewer
+ * settings:
  *   0. BLOCKED by the orchestrator (a `blockedReason` other than `none`): the output
  *      keeps its POSITION, with no url. `MatureContent` is a maturity block, so it is
  *      `{ restricted: true, reason: 'ceiling' }`; any other reason (moderation) is
@@ -54,7 +53,8 @@ import type {
  *      in `workflow-data.ts`): the provider moderates its own output. A rating that
  *      does arrive on one goes through rules 2-6 as usual.
  *   2. A rating this module does not know: restricted, `'ceiling'` (fail closed).
- *   3. Above the token's `maxBrowsingLevel` ceiling: restricted, `'ceiling'`.
+ *   3. Above the viewer ceiling ({@link blockOutputCeilingFromClaims}): restricted,
+ *      `'ceiling'`.
  *   4. Above the workflow's own `nsfwLevel` cap (the site's base-model clamp):
  *      restricted, `'ceiling'`.
  *   5. Mature (R and up) on a workflow with `allowMatureContent === false`:
@@ -143,7 +143,7 @@ export function classifyBlockOutput(
 /**
  * Whether a rating that has not landed yet COULD make an output restricted — the
  * condition under which an unrated output is HELD rather than handed out. Any of:
- *   - the token's ceiling does not cover every rating (PG through XXX);
+ *   - the viewer ceiling does not cover every rating (PG through XXX);
  *   - the workflow refused mature content (`allowMatureContent === false`);
  *   - the workflow carries an `nsfwLevel` cap below XXX (an unrecognised cap counts).
  * A mature token on an unrestricted, uncapped workflow can be handed any rating, so
@@ -176,25 +176,24 @@ const KNOWN_TYPES: ReadonlySet<string> = new Set(['image', 'video', 'audio', 'mo
 export type BlockOutputWorkflowFacts = Pick<Workflow, 'allowMatureContent' | 'nsfwLevel'>;
 
 /**
- * The app token's maturity ceiling — a civitai browsing-level bitflag. Build it with
- * {@link blockOutputCeilingFromClaims}; it is REQUIRED by every snapshot and listing
- * producer, so a new producer cannot forget it.
+ * The VIEWER's maturity ceiling for this token, a civitai browsing-level bitflag. Build
+ * it with {@link blockOutputCeilingFromClaims}; it is REQUIRED by every snapshot and
+ * listing producer, so a new producer cannot forget it.
  */
 export type BlockOutputCeiling = { readonly maxBrowsingLevel: number };
 
 /**
- * The ceiling from a verified token's `maxBrowsingLevel` claim. FAIL CLOSED to SFW
- * for a token without a numeric claim — the same fallback `resolveBlockMaturity`
- * applies to the submit.
+ * The output ceiling from a verified token: the domain ceiling (`maxBrowsingLevel`)
+ * intersected with the viewer's own signed `viewerBrowsingLevel`. That is EXACTLY
+ * `resolveViewerBrowsingLevel`, the level #8786 clamps the gated-image read and posts
+ * to, so an output and a gated image are judged at the same level. FAIL CLOSED to PG
+ * for a token without a viewer level or a numeric domain ceiling.
  */
 export function blockOutputCeilingFromClaims(claims: {
-  maxBrowsingLevel?: number;
+  maxBrowsingLevel?: number | null;
+  viewerBrowsingLevel?: number | null;
 }): BlockOutputCeiling {
-  const value = claims.maxBrowsingLevel;
-  return {
-    maxBrowsingLevel:
-      typeof value === 'number' && Number.isFinite(value) ? value : sfwBrowsingLevelsFlag,
-  };
+  return { maxBrowsingLevel: resolveViewerBrowsingLevel(claims) };
 }
 
 /**

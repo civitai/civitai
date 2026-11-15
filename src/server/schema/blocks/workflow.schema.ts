@@ -1145,8 +1145,9 @@ export type BlockWorkflowSnapshot = {
    *   - `{ restricted: true, reason }` — NO url and NO rating. `'pool'`: the Buzz that
    *     paid does not allow mature content for this viewer (the workflow's
    *     `allowMatureContent` was set false at charge time) and the output is above
-   *     PG-13. `'ceiling'`: the output is above the app token's maturity ceiling, or
-   *     above a cap the site itself put on the workflow, or a `MatureContent` block.
+   *     PG-13. `'ceiling'`: the output is above this viewer's maturity ceiling (the
+   *     token's domain ceiling cut to the viewer's own browsing level), or above a
+   *     cap the site itself put on the workflow, or a `MatureContent` block.
    *     `'unrated'`: no rating will ever arrive (an `imageResourceTraining` sample, a
    *     3D mesh on a finished step with no rating source) and one could restrict it —
    *     terminal, fail closed. Treat an unknown reason like `'ceiling'`.
