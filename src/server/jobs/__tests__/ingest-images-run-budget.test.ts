@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // helper directly with the REAL limitConcurrency (only ingestImage is mocked).
 
 const { mockIngestImage, mockDeleteImages } = vi.hoisted(() => ({
-  mockIngestImage: vi.fn(async () => true),
+  mockIngestImage: vi.fn(async (_input: { image: IngestImageInput }) => true),
   mockDeleteImages: vi.fn(async () => undefined),
 }));
 

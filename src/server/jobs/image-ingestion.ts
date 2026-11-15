@@ -684,18 +684,20 @@ async function sendScanItems(
   // in-batch retry). A single pass per run: a failed/timed-out submit leaves the
   // image Error/Pending, so it is retried on the NEXT cron run after the cooldown —
   // in-run resends just tripled the time under failure and burned the run budget.
+  // A function, not an inline test: the status can change while a paced submit sleeps.
+  const canceled = () => ctx?.status === 'canceled';
   const tasks = items.map(({ image, lowPriority }) => async () => {
     // Out of budget or canceled/superseded: don't start this submit. The image is
     // neither sent nor failed — it stays queued and is retried next run.
     if (deadline && Date.now() >= deadline) return;
-    if (ctx?.status === 'canceled') return;
+    if (canceled()) return;
     if (pacer) {
       const startAt = pacer.claimStart();
       if (deadline && startAt >= deadline) return;
       const wait = startAt - Date.now();
       if (wait > 0) {
         await sleep(wait);
-        if (ctx?.status === 'canceled') return;
+        if (canceled()) return;
       }
     }
 

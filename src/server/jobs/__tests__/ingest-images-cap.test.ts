@@ -113,8 +113,9 @@ async function runJob(): Promise<RunResult> {
 
 function deletedJobQueueIds(): number[] {
   // The stale prune is the only JobQueue DELETE; its id array is the template's array value.
-  return mockDbWrite.$executeRaw.mock.calls
-    .filter((call) => String((call[0] as TemplateStringsArray).join('')).includes('JobQueue'))
+  const calls = mockDbWrite.$executeRaw.mock.calls as unknown as unknown[][];
+  return calls
+    .filter((call) => (call[0] as TemplateStringsArray).join('').includes('JobQueue'))
     .flatMap((call) => call.slice(1).filter(Array.isArray).flat() as number[]);
 }
 
