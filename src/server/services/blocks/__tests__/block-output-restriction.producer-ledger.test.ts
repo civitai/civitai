@@ -159,7 +159,7 @@ function scan() {
         if (/function\s+$/.test(before) || /typeof\s+$/.test(before)) continue;
         if (
           /^\s*[,}]/.test(after) &&
-          /(import|export)\s*(type\s*)?\{[^}]*$/.test(code.slice(Math.max(0, at - 400), at))
+          /(import|export)\s*(type\s*)?\{[^}]*$/.test(code.slice(Math.max(0, at - 4000), at))
         )
           continue;
         if (!/^\s*\(/.test(after)) {

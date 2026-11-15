@@ -528,7 +528,10 @@ describe('resolveOwnedWorkflowOutputs', () => {
     const out = await call(getWorkflow);
     expect(out).toHaveLength(2);
     expect(out[0]).toBeNull();
-    expect(out[1]?.url).toContain('orchestration.civitai.com');
+    // A usable slot (not `null`, not `{ restricted: true }`) carries the url.
+    expect(out[1] && 'url' in out[1] ? out[1].url : undefined).toContain(
+      'orchestration.civitai.com'
+    );
   });
 });
 
