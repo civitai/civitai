@@ -40,6 +40,7 @@ import {
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
+  isCoverWithinBrowsingLevel,
   getCollectionItemById,
   createEmptyPermissions,
   getCollectionEntryCount,
@@ -78,7 +79,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { requestServableLevels } from '~/server/utils/browsing-level';
+import { relatedPostsBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -113,15 +114,20 @@ export const getAllCollectionsInfiniteHandler = async ({
         userId: true,
         user: { select: userWithCosmeticsSelect },
         nsfwLevel: true,
-        image: { select: imageSelect },
+        image: { select: { ...imageSelect, tosViolation: true } },
         mode: true,
         createdAt: true,
         metadata: true,
       },
       user: ctx.user,
     });
+    const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
     // A cover the viewer may not see falls through to the item covers below.
-    const items = await withServableCovers(rows, ctx.user);
+    const items = (await withServableCovers(rows, ctx.user)).map((row) =>
+      row.image && !isCoverWithinBrowsingLevel(row.image, browsingLevel)
+        ? { ...row, image: null }
+        : row
+    );
 
     let nextCursor: number | undefined;
     if (items.length > input.limit) {
@@ -134,6 +140,7 @@ export const getAllCollectionsInfiniteHandler = async ({
     const collectionImages = await getCollectionCoverImages({
       collectionIds: collectionRequiringImages,
       imagesPerCollection: 10, // Some fallbacks
+      browsingLevel,
     });
 
     // Get Item Counts

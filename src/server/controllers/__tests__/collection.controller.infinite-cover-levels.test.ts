@@ -50,7 +50,7 @@ const itemCover = (collectionId: number, imageId: number, nsfwLevel: number, ext
 
 const SIGNED_OUT = { user: undefined, features: { canViewNsfw: true }, req: { headers: {} } };
 const MATURE_VIEWER = {
-  user: { id: 9, isModerator: false, browsingLevel: allBrowsingLevelsFlag },
+  user: { id: 9, isModerator: false, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
   features: { canViewNsfw: true },
   req: { headers: {} },
 };
@@ -112,6 +112,15 @@ describe('getAllCollectionsInfiniteHandler cover levels', () => {
 
   it('serves a signed-in viewer only the levels they browse', async () => {
     expect(await feed(MATURE_VIEWER, sfwBrowsingLevelsFlag)).toEqual([
+      { id: 1, own: 101, items: [] },
+      { id: 2, own: null, items: [] },
+      { id: 3, own: null, items: [300] },
+    ]);
+  });
+
+  it('falls back to PG when neither the request nor the viewer names a level', async () => {
+    const noLevel = { ...MATURE_VIEWER, user: { id: 9, isModerator: false } };
+    expect(await feed(noLevel)).toEqual([
       { id: 1, own: 101, items: [] },
       { id: 2, own: null, items: [] },
       { id: 3, own: null, items: [300] },
