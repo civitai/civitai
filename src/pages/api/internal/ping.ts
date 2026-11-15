@@ -1,5 +1,6 @@
 import { isDev } from '~/env/other';
-import { Tracker } from '~/server/clickhouse/client';
+import { beginBeaconGoShadow } from '~/server/beacon/beacon-go-shadow';
+import { Tracker, trackerSends } from '~/server/clickhouse/client';
 import { pageViewBeaconSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getMatchingPathname } from '~/shared/constants/pathname.constants';
@@ -12,6 +13,9 @@ import { getMatchingPathname } from '~/shared/constants/pathname.constants';
 export default PublicEndpoint(
   async (req, res) => {
     if (isDev) return res.status(200).end();
+    // beacon-go shadow (flag `beacon-go-shadow`, default off): a sampled request's response and
+    // tracker row are mirrored to apps/beacon-go after the response. Never throws, never awaited.
+    const shadow = beginBeaconGoShadow(req, res, 'ping', trackerSends);
 
     // A malformed-but-present `referer` (bot/scraper traffic) makes `new URL()`
     // throw a TypeError. That's invalid client input, not a server fault → 400,
@@ -54,6 +58,7 @@ export default PublicEndpoint(
     if (!match) return res.status(200).end();
 
     const tracker = new Tracker(req, res);
+    shadow?.attach(tracker);
     await tracker.pageView({
       pageId: match,
       path,
