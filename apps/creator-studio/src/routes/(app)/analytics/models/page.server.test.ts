@@ -60,5 +60,6 @@ describe('/analytics/models all-time period', () => {
     expect(getModelPerformance).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 7, from: '2026-11-01', to: '2026-11-30' })
     );
+    expect(getModelPerformance.mock.calls[0][0]).not.toHaveProperty('maxExecutionSeconds');
   });
 });
