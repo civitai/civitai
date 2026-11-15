@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
-	"regexp"
 	"strings"
 	"time"
 
@@ -58,9 +57,6 @@ var infiniteUnsupported = func() []string {
 // ignored alone.
 var hatKeys = []string{"hatSort", "hatTurfMine", "hideTurfHats", "hideWornHats"}
 
-// usernameRE is usernameSchema's pattern (src/shared/zod/username.schema.ts).
-var usernameRE = regexp.MustCompile(`^[A-Za-z0-9_]*$`)
-
 // ParseInfinite validates image.getInfinite's decoded input. A shape outside the supported subset is
 // a fallback, and so is a value the schema rejects (Node answers it with its own BAD_REQUEST).
 func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
@@ -88,7 +84,7 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 	}
 	if v, ok := m["username"]; ok && v != nil {
 		s, isStr := v.(string)
-		if !isStr || !usernameRE.MatchString(s) {
+		if !isStr || !usernameRE.MatchString(s) { // usernameSchema's pattern (v1query.go)
 			return nil, fallback.New("input-invalid")
 		}
 		in.Username = s
