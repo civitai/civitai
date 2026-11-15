@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("{\"alg\":\"HS256\",\"kid\":\"k1\"}")
+[]byte("{\"sub\":\"42\"}")
+string("eyJhbGciOiJub25lIn0.eyJzdWIiOiI0MiJ9.")
