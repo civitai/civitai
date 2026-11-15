@@ -502,8 +502,7 @@ func TestBatchGroupsByClientIdentity(t *testing.T) {
 }
 
 // BenchmarkHydratePage hydrates basePageFixture's page with Page through the in-memory Redis fake and
-// reports the pipelines it sends per page (asserted: 2). The per-lookup path it replaced measured 10
-// pipelines and 946 allocs/op against 851 here, once, in #9025; it is not benchmarked on every run.
+// reports the pipelines it sends per page (asserted: 2).
 func BenchmarkHydratePage(b *testing.B) {
 	f := basePageFixture(b)
 	b.Run("pipelined", func(b *testing.B) {

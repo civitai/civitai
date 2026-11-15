@@ -184,10 +184,8 @@ func TestIntegrationPageMatchesPerLookupInTwoPipelines(t *testing.T) {
 	if pagePipelines != 2 || lookupPipelines != 10 {
 		t.Fatalf("cluster pipelines: Page %d, per-lookup %d; want 2 and 10", pagePipelines, lookupPipelines)
 	}
-	// The node-level hook also counts the CLIENT SETINFO pipeline each newly dialed connection runs
-	// (see pipelineCounter), so its total depends on how many connections a run opens: 9 for Page's 2
-	// pipelines on 3 masters, 43 to 45 for the per-lookup 10, measured. Only the relation is asserted:
-	// fewer for Page, and at least one per stage.
+	// The node-level total depends on how many connections a run opens (see pipelineCounter), so only
+	// the relation is asserted: fewer for Page, and at least one per stage.
 	if pageNodeTrips < 2 || lookupNodeTrips <= pageNodeTrips {
 		t.Fatalf("node pipeline hook calls: Page %d (want >= 2), per-lookup %d (want more than Page)", pageNodeTrips, lookupNodeTrips)
 	}
