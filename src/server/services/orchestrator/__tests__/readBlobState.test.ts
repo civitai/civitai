@@ -96,10 +96,10 @@ describe('readBlobState', () => {
     backedOff();
   });
 
-  it('🔴 a 503 (scan pending) is pending and is never cached as a verdict', async () => {
+  it('🔴 a 503 (scan pending) is pending, holds off 5 s, and is never cached as a verdict', async () => {
     headBlob.mockResolvedValue(answered(503));
     expect(await readBlobState('b1')).toEqual({ verdict: 'pending' });
-    expect(redis.setNxKeepTtlWithEx).not.toHaveBeenCalled();
+    backedOff();
     await refillIsNotCached();
   });
 
@@ -112,6 +112,7 @@ describe('readBlobState', () => {
   it('🔴 a 200 with neither a level nor a block is pending', async () => {
     headBlob.mockResolvedValue(answered(200, { Location: 'https://cdn/b1' }));
     expect(await readBlobState('b1')).toEqual({ verdict: 'pending' });
+    backedOff();
     await refillIsNotCached();
   });
 

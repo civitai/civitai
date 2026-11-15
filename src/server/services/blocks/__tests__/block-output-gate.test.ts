@@ -125,6 +125,16 @@ describe('deriveOutputGate', () => {
     expect(deriveOutputGate(item({ privateGen: true }), pgViewer).state).toBe('visible');
   });
 
+  it('🔴 a private generation hides from a stranger above SFW only', () => {
+    expect(deriveOutputGate(item({ privateGen: true, nsfwLevel: 'r' }), allViewer)).toEqual({
+      state: 'hidden',
+      reason: 'private',
+    });
+    expect(deriveOutputGate(item({ privateGen: true, nsfwLevel: 'pg13' }), allViewer).state).toBe(
+      'visible'
+    );
+  });
+
   it('an anonymous viewer is never the owner', () => {
     expect(
       deriveOutputGate(item({ mediaType: 'audio' }), {

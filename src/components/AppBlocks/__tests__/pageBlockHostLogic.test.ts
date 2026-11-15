@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { WORKFLOW_MEDIA_MAX_REFS } from '~/server/services/blocks/block-media-serving';
 import {
   advanceReviewConsentLatch,
   AUTO_RETRY_BACKOFF_MS,
@@ -2277,7 +2278,7 @@ describe('resolveGetWorkflowMediaRequest (untrusted iframe payload)', () => {
     expect(resolveGetWorkflowMediaRequest({ requestId: 'r1', refs })?.refs).toEqual(
       refs.slice(0, GET_WORKFLOW_MEDIA_MAX_REFS)
     );
-    expect(GET_WORKFLOW_MEDIA_MAX_REFS).toBe(32);
+    expect(GET_WORKFLOW_MEDIA_MAX_REFS).toBe(WORKFLOW_MEDIA_MAX_REFS);
   });
 });
 

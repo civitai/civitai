@@ -115,7 +115,11 @@ async function headBlobState(blobId: string): Promise<BlobState> {
   const verdict = response
     ? parseBlobVerdictHeaders(response.headers, response.status)
     : ({ status: 'unavailable', httpStatus: 0 } as const);
-  if (verdict.status === 'pending') throw new NoVerdict();
+  if (verdict.status === 'pending') {
+    // Matches the route's Retry-After, so polling a pending blob costs one HEAD per 5 s.
+    await holdOff(blobId);
+    throw new NoVerdict();
+  }
   if (verdict.status === 'unavailable') {
     await backOff(blobId, new Error(`blob HEAD ${verdict.httpStatus}`));
     throw new NoVerdict();
@@ -128,10 +132,14 @@ async function headBlobState(blobId: string): Promise<BlobState> {
   };
 }
 
-async function backOff(blobId: string, error: unknown) {
+async function holdOff(blobId: string) {
   await redis
     .setNxKeepTtlWithEx(backoffKey(blobId), '1', BLOB_STATE_BACKOFF_SECONDS)
     .catch(() => undefined);
+}
+
+async function backOff(blobId: string, error: unknown) {
+  await holdOff(blobId);
   // A timeout is the ordinary pending case: the HEAD waits for the scan.
   if (error instanceof Error && error.name === 'TimeoutError') return;
   logToAxiom({ type: 'warning', name: 'block-media-blob-state-failed', error: safeError(error) });

@@ -218,6 +218,16 @@ async function mountAndCaptureInit(overrides: Partial<typeof baseProps> = {}) {
   return { posts, init };
 }
 
+describe('PageBlockHost BLOCK_INIT — capabilities', () => {
+  test('🔴 advertises workflowMedia:v1, so the SDK may send GET_WORKFLOW_MEDIA to this host', async () => {
+    // The SDK sends GET_WORKFLOW_MEDIA only to a host that advertises it; any other host
+    // would leave the request unanswered.
+    const { posts, init } = await mountAndCaptureInit();
+    expect(init.capabilities).toContain('workflowMedia:v1');
+    posts.stop();
+  });
+});
+
 describe('PageBlockHost BLOCK_INIT — viewer.signedIn (v2)', () => {
   test('🔴 signedIn: true reaches the block through the PROP path, not the projection', async () => {
     // The seam. This host never calls `projectBlockInitViewer`, so a flag added
