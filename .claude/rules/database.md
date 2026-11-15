@@ -1,10 +1,17 @@
 ---
 paths:
   - "packages/civitai-db-schema/**"
+  - "packages/civitai-db-queries/**"
   - "**/migrations/**"
 ---
 
 # Database
+
+## Choosing a query client
+
+Main-app service code gets this from `.claude/rules/server.md` (Use X for Y), which loads on `src/server/**`:
+- Reads use `dbRead` / `kyselyRead`; read-after-write uses `getDbWithoutLag` / `getKyselyWithoutLag`. A plain read on `dbWrite` needs a `// primary: <reason>` comment.
+- New queries use Kysely (`kyselyRead` / `kyselyWrite`) or a function in `@civitai/db-queries`; Prisma ORM is fine for simple CRUD. A new raw `$queryRaw` / `$executeRaw` belongs only inside `@civitai/db-queries`. The plan: `docs/db-queries-kysely-plan.md`.
 
 ## Commands and schema files
 

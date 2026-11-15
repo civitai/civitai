@@ -52,11 +52,21 @@ apps/<name>/
   src/
     app.html  app.d.ts  global.css
     hooks.server.ts       # auth adapter (see §5)
-    lib/server/           # db.ts, auth.ts, redis.ts, … (one tiny shim per package used)
+    lib/server/           # db.ts, auth.ts, redis.ts, … (one tiny shim per package used; see §2.1 for redis)
     routes/
 ```
 
 The repo's `pnpm-workspace.yaml` already globs `apps/*`, so a new folder is picked up by `pnpm install`.
+
+### 2.1 Two rules for `lib/server/`
+
+- **Redis: pick the client by what the data is.** Cached or recomputable data goes on the cache client
+  (`createCacheRedis`, keys in `REDIS_KEYS`, always with a TTL). The sys client (`createSysRedis`,
+  `REDIS_SYS_KEYS`) is durable state, not a cache; `@civitai/auth`'s revocation check reads it. Build a
+  cache client in the shim when the app caches anything, rather than putting the cache on the sys client.
+- **Never port main-app logic into an app.** Extract it into the owning `@civitai/*` package and import it
+  from both sides (for example `packages/civitai-shared/src/feedback.constants.ts`). A "Ported from" or
+  "Mirrors" comment is a defect marker, not a pattern to follow.
 
 ## 3. The transpile requirement (every package)
 

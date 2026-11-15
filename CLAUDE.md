@@ -13,6 +13,7 @@ where it loads on demand:
 
 ## How to work with us
 - Plans are markdown documents in `docs/`. Our inline comments are marked `@dev:`; leave yours as `@ai:`.
+  A plan without a current `**Status:**` line is historical: don't follow it as instructions.
 - **Never open an issue or ticket without a closing condition** — what ends it and who or what checks it.
   Read `docs/dev/filing-follow-ups.md` before filing anything.
 - Read a file before editing it; plan the change, then make one complete edit. Act after reading 3–5
@@ -23,13 +24,12 @@ where it loads on demand:
 ## The repo
 - pnpm workspace. `src/` is the civitai.com Next.js 16 app (TypeScript, Mantine v7, Tailwind + SCSS
   modules, tRPC, Prisma/PostgreSQL, Zustand, React Query, Meilisearch).
-- `apps/` — sibling apps (`auth`, `creator-studio`, `event-engine`, `moderator`, `notifications`,
-  `orchestrator-gateway`, `storage`, `training-studio`), each with its own `CLAUDE.md` and
-  `pnpm dev:<name>` / `pnpm release:<name>`. New app: the `scaffold-civitai-app` skill and
-  `docs/packages/new-app-integration.md`. `apps/moderator`, `apps/auth` and
-  `apps/creator-studio` are SvelteKit 5 + Kysely + shadcn-svelte: none of the main-app conventions apply;
-  see `docs/svelte-app-standard.md`.
+- `apps/*` — sibling apps: read the app's own `CLAUDE.md` or `README.md` first. Apps with a `svelte.config.js` are SvelteKit
+  (main-app conventions don't apply; `docs/svelte-app-standard.md`); apps with a `go.mod` are Go. New app: the
+  `scaffold-civitai-app` skill and `docs/packages/new-app-integration.md`.
 - `packages/civitai-*` — shared workspace packages. `event-engine-common/` is a git submodule.
+- **Use X for Y** (`.claude/rules/server.md`) names the one helper per need (HTTP, rate limit, lock, cache, DB client, new query, feature flag, …); follow it over nearby code.
+  Store choice: cache and rate-limit data go on `redis` with a TTL; `sysRedis` is durable state, not a cache, and takes no new key without sign-off; new durable data goes in Postgres.
 - Auth is `@civitai/auth` (hub-driven `civ-token`); NextAuth is fully removed —
   `src/providers/SessionProvider.tsx` and `src/types/session.ts` replace `next-auth/react`.
 
