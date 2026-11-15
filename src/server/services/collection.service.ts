@@ -3974,11 +3974,12 @@ export const getCollectionCoverImages = async ({
           imageSql,
         })}`
       : [];
-  const shown = itemImages.map(({ id, image, src }) => ({
-    id,
-    image: image && isCoverWithinBrowsingLevel(image, browsingLevel) ? image : null,
-    src,
-  }));
+  // An article's cover string stands for the same image, so it goes with it.
+  const shown = itemImages.map(({ id, image, src }) =>
+    image && !isCoverWithinBrowsingLevel(image, browsingLevel)
+      ? { id, image: null, src: null }
+      : { id, image, src }
+  );
 
   // Use Redis cache for tag lookups (much faster than direct DB query)
   const imageIds = [...new Set(shown.map(({ image }) => image?.id).filter(isDefined))];

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -59,6 +60,16 @@ const GREEN_MATURE_VIEWER = {
   features: { canViewNsfw: false, isGreen: true },
 };
 
+/** The item-cover read answers only for the collections it is asked about. */
+function itemCovers(rows: ReturnType<typeof itemCover>[]) {
+  dbMock.dbRead.$queryRaw.mockImplementation(
+    async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const bound = Prisma.sql(strings, ...(values as never[])).values;
+      return rows.filter((row) => bound.includes(row.id));
+    }
+  );
+}
+
 async function feed(ctx: object, browsingLevel?: number) {
   const { items } = await getAllCollectionsInfiniteHandler({
     input: { limit: 10, browsingLevel } as never,
@@ -78,7 +89,8 @@ beforeEach(() => {
     ownCover(2, NsfwLevel.XXX),
     noCover(3),
   ]);
-  dbMock.dbRead.$queryRaw.mockResolvedValue([
+  itemCovers([
+    itemCover(2, 200, NsfwLevel.PG),
     itemCover(3, 300, NsfwLevel.PG),
     itemCover(3, 301, NsfwLevel.X),
     itemCover(3, 302, NsfwLevel.R),
@@ -89,7 +101,7 @@ describe('getAllCollectionsInfiniteHandler cover levels', () => {
   it('serves a signed-out viewer only PG covers, whatever level the request asks for', async () => {
     expect(await feed(SIGNED_OUT, allBrowsingLevelsFlag)).toEqual([
       { id: 1, own: 101, items: [] },
-      { id: 2, own: null, items: [] },
+      { id: 2, own: null, items: [200] },
       { id: 3, own: null, items: [300] },
     ]);
   });
@@ -105,7 +117,7 @@ describe('getAllCollectionsInfiniteHandler cover levels', () => {
   it('holds a mature signed-in viewer to the SFW cap on the green domain', async () => {
     expect(await feed(GREEN_MATURE_VIEWER)).toEqual([
       { id: 1, own: 101, items: [] },
-      { id: 2, own: null, items: [] },
+      { id: 2, own: null, items: [200] },
       { id: 3, own: null, items: [300] },
     ]);
   });
@@ -113,7 +125,7 @@ describe('getAllCollectionsInfiniteHandler cover levels', () => {
   it('serves a signed-in viewer only the levels they browse', async () => {
     expect(await feed(MATURE_VIEWER, sfwBrowsingLevelsFlag)).toEqual([
       { id: 1, own: 101, items: [] },
-      { id: 2, own: null, items: [] },
+      { id: 2, own: null, items: [200] },
       { id: 3, own: null, items: [300] },
     ]);
   });
@@ -122,8 +134,28 @@ describe('getAllCollectionsInfiniteHandler cover levels', () => {
     const noLevel = { ...MATURE_VIEWER, user: { id: 9, isModerator: false } };
     expect(await feed(noLevel)).toEqual([
       { id: 1, own: 101, items: [] },
-      { id: 2, own: null, items: [] },
+      { id: 2, own: null, items: [200] },
       { id: 3, own: null, items: [300] },
+    ]);
+  });
+
+  it('reads the ToS flag of each own cover', async () => {
+    await feed(MATURE_VIEWER);
+    expect(mockGetAllCollections).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          image: { select: expect.objectContaining({ tosViolation: true }) },
+        }),
+      })
+    );
+  });
+
+  it('never serves an unrated cover', async () => {
+    mockGetAllCollections.mockResolvedValue([ownCover(1, 0), noCover(3)]);
+    itemCovers([itemCover(1, 100, NsfwLevel.PG), itemCover(3, 300, 0)]);
+    expect(await feed(MATURE_VIEWER)).toEqual([
+      { id: 1, own: null, items: [100] },
+      { id: 3, own: null, items: [] },
     ]);
   });
 
@@ -133,7 +165,7 @@ describe('getAllCollectionsInfiniteHandler cover levels', () => {
       ownCover(2, NsfwLevel.PG, { tosViolation: true }),
       noCover(3),
     ]);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([
+    itemCovers([
       itemCover(3, 300, NsfwLevel.PG),
       itemCover(3, 301, NsfwLevel.Blocked),
       itemCover(3, 302, NsfwLevel.PG, { tosViolation: true }),

@@ -68,6 +68,7 @@ const MODEL_ITEM_SCHEDULED_VERSION = 8036;
 const MODEL_ITEM_DRAFT_VERSION = 8037;
 const MATURE_IMAGE_ITEM = 8038;
 const TOS_VIOLATION_IMAGE_ITEM = 8039;
+const MATURE_ARTICLE_BOTH = 8040;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -223,6 +224,9 @@ beforeAll(async () => {
       (132, 'mature-image', 1, 16, false), (133, 'tos-violation', 1, 1, true);
     INSERT INTO "CollectionItem" ("id", "collectionId", "imageId") VALUES
       (38, ${MATURE_IMAGE_ITEM}, 132), (39, ${TOS_VIOLATION_IMAGE_ITEM}, 133);
+    INSERT INTO "Image" ("id", "url", "nsfwLevel") VALUES (134, 'mature-article-cover', 8);
+    INSERT INTO "Article" ("id", "cover", "coverId") VALUES (28, 'mature-both', 134);
+    INSERT INTO "CollectionItem" ("id", "collectionId", "articleId") VALUES (40, ${MATURE_ARTICLE_BOTH}, 28);
     INSERT INTO "ModelVersion" ("id", "modelId", "index") VALUES (53, 43, 0);
     INSERT INTO "Post" ("id", "userId", "modelVersionId", "publishedAt") VALUES
       (8, 2, 53, now() - interval '1 day'),
@@ -405,6 +409,11 @@ describe('getCollectionCoverImages', () => {
     expect(await coversFor(IMAGE_ITEM, publicBrowsingLevelsFlag)).toEqual([
       { imageId: 100, src: null },
     ]);
+  });
+
+  it("drops an article's cover string with its cover image when the image is above the viewer level", async () => {
+    expect(await coversFor(MATURE_ARTICLE_BOTH)).toEqual([{ imageId: 134, src: 'mature-both' }]);
+    expect(await coversFor(MATURE_ARTICLE_BOTH, publicBrowsingLevelsFlag)).toEqual([]);
   });
 
   it('skips a ToS-violating cover at every level', async () => {
