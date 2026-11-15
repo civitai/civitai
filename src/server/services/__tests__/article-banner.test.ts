@@ -321,10 +321,16 @@ describe('getArticleById and a banner its model withholds', () => {
     return getArticleById({ id: ARTICLE_ID, ...viewer });
   };
 
-  it('🔴 hides it from a reader', async () => {
+  it('🔴 hides it from a reader, without saying it is there', async () => {
     const article = await read({ userId: READER }, { withheld: true });
     expect(article.bannerImage).toBeUndefined();
-    expect(article.bannerImageWithheld).toBe(true);
+    expect(article.bannerImageWithheld).toBe(false);
+  });
+
+  it('says nothing of it to a signed-out reader', async () => {
+    const article = await read({}, { withheld: true });
+    expect(article.bannerImage).toBeUndefined();
+    expect(article.bannerImageWithheld).toBe(false);
   });
 
   it("🔴 hides it from the article's owner when someone else uploaded it", async () => {

@@ -879,16 +879,17 @@ export const getArticleById = async ({
       !!image &&
       withheldByModel.has(image.id) &&
       !(userId === article.userId && image.userId === article.userId);
-    const coverImageWithheld = hiddenByModel(article.coverImage);
-    const bannerImageWithheld = hiddenByModel(article.bannerImage);
-    const coverImage = viewableArticleImage(
-      coverImageWithheld ? null : article.coverImage,
-      isOwnerOrMod
-    );
+    const coverHidden = hiddenByModel(article.coverImage);
+    const bannerHidden = hiddenByModel(article.bannerImage);
+    const coverImage = viewableArticleImage(coverHidden ? null : article.coverImage, isOwnerOrMod);
     const bannerImage = viewableArticleImage(
-      bannerImageWithheld ? null : article.bannerImage,
+      bannerHidden ? null : article.bannerImage,
       isOwnerOrMod
     );
+    // For the owner's edit form only: anyone else learns nothing about an image they cannot see.
+    const isOwner = userId !== undefined && userId === article.userId;
+    const coverImageWithheld = isOwner && coverHidden;
+    const bannerImageWithheld = isOwner && bannerHidden;
 
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.
