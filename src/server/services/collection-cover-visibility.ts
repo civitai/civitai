@@ -116,8 +116,8 @@ export const publishedArticleSql = Prisma.sql`(
 
 /**
  * Whether article `"Article" a`'s legacy cover string may be served: beside a servable cover or
- * banner image within `imageLevels` and its model's gallery level, or, with neither, for an
- * article at an SFW level.
+ * banner image within `imageLevels` and its model's gallery level, on no taken-down model, or, with
+ * neither, for an article at an SFW level.
  */
 export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLevelsFlag) {
   return Prisma.sql`CASE
@@ -129,6 +129,7 @@ export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLev
       LEFT JOIN "Post" p ON p.id = i."postId"
       WHERE i.id = COALESCE(a."coverId", a."bannerId")
         AND ${servableImageSql}
+        AND ${notOnTakenDownModelSql}
         AND ${withinHeldGallerySql()}
         AND (i."nsfwLevel" & ${imageLevels}::int) <> 0
         AND (i."nsfwLevel" & ~${imageLevels}::int) = 0

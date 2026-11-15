@@ -24,7 +24,7 @@ beforeAll(async () => {
   await db.exec(`
     CREATE TABLE "Model" (
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false,
-      "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
+      "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb, mode text
     );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);

@@ -93,9 +93,9 @@ beforeAll(async () => {
       (60, 48, 'Published', now() - interval '1 day', 'Public', 'Scanned');
     INSERT INTO "Model3D" (id, "thumbnailImageId", status, availability) VALUES (61, 49, 'Published', 'Public');
     -- Article 62's cover is on the taken-down model's post, article 63's on the live model's.
-    INSERT INTO "Article" (id, "coverId", status, "publishedAt", availability, ingestion) VALUES
-      (62, 41, 'Published', now() - interval '1 day', 'Public', 'Scanned'),
-      (63, 40, 'Published', now() - interval '1 day', 'Public', 'Scanned');
+    INSERT INTO "Article" (id, "coverId", cover, status, "publishedAt", availability, ingestion) VALUES
+      (62, 41, 'legacy-taken-down', 'Published', now() - interval '1 day', 'Public', 'Scanned'),
+      (63, 40, 'legacy-live', 'Published', now() - interval '1 day', 'Public', 'Scanned');
     INSERT INTO "CollectionItem" ("collectionId", "addedById", "imageId", "postId", "modelId") VALUES
       (${IMAGE_ON_LIVE}, ${OWNER}, 40, NULL, NULL),
       (${IMAGE_ON_TAKEN_DOWN}, ${STRANGER}, 42, NULL, NULL),
@@ -154,6 +154,23 @@ describe('collection item covers', () => {
     ['a 3D model item whose thumbnail is R on a restricted base model', MODEL3D_RESTRICTED_R],
   ])('takes no cover from %s', async (_, collectionId) => {
     expect(await coverOf(collectionId)).toEqual([null]);
+  });
+
+  it.each([
+    [
+      'drops the legacy cover string with a cover on a taken-down model',
+      ARTICLE_ON_TAKEN_DOWN,
+      null,
+    ],
+    ['keeps the legacy cover string with a cover on a live model', ARTICLE_ON_LIVE, 'legacy-live'],
+  ])('%s', async (_, collectionId, src) => {
+    const sql = collectionItemCoversSql({
+      collectionIds: [collectionId],
+      itemsPerCollection: 4,
+      imageSql: Prisma.sql`i.id image`,
+    });
+    const { rows } = await db.query<{ src: string | null }>(sql.text, sql.values);
+    expect(rows.map((row) => row.src)).toEqual([src]);
   });
 
   it('skips only the taken-down item, so a later live item still gives a cover', async () => {
