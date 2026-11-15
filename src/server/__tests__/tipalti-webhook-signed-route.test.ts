@@ -53,8 +53,8 @@ const body = JSON.stringify({
 
 // The route runs through Next's own API resolver, so `config.api.bodyParser: false` is honoured
 // and the handler reads the raw request stream, as it does when deployed.
-// The handler fetches an API access token before it checks the signature; a local stand-in
-// answers that, so nothing here reaches Tipalti.
+// Token requests (paymentError's payment lookup, the cache case) go to a local stand-in, so
+// nothing here reaches Tipalti.
 const listen = async (server: Server) => {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -187,7 +187,7 @@ describe('POST /api/webhooks/tipalti with a signed event', () => {
 });
 
 describe('Tipalti API access token', () => {
-  // expires_in is in seconds; read as milliseconds, the token was refetched on nearly every call.
+  // expires_in is in seconds.
   it('reuses the token for later calls within its lifetime', async () => {
     const start = Date.now();
     const now = vi.spyOn(Date, 'now').mockReturnValue(start);
