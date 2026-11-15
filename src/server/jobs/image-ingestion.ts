@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { keepPermanentScanFailureSql } from '~/server/common/image-visibility';
 import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, type JobContext } from '~/server/jobs/job';
@@ -433,7 +434,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     // gives it the unknown cap, so an earlier episode's class does not re-open its retries.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
+      SET ingestion = 'Error'::"ImageIngestionStatus",
+        "scanJobs" = ("scanJobs" - 'lastFailure') || ${keepPermanentScanFailureSql()}
       WHERE id = ANY(${exhaustedRescanIds})
         AND ingestion = 'Rescan'::"ImageIngestionStatus"
     `;
@@ -453,7 +455,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     // As above, dropping lastFailure gives the row the unknown cap, not an earlier episode's.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
+      SET ingestion = 'Error'::"ImageIngestionStatus",
+        "scanJobs" = ("scanJobs" - 'lastFailure') || ${keepPermanentScanFailureSql()}
       WHERE id = ANY(${agedOutPendingIds})
         AND ingestion = 'Pending'::"ImageIngestionStatus"
     `;

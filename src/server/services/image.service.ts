@@ -53,6 +53,7 @@ import { CacheTTL, constants } from '~/server/common/constants';
 import {
   hasBlockMarker,
   imageReviewedSql,
+  keepPermanentScanFailureSql,
   pendingLevelImageSql,
   pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
@@ -1746,7 +1747,7 @@ async function markImageScanSubmitFailure({
             to_jsonb(${new Date().toISOString()}::text)
           )
         ) ELSE '{}'::jsonb END
-      )
+      ) || ${keepPermanentScanFailureSql()}
     WHERE id = ${imageId}
       -- Submit retries can outlive the callback, so a late failure must not clobber a verdict.
       AND "ingestion" = ANY(ARRAY['Pending','Rescan','Error']::"ImageIngestionStatus"[])
@@ -1855,7 +1856,7 @@ export const ingestImage = async ({
         "scanJobs" = ${scanJobsJson}::jsonb || jsonb_strip_nulls(jsonb_build_object(
           'retryCount', "scanJobs"->'retryCount',
           'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
-        ))
+        )) || ${keepPermanentScanFailureSql()}
       WHERE id = ${id}
     `;
   imageScanSubmittedCounter.inc({ lane, result: 'success' });
