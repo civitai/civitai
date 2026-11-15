@@ -22,6 +22,10 @@ const {
 beforeAll(async () => {
   const db = new PGlite();
   await db.exec(`
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false,
+      "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
+    );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int);
     CREATE TABLE "Image" (
@@ -55,6 +59,14 @@ beforeAll(async () => {
       (43, 'r', NULL, 4), (44, 'pg', NULL, 1), (45, NULL, 4100, 1);
     INSERT INTO "CollectionItem" ("collectionId", "articleId") VALUES
       (11, 40), (12, 41), (13, 42), (14, 43), (15, 44), (16, 45);
+    -- Article 46's PG-13 cover is on minor model 3, whose gallery level is PG; collection 17
+    -- holds it.
+    INSERT INTO "Model" (id, minor, "gallerySettings") VALUES (1, false, NULL), (3, true, '{"level": 1}');
+    INSERT INTO "ModelVersion" VALUES (30, 3);
+    INSERT INTO "Post" VALUES (400, 30);
+    INSERT INTO "Image" (id, "postId", "nsfwLevel") VALUES (4600, 400, 2);
+    INSERT INTO "Article" (id, cover, "coverId", "nsfwLevel") VALUES (46, 'held', 4600, 2);
+    INSERT INTO "CollectionItem" ("collectionId", "articleId") VALUES (17, 46);
   `);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
     pgliteRaw(db).queryRaw
@@ -90,7 +102,7 @@ describe('queueModelCollectionsReindex', () => {
 describe('getCollectionIdsWithWithheldLegacyCover', () => {
   it('finds the collections whose legacy cover string is now withheld, and not one still served', async () => {
     expect(await getCollectionIdsWithWithheldLegacyCover({ cursor: 0, limit: 100 })).toEqual([
-      12, 13, 14,
+      12, 13, 14, 17,
     ]);
   });
 
@@ -98,6 +110,8 @@ describe('getCollectionIdsWithWithheldLegacyCover', () => {
     expect(await getCollectionIdsWithWithheldLegacyCover({ cursor: 0, limit: 2 })).toEqual([
       12, 13,
     ]);
-    expect(await getCollectionIdsWithWithheldLegacyCover({ cursor: 13, limit: 2 })).toEqual([14]);
+    expect(await getCollectionIdsWithWithheldLegacyCover({ cursor: 13, limit: 2 })).toEqual([
+      14, 17,
+    ]);
   });
 });

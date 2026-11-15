@@ -137,7 +137,23 @@ beforeAll(async () => {
       (112, ${STRANGER}, NULL, NULL, NULL, 76),
       (113, ${STRANGER}, NULL, 33, NULL, NULL),
       (114, ${STRANGER}, NULL, NULL, NULL, 77),
-      (115, ${MODEL_OWNER}, 51, NULL, NULL, NULL);
+      (115, ${MODEL_OWNER}, 51, NULL, NULL, NULL),
+      (116, ${STRANGER}, NULL, NULL, NULL, 78),
+      (117, ${STRANGER}, NULL, NULL, NULL, 79);
+
+    -- Article 78's cover is a PG-13 image on the held model's post, above its gallery level;
+    -- article 79's is a PG-13 image on the unheld model's post.
+    INSERT INTO "Image" (id, "userId", "postId", index, "nsfwLevel") VALUES
+      (52, ${MODEL_OWNER}, 30, 2, ${NsfwLevel.PG13}), (53, ${MODEL_OWNER}, 32, 2, ${
+    NsfwLevel.PG13
+  });
+    INSERT INTO "Article" (id, "coverId", cover, status, "publishedAt", availability, ingestion, "nsfwLevel") VALUES
+      (78, 52, 'legacy-held', 'Published', now() - interval '1 day', 'Public', 'Scanned', ${
+        NsfwLevel.PG13
+      }),
+      (79, 53, 'legacy-unheld', 'Published', now() - interval '1 day', 'Public', 'Scanned', ${
+        NsfwLevel.PG13
+      });
   `);
 });
 
@@ -164,6 +180,8 @@ describe('a cover drawn from an item of a minor or SFW-only model', () => {
     ['a model item for an unheld model', 105, 44],
     ['a post item on an SFW-only model with no stored level', 113, 49],
     ['a ToS-violating image item', 115, null],
+    ['an article item whose cover is above the gallery level', 116, null],
+    ['an article item whose cover is on an unheld model', 117, 53],
   ])('%s takes the first image within the gallery level', async (_, collectionId, image) => {
     expect((await itemCovers(collectionId)).map((row) => row.image)).toEqual([image]);
   });
@@ -179,6 +197,8 @@ describe("an article item's legacy cover string", () => {
     ['an article whose cover image awaits review', 111, null],
     ['an article whose cover image is X', 114, null],
     ['an article with an SFW banner image it serves', 112, 'legacy-banner'],
+    ['an article whose cover image is above its model gallery level', 116, null],
+    ['an article whose cover image is on an unheld model', 117, 'legacy-unheld'],
   ])('%s', async (_, collectionId, src) => {
     expect((await itemCovers(collectionId)).map((row) => row.src)).toEqual([src]);
   });

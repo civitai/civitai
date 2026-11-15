@@ -116,7 +116,8 @@ export const publishedArticleSql = Prisma.sql`(
 
 /**
  * Whether article `"Article" a`'s legacy cover string may be served: beside a servable cover or
- * banner image within `imageLevels`, or, with neither, for an article at an SFW level.
+ * banner image within `imageLevels` and its model's gallery level, or, with neither, for an
+ * article at an SFW level.
  */
 export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLevelsFlag) {
   return Prisma.sql`CASE
@@ -125,8 +126,10 @@ export function legacyCoverStringAllowedSql(imageLevels: number = sfwBrowsingLev
       AND (a."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
     ELSE EXISTS (
       SELECT 1 FROM "Image" i
+      LEFT JOIN "Post" p ON p.id = i."postId"
       WHERE i.id = COALESCE(a."coverId", a."bannerId")
         AND ${servableImageSql}
+        AND ${withinHeldGallerySql()}
         AND (i."nsfwLevel" & ${imageLevels}::int) <> 0
         AND (i."nsfwLevel" & ~${imageLevels}::int) = 0
     )
@@ -225,8 +228,10 @@ export function collectionItemCoversSql({
           ${imageSql}
         FROM "Article" a
         JOIN "Image" i ON i.id = COALESCE(a."coverId", a."bannerId")
+        LEFT JOIN "Post" p ON p.id = i."postId"
         WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
           AND ${servableImageSql}
+          AND ${withinHeldGallerySql()}
           AND ${publishedArticleSql}
     ), articleItemSrc AS MATERIALIZED (
         -- A legacy cover string carries no rating of its own, and its readers show it to every
