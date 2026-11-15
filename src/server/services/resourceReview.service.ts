@@ -19,7 +19,10 @@ import { readResourceReviewsPage } from '~/server/services/hot-reads-12.reads';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
+import type {
+  GetRecommendedByInput,
+  GetResourceReviewsInput,
+} from '~/server/schema/resourceReview.schema';
 import {
   resourceReviewSelect,
   resourceReviewSimpleSelect,
@@ -524,6 +527,16 @@ export const writtenReviewSql = Prisma.sql`(
   AND btrim(regexp_replace(coalesce(rr.details, ''), '<[^>]*>|&nbsp;', '', 'g')) <> ''
 )`;
 
+// The thumbs-up reviews the written list leaves out: no text, and not hidden by a moderator or flag.
+export const thumbsOnlyRecommendSql = Prisma.sql`(
+  NOT rr.exclude AND NOT rr."tosViolation" AND NOT rr.nsfw
+  AND rr.recommended = TRUE
+  AND (
+    rr.details IS NULL OR rr.details = ''
+    OR btrim(regexp_replace(rr.details, '<[^>]*>|&nbsp;', '', 'g')) = ''
+  )
+)`;
+
 // A post can keep an `unpublishedAt` stamp with `publishedAt` still set; the stamp hides it.
 // `acceptableMinor` is dropped for every viewer, as the image feed does outside the pending view.
 const servablePostImageSql = (browsingLevel: number) => Prisma.sql`
@@ -852,6 +865,64 @@ export const getPagedResourceReviews = async ({
   });
 
   return getPagingData({ items, count, hasMore }, limit, page);
+};
+
+/** Who gave one version a thumbs-up without writing a review, newest first, one page at a time. */
+export const getRecommendedBy = async ({
+  input,
+  userId,
+}: {
+  input: GetRecommendedByInput;
+  userId?: number;
+}) => {
+  const { modelId, modelVersionId, limit, cursor: page } = input;
+  const AND = [
+    Prisma.sql`rr."modelVersionId" = ${modelVersionId}`,
+    visibleReviewForViewerSql('rr', userId),
+    thumbsOnlyRecommendSql,
+  ];
+  const excludedUserIds = await getExcludedReviewerIds({ userId, modelId, modelVersionId });
+  if (excludedUserIds.length) {
+    AND.push(Prisma.sql`rr."userId" != ALL(${excludedUserIds}::int[])`);
+  }
+
+  // One extra row says whether another page follows, so there is no exact COUNT.
+  const rows = await dbRead.$queryRaw<{ userId: number; createdAt: Date }[]>`
+    SELECT rr."userId", rr."createdAt"
+    FROM "ResourceReview" rr
+    WHERE ${Prisma.join(AND, ' AND ')}
+    ORDER BY rr."createdAt" DESC, rr.id DESC
+    LIMIT ${limit + 1}
+    OFFSET ${limit * (page - 1)}
+  `;
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+
+  const userIds = pageRows.map((row) => row.userId);
+  const [users, userCosmetics, profilePictures] = await Promise.all([
+    getBasicDataForUsers(userIds),
+    getCosmeticsForUsers(userIds),
+    getProfilePicturesForUsers(userIds),
+  ]);
+  const items = pageRows.flatMap(({ userId: id, createdAt }) => {
+    const user = users[id];
+    if (!user || user.deletedAt) return [];
+    return [
+      {
+        createdAt,
+        user: {
+          id,
+          username: user.username,
+          userImage: user.image,
+          deletedAt: user.deletedAt,
+          cosmetics: userCosmetics?.[id] ?? [],
+          profilePicture: profilePictures?.[id] ?? null,
+        },
+      },
+    ];
+  });
+
+  return { items, nextCursor: hasMore ? page + 1 : undefined };
 };
 
 export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {

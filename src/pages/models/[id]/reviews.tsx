@@ -42,6 +42,7 @@ import {
   parseReviewsFilter,
   resolveReviewsVersion,
 } from '~/components/ResourceReview/model-reviews-url';
+import { RecommendedBy } from '~/components/ResourceReview/RecommendedBy';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
 import { ReviewCardWithImages } from '~/components/ResourceReview/ReviewCard/ReviewCardWithImages';
@@ -407,7 +408,7 @@ export default function ModelReviews() {
                 ))}
                 {resourceReviews && !resourceReviews.items.length && (
                   <Text c="dimmed" ta="center" py="xl">
-                    No reviews match this filter.
+                    {filter ? 'No reviews match this filter.' : 'No written reviews yet.'}
                   </Text>
                 )}
                 {resourceReviews &&
@@ -432,6 +433,12 @@ export default function ModelReviews() {
                 )}
               </Stack>
             )}
+            {/* Under the last page of written reviews; the With images and Doesn’t views do not apply to thumbs-up. */}
+            {modelVersionId &&
+              (!filter || filter === 'up') &&
+              !(resourceReviews && 'hasMore' in resourceReviews && resourceReviews.hasMore) && (
+                <RecommendedBy modelId={modelId} modelVersionId={modelVersionId} />
+              )}
           </div>
         </div>
       </Container>
