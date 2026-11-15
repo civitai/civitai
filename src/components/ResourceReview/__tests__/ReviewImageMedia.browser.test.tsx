@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../../test/component-setup';
 import { ReviewImageMedia } from '../ResourceReviewCarousel';
+import { getReviewSlideSize } from '../review-image-width';
 
 const SLIDE_HEIGHT = 400;
 
@@ -13,14 +14,15 @@ const IMAGE_URL = URL.createObjectURL(
   })
 );
 
-// The slide as ReviewImage sizes it on desktop: fixed height, the image's own ratio, clipped.
-function Slide({ width, height }: { width: number; height: number; hiDpi: boolean }) {
+// The slide box comes from the same helper ReviewImage uses; only the viewport-relative height is
+// pinned, so the numbers do not depend on the browser window.
+function Slide({ width, height }: { width: number; height: number }) {
   return (
     <div style={{ width: 3000 }}>
       <div
         data-testid="slide"
         className="relative overflow-hidden"
-        style={{ aspectRatio: width / height, height: SLIDE_HEIGHT, maxWidth: '100%' }}
+        style={{ ...getReviewSlideSize({ width, height }, false), height: SLIDE_HEIGHT }}
       >
         <ReviewImageMedia
           image={{
@@ -57,5 +59,21 @@ describe('ReviewImageMedia', () => {
     const { slide, img } = await widths();
     expect(slide).toBeLessThan(800);
     expect(img).toBeCloseTo(slide, 0);
+  });
+
+  // The requested URL is the other half of the fix, and a blob: src bypasses it, so these use an
+  // edge key. The image never loads; only the src attribute is read.
+  test.each([
+    { name: 'landscape', width: 2712, height: 1160, requested: 'width=1600' },
+    { name: 'portrait', width: 1160, height: 2712, requested: 'width=800' },
+  ])('requests $requested for a $name image', async ({ width, height, requested }) => {
+    renderWithProviders(
+      <ReviewImageMedia
+        image={{ id: 1, name: 'a.png', url: 'abc-key', type: 'image', width, height }}
+      />
+    );
+    await expect
+      .element(page.getByRole('img'))
+      .toHaveAttribute('src', expect.stringContaining(requested));
   });
 });

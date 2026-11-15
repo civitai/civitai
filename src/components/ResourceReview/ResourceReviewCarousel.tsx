@@ -23,12 +23,13 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import classes from './ResourceReviewCarousel.module.css';
-import { getReviewImageWidth } from './review-image-width';
+import {
+  DESKTOP_IMAGE_HEIGHT,
+  getReviewImageWidth,
+  getReviewSlideSize,
+} from './review-image-width';
 
 const MAX_IMAGES = 8;
-const MOBILE_MAX_IMAGE_HEIGHT = '60vh';
-// Desktop slides share one height and take their width from the image, so as many as fit show.
-const DESKTOP_IMAGE_HEIGHT = '55vh';
 const SIDE_SLIDE_WIDTH = 240;
 const SLIDE_CLASS =
   'flex max-w-full flex-[0_0_100%] items-center justify-center pl-2 md:flex-none md:justify-start';
@@ -219,10 +220,7 @@ function ReviewImage({
 }) {
   const features = useFeatureFlags();
   // The wrapper takes the image's own shape so `MediaHash` (absolute, inset-0) has a size to fill.
-  const ratio = image.width && image.height ? image.width / image.height : 1;
-  const size = mobile
-    ? { aspectRatio: ratio, width: `min(100%, calc(${MOBILE_MAX_IMAGE_HEIGHT} * ${ratio}))` }
-    : { aspectRatio: ratio, height: DESKTOP_IMAGE_HEIGHT, maxWidth: '100%' };
+  const size = getReviewSlideSize(image, mobile);
 
   if (!inView)
     return (
