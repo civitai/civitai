@@ -585,6 +585,43 @@ func testCounterValue(t *testing.T, c prometheus.Counter) float64 {
 // The endpoint label is `feed_endpoint` on every per-endpoint family. `endpoint` is a reserved scrape
 // target label: the scraper's own value overwrites it, so a query on endpoint="as-posts" would match
 // nothing. Each family is touched once so Gather shows its label names.
+// The cache-miss counter is seeded for every cache and result, and ObserveCacheMiss adds ids.
+func TestCacheMissCounter(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	m.ObserveCacheMiss("image-frames", "computed", 3)
+	m.ObserveCacheMiss("image-frames", "computed", 2)
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, mf := range mfs {
+		if mf.GetName() != "feed_go_cache_miss_total" {
+			continue
+		}
+		for _, metric := range mf.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range metric.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			got[labels["cache"]+"/"+labels["result"]] = metric.GetCounter().GetValue()
+		}
+	}
+	want := map[string]float64{
+		"user-cosmetics/computed": 0, "user-cosmetics/error": 0, "image-frames/computed": 5, "image-frames/error": 0,
+		"event-decorations/computed": 0, "event-decorations/error": 0,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("series %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
 func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	if EndpointLabel != "feed_endpoint" {
 		t.Fatalf("EndpointLabel = %q, want feed_endpoint", EndpointLabel)
@@ -604,7 +641,9 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true}
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
+		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
+		"feed_go_cache_miss_total": true}
 	checked := 0
 	for _, mf := range mfs {
 		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {

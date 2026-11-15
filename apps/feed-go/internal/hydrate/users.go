@@ -59,8 +59,8 @@ type equippedCosmetic struct {
 
 // userCosmeticsFrom is getCosmeticsForUsers' first half over the user-cosmetics cache's answer got
 // for (unique) ids: each user's equipped list, and the cosmetic ids to join (unordered, possibly
-// repeated). The user-cosmetics miss path (which drops withheld creator cosmetics) is not ported: any
-// miss falls back.
+// repeated). An id got does not answer falls back; with Sources.Compute, fillUserCosmetics has
+// computed every miss (lookupUserCosmetics) into got before this runs.
 func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic, []int, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
 		return nil, nil, fallback.Newf("user-cosmetics-miss", "%d ids", len(miss))

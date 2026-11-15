@@ -54,7 +54,8 @@ keyset, sent to clients as `feed:<a>:<b>`. With the flag off, every page is the 
      counts (watcher-fed Redis hashes in front of ClickHouse), and the viewer's own reactions
      (Postgres); Model3D link visibility. The cache reads go out in one Redis pipeline per
      dependency stage (`hydrate.Sources.Page`): every per-id key and metric hash at once, then the
-     cosmetic records both cosmetic joins need; the Postgres miss reads run after it, in parallel;
+     cosmetic records both cosmetic joins need; the Postgres miss reads run after it, in parallel
+     (and, for the caches Node fills on read, the miss computations of §3.1);
    - drops, for anyone but a moderator, images of unpublished / scheduled posts that are not the
      viewer's own.
 4. **Posts.** With `gallery-lazy-post-images` on (production), each post the page holds fewer images
@@ -83,7 +84,7 @@ Supported today:
 | Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
 | Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
 | Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
-| Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails | misses on user cosmetics, image frames, event decorations, tag ids, metric hashes |
+| Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails; computed misses (§3.1) on user cosmetics, image frames and event decorations | misses on tag ids (`tag-ids-miss`) and metric hashes (`metrics-miss`); a failed miss computation (`<reason>-failed`) |
 | Flags | see §8 | the index path without `FEED_SERVICE_URL` (`index-feed-unconfigured`) |
 
 **First page of a version gallery** (`internal/feed/firstpage.go`, `promotion.go`), in the handler's
@@ -134,21 +135,24 @@ internal/fallback    the fallback error and its reasons
 
   *Worst-case fan-out, as of 2026-11-14:* shadow concurrency is `FEED_GO_SHADOW_WORKERS` (4 in the
   deployment) comparisons; each runs its page queries one at a time, each followed by a parallel
-  hydration of nine lookups of which at most five can reach Postgres at once (basic users, cosmetics
-  and profile pictures on a cache miss; video thumbnails; a signed-in viewer's reactions), then a
+  hydration of nine lookups of which at most eight can reach Postgres at once (basic users, cosmetics,
+  profile pictures, user cosmetics, frames and event decorations on a cache miss — the last three
+  each one lookup query, then at most two sequential withheld-cosmetic queries; video thumbnails; a
+  signed-in viewer's reactions), then a
   3D-model read when the page has any. With lazy post images on, a comparison then runs one post-count
   query and up to `FEED_GO_COMPLETION_CONCURRENCY` (default 4, `feed.DefaultCompletionConcurrency`)
   completion fetches at once,
-  each a page query plus its hydration. So the worst case is ~4 × 4 × 5 = 80 concurrent reads, and the
+  each a page query plus its hydration. So the worst case is ~4 × 4 × 8 = 128 concurrent reads, and the
   common case is far fewer (page queries plus the reads that always go to Postgres). 8 covers the
   common case with headroom and makes a burst wait instead of opening 80 pooler connections per pod.
   Page 1 of a gallery with pinned posts or a sponsored post adds one sequential fetch (plus its
   hydration) for each before the page loop, which does not raise that worst case.
 - **Redis (cache cluster):** the same per-id caches, read-compatibly: plain msgpack maps
   (msgpackr's module-level `pack`, `useRecords: false`), Dates as the timestamp extension, `undefined`
-  as fixext type 0, `notFound` / `debounce` markers honoured, stale entries served. **This service
-  never writes those keys** — a Go encoding bug cannot poison a cache the Node app reads. The cost:
-  a miss Go sees stays a miss until Node fills it; the fallback rate shows how often that matters.
+  as fixext type 0, `notFound` / `debounce` markers honoured, stale entries served. **By default this
+  service never writes those keys** — a Go encoding bug cannot poison a cache the Node app reads.
+  The cost: a miss Go computes (§3.1) stays a miss for the next reader until Node fills it.
+  `FEED_GO_CACHE_WRITEBACK=true` writes what Node writes instead (§3.1).
 - **Redis (system):** the session revocation registry and the browsing-settings addons. Reached the
   way the Node app reaches it (`packages/civitai-redis`, `getBaseClient('system')`), from the same
   env vars, so one deployment config feeds both (`internal/sysredis`):
@@ -183,8 +187,57 @@ internal/fallback    the fallback error and its reasons
   and put back in the feed's order. Not ported: `hydrateWithReadRescue` (an empty hydrate
   is retried on another replica this service does not reach — it falls back instead), and the
   `feed-service-degrade` breaker and last-good page (every failed call falls back).
-- **ClickHouse:** not yet. Metric counts come from the watcher-fed Redis hashes; a missing hash (Node
-  would populate it from ClickHouse) is a fallback. Porting that read is listed in §9.
+- **ClickHouse:** not read. Metric counts come from the watcher-fed Redis hashes; a missing hash (Node
+  populates it from ClickHouse) falls back (`metrics-miss`, counted in `feed_go_fallback_total` like
+  every reason).
+
+### 3.1 Cache misses this service computes
+
+Three per-entity caches are filled on read by their `createCachedObject` lookup. In serving mode Go
+runs before Node, so these misses are Go's to answer (in shadow mode Node has just filled them).
+`internal/hydrate/misses.go` runs the Node lookup's own query, once per page and cache for every
+missed id, and builds the entry exactly as the Node lookup builds it; the entry is then packed with
+msgpackr's encoding (`internal/jspack`, whose goldens msgpackr wrote) and read back through the same
+decoder as a cache hit, so a computed miss hydrates exactly as the hit Node's write would later
+produce. `FEED_GO_COMPUTE_MISSES=false` restores the fallbacks.
+
+| Reason it replaces | Cache (key) | Node source | Query here |
+|---|---|---|---|
+| `user-cosmetics-miss` | `userCosmeticCache` (`packed:caches:user-cosmetics:<userId>`) | `src/server/redis/caches.ts` lookupFn (dbRead), `getWithheldCosmeticIds` (`src/server/services/creator-shop-withheld.ts`, `isListingDisplayable` in `packages/civitai-shared/src/knights-shop.ts`) | the equipped, unplaced `UserCosmetic` rows on the replica; the withheld check's two queries (creator shop listings, then the `Withheld` flag of unlisted creator cosmetics) |
+| `image-frame-miss` | `cosmeticEntityCaches.Image` (`packed:caches:cosmetics2:Image:<imageId>`) | the same file's lookupFn (dbWrite) and appendFn | `UserCosmetic` placed on the image, non-event cosmetic, and the withheld check over creator cosmetics: on the replica with write-back off, on the primary with it on; the appendFn join is the existing cosmetic join |
+| `event-decoration-miss` | `eventDecorationEntityCaches.Image` (`packed:caches:cosmetics2:event:v2:Image:<imageId>`) | the same file's lookupFn (dbWrite) over `cosmeticCache.fetch` (dbRead) | `UserCosmetic` placed on the image, event cosmetic: replica or primary as for frames; the cosmetic records from `cosmetics2` (replica on a miss) |
+
+Not computed: `metrics-miss` (Node populates the hash from ClickHouse, which this service does not
+read), `tag-ids-miss` (the lookup joins the tag cache and the browsing-gate tag ids), and on the REST
+endpoint `image-resources-miss` (Node picks a replica by write lag). `input-techniques` is an input
+shape, not a cache miss: it stays an unsupported fallback.
+
+**Write-back** (`FEED_GO_CACHE_WRITEBACK`, default off). Off, nothing is written (the tests assert the
+cache is untouched), and a lagging replica read affects only the one answer it feeds. On, each
+computed entry is written where and as Node's fetch writes it: the same key
+(`CACHE_KEY_NAMESPACE`-prefixed outside production), msgpackr's bytes of `{...result, cachedAt}` or of
+the `{[idKey]: id, notFound: true, cachedAt}` marker, the same expiry (user cosmetics a day, markers a
+day; frames and event decorations a day, markers an hour, frame markers only with
+`frame-cache-negative` on), and only for a miss Node writes (no key or an undecodable value; never
+inside a bust's debounce window or after a failed read). Write-back needs `DATABASE_URL` (the primary,
+Node's `dbWrite`; startup fails without it): the frame and event-decoration lookups, and the frames'
+withheld check, then read the primary, as Node's do (`src/server/redis/caches.ts`, the two
+`dbWrite.$queryRaw` lookups). That primary read is the guard against re-caching stale state: read
+from a lagging replica, a frame just unequipped or withheld would be written back and served for a
+day. With the primary read, a fill races an equip or unequip exactly as Node's own fill does.
+
+`SET NX` (where Node's write is a plain `SET`) is a second, narrower guard: it never overwrites a key
+that holds a value or a bust's debounce marker at write time. It does not stop a value read before a
+change from landing after the change's debounce marker expired; only the primary read bounds that, to
+the same window Node has. The user-cosmetics lookup reads the replica, as Node's does. The shared
+caches Go already filled from the replica before this change (basic users, `cosmetics2`, profile
+pictures, thumbnails) are still never written.
+
+The golden fixtures `as-posts/cold-*` (`testdata/golden/`) carry, per reason, Node's answer and Node's
+writes for a cold key, and every served fixture is run with write-back off (nothing written) and on
+(exactly Node's writes). Their Node side is a hand transcription of the lookups (`gen.mjs`; only the
+encoding is msgpackr itself), so they show feed-go agrees with that transcription. They do not prove
+agreement with the running Node app: the shadow diffs in production are what prove parity.
 
 ## 4. Viewer identity — never another user's private data
 
@@ -381,6 +434,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | `image-resource-use-write` | model-gallery queries read the primary | not mirrored: off in production; the replica is used |
 | `image-feed-shared-users` | one `user` object per creator on the wire | decoded value unchanged; nothing to do |
 | event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
+| `frame-cache-negative` | whether the image frame cache's notFound markers are live (read as "no frame", written for an hour on a miss) | `FEED_GO_FRAME_CACHE_NEGATIVE` (default off, as Node reads a flag it cannot evaluate): off, a marker is a miss (looked up, §3.1) and none is written, as in Node |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
 ## 9. Not at parity (yet)
@@ -395,10 +449,9 @@ will show.
   run payload whose `endsAt` is not an ISO timestamp or a host gallery level that is not a number;
 - feed-service failures and non-200 answers, a hydrate that empties a page, and the cursors Node
   answers with a 400 (§3);
-- cache misses on user cosmetics, image frames, event decorations, tag ids (their lookups filter
-  withheld creator cosmetics, read the primary, or join the tag cache — not ported), metric hashes
-  (ClickHouse populate not ported), session users (auth hub fetch not ported), gallery settings
-  (rebuild not ported);
+- cache misses on tag ids (the lookup joins the tag cache — not ported), a failed miss computation
+  (§3.1, `<reason>-failed`), metric hashes (ClickHouse populate not ported, `metrics-miss`), session
+  users (auth hub fetch not ported), gallery settings (rebuild not ported);
 - bearer tokens, two session cookies, verified crawlers, POST (`methodOverride`) requests;
 - public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
 
@@ -408,6 +461,14 @@ on Node). A metric hash holding only the `notFound` marker is a KNOWN image with
 (`statsUnknown: false`): `getImageMetricsObject` gives every id whose hash exists an entry on both
 its arms, so `toImageV2Stats` only reports `statsUnknown: true` when the ClickHouse read failed and
 no hash was cached — a case this service falls back on (`metrics-miss`) instead of answering.
+
+**Divergences of the miss computations (§3.1):**
+- with write-back off, the frame and event-decoration lookups read the replica; Node's read the
+  primary. Within replica lag of an equip or unequip, Go can answer the previous state for that one
+  request (nothing is cached). With write-back on they read the primary, as Node's do;
+- a nested json member order in a written entry follows the jsonb text Postgres prints, as Prisma
+  parses it for Node (the integration tests pin that order against a real Postgres); a cached record
+  carried into a new entry (an event decoration's cosmetic `data`) keeps its cached order.
 
 **Divergences the comparator will show:**
 - `referentialEqualities` and opaque-object key order (not visible after decode; excluded by design);
@@ -577,14 +638,15 @@ measurement that identified this one), read over the same window for
 `image.getImagesAsPostsInfinite`. To compare like with like:
 
 - read Go's ratio only over answered requests. A fallback is NOT free for Go: one raised before the
-  query (input shape, bearer token, origin) is cheap, but one raised during hydration (a cosmetics,
-  metrics, tag-id, frame, event-decoration, session or gallery miss) comes after the page query and
+  query (input shape, bearer token, origin) is cheap, but one raised during hydration (a tag-id,
+  session or gallery miss, or a failed miss computation) comes after the page query and
   the parallel lookups, and in the post loop after earlier pages. That CPU lands in the numerator with
   no served request in the denominator, so it is a second reason Go's figure is an upper bound; read
   the fallback-reason rate beside it;
 - run both reads over the same windows and compare medians across several windows, not one;
-- note what Go does **not** pay yet: cache write-back, ClickHouse populates, auth-hub fetches — all
-  rare misses that Node pays and Go falls back on. The fallback rate bounds how much this can matter;
+- note what Go does **not** pay yet: cache write-back (off by default), auth-hub fetches — rare
+  misses that Node pays and Go falls back on, ClickHouse populates of metric hashes — while Go now
+  pays the miss computations of §3.1; `feed_go_cache_miss_total{cache,result}` counts them;
 - add the extra Redis and Postgres reads Go makes in shadow mode to the cost side when the sample
   rate is raised (shadowing doubles the read work for sampled requests, and on the feed-service path
   each sample is one more feed-service call per page and per completion batch).
@@ -612,9 +674,12 @@ None of this is in this PR.
   `SERVER_DOMAIN_*` hosts, `REGION_RESTRICTION_CONFIG`, `IMAGE_QUERY_CACHING`, the flag mirrors, and
   `FEED_SERVICE_URL` (the same value as the Node pools) with `FEED_GO_IMAGE_INDEX_FEED` /
   `FEED_GO_LAZY_POST_IMAGES` at the flags' values, and `FEED_GO_FALLBACK_URL` (the in-cluster Node
-  service) once serving.
+  service) once serving. `FEED_GO_FRAME_CACHE_NEGATIVE` mirrors a live flag: the deployment must set
+  it to `frame-cache-negative`'s production value (and change it when the flag changes), or frame
+  markers are read and written differently from Node (§8). `FEED_GO_CACHE_WRITEBACK` stays off until
+  the operator decides; turning it on also needs `DATABASE_URL`, the primary (§3.1).
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
-  Redis Sentinels), the JWKS endpoint, the image feed service,
+  Redis Sentinels), the JWKS endpoint, the image feed service, the primary (only with write-back on),
   and (serving) the Node service.
 - **Monitoring:** a scrape of `:9090/metrics`; a dashboard of §10's queries and the shadow results.
 - **Flags:** the Node-side shadow sample percentage, and later the client transport flag. Created OFF.
@@ -628,9 +693,9 @@ Honest estimate, in order:
 2. **Burn down parity** — read the comparator for a week, fix the categories it surfaces. Unknown size
    by nature; expect several rounds. The SQL and hydration are ported line by line, but nothing has
    run against production data yet.
-3. **Cut fallbacks that matter by volume** — the metric-hash ClickHouse populate and the cache miss
-   paths, in fallback-rate order (pinned and sponsored posts were ported on 2026-11-14). Each is a
-   contained port; together roughly one to two weeks.
+3. **Cut fallbacks that matter by volume** — in fallback-rate order (pinned and sponsored posts were
+   ported on 2026-11-14; the user-cosmetics, frame and event-decoration miss paths on
+   2026-11-15, §3.1). Left: tag ids and the metric-hash ClickHouse populate.
 4. **Flags** — a Flipt evaluation client so the env mirrors go away (a few days).
 5. **Serving** — the client transport flag PR, a small cohort, then ramp while watching error rate,
    latency and the Node-side CPU drop. A week of ramp.

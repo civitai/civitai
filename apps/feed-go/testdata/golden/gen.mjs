@@ -95,6 +95,46 @@ const PROFILE_PICTURES = {
     metadata: { width: 512, height: 512 },
   },
 };
+// Creator-made cosmetics (Cosmetic.createdById set): 303 is listed by its creator but not
+// displayable (withheld), 304's creator listing was approved on review (shown), 305 has no listing and
+// carries CosmeticFlag.Withheld (tombstoned: withheld).
+Object.assign(COSMETICS, {
+  303: { id: 303, name: 'Pending Badge', type: 'Badge', data: { url: uuid(3031) }, source: 'Purchase', flags: 0 },
+  304: { id: 304, name: 'Creator Plate', type: 'NamePlate', data: { color: 'gold', 2: 1 }, source: 'Purchase', flags: 0 },
+  305: { id: 305, name: 'Removed Badge', type: 'Badge', data: { url: uuid(3051) }, source: 'Purchase', flags: 4 },
+});
+const COSMETIC_CREATORS = { 303: 1009, 304: 1009, 305: 1009 };
+
+// ---- The database behind the caches (read by a lookup only when its key is cold) ----------------
+// UserCosmetic rows. The user-cosmetics cache entry of 1002 predates its 304: a cold read finds it
+// (its 303 is withheld, its 305 tombstoned, its 302 owned but not equipped). The frame and event rows
+// agree with FRAMES / EVENT_DECORATIONS, plus a withheld creator frame on 8007 (so 8007 shows none).
+const USER_COSMETIC_ROWS = [
+  { userId: 1001, cosmeticId: 301, data: null, equippedAt: day(1), equippedToId: null, equippedToType: null },
+  { userId: 1002, cosmeticId: 303, data: null, equippedAt: day(2), equippedToId: null, equippedToType: null },
+  { userId: 1002, cosmeticId: 304, data: { color: 'gold', 2: 1, sparkle: { on: true, at: 0.5 } }, equippedAt: day(2), equippedToId: null, equippedToType: null },
+  { userId: 1002, cosmeticId: 305, data: null, equippedAt: day(3), equippedToId: null, equippedToType: null },
+  { userId: 1002, cosmeticId: 302, data: null, equippedAt: null, equippedToId: null, equippedToType: null },
+  { userId: 1001, cosmeticId: 302, data: null, equippedAt: day(3), equippedToId: 8001, equippedToType: 'Image' },
+  { userId: 1009, cosmeticId: 303, data: { lights: 2 }, equippedAt: day(3), equippedToId: 8007, equippedToType: 'Image' },
+  { userId: 1002, cosmeticId: 401, data: null, equippedAt: day(4), equippedToId: 8003, equippedToType: 'Image' },
+];
+// CosmeticShopItem rows: [cosmeticId, addedById, status, meta, rejectionReason].
+const SHOP_ITEMS = [
+  { cosmeticId: 303, addedById: 1009, status: 'PendingReview', meta: {}, rejectionReason: null },
+  { cosmeticId: 304, addedById: 1009, status: 'Draft', meta: { history: [{ kind: 'reviewed', action: 'approve' }] }, rejectionReason: null },
+  { cosmeticId: 304, addedById: 1010, status: 'Rejected', meta: {}, rejectionReason: 'Not theirs' },
+];
+/** A jsonb column's text as Postgres writes it: members ordered by key length then bytes, `", "` and
+ *  `": "` separators. Prisma hands the Node code JSON.parse of exactly this. */
+function jsonbText(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(jsonbText).join(', ')}]`;
+  const keys = Object.keys(v).sort((a, b) => Buffer.byteLength(a) - Buffer.byteLength(b) || Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  return `{${keys.map((k) => `${JSON.stringify(k)}: ${jsonbText(v[k])}`).join(', ')}}`;
+}
+const prismaJson = (v) => (v === null || v === undefined ? null : JSON.parse(jsonbText(v)));
+
 // The Image frame each image wears (cosmeticEntityCaches.Image raw lookup rows).
 const FRAMES = { 8001: { equippedToId: 8001, cosmeticId: 302, userData: null } };
 // The event decoration each image wears (eventDecorationEntityCaches.Image entries).
@@ -397,6 +437,9 @@ class Trace {
     this.feed = []; // { query, status, body }
     this.posts = new Set(); // post ids whose rows the db fixture must hold
     this.models = new Set();
+    this.cold = new Set(); // "prefix:id" keys the fixture holds absent (a cache miss)
+    this.coldRead = new Set(); // the cold keys the mirror read (each must be)
+    this.writes = new Map(); // key -> what Node writes on the miss ({value, ex})
   }
 }
 let T; // the fixture being traced
@@ -405,22 +448,158 @@ function sizeOf(o) {
   return Object.keys(o).length;
 }
 
-/** createCachedObject.fetch over the world: hits by idKey, notFound markers skipped, cachedAt
- *  stripped. A miss would run the lookup on the database; the fixtures hold every key they read. */
-function cacheFetch(prefix, ids, { appendFn } = {}) {
+/** createCachedObject.fetch over the world (packages/civitai-redis/src/cached-array.ts): hits by
+ *  idKey, notFound markers skipped (or, with `negative` false, read as misses), cachedAt stripped. A
+ *  key the fixture holds cold (absent) is a miss: with `lookup` (the cache's lookupFn, transcribed)
+ *  it is looked up and written back as fetch writes it — `{...result, cachedAt}` with EX `ttl`, or
+ *  the `{[idKey]: id, notFound: true, cachedAt}` marker with EX `notFoundTtl ?? ttl` when `negative`
+ *  — and recorded in T.writes; without one it fails (the fixture must hold every key it reads). */
+function cacheFetch(prefix, ids, { appendFn, lookup, idKey, ttl, notFoundTtl, negative = true } = {}) {
   const out = {};
+  const misses = [];
+  const markers = new Set();
   for (const id of [...new Set(ids)]) {
-    const v = worldPacked(prefix, id);
-    if (v === undefined) throw new Error(`fixture ${T.fixture}: cache miss ${prefix}:${id}`);
-    T.packed.set(`${prefix}:${id}`, v);
-    if (v.notFound) continue;
+    const key = `${prefix}:${id}`;
+    const v = T.cold.has(key) ? undefined : worldPacked(prefix, id);
+    if (v === undefined) {
+      if (!lookup) throw new Error(`fixture ${T.fixture}: cache miss ${key}`);
+      T.coldRead.add(key);
+      misses.push(id);
+      continue;
+    }
+    T.packed.set(key, v);
+    if (v.notFound) {
+      if (!negative && lookup) {
+        markers.add(id);
+        misses.push(id);
+      }
+      continue;
+    }
     if (v.debounce) throw new Error('debounce marker not modelled');
     const { cachedAt: _c, ...rest } = structuredClone(v);
     out[id] = rest;
   }
+  if (misses.length) {
+    const results = lookup(misses);
+    for (const id of misses) {
+      const key = `${prefix}:${id}`;
+      const result = results[id];
+      if (!result) {
+        if (negative && !markers.has(id)) T.writes.set(key, { value: { [idKey]: id, notFound: true, cachedAt: NOW }, ex: notFoundTtl ?? ttl });
+        continue;
+      }
+      // A marker read while `negative` is off is overwritten by Node's plain SET; feed-go's SET NX
+      // leaves it. No fixture world holds that case.
+      if (markers.has(id)) throw new Error(`fixture ${T.fixture}: ${key} marker over a found row is not modelled`);
+      out[id] = result;
+      T.writes.set(key, { value: mark({ ...result, cachedAt: NOW }), ex: ttl });
+    }
+  }
   if (appendFn) appendFn(out);
   return out;
 }
+
+const DAY = 24 * 60 * 60;
+const HOUR = 60 * 60;
+
+// --- the lookupFns (src/server/redis/caches.ts) over the world tables ---------------------------
+function isListingDisplayable(listing) {
+  // packages/civitai-shared/src/knights-shop.ts
+  if (listing.status === 'Published') return true;
+  const meta = listing.meta;
+  if (meta?.takedown) return false;
+  if (meta?.displayApproved !== undefined) return meta.displayApproved;
+  const history = meta?.history ?? [];
+  let index = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].kind === 'reviewed') {
+      index = i;
+      break;
+    }
+  }
+  const approved = index >= 0 ? history[index].action === 'approve' : meta?.lastApprovedAmount != null && !listing.rejectionReason;
+  const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
+  return approved && !history.slice(index + 1).some((entry) => entry.changes?.some((change) => DISPLAYED_FIELDS.has(change.field)));
+}
+
+/** getWithheldCosmeticIds (src/server/services/creator-shop-withheld.ts). */
+function getWithheldCosmeticIds(cosmeticIds) {
+  const withheld = new Set();
+  if (!cosmeticIds.length) return withheld;
+  const unique = [...new Set(cosmeticIds)];
+  const listings = SHOP_ITEMS.filter((x) => unique.includes(x.cosmeticId)).map((x) => ({
+    ...x,
+    meta: prismaJson(x.meta),
+    cosmetic: { createdById: COSMETIC_CREATORS[x.cosmeticId] ?? null },
+  }));
+  const displayable = new Set();
+  for (const { cosmeticId, addedById, cosmetic, status, meta, rejectionReason } of listings) {
+    if (cosmeticId == null || cosmetic?.createdById == null || addedById !== cosmetic.createdById) continue;
+    const shown = isListingDisplayable({ status, meta, rejectionReason });
+    (shown ? displayable : withheld).add(cosmeticId);
+  }
+  for (const id of displayable) withheld.delete(id);
+  const unlisted = unique.filter((id) => !displayable.has(id) && !withheld.has(id));
+  if (unlisted.length) {
+    const tombstoned = unlisted.filter((id) => COSMETIC_CREATORS[id] != null).map((id) => ({ id, flags: COSMETICS[id]?.flags ?? 0 }));
+    for (const { id, flags } of tombstoned) if ((flags | 4) === flags) withheld.add(id);
+  }
+  return withheld;
+}
+
+/** userCosmeticCache's lookupFn. */
+function lookupUserCosmetics(ids) {
+  const equipped = USER_COSMETIC_ROWS.filter((r) => ids.includes(r.userId) && r.equippedAt !== null && r.equippedToId === null).map((r) => ({
+    userId: r.userId,
+    cosmeticId: r.cosmeticId,
+    data: prismaJson(r.data),
+  }));
+  const withheld = getWithheldCosmeticIds(equipped.map((x) => x.cosmeticId));
+  return equipped
+    .filter((x) => !withheld.has(x.cosmeticId))
+    .reduce((acc, { userId, cosmeticId, data }) => {
+      acc[userId] ??= { userId, cosmetics: [] };
+      acc[userId].cosmetics.push({ cosmeticId, data });
+      return acc;
+    }, {});
+}
+
+const isEventData = (data) => !!data && typeof data === 'object' && typeof data.event === 'string';
+
+/** cosmeticEntityCaches.Image's lookupFn (its appendFn is the join getAllImagesUncaptured runs). */
+function lookupImageFrames(ids) {
+  const entityCosmetics = USER_COSMETIC_ROWS.filter(
+    (r) => ids.includes(r.equippedToId) && r.equippedToType === 'Image' && !isEventData(COSMETICS[r.cosmeticId].data)
+  ).map((r) => ({ cosmeticId: r.cosmeticId, equippedToId: r.equippedToId, userData: prismaJson(r.data), createdById: COSMETIC_CREATORS[r.cosmeticId] ?? null }));
+  const withheld = getWithheldCosmeticIds(entityCosmetics.filter((x) => x.createdById != null).map((x) => x.cosmeticId));
+  return Object.fromEntries(entityCosmetics.filter((x) => !withheld.has(x.cosmeticId)).map(({ createdById: _, ...x }) => [x.equippedToId, x]));
+}
+
+/** eventDecorationEntityCaches.Image's lookupFn. */
+function lookupImageEvents(ids) {
+  const rows = USER_COSMETIC_ROWS.filter((r) => ids.includes(r.equippedToId) && r.equippedToType === 'Image' && isEventData(COSMETICS[r.cosmeticId].data));
+  const cosmetics = cacheFetch(K.cosmetics, [...new Set(rows.map((x) => x.cosmeticId))]);
+  const result = {};
+  for (const row of rows) {
+    const cosmetic = cosmetics[row.cosmeticId];
+    if (!cosmetic || !isEventData(cosmetic.data)) continue;
+    result[row.equippedToId] = {
+      id: cosmetic.id,
+      name: cosmetic.name,
+      type: cosmetic.type,
+      source: cosmetic.source,
+      data: cosmetic.data,
+      equippedToId: row.equippedToId,
+      equippedToType: 'Image',
+      userId: row.userId,
+    };
+  }
+  return result;
+}
+
+// frame-cache-negative, as the fixtures run it (feed-go's FEED_GO_FRAME_CACHE_NEGATIVE default):
+// off, so a frame marker is a miss and none is written.
+const FRAME_CACHE_NEGATIVE = false;
 
 const FLAGS = { PG: 1, PG13: 2, R: 4, X: 8, XXX: 16, Blocked: 32 };
 const allBrowsingLevelsFlag = 31;
@@ -743,7 +922,7 @@ function getAllImagesUncaptured(input) {
   const userBasicData = cacheFetch(K.basic, uids);
   let userCosmetics;
   if (includeCosmetics) {
-    const uc = cacheFetch(K.userCosmetics, uids);
+    const uc = cacheFetch(K.userCosmetics, uids, { lookup: lookupUserCosmetics, idKey: 'userId', ttl: DAY });
     const cosmeticIds = [...new Set(Object.values(uc).flatMap((x) => x.cosmetics.map((y) => y.cosmeticId)))];
     const cosmetics = cacheFetch(K.cosmetics, cosmeticIds);
     userCosmetics = Object.fromEntries(Object.values(uc).map((x) => [x.userId, x.cosmetics.map((y) => ({ ...y, cosmetic: cosmetics[y.cosmeticId] }))]));
@@ -751,7 +930,7 @@ function getAllImagesUncaptured(input) {
   const profilePictures = include.includes('profilePictures') ? cacheFetch(K.profile, uids) : undefined;
   let frames;
   if (includeCosmetics) {
-    const recs = cacheFetch(K.frames, ids);
+    const recs = cacheFetch(K.frames, ids, { lookup: lookupImageFrames, idKey: 'equippedToId', ttl: DAY, notFoundTtl: HOUR, negative: FRAME_CACHE_NEGATIVE });
     const cosmeticIds = [...new Set(Object.values(recs).map((x) => x.cosmeticId))];
     const cosmetics = cosmeticIds.length ? cacheFetch(K.cosmetics, cosmeticIds) : {};
     for (const record of Object.values(recs)) {
@@ -774,7 +953,7 @@ function getAllImagesUncaptured(input) {
   const imageResources = includeBaseModel ? cacheFetch(K.resources, ids) : undefined;
   let eventDecorations = {};
   if (ids.length && T.events.size) {
-    const decorations = cacheFetch(K.events, ids);
+    const decorations = cacheFetch(K.events, ids, { lookup: lookupImageEvents, idKey: 'equippedToId', ttl: DAY, notFoundTtl: HOUR });
     for (const [id, d] of Object.entries(decorations))
       if (typeof d.data?.event === 'string' && T.events.has(d.data.event)) {
         const { name, type, source, data, equippedToId, equippedToType } = d;
@@ -1596,13 +1775,38 @@ const AS_POSTS = [
     headers: { authorization: 'Bearer golden-not-a-real-key' },
     input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3 },
   },
+  // Cold caches: a key Node finds absent and fills by its lookup (the miss feed-go computes). Each
+  // fixture's expect.writes is what Node's fetch writes for it.
   {
-    name: 'fallback-user-cosmetics-miss',
-    description: 'A creator whose user-cosmetics entry is not cached: Node’s lookup filters withheld cosmetics; not ported.',
-    fallback: 'user-cosmetics-miss',
+    name: 'cold-user-cosmetics',
+    description: 'A creator whose user-cosmetics entry is not cached: the lookup reads their equipped cosmetics and drops the withheld (a creator listing not displayable) and tombstoned ones; the entry is written back for a day.',
     viewer: null,
     host: HOST.green,
-    dropKeys: [`${K.userCosmetics}:1002`],
+    cold: [`${K.userCosmetics}:1002`],
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3 },
+    replies: {
+      'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&sort=reactions&limit=6': { body: { items: [8003, 8006, 8007] } },
+    },
+  },
+  {
+    name: 'cold-image-frames',
+    description: 'A framed image whose frame entry is not cached: the lookup finds its frame row (written back for a day); with frame-cache-negative off every frame marker is looked up too (8007\'s withheld creator frame shows none) and no marker is written.',
+    viewer: null,
+    host: HOST.green,
+    cold: [`${K.frames}:8001`],
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 3 },
+    replies: {
+      'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&sort=reactions&limit=6': { body: { items: [8001, 8003, 8008, 8005], ...fc('1718000000000', '8005') } },
+      'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&postIds=7001&sort=reactions&limit=2': { body: { items: [8001] } },
+    },
+  },
+  {
+    name: 'cold-event-decoration',
+    description: 'Two images whose event-decoration entries are not cached: one wears a hat (built from the cosmetic record, written back for a day), the other none (a notFound marker for an hour).',
+    viewer: null,
+    host: HOST.green,
+    events: ['goldentest2026'],
+    cold: [`${K.events}:8003`, `${K.events}:8006`],
     input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3 },
     replies: {
       'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&sort=reactions&limit=6': { body: { items: [8003, 8006, 8007] } },
@@ -1741,6 +1945,17 @@ const V1 = [
 // with no scope; the creator and tag scopes are feed queries too; a post's media and a model without
 // a version take the Postgres query (requiresImageDbPath).
 const INFINITE = [
+  {
+    name: 'cold-global-signed-out',
+    description: 'The global feed signed out with a cold frame entry and a cold user-cosmetics entry: the page hydrator computes both misses as on the gallery procedure (Node writes both back).',
+    viewer: null,
+    host: HOST.green,
+    cold: [`${K.frames}:8001`, `${K.userCosmetics}:1002`],
+    input: { sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
   {
     name: 'global-signed-out-most-reactions',
     description: 'The global feed signed out (domain cap PG): the feed’s page in its order, its next cursor, a framed image, a video with its thumbnail, no profile pictures (not in include), source feed.',
@@ -1936,7 +2151,21 @@ function dbTables({ tags = false } = {}) {
     reactions: REACTIONS,
     placements: PLACEMENTS.map(mark),
     users: Object.values(USERS).map(mark),
+    // Every lookup reads these as text columns (`::text`), so they are written as Postgres prints them.
+    userCosmetics: USER_COSMETIC_ROWS.map((r) => ({ ...r, data: r.data === null ? null : jsonbText(r.data), equippedAt: r.equippedAt !== null })),
+    cosmetics: Object.values(COSMETICS).map((c) => ({ id: c.id, name: c.name, type: c.type, source: c.source, data: jsonbText(c.data), flags: c.flags, createdById: COSMETIC_CREATORS[c.id] ?? null })),
+    cosmeticShopItems: SHOP_ITEMS.map((x) => ({ ...x, meta: jsonbText(x.meta) })),
   };
+}
+
+/** What Node writes on this fixture's misses, as the Go harness compares it. */
+function writeEntries() {
+  for (const key of T.cold) if (!T.coldRead.has(key)) throw new Error(`fixture ${T.fixture}: cold key ${key} never read`);
+  const out = {};
+  for (const [key, w] of [...T.writes.entries()].sort()) {
+    out[key] = { value: mark(w.value), packed: packMarked(mark(w.value)), ex: w.ex };
+  }
+  return out;
 }
 
 function redisEntries(dropKeys = []) {
@@ -1971,6 +2200,7 @@ function newTrace(name, spec) {
   T.replies = spec.replies ?? {};
   T.usedReplies = new Set();
   T.events = new Set(spec.events ?? []);
+  T.cold = new Set(spec.cold ?? []);
   T.usernames = new Set();
 }
 
@@ -1989,7 +2219,7 @@ function emitAsPosts() {
   for (const spec of AS_POSTS) {
     newTrace(spec.name, spec);
     const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
-    const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [] };
+    const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [], frameCacheNegative: FRAME_CACHE_NEGATIVE };
     const inputEnvelope = JSON.stringify(superjson.serialize(spec.input));
     let expect;
     if (spec.fallback) {
@@ -2001,7 +2231,7 @@ function emitAsPosts() {
     } else {
       const { value, cacheable } = runAsPosts({ ...spec, nodeFlags });
       checkReplies(spec);
-      expect = { envelope: superjson.serialize(value), cacheable };
+      expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
     }
     writeFixture(dir, spec.name, {
       name: spec.name,
@@ -2066,7 +2296,7 @@ function emitInfinite() {
   for (const spec of INFINITE) {
     newTrace(spec.name, spec);
     const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
-    const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [] };
+    const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [], frameCacheNegative: FRAME_CACHE_NEGATIVE };
     let expect;
     if (spec.fallback) {
       if (spec.viewer) T.packed.set(`${K.session}:${spec.viewer}`, SESSIONS[spec.viewer]);
@@ -2074,7 +2304,7 @@ function emitInfinite() {
     } else {
       const { value } = runInfinite({ ...spec, nodeFlags });
       checkReplies(spec);
-      expect = { envelope: superjson.serialize(value), cacheable: false };
+      expect = { envelope: superjson.serialize(value), cacheable: false, writes: writeEntries() };
     }
     // Every image the feed named is in the tables, so a row the hydrate's own filters drop (the tag
     // scope) is one feed-go must drop too, not one the fixture never held.
