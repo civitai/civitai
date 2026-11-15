@@ -1083,9 +1083,10 @@ jobs:
     runs-on: ubuntu-latest
     # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
     # On a full-ci dispatch whose PR run passed the component suite (`passed`), only shard 1
-    # runs, with geometry alone, exactly as `only: geometry` does.
+    # runs, with geometry alone, exactly as `only: geometry` does. On `only: component` that
+    # leaves nothing to run, so the job skips.
     needs: passed
-    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (inputs.only != 'component' || needs.passed.outputs.component != 'true') }}
     # ── `component` SHARDED ACROSS 3 RUNNERS; GEOMETRY ON SHARD 1 ──
     #
     # Only the component tests step shards; setup (checkout, install, Chromium) is paid again by
