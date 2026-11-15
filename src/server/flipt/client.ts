@@ -265,6 +265,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // written. DEFAULT-OFF. Global boolean, read at most once per 5s per process; also needs
   // FEED_GO_SHADOW_URL and FEED_GO_SHADOW_SAMPLE_RATE > 0. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW = 'feed-go-shadow',
+  // The same mirror for the public REST `GET /api/v1/images` (the query string, the headers, Node's
+  // JSON body), to feed-go's `/internal/shadow/api/v1/images`. Its own flag so the REST route is
+  // enabled separately from the gallery procedure. DEFAULT-OFF. Global boolean, read at most once
+  // per 5s per process; shares FEED_GO_SHADOW_URL and the rate / in-flight / per-second knobs with
+  // FEED_GO_SHADOW. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_V1_IMAGES = 'feed-go-shadow-v1-images',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the

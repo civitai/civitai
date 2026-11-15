@@ -344,3 +344,24 @@ func BenchmarkSerialize(b *testing.B) {
 		}
 	}
 }
+
+// Plain is JSON.stringify: a Date is its ISO string with no annotation, an undefined member is
+// omitted, an undefined array element is null, and there is no envelope.
+func TestPlainIsJSONStringify(t *testing.T) {
+	v := Object{
+		{Key: "createdAt", Val: time.Date(2024, 3, 1, 10, 0, 0, 123_000_000, time.UTC)},
+		{Key: "tags", Val: Undefined{}},
+		{Key: "list", Val: []any{int64(1), Undefined{}, nil}},
+		{Key: "meta", Val: nil},
+	}
+	got, err := Plain(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"createdAt":"2024-03-01T10:00:00.123Z","list":[1,null,null],"meta":null}` {
+		t.Fatalf("Plain = %s", got)
+	}
+	if _, err := Plain(Undefined{}); err == nil {
+		t.Fatal("an undefined root has no JSON form")
+	}
+}

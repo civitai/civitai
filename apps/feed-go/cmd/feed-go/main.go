@@ -1,5 +1,6 @@
 // Command feed-go serves `image.getImagesAsPostsInfinite` for the request shapes it has ported and
-// proxies everything else to the Node app. See apps/feed-go/DESIGN.md.
+// proxies everything else to the Node app, and shadow-compares that procedure and the REST
+// `GET /api/v1/images`. See apps/feed-go/DESIGN.md.
 package main
 
 import (
@@ -124,6 +125,18 @@ func run(log *slog.Logger) error {
 		tr.MaxIdleConnsPerHost = 16
 		deps.Feed = &feedsvc.Client{BaseURL: cfg.FeedServiceURL, HTTP: &http.Client{Transport: tr}}
 	}
+	// The REST /api/v1/images shadow shares the feed client, the replica, the caches and the addons.
+	v1 := &feed.V1Deps{
+		Feed:    deps.Feed,
+		Sources: sources,
+		Gallery: deps.Gallery,
+		Rows: func(ctx context.Context, q feed.ImagesQuery) ([]feed.RawImage, error) {
+			return feed.FetchRows(ctx, pool, deps.Cache, q.Build())
+		},
+		Addons:         deps.Addons.Addons,
+		ImageLocation:  cfg.ImageLocation,
+		NodeProduction: cfg.NodeProduction,
+	}
 	srv := &server.Server{
 		Resolver:       resolver,
 		Deps:           deps,
@@ -133,6 +146,7 @@ func run(log *slog.Logger) error {
 		Log:            log,
 		ShadowQueue:    make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
+		V1:             v1,
 	}
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)

@@ -18,6 +18,11 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
+import {
+  beginFeedGoShadowV1Images,
+  captureFeedGoShadowV1Images,
+  finishFeedGoShadow,
+} from '~/server/trpc/feed-go-shadow';
 import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -159,6 +164,16 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
   let endTimer: (() => void) | undefined;
 
   let releaseSlot: (() => void) | undefined;
+
+  // feed-go shadow (flag `feed-go-shadow-v1-images`, default off): a sampled request keeps a
+  // reference to the 200 body it writes, and after the handler its query string, the headers the
+  // answer depends on and that body are POSTed to feed-go's internal compare endpoint from
+  // `setImmediate`, never awaited. Never throws. See `~/server/trpc/feed-go-shadow`.
+  const shadow = beginFeedGoShadowV1Images(req);
+  const ok = (body: unknown) => {
+    if (shadow) captureFeedGoShadowV1Images(shadow, body);
+    return res.status(200).json(body);
+  };
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
@@ -234,13 +249,12 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
         '~/server/services/model.service'
       );
       // A taken-down model's images are withheld here from everyone, its owner included.
-      if (await isModelGalleryWithheld(data))
-        return res.status(200).json({ items: [], metadata: {} });
+      if (await isModelGalleryWithheld(data)) return ok({ items: [], metadata: {} });
       const heldLevel = await getHeldGalleryLevel(data);
       if (heldLevel !== undefined) {
         _browsingLevel = Flags.intersection(_browsingLevel, heldLevel);
         // The search reads 0 as its default level, not as none, so an empty intersection is an empty page.
-        if (!_browsingLevel) return res.status(200).json({ items: [], metadata: {} });
+        if (!_browsingLevel) return ok({ items: [], metadata: {} });
       }
     }
 
@@ -266,7 +280,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     }
     metadata.nextPage = getNextPage({ req, ...metadata });
 
-    res.status(200).json({
+    ok({
       items,
       metadata,
     });
@@ -341,6 +355,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // Release the heavy slot as soon as the handler resolves (synchronous
     // serialization — the actual pin cost — is done by now), not on socket close.
     releaseSlot?.();
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
   }
 }
 

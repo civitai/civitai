@@ -1,5 +1,5 @@
 // Package server is the HTTP surface: the public tRPC path for the one procedure, and the internal
-// shadow-compare endpoint.
+// shadow-compare endpoints (that procedure, and the public REST `GET /api/v1/images`).
 package server
 
 import (
@@ -25,6 +25,16 @@ import (
 // Procedure is the one tRPC path this service answers.
 const Procedure = "image.getImagesAsPostsInfinite"
 
+// Endpoint labels: every feed_go_* series carries `endpoint`, one of these two, so CPU per call and
+// parity read per endpoint (DESIGN.md §10).
+const (
+	EndpointAsPosts  = "as-posts"  // tRPC image.getImagesAsPostsInfinite
+	EndpointV1Images = "v1-images" // REST GET /api/v1/images
+)
+
+// V1ImagesPath is the REST route the v1-images shadow describes.
+const V1ImagesPath = "/api/v1/images"
+
 // verifiedBotHeader is VERIFIED_BOT_HEADER: a verified crawler is "authorized" where NSFW is viewable.
 const verifiedBotHeader = "x-civitai-verified-bot"
 
@@ -49,8 +59,13 @@ type Server struct {
 	// shadowStarts counts shadow samples admitted to the queue; a phase whose start and end readings
 	// differ overlapped another sample (phase CPU is then not attributed).
 	shadowStarts atomic.Uint64
-	// computeFn replaces compute in the shadow path (tests only; nil in production).
-	computeFn func(context.Context, *http.Request) (*computed, error)
+	// V1 serves the REST `/api/v1/images` shadow; nil = every such sample falls back.
+	V1 *feed.V1Deps
+
+	// computeFn and computeV1Fn replace compute / computeV1 in the shadow path (tests only; nil in
+	// production).
+	computeFn   func(context.Context, *http.Request) (*computed, error)
+	computeV1Fn func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -75,9 +90,9 @@ func (s *Server) startPhase() phaseClock {
 // endPhase records a phase's wall time always, and the process CPU delta over it only when the phase
 // was solo throughout: no other sample in flight at its start, none admitted before its end. Process
 // CPU is then this sample's own (plus background runtime/GC work and any scrape, DESIGN.md §10).
-func (s *Server) endPhase(p phaseClock, phase, outcome string) {
+func (s *Server) endPhase(p phaseClock, endpoint, phase, outcome string) {
 	wall := time.Since(p.wall).Seconds()
-	s.Metrics.ShadowPhase.WithLabelValues(phase, outcome).Observe(wall)
+	s.Metrics.ShadowPhase.WithLabelValues(endpoint, phase, outcome).Observe(wall)
 	if !p.solo || !p.cpuOK {
 		return
 	}
@@ -85,9 +100,9 @@ func (s *Server) endPhase(p phaseClock, phase, outcome string) {
 	if !ok || s.shadowStarts.Load() != p.starts || len(s.ShadowQueue) != 1 {
 		return
 	}
-	s.Metrics.ShadowPhaseCPU.WithLabelValues(phase, outcome).Add((cpu - p.cpu).Seconds())
-	s.Metrics.ShadowPhaseSolo.WithLabelValues(phase, outcome).Inc()
-	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(phase, outcome).Add(wall)
+	s.Metrics.ShadowPhaseCPU.WithLabelValues(endpoint, phase, outcome).Add((cpu - p.cpu).Seconds())
+	s.Metrics.ShadowPhaseSolo.WithLabelValues(endpoint, phase, outcome).Inc()
+	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(endpoint, phase, outcome).Add(wall)
 }
 
 // computed is one answer.
@@ -142,6 +157,43 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	return out, nil
 }
 
+// computeV1 answers a REST `/api/v1/images` request (handleImagesRequest), or returns a fallback/other
+// error. The body is plain JSON, as `res.json` writes it.
+func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, error) {
+	if s.V1 == nil {
+		return nil, fallback.New("v1-unconfigured")
+	}
+	if r.Method != http.MethodGet {
+		return nil, fallback.New("method")
+	}
+	in, err := feed.ParseV1(r.URL.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+	// getApiAuthSession(whenBanned: 'anonymous'): a bearer/API key falls back (Resolve), a banned
+	// session is no user at all.
+	user, err := s.Resolver.Resolve(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	var viewer *feed.Viewer
+	if user != nil && !user.Banned {
+		viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator}
+	}
+	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	body, err := feed.ServeV1(ctx, s.V1, feed.V1Request{
+		Input: in, Viewer: viewer, RegionRestricted: restricted, Host: r.Host, Path: r.URL.Path,
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload, err := superjson.Plain(body)
+	if err != nil {
+		return nil, err
+	}
+	return &computed{payload: payload}, nil
+}
+
 func countryOf(r *http.Request) string {
 	if v := r.Header.Get("x-isuk"); v == "true" || v == "1" {
 		return "GB"
@@ -175,8 +227,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		trpc.WriteResult(w, c.payload, c.ttl)
-		s.Metrics.Requests.WithLabelValues("serve", "served").Inc()
-		s.Metrics.Duration.WithLabelValues("serve", "served").Observe(time.Since(start).Seconds())
+		s.Metrics.Requests.WithLabelValues(EndpointAsPosts, "serve", "served").Inc()
+		s.Metrics.Duration.WithLabelValues(EndpointAsPosts, "serve", "served").Observe(time.Since(start).Seconds())
 		return
 	}
 	outcome := "fallback"
@@ -185,9 +237,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		outcome, reason = "error", "error"
 		s.Log.Error("feed compute failed; falling back", "err", err)
 	}
-	s.Metrics.Requests.WithLabelValues("serve", outcome).Inc()
-	s.Metrics.Fallbacks.WithLabelValues("serve", reason).Inc()
-	s.Metrics.Duration.WithLabelValues("serve", outcome).Observe(time.Since(start).Seconds())
+	s.Metrics.Requests.WithLabelValues(EndpointAsPosts, "serve", outcome).Inc()
+	s.Metrics.Fallbacks.WithLabelValues(EndpointAsPosts, "serve", reason).Inc()
+	s.Metrics.Duration.WithLabelValues(EndpointAsPosts, "serve", outcome).Observe(time.Since(start).Seconds())
 	if s.Fallback == nil {
 		trpc.WriteError(w, Procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
 		return
@@ -197,21 +249,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ShadowRequest is what the Node app posts after it has answered a sampled request.
 type ShadowRequest struct {
-	// Input is the raw `input` query parameter Node received.
+	// Input is the raw `input` query parameter Node received (tRPC), or the request's raw query string
+	// without the `?` (REST).
 	Input string `json:"input"`
+	// Path is the REST request's path (nextPage is built from it); unused for tRPC.
+	Path string `json:"path,omitempty"`
 	// Headers are the request headers the answer depends on: cookie, host, cf-ipcountry,
 	// cf-region-code, x-isuk, authorization (presence only matters), x-civitai-verified-bot.
 	Headers map[string]string `json:"headers"`
-	// Node is Node's superjson envelope for the response (`{json, meta}`).
+	// Node is Node's response: the superjson envelope (`{json, meta}`) for tRPC, the JSON body for REST.
 	Node json.RawMessage `json:"node"`
 }
 
 // maxShadowBody bounds a shadow request body (a response page can be large).
 const maxShadowBody = 32 << 20
 
-// ShadowHandler is the internal compare endpoint. It answers 202 at once and compares in the
-// background; a full queue drops the sample.
+// ShadowHandler is the internal compare endpoint for the tRPC procedure.
 func (s *Server) ShadowHandler(w http.ResponseWriter, r *http.Request) {
+	s.shadowHandler(w, r, EndpointAsPosts)
+}
+
+// ShadowV1Handler is the internal compare endpoint for REST `GET /api/v1/images`.
+func (s *Server) ShadowV1Handler(w http.ResponseWriter, r *http.Request) {
+	s.shadowHandler(w, r, EndpointV1Images)
+}
+
+// shadowHandler answers 202 at once and compares in the background; a full queue drops the sample.
+// Both endpoints share one queue, so the solo-phase CPU method (DESIGN.md §10.1) sees every sample.
+func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint string) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -221,7 +286,7 @@ func (s *Server) ShadowHandler(w http.ResponseWriter, r *http.Request) {
 	select {
 	case s.ShadowQueue <- struct{}{}:
 	default:
-		s.Metrics.ShadowDropped.Inc()
+		s.Metrics.ShadowDropped.WithLabelValues(endpoint).Inc()
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -229,26 +294,26 @@ func (s *Server) ShadowHandler(w http.ResponseWriter, r *http.Request) {
 	decode := s.startPhase()
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxShadowBody))
 	if err != nil {
-		s.endPhase(decode, "decode", "bad_request")
+		s.endPhase(decode, endpoint, "decode", "bad_request")
 		<-s.ShadowQueue
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	var req ShadowRequest
 	if err := json.Unmarshal(body, &req); err != nil || len(req.Node) == 0 {
-		s.endPhase(decode, "decode", "bad_request")
+		s.endPhase(decode, endpoint, "decode", "bad_request")
 		<-s.ShadowQueue
-		s.Metrics.ShadowResults.WithLabelValues("bad_request").Inc()
+		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	s.endPhase(decode, "decode", "ok")
+	s.endPhase(decode, endpoint, "decode", "ok")
 	w.WriteHeader(http.StatusAccepted)
 	go func() {
 		defer func() { <-s.ShadowQueue }()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		s.compare(ctx, req)
+		s.compare(ctx, endpoint, req)
 	}()
 }
 
@@ -268,49 +333,79 @@ func SyntheticRequest(ctx context.Context, req ShadowRequest) (*http.Request, er
 	return r, nil
 }
 
-func (s *Server) compare(ctx context.Context, req ShadowRequest) {
-	r, err := SyntheticRequest(ctx, req)
+// SyntheticV1Request rebuilds the REST request a v1-images sample describes: its path and raw query
+// string as Node received them, and the forwarded headers.
+func SyntheticV1Request(ctx context.Context, req ShadowRequest) (*http.Request, error) {
+	r, err := http.NewRequestWithContext(ctx, http.MethodGet, V1ImagesPath, nil)
 	if err != nil {
-		s.Metrics.ShadowResults.WithLabelValues("bad_request").Inc()
-		return
+		return nil, err
 	}
-	computeFn := s.compute
+	path := req.Path
+	if path == "" {
+		path = V1ImagesPath
+	}
+	r.URL = &url.URL{Path: path, RawQuery: req.Input}
+	r.RequestURI = ""
+	for k, v := range req.Headers {
+		r.Header.Set(k, v)
+	}
+	if h := req.Headers["host"]; h != "" {
+		r.Host = h
+	}
+	return r, nil
+}
+
+func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest) {
+	build, computeFn := SyntheticRequest, s.compute
+	compareFn, classify := shadow.Compare, shadow.Classify
 	if s.computeFn != nil {
 		computeFn = s.computeFn
+	}
+	if endpoint == EndpointV1Images {
+		build, computeFn = SyntheticV1Request, s.computeV1
+		compareFn, classify = shadow.CompareJSON, shadow.ClassifyJSON
+		if s.computeV1Fn != nil {
+			computeFn = s.computeV1Fn
+		}
+	}
+	r, err := build(ctx, req)
+	if err != nil {
+		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
+		return
 	}
 	start := time.Now()
 	phase := s.startPhase()
 	c, err := computeFn(ctx, r)
 	if err != nil {
 		if reason := fallback.Reason(err); reason != "" {
-			s.endPhase(phase, "compute", "fallback")
-			s.Metrics.Requests.WithLabelValues("shadow", "fallback").Inc()
-			s.Metrics.Fallbacks.WithLabelValues("shadow", reason).Inc()
-			s.Metrics.ShadowResults.WithLabelValues("unsupported").Inc()
-			s.Metrics.Duration.WithLabelValues("shadow", "fallback").Observe(time.Since(start).Seconds())
+			s.endPhase(phase, endpoint, "compute", "fallback")
+			s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "fallback").Inc()
+			s.Metrics.Fallbacks.WithLabelValues(endpoint, "shadow", reason).Inc()
+			s.Metrics.ShadowResults.WithLabelValues(endpoint, "unsupported").Inc()
+			s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "fallback").Observe(time.Since(start).Seconds())
 			return
 		}
-		s.endPhase(phase, "compute", "error")
-		s.Metrics.Requests.WithLabelValues("shadow", "error").Inc()
-		s.Metrics.ShadowResults.WithLabelValues("go_error").Inc()
-		s.Log.Warn("shadow compute failed", "err", err)
+		s.endPhase(phase, endpoint, "compute", "error")
+		s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "error").Inc()
+		s.Metrics.ShadowResults.WithLabelValues(endpoint, "go_error").Inc()
+		s.Log.Warn("shadow compute failed", "endpoint", endpoint, "err", err)
 		return
 	}
-	s.endPhase(phase, "compute", "served")
-	s.Metrics.Requests.WithLabelValues("shadow", "served").Inc()
-	s.Metrics.Duration.WithLabelValues("shadow", "served").Observe(time.Since(start).Seconds())
+	s.endPhase(phase, endpoint, "compute", "served")
+	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "served").Inc()
+	s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "served").Observe(time.Since(start).Seconds())
 	phase = s.startPhase()
-	report, err := shadow.Compare(c.payload, req.Node)
+	report, err := compareFn(c.payload, req.Node)
 	if err != nil {
-		s.endPhase(phase, "compare", "bad_request")
-		s.Metrics.ShadowResults.WithLabelValues("bad_request").Inc()
+		s.endPhase(phase, endpoint, "compare", "bad_request")
+		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
 		return
 	}
-	result := shadow.Classify(report, c.payload, req.Node)
-	s.endPhase(phase, "compare", "ok")
-	s.Metrics.ShadowResults.WithLabelValues(result).Inc()
+	result := classify(report, c.payload, req.Node)
+	s.endPhase(phase, endpoint, "compare", "ok")
+	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
 	for _, d := range report.Diffs {
-		s.Metrics.ShadowDiffs.WithLabelValues(d.Category, d.Kind).Inc()
+		s.Metrics.ShadowDiffs.WithLabelValues(endpoint, d.Category, d.Kind).Inc()
 	}
 	if result != "match" {
 		// Paths only (no values): enough to find the field, and never user data in logs.
@@ -318,6 +413,6 @@ func (s *Server) compare(ctx context.Context, req ShadowRequest) {
 		for _, d := range report.Diffs {
 			paths = append(paths, d.Kind+":"+d.Path)
 		}
-		s.Log.Info("shadow diff", "result", result, "paths", paths, "truncated", report.Truncated)
+		s.Log.Info("shadow diff", "endpoint", endpoint, "result", result, "paths", paths, "truncated", report.Truncated)
 	}
 }

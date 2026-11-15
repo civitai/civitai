@@ -83,6 +83,22 @@ type writer struct {
 	// joined into a string by note() and the error paths, which are rare.
 	path  []segment
 	notes []annotation
+	// plain writes JSON.stringify's output (no envelope, no annotations): see Plain.
+	plain bool
+}
+
+// Plain returns v as JSON.stringify writes it, for a plain-JSON response (the public REST endpoints
+// answer with `res.json`, not superjson): Dates as their ISO string, undefined object members omitted,
+// undefined array elements as null. No envelope and no annotations.
+func Plain(v any) ([]byte, error) {
+	w := &writer{buf: make([]byte, 0, initialBufSize), plain: true}
+	if _, isUndef := v.(Undefined); isUndef {
+		return nil, fmt.Errorf("superjson: undefined has no JSON form")
+	}
+	if err := w.value(v, false); err != nil {
+		return nil, err
+	}
+	return w.buf, nil
 }
 
 // Serialize returns the superjson envelope for v as JSON bytes: `{"json":…}` or
@@ -158,6 +174,9 @@ func (w *writer) joinPath() string {
 }
 
 func (w *writer) note(typ string) {
+	if w.plain {
+		return
+	}
 	w.notes = append(w.notes, annotation{path: w.joinPath(), typ: typ})
 }
 
