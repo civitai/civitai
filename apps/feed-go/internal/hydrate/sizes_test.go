@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-// Declared lengths the input cannot hold are refused before the decoder sizes anything from them.
-// Before checkSizes, the first case (an array32 header claiming 2^32-1 elements) made Unpack allocate
-// 64 GiB and the process die of a fatal out-of-memory error, which no recover can catch.
+// An array32 header claiming 2^32-1 elements must be refused, not allocated.
 func TestUnpackRefusesLengthsTheInputCannotHold(t *testing.T) {
 	for name, b := range map[string][]byte{
 		"array32 of 2^32-1":       {0xdd, 0xff, 0xff, 0xff, 0xff},

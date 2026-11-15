@@ -100,7 +100,7 @@ type Verifier struct {
 	Now         func() time.Time
 	// MinRefetch bounds how often an unknown `kid` may trigger a JWKS refetch.
 	MinRefetch time.Duration
-	// FetchTimeout bounds one JWKS fetch (0 = JWKS_TIMEOUT_MS, 2.5 s).
+	// FetchTimeout bounds one JWKS fetch (0 = the JWKS_TIMEOUT_MS default).
 	FetchTimeout time.Duration
 	// RefreshInterval is how often Run refetches the key set (0 = DefaultJWKSRefresh), jittered by
 	// ±10% so replicas do not refetch in step. RetryMin is the first retry delay after a failed
@@ -422,7 +422,7 @@ func ParseJWKS(keys []jwk) map[string]*ecdsa.PublicKey {
 }
 
 // p256PublicKey builds a P-256 public key from a JWK's big-endian x and y coordinates, refusing a
-// point that is not on the curve. A coordinate is read as an integer, as before: a shorter one is
+// point that is not on the curve. A coordinate is read as an integer: a shorter one is
 // left-padded, and leading zero bytes beyond 32 are dropped.
 func p256PublicKey(x, y []byte) (*ecdsa.PublicKey, error) {
 	const size = 32

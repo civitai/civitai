@@ -64,13 +64,13 @@ type Config struct {
 	// ModerationAccountID is CIVITAI_MODERATION_USER_ID: the shared moderation account, refused as a
 	// session (0 when unset or not a positive integer; the reserved username is refused regardless).
 	ModerationAccountID int
-	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS (default 6000): the deadline of one computation, served
+	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
 	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
 	RequestBudget time.Duration
-	// CompletionConcurrency is FEED_GO_COMPLETION_CONCURRENCY (default 4): the lazy-post-images
-	// completion fetches one request runs at once. 4 is sized for shadow load; serving may want more.
+	// CompletionConcurrency is FEED_GO_COMPLETION_CONCURRENCY: the lazy-post-images completion
+	// fetches one request runs at once. The default is sized for shadow load; serving may want more.
 	CompletionConcurrency int
-	// JWKSRefresh is FEED_GO_JWKS_REFRESH_MS (default 600000): how often the signing keys are
+	// JWKSRefresh is FEED_GO_JWKS_REFRESH_MS: how often the signing keys are
 	// refetched, so a key the auth hub removed stops verifying without a restart.
 	JWKSRefresh time.Duration
 	// JWKSMaxStaleness is FEED_GO_JWKS_MAX_STALENESS_MS (default 3 × JWKSRefresh): how long the last
