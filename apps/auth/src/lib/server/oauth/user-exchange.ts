@@ -191,7 +191,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     if (!app) return refuse('invalid_grant', 'app not found');
     if (app.accessMode === 'disabled') return refuse('unauthorized_client', 'app disabled');
 
-    // 9. Scope: what the token holds, within the resource's cap and the app's current ceiling, narrowed
+    // 8. Scope: what the token holds, within the resource's cap and the app's current ceiling, narrowed
     // to a request that names only scopes within that.
     const ceiling = exchangeScopeCeiling(subject.tokenScope, resource, app);
     let scope = ceiling;
@@ -204,7 +204,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     if (scope === 0) return refuse('invalid_scope', 'empty scope');
     ctx.scope = scopeNames(scope);
 
-    // 8. The user, against the final scope.
+    // 9. The user, against the final scope.
     const userProblem = await userRefusal(subject.userId, scope, app);
     if (userProblem) return refuse(userProblem.refusal, userProblem.reason);
 
