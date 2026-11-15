@@ -4,6 +4,10 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
+import type * as ImageHashModule from '~/components/ImageHash/ImageHash';
+import type * as EdgeMediaModule from '~/components/EdgeMedia/EdgeMedia';
+import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
+import type * as ImagesProviderModule from '~/components/Image/Providers/ImagesProvider';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import type { EmbedImage } from '~/components/CivitaiEmbed/CivitaiEmbedProvider';
@@ -26,19 +30,19 @@ vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
     }),
 }));
 vi.mock('~/components/Image/Providers/ImagesProvider', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
+  ...(await importOriginal<typeof ImagesProviderModule>()),
   useImagesContext: () => ({ getImages: () => [] }),
 }));
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
+  ...(await importOriginal<typeof RoutedDialogLinkModule>()),
   RoutedDialogLink: ({ children }: { children: React.ReactNode }) => <a href="#">{children}</a>,
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
+  ...(await importOriginal<typeof EdgeMediaModule>()),
   EdgeMedia2: ({ src }: { src: string }) => <div data-testid="edge-media" data-src={src} />,
 }));
 vi.mock('~/components/ImageHash/ImageHash', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
+  ...(await importOriginal<typeof ImageHashModule>()),
   MediaHash: () => <div data-testid="media-hash" />,
 }));
 

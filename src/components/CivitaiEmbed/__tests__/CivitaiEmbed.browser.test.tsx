@@ -9,6 +9,8 @@ import type * as TrpcModule from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
 import type * as AddonsModule from '~/providers/BrowsingSettingsAddonsProvider';
+import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
+import type * as EdgeMediaModule from '~/components/EdgeMedia/EdgeMedia';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { NsfwLevel } from '~/server/common/enums';
@@ -139,7 +141,8 @@ vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   ImagesProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useImagesContext: () => ({ getImages: () => [] }),
 }));
-vi.mock('~/components/Dialog/RoutedDialogLink', () => ({
+vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
+  ...(await importOriginal<typeof RoutedDialogLinkModule>()),
   RoutedDialogLink: ({
     children,
     state,
@@ -152,7 +155,8 @@ vi.mock('~/components/Dialog/RoutedDialogLink', () => ({
     </a>
   ),
 }));
-vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
+vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
+  ...(await importOriginal<typeof EdgeMediaModule>()),
   EdgeMedia2: ({
     src,
     type,
@@ -213,7 +217,9 @@ vi.mock('~/components/ImageGuard/ImageGuard2', async () => {
     const level = useBrowsingLevelDebounced();
     return children(Flags.intersects(image.nsfwLevel, level));
   }
-  ImageGuard2.BlurToggle = () => null;
+  ImageGuard2.BlurToggle = function BlurToggle() {
+    return null;
+  };
   return { ImageGuard2 };
 });
 
