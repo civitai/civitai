@@ -182,6 +182,9 @@ function validClaims(over: Record<string, unknown> = {}) {
     scopes: ['ai:write:budgeted'],
     buzzBudget: 50,
     maxBrowsingLevel: sfwBrowsingLevelsFlag,
+    // A viewer whose own level allows everything, so the domain ceiling decides; the
+    // viewer-level describe below overrides it.
+    viewerBrowsingLevel: 1 | 2 | 4 | 8 | 16,
     ...over,
   };
 }
@@ -443,5 +446,101 @@ describe('CONTROL: the same workflow, mature content allowed', () => {
       { url: SECRET, nsfwLevel: 'r' },
       { url: OK_B, nsfwLevel: 'pg13' },
     ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 The output ceiling is the VIEWER's level (#8786): the domain ceiling intersected
+// with the token's `viewerBrowsingLevel`, PG without one. Domain PG|PG13|R (7) on a
+// workflow that allows mature content, so only the ceiling decides. Outputs pg (1),
+// r (4), pg13 (2); viewers PG (1) and PG+R (5), pairwise distinct. A site that passed
+// the domain ceiling would hand over all three; one that ignored the domain, nothing new.
+describe("🔴 every read and publish judges outputs at the viewer's own level", () => {
+  const DOMAIN_TO_R = 1 | 2 | 4;
+  const VIEWERS = [
+    [
+      'a PG viewer',
+      { viewerBrowsingLevel: 1 },
+      [
+        { url: OK_A, nsfwLevel: 'pg' },
+        { restricted: true, reason: 'ceiling' },
+        { restricted: true, reason: 'ceiling' },
+      ],
+    ],
+    [
+      'a token without a viewer level (PG)',
+      { viewerBrowsingLevel: undefined },
+      [
+        { url: OK_A, nsfwLevel: 'pg' },
+        { restricted: true, reason: 'ceiling' },
+        { restricted: true, reason: 'ceiling' },
+      ],
+    ],
+    [
+      'a PG+R viewer',
+      { viewerBrowsingLevel: 1 | 4 },
+      [
+        { url: OK_A, nsfwLevel: 'pg' },
+        { url: SECRET, nsfwLevel: 'r' },
+        { restricted: true, reason: 'ceiling' },
+      ],
+    ],
+  ] as const;
+
+  describe.each(VIEWERS)('%s, domain ceiling up to R', (_label, viewer, expected) => {
+    beforeEach(() => {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ maxBrowsingLevel: DOMAIN_TO_R, ...viewer })
+      );
+      mockGetWorkflow.mockResolvedValue(restrictedWorkflow({ allowMatureContent: true }));
+      mockQueryWorkflows.mockResolvedValue({
+        items: [restrictedWorkflow({ allowMatureContent: true })],
+        nextCursor: undefined,
+      });
+    });
+    const urls = expected.flatMap((o) => ('url' in o ? [o.url] : []));
+
+    it('pollWorkflow and cancelWorkflow', async () => {
+      for (const procedure of ['pollWorkflow', 'cancelWorkflow'] as const) {
+        const { snapshot } = await READS[procedure]();
+        expect(snapshot.outputs).toStrictEqual(expected);
+        expect(snapshot.imageUrls).toStrictEqual(urls);
+      }
+    });
+
+    it('queryAppWorkflows and cancelAppWorkflow', async () => {
+      const listed = (await READS.queryAppWorkflows()).workflows[0];
+      const canceled = (await READS.cancelAppWorkflow()).workflow;
+      for (const workflow of [listed, canceled]) {
+        expect(workflow.outputs).toStrictEqual(expected);
+        expect(workflow.images.map((i) => i.url)).toStrictEqual(urls);
+      }
+    });
+
+    it('publishGenerationOutputs fetches exactly the outputs the viewer may see', async () => {
+      await caller({ id: VIEWER }).publishGenerationOutputs({
+        blockToken: 'tok',
+        workflowId: OWN_ID,
+        imageIndexes: [0],
+      });
+      for (const position of [1, 2]) {
+        const call = caller({ id: VIEWER }).publishGenerationOutputs({
+          blockToken: 'tok',
+          workflowId: OWN_ID,
+          imageIndexes: [position],
+        });
+        if ('url' in expected[position]) await call;
+        else
+          await expect(call).rejects.toMatchObject({
+            code: 'BAD_REQUEST',
+            message: `output ${position} is restricted`,
+          });
+      }
+      expect(
+        mockPersistBlockWorkflowOutputImage.mock.calls.map(
+          (c) => (c[0] as { imageUrl: string }).imageUrl
+        )
+      ).toStrictEqual(urls);
+    });
   });
 });

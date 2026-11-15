@@ -1205,7 +1205,11 @@ describe('blocks.submitWorkflow — a restricted output on the reply', () => {
     ['a mature app', 1 | 2 | 4 | 8 | 16, 'pool'],
   ] as const)('%s is never handed the restricted url', async (_label, maxBrowsingLevel, reason) => {
     mockVerifyBlockToken.mockResolvedValue(
-      validClaims({ buzzBudget: 100, ...(maxBrowsingLevel ? { maxBrowsingLevel } : {}) })
+      validClaims({
+        buzzBudget: 100,
+        // The viewer's own level matches the domain, so the domain ceiling decides.
+        ...(maxBrowsingLevel ? { maxBrowsingLevel, viewerBrowsingLevel: maxBrowsingLevel } : {}),
+      })
     );
     happyVersionLookup();
     happyUser();

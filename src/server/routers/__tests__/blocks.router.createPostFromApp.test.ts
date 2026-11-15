@@ -554,15 +554,22 @@ describe('write trust', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 🔴 F5 — the post actor's OUTPUT CEILING is the token's own claim, at BOTH actor sites.
+// 🔴 F5 — the post actor's OUTPUT CEILING comes from the token, at BOTH actor sites.
 // It decides which output positions are restricted; an all-levels constant there would
-// type-check and hand a post every restricted output. Levels 3 and 7 are pairwise
-// distinct and distinct from the all-levels flag (31), so a constant cannot pass both.
-describe('post actor outputCeiling is the token ceiling', () => {
-  it.each([3, 7])(
-    'previewPostFromApp and createPostFromApp pass maxBrowsingLevel %i',
-    async (level) => {
-      mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ maxBrowsingLevel: level }));
+// type-check and hand a post every restricted output. It is the VIEWER's level (#8786):
+// the domain ceiling intersected with `viewerBrowsingLevel`, PG without one. Domain 7
+// (to R) and the viewer levels 1, 13 and none give 1, 5 and 1: pairwise distinct from
+// the domain (7), the viewer (13) and the all-levels flag (31), so a site that passed
+// the domain ceiling, the raw viewer level or a constant fails.
+describe('post actor outputCeiling is the viewer-clamped token ceiling', () => {
+  it.each([
+    ['a PG viewer', { maxBrowsingLevel: 7, viewerBrowsingLevel: 1 }, 1],
+    ['a PG+R+X viewer on a domain to R', { maxBrowsingLevel: 7, viewerBrowsingLevel: 13 }, 5],
+    ['a token without a viewer level', { maxBrowsingLevel: 7 }, 1],
+  ] as const)(
+    '%s: previewPostFromApp and createPostFromApp pass maxBrowsingLevel %#',
+    async (_label, over, level) => {
+      mockAuthorizeBlockBridgeToken.mockResolvedValue(claims(over));
       await caller().previewPostFromApp(INPUT);
       await caller().createPostFromApp(INPUT);
       expect(mockPreviewBlockPost).toHaveBeenCalledWith(

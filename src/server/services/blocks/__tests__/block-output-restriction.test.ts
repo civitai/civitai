@@ -22,10 +22,19 @@ import {
  * serialised reply, so a url leaking through any field fails the test.
  */
 
+// A viewer whose own browsing level allows every level, so the token's domain ceiling
+// alone decides (the ceiling is the domain ceiling intersected with the viewer's level).
+const ANY_VIEWER = 1 | 2 | 4 | 8 | 16;
 // An SFW app token (green/blue host): PG | PG13.
-const SFW = blockOutputCeilingFromClaims({ maxBrowsingLevel: 1 | 2 });
+const SFW = blockOutputCeilingFromClaims({
+  maxBrowsingLevel: 1 | 2,
+  viewerBrowsingLevel: ANY_VIEWER,
+});
 // A mature app token (red host): PG through XXX.
-const MATURE = blockOutputCeilingFromClaims({ maxBrowsingLevel: 1 | 2 | 4 | 8 | 16 });
+const MATURE = blockOutputCeilingFromClaims({
+  maxBrowsingLevel: 1 | 2 | 4 | 8 | 16,
+  viewerBrowsingLevel: ANY_VIEWER,
+});
 
 function image(id: string, nsfwLevel: string | null, over: Record<string, unknown> = {}) {
   return {
@@ -847,7 +856,10 @@ describe('classifyBlockOutput', () => {
     [
       'a ceiling short of XXX',
       {},
-      blockOutputCeilingFromClaims({ maxBrowsingLevel: 1 | 2 | 4 | 8 }),
+      blockOutputCeilingFromClaims({
+        maxBrowsingLevel: 1 | 2 | 4 | 8,
+        viewerBrowsingLevel: ANY_VIEWER,
+      }),
     ],
     ['allowMatureContent false', { allowMatureContent: false }, MATURE],
     ['an nsfwLevel cap below XXX', { nsfwLevel: 'pg13' }, MATURE],
@@ -912,7 +924,10 @@ describe('classifyBlockOutput', () => {
   });
 
   it('restricts above the token ceiling even when the workflow allows mature content', () => {
-    const rOnly = blockOutputCeilingFromClaims({ maxBrowsingLevel: 1 | 2 | 4 });
+    const rOnly = blockOutputCeilingFromClaims({
+      maxBrowsingLevel: 1 | 2 | 4,
+      viewerBrowsingLevel: ANY_VIEWER,
+    });
     expect(classifyBlockOutput(media('x'), { allowMatureContent: true }, rOnly)).toStrictEqual({
       restricted: true,
       reason: 'ceiling',
@@ -923,10 +938,77 @@ describe('classifyBlockOutput', () => {
     });
   });
 
-  it('fails closed to SFW for a token with no numeric ceiling', () => {
-    expect(blockOutputCeilingFromClaims({})).toStrictEqual({ maxBrowsingLevel: 3 });
-    expect(blockOutputCeilingFromClaims({ maxBrowsingLevel: Number.NaN })).toStrictEqual({
-      maxBrowsingLevel: 3,
+  it('fails closed to PG for a token with no numeric ceiling', () => {
+    expect(blockOutputCeilingFromClaims({})).toStrictEqual({ maxBrowsingLevel: 1 });
+    expect(
+      blockOutputCeilingFromClaims({
+        maxBrowsingLevel: Number.NaN,
+        viewerBrowsingLevel: ANY_VIEWER,
+      })
+    ).toStrictEqual({ maxBrowsingLevel: 3 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 The output ceiling is the VIEWER's level, as #8786 clamps the gated-image read:
+// the token's domain ceiling intersected with its signed `viewerBrowsingLevel`. The
+// levels are pairwise distinct: domain PG|PG13|R (7), a PG viewer (1), a PG+R viewer
+// that skips PG13 (5), and a PG+R+X viewer (13), whose intersection with the domain (5)
+// is neither the domain nor the viewer. A site that passes the domain ceiling alone
+// gives 7; one that passes the viewer's level alone gives 13.
+describe("🔴 the output ceiling is clamped to the viewer's own browsing level", () => {
+  const DOMAIN_TO_R = 1 | 2 | 4;
+  const r = { id: 'vr', type: 'image', url: 'https://cdn/vr.png', nsfwLevel: 'r' };
+  const pg13 = { id: 'vp', type: 'image', url: 'https://cdn/vp.png', nsfwLevel: 'pg13' };
+  const facts = { allowMatureContent: true };
+
+  it('a PG viewer on a domain ceiling up to R: an R output is restricted ceiling', () => {
+    const ceiling = blockOutputCeilingFromClaims({
+      maxBrowsingLevel: DOMAIN_TO_R,
+      viewerBrowsingLevel: 1,
+    });
+    expect(ceiling).toStrictEqual({ maxBrowsingLevel: 1 });
+    expect(classifyBlockOutput(r, facts, ceiling)).toStrictEqual({
+      restricted: true,
+      reason: 'ceiling',
+    });
+  });
+
+  it('the same R output, the viewer at PG+R: url; their PG13 output is restricted', () => {
+    const ceiling = blockOutputCeilingFromClaims({
+      maxBrowsingLevel: DOMAIN_TO_R,
+      viewerBrowsingLevel: 1 | 4,
+    });
+    expect(ceiling).toStrictEqual({ maxBrowsingLevel: 5 });
+    expect(classifyBlockOutput(r, facts, ceiling)).toStrictEqual({
+      url: 'https://cdn/vr.png',
+      nsfwLevel: 'r',
+    });
+    expect(classifyBlockOutput(pg13, facts, ceiling)).toStrictEqual({
+      restricted: true,
+      reason: 'ceiling',
+    });
+  });
+
+  it('a viewer level wider than the domain is cut to the domain: 13 on 7 is 5', () => {
+    expect(
+      blockOutputCeilingFromClaims({
+        maxBrowsingLevel: DOMAIN_TO_R,
+        viewerBrowsingLevel: 1 | 4 | 8,
+      })
+    ).toStrictEqual({ maxBrowsingLevel: 5 });
+  });
+
+  it('a token without a viewer level reads PG', () => {
+    const ceiling = blockOutputCeilingFromClaims({ maxBrowsingLevel: DOMAIN_TO_R });
+    expect(ceiling).toStrictEqual({ maxBrowsingLevel: 1 });
+    expect(classifyBlockOutput(r, facts, ceiling)).toStrictEqual({
+      restricted: true,
+      reason: 'ceiling',
+    });
+    expect(classifyBlockOutput(pg13, facts, ceiling)).toStrictEqual({
+      restricted: true,
+      reason: 'ceiling',
     });
   });
 });

@@ -205,3 +205,24 @@ describe('blocks.persistGenerationSource — bounds that hold for moderators', (
     expect(redisMock.redis.incrBy.mock.calls.filter((c) => c[0] === key)).toHaveLength(2);
   });
 });
+
+// 🔴 The persist ceiling is the VIEWER's level (#8786), the same as every other site:
+// the domain ceiling intersected with `viewerBrowsingLevel`, PG without one. Levels are
+// pairwise distinct (domain 7, viewers 1 and 13, results 1 and 5), so a site that passed
+// the domain ceiling (7) or the raw viewer level (13) fails.
+describe('blocks.persistGenerationSource — the output ceiling is the viewer level', () => {
+  it.each([
+    [{ maxBrowsingLevel: 7, viewerBrowsingLevel: 1 }, 1],
+    [{ maxBrowsingLevel: 7, viewerBrowsingLevel: 13 }, 5],
+    [{ maxBrowsingLevel: 7 }, 1],
+  ] as const)('claims %o pass ceiling %i', async (over, level) => {
+    mockAuthorizeBlockBridgeToken.mockImplementationOnce(async () => ({
+      ...claims(MODERATOR_ID),
+      ...over,
+    }));
+    await expect(call()).resolves.toEqual(RESULT);
+    expect(mockPersistSource).toHaveBeenCalledWith(
+      expect.objectContaining({ ceiling: { maxBrowsingLevel: level } })
+    );
+  });
+});
