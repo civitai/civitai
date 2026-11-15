@@ -4,10 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
 func TestParseInputSuperjson(t *testing.T) {
@@ -68,5 +74,81 @@ func TestWriteErrorShape(t *testing.T) {
 	want := `{"error":{"json":{"message":"bad","code":-32600,"data":{"code":"BAD_REQUEST","httpStatus":400,"path":"image.getImagesAsPostsInfinite"}}}}`
 	if got := rec.Body.String(); got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// A pooled payload released right after WriteResult (what the server does) is never read again: each
+// response, read back after every owner has released and the pool has been reused, is its own. One
+// run writes to recorders, the other through a real net/http server (whose ResponseWriter is what must
+// not keep the slice). Both run under -race in CI.
+func TestWriteResultThenReleaseConcurrent(t *testing.T) {
+	payload := func(n int) superjson.Object {
+		return superjson.Object{{Key: "n", Val: n}, {Key: "pad", Val: strings.Repeat("p", (n*53)%4096)}}
+	}
+	want := func(n int) string {
+		return `{"result":{"data":{"json":{"n":` + strconv.Itoa(n) + `,"pad":"` + strings.Repeat("p", (n*53)%4096) + `"}}}}`
+	}
+	write := func(w http.ResponseWriter, n int) {
+		buf, err := superjson.SerializeBuffer(payload(n))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		WriteResult(w, buf.Bytes(), nil)
+		buf.Release()
+	}
+
+	const owners = 200
+	recs := make([]*httptest.ResponseRecorder, owners)
+	var wg sync.WaitGroup
+	for n := range owners {
+		recs[n] = httptest.NewRecorder()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			write(recs[n], n)
+		}()
+	}
+	wg.Wait()
+	for n, rec := range recs {
+		if got := rec.Body.String(); got != want(n) {
+			t.Fatalf("recorder %d after release: %.80s…", n, got)
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
+		write(w, n)
+	}))
+	defer srv.Close()
+	bodies := make([]string, owners)
+	errs := make([]error, owners)
+	for n := range owners {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/?n="+strconv.Itoa(n), nil)
+			if err != nil {
+				errs[n] = err
+				return
+			}
+			resp, err := srv.Client().Do(req)
+			if err != nil {
+				errs[n] = err
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+			b, err := io.ReadAll(resp.Body)
+			bodies[n], errs[n] = string(b), err
+		}()
+	}
+	wg.Wait()
+	for n := range owners {
+		if errs[n] != nil {
+			t.Fatalf("request %d: %v", n, errs[n])
+		}
+		if bodies[n] != want(n) {
+			t.Fatalf("response %d: %.80s…", n, bodies[n])
+		}
 	}
 }

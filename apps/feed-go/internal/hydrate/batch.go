@@ -1,0 +1,136 @@
+package hydrate
+
+import (
+	"context"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+// Batch collects the cache reads of one dependency stage and sends them in ONE Pipelined call per
+// client, instead of one per lookup. A cluster client splits a pipeline per shard node, starting a
+// goroutine and paying a round trip on each, so every Pipelined call a page saves is that cost once
+// per shard.
+//
+// Use: queue every read (PackedReader.Queue, Sources.queueMetrics), call Exec once, then read each
+// handle. A handle is read by one goroutine; distinct handles may be read concurrently (each owns its
+// commands, and Exec has returned before any is read).
+type Batch struct {
+	groups []*batchGroup
+}
+
+// batchGroup is the commands of one client, queued in order.
+type batchGroup struct {
+	client redis.UniversalClient
+	queue  []func(context.Context, redis.Pipeliner)
+}
+
+// NewBatch returns an empty batch.
+func NewBatch() *Batch { return &Batch{} }
+
+// add queues fn's commands on client's pipeline.
+func (b *Batch) add(client redis.UniversalClient, fn func(context.Context, redis.Pipeliner)) {
+	for _, g := range b.groups {
+		if g.client == client {
+			g.queue = append(g.queue, fn)
+			return
+		}
+	}
+	b.groups = append(b.groups, &batchGroup{client: client, queue: []func(context.Context, redis.Pipeliner){fn}})
+}
+
+// Exec sends the queued commands, one Pipelined call per client; a batch with nothing queued sends
+// nothing. The pipeline's own error is not inspected: every handle reads its own commands' errors (a
+// command that failed, redis.Nil included, is a miss or a read failure as that lookup defines it), so
+// a failure on one shard never masks another lookup's good answers.
+func (b *Batch) Exec(ctx context.Context) {
+	for _, g := range b.groups {
+		_, _ = g.client.Pipelined(ctx, func(p redis.Pipeliner) error {
+			for _, fn := range g.queue {
+				fn(ctx, p)
+			}
+			return nil
+		})
+	}
+}
+
+// PackedRead is one queued PackedReader lookup; Entries decodes its answer after Exec.
+type PackedRead struct {
+	p    *PackedReader
+	ids  []int
+	ttl  time.Duration
+	cmds []*redis.StringCmd
+}
+
+// Queue adds the `${key}:${id}` GETs of ids to b, with Get's semantics (see Get). Nothing is queued for
+// no ids or no client: every id is then a miss.
+func (p *PackedReader) Queue(b *Batch, key string, ids []int, ttl time.Duration) *PackedRead {
+	r := &PackedRead{p: p, ids: ids, ttl: ttl}
+	if len(ids) == 0 || p.Redis == nil {
+		return r
+	}
+	r.cmds = make([]*redis.StringCmd, len(ids))
+	b.add(p.Redis, func(ctx context.Context, pl redis.Pipeliner) {
+		for i, id := range ids {
+			r.cmds[i] = pl.Get(ctx, p.key(key, id))
+		}
+	})
+	return r
+}
+
+// Entries decodes the lookup's answer by id, after the batch's Exec (see Get).
+func (r *PackedRead) Entries() map[int]Entry {
+	out := make(map[int]Entry, len(r.ids))
+	if len(r.cmds) == 0 {
+		return out
+	}
+	now := time.Now()
+	if r.p.Now != nil {
+		now = r.p.Now()
+	}
+	for i, cmd := range r.cmds {
+		if e, ok := decodeEntry(cmd, r.ttl, now); ok {
+			out[r.ids[i]] = e
+		}
+	}
+	return out
+}
+
+// metricsRead is one queued ImageMetrics lookup: the HGETALL of each id's metric hash.
+type metricsRead struct {
+	ids  []int
+	cmds []*redis.MapStringStringCmd
+}
+
+// queueMetrics adds ImageMetrics' HGETALLs of (unique) ids to b, on s.Cache.
+func (s *Sources) queueMetrics(b *Batch, ids []int) *metricsRead {
+	r := &metricsRead{ids: ids}
+	if len(ids) == 0 {
+		return r
+	}
+	r.cmds = make([]*redis.MapStringStringCmd, len(ids))
+	b.add(s.Cache, func(ctx context.Context, p redis.Pipeliner) {
+		for i, id := range ids {
+			r.cmds[i] = p.HGetAll(ctx, metricHashKey(id))
+		}
+	})
+	return r
+}
+
+// result is ImageMetrics' answer after Exec. Any command error is a read failure: the first one in
+// command order names it, as the separate pipeline's first-command error did (an HGETALL answers an
+// absent key with an empty hash, never redis.Nil, so every error here is a real failure).
+func (r *metricsRead) result() (map[int]Metrics, error) {
+	if len(r.ids) == 0 {
+		return map[int]Metrics{}, nil
+	}
+	hashes := make([]map[string]string, len(r.cmds))
+	for i, cmd := range r.cmds {
+		hash, err := cmd.Result()
+		if err != nil {
+			return nil, metricsReadFailed(err)
+		}
+		hashes[i] = hash
+	}
+	return MetricsFromHashes(r.ids, hashes)
+}

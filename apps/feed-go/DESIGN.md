@@ -51,7 +51,9 @@ keyset, sent to clients as `feed:<a>:<b>`. With the flag off, every page is the 
    - hydrates in parallel from per-id Redis caches (msgpack): creator basic data, creator cosmetics,
      profile pictures, image frame cosmetics, event decorations, video thumbnails, tag ids, metric
      counts (watcher-fed Redis hashes in front of ClickHouse), and the viewer's own reactions
-     (Postgres); Model3D link visibility;
+     (Postgres); Model3D link visibility. The cache reads go out in one Redis pipeline per
+     dependency stage (`hydrate.Sources.Page`): every per-id key and metric hash at once, then the
+     cosmetic records both cosmetic joins need; the Postgres miss reads run after it, in parallel;
    - drops, for anyone but a moderator, images of unpublished / scheduled posts that are not the
      viewer's own.
 4. **Posts.** With `gallery-lazy-post-images` on (production), each post the page holds fewer images

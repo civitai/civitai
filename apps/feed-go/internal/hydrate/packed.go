@@ -126,53 +126,52 @@ type PackedReader struct {
 // an undecodable value, or a redis failure — redis errors fail open to the database like the Node path).
 // ttl > 0 marks entries whose `cachedAt` is older than ttl as Stale; they are still returned (served
 // stale, as the Node path does when another process holds the refresh lock).
+//
+// Get is one pipeline of its own; a page's hydration queues all of its lookups on one Batch instead
+// (Queue), with the same per-entry semantics (decodeEntry).
 func (p *PackedReader) Get(ctx context.Context, key string, ids []int, ttl time.Duration) map[int]Entry {
-	out := make(map[int]Entry, len(ids))
-	if len(ids) == 0 || p.Redis == nil {
-		return out
+	b := NewBatch()
+	r := p.Queue(b, key, ids, ttl)
+	b.Exec(ctx)
+	return r.Entries()
+}
+
+// key is the Redis key of one id's entry.
+func (p *PackedReader) key(key string, id int) string {
+	return p.Prefix + key + ":" + strconv.Itoa(id)
+}
+
+// decodeEntry is one GET's answer as an Entry; ok false is a miss: the command failed (redis.Nil for
+// an absent key, or a transport failure), the value is empty, undecodable or not a map, or it is a
+// `{debounce: true}` marker. A `{notFound: true}` marker is an entry with NotFound set; any other value
+// is data, Stale when ttl > 0 and its `cachedAt` is older than ttl before now. `cachedAt` is removed
+// from the value either way.
+func decodeEntry(cmd *redis.StringCmd, ttl time.Duration, now time.Time) (Entry, bool) {
+	b, err := cmd.Bytes()
+	if err != nil || len(b) == 0 {
+		return Entry{}, false
 	}
-	cmds := make([]*redis.StringCmd, len(ids))
-	_, err := p.Redis.Pipelined(ctx, func(pl redis.Pipeliner) error {
-		for i, id := range ids {
-			cmds[i] = pl.Get(ctx, p.Prefix+key+":"+strconv.Itoa(id))
-		}
-		return nil
-	})
-	// A pipeline error (redis.Nil for any absent key, or a transport failure) is not inspected here:
-	// each command's own error is, below, and an errored command is a miss.
-	_ = err
-	now := time.Now()
-	if p.Now != nil {
-		now = p.Now()
+	v, err := Unpack(b)
+	if err != nil {
+		return Entry{}, false
 	}
-	for i, cmd := range cmds {
-		b, err := cmd.Bytes()
-		if err != nil || len(b) == 0 {
-			continue
-		}
-		v, err := Unpack(b)
-		if err != nil {
-			continue
-		}
-		m, ok := v.(map[string]any)
-		if !ok {
-			continue
-		}
-		if truthy(m["debounce"]) {
-			continue
-		}
-		e := Entry{Value: m}
-		if truthy(m["notFound"]) {
-			e.NotFound = true
-		} else if ttl > 0 {
-			if at, ok := m["cachedAt"].(time.Time); ok && at.Before(now.Add(-ttl)) {
-				e.Stale = true
-			}
-		}
-		delete(m, "cachedAt")
-		out[ids[i]] = e
+	m, ok := v.(map[string]any)
+	if !ok {
+		return Entry{}, false
 	}
-	return out
+	if truthy(m["debounce"]) {
+		return Entry{}, false
+	}
+	e := Entry{Value: m}
+	if truthy(m["notFound"]) {
+		e.NotFound = true
+	} else if ttl > 0 {
+		if at, ok := m["cachedAt"].(time.Time); ok && at.Before(now.Add(-ttl)) {
+			e.Stale = true
+		}
+	}
+	delete(m, "cachedAt")
+	return e, true
 }
 
 func truthy(v any) bool {

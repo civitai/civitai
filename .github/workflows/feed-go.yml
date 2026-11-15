@@ -416,11 +416,12 @@ jobs:
       - name: allocs/op gate
         run: |
           set -euo pipefail
-          # Positive control: every benchmark produced its 6 samples (7 benchmarks: superjson Serialize,
-          # hydrate Unpack and TagIDs, feed BuildImages, shadow Compare/golden, Compare/page50 and
+          # Positive control: every benchmark produced its 6 samples (10 benchmarks: superjson Serialize
+          # and SerializeBuffer, hydrate Unpack, TagIDs, HydratePage/pipelined and
+          # HydratePage/per-lookup, feed BuildImages, shadow Compare/golden, Compare/page50 and
           # CompareJSON). A filter or build change that drops benchmarks would otherwise pass as "no
           # regression"; raise the count with each new benchmark.
           samples=$(grep -c ' allocs/op' "$RUNNER_TEMP/head.txt" || true)
           echo "head samples with allocs/op: $samples"
-          [ "$samples" -ge 42 ]
+          [ "$samples" -ge 60 ]
           python3 ci/allocs_gate.py "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
