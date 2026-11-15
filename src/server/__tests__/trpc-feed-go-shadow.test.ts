@@ -7,7 +7,6 @@ import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
 import { FEED_GO_SHADOW_PATH, resetFeedGoShadowForTests } from '~/server/trpc/feed-go-shadow';
-import { FEED_GO_SHADOW_ENDPOINT_LABEL } from '~/server/prom/feed-go-shadow.metrics';
 
 /**
  * The feed-go shadow sampler wired end to end: the real route (`src/pages/api/trpc/[trpc].ts`,
@@ -317,7 +316,6 @@ describe('feed-go shadow, end to end', () => {
 
   // `endpoint` is a reserved scrape target label: the scraper's own value would overwrite ours.
   it('labels the endpoint as feed_endpoint, never endpoint', async () => {
-    expect(FEED_GO_SHADOW_ENDPOINT_LABEL).toBe('feed_endpoint');
     for (const name of [
       'civitai_app_feed_go_shadow_samples_total',
       'civitai_app_feed_go_shadow_encode_seconds_total',

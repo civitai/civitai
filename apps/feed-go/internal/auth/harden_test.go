@@ -449,3 +449,111 @@ func TestResolveRevocationOutageFailsOpen(t *testing.T) {
 		t.Fatalf("fail-open reports = %v, want the one outage", f.reports)
 	}
 }
+
+// staleFixture is a Verifier on a hand-moved clock over a switchable JWKS, with stale drops counted.
+type staleFixture struct {
+	now    time.Time
+	j      *switchableJWKS
+	v      *Verifier
+	stales []time.Duration
+	key    keyPair
+}
+
+func newStaleFixture(t *testing.T) *staleFixture {
+	t.Helper()
+	f := &staleFixture{now: time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC), key: newKey(t, "k1")}
+	j, srv := newSwitchable(t, f.key)
+	f.j = j
+	f.v = &Verifier{Issuer: issuer, JWKSURL: srv.URL, HTTP: srv.Client(), Now: func() time.Time { return f.now },
+		MaxStaleness: 30 * time.Minute, OnStale: func(age time.Duration) { f.stales = append(f.stales, age) }}
+	if err := f.v.refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func (f *staleFixture) verifies(t *testing.T) bool {
+	t.Helper()
+	_, err := f.v.Verify(context.Background(), sign(t, f.key, "ES256", baseClaims(f.now)))
+	return err == nil
+}
+
+// Keep-last-good holds only within MaxStaleness: past it the set is dropped once, every session then
+// verifies as signed out, and the first successful fetch restores it.
+func TestJWKSMaxStalenessFailsClosed(t *testing.T) {
+	f := newStaleFixture(t)
+	t0 := f.now
+	f.j.fail(http.StatusBadGateway, "down")
+	f.now = t0.Add(29 * time.Minute)
+	if !f.verifies(t) || len(f.stales) != 0 {
+		t.Fatalf("within the window: verifies=false or %d stale drops, want the last good key kept", len(f.stales))
+	}
+	f.now = t0.Add(31 * time.Minute)
+	if f.verifies(t) {
+		t.Fatal("31 min after the last good fetch (limit 30): still verifies, want fail closed")
+	}
+	if len(f.stales) != 1 || f.stales[0] != 31*time.Minute {
+		t.Fatalf("stale drops = %v, want one, aged 31m", f.stales)
+	}
+	f.now = f.now.Add(time.Minute)
+	if f.verifies(t) || len(f.stales) != 1 {
+		t.Fatalf("still down: want no verify and no second drop report, got %d drops", len(f.stales))
+	}
+	f.j.set(f.key) // the hub recovers
+	f.now = f.now.Add(time.Minute)
+	if !f.verifies(t) {
+		t.Fatal("after the hub recovered: the refetched key does not verify")
+	}
+	if len(f.stales) != 1 {
+		t.Fatalf("stale drops = %d after recovery, want 1", len(f.stales))
+	}
+}
+
+// A non-empty successful fetch resets the staleness clock.
+func TestJWKSSuccessfulFetchResetsStaleness(t *testing.T) {
+	f := newStaleFixture(t)
+	t0 := f.now
+	f.now = t0.Add(25 * time.Minute)
+	if err := f.v.refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.j.fail(http.StatusBadGateway, "down")
+	f.now = t0.Add(50 * time.Minute) // 50 min after the first fetch, 25 after the last good one
+	if !f.verifies(t) || len(f.stales) != 0 {
+		t.Fatal("25 min after a good fetch: want verified, no drop")
+	}
+	f.now = t0.Add(56 * time.Minute)
+	if f.verifies(t) || len(f.stales) != 1 {
+		t.Fatalf("31 min after the last good fetch: want fail closed and one drop, got %d", len(f.stales))
+	}
+}
+
+// An empty successful set keeps the last good keys, but does not extend the window.
+func TestJWKSEmptySetKeepsLastGoodOnlyWithinTheWindow(t *testing.T) {
+	f := newStaleFixture(t)
+	t0 := f.now
+	f.j.fail(0, `{"keys":[]}`)
+	f.now = t0.Add(10 * time.Minute)
+	if err := f.v.refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "no usable signing keys") {
+		t.Fatalf("empty set: err = %v, want the no-usable-keys error", err)
+	}
+	if !f.verifies(t) {
+		t.Fatal("empty set within the window: the last good key was dropped")
+	}
+	f.now = t0.Add(31 * time.Minute)
+	if f.verifies(t) || len(f.stales) != 1 {
+		t.Fatalf("31 min after the last NON-EMPTY fetch: want fail closed, got %d drops", len(f.stales))
+	}
+}
+
+func TestJWKSMaxStalenessDefaultsToThreeIntervals(t *testing.T) {
+	if got := (&Verifier{}).maxStaleness(); got != 30*time.Minute {
+		t.Fatalf("default = %v, want 30m (3 × the 10 min refresh)", got)
+	}
+	if got := (&Verifier{RefreshInterval: time.Minute}).maxStaleness(); got != 3*time.Minute {
+		t.Fatalf("with a 1 min refresh = %v, want 3m", got)
+	}
+	if got := (&Verifier{RefreshInterval: time.Minute, MaxStaleness: 7 * time.Minute}).maxStaleness(); got != 7*time.Minute {
+		t.Fatalf("explicit = %v, want 7m", got)
+	}
+}

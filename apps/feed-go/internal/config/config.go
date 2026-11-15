@@ -72,6 +72,9 @@ type Config struct {
 	// JWKSRefresh is FEED_GO_JWKS_REFRESH_MS (default 600000): how often the signing keys are
 	// refetched, so a key the auth hub removed stops verifying without a restart.
 	JWKSRefresh time.Duration
+	// JWKSMaxStaleness is FEED_GO_JWKS_MAX_STALENESS_MS (default 3 × JWKSRefresh): how long the last
+	// good key set is kept while refreshes fail; past it sessions verify as signed out.
+	JWKSMaxStaleness time.Duration
 
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
@@ -126,6 +129,7 @@ func Load() (*Config, error) {
 	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
 	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
 	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond
+	c.JWKSMaxStaleness = time.Duration(positiveIntEnv("FEED_GO_JWKS_MAX_STALENESS_MS", 3*int(c.JWKSRefresh/time.Millisecond))) * time.Millisecond
 	if n := intEnv("CIVITAI_MODERATION_USER_ID", 0); n > 0 {
 		c.ModerationAccountID = n
 	}

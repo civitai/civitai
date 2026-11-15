@@ -101,6 +101,13 @@ func run(log *slog.Logger) error {
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
 		RefreshInterval: cfg.JWKSRefresh,
+		MaxStaleness:    cfg.JWKSMaxStaleness,
+		// Called once per stale episode: every session verifies as signed out until a fetch succeeds.
+		OnStale: func(age time.Duration) {
+			metrics.JWKSStale.Inc()
+			log.Error("jwks key set dropped: no successful fetch within the maximum staleness; sessions verify as signed out",
+				"age", age.String(), "max", cfg.JWKSMaxStaleness.String())
+		},
 		OnRefresh: func(err error) {
 			if err != nil {
 				metrics.JWKSRefresh.WithLabelValues("error").Inc()

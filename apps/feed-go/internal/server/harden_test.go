@@ -18,6 +18,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
@@ -207,6 +208,10 @@ func TestServeHTTPCanceledClient(t *testing.T) {
 	if fallbackCount(t, reg, "canceled") != 1 || fallbackCount(t, reg, "deadline") != 0 {
 		t.Fatalf("canceled=%v deadline=%v, want 1 and 0", fallbackCount(t, reg, "canceled"), fallbackCount(t, reg, "deadline"))
 	}
+	// The client has gone: nothing is proxied to the Node app.
+	if fb.calls != 0 {
+		t.Fatalf("a canceled request was proxied %d times, want 0", fb.calls)
+	}
 }
 
 func panics(t *testing.T, reg *prometheus.Registry, where string) float64 {
@@ -294,8 +299,47 @@ func TestShadowComputeRunsUnderTheBudget(t *testing.T) {
 	if err := s.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if shadowResult(t, reg, "unsupported") != 1 || shadowResult(t, reg, "match") != 0 {
-		t.Fatalf("unsupported=%v match=%v: a timed-out compute must not be compared", shadowResult(t, reg, "unsupported"), shadowResult(t, reg, "match"))
+	// Its own result, not `unsupported`, so the share the budget excludes stays visible.
+	if shadowResult(t, reg, "deadline") != 1 || shadowResult(t, reg, "unsupported") != 0 || shadowResult(t, reg, "match") != 0 {
+		t.Fatalf("deadline=%v unsupported=%v match=%v, want 1 0 0: a timed-out compute is counted as deadline and never compared",
+			shadowResult(t, reg, "deadline"), shadowResult(t, reg, "unsupported"), shadowResult(t, reg, "match"))
+	}
+}
+
+// The deadline result is exported at 0 for both endpoints before any sample.
+func TestShadowDeadlineResultIsSeeded(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	NewMetrics(reg)
+	for _, e := range []string{"as-posts", "v1-images"} {
+		v, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": "deadline"})
+		if !found || v != 0 {
+			t.Fatalf("feed_go_shadow_compare_total{feed_endpoint=%q,result=\"deadline\"} = %v (found %v), want a seeded 0", e, v, found)
+		}
+	}
+}
+
+// A deadline the parent carries that ends before the budget (a shadow sample's own bound, below a
+// budget configured above it) is still the `deadline` fallback, not `canceled`.
+func TestComputeWithinParentDeadlineIsADeadline(t *testing.T) {
+	s := &Server{Metrics: NewMetrics(prometheus.NewRegistry()), Log: quietLog(), RequestBudget: time.Minute}
+	parent, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := s.computeWithin(parent, publicRequest(), "shadow", func(ctx context.Context, _ *http.Request) (*computed, error) {
+		<-ctx.Done()
+		return &computed{payload: []byte(`{}`)}, nil
+	})
+	if got := fallback.Reason(err); got != "deadline" {
+		t.Fatalf("reason = %q (%v), want deadline", got, err)
+	}
+	// Control: a cancelled parent is `canceled`.
+	parent2, cancel2 := context.WithCancel(context.Background())
+	_, err = s.computeWithin(parent2, publicRequest(), "shadow", func(ctx context.Context, _ *http.Request) (*computed, error) {
+		cancel2()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+	if got := fallback.Reason(err); got != "canceled" {
+		t.Fatalf("cancelled parent: reason = %q, want canceled", got)
 	}
 }
 
@@ -551,7 +595,7 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true}
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true}
 	checked := 0
 	for _, mf := range mfs {
 		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {

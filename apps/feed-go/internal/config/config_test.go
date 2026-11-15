@@ -127,24 +127,30 @@ func TestLoadServingLimits(t *testing.T) {
 		t.Setenv(k, "x://"+k)
 	}
 	cases := []struct {
-		budget, concurrency, jwks string
-		wantBudget                time.Duration
-		wantConcurrency           int
-		wantJWKS                  time.Duration
+		budget, concurrency, jwks, stale string
+		wantBudget                       time.Duration
+		wantConcurrency                  int
+		wantJWKS, wantStale              time.Duration
 	}{
-		{"", "", "", 6 * time.Second, 4, 10 * time.Minute},
-		{"2500", "12", "30000", 2500 * time.Millisecond, 12, 30 * time.Second},
+		{"", "", "", "", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
+		// The staleness default follows the refresh interval (3 ×); an explicit value wins.
+		{"2500", "12", "30000", "", 2500 * time.Millisecond, 12, 30 * time.Second, 90 * time.Second},
+		{"", "", "", "120000", 6 * time.Second, 4, 10 * time.Minute, 2 * time.Minute},
 		// Zero, negative or junk is the default, never an unbounded or zero budget.
-		{"0", "0", "0", 6 * time.Second, 4, 10 * time.Minute},
-		{"-1", "-3", "junk", 6 * time.Second, 4, 10 * time.Minute},
+		{"0", "0", "0", "0", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
+		{"-1", "-3", "junk", "-5", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
 	}
 	for _, c := range cases {
 		t.Setenv("FEED_GO_REQUEST_BUDGET_MS", c.budget)
 		t.Setenv("FEED_GO_COMPLETION_CONCURRENCY", c.concurrency)
 		t.Setenv("FEED_GO_JWKS_REFRESH_MS", c.jwks)
+		t.Setenv("FEED_GO_JWKS_MAX_STALENESS_MS", c.stale)
 		cfg, err := Load()
 		if err != nil {
 			t.Fatal(err)
+		}
+		if cfg.JWKSMaxStaleness != c.wantStale {
+			t.Errorf("jwks=%q stale=%q -> staleness %v, want %v", c.jwks, c.stale, cfg.JWKSMaxStaleness, c.wantStale)
 		}
 		if cfg.RequestBudget != c.wantBudget || cfg.CompletionConcurrency != c.wantConcurrency || cfg.JWKSRefresh != c.wantJWKS {
 			t.Errorf("budget=%q concurrency=%q jwks=%q -> %v %d %v, want %v %d %v", c.budget, c.concurrency, c.jwks,

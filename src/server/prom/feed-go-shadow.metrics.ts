@@ -9,7 +9,7 @@ import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai
 // are not counted. Labels: `outcome`, a member of the fixed set below, and `feed_endpoint`, one of
 // FEED_GO_SHADOW_ENDPOINTS, so cardinality is bounded by construction.
 //
-// FEED_GO_SHADOW_ENDPOINT_LABEL is not `endpoint`: that is a reserved scrape target label (the
+// The label is not called `endpoint`: that is a reserved scrape target label (the
 // scraper's target label), which overwrites a series' own `endpoint` and moves ours to
 // `exported_endpoint`. feed-go's feed_go_* series use the same name.
 //
@@ -43,9 +43,6 @@ export const FEED_GO_SHADOW_OUTCOMES = [
 ] as const;
 
 export type FeedGoShadowOutcome = (typeof FEED_GO_SHADOW_OUTCOMES)[number];
-
-/** The endpoint label's name on these counters (and on feed-go's feed_go_* series). */
-export const FEED_GO_SHADOW_ENDPOINT_LABEL = 'feed_endpoint';
 
 /** The mirrored routes, as feed-go labels them (`feed_endpoint` on its feed_go_* series too). */
 export const FEED_GO_SHADOW_ENDPOINTS = ['as-posts', 'v1-images'] as const;

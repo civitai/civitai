@@ -201,7 +201,16 @@ the authenticated viewer or for nobody.
   an unknown `kid`, so a signing key the hub removed stops verifying without a restart. A failed
   refresh — an error status, an undecodable body, or a set with no usable ES256 key — keeps the last
   good set and retries with backoff (5 s doubling, up to the interval);
-  `feed_go_jwks_refresh_total{result}` counts both outcomes.
+  `feed_go_jwks_refresh_total{result}` counts both outcomes. Keep-last-good is bounded: once no fetch
+  has returned a usable set for `FEED_GO_JWKS_MAX_STALENESS_MS` (default 3 × the interval, 30 min),
+  the set is dropped and every session verifies as **signed out** (fail closed) until a fetch
+  succeeds; `feed_go_jwks_stale_total` counts each drop and one error line is logged.
+  *How this differs from Node:* jose's remote JWKS reloads once its cache is 10 min old and fails
+  closed as soon as that reload fails, and it accepts an empty set (then rejects every token). This
+  service instead keeps the last good set, an empty answer included, for up to the staleness bound.
+  The reason is blast radius: a brief hub outage or a bad deploy that publishes an empty set would
+  sign out every viewer here for its whole length, while the window is short enough that a key the
+  hub really retired stops verifying within ~30 min. An empty set never extends the window.
 - The rich session user (moderator flag, ban) is read from the shared session cache; the cached entry
   must carry the same id as the token, or the request falls back. A cleared entry falls back. A cache
   miss falls back (Node would fetch the user from the auth hub).
@@ -271,8 +280,9 @@ it is never less correct than not routing it — only its share of fallbacks cha
   `FEED_GO_REQUEST_BUDGET_MS` (default 6 s), covering every Postgres, Redis and feed-service read it
   makes. An answer is all or nothing: a computation still running at the budget, or one that finished
   after it (a read that failed open on the expired context would otherwise leave a partial page), is
-  the `deadline` fallback — proxied when serving, `unsupported` with reason `deadline` in shadow. A
-  client that leaves mid-compute is the `canceled` fallback, not a deadline.
+  the `deadline` fallback — proxied when serving, compare result `deadline` in shadow (its own result,
+  so the share the budget excludes from the match rate stays visible). A client that leaves
+  mid-compute is the `canceled` fallback, not a deadline, and is not proxied (nobody would read it).
 - **Panics.** A panic in a computation, its errgroup workers included (`internal/safe`), is the
   `panic` fallback and `feed_go_panics_total{where="serve"}`; one anywhere in a shadow sample
   (compute or compare) is `feed_go_panics_total{where="shadow"}`, logged with its stack, and the
@@ -326,7 +336,7 @@ path as serving, and compares decoded values:
   `undefined` is still a difference;
 - each comparison gets one result: `match`, `fields` (same posts, same order, some field differs),
   `order` (same posts, different order), `membership` (different posts), `unsupported` (Go fell back,
-  with its reason), `go_error`;
+  with its reason), `deadline` (the compute ran past the request budget, §6.1), `go_error`;
 - each differing path is counted by **category** — the path with indices folded to `*`, truncated at
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
@@ -440,6 +450,14 @@ sum(rate(feed_go_requests_total{mode="shadow",outcome="served"}[10m]))
 
 # What blocks serving more: fallback reasons by rate.
 topk(10, sum by (reason) (rate(feed_go_fallback_total{mode="shadow"}[1h])))
+
+# Match rate, and beside it what that denominator leaves out: the share of samples Go fell back on
+# (`unsupported`) or cut at the request budget (`deadline`), with the reasons behind them.
+sum by (feed_endpoint) (rate(feed_go_shadow_compare_total{result="match"}[1h]))
+  / sum by (feed_endpoint) (rate(feed_go_shadow_compare_total{result=~"match|fields|order|membership"}[1h]))
+sum by (feed_endpoint, result) (rate(feed_go_shadow_compare_total{result=~"unsupported|deadline"}[1h]))
+  / ignoring(result) group_left sum by (feed_endpoint) (rate(feed_go_shadow_compare_total[1h]))
+topk(10, sum by (feed_endpoint, reason) (rate(feed_go_fallback_total{mode="shadow"}[1h])))
 ```
 
 ### 10.1 Compute-only CPU: the per-phase series
@@ -711,7 +729,7 @@ numbers numerically), with no annotation step — a Date is its ISO string on bo
 undefined member is absent on both (`JSON.stringify` drops it; this service's writer, `superjson.Plain`,
 does the same). Categories stop at `meta` only: `metadata` is the paging object here, so
 `metadata.nextCursor` / `metadata.nextPage` keep their keys. Results classify by `items[].id`
-(images, not posts): `match`, `fields`, `order`, `membership`, `unsupported`, `go_error`.
+(images, not posts): `match`, `fields`, `order`, `membership`, `unsupported`, `deadline`, `go_error`.
 
 ### 13.6 Measurement: the go/no-go is for the ported subset
 
@@ -733,6 +751,11 @@ sum(rate(feed_go_shadow_phase_cpu_seconds_total{feed_endpoint="v1-images",phase=
 
 sum(rate(feed_go_shadow_compare_total{feed_endpoint="v1-images",result="match"}[1h]))
   / sum(rate(feed_go_shadow_compare_total{feed_endpoint="v1-images",result=~"match|fields|order|membership"}[1h]))
+
+# What the match rate's denominator leaves out: fell back (`unsupported`) or cut at the budget
+# (`deadline`), as shares of all v1 samples, and the reasons (`deadline` is one of them).
+sum by (result) (rate(feed_go_shadow_compare_total{feed_endpoint="v1-images",result=~"unsupported|deadline"}[1h]))
+  / ignoring(result) group_left sum(rate(feed_go_shadow_compare_total{feed_endpoint="v1-images"}[1h]))
 
 topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="v1-images",mode="shadow"}[1h])))
 ```

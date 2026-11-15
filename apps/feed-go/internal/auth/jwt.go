@@ -108,10 +108,47 @@ type Verifier struct {
 	RetryMin        time.Duration
 	// OnRefresh, when set, is called after every periodic refresh with its error (nil = success).
 	OnRefresh func(err error)
+	// MaxStaleness bounds keep-last-good (0 = 3 × the refresh interval): once no fetch has succeeded
+	// for this long, the key set is dropped and every session verifies as signed out until a fetch
+	// succeeds again. OnStale, when set, is called once each time that happens.
+	MaxStaleness time.Duration
+	OnStale      func(age time.Duration)
 
 	mu        sync.RWMutex
 	keys      map[string]*ecdsa.PublicKey
 	lastFetch time.Time
+	// lastGood is when a fetch last returned a usable key set (zero = never).
+	lastGood time.Time
+}
+
+func (v *Verifier) maxStaleness() time.Duration {
+	if v.MaxStaleness > 0 {
+		return v.MaxStaleness
+	}
+	interval := v.RefreshInterval
+	if interval <= 0 {
+		interval = DefaultJWKSRefresh
+	}
+	return 3 * interval
+}
+
+// expireIfStale drops the key set once the last good fetch is older than the maximum staleness, so a
+// hub that stays unreachable (or keeps answering an empty set) eventually fails closed, as Node's
+// remote JWKS does once its cached set ages out. It reports the drop once per stale episode.
+func (v *Verifier) expireIfStale() {
+	now := v.now()
+	limit := v.maxStaleness()
+	v.mu.Lock()
+	if v.keys == nil || v.lastGood.IsZero() || now.Sub(v.lastGood) <= limit {
+		v.mu.Unlock()
+		return
+	}
+	age := now.Sub(v.lastGood)
+	v.keys = nil
+	v.mu.Unlock()
+	if v.OnStale != nil {
+		v.OnStale(age)
+	}
 }
 
 // DefaultJWKSRefresh is the periodic refresh interval. Without it a signing key the hub removed stayed
@@ -123,7 +160,8 @@ const defaultRetryMin = 5 * time.Second
 
 // Run refetches the key set right away and then every RefreshInterval (jittered) until ctx ends,
 // retrying a failed fetch with exponential backoff. A failed fetch keeps the last good key set (refresh
-// replaces the set only on success), so a hub outage never signs everyone out.
+// replaces the set only on success), so a short hub outage never signs everyone out — but only for
+// MaxStaleness: past it the set is dropped (expireIfStale) and verification fails closed.
 func (v *Verifier) Run(ctx context.Context) {
 	interval := v.RefreshInterval
 	if interval <= 0 {
@@ -156,6 +194,7 @@ func (v *Verifier) Run(ctx context.Context) {
 			v.OnRefresh(err)
 		}
 		if err != nil {
+			v.expireIfStale()
 			failures++
 			delay = backoff(retry, interval, failures)
 		} else {
@@ -279,6 +318,7 @@ func (v *Verifier) checkClaims(c *Claims) error {
 }
 
 func (v *Verifier) key(ctx context.Context, kid string) (*ecdsa.PublicKey, error) {
+	v.expireIfStale()
 	v.mu.RLock()
 	k, ok := v.keys[kid]
 	last := v.lastFetch
@@ -348,11 +388,13 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	}
 	keys := ParseJWKS(set.Keys)
 	if len(keys) == 0 {
-		// A set with no usable signing key would reject every session; keep the last good one.
+		// A set with no usable signing key would reject every session; keep the last good one, within
+		// MaxStaleness (lastGood is not advanced, so an empty set never extends the window).
 		return errors.New("jwks: no usable signing keys")
 	}
 	v.mu.Lock()
 	v.keys = keys
+	v.lastGood = v.now()
 	v.mu.Unlock()
 	return nil
 }

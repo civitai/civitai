@@ -280,10 +280,11 @@ func (s *Server) panicked(where string, value any, stack []byte) {
 }
 
 // computeWithin runs fn under the request budget. Whatever fn returns, the answer is all or nothing:
-// past the budget (even when fn returned a value, e.g. after a store read failed open on the expired
-// context) it is the `deadline` fallback; once parent itself has ended (the client left, or shutdown)
-// it is the `canceled` fallback; a panic anywhere in the computation, its errgroup workers included,
-// is counted under where and is the `panic` fallback.
+// past a deadline — the budget's, or an earlier one parent carries (a shadow sample's own bound) —
+// even when fn returned a value (e.g. after a store read failed open on the expired context), it is
+// the `deadline` fallback; once parent was cancelled (the client left, or shutdown) it is the
+// `canceled` fallback; a panic anywhere in the computation, its errgroup workers included, is counted
+// under where and is the `panic` fallback.
 func (s *Server) computeWithin(parent context.Context, r *http.Request, where string, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
 	budget := s.budget()
 	ctx, cancel := context.WithTimeout(parent, budget)
@@ -294,7 +295,7 @@ func (s *Server) computeWithin(parent context.Context, r *http.Request, where st
 		s.panicked(where, pe.Value, pe.Stack)
 		return nil, fallback.New("panic")
 	}
-	if parent.Err() != nil {
+	if errors.Is(parent.Err(), context.Canceled) {
 		return nil, fallback.New("canceled")
 	}
 	if ctx.Err() != nil {
@@ -336,6 +337,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.Metrics.Requests.WithLabelValues(EndpointAsPosts, "serve", outcome).Inc()
 	s.Metrics.Fallbacks.WithLabelValues(EndpointAsPosts, "serve", reason).Inc()
 	s.Metrics.Duration.WithLabelValues(EndpointAsPosts, "serve", outcome).Observe(time.Since(start).Seconds())
+	if reason == "canceled" {
+		// The client has gone: nobody would read a proxied answer, and proxying would only make the
+		// Node app compute one.
+		return
+	}
 	if s.Fallback == nil {
 		trpc.WriteError(w, Procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
 		return
@@ -505,7 +511,13 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			s.endPhase(phase, endpoint, "compute", "fallback")
 			s.Metrics.Requests.WithLabelValues(endpoint, "shadow", "fallback").Inc()
 			s.Metrics.Fallbacks.WithLabelValues(endpoint, "shadow", reason).Inc()
-			s.Metrics.ShadowResults.WithLabelValues(endpoint, "unsupported").Inc()
+			// A compute cut by the budget is its own result, not `unsupported`: the match-rate
+			// denominator leaves both out, and this keeps the budget's share visible (DESIGN.md §10).
+			result := "unsupported"
+			if reason == "deadline" {
+				result = "deadline"
+			}
+			s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
 			s.Metrics.Duration.WithLabelValues(endpoint, "shadow", "fallback").Observe(time.Since(start).Seconds())
 			return
 		}
