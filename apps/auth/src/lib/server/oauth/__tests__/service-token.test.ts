@@ -606,6 +606,27 @@ describe('service token — introspection', () => {
     expect((await introspect(token)).body).toEqual({ active: false });
   });
 
+  it('is inactive once its record is gone or no longer matches the token', async () => {
+    const token = await minted();
+    expect((await introspect(token)).body.active).toBe(true);
+    const [[key, stored]] = [...h.redis.entries()];
+    const original = JSON.parse(stored.value) as Row;
+    for (const change of [{ kind: 'exchange' }, { clientId: APP }, { resource: OTHER_RESOURCE }]) {
+      h.redis.set(key, { ...stored, value: JSON.stringify({ ...original, ...change }) });
+      expect((await introspect(token)).body, JSON.stringify(change)).toEqual({ active: false });
+    }
+    h.redis.clear();
+    expect((await introspect(token)).body).toEqual({ active: false });
+  });
+
+  it('keeps a scope narrowed at mint narrowed at introspection', async () => {
+    process.env.OAUTH_EXCHANGE_RESOURCES = registry({
+      scopes: ['AIServicesRead', 'AIServicesWrite'],
+    });
+    const token = await minted({ scope: 'AIServicesRead' });
+    expect((await introspect(token)).body.scope).toBe('AIServicesRead');
+  });
+
   it("narrows scope to the entry's current scopes, inactive when none are left", async () => {
     process.env.OAUTH_EXCHANGE_RESOURCES = registry({
       scopes: ['AIServicesRead', 'AIServicesWrite'],

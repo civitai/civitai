@@ -21,8 +21,8 @@ import {
 // RFC 7662 introspection of a JWT minted by the user token exchange, or a service token (service-token.ts).
 // Active only while everything it was minted from still holds: the signature, the resource's lists, the
 // record, and for an exchange the access token it came from, the app and the user; for a service token its
-// client and its `services` entry, whose current roles and uid the answer carries. Each of those failing reads as {active:false}; a lookup that cannot answer
-// is `indeterminate`, which the route turns into a 503.
+// client and its `services` entry, whose current roles and uid the answer carries. Any of those failing
+// reads as {active:false}; a lookup that cannot answer is `indeterminate` (503).
 
 /** Whether `token` is a compact JWS whose header says `typ: at+jwt`. */
 export function isAccessTokenJwt(token: string): boolean {

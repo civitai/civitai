@@ -52,8 +52,7 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //                whose secret checks out is never charged or refused by it. With no resolvable IP the
 //                failures share one bucket, never one keyed on the claimed client id.
 //   - token-service: per-client (60/min) — service tokens (service-token.ts), charged after client auth. The
-//                per-IP `token` limit never applies to it; a request that fails client auth is not a
-//                service token request and takes the general path and its limits.
+//                per-IP `token` limit never applies to it.
 //   - introspect-jwt: per-client (1200/min) — introspection of an exchanged JWT, charged after client auth.
 //   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
 //                once per token TTL, so this only catches a runaway host loop.

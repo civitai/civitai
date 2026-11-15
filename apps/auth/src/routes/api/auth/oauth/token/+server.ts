@@ -115,9 +115,9 @@ export const POST: RequestHandler = async ({ request }) => {
     return handleUserTokenExchange({ request, body, resources, clientIp, formEncoded });
   }
 
-  // client_credentials with a `resource`, from an authenticated service client, is a service token with its
-  // own limit. Any other client, or a failed client check, goes on below exactly as without `resource`. An
-  // IP that may check no more secrets on the general path is not checked here either.
+  // client_credentials with a `resource` from an authenticated service client is a service token under its
+  // own limit; anything else goes on below. An IP that may check no more secrets on the general path is not
+  // checked here either.
   if (
     body.grant_type === 'client_credentials' &&
     body.resource !== undefined &&
