@@ -7,9 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/vmihailenco/msgpack/v5"
+
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
-	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
+	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
 
 // gatedPosts holds every completion fetch until `want` are in flight at once (or a timeout), so the
@@ -109,42 +112,31 @@ func TestCompletePostsWorkerPanicIsAnError(t *testing.T) {
 	}
 }
 
-// panickingHydrator panics in one hydration lookup; every other lookup answers empty.
-type panickingHydrator struct{}
+// panickingReplica panics on every query.
+type panickingReplica struct{}
 
-func (panickingHydrator) BasicUsers(context.Context, []int) (map[int]hydrate.BasicUser, error) {
-	return nil, nil
-}
-func (panickingHydrator) UserCosmetics(context.Context, []int) (map[int][]any, error) {
-	return nil, nil
-}
-func (panickingHydrator) ProfilePictures(context.Context, []int) (map[int]superjson.Object, error) {
-	return nil, nil
-}
-func (panickingHydrator) ImageFrames(context.Context, []int) (map[int]superjson.Object, error) {
-	return nil, nil
-}
-func (panickingHydrator) Thumbnails(context.Context, []int) (map[int]hydrate.Thumbnail, error) {
-	return nil, nil
-}
-func (panickingHydrator) ImageMetrics(context.Context, []int) (map[int]hydrate.Metrics, error) {
-	panic("metrics lookup exploded")
-}
-func (panickingHydrator) TagIDs(context.Context, []int) (map[int]any, error) { return nil, nil }
-func (panickingHydrator) EventDecorations(context.Context, []int, map[string]bool) (map[int]superjson.Object, error) {
-	return nil, nil
-}
-func (panickingHydrator) Reactions(context.Context, []int, int) (map[int][]any, error) {
-	return nil, nil
-}
-func (panickingHydrator) VisibleModel3DIDs(context.Context, []int, int, bool) (map[int]bool, error) {
-	return nil, nil
+func (panickingReplica) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	panic("replica exploded")
 }
 
+// A panic inside a hydration worker (hydrate.Sources.Page runs each lookup's finish on its own
+// goroutine) must come back from Hydrate as an error rather than kill the process. Every lookup but
+// basic users answers from the cache (notFound markers, a notFound metric hash), so the one replica
+// read, the basic-users miss, is the worker that panics.
 func TestHydrateWorkerPanicIsAnError(t *testing.T) {
-	_, err := Hydrate(context.Background(), panickingHydrator{}, []RawImage{{ID: 1, UserID: 2}}, Viewer{}, nil)
+	r := testkit.NewRedis()
+	notFound, err := msgpack.Marshal(map[string]any{"notFound": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{hydrate.KeyUserCosmetics + ":2", hydrate.KeyProfilePictures + ":2", hydrate.KeyImageFrames + ":1", hydrate.KeyTagIDs + ":1"} {
+		r.SetString(k, notFound)
+	}
+	r.SetHash("metrics:Image:1", map[string]string{"notFound": "1"})
+	src := &hydrate.Sources{Packed: &hydrate.PackedReader{Redis: r}, Cache: r, Replica: panickingReplica{}}
+	_, err = Hydrate(context.Background(), src, []RawImage{{ID: 1, UserID: 2}}, Viewer{}, nil)
 	var pe *safe.PanicError
-	if !errors.As(err, &pe) || pe.Value != "metrics lookup exploded" {
+	if !errors.As(err, &pe) || pe.Value != "replica exploded" {
 		t.Fatalf("err = %v, want the lookup's *safe.PanicError", err)
 	}
 }

@@ -128,10 +128,14 @@ func (s *Server) endPhase(p phaseClock, endpoint, phase, outcome string) {
 	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(endpoint, phase, outcome).Add(wall)
 }
 
-// computed is one answer.
+// computed is one answer. payload may be a pooled buffer's bytes (buf): whoever ends up holding the
+// computed releases it once payload is written or compared, and never reads payload after that.
+// computeWithin releases an answer it discards.
 type computed struct {
 	payload []byte
-	ttl     *trpc.CacheTTL
+	// buf owns payload when it is pooled (nil when payload is an ordinary slice, as in tests).
+	buf *superjson.Buffer
+	ttl *trpc.CacheTTL
 	// trivial: answered without loading any image (feed.V1Answer.Trivial). Recorded as outcome
 	// served_empty and result match_empty, so the per-served-call CPU and the match rate cover only
 	// answers that did the work.
@@ -172,11 +176,11 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	if err != nil {
 		return nil, err
 	}
-	payload, err := superjson.Serialize(res.Value())
+	buf, err := superjson.SerializeBuffer(res.Value())
 	if err != nil {
 		return nil, err
 	}
-	out := &computed{payload: payload}
+	out := &computed{payload: buf.Bytes(), buf: buf}
 	if user == nil {
 		// createContext: cacheable only without a session user (a banned user still has one).
 		out.ttl = &trpc.SignedOutTTL
@@ -214,11 +218,21 @@ func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, err
 	if err != nil {
 		return nil, err
 	}
-	payload, err := superjson.Plain(ans.Body)
+	buf, err := superjson.PlainBuffer(ans.Body)
 	if err != nil {
 		return nil, err
 	}
-	return &computed{payload: payload, trivial: ans.Trivial}, nil
+	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}, nil
+}
+
+// release hands a pooled payload back to its pool and drops payload, so a use after it reads nothing
+// rather than another request's bytes. Safe on nil and when called twice.
+func (c *computed) release() {
+	if c == nil {
+		return
+	}
+	c.buf.Release()
+	c.buf, c.payload = nil, nil
 }
 
 func countryOf(r *http.Request) string {
@@ -296,12 +310,18 @@ func (s *Server) computeWithin(parent context.Context, r *http.Request, where st
 		return nil, fallback.New("panic")
 	}
 	if errors.Is(parent.Err(), context.Canceled) {
+		c.release()
 		return nil, fallback.New("canceled")
 	}
 	if ctx.Err() != nil {
+		c.release()
 		return nil, fallback.Newf("deadline", "budget %v", budget)
 	}
-	return c, err
+	if err != nil {
+		c.release()
+		return nil, err
+	}
+	return c, nil
 }
 
 // ServeHTTP is the public route.
@@ -324,6 +344,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		trpc.WriteResult(w, c.payload, c.ttl)
+		c.release() // WriteResult has sent payload and keeps no reference
 		s.Metrics.Requests.WithLabelValues(EndpointAsPosts, "serve", "served").Inc()
 		s.Metrics.Duration.WithLabelValues(EndpointAsPosts, "serve", "served").Observe(time.Since(start).Seconds())
 		return
@@ -527,6 +548,8 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		s.Log.Warn("shadow compute failed", "endpoint", endpoint, "err", err)
 		return
 	}
+	// Released once the comparison and its classification (the last readers of payload) are done.
+	defer c.release()
 	served := "served"
 	if c.trivial {
 		served = "served_empty"

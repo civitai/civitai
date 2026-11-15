@@ -2,10 +2,7 @@ package hydrate
 
 import (
 	"context"
-	"errors"
 	"strconv"
-
-	"github.com/redis/go-redis/v9"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -18,6 +15,20 @@ import (
 func (s *Sources) ImageFrames(ctx context.Context, imageIDs []int) (map[int]superjson.Object, error) {
 	imageIDs = Unique(imageIDs)
 	got := s.Packed.Get(ctx, KeyImageFrames, imageIDs, 0)
+	cosmeticIDs, err := frameCosmeticIDs(imageIDs, got)
+	if err != nil {
+		return nil, err
+	}
+	cosmetics, err := s.Cosmetics(ctx, cosmeticIDs)
+	if err != nil {
+		return nil, err
+	}
+	return joinFrames(got, cosmetics)
+}
+
+// frameCosmeticIDs is ImageFrames' first half over the frame cache's answer got for (unique) ids: the
+// cosmetic ids to join (unordered, possibly repeated). Any miss falls back.
+func frameCosmeticIDs(imageIDs []int, got map[int]Entry) ([]int, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("image-frame-miss", "%d ids", len(miss))
 	}
@@ -30,10 +41,13 @@ func (s *Sources) ImageFrames(ctx context.Context, imageIDs []int) (map[int]supe
 			cosmeticIDs = append(cosmeticIDs, cid)
 		}
 	}
-	cosmetics, err := s.Cosmetics(ctx, cosmeticIDs)
-	if err != nil {
-		return nil, err
-	}
+	return cosmeticIDs, nil
+}
+
+// joinFrames is ImageFrames' second half: each frame joined with its cosmetic record. cosmetics is
+// Cosmetics' answer for (at least) the ids frameCosmeticIDs returned; a record is a pure function of
+// its id, so extra ids change nothing.
+func joinFrames(got map[int]Entry, cosmetics map[int]superjson.Object) (map[int]superjson.Object, error) {
 	out := map[int]superjson.Object{}
 	for id, e := range got {
 		if e.NotFound {
@@ -145,11 +159,16 @@ type Thumbnail struct {
 // Thumbnails is getThumbnailsForImages(videoIds). The miss path is the cache's own two queries.
 func (s *Sources) Thumbnails(ctx context.Context, videoIDs []int) (map[int]Thumbnail, error) {
 	videoIDs = Unique(videoIDs)
-	out := map[int]Thumbnail{}
 	if len(videoIDs) == 0 {
-		return out, nil
+		return map[int]Thumbnail{}, nil
 	}
-	got := s.Packed.Get(ctx, KeyThumbnails, videoIDs, ttlDay)
+	return s.thumbnailsFrom(ctx, videoIDs, s.Packed.Get(ctx, KeyThumbnails, videoIDs, ttlDay))
+}
+
+// thumbnailsFrom is Thumbnails over the cache's answer got for (unique) video ids: the misses are read
+// from the replica.
+func (s *Sources) thumbnailsFrom(ctx context.Context, videoIDs []int, got map[int]Entry) (map[int]Thumbnail, error) {
+	out := map[int]Thumbnail{}
 	for id, e := range got {
 		if !e.NotFound {
 			out[id] = thumbFrom(e.Value)
@@ -200,31 +219,14 @@ func metricHashKey(id int) string { return "metrics:Image:" + strconv.Itoa(id) }
 // (Node reports statsUnknown only when the ClickHouse read failed or timed out and the cache held no
 // hash; an image with no hash falls back here, so this service never answers statsUnknown true.)
 func (s *Sources) ImageMetrics(ctx context.Context, imageIDs []int) (map[int]Metrics, error) {
-	imageIDs = Unique(imageIDs)
-	out := map[int]Metrics{}
-	if len(imageIDs) == 0 {
-		return out, nil
-	}
-	cmds := make([]*redis.MapStringStringCmd, len(imageIDs))
-	_, err := s.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
-		for i, id := range imageIDs {
-			cmds[i] = p.HGetAll(ctx, metricHashKey(id))
-		}
-		return nil
-	})
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fallback.Newf("metrics-read-failed", "%v", err)
-	}
-	hashes := make([]map[string]string, len(cmds))
-	for i, cmd := range cmds {
-		hash, err := cmd.Result()
-		if err != nil {
-			return nil, fallback.Newf("metrics-read-failed", "%v", err)
-		}
-		hashes[i] = hash
-	}
-	return MetricsFromHashes(imageIDs, hashes)
+	b := NewBatch()
+	r := s.queueMetrics(b, Unique(imageIDs))
+	b.Exec(ctx)
+	return r.result()
 }
+
+// metricsReadFailed is the fallback for a metric hash read that failed.
+func metricsReadFailed(err error) error { return fallback.Newf("metrics-read-failed", "%v", err) }
 
 // MetricsFromHashes is the per-id half of ImageMetrics: hashes[i] is the `metrics:Image:<ids[i]>`
 // hash as HGETALL returned it. An empty hash (no key) falls back; any other hash is an entry, a
@@ -305,7 +307,11 @@ func Stats(m Metrics, ok bool) superjson.Object {
 // regardless of age.
 func (s *Sources) TagIDs(ctx context.Context, imageIDs []int) (map[int]any, error) {
 	imageIDs = Unique(imageIDs)
-	got := s.Packed.Get(ctx, KeyTagIDs, imageIDs, 0)
+	return tagIDsFrom(imageIDs, s.Packed.Get(ctx, KeyTagIDs, imageIDs, 0))
+}
+
+// tagIDsFrom is TagIDs over the cache's answer got for (unique) image ids.
+func tagIDsFrom(imageIDs []int, got map[int]Entry) (map[int]any, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("tag-ids-miss", "%d ids", len(miss))
 	}

@@ -20,12 +20,14 @@
 package superjson
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -75,8 +77,17 @@ type segment struct {
 	index int
 }
 
-// initialBufSize pre-sizes the output; a feed page is tens of KiB, and append doubles from here.
-const initialBufSize = 16 << 10
+// Output buffers come from writerPool. A pooled writer starts with pooledBufSize of buffer (a feed page
+// is a few hundred KiB, so append rarely grows it); one whose buffer grew past maxPooledBufSize is not
+// put back, so a rare huge page does not pin its memory in the pool.
+const (
+	pooledBufSize    = 512 << 10
+	maxPooledBufSize = 1 << 20
+)
+
+var writerPool = sync.Pool{New: func() any {
+	return &writer{buf: make([]byte, 0, pooledBufSize), path: make([]segment, 0, 8)}
+}}
 
 type writer struct {
 	buf []byte
@@ -88,24 +99,101 @@ type writer struct {
 	plain bool
 }
 
+func getWriter(plain bool) *writer {
+	w, _ := writerPool.Get().(*writer)
+	w.plain = plain
+	return w
+}
+
+// putWriter resets w and returns it to the pool, unless its buffer outgrew maxPooledBufSize (then it
+// is left to the collector). It reports whether w was pooled. The caller must hold no reference to
+// w.buf afterwards: the next writer taken from the pool writes over it.
+func putWriter(w *writer) bool {
+	if cap(w.buf) > maxPooledBufSize {
+		return false
+	}
+	clear(w.notes) // the annotations' path strings are not kept alive by the pool
+	w.buf, w.path, w.notes, w.plain = w.buf[:0], w.path[:0], w.notes[:0], false
+	writerPool.Put(w)
+	return true
+}
+
+// Buffer is serialized output held in a pooled buffer. It has one owner, who calls Release once
+// nothing reads Bytes any more (the response is written, the comparison is done); until then the
+// bytes are the owner's alone. Release is idempotent; after it Bytes is nil.
+type Buffer struct {
+	w *writer
+}
+
+// Bytes is the output. It is valid until Release; do not keep it (or a sub-slice) past that.
+func (b *Buffer) Bytes() []byte {
+	if b == nil || b.w == nil {
+		return nil
+	}
+	return b.w.buf
+}
+
+// Release hands the buffer back to the pool. Safe on a nil Buffer and when called twice.
+func (b *Buffer) Release() {
+	if b == nil || b.w == nil {
+		return
+	}
+	w := b.w
+	b.w = nil
+	putWriter(w)
+}
+
 // Plain returns v as JSON.stringify writes it, for a plain-JSON response (the public REST endpoints
 // answer with `res.json`, not superjson): Dates as their ISO string, undefined object members omitted,
-// undefined array elements as null. No envelope and no annotations.
+// undefined array elements as null. No envelope and no annotations. The result is a copy the caller
+// owns; PlainBuffer avoids the copy.
 func Plain(v any) ([]byte, error) {
-	w := &writer{buf: make([]byte, 0, initialBufSize), plain: true}
+	return owned(PlainBuffer(v))
+}
+
+// PlainBuffer is Plain into a pooled Buffer the caller must Release.
+func PlainBuffer(v any) (*Buffer, error) {
 	if _, isUndef := v.(Undefined); isUndef {
 		return nil, errors.New("superjson: undefined has no JSON form")
 	}
+	w := getWriter(true)
 	if err := w.value(v, false); err != nil {
+		putWriter(w)
 		return nil, err
 	}
-	return w.buf, nil
+	return &Buffer{w: w}, nil
 }
 
 // Serialize returns the superjson envelope for v as JSON bytes: `{"json":…}` or
-// `{"json":…,"meta":{"values":{…},"v":1}}`.
+// `{"json":…,"meta":{"values":{…},"v":1}}`. The result is a copy the caller owns; SerializeBuffer
+// avoids the copy.
 func Serialize(v any) ([]byte, error) {
-	w := &writer{buf: make([]byte, 0, initialBufSize), path: make([]segment, 0, 8)}
+	return owned(SerializeBuffer(v))
+}
+
+// owned copies a Buffer's output out of the pool and releases it.
+func owned(b *Buffer, err error) ([]byte, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := bytes.Clone(b.Bytes())
+	b.Release()
+	return out, nil
+}
+
+// SerializeBuffer is Serialize into a pooled Buffer the caller must Release. A failed serialization
+// returns no Buffer (its writer is already back in the pool).
+func SerializeBuffer(v any) (*Buffer, error) {
+	w := getWriter(false)
+	if err := w.envelope(v); err != nil {
+		putWriter(w)
+		return nil, err
+	}
+	return &Buffer{w: w}, nil
+}
+
+// envelope writes the superjson envelope for v.
+func (w *writer) envelope(v any) error {
 	_, isUndef := v.(Undefined)
 	if isUndef {
 		// JSON.stringify drops an undefined top-level json; superjson then reads `json` as undefined.
@@ -115,7 +203,7 @@ func Serialize(v any) ([]byte, error) {
 		w.buf = append(w.buf, `{"json":`...)
 	}
 	if err := w.value(v, false); err != nil {
-		return nil, err
+		return err
 	}
 	if len(w.notes) > 0 {
 		if !isUndef {
@@ -143,7 +231,7 @@ func Serialize(v any) ([]byte, error) {
 		w.buf = append(w.buf, `,"v":1}`...)
 	}
 	w.buf = append(w.buf, '}')
-	return w.buf, nil
+	return nil
 }
 
 // EscapeKey mirrors superjson's pathstringifier.escapeKey.

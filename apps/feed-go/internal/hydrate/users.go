@@ -19,7 +19,12 @@ type BasicUser struct {
 // BasicUsers is getBasicDataForUsers: cache `basic-users` (stale served), miss -> the same Prisma select.
 func (s *Sources) BasicUsers(ctx context.Context, ids []int) (map[int]BasicUser, error) {
 	ids = Unique(ids)
-	got := s.Packed.Get(ctx, KeyBasicUsers, ids, ttlDay)
+	return s.basicUsersFrom(ctx, ids, s.Packed.Get(ctx, KeyBasicUsers, ids, ttlDay))
+}
+
+// basicUsersFrom is BasicUsers over the cache's answer got for (unique) ids: the misses are read from
+// the replica.
+func (s *Sources) basicUsersFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]BasicUser, error) {
 	out := make(map[int]BasicUser, len(ids))
 	for id, e := range got {
 		if e.NotFound {
@@ -58,15 +63,31 @@ func basicUserFrom(id int, m map[string]any) BasicUser {
 // The user-cosmetics miss path (which drops withheld creator cosmetics) is not ported: a miss falls back.
 func (s *Sources) UserCosmetics(ctx context.Context, ids []int) (map[int][]any, error) {
 	ids = Unique(ids)
-	got := s.Packed.Get(ctx, KeyUserCosmetics, ids, 0)
+	perUser, cosmeticIDs, err := userCosmeticsFrom(ids, s.Packed.Get(ctx, KeyUserCosmetics, ids, 0))
+	if err != nil {
+		return nil, err
+	}
+	cosmetics, err := s.Cosmetics(ctx, cosmeticIDs)
+	if err != nil {
+		return nil, err
+	}
+	return joinUserCosmetics(perUser, cosmetics), nil
+}
+
+// equippedCosmetic is one entry of a user's cached equipped list.
+type equippedCosmetic struct {
+	cosmeticID int
+	data       any
+}
+
+// userCosmeticsFrom is UserCosmetics' first half over the cache's answer got for (unique) ids: each
+// user's equipped list, and the cosmetic ids to join (unordered, possibly repeated). Any miss falls
+// back.
+func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic, []int, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
-		return nil, fallback.Newf("user-cosmetics-miss", "%d ids", len(miss))
+		return nil, nil, fallback.Newf("user-cosmetics-miss", "%d ids", len(miss))
 	}
-	type equipped struct {
-		cosmeticID int
-		data       any
-	}
-	perUser := map[int][]equipped{}
+	perUser := map[int][]equippedCosmetic{}
 	var cosmeticIDs []int
 	for id, e := range got {
 		if e.NotFound {
@@ -79,14 +100,17 @@ func (s *Sources) UserCosmetics(ctx context.Context, ids []int) (map[int][]any, 
 				continue
 			}
 			cid, _ := Int(m["cosmeticId"])
-			perUser[id] = append(perUser[id], equipped{cosmeticID: cid, data: m["data"]})
+			perUser[id] = append(perUser[id], equippedCosmetic{cosmeticID: cid, data: m["data"]})
 			cosmeticIDs = append(cosmeticIDs, cid)
 		}
 	}
-	cosmetics, err := s.Cosmetics(ctx, cosmeticIDs)
-	if err != nil {
-		return nil, err
-	}
+	return perUser, cosmeticIDs, nil
+}
+
+// joinUserCosmetics is UserCosmetics' second half: each equipped entry with its cosmetic record, or
+// undefined when the record exists nowhere. cosmetics is Cosmetics' answer for (at least) the ids
+// userCosmeticsFrom returned; a record is a pure function of its id, so extra ids change nothing.
+func joinUserCosmetics(perUser map[int][]equippedCosmetic, cosmetics map[int]superjson.Object) map[int][]any {
 	out := make(map[int][]any, len(perUser))
 	for uid, list := range perUser {
 		arr := make([]any, 0, len(list))
@@ -103,17 +127,22 @@ func (s *Sources) UserCosmetics(ctx context.Context, ids []int) (map[int][]any, 
 		}
 		out[uid] = arr
 	}
-	return out, nil
+	return out
 }
 
 // Cosmetics is cosmeticCache.fetch: `{id, name, type, data, source, flags?}` per cosmetic id.
 func (s *Sources) Cosmetics(ctx context.Context, ids []int) (map[int]superjson.Object, error) {
 	ids = Unique(ids)
-	out := make(map[int]superjson.Object, len(ids))
 	if len(ids) == 0 {
-		return out, nil
+		return map[int]superjson.Object{}, nil
 	}
-	got := s.Packed.Get(ctx, KeyCosmetics, ids, ttlDay)
+	return s.cosmeticsFrom(ctx, ids, s.Packed.Get(ctx, KeyCosmetics, ids, ttlDay))
+}
+
+// cosmeticsFrom is Cosmetics over the cache's answer got for (unique) ids: the misses are read from the
+// replica.
+func (s *Sources) cosmeticsFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]superjson.Object, error) {
+	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
 			out[id] = Pick(e.Value, "id", "name", "type", "data", "source", "flags")
@@ -143,7 +172,12 @@ var profilePictureColumns = []string{"id", "name", "url", "nsfwLevel", "hash", "
 // the user's profile picture, only when it is servable (src/server/services/profile-picture.sql.ts).
 func (s *Sources) ProfilePictures(ctx context.Context, ids []int) (map[int]superjson.Object, error) {
 	ids = Unique(ids)
-	got := s.Packed.Get(ctx, KeyProfilePictures, ids, 0)
+	return s.profilePicturesFrom(ctx, ids, s.Packed.Get(ctx, KeyProfilePictures, ids, 0))
+}
+
+// profilePicturesFrom is ProfilePictures over the cache's answer got for (unique) ids: the misses are
+// read from the replica.
+func (s *Sources) profilePicturesFrom(ctx context.Context, ids []int, got map[int]Entry) (map[int]superjson.Object, error) {
 	out := make(map[int]superjson.Object, len(ids))
 	for id, e := range got {
 		if !e.NotFound {
