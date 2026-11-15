@@ -287,6 +287,52 @@ describe('getArticleById banner visibility', () => {
   });
 });
 
+describe('getArticleById and a banner its model withholds', () => {
+  const read = async (viewer: { userId?: number; isModerator?: boolean }, withheld: boolean) => {
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: ARTICLE_ID,
+      userId: OWNER,
+      nsfwLevel: NsfwLevel.PG,
+      content: '',
+      tags: [],
+      metadata: null,
+      coverImage: null,
+      bannerImage: {
+        id: BANNER,
+        url: 'banner-key',
+        nsfwLevel: NsfwLevel.PG,
+        ingestion: 'Scanned',
+        needsReview: null,
+        meta: null,
+        metadata: null,
+        tags: [],
+      },
+    } as never);
+    dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
+    // The model-withheld read answers with the banner when its model withholds it.
+    dbMock.dbRead.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      withheld && strings.join('?').includes('JOIN "Post" p ON p.id = i."postId"')
+        ? [{ id: BANNER }]
+        : []) as never);
+    return (await getArticleById({ id: ARTICLE_ID, ...viewer })).bannerImage;
+  };
+
+  it.each([
+    ['a reader', { userId: READER }],
+    ['the article owner', { userId: OWNER }],
+  ])('🔴 hides it from %s', async (_, viewer) => {
+    expect(await read(viewer, true)).toBeUndefined();
+  });
+
+  it('shows it to a moderator', async () => {
+    expect(await read({ userId: READER, isModerator: true }, true)).toMatchObject({ id: BANNER });
+  });
+
+  it('shows a reader a banner its model does not withhold', async () => {
+    expect(await read({ userId: READER }, false)).toMatchObject({ id: BANNER });
+  });
+});
+
 describe('getArticleById on a banner-only article', () => {
   // The edit form seeds coverImage from this read and saves it back, so a banner standing in for
   // the cover here would save coverId = bannerId (refused by the unique index) or give the article

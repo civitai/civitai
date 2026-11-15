@@ -283,6 +283,24 @@ export function collectionItemCoversSql({
   `;
 }
 
+/**
+ * Of these image ids, the ones their model withholds from every viewer but moderators (taken down,
+ * or above a minor or SFW-only model's gallery level): the rule `imageAllowedByItsModelSql` applies.
+ */
+export async function getModelWithheldImageIds(
+  imageIds: number[],
+  db: Pick<typeof dbRead, '$queryRaw'> = dbRead
+): Promise<Set<number>> {
+  const ids = [...new Set(imageIds)];
+  if (!ids.length) return new Set();
+  const rows = await db.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id IN (${Prisma.join(ids)}) AND NOT ${withinItsModelSql}
+  `;
+  return new Set(rows.map((row) => Number(row.id)));
+}
+
 type CoverViewer = { id?: number; isModerator?: boolean } | undefined | null;
 
 type CoverCandidate = { collectionId: number; collectionOwnerId: number; imageId: number };

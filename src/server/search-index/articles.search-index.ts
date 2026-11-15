@@ -15,6 +15,7 @@ import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = ARTICLES_SEARCH_INDEX;
@@ -73,17 +74,22 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 export const transformData = async ({
   articles,
   cosmetics,
+  modelWithheldImageIds = new Set(),
 }: {
   articles: Article[];
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
+  /** Cover or banner images their model withholds: indexed as if unservable. */
+  modelWithheldImageIds?: Set<number>;
 }) => {
+  const servable = (image: Article['coverImage']) =>
+    image && !modelWithheldImageIds.has(image.id) ? servableArticleImage(image) : null;
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
       // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
       // article stays searchable.
       const cover = articleRecord.coverImage;
       if (cover && (hasBlockMarker(cover) || cover.needsReview)) return null;
-      const coverImage = servableArticleImage(cover) ?? servableArticleImage(bannerImage);
+      const coverImage = servable(cover) ?? servable(bannerImage);
       if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
@@ -238,9 +244,15 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
 
     logger(`PullData :: Pulled cosmetics`);
 
+    const modelWithheldImageIds = await getModelWithheldImageIds(
+      articles.flatMap((a) => [a.coverImage?.id, a.bannerImage?.id]).filter(isDefined),
+      db
+    );
+
     return {
       articles,
       cosmetics,
+      modelWithheldImageIds,
     };
   },
   transformData,

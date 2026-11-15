@@ -45,6 +45,23 @@ describe('articles search index', () => {
     expect(record).not.toHaveProperty('bannerImage');
   });
 
+  it('🔴 indexes an article without a cover its model withholds, falling back to the banner', async () => {
+    const withBanner = await recordsOf({
+      articles: [article({ coverImage: image(10, 1), bannerImage: image(11, 1) })],
+      cosmetics: {},
+      modelWithheldImageIds: new Set([10]),
+    });
+    expect(withBanner[0]?.coverImage).toMatchObject({ id: 11 });
+
+    const coverOnly = await recordsOf({
+      articles: [article({ coverImage: image(10, 1), bannerImage: null })],
+      cosmetics: {},
+      modelWithheldImageIds: new Set([10]),
+    });
+    expect(coverOnly).toHaveLength(1);
+    expect(coverOnly[0]?.coverImage).toBeUndefined();
+  });
+
   it('keeps the cover when there is one', async () => {
     const [record] = await recordsOf({
       articles: [article({ coverImage: image(10, 1), bannerImage: image(11, 1) })],

@@ -82,7 +82,10 @@ import {
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
-import { imageAllowedByItsModelSql } from '~/server/services/collection-cover-visibility';
+import {
+  getModelWithheldImageIds,
+  imageAllowedByItsModelSql,
+} from '~/server/services/collection-cover-visibility';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -864,8 +867,16 @@ export const getArticleById = async ({
     });
 
     const isOwnerOrMod = isModerator || userId === article.userId;
-    const coverImage = viewableArticleImage(article.coverImage, isOwnerOrMod);
-    const bannerImage = viewableArticleImage(article.bannerImage, isOwnerOrMod);
+    // A cover or banner its model withholds is the moderators' alone, as on the entity cover read.
+    const withheldByModel = isModerator
+      ? new Set<number>()
+      : await getModelWithheldImageIds(
+          [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)
+        );
+    const allowedByModel = <T extends { id: number }>(image: T | null) =>
+      image && !withheldByModel.has(image.id) ? image : null;
+    const coverImage = viewableArticleImage(allowedByModel(article.coverImage), isOwnerOrMod);
+    const bannerImage = viewableArticleImage(allowedByModel(article.bannerImage), isOwnerOrMod);
 
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.

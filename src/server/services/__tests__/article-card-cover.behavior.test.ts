@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { ArticleSort } from '~/server/common/enums';
+import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 import {
   articleCardCoverIdSql,
   getArticles,
@@ -111,6 +112,19 @@ describe('article card cover', () => {
 
   it('gives no image when there is neither', async () => {
     expect(await cardCoverId(NEITHER)).toBeNull();
+  });
+});
+
+describe('getModelWithheldImageIds', () => {
+  it('names the images on a taken-down model or above a held gallery level, and no other', async () => {
+    const raw = (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const q = Prisma.sql(strings, ...(values as never[]));
+      return pg.query(q.text, q.values as unknown[]).then((r) => r.rows);
+    };
+    const withheld = await getModelWithheldImageIds([10, 20, 21, 22, 23], {
+      $queryRaw: raw,
+    } as never);
+    expect([...withheld].sort()).toEqual([20, 21, 22]);
   });
 });
 
