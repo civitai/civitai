@@ -118,10 +118,17 @@ export function collectionItemCoversSql({
   collectionIds,
   itemsPerCollection,
   imageSql,
+  srcImageLevels = sfwBrowsingLevelsFlag,
 }: {
   collectionIds: number[];
   itemsPerCollection: number;
   imageSql: Prisma.Sql;
+  /**
+   * The levels an article's cover image may have for its legacy cover string to go with it. SFW
+   * for a reader that shows the string to everyone; a reader that drops the string with an image
+   * above the viewer's level may pass every level.
+   */
+  srcImageLevels?: number;
 }) {
   return Prisma.sql`
     WITH target AS MATERIALIZED (
@@ -212,8 +219,8 @@ export function collectionItemCoversSql({
               SELECT 1 FROM "Image" i
               WHERE i.id = COALESCE(a."coverId", a."bannerId")
                 AND ${servableImageSql}
-                AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}::int) <> 0
-                AND (i."nsfwLevel" & ~${sfwBrowsingLevelsFlag}::int) = 0
+                AND (i."nsfwLevel" & ${srcImageLevels}::int) <> 0
+                AND (i."nsfwLevel" & ~${srcImageLevels}::int) = 0
             )
           END
     ), model3dItemImage AS MATERIALIZED (

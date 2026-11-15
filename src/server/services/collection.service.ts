@@ -3972,6 +3972,8 @@ export const getCollectionCoverImages = async ({
           collectionIds,
           itemsPerCollection: imagesPerCollection,
           imageSql,
+          // The string is dropped below with an image above the viewer's level.
+          srcImageLevels: allBrowsingLevelsFlag,
         })}`
       : [];
   // An article's cover string carries no rating of its own: it is served only beside a cover
