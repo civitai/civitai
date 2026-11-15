@@ -54,11 +54,11 @@ func TestFromJSONOrderAndPack(t *testing.T) {
 	}
 	o := v.(Obj)
 	keys := make([]string, 0, len(o))
-	var inner []string
 	for _, kv := range o {
 		keys = append(keys, kv.K)
 	}
 	a, _ := o.Get("a")
+	inner := make([]string, 0, len(a.(Obj)))
 	for _, kv := range a.(Obj) {
 		inner = append(inner, kv.K)
 	}
