@@ -291,6 +291,18 @@ describe('the flag, per user', () => {
     h.variant.mockImplementation(async () => null);
     expect(await getPassThroughPromptAuditMode(43)).toBe('log');
   });
+
+  it("a user's segment cannot make the audit laxer than the global mode", async () => {
+    h.variant.mockImplementation(async (_f, entity) => (entity === '42' ? 'off' : 'enforce'));
+    expect(await getPassThroughPromptAuditMode(42)).toBe('enforce');
+    h.variant.mockImplementation(async (_f, entity) => (entity === '42' ? 'log' : 'enforce'));
+    expect(await getPassThroughPromptAuditMode(42)).toBe('enforce');
+  });
+
+  it("control: a user's segment can make it stricter", async () => {
+    h.variant.mockImplementation(async (_f, entity) => (entity === '42' ? 'enforce' : 'log'));
+    expect(await getPassThroughPromptAuditMode(42)).toBe('enforce');
+  });
 });
 
 describe('submit telemetry', () => {

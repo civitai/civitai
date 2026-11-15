@@ -170,7 +170,7 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
   },
   // Every App Block audit (textToImage, custom comfy, registry steps, pass-through, workflow and
   // training sample prompts) goes through this one wrapper; its callers are pinned by
-  // `blocks.router.prompt-refusal-coverage.test.ts`.
+  // `no-unaudited-app-block-generation-kind.test.ts`.
   'src/server/services/blocks/pass-through-prompt-audit.ts::auditAppBlockPrompt': {
     sites: 1,
     siteNote: "the block host's pre-check on every App Block generation prompt",
