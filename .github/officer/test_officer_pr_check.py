@@ -9,8 +9,9 @@ Three groups:
     (`check <base> <head>`, `arm <base> <ref> <author>`), and each wall must go RED on the
     change it exists to catch, with its own reason (a head adds a regression test unless
     the test is about that rule, so a refusal is never check 4's by accident).
-  * RealList: the committed list parses, forbids each class the policy names, leaves
-    ordinary application code alone, and forbids EVERY top-level entry of this checkout
+  * RealList: the committed list parses, forbids each class the policy names and every
+    entry of the ci-watch officer charter's floor (CHARTER_FLOOR), leaves ordinary
+    application code alone, and forbids EVERY top-level entry of this checkout
     except src/ and packages/ (the agent's push gate has no allowlist, so the list must
     spell it out; a new top-level entry fails here until it is listed).
 """
@@ -84,7 +85,7 @@ class Fixture(unittest.TestCase):
         self.write(".github/officer/bot-logins.txt", "# bots\n# placeholder[bot]\nCivitai-Officer-X[bot]   # x\r\n")
         self.write("src/app.ts", "export const a = 1;\n")
         self.write("src/old/keep.ts", "x\n")
-        self.write("src/old/keep.test.ts", "x\n")
+        self.write("src/old/keep.test.ts", "expect(1).toBe(1);\nexpect(2).toBe(2);\n")
         self.write("packages/civitai-ui/src/b.ts", "export const b = 1;\n")
         self.write("packages/civitai-db-schema/prisma/schema.prisma", "model A {}\n")
         self.write("package.json", "{}\n")
@@ -146,10 +147,56 @@ class Fixture(unittest.TestCase):
         rc, out = self.check()
         self.assertEqual(rc, 1, out)
         self.assertIn("FAIL: no test file added or modified", out)
+        self.assertIn("FAIL: 1 test file(s) deleted", out)
 
-    def test_modified_test_under___tests___counts(self):
-        self.write("packages/civitai-ui/src/__tests__/b.ts", "test('b', () => {});\n")
+    def test_a_non_test_file_under___tests___does_not_count(self):
+        # Only *.test.* and *.spec.* count: a helper under __tests__/ is not a regression test.
+        self.write("packages/civitai-ui/src/__tests__/helpers.ts", "export const h = 1;\n")
         self.write("packages/civitai-ui/src/b.ts", "export const b = 2;\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL: no test file added or modified", out)
+
+    def test_a_spec_file_counts(self):
+        self.write("packages/civitai-ui/src/b.spec.tsx", "expect(1).toBe(1);\n")
+        self.write("packages/civitai-ui/src/b.ts", "export const b = 2;\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 test file(s) added or modified", out)
+
+    def test_deleting_a_test_file_fails_even_with_a_new_test(self):
+        self.g("rm", "-q", "src/old/keep.test.ts")
+        self.commit()   # adds src/app.test.ts, so check 4 alone would pass
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL: 1 test file(s) deleted", out)
+        self.assertIn("'src/old/keep.test.ts'", out)
+        self.assertIn("1 test file(s) added or modified", out)
+
+    def test_a_net_loss_of_expect_calls_in_a_test_file_fails(self):
+        self.write("src/old/keep.test.ts", "expect(1).toBe(1);\n// expect gone\n")
+        self.write("src/old/keep.ts", "y\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL: 1 test file(s) lose expect( calls", out)
+        self.assertIn("'src/old/keep.test.ts': 2 -> 1", out)
+
+    def test_moving_expect_calls_between_test_files_still_fails_the_one_that_lost_them(self):
+        # Per file, as the charter says ("in a test file"): a gain elsewhere does not offset it.
+        self.write("src/old/keep.test.ts", "expect(1).toBe(1);\n")
+        self.write("src/app.test.ts", "expect(1).toBe(1);\nexpect(2).toBe(2);\nexpect(3).toBe(3);\n")
+        self.g("add", "-A")
+        self.g("commit", "-q", "-m", "head")
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("'src/old/keep.test.ts': 2 -> 1", out)
+
+    def test_adding_expect_calls_to_a_test_file_passes(self):
+        self.write("src/old/keep.test.ts", "expect(1).toBe(1);\nexpect(2).toBe(2);\nexpect(3).toBe(3);\n")
+        self.write("src/old/keep.ts", "y\n")
         self.commit(with_test=False)
         rc, out = self.check()
         self.assertEqual(rc, 0, out)
@@ -264,8 +311,21 @@ class Fixture(unittest.TestCase):
         self.assertIn("line 1", out)
 
     # ── arm ──
-    def arm(self, ref, author):
-        return self.run_checker("arm", "base", ref, author)
+    def arm(self, ref, author, sender=None, base_ref="main", cwd=None):
+        args = ["arm", "base", "HEAD", base_ref, ref, author, sender or author]
+        if cwd is None:
+            return self.run_checker(*args)
+        r = subprocess.run([sys.executable, CHECKER, *args], cwd=cwd, capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def commit_as(self, author, committer=("t", "t@t")):
+        self.n = getattr(self, "n", 0) + 1
+        self.write("src/app.ts", "export const a = %d;\n" % (100 + self.n))
+        self.g("add", "-A")
+        env = dict(os.environ, GIT_AUTHOR_NAME=author[0], GIT_AUTHOR_EMAIL=author[1],
+                   GIT_COMMITTER_NAME=committer[0], GIT_COMMITTER_EMAIL=committer[1])
+        subprocess.run(["git", "-C", self.d, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "c"],
+                       check=True, capture_output=True, env=env)
 
     def test_arm_officer_prefix(self):
         rc, out = self.arm("officer/release-followup/12-fix", "SomeHuman")
@@ -277,6 +337,70 @@ class Fixture(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("armed=true", out)
         self.assertIn("officer bot author", out)
+
+    def test_arm_listed_bot_sender(self):
+        # A human-authored PR that a listed bot pushed to (the event's sender) is armed.
+        rc, out = self.arm("fix/oom", "SomeHuman", sender="CIVITAI-OFFICER-X[bot]")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("armed=true", out)
+        self.assertIn("officer bot sender", out)
+
+    def test_arm_a_commit_authored_by_a_listed_bot(self):
+        self.g("checkout", "-q", "-b", "fix/oom")
+        self.commit_as(("t", "t@t"))
+        self.commit_as(("civitai-officer-x[bot]", "1+civitai-officer-x[bot]@users.noreply.github.com"))
+        rc, out = self.arm("fix/oom", "SomeHuman")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("armed=true", out)
+        self.assertIn("author", out)
+        self.assertIn("commit", out)
+
+    def test_arm_a_commit_committed_by_a_listed_bot_by_email_only(self):
+        self.g("checkout", "-q", "-b", "fix/oom")
+        self.commit_as(("SomeHuman", "h@h"), committer=("A Name", "42+Civitai-Officer-X[bot]@users.noreply.github.com"))
+        rc, out = self.arm("fix/oom", "SomeHuman")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("armed=true", out)
+        self.assertIn("committer", out)
+
+    def test_human_commits_do_not_arm(self):
+        self.g("checkout", "-q", "-b", "fix/oom")
+        self.commit_as(("SomeHuman", "h@h"), committer=("placeholder[bot]", "placeholder[bot]@x"))
+        self.commit_as(("civitai-officer-x", "civitai-officer-x@users.noreply.github.com"))
+        rc, out = self.arm("fix/oom", "SomeHuman")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("armed=false", out)
+
+    def test_arm_fails_closed_on_truncated_history(self):
+        # A shallow checkout that cuts the base..head range cannot prove no bot commit is in it.
+        self.g("checkout", "-q", "-b", "fix/oom")
+        self.commit_as(("civitai-officer-x[bot]", "x@x"))
+        self.commit_as(("SomeHuman", "h@h"))
+        clone = tempfile.mkdtemp(prefix="officer-pr-check-shallow-")
+        self.addCleanup(shutil.rmtree, clone, True)
+        subprocess.run(["git", "clone", "-q", "--depth", "1", "--branch", "fix/oom", "file://" + self.d, clone],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "-C", clone, "fetch", "-q", "--depth", "1", "origin", "base:base"],
+                       check=True, capture_output=True)
+        rc, out = self.arm("fix/oom", "SomeHuman", cwd=clone)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("shallow", out)
+        # Control: the full history arms on the bot commit.
+        rc, out = self.arm("fix/oom", "SomeHuman")
+        self.assertIn("armed=true", out)
+
+    def test_armed_pr_against_a_base_other_than_main_fails(self):
+        for ref, author in [("officer/x/1-y", "SomeHuman"), ("fix/oom", "civitai-officer-x[bot]")]:
+            with self.subTest(ref=ref):
+                rc, out = self.arm(ref, author, base_ref="feat/thing")
+                self.assertEqual(rc, 1, out)
+                self.assertIn("armed=true", out)
+                self.assertIn("FAIL: an officer PR must target main", out)
+
+    def test_unarmed_pr_against_another_base_passes(self):
+        rc, out = self.arm("fix/oom", "SomeHuman", base_ref="feat/thing")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("armed=false", out)
 
     def test_human_on_other_branch_not_armed(self):
         for ref, author in [("fix/oom", "SomeHuman"), ("officers/x", "a"), ("zach/officer/x", "a"),
@@ -296,6 +420,7 @@ class Fixture(unittest.TestCase):
     def test_arm_fails_closed(self):
         self.assertEqual(self.arm("fix/oom", "")[0], 2)
         self.assertEqual(self.arm("", "SomeHuman")[0], 2)
+        self.assertEqual(self.arm("fix/oom", "SomeHuman", base_ref="")[0], 2)
         self.g("checkout", "-q", "--detach", "base")
         self.g("rm", "-q", ".github/officer/bot-logins.txt")
         self.g("commit", "-q", "-m", "no logins")
@@ -303,6 +428,43 @@ class Fixture(unittest.TestCase):
         self.assertEqual(self.arm("fix/oom", "SomeHuman")[0], 2)
         # ...but an officer/ ref still arms without the list.
         self.assertIn("armed=true", self.arm("officer/x/1-y", "SomeHuman")[1])
+
+    # ── selftest-needed (D1: the self-test runs only when it can say something new) ──
+    def selftest_needed(self):
+        return self.run_checker("selftest-needed", "base", "HEAD")
+
+    def test_selftest_needed_when_the_officer_dir_changes(self):
+        self.write(".github/officer/bot-logins.txt", "x[bot]\n")
+        self.commit(with_test=False)
+        rc, out = self.selftest_needed()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("selftest=true", out)
+
+    def test_selftest_needed_when_a_top_level_directory_is_added(self):
+        self.write("newtool/x.txt", "x\n")
+        self.commit(with_test=False)
+        rc, out = self.selftest_needed()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("selftest=true", out)
+        self.assertIn("'newtool'", out)
+
+    def test_selftest_needed_when_a_top_level_file_is_added(self):
+        self.write("NEWFILE.md", "x\n")
+        self.commit(with_test=False)
+        rc, out = self.selftest_needed()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("selftest=true", out)
+        self.assertIn("'NEWFILE.md'", out)
+
+    def test_selftest_not_needed_for_ordinary_changes(self):
+        self.write("src/app.ts", "export const a = 9;\n")
+        self.write("README.md", "changed\n")          # an existing top-level entry, modified
+        self.write(".github/workflows/x.yml", "on: push\n")
+        self.g("rm", "-q", "package.json")              # a top-level entry removed
+        self.commit(with_test=False)
+        rc, out = self.selftest_needed()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("selftest=false", out)
 
 
 class RealList(unittest.TestCase):
@@ -326,6 +488,53 @@ class RealList(unittest.TestCase):
             with self.subTest(path=p):
                 self.assertTrue(self.forbidden(p), f"{p} is not forbidden by {REAL_LIST}")
 
+    # The ci-watch officer charter's floor: what it treats as forbidden until this list exists
+    # on main. Pinned here entry by entry (with variants and depths) so the list cannot again
+    # fall below it. A charter change that widens the floor must add its entries here too.
+    CHARTER_FLOOR = {
+        "Prisma schema and migrations": ["prisma/schema.prisma", "packages/civitai-db-schema/prisma/schema.full.prisma",
+                                         "packages/civitai-db-schema/prisma/migrations/1_x/migration.sql",
+                                         "src/server/clickhouse/migrations/x.sql"],
+        ".github/": [".github/workflows/x.yml", ".github/officer/forbidden-paths.txt"],
+        "scripts/": ["scripts/ci/x.mjs", "packages/civitai-ui/scripts/x.mjs"],
+        "vitest.config.*": ["vitest.config.mts", "vitest.config.ts", "packages/civitai-ui/vitest.config.ts",
+                            "packages/civitai-post-planner/vitest.browser.config.ts", "src/x/vitest.config.js",
+                            "vitest.workspace.config.mjs"],
+        "playwright*.config.ts": ["playwright.config.ts", "playwright.preview.config.ts",
+                                  "packages/x/playwright.e2e.config.ts"],
+        "*baseline*.json": ["scripts/ci/typecheck-tests-baseline.json",
+                            "packages/civitai-db-schema/src/schema-drift/drift-baseline.json",
+                            "src/x/baseline.json", "packages/x/perf.baseline.v2.json"],
+        ".bundle-budget.json": [".bundle-budget.json", "packages/x/.bundle-budget.json"],
+        ".claude/": [".claude/settings.json", ".claude/skills/x/SKILL.md"],
+        "CLAUDE.md": ["CLAUDE.md", "src/CLAUDE.md", "packages/x/CLAUDE.md"],
+        "AGENTS.md": ["AGENTS.md", "packages/x/AGENTS.md"],
+        "opencode.json": ["opencode.json"],
+        "package.json": ["package.json", "packages/civitai-ui/package.json"],
+        "pnpm-lock.yaml": ["pnpm-lock.yaml", "packages/x/pnpm-lock.yaml"],
+        "patches/": ["patches/x.patch"],
+        ".npmrc": [".npmrc", "packages/x/.npmrc"],
+        ".nvmrc": [".nvmrc", "src/.nvmrc"],
+        "Dockerfile*": ["Dockerfile", "packages/x/Dockerfile.prod"],
+        "docker-compose*": ["docker-compose.yml", "docker-compose.base.yml", "packages/x/docker-compose.dev.yaml"],
+        "containers/": ["containers/x/y"],
+        "ops/": ["ops/x/y.yaml"],
+        "next.config.mjs": ["next.config.mjs", "packages/x/next.config.mjs"],
+        "apps/": ["apps/moderator/src/x.ts", "apps/auth/package.json"],
+        ".env*": [".env", ".env.production", "src/.env.local", ".envrc.example"],
+        "src/env/": ["src/env/server.ts", "src/env/client.mjs", "src/env/__tests__/x.test.ts"],
+        "src/proxy.ts": ["src/proxy.ts"],
+        "src/server/middleware/": ["src/server/middleware/x.middleware.ts", "src/server/middleware/a/b.ts"],
+        "packages/civitai-auth/": ["packages/civitai-auth/src/index.ts", "packages/civitai-auth/src/__tests__/x.test.ts"],
+        ".eslintrc*": [".eslintrc.js", ".eslintrc", "packages/.eslintrc.cjs", "src/x/.eslintrc.json"],
+    }
+
+    def test_forbids_the_ci_watch_charter_floor(self):
+        for entry, probes in self.CHARTER_FLOOR.items():
+            for p in probes:
+                with self.subTest(entry=entry, path=p):
+                    self.assertTrue(self.forbidden(p), f"charter floor {entry!r}: {p} is not forbidden by {REAL_LIST}")
+
     def test_leaves_application_code_alone(self):
         # Positive control: the list must not forbid what an officer PR is FOR.
         for p in ["src/pages/index.tsx", "src/server/services/model.service.ts", "src/components/Image/x.tsx",
@@ -333,7 +542,11 @@ class RealList(unittest.TestCase):
                   "packages/civitai-db-schema/src/index.ts", "src/server/routers/image.router.ts",
                   # tests under src/ and packages/ are allowed (operator decision 2026-11-09)
                   "src/server/services/model.service.test.ts", "src/__tests__/pages/x.test.tsx",
-                  "src/tests/api/x.test.ts", "packages/civitai-ui/src/__tests__/b.test.tsx"]:
+                  "src/tests/api/x.test.ts", "packages/civitai-ui/src/__tests__/b.test.tsx",
+                  # near misses of the charter-floor entries
+                  "src/environment.ts", "src/server/env-utils.ts", "src/proxy.test.ts", "src/server/proxy.ts",
+                  "src/server/middleware.ts", "packages/civitai-ui/src/vitest-helpers.ts",
+                  "src/server/services/baseline.service.ts", "src/server/eslint-rules.ts"]:
             with self.subTest(path=p):
                 self.assertFalse(self.forbidden(p), f"{p} (application code) is forbidden by {REAL_LIST}")
 

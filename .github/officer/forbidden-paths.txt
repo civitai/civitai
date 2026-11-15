@@ -41,11 +41,15 @@ packages/civitai-db-schema/prisma/
 *.prisma
 **/migrations/**
 
-# ── environment and secrets ─────────────────────────────────────────────────────
+# ── auth, environment and secrets ───────────────────────────────────────────────
 .env*
 *.env
 *.pem
 *.key
+src/env/
+src/proxy.ts
+src/server/middleware/
+packages/civitai-auth/
 
 # ── containers ──────────────────────────────────────────────────────────────────
 Dockerfile*
@@ -71,6 +75,13 @@ opencode.json
 *.sh
 scripts
 
+# ── test, lint and CI config and baselines, anywhere ───────────────────────────
+# A fix may not loosen the gate that judges it: every variant, in any directory.
+vitest*.config.*
+playwright*.config.*
+*baseline*.json
+.eslintrc*
+
 # ── every other top-level entry (the second wall's allowlist, spelled out) ──────
 # Directories (anchored at the root).
 .browser/
@@ -93,7 +104,6 @@ event-engine-common
 .bundle-budget.json
 .editorconfig
 .eslintignore
-.eslintrc.js
 .prettierignore
 .prettierrc
 CONTRIBUTING.md
@@ -108,8 +118,6 @@ flake.nix
 lighthouserc.json
 next-boost.js
 next.config.mjs
-playwright.config.ts
-playwright.preview.config.ts
 postcss.config.js
 removedByAuthor
 renovate.json
@@ -118,4 +126,3 @@ tsconfig.json
 tsconfig.scripts.json
 tsconfig.tests.json
 turbo.json
-vitest.config.mts

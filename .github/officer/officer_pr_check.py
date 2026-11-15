@@ -2,14 +2,26 @@
 """officer_pr_check.py: the second wall for PRs opened by an officer agent's GitHub App.
 
 Usage:
-  officer_pr_check.py arm   <base-rev> <head-ref-name> <author-login>
+  officer_pr_check.py arm   <base-rev> <head-rev> <base-ref-name> <head-ref-name> <author-login> <sender-login>
   officer_pr_check.py check <base-rev> <head-rev>
+  officer_pr_check.py selftest-needed <base-rev> <rev>
 
-`arm` decides whether the check applies. Armed when EITHER the head ref starts with
-`officer/` OR the author is listed (case-insensitively) in the BASE revision's
-.github/officer/bot-logins.txt. Prints `armed=true` or `armed=false` and a `why:` line.
-Exit 2 (fail closed) on an empty ref or author, or when an author must be checked and the
-base lacks the list.
+`arm` decides whether the check applies. Armed when ANY of these holds:
+  * the head ref starts with `officer/`;
+  * the PR author, or the event's sender, is listed (case-insensitively) in the BASE
+    revision's .github/officer/bot-logins.txt;
+  * a commit in <base-rev>..<head-rev> has a listed login as its author or committer, by
+    name or by GitHub's noreply email (`[<id>+]<login>@users.noreply.github.com`).
+Prints `armed=true` or `armed=false` and a `why:` line. An armed PR whose base ref is not
+`main` FAILS (exit 1): officer PRs target main only, and the list a PR is judged by must be
+main's. Exit 2 (fail closed) on an empty argument, when logins must be read and the base
+lacks the list, or when a shallow history cuts <base-rev>..<head-rev> short (a bot commit
+could hide past the cut).
+
+`selftest-needed` decides whether the self-test has anything to say about a PR: it prints
+`selftest=true` when <base-rev>..<rev> touches .github/officer/ or adds a top-level entry
+(which forbidden-paths.txt must then list), else `selftest=false`. A PR that does neither
+cannot change the walls or the top-level coverage the self-test checks.
 
 `check` judges every path changed between <base-rev> and <head-rev> (both sides of a
 rename, deletions included):
@@ -18,10 +30,12 @@ rename, deletions included):
      .github/officer/forbidden-paths.txt (the grammar of the agent's push gate, ported:
      match_forbidden below).
   3. MODE: no symlink (120000) or gitlink (160000) may be added or changed to.
-  4. REGRESSION TEST: at least one added or modified file is a test (TEST_GLOBS: a
-     `*.test.*` / `*.spec.*` file or anything under a `__tests__/` directory). Every officer
-     PR must carry a regression test for the fault it fixes (operator decision 2026-11-09);
-     a deleted test does not count.
+  4. REGRESSION TEST: at least one added or modified file is a test (TEST_GLOBS: a file
+     whose name matches `*.test.*` or `*.spec.*`). Every officer PR must carry a regression
+     test for the fault it fixes (operator decision 2026-11-09); a deleted test does not count.
+  5. NO DELETED TEST: no test file may be deleted (a rename is a deletion here).
+  6. NO LOST ASSERTIONS: no modified test file may have fewer `expect(` calls at <head-rev>
+     than at <base-rev>, counted per file (a gain in another file does not offset a loss).
 An empty diff FAILS: an officer PR always changes something, and "nothing changed" more
 often means wrong revisions than a clean PR.
 
@@ -39,8 +53,12 @@ LIST = ".github/officer/forbidden-paths.txt"
 LOGINS = ".github/officer/bot-logins.txt"
 ALLOWED_ROOTS = ("src/", "packages/")
 BRANCH_PREFIX = "officer/"
+BASE_REF = "main"
+SELFTEST_DIR = ".github/officer/"
 BAD_MODES = {"120000": "a symlink", "160000": "a submodule gitlink"}
-TEST_GLOBS = ("*.test.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "*.spec.{ts,tsx,mts,cts,js,jsx,mjs,cjs}", "__tests__")
+TEST_GLOBS = ("*.test.*", "*.spec.*")
+EXPECT = "expect("
+NOREPLY = re.compile(r"^(?:[0-9]+\+)?(?P<login>[^@]+)@users\.noreply\.github\.com$", re.IGNORECASE)
 
 
 class Fatal(Exception):
@@ -154,6 +172,52 @@ def resolve(rev):
     return r.stdout.decode().strip()
 
 
+def is_test(path):
+    """A test file: its NAME (the last segment) matches a TEST_GLOBS pattern."""
+    name = path.rsplit("/", 1)[-1]
+    return any(compile_glob(g).fullmatch(name) for g in TEST_GLOBS)
+
+
+def expect_count(rev, path):
+    return git("show", f"{rev}:{path}").decode("utf-8", errors="replace").count(EXPECT)
+
+
+def read_logins(base):
+    out = set()
+    for line in from_base(base, LOGINS).replace("\r", "").split("\n"):
+        line = "".join(line.split("#", 1)[0].split())
+        if line:
+            out.add(line.lower())
+    return out
+
+
+def range_identities(base, head):
+    """[(sha, role, name, email)] for the author and committer of every commit in base..head.
+
+    Fail closed when a shallow boundary falls inside the range: git would stop walking there
+    and report fewer commits than the PR has, with no error."""
+    raw = git("log", "-z", "--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce", f"{base}..{head}")
+    commits = [r.split(b"\x1f") for r in raw.split(b"\0") if r.strip()]
+    shallow = git("rev-parse", "--is-shallow-repository").decode().strip() == "true"
+    if shallow:
+        path = git("rev-parse", "--git-path", "shallow").decode().strip()
+        try:
+            with open(path) as f:
+                cut = {ln.strip() for ln in f if ln.strip()}
+        except OSError:
+            cut = set()
+        hit = [c[0].decode().strip() for c in commits if c[0].decode().strip() in cut]
+        if hit:
+            raise Fatal(f"the history is shallow and cut at {hit[0][:12]}, inside {base}..{head}; "
+                        "cannot see every commit to arm on (fail closed; fetch the full PR history)")
+    out = []
+    for c in commits:
+        sha, an, ae, cn, ce = (x.decode("utf-8", errors="replace").strip() for x in c)
+        out.append((sha, "author", an, ae))
+        out.append((sha, "committer", cn, ce))
+    return out
+
+
 def changed_entries(base, head):
     """[(old_mode, new_mode, status, path)] from `git diff --raw -z --no-renames`."""
     raw = git("diff", "--raw", "-z", "--no-renames", "--no-abbrev", base, head)
@@ -170,23 +234,58 @@ def changed_entries(base, head):
 
 
 # ── commands ────────────────────────────────────────────────────────────────────
-def cmd_arm(base, ref, author):
-    if not ref or not author:
-        raise Fatal("empty head ref or author; cannot decide whether the officer check applies (fail closed)")
+def arm_reason(base, head, ref, author, sender):
+    """Why the PR is armed, or None."""
     if ref.startswith(BRANCH_PREFIX):
-        print("armed=true")
-        print(f"why: {BRANCH_PREFIX} head ref {ref}")
+        return f"{BRANCH_PREFIX} head ref {ref}"
+    base_c, head_c = resolve(base), resolve(head)
+    logins = read_logins(base_c)
+    if author.lower() in logins:
+        return f"officer bot author {author}"
+    if sender.lower() in logins:
+        return f"officer bot sender {sender}"
+    for sha, role, name, email in range_identities(base_c, head_c):
+        m = NOREPLY.match(email)
+        for who in (name, m.group("login") if m else None):
+            if who and who.lower() in logins:
+                return f"commit {sha[:12]} has officer bot {who} as its {role}"
+    return None
+
+
+def cmd_arm(base, head, base_ref, ref, author, sender):
+    if not all((base, head, base_ref, ref, author, sender)):
+        raise Fatal("an empty argument; cannot decide whether the officer check applies (fail closed)")
+    why = arm_reason(base, head, ref, author, sender)
+    if why is None:
+        print("armed=false")
+        print(f"why: head ref is not {BRANCH_PREFIX}*, and neither the author {author}, the sender {sender} "
+              f"nor any commit's author or committer is a listed officer bot")
         return 0
-    resolve(base)
-    want = author.lower()
-    for line in from_base(base, LOGINS).replace("\r", "").split("\n"):
-        line = "".join(line.split("#", 1)[0].split())
-        if line and line.lower() == want:
-            print("armed=true")
-            print(f"why: officer bot author {author}")
-            return 0
-    print("armed=false")
-    print(f"why: head ref is not {BRANCH_PREFIX}* and author {author} is not a listed officer bot")
+    print("armed=true")
+    print(f"why: {why}")
+    if base_ref != BASE_REF:
+        print(f"FAIL: an officer PR must target {BASE_REF}, not {base_ref!r} "
+              f"(the walls are judged against {BASE_REF}'s list)")
+        return 1
+    return 0
+
+
+def cmd_selftest_needed(base, rev):
+    base_c, rev_c = resolve(base), resolve(rev)
+    touched = [p for _, _, _, p in changed_entries(base_c, rev_c) if p.startswith(SELFTEST_DIR)]
+    if touched:
+        print("selftest=true")
+        print(f"why: touches {SELFTEST_DIR}, e.g. {touched[0]!r}")
+        return 0
+    def top(r):
+        return {n for n in git("ls-tree", "-z", "--name-only", r).decode("utf-8", errors="surrogateescape").split("\0") if n}
+    added = sorted(top(rev_c) - top(base_c))
+    if added:
+        print("selftest=true")
+        print(f"why: adds top-level {', '.join(repr(a) for a in added)} (forbidden-paths.txt must list it)")
+        return 0
+    print("selftest=false")
+    print(f"why: touches nothing under {SELFTEST_DIR} and adds no top-level entry")
     return 0
 
 
@@ -201,10 +300,17 @@ def cmd_check(base, head):
     if not entries:
         print("FAIL: no changed paths between base and head. Wrong revisions?")
         return 1
-    violations, tests = [], []
+    violations, tests, deleted_tests, lost = [], [], [], []
     for old_mode, new_mode, status, path in entries:
-        if status != "D" and any(match_forbidden(g, path) for g in TEST_GLOBS):
-            tests.append(path)
+        if is_test(path):
+            if status == "D":
+                deleted_tests.append(path)
+            else:
+                tests.append(path)
+                if status != "A":
+                    before, after = expect_count(base_c, path), expect_count(head_c, path)
+                    if after < before:
+                        lost.append(f"  {path!r}: {before} -> {after}")
         why = []
         if not path.startswith(ALLOWED_ROOTS):
             why.append("outside the allowed roots")
@@ -226,15 +332,25 @@ def cmd_check(base, head):
         print(f"ok: {len(tests)} test file(s) added or modified (the regression test), e.g. {tests[0]!r}")
     else:
         print("FAIL: no test file added or modified; an officer PR must include a regression test "
-              f"(a file matching one of {', '.join(TEST_GLOBS)})")
+              f"(a file named like one of {', '.join(TEST_GLOBS)})")
+        rc = 1
+    if deleted_tests:
+        print(f"FAIL: {len(deleted_tests)} test file(s) deleted; an officer PR may not delete a test:")
+        print("\n".join(f"  {p!r}" for p in deleted_tests))
+        rc = 1
+    if lost:
+        print(f"FAIL: {len(lost)} test file(s) lose {EXPECT} calls; an officer PR may not weaken a test:")
+        print("\n".join(lost))
         rc = 1
     return rc
 
 
 def main(argv):
     try:
-        if len(argv) == 5 and argv[1] == "arm":
-            return cmd_arm(argv[2], argv[3], argv[4])
+        if len(argv) == 8 and argv[1] == "arm":
+            return cmd_arm(*argv[2:8])
+        if len(argv) == 4 and argv[1] == "selftest-needed":
+            return cmd_selftest_needed(argv[2], argv[3])
         if len(argv) == 4 and argv[1] == "check":
             return cmd_check(argv[2], argv[3])
         print(__doc__.split("\n\n")[1], file=sys.stderr)
