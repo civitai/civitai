@@ -63,7 +63,7 @@ import { toStringList } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { Fragment, useEffect } from 'react';
+import { Fragment, useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
@@ -100,6 +100,10 @@ export function PostDetailContent({ postId }: Props) {
   const searchParams = useSearchParams();
   const { query } = useBrowserRouter();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
+  const postTexts = useMemo(
+    () => post?.texts.map((text) => ({ ...text, postId: post.id })),
+    [post]
+  );
   const {
     collectionItems = [],
     permissions,
@@ -508,6 +512,8 @@ export function PostDetailContent({ postId }: Props) {
                 <PostImages
                   postId={post.id}
                   images={images}
+                  texts={postTexts}
+                  authorId={post.user.id}
                   isLoading={imagesLoading}
                   collectionItems={collectionItems}
                   isOwner={currentUser?.id === post.user.id}

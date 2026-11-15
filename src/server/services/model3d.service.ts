@@ -409,6 +409,52 @@ export const ensureModel3DFromWorkflow = async ({
   return created;
 };
 
+/**
+ * Feed rows in the card's shape: tags flattened for `useApplyHiddenPreferences`, and the viewer's
+ * own recommend (thumbs-up) per row so the card renders it toggled.
+ */
+async function withUserReviews(
+  rows: Prisma.Model3DGetPayload<{ select: typeof model3dListSelect }>[],
+  user?: SessionUser | null
+) {
+  const rowIds = rows.map((r) => r.id);
+  const userReviews =
+    user && rowIds.length
+      ? await dbRead.model3DReview.findMany({
+          where: { userId: user.id, model3dId: { in: rowIds } },
+          select: { id: true, model3dId: true, recommended: true },
+        })
+      : [];
+  const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
+  return rows.map(({ tags, ...rest }) => {
+    const review = reviewByModel.get(rest.id);
+    return {
+      ...rest,
+      tags: tags.map((t) => t.tagId),
+      userReview: review ? { id: review.id, recommended: review.recommended } : null,
+    };
+  });
+}
+
+/**
+ * The feed cards of the given 3D models, unordered, with no visibility rule of its own: the caller
+ * decides which ids may be shown.
+ */
+export async function getModel3DFeedItemsByIds({
+  ids,
+  user,
+}: {
+  ids: number[];
+  user?: SessionUser | null;
+}) {
+  if (!ids.length) return [];
+  const rows = await dbRead.model3D.findMany({
+    where: { id: { in: ids } },
+    select: model3dListSelect,
+  });
+  return withUserReviews(rows, user);
+}
+
 export type Model3DGetInfinite = AsyncReturnType<typeof getModel3DsInfinite>;
 export const getModel3DsInfinite = async ({
   limit,
@@ -601,31 +647,7 @@ export const getModel3DsInfinite = async ({
       nextCursor = nextItem?.id;
     }
 
-    // The signed-in user's own recommend (thumbs-up) per row, so the card can
-    // render the gold thumbs-up in its toggled state. One indexed lookup keyed
-    // on (userId, model3dId) rather than a per-row correlated sub-select.
-    const rowIds = rows.map((r) => r.id);
-    const userReviews =
-      user && rowIds.length
-        ? await dbRead.model3DReview.findMany({
-            where: { userId: user.id, model3dId: { in: rowIds } },
-            select: { id: true, model3dId: true, recommended: true },
-          })
-        : [];
-    const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
-
-    // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
-    // `useApplyHiddenPreferences` hook can apply tag-based filtering with
-    // the same shape it uses for the `'models'` branch.
-    const items = rows.map(({ tags, ...rest }) => {
-      const review = reviewByModel.get(rest.id);
-      return {
-        ...rest,
-        tags: tags.map((t) => t.tagId),
-        userReview: review ? { id: review.id, recommended: review.recommended } : null,
-      };
-    });
-
+    const items = await withUserReviews(rows, user);
     return { items, nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

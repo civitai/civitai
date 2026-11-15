@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -651,9 +652,12 @@ export async function getInfiniteChallenges(
     currentUserId?: number;
     isGreen: boolean;
     canAccessUserChallenges?: boolean;
+    /** Server-only: only these challenges, e.g. the semantic search's candidates. */
+    ids?: number[];
   }
 ) {
   const {
+    ids,
     query,
     status,
     source,
@@ -684,6 +688,11 @@ export async function getInfiniteChallenges(
     }))
   );
 
+  if (ids) {
+    if (!ids.length) return { items: [], nextCursor: undefined };
+    conditions.push(Prisma.sql`c.id IN (${Prisma.join(ids)})`);
+  }
+
   // Status filter (parameterized)
   if (status && status.length > 0) {
     const statusValues = status.map((s) => Prisma.sql`${s}::"ChallengeStatus"`);
@@ -702,7 +711,7 @@ export async function getInfiniteChallenges(
 
   // Text search (parameterized - safe from SQL injection)
   if (query) {
-    const searchPattern = `%${query}%`;
+    const searchPattern = ilikeContains(query);
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 
@@ -4238,7 +4247,7 @@ export async function getCompletedChallengesWithWinners(
   }
 
   if (query) {
-    const searchPattern = `%${String(query)}%`;
+    const searchPattern = ilikeContains(String(query));
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 

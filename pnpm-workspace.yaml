@@ -5,3 +5,6 @@ packages:
   # apps/feed-go is a Go module. Its package.json only carries the release version for
   # scripts/release-app.mjs, so it stays out of the workspace (no lockfile importer, no install).
   - '!apps/feed-go'
+  # apps/registry-adapter holds only the registry adapter's Dockerfile and a package.json that
+  # carries its release version; the adapter itself is built from the root package.
+  - '!apps/registry-adapter'

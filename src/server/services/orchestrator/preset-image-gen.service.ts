@@ -10,6 +10,7 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { env } from '~/env/server';
 import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
+import { assertGenerationAllowedNow } from '~/server/services/generation/generation-status-gate';
 
 /**
  * Preset image generation
@@ -291,10 +292,7 @@ export async function assertPresetGenerationAllowed(
   user: Pick<SessionUser, 'isModerator' | 'tier'>
 ): Promise<void> {
   if (!env.PRESET_ENFORCE_GENERATION_STATUS) return;
-  const generation = await import('~/server/services/generation/generation.service');
-  const { status, known } = await generation.getGenerationStatusState();
-  if (!known) throw generation.generationConfigUnavailableError();
-  assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+  await assertGenerationAllowedNow(user);
 }
 
 /**

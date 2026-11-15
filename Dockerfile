@@ -77,6 +77,10 @@ ARG LIBC
 RUN --mount=type=cache,id=pnpm-store-${LIBC},target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
+COPY apps/training-studio/package.json ./apps/training-studio/package.json
+RUN --mount=type=cache,id=pnpm-store-${LIBC},target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --filter @civitai/training-studio-app... --ignore-scripts
+
 ##### BUILDER
 
 # FROM deps (NOT a fresh node image) so the builder INHERITS the complete node_modules from the install stage
@@ -96,6 +100,12 @@ COPY . .
 # schema.prisma is generated (gitignored) so `COPY . .` doesn't carry it. It's inherited via FROM deps, but
 # re-copy explicitly so the build never depends on that inheritance subtlety.
 COPY --from=deps /app/packages/civitai-db-schema/prisma/schema.prisma ./packages/civitai-db-schema/prisma/schema.prisma
+
+# PR previews load this commit's Studio element instead of the production Studio deployment.
+RUN pnpm --filter @civitai/training-studio-app exec svelte-kit sync && \
+    pnpm --filter @civitai/training-studio-app build:element && \
+    mkdir -p public/training-studio && \
+    cp -a apps/training-studio/static/element public/training-studio/
 
 ENV NEXT_TELEMETRY_DISABLED=1
 

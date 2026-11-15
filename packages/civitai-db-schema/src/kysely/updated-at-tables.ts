@@ -72,6 +72,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'Post',
   'PostPreset',
   'PostReaction',
+  'PostText',
   'PurchasableReward',
   'Question',
   'QuestionReaction',

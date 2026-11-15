@@ -360,10 +360,11 @@ describe('mini/[id] epoch arm, cache', () => {
     '%s: no shared cache may store the response',
     async (variant) => {
       h.variant.value = variant;
-      for (const caller of [anonymous, owner, service]) {
-        const { cacheControl } = await request(caller);
-        expect(cacheControl).toBe('private, no-store');
-      }
+      for (const caller of [anonymous, stranger, grantee, owner, moderator, service])
+        for (const query of [{}, { epoch: '5' }] as Record<string, string>[]) {
+          const { cacheControl } = await request(caller, {}, undefined, undefined, query);
+          expect(cacheControl, JSON.stringify({ caller, query })).toBe('private, no-store');
+        }
     }
   );
 
@@ -563,13 +564,14 @@ describe('mini/[id] ?epoch= from the query string', () => {
         ['the owner', owner],
         ['a moderator', moderator],
         ['the service token', service],
-      ])('%s still gets the epoch it names, kept out of shared caches', async (_, caller) => {
+      ])('%s still gets the epoch it names', async (_, caller) => {
         const { status, body, cacheControl } = await request(caller, {}, twoEpochs, undefined, {
           epoch: '5',
         });
         expect(status).toBe(200);
         expect(body.downloadUrls).toEqual([EARLY]);
-        expect(cacheControl).toBe('private, no-store');
+        // The other modes already set it for every caller on this arm.
+        if (variant === 'off') expect(cacheControl).toBe('private, no-store');
       });
     }
   );

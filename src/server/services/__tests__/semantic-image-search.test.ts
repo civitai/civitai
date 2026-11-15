@@ -16,9 +16,11 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
 // image fetch path returns, and that the fetch path keeps every visibility filter for an id list.
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => {
   return {
+    recordAudit: vi.fn(),
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
     stripBenignPhrases: vi.fn(async (text: string) => text),
@@ -33,6 +35,10 @@ const h = vi.hoisted(() => {
   };
 });
 
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   stripBenignPhrases: h.stripBenignPhrases,
@@ -474,36 +480,18 @@ describe('filters', () => {
     expect(calls[0].filter.range).toMatchObject({ key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' });
   });
 
-  it('never proposes NSFW images on a base model that forbids NSFW', async () => {
+  it.each([
+    ['a moderator', { id: 501, isModerator: true } as SessionUser],
+    ['a non-moderator', VIEWER],
+  ])('leaves the base-model licence rule to hydration for %s at NSFW levels', async (_, user) => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
       input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
-      user: { id: 501, isModerator: true } as SessionUser,
-      candidateSource: source,
-    });
-    const [restricted] = calls[0].filter.mustNot as {
-      must: { key: string; match: { any: unknown[] } }[];
-    }[];
-    expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
-    for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
-  });
-
-  it('keeps the base-model rule for a non-moderator searching at an NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({
-      input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
-      user: VIEWER,
+      user,
       candidateSource: source,
     });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
-    expect(calls[0].filter.mustNot).toHaveLength(1);
-  });
-
-  it('drops the base-model rule when the gate holds no NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
-    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
-    expect(calls[0].filter.mustNot).toEqual([]);
+    expect(calls[0].filter.mustNot ?? []).toEqual([]);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
@@ -974,4 +962,20 @@ describe('the search service call', () => {
       searchSemanticImages({ input: input({ imageId: undefined, query: 'fox' }), user: VIEWER })
     ).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
   });
+});
+
+describeSemanticAuditContract({
+  index: 'images',
+  run: ({ source, user, cursor }) => {
+    h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
+    return searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox', cursor }),
+      user,
+      candidateSource: source,
+    });
+  },
+  ids: [101, 103],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });

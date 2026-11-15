@@ -51,7 +51,8 @@ beforeAll(async () => {
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int, status text, availability "Availability" DEFAULT 'Public',
-      mode "ModelModifier"
+      mode "ModelModifier", minor boolean NOT NULL DEFAULT false,
+      "sfwOnly" boolean NOT NULL DEFAULT false, "gallerySettings" jsonb
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, index int, status text, "publishedAt" timestamp,

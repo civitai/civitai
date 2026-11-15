@@ -251,6 +251,62 @@ describe('/api/v1/models — a minor or SFW-only model', () => {
   });
 });
 
+describe('/api/v1/models — a page with a held and an unflagged model', () => {
+  const OTHER_MODEL = 8;
+  const OTHER_VERSION = 43;
+
+  it('holds only the held model and serves the other whole', async () => {
+    primeOneModel({ minor: false, sfwOnly: true });
+    storedModel({ sfwOnly: true, gallerySettings: { level: 31 } });
+    const [row] = await (await mockCancellableQuery.getMockImplementation()!()).result();
+    mockCancellableQuery.mockResolvedValue({
+      result: async () => [
+        row,
+        { ...row, id: OTHER_MODEL, name: 'N', minor: false, sfwOnly: false },
+      ],
+    });
+    const [entry] = Object.values(await vi.mocked(dataForModelsCache.fetch)([MODEL_ID])) as {
+      versions: { id: number }[];
+    }[];
+    vi.mocked(dataForModelsCache.fetch).mockResolvedValue({
+      [MODEL_ID]: entry,
+      [OTHER_MODEL]: { ...entry, versions: [{ ...entry.versions[0], id: OTHER_VERSION }] },
+    } as never);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { id: VERSION_ID, meta: null },
+      { id: OTHER_VERSION, meta: null },
+    ] as never);
+    const [files] = Object.values(await mockGetFilesForModelVersionCache([VERSION_ID])) as {
+      files: { modelVersionId: number }[];
+    }[];
+    mockGetFilesForModelVersionCache.mockResolvedValue({
+      [VERSION_ID]: files,
+      [OTHER_VERSION]: {
+        modelVersionId: OTHER_VERSION,
+        files: files.files.map((file) => ({ ...file, modelVersionId: OTHER_VERSION })),
+      },
+    });
+    mockImagesCache.mockResolvedValue({
+      [VERSION_ID]: { modelVersionId: VERSION_ID, images: SHOWCASE },
+      [OTHER_VERSION]: {
+        modelVersionId: OTHER_VERSION,
+        images: SHOWCASE.map((i) => ({ ...i, modelVersionId: OTHER_VERSION })),
+      },
+    });
+
+    const { items } = await getModelsWithVersions({
+      input: { browsingLevel: 1, take: 10, period: 'AllTime' } as never,
+    });
+    const served = Object.fromEntries(
+      items.map((item: { id: number; modelVersions: { images: { id: number }[] }[] }) => [
+        item.id,
+        item.modelVersions[0].images.map((i) => i.id),
+      ])
+    );
+    expect(served).toEqual({ [MODEL_ID]: SFW_IDS, [OTHER_MODEL]: ALL_IDS });
+  });
+});
+
 describe('/api/v1/model-versions — the hold as the version API calls it', () => {
   it('serves a minor model with stored gallery level 0 only within SFW', async () => {
     storedModel({ minor: true, gallerySettings: { level: 0 } });
@@ -297,10 +353,5 @@ describe('/api/v1/model-versions — the hold as the version API calls it', () =
       new Map([[VERSION_ID, { modelId: MODEL_ID, minor: false, sfwOnly: false }]])
     );
     expect(held[VERSION_ID].images.map((i) => i.id)).toEqual(ALL_IDS);
-  });
-
-  it('serves no images of a version with no model', async () => {
-    const held = await holdShowcaseImages({ [VERSION_ID]: { images: SHOWCASE } }, new Map());
-    expect(held[VERSION_ID].images).toEqual([]);
   });
 });

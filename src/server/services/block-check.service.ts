@@ -114,6 +114,13 @@ export async function getBlockCheckOwnerIds({
       });
       return r ? [r.userId] : [];
     }
+    case 'postText': {
+      const r = await guardDb.postText.findUnique({
+        where: { id: entityId },
+        select: { post: { select: { userId: true } } },
+      });
+      return r ? [r.post.userId] : [];
+    }
     case 'comicChapter': {
       const r = await guardDb.comicChapter.findUnique({
         where: { id: entityId },

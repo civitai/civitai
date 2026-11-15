@@ -33,9 +33,14 @@
  * the mint-time intersection is a direct set operation, not a bitmask op.
  */
 
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  consentCapExceeded,
+  readConsentBudgetSpent,
+} from '~/server/services/blocks/block-buzz-cap';
 import {
   CONSENT_EXEMPT_SCOPES,
   isConsentExemptScope,
@@ -559,6 +564,28 @@ export async function resolveConsentSpendPosture(opts: {
 }
 
 /**
+ * The viewer's own daily Buzz limit for this app, what they have spent against it today, and
+ * whether `cost` more would exceed it; `null` when no limit applies (none set, or the grant is
+ * revoked: the submit refuses that on its own). The "exceeds" rule is `consentCapExceeded`, the
+ * predicate the submit's reservation applies to the same counter.
+ */
+export async function readConsentDailyLimit(
+  userId: number,
+  appBlockId: string,
+  cost: number
+): Promise<{ limit: number; spentToday: number; remaining: number; exceeds: boolean } | null> {
+  const posture = await resolveConsentSpendPosture({ userId, appBlockId });
+  if (posture.kind !== 'budget') return null;
+  const spentToday = await readConsentBudgetSpent(userId, appBlockId);
+  return {
+    limit: posture.budget,
+    spentToday,
+    remaining: Math.max(0, posture.budget - spentToday),
+    exceeds: consentCapExceeded(spentToday + cost, posture.budget),
+  };
+}
+
+/**
  * 🔴 THE WRITES BELOW MUST NEVER READ A COLUMN BACK. Prisma's DEFAULT selection is
  * "every scalar", so a `create`/`update` with no `select` emits
  * `RETURNING … buzz_budget_per_day` — which makes an ordinary install / subscribe /
@@ -1079,6 +1106,69 @@ export async function recordScopeGrant(opts: {
     });
   }
   return { revokedScopesAfterClear: clearedTo };
+}
+
+/**
+ * Raises the viewer's own daily Buzz limit for one app, and changes nothing else.
+ *
+ * Unlike `recordScopeGrant`, this never grants a scope or lifts a revocation: a raise dialog left
+ * open while the viewer revokes spending elsewhere must not switch spending back on. One statement
+ * applies every condition, so the row is read and written under the same lock: a live, unrevoked
+ * spend scope, an existing limit, and a strictly higher new value. Returns the limit it replaced,
+ * or `null` when nothing was written (the caller says the limit changed and to reopen).
+ */
+export async function raiseConsentDailyLimit(opts: {
+  userId: number;
+  appBlockId: string;
+  buzzBudgetPerDay: number;
+}): Promise<{ previousLimit: number } | null> {
+  const rows = await dbWrite.$queryRaw<{ previous: number }[]>(Prisma.sql`
+    UPDATE app_user_scope_grants AS g
+    SET buzz_budget_per_day = ${opts.buzzBudgetPerDay}
+    FROM (
+      SELECT id, buzz_budget_per_day AS previous
+      FROM app_user_scope_grants
+      WHERE user_id = ${opts.userId} AND app_block_id = ${opts.appBlockId}
+      FOR UPDATE
+    ) AS prev
+    WHERE g.id = prev.id
+      AND g.revoked_at IS NULL
+      AND g.buzz_budget_per_day IS NOT NULL
+      AND g.buzz_budget_per_day > 0
+      AND g.buzz_budget_per_day < ${opts.buzzBudgetPerDay}
+      AND ${CONSENT_SPEND_SCOPE} = ANY(g.granted_scopes)
+      AND NOT (${CONSENT_SPEND_SCOPE} = ANY(g.revoked_scopes))
+    RETURNING prev.previous
+  `);
+  const previous = rows[0]?.previous;
+  return typeof previous === 'number' ? { previousLimit: previous } : null;
+}
+
+/**
+ * Records a change the viewer made to their own daily Buzz limit for an app, for their Activity
+ * feed. Best-effort like every audit write: the change has already been made. The row's source
+ * keeps it out of the app owner's analytics.
+ */
+export async function recordConsentLimitChange(opts: {
+  userId: number;
+  appBlockId: string;
+  previousLimit: number | null;
+  limit: number | null;
+}): Promise<void> {
+  if (opts.previousLimit === opts.limit) return;
+  const [{ recordScopeInvocation }, { VIEWER_CONSENT_INVOCATION_SOURCE }] = await Promise.all([
+    import('~/server/services/blocks/user-app-surface.service'),
+    import('~/server/services/blocks/scope-activity-predicate'),
+  ]);
+  await recordScopeInvocation({
+    userId: opts.userId,
+    appBlockId: opts.appBlockId,
+    source: VIEWER_CONSENT_INVOCATION_SOURCE,
+    scope: CONSENT_SPEND_SCOPE,
+    endpoint: 'consent:daily-limit',
+    statusCode: 200,
+    detail: { action: 'limit.change', previousLimit: opts.previousLimit, limit: opts.limit },
+  });
 }
 
 /** What a revoke actually did, for the caller's response + its side effects. */

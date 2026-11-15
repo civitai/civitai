@@ -101,7 +101,20 @@ export type ParsedTraceLine = { kind: 'event'; event: TraceEvent } | { kind: 'te
 export function parseTraceLine(line: string): ParsedTraceLine {
   try {
     const parsed = JSON.parse(line) as unknown;
-    if (parsed && typeof parsed === 'object') return { kind: 'event', event: parsed as TraceEvent };
+    if (parsed && typeof parsed === 'object') {
+      const event = parsed as TraceEvent;
+      // The controller wraps the trainer's structured stdout in a log event.
+      if (event.type === 'log' && typeof event.message === 'string') {
+        try {
+          const nested = JSON.parse(event.message) as TraceEvent | null;
+          if (nested?.type === 'loss')
+            return { kind: 'event', event: { ...nested, t: event.t, epoch: event.epoch } };
+        } catch {
+          // Ordinary trainer output remains a log message.
+        }
+      }
+      return { kind: 'event', event };
+    }
   } catch {
     // plain-text log line
   }
@@ -165,6 +178,16 @@ export function traceLineText(line: string): string {
   const maxSteps = finite(e.maxSteps);
   const epoch = finite(e.epoch);
   switch (e.type) {
+    case 'loss': {
+      const metrics = Object.entries(lossFields(e.loss));
+      const lr = finite(e.lr);
+      if (lr !== null) metrics.push(['lr', lr]);
+      return step !== null && metrics.length
+        ? `step ${step}: ${metrics
+            .map(([key, value]) => `${key}: ${value.toPrecision(5)}`)
+            .join(', ')}`
+        : line;
+    }
     case 'step':
       return step !== null ? `step ${step}${maxSteps !== null ? ` / ${maxSteps}` : ''}` : line;
     case 'phase':

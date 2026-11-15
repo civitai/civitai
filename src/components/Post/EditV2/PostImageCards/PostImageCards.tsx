@@ -1,5 +1,5 @@
-import { Tabs, Text } from '@mantine/core';
-import { IconPencil, IconPhoto } from '@tabler/icons-react';
+import { Button, Tabs, Text } from '@mantine/core';
+import { IconPencil, IconPhoto, IconPlus } from '@tabler/icons-react';
 import React from 'react';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
@@ -8,14 +8,36 @@ import { BlockedImage } from '~/components/Post/EditV2/PostImageCards/BlockedIma
 import { ErrorImage } from '~/components/Post/EditV2/PostImageCards/ErrorImage';
 import { PendingImage } from '~/components/Post/EditV2/PostImageCards/PendingImage';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
+import { StorylineTextCard } from '~/components/Storyline/editor/StorylineTextCard';
+import { usePostStorylineMode } from '~/components/Storyline/editor/usePostStorylineMode';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { PostEditTextDetail } from '~/server/services/post.service';
+import { mergeEditorItems } from '~/components/Post/EditV2/post-edit-items';
+import { textIndexAfter } from '~/shared/utils/post-items';
+import { STORYLINE_TEXT_MAX_PER_POST } from '~/shared/utils/storyline';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+
+const NO_TEXTS: PostEditTextDetail[] = [];
 
 export function PostImageCards() {
-  const images = usePostEditStore((state) => state.images);
+  const [images, storeTexts] = usePostEditStore((state) => [state.images, state.texts]);
+  // Without the flag the text routes refuse every change, so the editor shows images only; the
+  // server keeps each text where it is.
+  const textOn = !!useFeatureFlags().storylineText;
+  const texts = textOn ? storeTexts : NO_TEXTS;
   const { maxItems } = useMediaUploadSettingsContext();
   const { showPreview, toggleShowPreview } = usePostPreviewContext();
   const tab = showPreview ? 'preview' : 'edit';
+  const canAddText = useCanAddStorylineText() && texts.length < STORYLINE_TEXT_MAX_PER_POST;
 
   if (!images.length) return null;
+
+  const items = mergeEditorItems(images, texts);
+  const addSlots = canAddText && !showPreview;
+  let imageNumber = 0;
+  let textNumber = 0;
 
   return (
     <>
@@ -38,22 +60,74 @@ export function PostImageCards() {
         </Tabs.List>
       </Tabs>
       <div className="flex flex-col gap-3">
-        {[...images]
-          .sort((a, b) => (a.data.index ?? 0) - (b.data.index ?? 0))
-          .map((image, i) => (
-            <div
-              key={image.type === 'added' ? image.data.id : image.data.url}
-              data-image-id={image.type === 'added' ? image.data.id : undefined}
-              className="flex flex-col gap-1"
-            >
-              <Text size="sm" fw={600} c="dimmed">
-                {i + 1} / {maxItems}
-              </Text>
-              <PostImageCard image={image} />
-            </div>
-          ))}
+        {addSlots && <AddTextSlot index={textIndexAfter(undefined, items[0]?.key)} />}
+        {items.map((item) => {
+          const slot = addSlots && <AddTextSlot index={textIndexAfter(item.key, undefined)} />;
+          if (item.type === 'text')
+            return (
+              <React.Fragment key={`text-${item.text.id}`}>
+                <div data-text-id={item.text.id} className="flex flex-col gap-1">
+                  <Text size="sm" fw={600} c="dimmed">
+                    Text {++textNumber} / {STORYLINE_TEXT_MAX_PER_POST}
+                  </Text>
+                  <StorylineTextCard text={item.text} />
+                </div>
+                {slot}
+              </React.Fragment>
+            );
+          const { image } = item;
+          imageNumber++;
+          return (
+            <React.Fragment key={image.type === 'added' ? image.data.id : image.data.url}>
+              <div
+                data-image-id={image.type === 'added' ? image.data.id : undefined}
+                className="flex flex-col gap-1"
+              >
+                <Text size="sm" fw={600} c="dimmed">
+                  {imageNumber} / {maxItems}
+                </Text>
+                <PostImageCard image={image} />
+              </div>
+              {image.type === 'added' && slot}
+            </React.Fragment>
+          );
+        })}
       </div>
     </>
+  );
+}
+
+/** Text items are for the author of a storyline chapter (or its draft), behind their flag. */
+export function useCanAddStorylineText() {
+  const flagOn = !!useFeatureFlags().storylineText;
+  const post = usePostEditStore((state) => state.post);
+  const currentUser = useCurrentUser();
+  const { inStoryline } = usePostStorylineMode(
+    post ?? { id: 0, user: { id: 0 }, publishedAt: null }
+  );
+  return flagOn && !!post && inStoryline && currentUser?.id === post.user.id;
+}
+
+function AddTextSlot({ index }: { index: number }) {
+  const [postId, setTexts] = usePostEditStore((state) => [state.post?.id, state.setTexts]);
+  const { mutate, isPending } = trpc.storyline.addText.useMutation({
+    onSuccess: (text) => setTexts((texts) => [...texts, text]),
+    onError: (error) => showErrorNotification({ title: 'Text not added', error }),
+  });
+  if (!postId) return null;
+
+  return (
+    <div className="flex justify-center">
+      <Button
+        variant="subtle"
+        size="compact-sm"
+        leftSection={<IconPlus size={14} />}
+        loading={isPending}
+        onClick={() => mutate({ postId, index })}
+      >
+        Add text
+      </Button>
+    </div>
   );
 }
 

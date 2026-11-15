@@ -3,6 +3,8 @@ import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
 import { trainingWhatIf } from '$lib/server/orchestrator';
 import type { TrainingWhatIfInput } from '$lib/orchestrator-core';
+import { KOHYA_UNAVAILABLE } from '$lib/train-core';
+import { isKohyaAllowed } from '$lib/server/flipt';
 
 const optionalString = (v: unknown) => v === undefined || typeof v === 'string';
 const optionalNumber = (v: unknown) =>
@@ -31,6 +33,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   ) {
     error(400, 'Bad quote request.');
   }
+
+  if (body.engine === 'kohya' && !(await isKohyaAllowed(locals))) error(403, KOHYA_UNAVAILABLE);
 
   try {
     return json({ cost: await trainingWhatIf(token, body as TrainingWhatIfInput) });

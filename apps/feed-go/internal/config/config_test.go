@@ -64,6 +64,48 @@ func TestAllowedOriginHosts(t *testing.T) {
 	}
 }
 
+func TestLoadFeedServiceMirrors(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	// Unset: both mirrors default ON (the production value of both flags); no feed service.
+	t.Setenv("FEED_GO_IMAGE_INDEX_FEED", "")
+	t.Setenv("FEED_GO_LAZY_POST_IMAGES", "")
+	t.Setenv("FEED_SERVICE_URL", "")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.ImageIndexFeed || !c.LazyPostImages || c.FeedServiceURL != "" {
+		t.Fatalf("defaults: index=%v lazy=%v url=%q", c.ImageIndexFeed, c.LazyPostImages, c.FeedServiceURL)
+	}
+	t.Setenv("FEED_GO_IMAGE_INDEX_FEED", "false")
+	t.Setenv("FEED_GO_LAZY_POST_IMAGES", "false")
+	t.Setenv("FEED_SERVICE_URL", "http://feed.internal")
+	if c, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if c.ImageIndexFeed || c.LazyPostImages || c.FeedServiceURL != "http://feed.internal" {
+		t.Fatalf("set: index=%v lazy=%v url=%q", c.ImageIndexFeed, c.LazyPostImages, c.FeedServiceURL)
+	}
+}
+
+func TestLoadPprofDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_PPROF", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Pprof != want {
+			t.Errorf("FEED_GO_PPROF=%q -> %v, want %v", in, c.Pprof, want)
+		}
+	}
+}
+
 func TestLoadModerationAccountID(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -76,6 +118,43 @@ func TestLoadModerationAccountID(t *testing.T) {
 		}
 		if c.ModerationAccountID != want {
 			t.Errorf("CIVITAI_MODERATION_USER_ID=%q -> %d, want %d", in, c.ModerationAccountID, want)
+		}
+	}
+}
+
+func TestLoadServingLimits(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	cases := []struct {
+		budget, concurrency, jwks, stale string
+		wantBudget                       time.Duration
+		wantConcurrency                  int
+		wantJWKS, wantStale              time.Duration
+	}{
+		{"", "", "", "", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
+		// The staleness default follows the refresh interval (3 ×); an explicit value wins.
+		{"2500", "12", "30000", "", 2500 * time.Millisecond, 12, 30 * time.Second, 90 * time.Second},
+		{"", "", "", "120000", 6 * time.Second, 4, 10 * time.Minute, 2 * time.Minute},
+		// Zero, negative or junk is the default, never an unbounded or zero budget.
+		{"0", "0", "0", "0", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
+		{"-1", "-3", "junk", "-5", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
+	}
+	for _, c := range cases {
+		t.Setenv("FEED_GO_REQUEST_BUDGET_MS", c.budget)
+		t.Setenv("FEED_GO_COMPLETION_CONCURRENCY", c.concurrency)
+		t.Setenv("FEED_GO_JWKS_REFRESH_MS", c.jwks)
+		t.Setenv("FEED_GO_JWKS_MAX_STALENESS_MS", c.stale)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.JWKSMaxStaleness != c.wantStale {
+			t.Errorf("jwks=%q stale=%q -> staleness %v, want %v", c.jwks, c.stale, cfg.JWKSMaxStaleness, c.wantStale)
+		}
+		if cfg.RequestBudget != c.wantBudget || cfg.CompletionConcurrency != c.wantConcurrency || cfg.JWKSRefresh != c.wantJWKS {
+			t.Errorf("budget=%q concurrency=%q jwks=%q -> %v %d %v, want %v %d %v", c.budget, c.concurrency, c.jwks,
+				cfg.RequestBudget, cfg.CompletionConcurrency, cfg.JWKSRefresh, c.wantBudget, c.wantConcurrency, c.wantJWKS)
 		}
 	}
 }

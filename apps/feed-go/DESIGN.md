@@ -16,14 +16,24 @@ This document covers what the service does, what it reuses, how it identifies th
 reaches it, how parity is proven before it serves anyone, and how the CPU comparison is made. The
 last sections list what is **not** at parity and what a deployment needs.
 
+A second port, the public REST endpoint `GET /api/v1/images`, runs in **shadow only** (nothing routes
+public traffic to it): §13. It shares the feed-service client, the hydration readers, the caches, the
+shadow queue and the metric families, told apart by a `feed_endpoint` label (not `endpoint`: that is a
+reserved scrape target label, which would overwrite ours).
+
 ---
 
 ## 1. What the Node procedure does
 
 Router `src/server/routers/image.router.ts` (`heavyProcedure`, input `getInfiniteImagesSchema`) →
 handler `getImagesAsPostsInfiniteHandler` (`src/server/controllers/image.controller.ts`) → read path
-`getAllImages` (`src/server/services/image.service.ts`). With the image-index feed flag off, which is
-the production state, every page is the Postgres path:
+`getAllImages` / `getAllImagesIndex` (`src/server/services/image.service.ts`), picked by the
+`image-index-feed` flag (`fetchFn`). **That flag is on in production**, so production pages come from
+`getAllImagesIndex`: the image feed service (`FEED_SERVICE_URL`, `serveImagesFromFeedService` →
+`serveFromFeed`) picks and orders a page of image ids for a query built by
+`mapSearchInputToFeedQuery`, and the Postgres query of step 3 below, run with `ids` and without the
+model scope, paging or period (`feedHydrateQuery`), supplies the rows. Its cursor is the feed's own
+keyset, sent to clients as `feed:<a>:<b>`. With the flag off, every page is the Postgres path:
 
 1. **Middleware** clamps the input's browsing level to the domain cap before the schema default
    applies (`applyDomainFeature`): signed out → PG; signed in where NSFW is not viewable (SFW host,
@@ -44,7 +54,12 @@ the production state, every page is the Postgres path:
      (Postgres); Model3D link visibility;
    - drops, for anyone but a moderator, images of unpublished / scheduled posts that are not the
      viewer's own.
-4. **Posts.** Creators' reviews of the model, per-post fields, a per-sort ordering, wire trims.
+4. **Posts.** With `gallery-lazy-post-images` on (production), each post the page holds fewer images
+   of than its row count (`getPostImageCounts`) is fetched again whole, by `postIds` in the requested
+   sort, in batches of at most 25 posts / 200 rows (`packPostCompletions`), and the missing images are
+   appended. Then: creators' reviews of the model, per-post fields, a per-sort ordering, wire trims;
+   with lazy post images on, each post carries its first 6 images (after the Newest index sort) and
+   `imageCount`, the whole post's count (`buildPostImagesWire`).
 5. **Encoding.** superjson (devalue only for web bundles on pools that opt in, never for a cacheable
    response). Signed-out responses carry `public, max-age=60, s-maxage=60, stale-while-revalidate=30`.
 
@@ -61,11 +76,30 @@ Supported today:
 
 | Area | Supported | Falls back |
 |---|---|---|
-| Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`; numeric cursors | `hidden`, user / username / collection / post / tags / tools / techniques / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts, compound or date cursors |
+| Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`; cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / tags / tools / techniques / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
 | Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
-| Gallery gates | settings from cache, held level, taken-down models | a settings key Node would rebuild; pinned posts on page 1; sponsored posts while creator promotions are on |
+| Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
+| Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
 | Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails | misses on user cosmetics, image frames, event decorations, tag ids, metric hashes |
-| Flags | see §8 | lazy per-post images on |
+| Flags | see §8 | the index path without `FEED_SERVICE_URL` (`index-feed-unconfigured`) |
+
+**First page of a version gallery** (`internal/feed/firstpage.go`, `promotion.go`), in the handler's
+order and always on the Postgres path whatever `image-index-feed` says:
+
+- *Pinned posts:* the version's `pinnedPosts` are fetched whole (no model scope, no cursor, the
+  request's own sort, period, level and filters, 20 × 20 rows), narrowed to media the version made or
+  that has no resource rows (`filterPinnedImagesToVersion`), and kept off every page by the page loop.
+  They are merged with the page by ascending post id, marked `pinned`, not completed (fetched whole
+  already), and sorted first under every ported sort.
+- *Sponsored post* (`getSponsoredGalleryPost`): approved `galleryPromotion` placements on the model
+  resolved within the last 7 days, parsed as `parseGalleryPromotionData` does, live by
+  `isPromotionLive`, made for this version; served at the accept-frozen level held to the model's
+  platform lock today (else the host's gallery level); fetched at `(preCap ?? level) & serving`
+  (20 rows) unless it is a pinned post, with the browsing-settings addons resolved at that level
+  (getAllImages resolves them per call, so they can differ from the page's), and only the
+  host-approved images kept. It goes after the
+  pinned posts, or second (`sponsoredSlotIndex`), with no review and no per-post index sort, and its
+  post is kept off the page.
 
 Layout:
 
@@ -75,9 +109,11 @@ internal/trpc        tRPC v11 query/response envelopes
 internal/superjson   the superjson writer the client decodes
 internal/auth        session JWS verification, revocation registry, cached session user
 internal/browsing    level flags, domain cap, browsing-settings addons, host color, region rules
-internal/feed        input parsing, the SQL, page loop, post grouping and ordering, gallery gates
+internal/feed        input parsing, the SQL, page sources, page loop, post completion, grouping and
+                     ordering, gallery gates; the REST /api/v1/images port (v1query.go, v1images.go)
+internal/feedsvc     the image feed service: query mapper, cursor codec, HTTP client
 internal/hydrate     read-only cache readers (msgpack) and miss paths
-internal/shadow      the comparator
+internal/shadow      the comparators (superjson envelope; plain JSON for REST)
 internal/server      HTTP handlers, metrics
 internal/fallback    the fallback error and its reasons
 ```
@@ -90,6 +126,19 @@ internal/fallback    the fallback error and its reasons
   sized for the shadow workers and their hydration fan-out; see the package comment), none kept open
   when idle, a 30-minute connection lifetime and a 5-minute idle timeout. A `pool_max_conns`,
   `pool_min_conns`, `pool_max_conn_lifetime` or `pool_max_conn_idle_time` in the database URL wins.
+
+  *Worst-case fan-out, as of 2026-11-14:* shadow concurrency is `FEED_GO_SHADOW_WORKERS` (4 in the
+  deployment) comparisons; each runs its page queries one at a time, each followed by a parallel
+  hydration of nine lookups of which at most five can reach Postgres at once (basic users, cosmetics
+  and profile pictures on a cache miss; video thumbnails; a signed-in viewer's reactions), then a
+  3D-model read when the page has any. With lazy post images on, a comparison then runs one post-count
+  query and up to `FEED_GO_COMPLETION_CONCURRENCY` (default 4, `feed.DefaultCompletionConcurrency`)
+  completion fetches at once,
+  each a page query plus its hydration. So the worst case is ~4 × 4 × 5 = 80 concurrent reads, and the
+  common case is far fewer (page queries plus the reads that always go to Postgres). 8 covers the
+  common case with headroom and makes a burst wait instead of opening 80 pooler connections per pod.
+  Page 1 of a gallery with pinned posts or a sponsored post adds one sequential fetch (plus its
+  hydration) for each before the page loop, which does not raise that worst case.
 - **Redis (cache cluster):** the same per-id caches, read-compatibly: plain msgpack maps
   (msgpackr's module-level `pack`, `useRecords: false`), Dates as the timestamp extension, `undefined`
   as fixext type 0, `notFound` / `debounce` markers honoured, stale entries served. **This service
@@ -113,6 +162,22 @@ internal/fallback    the fallback error and its reasons
   fragments, which different SQL text never reproduces. Go keeps its own key space
   (`feed-go:getAllImages:v1:<sha256>`), but adds its keys to the **same** `tag:images-model…` sets,
   so the existing invalidation on image upload / update clears both services' entries at once.
+- **The image feed service** (`FEED_SERVICE_URL`, the same variable and value the Node pools carry):
+  `GET <base>/v1/feed?<query>` with a 5s timeout. The request-source headers follow the mode: a
+  shadow compute sends `x-request-source: shadow` and `x-replay-id: feed-go-shadow` (the feed service
+  labels its metrics by the replay id, so shadow load stays out of its live series); a served request
+  is the site's own traffic and sends what Node's served reads send, `x-request-source: primary` and
+  no replay id (`feedsvc.WithShadow` marks the shadow context). At most
+  `FEED_GO_COMPLETION_CONCURRENCY` (default 4) completion fetches run at once per request: Node runs
+  them all at once, and 4 is sized for shadow load; a serving deployment may want a higher value,
+  since the completions sit on the request's critical path under the request budget (§6.1). The query built
+  exactly as `mapSearchInputToFeedQuery(input, 'primary', 'website')` builds it (`internal/feedsvc`,
+  tests pin the literal query strings). A mapper refusal Node answers with an empty page is answered
+  with an empty page here too; one Node answers with a 400 falls back. The feed's ids are hydrated
+  with this service's own SQL (`ids` filter, no model join, `AllTime`, statement timeout as an error)
+  and put back in the feed's order. Not ported: `hydrateWithReadRescue` (an empty hydrate
+  is retried on another replica this service does not reach — it falls back instead), and the
+  `feed-service-degrade` breaker and last-good page (every failed call falls back).
 - **ClickHouse:** not yet. Metric counts come from the watcher-fed Redis hashes; a missing hash (Node
   would populate it from ClickHouse) is a fallback. Porting that read is listed in §9.
 
@@ -130,6 +195,22 @@ the authenticated viewer or for nobody.
 - Revocation is the same registry read as the main app (`session:token-state`, `session:family-state`,
   `session:all`, `session:user-cut:*`), one pipelined round trip, failing **open** on a slow store,
   exactly as the app does (a revoked token can be honoured for the length of a store outage on both).
+  Every fail-open is counted (`feed_go_revocation_fail_open_total`); the warning is logged at most once
+  per 10 s, with the number suppressed since the previous line.
+- The JWKS is refetched every `FEED_GO_JWKS_REFRESH_MS` (default 10 min, ±10% jitter), as well as on
+  an unknown `kid`, so a signing key the hub removed stops verifying without a restart. A failed
+  refresh — an error status, an undecodable body, or a set with no usable ES256 key — keeps the last
+  good set and retries with backoff (5 s doubling, up to the interval);
+  `feed_go_jwks_refresh_total{result}` counts both outcomes. Keep-last-good is bounded: once no fetch
+  has returned a usable set for `FEED_GO_JWKS_MAX_STALENESS_MS` (default 3 × the interval, 30 min),
+  the set is dropped and every session verifies as **signed out** (fail closed) until a fetch
+  succeeds; `feed_go_jwks_stale_total` counts each drop and one error line is logged.
+  *How this differs from Node:* jose's remote JWKS reloads once its cache is 10 min old and fails
+  closed as soon as that reload fails, and it accepts an empty set (then rejects every token). This
+  service instead keeps the last good set, an empty answer included, for up to the staleness bound.
+  The reason is blast radius: a brief hub outage or a bad deploy that publishes an empty set would
+  sign out every viewer here for its whole length, while the window is short enough that a key the
+  hub really retired stops verifying within ~30 min. An empty set never extends the window.
 - The rich session user (moderator flag, ban) is read from the shared session cache; the cached entry
   must carry the same id as the token, or the request falls back. A cleared entry falls back. A cache
   miss falls back (Node would fetch the user from the auth hub).
@@ -137,7 +218,8 @@ the authenticated viewer or for nobody.
   is never a session, as in `refuseModerationAccountSession`: refused by the token's `sub` before any
   lookup, and again by the resolved user's id or username. Signed out.
 - A banned user is served as signed out, but the response stays private (not edge-cacheable), as in
-  `createContext`.
+  `createContext`. Feature flags are the exception: Node evaluates them with the banned session's
+  user, so the `creator-promotions` mirror treats that session as its own case (§8).
 - Only a response computed with **no** session user gets the public cache headers. Every per-viewer
   clause binds the verified id; signed out binds `NULL`, which makes each carve-out false.
 - API keys / OAuth tokens fall back: they carry scopes and change the moderator rule (`moderatorView`).
@@ -192,6 +274,28 @@ only this procedure, to the service. Two ways, not exclusive:
 Either way the service proxies anything it does not answer to the Node app, so routing a request to
 it is never less correct than not routing it — only its share of fallbacks changes.
 
+### 6.1 Limits on the serving path
+
+- **Request budget.** Each computation — a served request, and a shadow sample's compute — runs under
+  `FEED_GO_REQUEST_BUDGET_MS` (default 6 s), covering every Postgres, Redis and feed-service read it
+  makes. An answer is all or nothing: a computation still running at the budget, or one that finished
+  after it (a read that failed open on the expired context would otherwise leave a partial page), is
+  the `deadline` fallback — proxied when serving, compare result `deadline` in shadow (its own result,
+  so the share the budget excludes from the match rate stays visible). A client that leaves
+  mid-compute is the `canceled` fallback, not a deadline, and is not proxied (nobody would read it).
+- **Panics.** A panic in a computation, its errgroup workers included (`internal/safe`), is the
+  `panic` fallback and `feed_go_panics_total{where="serve"}`; one anywhere in a shadow sample
+  (compute or compare) is `feed_go_panics_total{where="shadow"}`, logged with its stack, and the
+  sample's queue slot is released. Neither ends the process.
+- **Listeners** (`server.PublicHTTPServer` / `InternalHTTPServer`): 5 s to read the headers, 64 KiB of
+  headers (Node accepts 16 KiB), 120 s idle keep-alive. Public: 10 s to read the request (a GET),
+  and the request budget plus 60 s to write the response, room for the Node app's answer to a
+  fallback, relayed on the same connection. Internal: 60 s to read (a shadow sample is up to 32 MiB),
+  30 s to write; pprof captures extend their own deadline (§10.2).
+- **Shutdown.** On SIGTERM, within one 15 s grace period: new shadow samples are dropped, the running
+  ones are cancelled and waited for, then both listeners drain their in-flight requests, and only then
+  are the replica pool and both Redis clients closed.
+
 ## 7. Parity first: shadow mode
 
 Nothing is served from Go until the comparator says it matches. In shadow mode Node keeps serving
@@ -222,12 +326,22 @@ path as serving, and compares decoded values:
 - `json` trees structurally (object key order ignored, array order kept, numbers compared
   numerically), `meta.values` as a set (a `Date` or `undefined` on one side only is a difference the
   client would see), `meta.referentialEqualities` ignored;
+- `["undefined"]` annotations applied first, as `superjson.deserialize` applies them: superjson
+  writes an undefined object member as `null` plus the annotation, this service's writer omits the
+  member and writes the same annotation, and `setDeep` assigns the annotated path either way, so
+  both decode to the same object. (Before this, every such member — `images.*.tags` on every image,
+  `images.*.thumbnailUrl` on every image without a video thumbnail, `review` on every post without
+  one — was counted `missing-in-go`, and at 64 differences per comparison those artifacts also
+  truncated the report before any real difference was reached.) A real `null` against an
+  `undefined` is still a difference;
 - each comparison gets one result: `match`, `fields` (same posts, same order, some field differs),
   `order` (same posts, different order), `membership` (different posts), `unsupported` (Go fell back,
-  with its reason), `go_error`;
+  with its reason), `deadline` (the compute ran past the request budget, §6.1), `go_error`;
 - each differing path is counted by **category** — the path with indices folded to `*`, truncated at
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
-  `feed_go_shadow_field_diffs_total{category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
+  `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
+- every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13):
+  two values, so the label at most doubles a family's cardinality;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field.
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
@@ -247,12 +361,14 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 
 | Flag | Node effect | Here |
 |---|---|---|
-| `image-index-feed` | search-index path instead of Postgres | only the Postgres path is ported; the index path must stay off for the routed cohort |
-| `gallery-lazy-post-images` | first 6 images per post + `imageCount`, extra completion fetches | `FEED_GO_LAZY_POST_IMAGES`; on → fall back |
-| `creator-promotions` | sponsored post on page 1 | `FEED_GO_CREATOR_PROMOTIONS`; on → page-1 model galleries fall back |
+| `image-index-feed` | feed-service pages (`getAllImagesIndex`) instead of the Postgres query; on in production | `FEED_GO_IMAGE_INDEX_FEED` (default on) + `FEED_SERVICE_URL`; both paths ported; on without a URL → fall back |
+| `gallery-lazy-post-images` | post completion, then first 6 images per post + `imageCount`; on in production (enabled, 0% rollout: the no-match default is on) | `FEED_GO_LAZY_POST_IMAGES` (default on); ported on both page paths |
+| `feed-service-degrade` | circuit breaker + last-good page when the feed fails | not mirrored: every failed feed call falls back here |
+| `datapacket-read` | which replica the pages and the post counts read | not mirrored: this service reads its one replica (§3) |
+| `creator-promotions` | sponsored post on page 1 of a model-version gallery | `FEED_GO_CREATOR_PROMOTIONS` names the flag's audience: `false` (off for everyone), `mods-testers` (the flag's rule as of 2026-11-14: off signed out, on for moderators, unknown for other signed-in users, who may be on a user-id list feed-go does not hold, and for a banned user's session, which Node still evaluates the flag for), `everyone`, or `true` / unset (fail-safe: unknown for everyone). Where the value is known the sponsored post is ported; where it is unknown, a page that would carry one falls back (`sponsored-post`) and a page that would not is served (the flag cannot change it) |
 | `image-resource-use-write` | model-gallery queries read the primary | not mirrored: off in production; the replica is used |
 | `image-feed-shared-users` | one `user` object per creator on the wire | decoded value unchanged; nothing to do |
-| event decoration flags | which event hats are visible to which viewer | `FEED_GO_DECORATION_EVENTS`: the events visible to **every** viewer; tester-only previews are a parity gap |
+| event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
 ## 9. Not at parity (yet)
@@ -262,8 +378,11 @@ will show.
 
 **Fallbacks (correct, not served):**
 - every input shape in the right-hand column of the §2 table;
-- pinned posts (page 1 of a gallery with pins) and sponsored posts;
-- lazy per-post images (`gallery-lazy-post-images` on);
+- a sponsored post for a viewer whose `creator-promotions` value is unknown (§8), a version with two or
+  more live runs at once (Node rotates them at random per request), a failed promotion lookup, and a
+  run payload whose `endsAt` is not an ISO timestamp or a host gallery level that is not a number;
+- feed-service failures and non-200 answers, a hydrate that empties a page, and the cursors Node
+  answers with a 400 (§3);
 - cache misses on user cosmetics, image frames, event decorations, tag ids (their lookups filter
   withheld creator cosmetics, read the primary, or join the tag cache — not ported), metric hashes
   (ClickHouse populate not ported), session users (auth hub fetch not ported), gallery settings
@@ -273,11 +392,19 @@ will show.
 
 **Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an
 empty page, as Node does, rather than falling back (which would run the same slow query a second time
-on Node).
+on Node). A metric hash holding only the `notFound` marker is a KNOWN image with zero counts
+(`statsUnknown: false`): `getImageMetricsObject` gives every id whose hash exists an entry on both
+its arms, so `toImageV2Stats` only reports `statsUnknown: true` when the ClickHouse read failed and
+no hash was cached — a case this service falls back on (`metrics-miss`) instead of answering.
 
 **Divergences the comparator will show:**
 - `referentialEqualities` and opaque-object key order (not visible after decode; excluded by design);
-- per-viewer event-decoration visibility (testers before an event launches);
+- per-viewer event-decoration visibility: only while an event's flag base is OFF (a preview before
+  launch, or the kill switch), when Node shows its hats to moderators and testers alone and this
+  service, which does not evaluate Flipt, shows them to nobody. With the base on every viewer sees
+  them in Node and the mirror (§8) matches. A Node pod whose Flipt client has not yet initialised
+  evaluates every flag as off, so it shows hats to moderators only, while the mirror shows them to
+  all; once initialised the client keeps evaluating from its last config if Flipt goes away;
 - the session cookie roll: Node re-issues a session cookie older than a day; this service never sets
   cookies, so the next Node request rolls it instead;
 - web-client response headers Node adds (`x-update-required`, site alerts, rate-limit headers) are not
@@ -288,16 +415,29 @@ on Node).
   is unspecified on both sides);
 - `feedRequestCapture` (sampled ClickHouse logging of feed requests) is not ported — a side effect,
   not part of the answer.
+- the feed service answers milliseconds after it answered Node: on a busy gallery the page can move
+  between the two calls (`membership` / `order` diffs on Newest first pages).
+- a model gallery with a `modelId` and no `modelVersionId` on the feed-service path is an empty page,
+  as in Node (the mapper cannot express it); so are `generation`, `remixOfId`, `requiringMeta`,
+  browsing level 0 and more than 100 excluded tags.
+- `creator-promotions` is read from the `FEED_GO_CREATOR_PROMOTIONS` mirror, not Flipt: if the flag's
+  rule changes (a widened segment, a new rollout) or a Node pod carries a `FEATURE_FLAG_*` override,
+  the mirror must follow or sponsored posts diverge (`membership` diffs on page 1 of a promoted
+  version). With Flipt down, Node's static fallback for this flag (`availability: ['mod']`) also
+  answers on for moderators and off when signed out, so `mods-testers` still agrees.
+- a run that ends, or a placement approved, between Node's lookup and this one (milliseconds apart).
 
 ## 10. Measurement plan — CPU per call, Go vs Node, same traffic
 
 Shadow mode gives both sides the same requests. During it the Go process does nothing but handle
-shadow samples, so its CPU per call is a plain ratio. **That ratio is an UPPER BOUND for serving:**
+shadow samples, so its CPU per call is a plain ratio. Every series below carries `feed_endpoint`; add
+`feed_endpoint="as-posts"` (or `"v1-images"`, §13) to each selector to read one endpoint. The
+whole-process ratio cannot be split by endpoint (process CPU has no label), so with both shadows on
+read the per-phase figure, which can. **That ratio is an UPPER BOUND for serving:**
 each shadow sample also costs work serving never does — receiving and decoding Node's envelope (up
-to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That comparison
-overhead is included in `process_cpu_seconds_total` and is not separated out, so a measured Go
-figure below Node's is conservative, and a figure near Node's does not by itself show Go is no
-cheaper.
+to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That overhead is
+in `process_cpu_seconds_total`, so a whole-process figure below Node's is conservative, and one near
+Node's does not by itself show Go is no cheaper. The per-phase series below separate it out.
 
 ```promql
 # Go: CPU seconds per computed answer (shadow), GC and runtime included.
@@ -310,7 +450,115 @@ sum(rate(feed_go_requests_total{mode="shadow",outcome="served"}[10m]))
 
 # What blocks serving more: fallback reasons by rate.
 topk(10, sum by (reason) (rate(feed_go_fallback_total{mode="shadow"}[1h])))
+
+# Match rate, and beside it what that denominator leaves out: the share of samples Go fell back on
+# (`unsupported`) or cut at the request budget (`deadline`), with the reasons behind them.
+sum by (feed_endpoint) (rate(feed_go_shadow_compare_total{result="match"}[1h]))
+  / sum by (feed_endpoint) (rate(feed_go_shadow_compare_total{result=~"match|fields|order|membership"}[1h]))
+sum by (feed_endpoint, result) (rate(feed_go_shadow_compare_total{result=~"unsupported|deadline"}[1h]))
+  / ignoring(result) group_left sum by (feed_endpoint) (rate(feed_go_shadow_compare_total[1h]))
+topk(10, sum by (feed_endpoint, reason) (rate(feed_go_fallback_total{mode="shadow"}[1h])))
 ```
+
+### 10.1 Compute-only CPU: the per-phase series
+
+Each shadow sample runs three phases, each recorded with `{phase, outcome}`:
+
+| phase | covers | outcomes | serving pays it? |
+|---|---|---|---|
+| `decode` | reading the posted body and parsing the `ShadowRequest` (Node's envelope included) | `ok`, `bad_request` | no |
+| `compute` | `compute`: auth, the page, hydration, `superjson.Serialize` — the answer serving returns | `served`, `fallback`, `error` | yes |
+| `compare` | `shadow.Compare` (parses both envelopes, walks both trees) + `Classify` | `ok`, `bad_request` | no |
+
+Series:
+
+- `feed_go_shadow_phase_seconds` — wall time of every phase (histogram).
+- `feed_go_shadow_phase_cpu_seconds_total` — **process** CPU (`getrusage(RUSAGE_SELF)`, user+system)
+  consumed between the phase's start and end, added only when the phase was **solo**: it was the only
+  shadow sample holding a queue slot when it started, and no sample was admitted before it ended.
+- `feed_go_shadow_phase_solo_total` — how many phases were counted in the CPU series (its denominator).
+- `feed_go_shadow_phase_solo_wall_seconds_total` — the wall time of those same solo phases, to compare
+  with the mean over every phase (the length-bias check below).
+
+**Method, and why.** Go has no faithful per-request CPU clock: a request's work runs on several
+goroutines (the hydration lookups run in parallel) that migrate across OS threads, so a thread CPU
+clock misses work and a goroutine cannot be pinned without changing the program. Process CPU deltas
+are exact when only one request is running, and the shadow pod is in that regime almost all the time
+(it serves nothing but sampled shadow requests, at a low rate). So the CPU series counts only phases
+no other sample overlapped, and `solo_total` says how many that was. Wall time is NOT a CPU proxy for
+`compute`: it is mostly waiting on Redis, Postgres and the feed service, so apportioning process CPU by
+wall-time share overstates compute; use the wall histogram for latency and as a sanity check only.
+
+```promql
+# Go CPU per SERVED call, compute only (the go/no-go figure), per endpoint.
+sum by (feed_endpoint) (rate(feed_go_shadow_phase_cpu_seconds_total{phase="compute",outcome="served"}[1h]))
+  / sum by (feed_endpoint) (rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
+
+# Coverage: share of served computes that were solo (low share = the per-phase figure is a sample).
+sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_seconds_count{phase="compute",outcome="served"}[1h]))
+
+# Length bias: mean wall of the solo computes over the mean wall of all of them. Near 1 = the solo
+# phases are representative; below 1 = long computes are being excluded (see Limits).
+(sum(rate(feed_go_shadow_phase_solo_wall_seconds_total{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h])))
+/ (sum(rate(feed_go_shadow_phase_seconds_sum{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_seconds_count{phase="compute",outcome="served"}[1h])))
+
+# Shadow overhead per sample (what the whole-process ratio above over-counts).
+sum by (phase) (rate(feed_go_shadow_phase_cpu_seconds_total{phase=~"decode|compare"}[1h]))
+  / sum by (phase) (rate(feed_go_shadow_phase_solo_total{phase=~"decode|compare"}[1h]))
+
+# Cross-check: CPU the phases do not account for (idle runtime, GC not inside a phase, scrapes,
+# fallback samples). Should be small next to the phase CPU when coverage is high.
+sum(rate(process_cpu_seconds_total{job="feed-go"}[1h]))
+  - sum(rate(feed_go_shadow_phase_cpu_seconds_total[1h]))
+```
+
+**Limits.**
+
+- *Background runtime work is attributed to whichever phase it lands in.* The GC runs concurrently:
+  the collection of `compute`'s garbage may run during `compare` (which allocates heavily and so tends
+  to trigger it) or after the sample, and a collection of an EARLIER sample's garbage (its decode and
+  compare included) may run during this sample's `compute`. The direction of the net error is therefore
+  not known from these series: a profile decides it. Bound it with the unaccounted-CPU cross-check, and with the Go GC
+  series (`go_gc_*`) from the runtime collector; under real serving load the GC share is better read
+  from a profile (below) than from these series.
+- *Solo only.* Overlapping samples are excluded, not apportioned; if coverage is low (raised sample
+  rate, a burst), the figure is a sample of the quiet periods, which can differ from loaded behaviour
+  (less cache contention, no scheduler pressure).
+- *Length bias.* A phase is excluded when another sample is admitted before it ends, and a longer
+  phase is more likely to have that happen, so the solo phases lean short. Where a compute's CPU grows
+  with its wall time (cache misses, large hydrations), the compute-only figure then reads LOW, which
+  favours Go. The bias shrinks as coverage approaches 1; the length-bias query above measures it
+  directly, and coverage alone does not.
+- *Shadow-only process.* The method assumes the process runs nothing but shadow samples. The solo
+  check sees only shadow samples, so in a deployment that also serves the public route (or proxies
+  fallbacks) on the same process, that traffic's CPU lands in whichever phase it overlaps and the
+  figure reads HIGH. Read it only from a shadow-only deployment.
+- *Not covered:* building the synthetic request, the goroutine hand-off, and on the serving path the
+  response write (`trpc.WriteResult`) and the reverse-proxy cost of a fallback. All are small next to
+  `compute`; a fallback's proxy cost is Node's request, read on Node's side.
+- A Prometheus scrape that lands inside a phase is charged to it (one scrape per interval, small).
+- Off unix there is no process CPU clock: only the wall histogram is recorded.
+
+### 10.2 CPU profile
+
+With `FEED_GO_PPROF=true` the internal listener (the `FEED_GO_INTERNAL_ADDR` port, never the public
+one) serves `net/http/pprof` under `/debug/pprof/`. Off by default; turning it on is an env change
+and a restart. Anything the network allows to reach the internal port can then pull profiles, and a
+`profile`/`trace` request holds its connection for the `seconds` it asks for (net/http/pprof moves its
+own write deadline past the capture, so the internal listener's 30 s write timeout does not cut it),
+so enable it for a profiling session and turn it off after. Pull a profile through
+a port-forward to the pod's internal port:
+
+```bash
+go tool pprof -http=: 'http://localhost:9090/debug/pprof/profile?seconds=60'
+```
+
+A profile is the authority on where compute's CPU goes (including the GC share), and checks the
+phase series: `compute` frames (`server.(*Server).compute` and below) against `shadow.Compare` and the
+`ShadowHandler` body decode.
 
 Node's side is the per-procedure CPU attribution already used to rank tRPC procedures (the same
 measurement that identified this one), read over the same window for
@@ -326,10 +574,12 @@ measurement that identified this one), read over the same window for
 - note what Go does **not** pay yet: cache write-back, ClickHouse populates, auth-hub fetches — all
   rare misses that Node pays and Go falls back on. The fallback rate bounds how much this can matter;
 - add the extra Redis and Postgres reads Go makes in shadow mode to the cost side when the sample
-  rate is raised (shadowing doubles the read work for sampled requests).
+  rate is raised (shadowing doubles the read work for sampled requests, and on the feed-service path
+  each sample is one more feed-service call per page and per completion batch).
 
-The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity,
-with Go's side read as an upper bound (it includes the shadow decode and compare, above).
+The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity.
+For Go, read the compute-only figure (§10.1) as the serving estimate, with its coverage beside it,
+and the whole-process figure (above) as the upper bound that includes the shadow decode and compare.
 
 ## 11. Deploy prerequisites (infrastructure repo, later)
 
@@ -348,9 +598,11 @@ None of this is in this PR.
   `REDIS_SYS_SENTINEL_NAME`, the same values the Node pools carry, §3), the auth issuer + JWKS URI,
   `CIVITAI_MODERATION_USER_ID` (§4), `TRPC_ORIGINS` + `NEXTAUTH_URL` (the origin allow-list, serving), the
   `SERVER_DOMAIN_*` hosts, `REGION_RESTRICTION_CONFIG`, `IMAGE_QUERY_CACHING`, the flag mirrors, and
-  `FEED_GO_FALLBACK_URL` (the in-cluster Node service) once serving.
+  `FEED_SERVICE_URL` (the same value as the Node pools) with `FEED_GO_IMAGE_INDEX_FEED` /
+  `FEED_GO_LAZY_POST_IMAGES` at the flags' values, and `FEED_GO_FALLBACK_URL` (the in-cluster Node
+  service) once serving.
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
-  Redis Sentinels), the JWKS endpoint,
+  Redis Sentinels), the JWKS endpoint, the image feed service,
   and (serving) the Node service.
 - **Monitoring:** a scrape of `:9090/metrics`; a dashboard of §10's queries and the shadow results.
 - **Flags:** the Node-side shadow sample percentage, and later the client transport flag. Created OFF.
@@ -364,8 +616,8 @@ Honest estimate, in order:
 2. **Burn down parity** — read the comparator for a week, fix the categories it surfaces. Unknown size
    by nature; expect several rounds. The SQL and hydration are ported line by line, but nothing has
    run against production data yet.
-3. **Cut fallbacks that matter by volume** — likely pinned posts (page 1 of popular galleries), the
-   metric-hash ClickHouse populate, and the cache miss paths, in fallback-rate order. Each is a
+3. **Cut fallbacks that matter by volume** — the metric-hash ClickHouse populate and the cache miss
+   paths, in fallback-rate order (pinned and sponsored posts were ported on 2026-11-14). Each is a
    contained port; together roughly one to two weeks.
 4. **Flags** — a Flipt evaluation client so the env mirrors go away (a few days).
 5. **Serving** — the client transport flag PR, a small cohort, then ramp while watching error rate,
@@ -374,3 +626,165 @@ Honest estimate, in order:
 So roughly three to five weeks of focused work from merge to serving a meaningful share — most of it
 in step 2, which only production traffic can size. The CPU-per-call answer itself arrives earlier:
 step 1 plus a few days of shadow traffic.
+
+## 13. `GET /api/v1/images` (REST, shadow only)
+
+The public images API: `src/pages/api/v1/images/index.ts` (`handleImagesRequest`) →
+`runImageSearch` (`src/server/services/image-search.service.ts`) → `getImagesFromFeedServiceForRest`
+(`image.service.ts`). Ported in `internal/feed/v1query.go` (the query) and `v1images.go` (the rest);
+compared at `POST /internal/shadow/api/v1/images`. Nothing serves it publicly.
+
+### 13.1 What the Node path does
+
+1. **Query.** `imagesEndpointSchema` over Next's `req.query`: `limit` 0–200 (default 100), `page`,
+   `postId`, `modelId`, `modelVersionId`, `imageId`, `ids`, `username`, `userId`, `period`, `sort`
+   (default Most Reactions), `nsfw` (a deprecated level name or a boolean), `browsingLevel`, `tags`,
+   `cursor` (always a string here), `type`, `baseModels`, `withMeta`, `requiringMeta`, `flatMeta`,
+   `withTags`.
+2. **Viewer.** `getApiAuthSession(whenBanned: 'anonymous')`: a session cookie or an API key; a banned
+   user is no user at all. The viewer only reaches the query (POI / minor / tag carve-outs, the
+   `viewerId` POI exemption on the feed, moderators skipping the visibility clauses).
+3. **Paging guard.** `page * limit > 1000` without a cursor is a 429.
+4. **Level.** `browsingLevel ?? nsfw ?? PG`; a restricted region is clamped to PG|PG-13. No domain cap
+   (this route does not read the host).
+5. **Gallery gates** (a `modelId`, `modelVersionId` or `postId`): the models the request selects by
+   (`resolveImageModelIds`: the named model, the version's model, the post's version's model) —
+   a taken-down one empties the page for everyone, its owner and moderators included; a minor or
+   SFW-only one intersects the level with its held gallery level (empty → empty page). A version or
+   post that cannot be found empties the page. The empty answer is `{ items: [], metadata: {} }`.
+6. **Routing.** `ids`, `imageId`, or a `modelId` without a version take the legacy Postgres path
+   (`getAllImages`); everything else asks the image feed service (`route: 'rest'`): the browsing
+   addons resolved at the level (a `userId` naming the viewer keeps its tag exclusions off), a
+   `username` resolved to its id, `mapSearchInputToFeedQuery(input, 'primary', 'rest')` (a `postId`
+   is served in the requested sort on this caller), then the feed's ids hydrated with
+   `feedHydrateQuery` (no model scope, paging or period; `disablePoi`, `disableMinor` always on;
+   `include: ['tagIds', 'profilePictures']` plus `includeBaseModel`). The answer's `createdAt` is the
+   row's `sortAt`.
+7. **Shaping.** Per image: `getEdgeUrl(url, { original: true, type })`, the deprecated `nsfwLevel` name,
+   `browsingLevel` (the image level, raised to a video thumbnail's), a public video still
+   (`getPublicVideoThumbnail`: the custom thumbnail when its level is allowed, else a transcoded
+   frame, skipped past the first seconds of a long video), six counts from the metric hashes,
+   `username` (a cached numeric name as a string), `baseModel` (the checkpoint resource's raw
+   `baseModel`, else null: `getBaseModelFromResources` as image.service.ts imports it, from
+   `src/server/redis/caches.ts`, not the same-named ecosystem-group helper in
+   `generation.constants.ts`) and
+   `modelVersionIds` (the detected resources). Then `withoutHeldImages`: an image above its post's
+   held model level is left out, whatever the request named.
+8. **Body.** `res.json({ items, metadata })`, plain JSON (not superjson): `metadata` holds `nextCursor`
+   (the feed's `feed:<a>:<b>`), `currentPage` / `pageSize` when paging, and `nextPage`, the request's
+   own URL with `cursor` (or `page`) set, on `https://<host>` in production.
+
+### 13.2 What is ported, and what falls back
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Query | every member above except those on the right, Next's `req.query` parsing (repeated keys, `Object.keys` order for `nextPage`) | `ids` (`v1-ids`) and `imageId` (`v1-image-id`) and a `modelId` without a version (`v1-model-only`): the legacy Postgres path; `tags` (`v1-tags`), `baseModels` (`v1-base-models`), `withMeta=true` (`v1-with-meta`: the meta cache is compressed, its reader is not ported), `withTags=true` (`v1-with-tags`); any value `Number()` would read differently from a plain integer (`v1-input-number`), a repeated schema key (`v1-input-duplicate`), a sort the feed does not have (`v1-sort`), `userId=0` (`v1-user-zero`), a malformed escape (`v1-query-encoding`) |
+| Viewer | signed out; session cookies (the same resolver as §4); a banned session as signed out | API keys / bearer tokens (`bearer-token`); the sampler does not send them at all (§13.4) |
+| Gates | withheld, held level, unknown version / post; the per-post hold on every page | a gallery settings key Node would rebuild (`gallery-settings-miss`); a held model whose settings carry no level (`v1-held-level-unset`) |
+| Pages | the feed's page, its cursor, the empty-page answers (`requiringMeta`, `limit=0`, an empty feed answer) | a feed failure or a non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-refused`, `v1-cursor`, `v1-page-limit`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`: Node retries an empty one on another replica) |
+| Hydration | basic users (cache, replica on a miss), thumbnails, metric hashes, image resources (cache), the hold's post→version and version→model caches (replica on a miss or past their TTL), a `username` on the replica | a metric hash miss (`metrics-miss`), an image-resources miss (`image-resources-miss`: Node picks a replica by write lag), a username the replica does not hold (`v1-username-miss`: Node reads the primary next) |
+| Config | | no `FEED_SERVICE_URL` (`index-feed-unconfigured`), no `NEXT_PUBLIC_IMAGE_LOCATION` (`v1-image-location-unconfigured`) |
+
+The endpoint publishes no cosmetics, frames, tags, reactions or event decorations, so this port does
+not read them, and their cache misses (a fallback on the gallery procedure) cost nothing here.
+
+### 13.3 Flags and settings
+
+| Flag / setting | Node effect | Here |
+|---|---|---|
+| (no flag) | the REST route always takes the feed service when `FEED_SERVICE_URL` is set (`feedPrimaryAvailable`); `image-index-feed` is not read on this route | `FEED_SERVICE_URL` |
+| `datapacket-read` | which replica the hydrate reads, and whether an empty hydrate is retried on the other one | not mirrored: an empty hydrate falls back |
+| `feed-service-degrade` | breaker + last good page on a feed failure | not mirrored: a failure falls back |
+| `isProd` | `nextPage` on `https://<host>`, else `http://localhost:3000` | always the production form (the shadowed app is a production build) |
+| `NEXT_PUBLIC_IMAGE_LOCATION` | the edge URL prefix | the same variable |
+
+### 13.4 The Node sampler (flag `feed-go-shadow-v1-images`, default OFF)
+
+`src/server/trpc/feed-go-shadow.ts` (`beginV1Images` / `captureV1Images`), wired in the route's
+handler. Its own Flipt flag, so the REST route is enabled separately from the gallery procedure; it
+shares `FEED_GO_SHADOW_URL`, the sample rate and the in-flight cap with `feed-go-shadow`, and has its
+own per-second bucket of the same `FEED_GO_SHADOW_MAX_PER_SECOND` size, so REST traffic cannot starve
+the gallery's samples. The sampling decision is made after the handler's cheap rejects (the 400 and
+429) and its bulkhead slot, and the in-flight slot and the token are taken only once the handler has
+answered 200, so a sample holds nothing while the handler runs. A sampled 200 keeps a reference to the
+body the handler passes to `res.json`; after the handler, from `setImmediate` and never awaited, it
+POSTs
+
+```json
+{ "input": "<the raw query string>", "path": "/api/v1/images",
+  "headers": { "host": "…", "cookie": "<session cookies only>", "cf-ipcountry": "…", … },
+  "node": { "items": […], "metadata": { … } } }
+```
+
+A request carrying an API credential (a bearer header or `?token=`) is never mirrored, only counted
+(`skipped_credential`): `metadata.nextPage` repeats the request's query, `?token=` included, and this
+service would fall back on it anyway. Outcomes are counted in
+`civitai_app_feed_go_shadow_samples_total{outcome,feed_endpoint="v1-images"}`; the encode counters carry
+`feed_endpoint` too.
+
+### 13.5 Comparison
+
+`shadow.CompareJSON`: the same structural walk as §7 (object key order ignored, array order kept,
+numbers numerically), with no annotation step — a Date is its ISO string on both sides, and an
+undefined member is absent on both (`JSON.stringify` drops it; this service's writer, `superjson.Plain`,
+does the same). Categories stop at `meta` only: `metadata` is the paging object here, so
+`metadata.nextCursor` / `metadata.nextPage` keep their keys. Results classify by `items[].id`
+(images, not posts): `match`, `fields`, `order`, `membership`, `unsupported`, `deadline`, `go_error`.
+
+### 13.6 Measurement: the go/no-go is for the ported subset
+
+The shadow samples of both endpoints share one queue, so §10.1's solo-phase method covers both;
+read it per endpoint.
+
+**Trivial answers are kept apart.** An answer computed without loading any image — a withheld or
+fully held gallery, `limit=0`, a shape the feed cannot express, a feed page with no ids — costs
+almost nothing on either side and would pull CPU per call down and the match rate up. It is
+recorded as compute outcome `served_empty` (not `served`) and, when it matches, as result
+`match_empty` (not `match`); a trivial answer that differs is still counted as its diff.
+
+**The go/no-go figure** is CPU per non-trivial served call on the ported subset, with the match rate
+over the same calls:
+
+```promql
+sum(rate(feed_go_shadow_phase_cpu_seconds_total{feed_endpoint="v1-images",phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{feed_endpoint="v1-images",phase="compute",outcome="served"}[1h]))
+
+sum(rate(feed_go_shadow_compare_total{feed_endpoint="v1-images",result="match"}[1h]))
+  / sum(rate(feed_go_shadow_compare_total{feed_endpoint="v1-images",result=~"match|fields|order|membership"}[1h]))
+
+# What the match rate's denominator leaves out: fell back (`unsupported`) or cut at the budget
+# (`deadline`), as shares of all v1 samples, and the reasons (`deadline` is one of them).
+sum by (result) (rate(feed_go_shadow_compare_total{feed_endpoint="v1-images",result=~"unsupported|deadline"}[1h]))
+  / ignoring(result) group_left sum(rate(feed_go_shadow_compare_total{feed_endpoint="v1-images"}[1h]))
+
+topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="v1-images",mode="shadow"}[1h])))
+```
+
+**What share of the route that is.** The figure above says nothing about the requests the port
+cannot take. Node counts every request of the route, sampled or not and whatever the flag, by shape
+class in `civitai_app_feed_go_v1_shape_total{class}`: `ported` (a shape the port answers), the
+`unported_*` shapes it falls back on by construction (`ids`, `imageId`, `modelId_only`, `tags`,
+`baseModels`, `withMeta`, `withTags`), `api_key`, and `non200`. The share of the route a Go service
+could take is
+
+```promql
+sum(rate(civitai_app_feed_go_v1_shape_total{class="ported"}[1d]))
+  / sum(rate(civitai_app_feed_go_v1_shape_total{class!="non200"}[1d]))
+```
+
+and is an upper bound: a `ported` request can still fall back on a cache miss or a feed failure
+(the fallback-reason rate above). A saving read from the go/no-go figure applies to that share only.
+
+Node's side is the route's own timer, `images_search_request_duration_seconds{route="api/v1/images"}` (wall time), and
+the per-route CPU attribution over the same window.
+
+### 13.7 Known divergences
+
+- the hold caches: this service reads the post→version and version→model caches and, on a miss, its
+  own replica (Node's lookups read theirs); a gallery-settings key is read, never rebuilt;
+- the username lookup runs on this service's replica only (a miss falls back);
+- `Object.keys` order of `req.query` is reproduced for `nextPage`; Next's parser and this one agree on
+  plain `&`-separated `key=value` text (`+` as a space, percent-escapes), and a malformed escape
+  falls back rather than guess;
+- milliseconds between Node's feed call and this one: `membership` / `order` diffs on busy Newest
+  pages, `stats.*` value diffs, as in §7.

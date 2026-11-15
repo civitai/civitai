@@ -59,9 +59,17 @@ describe('capsGenerationOutput', () => {
     expect(capsGenerationOutput({ baseModels: ['Illustrious', undefined] })).toBe(false);
   });
 
-  it('decides a submit with no resources by its ecosystem, only when every base restricts', () => {
+  it('caps by ecosystem only when every base in it restricts', () => {
     expect(capsGenerationOutput({ baseModels: [], ecosystem: 'Ideogram' })).toBe(true);
     expect(capsGenerationOutput({ baseModels: [], ecosystem: 'SDXL' })).toBe(false);
     expect(capsGenerationOutput({ baseModels: [] })).toBe(false);
+  });
+
+  it('caps a restricted ecosystem whatever base models its resources carry', () => {
+    expect(capsGenerationOutput({ baseModels: ['SDXL 1.0'], ecosystem: 'Fibo2' })).toBe(true);
+  });
+
+  it('caps a base-model string that differs from the record only in case', () => {
+    expect(capsGenerationOutput({ baseModels: ['FIBO 2.0'] })).toBe(true);
   });
 });

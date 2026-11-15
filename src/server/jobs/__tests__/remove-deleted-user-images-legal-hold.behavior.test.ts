@@ -109,6 +109,16 @@ beforeAll(async () => {
       'utf8'
     )
   );
+  // The drain asks it whether a post holds held text.
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
+      ),
+      'utf8'
+    )
+  );
   // Off, so what stays is the drain's doing: the delete triggers would keep a held owner's rows
   // whatever the drain asked for, and the report trigger would add markers to the report cases.
   await holder.db.exec(`

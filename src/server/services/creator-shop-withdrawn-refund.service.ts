@@ -113,7 +113,7 @@ async function refundOnce(transactionId: string, description: string) {
 }
 
 /** The purchase's debits and payouts, or why they can't be reversed. The dry run reads this too. */
-async function readPurchaseLedger(purchase: {
+export async function readPurchaseLedger(purchase: {
   buzzTransactionId: string;
   userId: number;
   unitAmount: number;

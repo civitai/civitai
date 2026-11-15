@@ -134,7 +134,7 @@ describe('importSeed', () => {
     format: 'bench' as const,
     label: 'scam' as const,
     truthMap: { bad: 'yes', fine: 'no', unsure: 'skip' } as const,
-    by: 990001,
+    by: 990100025,
   };
 
   it('dry run writes nothing and reports counts only', async () => {
@@ -173,7 +173,7 @@ describe('importSeed', () => {
         model: 'model-a',
         thinking: false,
         status: 'done',
-        run_by: 990001,
+        run_by: 990100025,
         totals: '[]',
       })
       .returning('id')

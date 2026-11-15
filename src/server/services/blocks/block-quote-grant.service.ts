@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
 import type { BlockQuoteGrant } from '~/server/middleware/block-scope.middleware';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   BLOCK_STEP_QUOTE_ID_REGEX,
   BLOCK_TRAINING_QUOTE_ID_REGEX,
@@ -255,7 +256,14 @@ export async function claimQuoteGrant<R extends BlockQuoteGrantRecord>(
  * `total` is the orchestrator's FIXED price for exactly the hashed body — never a
  * variable/cap price, never the app's declared `maxBuzz`.
  */
-export type BlockStepQuoteRecord = BlockQuoteGrantRecord & { stepType: string };
+export type BlockStepQuoteRecord = BlockQuoteGrantRecord & {
+  stepType: string;
+  /**
+   * The body's Buzz pool pick, stored only when the body named one, so the consent
+   * dialog can say which pool is tried first. The body hash binds it too.
+   */
+  accountType?: BuzzSpendType;
+};
 
 /** `hashQuotedBody` for a pass-through step body. */
 export function hashPassThroughStepBody(body: PassThroughStepBody): string {

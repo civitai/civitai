@@ -119,6 +119,27 @@ describe('copy', () => {
     );
   });
 
+  // The pool line names the SERVER'S order, pick first. The fixture order is the
+  // reverse of the default (blue first), so a line built from the default cannot pass.
+  it('names the pool tried first when the block picked one', () => {
+    const copy = buildConfirmedStepConsentCopy({
+      appName: 'Mesh Maker',
+      preview: { ...PREVIEW, fundingOrder: ['yellow', 'blue'] },
+    });
+    expect(copy.fundingLine).toBe('Paid from Yellow Buzz first, then Blue.');
+  });
+
+  it.each([
+    ['no pick', null],
+    ['a server that predates picks', undefined],
+  ])('adds no pool line with %s', (_l, fundingOrder) => {
+    const copy = buildConfirmedStepConsentCopy({
+      appName: 'Mesh Maker',
+      preview: { ...PREVIEW, fundingOrder },
+    });
+    expect(copy.fundingLine).toBeNull();
+  });
+
   it('the daily-limit refusal names the limit, what is left, and that nothing was charged', () => {
     expect(
       buildConfirmedStepDailyLimitCopy({

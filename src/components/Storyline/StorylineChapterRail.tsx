@@ -21,12 +21,15 @@ const STUB = 'pointer-events-none absolute bottom-1/2 h-2.5 w-0.5 bg-[var(--mant
 export function StorylineChapterRail({
   storyline,
   images,
+  chapterIds,
   index,
   navigate,
 }: {
   storyline: ActiveStorylineMode;
   /** The carousel's own items, which `index` points into: not always the walked images alone. */
   images: { id: number }[];
+  /** Each carousel slide's chapter, when the slides are not `images` alone (text items among them). */
+  chapterIds?: (number | undefined)[];
   index: number;
   navigate: (index: number) => void;
 }) {
@@ -40,12 +43,21 @@ export function StorylineChapterRail({
       buildStorylineRail<RailLineChapter>({
         path: path.chapters,
         ahead: canonAhead.ahead,
-        imageChapterIds: images.map((image) => chapterIdOfImage(image.id)),
+        imageChapterIds: chapterIds ?? images.map((image) => chapterIdOfImage(image.id)),
         index,
         aheadKnown: canonAhead.isSuccess,
         laneOf,
       }),
-    [path.chapters, canonAhead.ahead, canonAhead.isSuccess, images, chapterIdOfImage, index, laneOf]
+    [
+      path.chapters,
+      canonAhead.ahead,
+      canonAhead.isSuccess,
+      images,
+      chapterIds,
+      chapterIdOfImage,
+      index,
+      laneOf,
+    ]
   );
   // jumpToChapter opens a chapter's first walked image, so a chapter with none cannot be jumped to.
   const readable = useMemo(

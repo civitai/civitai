@@ -148,6 +148,14 @@ test('CommentV3 skips self-comments for the owner and surfaces it does not count
     expect((await v3('create', { entityType }, { ownerId: 555 })).adds).toEqual([]);
 });
 
+// The site can ship a comment type before the engine knows it: those events must pass, not throw
+// and redeliver.
+test('a CommentV3 comment on a type the engine does not know yet emits nothing and reads nothing', async () => {
+  const { adds, calls } = await v3('create', { entityType: 'notYetKnown' }, { ownerId: 555 });
+  expect(adds).toEqual([]);
+  expect(calls).toEqual([]);
+});
+
 test.each([
   ['image', 'Image'],
   ['post', 'Post'],
@@ -172,6 +180,7 @@ test.each([
     'comicChapter',
     ['"ComicChapter" c', 'JOIN "ComicProject" p ON p.id = c."projectId"', 'p."userId"'],
   ],
+  ['postText', ['"PostText" t', 'JOIN "Post" p ON p.id = t."postId"', 'p."userId"', 't.id = $1']],
 ])('a CommentV3 %s comment counts for its owner only', async (entityType, sqlParts) => {
   const { adds, calls } = await v3('create', { entityType }, { ownerId: 555 });
   expectAdds(adds, [user(555, 42, 1)]);

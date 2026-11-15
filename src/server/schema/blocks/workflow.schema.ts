@@ -587,6 +587,12 @@ export function makeBlockStepBodySchema(stepIds: [string, ...string[]]) {
       kind: z.literal('step'),
       step: z.enum(stepIds),
       params: z.record(z.string(), z.unknown()),
+      // The Buzz pool tried FIRST — the same field and rule as `textToImage`'s
+      // `accountType`: blocks.router moves it to the front of the domain-allowed
+      // currencies and keeps the rest as fallback, and REJECTS a pick outside that
+      // set. Top-level, not in `params`: `params` is the step's own `.strict()`
+      // contract and a currency is not a step parameter.
+      accountType: blockAccountTypeSchema.optional(),
     })
     .strict();
 }
@@ -699,6 +705,11 @@ const blockPassThroughStepShape = {
   // draft claimed identity here and in `blocks.router`; measured false.)
   input: z.record(z.string(), z.unknown()),
   maxBuzz: z.number().int().min(1).max(PASS_THROUGH_MAX_BUZZ),
+  // The Buzz pool tried FIRST, the rest of the domain-allowed set kept as fallback;
+  // a pick outside that set is REJECTED (`resolveBlockCurrenciesForAccount`). Server
+  // field, never forwarded into `input`. INCLUDED in the confirmed-quote body hash, so
+  // a quote priced with one pool cannot be submitted with another.
+  accountType: blockAccountTypeSchema.optional(),
   // Present on a CONFIRMED submit only — the viewer-confirmed fixed-price quote
   // (`stepQuote.quoteId` on the estimate reply) this job is charged against in place
   // of the per-call budget. Excluded from the body hash that binds a quote to its
@@ -815,6 +826,10 @@ export const blockMultiStepWorkflowBodySchema = z
     kind: z.literal('workflow'),
     steps: z.array(blockMultiStepWorkflowStepSchema).min(1),
     arguments: z.record(z.string(), z.unknown()).optional(),
+    // PER-WORKFLOW, not per-step: the orchestrator takes ONE `currencies` list for
+    // the whole workflow, so a per-step pick could not be honoured. Same rule as the
+    // pass-through arm's `accountType`.
+    accountType: blockAccountTypeSchema.optional(),
   })
   .strict()
   // `arguments` too: a step input can `$ref` it, so it reaches the orchestrator the same way.
@@ -1146,8 +1161,9 @@ export type BlockWorkflowSnapshot = {
    * another node instead of a literal value. Estimate and submit alike, before anything is
    * reserved.
    *
-   * `'source-scan-pending'` — a `kind:'step'` or `kind:'workflow'` input, or an inline
-   * `customComfy` graph, names the viewer's own upload whose scan has not finished. Retry once the scan completes. Estimate and
+   * `'source-scan-pending'` — a `kind:'textToImage'` source image, a `kind:'step'` or
+   * `kind:'workflow'` input, or an inline `customComfy` graph, names the viewer's own upload
+   * (or a source kept with `PERSIST_GENERATION_SOURCE`) whose scan has not finished. Retry once the scan completes. Estimate and
    * submit alike, before anything is reserved.
    */
   errorCode?:
@@ -1540,6 +1556,55 @@ export type BlockWorkflowSnapshot = {
    * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk` in its own repo.
    */
   steps?: BlockWorkflowStepSnapshot[];
+  /**
+   * Where the workflow is right now, for a "N ahead / starts at / x% done" display.
+   * Read off the orchestrator's steps in workflow order (every kind, not only
+   * `kind:'workflow'`): the first step with a {@link BlockWorkflowStepQueue}, else
+   * the first `processing` step. `stepName` is that step's name.
+   *
+   * While queued: `queuedAhead`, `startsAt`, `completesAt` and `support` come from
+   * that step's queue, and `progress` is null. While running the orchestrator clears
+   * the queue, so those four are null and `progress` is the step's progress (null
+   * for a step type whose estimate does not cover the whole step — see
+   * `BlockWorkflowStepSnapshot.progress`). Timestamps are ISO-8601, as the
+   * orchestrator gives them; every field is an estimate.
+   *
+   * OMITTED (read it as null) when the workflow is terminal or no step is queued or
+   * processing. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  eta?: BlockWorkflowEta | null;
+  /**
+   * `true` on a poll the host could not serve; keep the previous snapshot's values.
+   * The rest of such a reply is a placeholder (`status: 'processing'`, the caller's
+   * own `workflowId`, nothing else), not a reading of the workflow. Set by the
+   * shed `pollWorkflow` and `cancelWorkflow` replies (rate limit) and by the hosts'
+   * `pollFailureSnapshot` for a poll that threw without an answer. A real snapshot
+   * never carries it. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  throttled?: true;
+};
+
+export type BlockWorkflowEta = {
+  stepName: string;
+  queuedAhead: number | null;
+  startsAt: string | null;
+  completesAt: string | null;
+  progress: number | null;
+  support: string | null;
+};
+
+/**
+ * A step's place in the orchestrator queue. `precedingJobs` is a whole number ≥ 0,
+ * or null when the orchestrator gave none (or gave something else). The timestamps
+ * are ISO-8601 strings exactly as the orchestrator gave them. `support` is the
+ * orchestrator's `JobSupport`: `available`, `unavailable` (no worker can take it
+ * right now) or `unsupported`.
+ */
+export type BlockWorkflowStepQueue = {
+  precedingJobs: number | null;
+  estimatedStartAt: string | null;
+  estimatedCompleteAt: string | null;
+  support: string;
 };
 
 export type BlockWorkflowStepSnapshot = {
@@ -1549,6 +1614,23 @@ export type BlockWorkflowStepSnapshot = {
   imageUrls?: string[];
   output?: unknown;
   error?: string;
+  /**
+   * Present only while the orchestrator reports the step as queued; omitted once it
+   * starts, and on any step or workflow that is terminal.
+   */
+  queue?: BlockWorkflowStepQueue | null;
+  /**
+   * The orchestrator's estimate of how much of the step is done, 0..1. Omitted when
+   * it gave none, when the step or workflow is terminal, and for every step type
+   * outside `WHOLE_STEP_PROGRESS_STEP_TYPES` in `services/blocks/workflow.service`
+   * (image and video generation) — some types, training among them, report a
+   * fraction that restarts at each phase, which would read as done many times over.
+   */
+  progress?: number | null;
+  /** ISO-8601, as the orchestrator gave it. Omitted until the step starts. */
+  startedAt?: string | null;
+  /** ISO-8601, as the orchestrator gave it. Omitted until the step ends. */
+  completedAt?: string | null;
 };
 
 export type BlockStepQuote = {

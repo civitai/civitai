@@ -153,7 +153,10 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
 
     let alg: string | undefined;
     try {
-      alg = decodeProtectedHeader(token).alg;
+      const header = decodeProtectedHeader(token);
+      // A session is a plain JWT; an access token (`at+jwt`) or any other typed token is not one.
+      if (header.typ !== undefined && header.typ !== 'JWT') return null;
+      alg = header.alg;
     } catch {
       alg = undefined;
     }
@@ -260,4 +263,52 @@ function readCookie(
     if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
   }
   return undefined;
+}
+
+/** How far in the future an access token's `iat` may be, for clock skew between hub pods. */
+const ACCESS_TOKEN_IAT_LEEWAY_S = 30;
+
+export interface AccessTokenJwtVerifierConfig {
+  /** The hub's SPKI public key (PEM). Defaults to AUTH_JWT_PUBLIC_KEY. */
+  publicKeyPem?: string;
+  clock?: () => number;
+}
+
+/**
+ * Verifies the hub's own RFC 9068 access tokens (`typ: at+jwt`): ES256 only, the given issuer exactly,
+ * `exp` with no leeway, and `iat` at most 30 s ahead. Returns the payload, or null on any failure.
+ * Throws when no public key is configured, or when `issuer` is empty.
+ */
+export function createAccessTokenJwtVerifier(config: AccessTokenJwtVerifierConfig = {}) {
+  const publicKeyPem = config.publicKeyPem ?? loadAuthEnv().AUTH_JWT_PUBLIC_KEY;
+  const clock = config.clock ?? (() => Date.now());
+  let _key: ReturnType<typeof importSPKI> | undefined;
+  const key = () => {
+    if (!publicKeyPem) throw new Error('[@civitai/auth] no AUTH_JWT_PUBLIC_KEY configured');
+    return (_key ??= importSPKI(normalizePem(publicKeyPem), ALG));
+  };
+
+  return async function verifyAccessTokenJwt(
+    token: string,
+    issuer: string
+  ): Promise<JWTPayload | null> {
+    if (!issuer) throw new Error('[@civitai/auth] an access token is verified against an issuer');
+    const k = await key();
+    const nowMs = clock();
+    try {
+      const { payload } = await jwtVerify(token, k, {
+        algorithms: [ALG],
+        issuer,
+        typ: 'at+jwt',
+        clockTolerance: 0,
+        currentDate: new Date(nowMs),
+        requiredClaims: ['exp', 'iat', 'jti', 'sub', 'aud', 'client_id'],
+      });
+      if (typeof payload.iat !== 'number') return null;
+      if (payload.iat > Math.floor(nowMs / 1000) + ACCESS_TOKEN_IAT_LEEWAY_S) return null;
+      return payload;
+    } catch {
+      return null;
+    }
+  };
 }

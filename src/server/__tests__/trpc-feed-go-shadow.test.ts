@@ -175,7 +175,12 @@ async function outcomeCounts(): Promise<Record<string, number>> {
   );
   if (!metric) return {};
   const { values } = await metric.get();
-  return Object.fromEntries(values.map((v) => [String(v.labels.outcome), v.value]));
+  // This route's series only: the REST route's (feed_endpoint v1-images) are seeded at 0 too.
+  return Object.fromEntries(
+    values
+      .filter((v) => v.labels.feed_endpoint === 'as-posts')
+      .map((v) => [String(v.labels.outcome), v.value])
+  );
 }
 
 const SUPERJSON_PAYLOAD = JSON.parse(JSON.stringify(superjson.serialize(PAYLOAD)));
@@ -307,5 +312,23 @@ describe('feed-go shadow, end to end', () => {
       await new Promise((r) => setTimeout(r, 10));
     release();
     expect((await outcomeCounts()).timeout).toBe((before.timeout ?? 0) + 1);
+  });
+
+  // `endpoint` is a reserved scrape target label: the scraper's own value would overwrite ours.
+  it('labels the endpoint as feed_endpoint, never endpoint', async () => {
+    for (const name of [
+      'civitai_app_feed_go_shadow_samples_total',
+      'civitai_app_feed_go_shadow_encode_seconds_total',
+      'civitai_app_feed_go_shadow_encode_bytes_total',
+    ]) {
+      const metric = instrumentationRegistry.getSingleMetric(name);
+      expect(metric, name).toBeDefined();
+      const { values } = await metric!.get();
+      // Seeded for both endpoints, so the label set is visible without traffic.
+      expect(values.map((v) => v.labels.feed_endpoint).sort(), name).toEqual(
+        expect.arrayContaining(['as-posts', 'v1-images'])
+      );
+      for (const v of values) expect(Object.keys(v.labels), name).not.toContain('endpoint');
+    }
   });
 });

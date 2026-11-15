@@ -61,8 +61,9 @@
   prefills the turbo block from `settings` and the graph falls back to it for
   anything a turbo LoRA left unset. `settings` is one of the shared `TURBO_PRESETS`, since
   distillation recipes recur across ecosystems; a preset's numbers are what the
-  LoRA pages on the site state for that ecosystem. Opted in today: MOSS Image
-  and Anima. SDXL and its children, SD 1.5, Flux.1 D, Qwen and Wan all have
+  LoRA pages on the site state for that ecosystem. Fibo 2.0 has no published
+  numbers and borrows MOSS's `mossDmd` until it does. Opted in today: MOSS
+  Image, Anima and Fibo 2.0. SDXL and its children, SD 1.5, Flux.1 D, Qwen and Wan all have
   turbo-style LoRAs and can opt in once their numbers are confirmed from the
   LoRA pages. A parent's entry reaches its children through the defaults
   merge. The generator's default turbo LoRA is not here; the family's graph file

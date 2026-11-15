@@ -24,6 +24,8 @@ import {
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { getShowcaseHeldLevels } from '~/server/services/model.service';
+import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
 import { decodeHubId } from '~/server/utils/hub-id';
@@ -181,6 +183,8 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       meta: true,
       mode: true,
       userId: true,
+      minor: true,
+      sfwOnly: true,
       user: { select: { username: true, settings: true } },
       modelVersions: {
         where: { status: 'Published' },
@@ -223,6 +227,11 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
     needsReview: null,
     ingestion: 'Scanned' as const,
   };
+  const heldLevel = (
+    await getShowcaseHeldLevels([{ modelId: id, minor: model.minor, sfwOnly: model.sfwOnly }])
+  ).get(id);
+  const withinHeldLevel =
+    heldLevel !== undefined ? { nsfwLevel: { in: Flags.instanceToArray(heldLevel) } } : {};
   const [metric, defaultImage, coverImage] = await Promise.all([
     dbRead.modelMetric
       .findUnique({
@@ -250,6 +259,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
             tosViolation: false,
             needsReview: null,
             ingestion: 'Scanned',
+            ...withinHeldLevel,
           },
           select: ogImageSelect,
           orderBy: [{ postId: 'asc' }, { index: 'asc' }, { id: 'asc' }],
@@ -265,6 +275,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
               ...ownPosts,
             },
             ...previewableImage,
+            ...withinHeldLevel,
           },
           select: ogImageSelect,
         })

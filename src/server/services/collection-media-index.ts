@@ -195,14 +195,14 @@ async function coverIndexExists() {
  * bounded — the index is 7,712 kB — so it is kept rather than given one of its own.
  * The cover leg is included only when its index is valid; see `coverIndexExists`.
  */
-function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
+function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean, db: typeof dbWrite) {
   const ids = Prisma.join(imageIds);
   const coverLeg = includeCover
     ? Prisma.sql`
       UNION
       SELECT c.id AS "collectionId" FROM "Collection" c WHERE c."imageId" IN (${ids})`
     : Prisma.empty;
-  return dbWrite.$queryRaw<{ collectionId: number }[]>`
+  return db.$queryRaw<{ collectionId: number }[]>`
     SELECT DISTINCT x."collectionId" FROM (
       SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."imageId" IN (${ids})
       ${coverLeg}
@@ -240,19 +240,25 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
 /**
  * Resolve the collections whose documents show any of the given images.
  *
- * Reads through `dbWrite` so a just-committed transaction is visible — the replica may
- * still be behind, and a missed row here is a permanently stale document, not a late
- * one. Never throws: callers run this immediately before their delete, so an exception
- * would cancel the deletion the user actually asked for.
+ * Reads through `dbWrite` by default so a just-committed transaction is visible — the
+ * replica may still be behind, and a missed row here is a permanently stale document, not
+ * a late one. A bulk caller with no write of its own to see passes `dbRead`. Does not throw by
+ * default: callers run this immediately before their delete, so an exception would cancel the
+ * deletion the user actually asked for. A caller that must tell a partial or failed lookup from
+ * "no collections" passes `throwOnError`, which also throws when the cover leg cannot run.
  */
 export async function getCollectionIdsForImages({
   imageIds,
   source = 'unknown',
   cap = DEFAULT_COLLECTION_CAP,
+  db = dbWrite,
+  throwOnError = false,
 }: {
   imageIds: number[];
   source?: string;
   cap?: number;
+  db?: typeof dbWrite;
+  throwOnError?: boolean;
 }): Promise<CollectionsToRebuild> {
   const uniqueImageIds = [...new Set(imageIds)];
   if (!uniqueImageIds.length) return EMPTY;
@@ -271,7 +277,10 @@ export async function getCollectionIdsForImages({
       `could not determine whether "${COVER_INDEX_NAME}" is usable; continuing without the cover leg`,
       error
     );
+    if (throwOnError) throw error;
   }
+  if (!withCover && throwOnError)
+    throw new Error(`"${COVER_INDEX_NAME}" is not present and valid: the cover leg cannot run`);
 
   if (!withCover)
     logToAxiom({
@@ -282,7 +291,7 @@ export async function getCollectionIdsForImages({
     }).catch(() => undefined);
 
   try {
-    return applyCap(await imageLegsSql(uniqueImageIds, cap, withCover), cap);
+    return applyCap(await imageLegsSql(uniqueImageIds, cap, withCover, db), cap);
   } catch (error) {
     logFailure(
       'collection-media-index-resolve-failed',
@@ -290,6 +299,7 @@ export async function getCollectionIdsForImages({
       'failed to resolve collections for removed images',
       error
     );
+    if (throwOnError) throw error;
     return EMPTY;
   }
 }

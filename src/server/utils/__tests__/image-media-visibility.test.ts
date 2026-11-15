@@ -1,7 +1,10 @@
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { describe, expect, it } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import {
+  canViewImageMedia,
   viewerCanSeeImageMedia,
   withoutMedia,
   withoutMediaReferences,
@@ -195,5 +198,51 @@ describe('withoutMediaReferences', () => {
     const copy = structuredClone(input);
     withoutMediaReferences(input);
     expect(input).toEqual(copy);
+  });
+});
+
+const KEY_OWNER = 7;
+// A capped (SFW) domain: signed in, without canViewNsfw.
+const green = { features: { canViewNsfw: false }, req: { headers: {} } };
+const mature = { nsfwLevel: NsfwLevel.X, user: { id: KEY_OWNER } };
+const key = (tokenScope: number) => ({
+  apiKeyId: 9,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey' as const, id: 9 },
+  tokenScope,
+});
+
+const canSee = (ctx: object) => canViewImageMedia({ ...green, ...ctx } as never, mature);
+
+describe('canViewImageMedia owner and moderator exemption from the domain cap', () => {
+  it('lets a moderator and the owner past the cap on a session or a full-access key', () => {
+    expect(canSee({ user: { id: 5, isModerator: true } })).toBe(true);
+    expect(canSee({ user: { id: KEY_OWNER } })).toBe(true);
+    expect(canSee({ user: { id: 5, isModerator: true }, ...key(TokenScope.Full) })).toBe(true);
+    expect(canSee({ user: { id: KEY_OWNER }, ...key(TokenScope.Full) })).toBe(true);
+  });
+
+  it('holds a moderator or the owner to the cap on a scoped token', () => {
+    expect(canSee({ user: { id: 5, isModerator: true }, ...key(TokenScope.ModelsRead) })).toBe(
+      false
+    );
+    expect(canSee({ user: { id: KEY_OWNER }, ...key(TokenScope.ModelsRead) })).toBe(false);
+  });
+
+  // A full-scope token an OAuth app holds is still not the user's own credential.
+  it('holds a moderator or the owner to the cap on a full-scope OAuth token', () => {
+    const oauth = {
+      apiKeyId: undefined,
+      apiKeyType: undefined,
+      subject: { type: 'oauth', id: 'app' },
+      tokenScope: TokenScope.Full,
+    };
+    expect(canSee({ user: { id: 5, isModerator: true }, ...oauth })).toBe(false);
+    expect(canSee({ user: { id: KEY_OWNER }, ...oauth })).toBe(false);
+  });
+
+  it('holds anyone else to the cap', () => {
+    expect(canSee({ user: { id: 6 } })).toBe(false);
+    expect(canSee({})).toBe(false);
   });
 });

@@ -564,6 +564,13 @@ describe('model CDC consumer', () => {
         'the connector does not stream public.ModelVersion'
       );
       expect(await modelEmbedBlock(connector('public.Model,public.ModelVersion'))).toBeNull();
+      // The prod list is a folded YAML scalar, so an entry that starts a line arrives as
+      // ' public.Model'. Debezium trims entries; the gate must too, or embedding never starts.
+      expect(
+        await modelEmbedBlock(
+          connector('public.Image,public.ModelVersion, public.Model,\npublic.Post')
+        )
+      ).toBeNull();
     } finally {
       if (saved === undefined) delete process.env.DEBEZIUM_CONNECT_URL;
       else process.env.DEBEZIUM_CONNECT_URL = saved;

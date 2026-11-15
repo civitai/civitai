@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -83,7 +84,7 @@ func (c *QueryCache) Key(b Built) string {
 var statementTimeout = 20 * time.Second
 
 // FetchRows runs the page query through the cache. A query that runs past statementTimeout yields an
-// empty page (never cached), as Node answers a statement timeout (getAllImages: "feeds can accept an
+// empty page (never cached) unless the query asks to throw, as Node answers a statement timeout (getAllImages: "feeds can accept an
 // empty page after a timeout"), so a slow replica is not handed on to the Node app to run again. Only
 // this query's own deadline does that: a cancelled or expired caller context is still an error.
 func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]RawImage, error) {
@@ -101,7 +102,7 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	qctx, cancel := context.WithTimeout(ctx, statementTimeout)
 	defer cancel()
 	timedOut := func() bool {
-		return ctx.Err() == nil && errors.Is(qctx.Err(), context.DeadlineExceeded)
+		return !b.ThrowOnStatementTimeout && ctx.Err() == nil && errors.Is(qctx.Err(), context.DeadlineExceeded)
 	}
 	rows, err := db.Query(qctx, b.SQL, b.Args...)
 	if err != nil {
@@ -231,15 +232,15 @@ func Hydrate(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, vi
 	}
 	out := &Hydrated{}
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() (err error) { out.Basic, err = h.BasicUsers(gctx, userIDs); return })
-	g.Go(func() (err error) { out.UserCosmetics, err = h.UserCosmetics(gctx, userIDs); return })
-	g.Go(func() (err error) { out.ProfilePics, err = h.ProfilePictures(gctx, userIDs); return })
-	g.Go(func() (err error) { out.Frames, err = h.ImageFrames(gctx, imageIDs); return })
-	g.Go(func() (err error) { out.Thumbs, err = h.Thumbnails(gctx, videoIDs); return })
-	g.Go(func() (err error) { out.Metrics, err = h.ImageMetrics(gctx, imageIDs); return })
-	g.Go(func() (err error) { out.TagIDs, err = h.TagIDs(gctx, imageIDs); return })
-	g.Go(func() (err error) { out.Decorations, err = h.EventDecorations(gctx, imageIDs, visibleEvents); return })
-	g.Go(func() (err error) { out.Reactions, err = h.Reactions(gctx, imageIDs, viewer.ID); return })
+	g.Go(safe.Go(func() (err error) { out.Basic, err = h.BasicUsers(gctx, userIDs); return }))
+	g.Go(safe.Go(func() (err error) { out.UserCosmetics, err = h.UserCosmetics(gctx, userIDs); return }))
+	g.Go(safe.Go(func() (err error) { out.ProfilePics, err = h.ProfilePictures(gctx, userIDs); return }))
+	g.Go(safe.Go(func() (err error) { out.Frames, err = h.ImageFrames(gctx, imageIDs); return }))
+	g.Go(safe.Go(func() (err error) { out.Thumbs, err = h.Thumbnails(gctx, videoIDs); return }))
+	g.Go(safe.Go(func() (err error) { out.Metrics, err = h.ImageMetrics(gctx, imageIDs); return }))
+	g.Go(safe.Go(func() (err error) { out.TagIDs, err = h.TagIDs(gctx, imageIDs); return }))
+	g.Go(safe.Go(func() (err error) { out.Decorations, err = h.EventDecorations(gctx, imageIDs, visibleEvents); return }))
+	g.Go(safe.Go(func() (err error) { out.Reactions, err = h.Reactions(gctx, imageIDs, viewer.ID); return }))
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
@@ -302,12 +303,12 @@ func BuildImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []
 				continue
 			}
 		}
-		out = append(out, buildImage(r, hy, viewer))
+		out = append(out, buildImage(r, hy))
 	}
 	return out
 }
 
-func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
+func buildImage(r RawImage, hy *Hydrated) Image {
 	thumb, hasThumb := hy.Thumbs[r.ID]
 	nsfw := r.NsfwLevel
 	if hasThumb && thumb.NsfwLevel > nsfw {
@@ -395,6 +396,9 @@ func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 		{Key: "user", Val: user},
 		{Key: "stats", Val: stats},
 		{Key: "reactions", Val: reactions},
+		// `tagsByImageId?.get(i.id)`: only built for include 'tags' (withTags, a fallback shape here),
+		// so always undefined. Node's wire carries it as `null` + ["undefined"]; the comparator
+		// decodes both the same (internal/shadow applyUndefined).
 		{Key: "tags", Val: superjson.Undefined{}},
 		{Key: "tagIds", Val: orUndefined(tagIDs, hasTagIDs)},
 		{Key: "cosmetic", Val: frame},

@@ -26,6 +26,7 @@ import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
 import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
+import { registerApiRouteMetrics } from '~/server/prom/api-route.metrics';
 import { startWarmupAndHealthMetricsLoop } from '~/server/health/start-after-warmup';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
@@ -56,6 +57,13 @@ if (pgDbWrite) {
 // Sets one global and nothing else, so it is a no-op under Next. That server awaits register()
 // before its first request, so this is in place by then. See ~/server/middleware/standalone-api-policy.
 registerStandaloneApiPolicy();
+
+// Per-route request counter for every pages-API route (civitai_app_api_route_requests_total),
+// hooked on http.Server's `request` event so it covers every route whatever wrapper it uses, under
+// both Next and the standalone server. DARK by default: nothing is installed unless
+// API_ROUTE_METRICS='true'. Installed before either server takes its first request (the standalone
+// server awaits register(); Next runs it while preparing). See ~/server/prom/api-route.metrics.
+registerApiRouteMetrics();
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is

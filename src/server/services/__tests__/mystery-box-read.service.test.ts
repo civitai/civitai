@@ -16,6 +16,7 @@ vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
 
 import {
   clearBoxCatalogDisplayCache,
+  getBoxCatalog,
   getBoxPoolForUser,
   getMysteryBoxCatalogForEvent,
   getMysteryBoxesForEvent,
@@ -458,6 +459,22 @@ describe('getMysteryBoxesForEvent', () => {
     });
 
     expect(pool.map((entry) => entry.contentId)).toEqual([1, 4, 5]);
+  });
+
+  it('a pool given the catalog reads no contents, and still applies the team and what is left', async () => {
+    const catalog = await getBoxCatalog(dbMock.dbRead as never, BOX);
+    world.contents = world.contents.filter((c) => c.id !== 2);
+    world.owned.push({ userId: VIEWER, cosmeticId: 1004 });
+
+    const pool = await getBoxPoolForUser(dbMock.dbRead as never, {
+      boxDefinitionId: BOX,
+      userId: VIEWER,
+      team: 'Pink',
+      catalog,
+    });
+
+    expect(dbMock.dbRead.boxContent.findMany).toHaveBeenCalledTimes(1);
+    expect(pool.map((entry) => entry.contentId)).toEqual([1, 2, 5]);
   });
 
   it('shows the odds the open draws under: the shared rule over the same pool', async () => {

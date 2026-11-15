@@ -56,6 +56,7 @@ import {
   notifyStorylineTitleModerated,
 } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { getStorylineTextStubs } from '~/server/services/post-text.service';
 import { getStorylineImageCaptions } from '~/server/services/storyline-caption.service';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
 import { clearTombstoneTips } from '~/server/services/storyline-chapter-removal.service';
@@ -883,16 +884,19 @@ export const createRootChapter = (
   });
 
 /**
+ * Advisory-lock class (`pg_advisory_xact_lock(int4, int4)`) serialising one user's starts from one
+ * spark image, so two at once cannot both miss the unwritten storyline and each create one.
+ */
+export const STORYLINE_SPARK_START_LOCK_CLASS = 0x53544c31;
+
+/**
  * The user's own storyline from this spark that has no chapter 1 yet and is not taken down.
  */
-export async function findUnwrittenSparkStoryline({
-  userId,
-  sparkImageId,
-}: {
-  userId: number;
-  sparkImageId: number;
-}) {
-  const [row] = await dbWrite.$queryRaw<{ id: number; title: string }[]>`
+export async function findUnwrittenSparkStoryline(
+  { userId, sparkImageId }: { userId: number; sparkImageId: number },
+  db: Db = dbWrite
+) {
+  const [row] = await db.$queryRaw<{ id: number; title: string }[]>`
     SELECT s.id, s.title FROM "Storyline" s
     WHERE s."userId" = ${userId} AND s."sparkImageId" = ${sparkImageId}
       AND s."tosViolation" = false
@@ -935,23 +939,23 @@ export async function createStoryline({
   if (!isStorylineCeilingLevel(maxNsfwLevel)) throw throwBadRequestError('Invalid maximum rating');
   await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
   if (sparkImageId) await assertStorylineSpark({ imageId: sparkImageId, userId, maxNsfwLevel });
-  if (sparkImageId && !postId) {
-    const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId });
-    if (unwritten) {
-      // With no chapter yet, nothing depends on the old terms, so the ones just chosen win.
-      await dbWrite.storyline.update({
-        where: { id: unwritten.id },
-        data: { title, maxNsfwLevel, whoCanContinue: whoCanContinue ?? 'Anyone' },
-      });
-      if (title !== unwritten.title)
-        scanEntityInBackground({ entityType: 'Storyline', entityId: unwritten.id });
-      return { id: unwritten.id, rootChapterId: null };
-    }
-  }
-
-  let created: { id: number; rootChapterId: number | null };
+  let created: { id: number; rootChapterId: number | null; reusedTitle?: string };
   try {
     created = await dbWrite.$transaction(async (tx) => {
+      if (sparkImageId && !postId) {
+        // Relies on READ COMMITTED: the lookup's snapshot is taken after the lock, so a waiter sees
+        // the row the holder committed.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STORYLINE_SPARK_START_LOCK_CLASS}::int, hashtext(${userId}::text || ':' || ${sparkImageId}::text)::int)`;
+        const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx);
+        if (unwritten) {
+          // With no chapter yet, nothing depends on the old terms, so the ones just chosen win.
+          await tx.storyline.update({
+            where: { id: unwritten.id },
+            data: { title, maxNsfwLevel, whoCanContinue: whoCanContinue ?? 'Anyone' },
+          });
+          return { id: unwritten.id, rootChapterId: null, reusedTitle: unwritten.title };
+        }
+      }
       if (postId) await assertPostCanBeChapter(tx, { postId, authorId: userId, maxNsfwLevel });
       const storyline = await tx.storyline.create({
         data: { userId, title, maxNsfwLevel, whoCanContinue, sparkImageId },
@@ -983,9 +987,11 @@ export async function createStoryline({
     if (isUniqueViolation(error)) throw throwBadRequestError('This post is already in a storyline');
     throw error;
   }
-  scanEntityInBackground({ entityType: 'Storyline', entityId: created.id });
-  if (created.rootChapterId && sparkImageId) void onStorySparked(created.id);
-  return created;
+  const { reusedTitle, ...result } = created;
+  if (reusedTitle !== title)
+    scanEntityInBackground({ entityType: 'Storyline', entityId: result.id });
+  if (result.rootChapterId && sparkImageId) void onStorySparked(result.id);
+  return result;
 }
 
 export const STORYLINE_SPARK_REFUSALS = {
@@ -3684,11 +3690,14 @@ export async function getStorylinePath({
   via = [],
   viewer,
   browsingLevel,
+  withTexts = false,
 }: {
   chapterId: number;
   via?: number[];
   viewer: Viewer;
   browsingLevel: number;
+  /** The viewer has the `storylineText` flag: return the chapters' text item stubs. */
+  withTexts?: boolean;
 }) {
   const target = await dbRead.storylineChapter.findUnique({
     where: { id: chapterId },
@@ -3769,7 +3778,7 @@ export async function getStorylinePath({
 
   const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
   const captionPostIds = chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : []));
-  const [routeChapters, captions] = await Promise.all([
+  const [routeChapters, captions, texts] = await Promise.all([
     withOwnerPaid(onRoute(rows, chapters), storyline.userId, viewer).then((route) =>
       withFirstImages(gate, route)
     ),
@@ -3785,12 +3794,21 @@ export async function getStorylinePath({
         hiddenTagIds,
       });
     })(),
+    withTexts
+      ? getStorylineTextStubs({
+          postIds: captionPostIds,
+          browsingLevel,
+          maxNsfwLevel: storyline.maxNsfwLevel,
+        })
+      : [],
   ]);
   return {
     storyline,
     chapters: routeChapters,
     /** Caption text by image id. */
     captions: Object.fromEntries(captions) as Record<number, string>,
+    /** The chapters' text items, without content (`post.get` carries it). */
+    texts,
     hasEarlier: (rows[0]?.depth ?? 0) > 0,
   };
 }
@@ -4389,6 +4407,7 @@ export async function getStorylinesInfinite({
   viewer,
   browsingLevel,
   userId,
+  ids,
 }: {
   filter: StorylineFeedFilter;
   sort: StorylineFeedSort;
@@ -4399,6 +4418,8 @@ export async function getStorylinesInfinite({
   browsingLevel: number;
   /** Only this owner's storylines (their profile), under the same gates as the feed. */
   userId?: number;
+  /** Only these storylines (a search's candidates), under the same gates as the feed. */
+  ids?: number[];
 }) {
   const excluded = [...(await getViewerExcludedIds(viewer))];
   const viewerId = viewer?.id ?? -1;
@@ -4427,6 +4448,7 @@ export async function getStorylinesInfinite({
       SELECT 1 FROM "StorylineFollow" sf WHERE sf."storylineId" = st.id AND sf."userId" = ${viewerId}
     )`);
   if (userId) where.push(Prisma.sql`st."userId" = ${userId}`);
+  if (ids) where.push(Prisma.sql`st.id = ANY(${ids}::int[])`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
     where.push(Prisma.sql`st.status <> 'Complete'`);

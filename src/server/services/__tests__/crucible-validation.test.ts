@@ -1151,7 +1151,7 @@ describe('submitEntry — one submit at a time per user', () => {
     expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
       'lock:crucible-entry:1:42',
       expect.stringMatching(/^[0-9a-f-]{36}$/),
-      { PX: 30_000, NX: true }
+      { PX: 180_000, NX: true }
     );
   });
 

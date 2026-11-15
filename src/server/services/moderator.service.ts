@@ -94,6 +94,10 @@ type UserModActivity = {
     | 'undoMembershipCancel'
     // A moderator re-read a member's Stripe subscription into CustomerSubscription (membership-resync.service).
     | 'resyncMembership'
+    // A moderator re-read a user's Tipalti payee into UserPaymentConfiguration (tipalti-payee-resync.service).
+    | 'tipaltiResync:enable'
+    | 'tipaltiResync:disable'
+    | 'tipaltiResync:status'
     // A moderator released a built personal-data export to the account owner (personal-data-export.service).
     | 'releasePersonalDataExport'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
@@ -191,6 +195,11 @@ type SiteAlertModActivity = {
   activity: 'post' | 'edit' | 'extend' | 'end';
 };
 
+type SearchQueryRuleModActivity = {
+  entityType: 'searchQueryRule';
+  activity: 'dryRun';
+};
+
 type CsamReportModActivity = {
   entityType: 'csamReport';
   activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
@@ -216,6 +225,7 @@ type ModActivity = {
   | SiteAlertModActivity
   | HeldMediaGridModActivity
   | StorylineModActivity
+  | SearchQueryRuleModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
