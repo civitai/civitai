@@ -420,8 +420,7 @@ function TurfWatcher({
   const everMarked = useRef(new Set<number>());
   const send = useCallback(
     (ids: number[]) => {
-      for (let i = 0; i < ids.length; i += MAX_TURF_IMAGES_PER_MARK)
-        mark({ event, imageIds: ids.slice(i, i + MAX_TURF_IMAGES_PER_MARK) });
+      for (const imageIds of chunkIds(ids, MAX_TURF_IMAGES_PER_MARK)) mark({ event, imageIds });
     },
     [event, mark]
   );
