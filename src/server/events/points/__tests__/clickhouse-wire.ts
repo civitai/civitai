@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-type ClientModule = Pick<typeof appClient, 'createClient'>;
+type ClientModule = Pick<typeof appClient, 'createClient' | 'TupleParam'>;
 
 // A second, separately loaded copy of @clickhouse/client, as in production: Next bundles the
 // package into each server module graph, and the process-global client (see

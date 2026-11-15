@@ -1,3 +1,4 @@
+import { TupleParam } from '@clickhouse/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
@@ -69,8 +70,11 @@ async function sentBy(mod?: Parameters<typeof fakeClickhouse>[0]) {
 
 describe('hat placement views through a bundled ClickHouse client', () => {
   it('sends the same params from a second copy of the client as from the app copy', async () => {
+    const copy = bundledClientCopy();
+    // A real second copy, or this would pass on the broken code too.
+    expect(new copy.TupleParam([]) instanceof TupleParam).toBe(false);
     const fromApp = await sentBy();
-    const fromCopy = await sentBy(bundledClientCopy());
+    const fromCopy = await sentBy(copy);
     expect(fromCopy).toEqual(fromApp);
   });
 });
