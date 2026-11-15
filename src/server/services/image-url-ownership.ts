@@ -7,8 +7,14 @@ import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
-import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import type { RedisKeyTemplateCache, RedisKeyTemplateSys } from '~/server/redis/client';
+import {
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  redis,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { backoffDelay } from '~/utils/backoff';
 import { sleep } from '~/utils/errorHandling';
 
@@ -301,20 +307,37 @@ const uploadKeyOwnerCounter = registerCounterWithLabels({
 });
 
 const ownerKey = (key: string) =>
+  `${REDIS_KEYS.SYSTEM.UPLOAD_KEY_OWNER}:${key}` as RedisKeyTemplateCache;
+
+/**
+ * Until then, a key the cluster has no issue record for is also looked up in sysRedis, where the
+ * records were written before they moved to the cluster. Every sysRedis record expires 30 days
+ * after it was written, so after this date the fallback finds nothing.
+ * 🔴 Delete the fallback (`sysOwnerKey`, its read in `ownersFromRedis`) and
+ * `REDIS_SYS_KEYS.SYSTEM.UPLOAD_KEY_OWNER` after this date.
+ */
+export const UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL = new Date('2027-01-01T00:00:00Z');
+
+const sysOwnerKey = (key: string) =>
   `${REDIS_SYS_KEYS.SYSTEM.UPLOAD_KEY_OWNER}:${key}` as RedisKeyTemplateSys;
 
 /** Writes an issue record gets before it is given up on: the write is idempotent, so a retry is safe. */
 const RECORD_ATTEMPTS = 3;
 const RECORD_RETRY_BASE_MS = 100;
+/**
+ * Bounds each cluster read and write of an issue record, as the sys read deadline bounded them in
+ * sysRedis: the cluster client's own command deadline is far longer than a request should wait.
+ */
+const RECORD_DEADLINE_MS = 1_000;
 
 /** Answered, with a 503, instead of an upload key whose issue record could not be written (when refusing is on). */
 export const UPLOAD_KEY_UNRECORDED_MESSAGE =
   "We couldn't start this upload. Please try again in a moment.";
 
 /**
- * Records that upload key `key` was issued to `userId`. A failed write is retried, up to
- * `RECORD_ATTEMPTS` writes with a jittered backoff between them, each one bounded by the sys
- * deadline so a write that never settles cannot hold the request. Never throws: resolves whether
+ * Records that upload key `key` was issued to `userId`, in the cluster. A failed write is retried,
+ * up to `RECORD_ATTEMPTS` writes with a jittered backoff between them, each one bounded by
+ * `RECORD_DEADLINE_MS` so a write that never settles cannot hold the request. Never throws: resolves whether
  * the record was written; a route handing the key to a client passes that to
  * `withholdUnrecordedUploadKey`.
  */
@@ -326,10 +349,11 @@ export async function recordUploadKeyOwner(key: string, userId: number): Promise
         backoffDelay(attempt - 1, { baseMs: RECORD_RETRY_BASE_MS, jitterMs: RECORD_RETRY_BASE_MS })
       );
     try {
-      await withSysReadDeadline(
-        sysRedis.set(ownerKey(key.toLowerCase()), String(userId), {
+      await withDeadline(
+        redis.set(ownerKey(key.toLowerCase()), String(userId), {
           EX: UPLOAD_KEY_OWNER_TTL_SECONDS,
-        })
+        }),
+        RECORD_DEADLINE_MS
       );
       if (attempt) uploadKeyOwnerCounter.inc({ outcome: 'record_retried' });
       return true;
@@ -366,19 +390,36 @@ export function withholdUnrecordedUploadKey(res: NextApiResponse, recorded: bool
   return true;
 }
 
-async function ownersFromRedis(keys: string[]) {
+const ownersIn = (owners: Map<string, number>, keys: string[], values: (string | null)[]) =>
+  values.forEach((value, i) => {
+    const owner = Number(value);
+    if (value && owner) owners.set(keys[i], owner);
+  });
+
+/**
+ * The issue records of `keys`: the cluster's, then, before `UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL`,
+ * sysRedis's for the keys the cluster lacks. `readFailed` when either read failed, so a key
+ * missing from `owners` may still have a record; the records that were read are kept.
+ */
+async function ownersFromRedis(keys: string[], now: Date) {
   const owners = new Map<string, number>();
+  let readFailed = false;
   try {
-    const values = await withSysReadDeadline(sysRedis.mGet(keys.map(ownerKey)));
-    values.forEach((value, i) => {
-      const owner = Number(value);
-      if (value && owner) owners.set(keys[i], owner);
-    });
-    return { owners, readFailed: false };
+    // The cluster client's mGet is one GET per key, never a multi-key command (CROSSSLOT).
+    ownersIn(owners, keys, await withDeadline(redis.mGet(keys.map(ownerKey)), RECORD_DEADLINE_MS));
   } catch {
-    uploadKeyOwnerCounter.inc({ outcome: 'record_read_failed' });
-    return { owners, readFailed: true };
+    readFailed = true;
   }
+  const missing = keys.filter((k) => !owners.has(k));
+  if (missing.length && now < UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL) {
+    try {
+      ownersIn(owners, missing, await withSysReadDeadline(sysRedis.mGet(missing.map(sysOwnerKey))));
+    } catch {
+      readFailed = true;
+    }
+  }
+  if (readFailed) uploadKeyOwnerCounter.inc({ outcome: 'record_read_failed' });
+  return { owners, readFailed };
 }
 
 const CLICKHOUSE_LOOKUP_DEADLINE_MS = 2_000;
@@ -429,6 +470,8 @@ type KeyIssuerArgs = {
   readLogForAll?: boolean;
   /** Most keys one call reads (`MAX_KEYS` by default); past it the result is `tooMany`. */
   maxKeys?: number;
+  /** When the issue records are read: decides whether the sysRedis fallback is read. */
+  now?: Date;
 };
 
 /**
@@ -442,6 +485,7 @@ export async function keyIssuers({
   db = dbWrite,
   readLogForAll = false,
   maxKeys = MAX_KEYS,
+  now = new Date(),
 }: KeyIssuerArgs) {
   const allowed = [userId, ...(alsoIssuedTo ? [alsoIssuedTo] : [])];
   const keys = [...new Set(urls.flatMap(keysIn))];
@@ -457,7 +501,7 @@ export async function keyIssuers({
   if (!keys.length) return result;
   if (keys.length > maxKeys) return { ...result, tooMany: true };
 
-  const { owners, readFailed } = await ownersFromRedis(keys);
+  const { owners, readFailed } = await ownersFromRedis(keys, now);
   result.recordReadFailed = readFailed;
   const unrecorded = keys.filter((k) => !owners.has(k));
   const logged = await ownersFromClickhouse(readLogForAll ? keys : unrecorded);
@@ -507,7 +551,7 @@ export async function assertClientKeysIssuedToCaller({
 }: KeyIssuerArgs & { now?: Date }) {
   const { userId } = args;
   assertNoUnfinishedUploads(args.urls);
-  const issuers = await keyIssuers(args);
+  const issuers = await keyIssuers({ ...args, now });
   const { tooMany, issuedToOthers, unrecorded: remaining, requestLogReadFailed } = issuers;
   if (tooMany || issuedToOthers.length) throw imageUrlUnavailableError();
   if (!remaining.length) return;
@@ -549,7 +593,7 @@ export async function clientKeysToReupload({
   if (keys.length > MAX_KEYS) return keys;
   const at = now < UNRECORDED_KEYS_ACCEPTED_UNTIL ? UNRECORDED_KEYS_ACCEPTED_UNTIL : now;
   // Every key reaches the request log, so whether it failed does not depend on which keys were sent.
-  const issuers = await keyIssuers({ urls: keys, userId, readLogForAll: true });
+  const issuers = await keyIssuers({ urls: keys, userId, readLogForAll: true, now });
   // Marked only from records that were read, or a key of another user's would differ from an absent one.
   if (issuers.recordReadFailed || issuers.requestLogReadFailed) return [];
   const refused = new Set(issuerRefusals(issuers, at).refused);
@@ -583,8 +627,8 @@ async function ownersFromShopArtwork(keys: string[], db: Db) {
  * upload request log. No row of anyone's counts. `failed`: a read failed, so a key missing from
  * `owners` may still have a record.
  */
-export async function keyIssueRecords(keys: string[], db: Db = dbWrite) {
-  const recorded = await ownersFromRedis(keys);
+export async function keyIssueRecords(keys: string[], db: Db = dbWrite, now = new Date()) {
+  const recorded = await ownersFromRedis(keys, now);
   const kept = await ownersFromShopArtwork(
     keys.filter((k) => !recorded.owners.has(k)),
     db

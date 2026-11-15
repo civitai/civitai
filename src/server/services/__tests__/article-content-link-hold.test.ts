@@ -213,7 +213,7 @@ beforeEach(async () => {
   textModeration = { status: 'Succeeded', blocked: false };
   state.clickhouseDown = false;
   createReport.mockClear();
-  redisMock.sysRedis.set.mockImplementation((async (k: string, v: string) => {
+  redisMock.redis.set.mockImplementation((async (k: string, v: string) => {
     redis.set(k, v);
     return 'OK';
   }) as never);
@@ -251,11 +251,11 @@ async function givenArticle(
   );
 }
 function lookupsDown() {
-  redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+  redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
   state.clickhouseDown = true;
 }
 function lookupsUp() {
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
   state.clickhouseDown = false;
 }
@@ -301,7 +301,7 @@ describe('linking a url whose key cannot be proved', () => {
 
   it('with the issue record alone down, defers a key the request log does not hold', async () => {
     await recordUploadKeyOwner(KEY, OTHER);
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
     await link();
     expect(await rows()).toEqual([]);
     expect((await hold())?.deferred).toEqual([KEY]);

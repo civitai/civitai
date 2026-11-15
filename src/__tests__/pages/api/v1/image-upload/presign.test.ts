@@ -93,7 +93,7 @@ describe('image upload presign routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.id).toEqual(expect.any(String));
     expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body.id, 7);
-    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+    expect(redisMock.redis.set).toHaveBeenCalledExactlyOnceWith(
       `system:upload-key-owner:${res.body.id}`,
       '7',
       { EX: 30 * 24 * 60 * 60 }
@@ -109,7 +109,7 @@ describe('image upload presign routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.key).toEqual(expect.any(String));
     expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body.key, 7);
-    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+    expect(redisMock.redis.set).toHaveBeenCalledExactlyOnceWith(
       `system:upload-key-owner:${res.body.key}`,
       '7',
       { EX: 30 * 24 * 60 * 60 }
@@ -117,7 +117,7 @@ describe('image upload presign routes', () => {
   });
 
   const failEveryWrite = () =>
-    redisMock.sysRedis.set
+    redisMock.redis.set
       .mockRejectedValueOnce(new Error('down'))
       .mockRejectedValueOnce(new Error('down'))
       .mockRejectedValueOnce(new Error('down'));
@@ -135,7 +135,7 @@ describe('image upload presign routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.body[field]).toEqual(expect.any(String));
-      expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(3);
+      expect(redisMock.redis.set).toHaveBeenCalledTimes(3);
       // The request log is then the save's only proof, so it must name the caller.
       expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body[field], 7);
     }
@@ -162,13 +162,13 @@ describe('image upload presign routes', () => {
   );
 
   it('hands out the key once a write that failed is retried', async () => {
-    redisMock.sysRedis.set.mockRejectedValueOnce(new Error('blip'));
+    redisMock.redis.set.mockRejectedValueOnce(new Error('blip'));
     const res = makeRes();
     await imageUpload({} as NextApiRequest, res);
 
     expect(res.statusCode).toBe(200);
-    expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(2);
-    expect(redisMock.sysRedis.set).toHaveBeenLastCalledWith(
+    expect(redisMock.redis.set).toHaveBeenCalledTimes(2);
+    expect(redisMock.redis.set).toHaveBeenLastCalledWith(
       `system:upload-key-owner:${res.body.id}`,
       '7',
       { EX: 30 * 24 * 60 * 60 }
@@ -182,6 +182,6 @@ describe('image upload presign routes', () => {
     await imageUploadMultipart({ body: {} } as NextApiRequest, makeRes());
 
     expect(m.track).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
   });
 });
