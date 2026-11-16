@@ -9,6 +9,7 @@ import {
   clearBridgeCookie,
   safePath,
   generatePkce,
+  bridgeCookieName,
   OAUTH_BRIDGE_COOKIE,
 } from '../first-party-bridge';
 import { firstPartyClientId } from '../first-party';
@@ -16,6 +17,10 @@ import { SAFE_RETURN_PATHS, UNSAFE_RETURN_PATHS } from './return-path-cases';
 
 const HUB = 'https://auth.test';
 const SELF = 'https://moderator.civitai.com';
+// States in randomState()'s shape (32 base64url chars): only that shape names a bridge cookie.
+const ST8 = 'st8'.padEnd(32, 'x');
+const OTHER = 'other'.padEnd(32, 'y');
+const flow = (value: string, state = ST8) => ({ [bridgeCookieName(state)]: value });
 
 beforeEach(() => {
   process.env.AUTH_JWT_ISSUER = HUB; // https → secure cookie
@@ -34,7 +39,10 @@ function readStash(setCookie: string): { v: string; s: string; r: string } {
 
 describe('buildAuthorizeRedirect', () => {
   it('builds the hub authorize URL with the derived client_id + exact redirect_uri + PKCE/state', () => {
-    const { location, setCookie } = buildAuthorizeRedirect({
+    const {
+      location,
+      setCookies: [setCookie],
+    } = buildAuthorizeRedirect({
       selfOrigin: SELF,
       returnUrl: '/cases/7',
     });
@@ -52,7 +60,7 @@ describe('buildAuthorizeRedirect', () => {
     expect(stash.s).toBe(url.searchParams.get('state'));
     expect(stash.v).toBeTruthy();
     expect(stash.r).toBe('/cases/7');
-    expect(setCookie).toContain(`${OAUTH_BRIDGE_COOKIE}=`);
+    expect(setCookie).toContain(`${bridgeCookieName(url.searchParams.get('state')!)}=`);
     expect(setCookie).toContain('HttpOnly');
     expect(setCookie).toContain('Secure'); // https issuer
     expect(setCookie).toContain('Path=/api/auth/callback');
@@ -60,7 +68,9 @@ describe('buildAuthorizeRedirect', () => {
 
   it('sets SameSite=None; Secure so the cookie survives the cross-site OAuth round-trip', () => {
     // https issuer → secure → the cross-registrable-domain (.red) return needs None; Lax was dropped there.
-    const { setCookie } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x' });
+    const {
+      setCookies: [setCookie],
+    } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x' });
     expect(setCookie).toContain('SameSite=None');
     expect(setCookie).toContain('Secure');
     expect(setCookie).not.toContain('SameSite=Lax');
@@ -68,7 +78,9 @@ describe('buildAuthorizeRedirect', () => {
 
   it('falls back to SameSite=Lax (no Secure) when the cookie is not Secure (dev/http)', () => {
     // None REQUIRES Secure — a None cookie without Secure is rejected by browsers, so http/dev uses Lax.
-    const { setCookie } = buildAuthorizeRedirect({
+    const {
+      setCookies: [setCookie],
+    } = buildAuthorizeRedirect({
       selfOrigin: SELF,
       returnUrl: '/x',
       secure: false,
@@ -79,7 +91,9 @@ describe('buildAuthorizeRedirect', () => {
   });
 
   it('adds Domain=<registrable> when cookieDomain is given (survives www↔apex host variation)', () => {
-    const { setCookie } = buildAuthorizeRedirect({
+    const {
+      setCookies: [setCookie],
+    } = buildAuthorizeRedirect({
       selfOrigin: SELF,
       returnUrl: '/x',
       cookieDomain: 'civitai.red',
@@ -88,12 +102,16 @@ describe('buildAuthorizeRedirect', () => {
   });
 
   it('omits Domain (host-only) when no cookieDomain is given', () => {
-    const { setCookie } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x' });
+    const {
+      setCookies: [setCookie],
+    } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x' });
     expect(setCookie).not.toContain('Domain=');
   });
 
   it('collapses an unsafe returnUrl to /', () => {
-    const { setCookie } = buildAuthorizeRedirect({
+    const {
+      setCookies: [setCookie],
+    } = buildAuthorizeRedirect({
       selfOrigin: SELF,
       returnUrl: 'https://evil.com',
     });
@@ -118,11 +136,16 @@ describe('completeFirstPartyCallback', () => {
 
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
-      query: { code: 'abc', state: 'st8' },
-      bridgeCookieValue: stashCookie('verif', 'st8', '/dash'),
+      query: { code: 'abc', state: ST8 },
+      cookies: flow(stashCookie('verif', ST8, '/dash')),
     });
     // deviceId rides back so the spoke can set the SHARED family device id as its own civ-device.
-    expect(result).toEqual({ token: 'civ.jwt', returnUrl: '/dash', deviceId: 'dev-123' });
+    expect(result).toEqual({
+      clearCookies: expect.any(Array),
+      token: 'civ.jwt',
+      returnUrl: '/dash',
+      deviceId: 'dev-123',
+    });
 
     const [calledUrl, init] = fetchMock.mock.calls[0];
     expect(calledUrl).toBe(`${HUB}/api/auth/oauth/session`);
@@ -144,8 +167,8 @@ describe('completeFirstPartyCallback', () => {
 
     await completeFirstPartyCallback({
       selfOrigin: SELF,
-      query: { code: 'abc', state: 'st8' },
-      bridgeCookieValue: stashCookie('verif', 'st8', '/dash'),
+      query: { code: 'abc', state: ST8 },
+      cookies: flow(stashCookie('verif', ST8, '/dash')),
       clientIp: '198.51.100.7',
     });
 
@@ -164,8 +187,8 @@ describe('completeFirstPartyCallback', () => {
 
     await completeFirstPartyCallback({
       selfOrigin: SELF,
-      query: { code: 'abc', state: 'st8' },
-      bridgeCookieValue: stashCookie('verif', 'st8', '/dash'),
+      query: { code: 'abc', state: ST8 },
+      cookies: flow(stashCookie('verif', ST8, '/dash')),
     });
 
     const [, init] = fetchMock.mock.calls[0];
@@ -179,11 +202,16 @@ describe('completeFirstPartyCallback', () => {
     vi.stubGlobal('fetch', fetchMock);
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
-      query: { code: 'abc', state: 'WRONG' },
-      bridgeCookieValue: stashCookie('verif', 'st8'),
+      query: { code: 'abc', state: OTHER },
+      cookies: flow(stashCookie('verif', ST8)),
     });
-    // A concurrent/stale login clobbered the single bridge cookie — a distinct cause from a missing cookie.
-    expect(result).toEqual({ error: 'oauth_state', returnUrl: '/dash', detail: 'state_mismatch' });
+    // Another flow's stash is no match for this state, and is left for its own callback.
+    expect(result).toEqual({
+      clearCookies: [],
+      error: 'oauth_state',
+      returnUrl: '/',
+      detail: 'state_mismatch',
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -191,18 +219,27 @@ describe('completeFirstPartyCallback', () => {
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
       query: { code: 'abc' }, // no state echoed back
-      bridgeCookieValue: stashCookie('verif', 'st8'),
+      cookies: flow(stashCookie('verif', ST8)),
     });
-    expect(result).toEqual({ error: 'oauth_state', returnUrl: '/dash', detail: 'no_code' });
+    expect(result).toEqual({
+      clearCookies: expect.any(Array),
+      error: 'oauth_state',
+      returnUrl: '/',
+      detail: 'no_code',
+    });
   });
 
   it('surfaces the hub error param', async () => {
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
-      query: { error: 'access_denied' },
-      bridgeCookieValue: stashCookie('verif', 'st8'),
+      query: { error: 'access_denied', state: ST8 },
+      cookies: flow(stashCookie('verif', ST8)),
     });
-    expect(result).toEqual({ error: 'access_denied', returnUrl: '/dash' });
+    expect(result).toEqual({
+      clearCookies: expect.any(Array),
+      error: 'access_denied',
+      returnUrl: '/dash',
+    });
   });
 
   it('returns oauth_exchange (detail: declined) when the hub rejects the code', async () => {
@@ -212,10 +249,15 @@ describe('completeFirstPartyCallback', () => {
     );
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
-      query: { code: 'abc', state: 'st8' },
-      bridgeCookieValue: stashCookie('verif', 'st8'),
+      query: { code: 'abc', state: ST8 },
+      cookies: flow(stashCookie('verif', ST8)),
     });
-    expect(result).toEqual({ error: 'oauth_exchange', returnUrl: '/dash', detail: 'declined' });
+    expect(result).toEqual({
+      clearCookies: expect.any(Array),
+      error: 'oauth_exchange',
+      returnUrl: '/dash',
+      detail: 'declined',
+    });
   });
 
   it('returns oauth_exchange (detail: network) when the hub fetch throws', async () => {
@@ -227,19 +269,141 @@ describe('completeFirstPartyCallback', () => {
     );
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
-      query: { code: 'abc', state: 'st8' },
-      bridgeCookieValue: stashCookie('verif', 'st8'),
+      query: { code: 'abc', state: ST8 },
+      cookies: flow(stashCookie('verif', ST8)),
     });
-    expect(result).toEqual({ error: 'oauth_exchange', returnUrl: '/dash', detail: 'network' });
+    expect(result).toEqual({
+      clearCookies: expect.any(Array),
+      error: 'oauth_exchange',
+      returnUrl: '/dash',
+      detail: 'network',
+    });
   });
 
-  it('treats a malformed/missing bridge cookie as detail: no_cookie (cross-site delivery failure)', async () => {
+  it('treats a malformed bridge cookie as detail: no_cookie (as if it never arrived)', async () => {
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
-      query: { code: 'abc', state: 'st8' },
-      bridgeCookieValue: 'not json',
+      query: { code: 'abc', state: ST8 },
+      cookies: flow('not json'),
     });
-    expect(result).toEqual({ error: 'oauth_state', returnUrl: '/', detail: 'no_cookie' });
+    expect(result).toEqual({
+      clearCookies: expect.any(Array),
+      error: 'oauth_state',
+      returnUrl: '/',
+      detail: 'no_cookie',
+    });
+  });
+});
+
+describe('completeFirstPartyCallback: one stash per flow', () => {
+  const stash = (s: string, r = '/dash') => JSON.stringify({ v: `verif-${s}`, s, r });
+  const okHub = () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => ({ token: 'civ.jwt' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  };
+  const sentVerifier = (fetchMock: ReturnType<typeof okHub>) =>
+    JSON.parse(String(fetchMock.mock.calls[0][1].body)).code_verifier;
+
+  it('uses and clears only the stash named for the returned state', async () => {
+    const fetchMock = okHub();
+    const result = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: ST8 },
+      cookies: { ...flow(stash(ST8, '/mine')), ...flow(stash(OTHER, '/theirs'), OTHER) },
+      cookieDomain: 'civitai.red',
+    });
+    expect(result).toMatchObject({ token: 'civ.jwt', returnUrl: '/mine' });
+    expect(sentVerifier(fetchMock)).toBe(`verif-${ST8}`);
+    expect(result.clearCookies).toEqual([
+      clearBridgeCookie(true, 'civitai.red', bridgeCookieName(ST8)),
+    ]);
+  });
+
+  it('rejects a stash whose name matches the state but whose content does not', async () => {
+    const fetchMock = okHub();
+    const result = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: ST8 },
+      cookies: flow(stash(OTHER)),
+    });
+    expect(result).toMatchObject({
+      error: 'oauth_state',
+      detail: 'state_mismatch',
+      returnUrl: '/',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.clearCookies).toEqual([
+      clearBridgeCookie(true, undefined, bridgeCookieName(ST8)),
+    ]);
+  });
+
+  it('rejects a stash for this state that carries no verifier', async () => {
+    const fetchMock = okHub();
+    const result = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: ST8 },
+      cookies: flow(JSON.stringify({ s: ST8, r: '/dash' })),
+    });
+    expect(result).toMatchObject({ error: 'oauth_state' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['too short', 'abc'],
+    ['a character outside base64url', `${'a'.repeat(31)};`],
+    ['too long', 'a'.repeat(33)],
+  ])('a state that is %s names no cookie, even one holding that state', async (_name, state) => {
+    const fetchMock = okHub();
+    const result = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state },
+      cookies: { [bridgeCookieName(state)]: stash(state) },
+    });
+    expect(result).toMatchObject({ error: 'oauth_state', clearCookies: [] });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts a stash under the pre-per-flow name only when it holds this state', async () => {
+    const fetchMock = okHub();
+    const ok = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: ST8 },
+      cookies: { [OAUTH_BRIDGE_COOKIE]: stash(ST8) },
+    });
+    expect(ok).toMatchObject({ token: 'civ.jwt', returnUrl: '/dash' });
+    expect(sentVerifier(fetchMock)).toBe(`verif-${ST8}`);
+    expect(ok.clearCookies).toEqual([clearBridgeCookie(true)]);
+
+    fetchMock.mockClear();
+    const other = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: ST8 },
+      cookies: { [OAUTH_BRIDGE_COOKIE]: stash(OTHER) },
+    });
+    expect(other).toMatchObject({
+      error: 'oauth_state',
+      detail: 'no_cookie',
+      clearCookies: [],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('authorize writes the same stash under the per-flow and the pre-per-flow name, each for 10 minutes', () => {
+    const { location, setCookies } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x' });
+    const state = new URL(location).searchParams.get('state')!;
+    expect(state).toMatch(/^[A-Za-z0-9_-]{32}$/);
+    const [perFlow, legacy] = setCookies;
+    expect(perFlow.startsWith(`${bridgeCookieName(state)}=`)).toBe(true);
+    expect(legacy.startsWith(`${OAUTH_BRIDGE_COOKIE}=`)).toBe(true);
+    expect(readStash(legacy)).toEqual(readStash(perFlow));
+    for (const c of setCookies) {
+      expect(c).toContain('Max-Age=600');
+      expect(c).toContain('Path=/api/auth/callback');
+    }
   });
 });
 
@@ -259,7 +423,9 @@ describe('helpers', () => {
     expect(safePath(raw)).toBe(expected);
   });
   it.each(UNSAFE_RETURN_PATHS)('buildAuthorizeRedirect stashes / for: %s', (_name, raw) => {
-    const { setCookie } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: raw });
+    const {
+      setCookies: [setCookie],
+    } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: raw });
     expect(readStash(setCookie).r).toBe('/');
   });
   it.each(UNSAFE_RETURN_PATHS)(
@@ -267,10 +433,14 @@ describe('helpers', () => {
     async (_name, raw) => {
       const result = await completeFirstPartyCallback({
         selfOrigin: SELF,
-        query: { error: 'access_denied' },
-        bridgeCookieValue: JSON.stringify({ v: 'verif', s: 'st8', r: raw }),
+        query: { error: 'access_denied', state: ST8 },
+        cookies: flow(JSON.stringify({ v: 'verif', s: ST8, r: raw })),
       });
-      expect(result).toEqual({ error: 'access_denied', returnUrl: '/' });
+      expect(result).toEqual({
+        clearCookies: expect.any(Array),
+        error: 'access_denied',
+        returnUrl: '/',
+      });
     }
   );
   it('generatePkce produces a verifier whose S256 challenge is returned', () => {
