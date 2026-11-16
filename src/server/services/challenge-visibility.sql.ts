@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 
 /**
  * The scan and cover gates a public challenge list applies to challenge `c`. The viewer's own
@@ -35,7 +36,9 @@ export const challengeSemanticEligibleWhere: Prisma.Sql[] = [
   ...challengeScanGates(),
   Prisma.sql`c.status <> 'Cancelled'::"ChallengeStatus"`,
   Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId"
-    AND (i."tosViolation" OR i."needsReview" IS NOT NULL OR i.minor OR i."blockedFor" IS NOT NULL))`,
+    AND (i."tosViolation" OR i."needsReview" IS NOT NULL OR i.minor OR ${hasBlockMarkerSql('i')}))`,
+  // A user challenge whose owner row is gone has no owner to check.
+  Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."createdById" IS NOT NULL)`,
   Prisma.sql`NOT EXISTS (SELECT 1 FROM "User" u WHERE u.id = c."createdById"
     AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL))`,
 ];

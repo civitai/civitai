@@ -21,7 +21,7 @@ const SCHEMA = `
   CREATE TABLE "Image" (
     id int PRIMARY KEY, poi boolean, ingestion "ImageIngestionStatus" NOT NULL,
     "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text,
-    minor boolean NOT NULL DEFAULT false, "blockedFor" text
+    minor boolean NOT NULL DEFAULT false, "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 1
   );
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
   CREATE TABLE "Challenge" (
@@ -38,8 +38,8 @@ type Over = {
   cover?: false | string;
   /** SQL for the cover's tosViolation, needsReview, minor, blockedFor. Default: not held. */
   held?: string;
-  /** The owner's bannedAt, deletedAt. Default: an active owner. */
-  owner?: string;
+  /** The owner's bannedAt, deletedAt, or false for no owner row. Default: an active owner. */
+  owner?: false | string;
 };
 
 /** One challenge; its cover image and its owner have the same id. */
@@ -53,10 +53,12 @@ const challenge = (id: number, name: string, include: boolean, over: Over = {}):
             over.held ?? 'false, NULL, false, NULL'
           })`,
         ]),
-    `INSERT INTO "User" VALUES (${id}, ${over.owner ?? 'NULL, NULL'})`,
+    ...(over.owner === false
+      ? []
+      : [`INSERT INTO "User" VALUES (${id}, ${over.owner ?? 'NULL, NULL'})`]),
     `INSERT INTO "Challenge" VALUES (${id}, '${over.status ?? 'Active'}',
       '${over.source ?? 'User'}', '${over.ingestion ?? 'Scanned'}',
-      ${cover === false ? 'NULL' : id}, ${id})`,
+      ${cover === false ? 'NULL' : id}, ${over.owner === false ? 'NULL' : id})`,
   ];
   return { id, name, include, insert: sql.join(';\n') };
 };
@@ -90,6 +92,18 @@ const spec: ParitySpec = {
     challenge(16, 'coverNotBlocked', false, { held: `false, NULL, false, 'CSAM'` }),
     challenge(17, 'ownerNotBanned', false, { owner: 'now(), NULL' }),
     challenge(18, 'ownerNotDeleted', false, { source: 'System', owner: 'NULL, now()' }),
+    // Blocked by ingestion or level with no reason recorded still counts as blocked.
+    challenge(19, 'coverNotBlockedIngestion', false, {
+      source: 'System',
+      cover: `false, 'Blocked'`,
+    }),
+    challenge(20, 'coverNotBlockedLevel', false, {
+      source: 'Mod',
+      held: 'false, NULL, false, NULL, 32',
+    }),
+    challenge(21, 'userHasOwner', false, { owner: false }),
+    // A System challenge needs no owner row.
+    challenge(22, 'systemNoOwner', true, { source: 'System', owner: false }),
   ],
   clauses: [
     'scanned',
@@ -103,6 +117,9 @@ const spec: ParitySpec = {
     'coverNotBlocked',
     'ownerNotBanned',
     'ownerNotDeleted',
+    'coverNotBlockedIngestion',
+    'coverNotBlockedLevel',
+    'userHasOwner',
   ],
   site: async (prisma) =>
     (

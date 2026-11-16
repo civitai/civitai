@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -30,7 +31,7 @@ export const crucibleCoverListedWhere = {
  */
 export const crucibleSemanticEligibleWhere: Prisma.Sql[] = [
   crucibleScannedSql,
-  Prisma.sql`NOT i.minor AND i."blockedFor" IS NULL`,
+  Prisma.sql`NOT i.minor AND NOT ${hasBlockMarkerSql('i')}`,
   Prisma.sql`c.status <> ${CrucibleStatus.Cancelled}::"CrucibleStatus"`,
   Prisma.sql`c."takenDownAt" IS NULL`,
   Prisma.sql`NOT EXISTS (SELECT 1 FROM "User" u WHERE u.id = c."userId"
