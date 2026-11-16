@@ -218,6 +218,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // bundle assembled two different ways. Flip OFF to roll back without a deploy; the disk path
   // is kept intact and reachable for exactly that reason.
   CSAM_ARCHIVE_STREAM_UPLOAD = 'csam-archive-stream-upload',
+  // Where the evidence archive job runs. ON: in the app's hourly job. OFF: in the separate
+  // archiver, so the app job only stamps reports with no user. 🔴 NOT default-off: read with
+  // `isFliptSync`, an unreadable flag (no client yet, an evaluation error, a missing key) counts as ON.
+  // Created ON in Flipt before the deploy that reads it.
+  EVIDENCE_ARCHIVE_IN_APP = 'evidence-archive-in-app',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',

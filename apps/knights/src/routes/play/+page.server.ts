@@ -15,6 +15,7 @@ import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
+import { ratingExamples, withExamples } from '$lib/server/rating-examples';
 import {
   dismissGuide,
   dismissProgress,
@@ -115,10 +116,11 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     getStanding(db, locals.user.id),
   ]);
   const now = queueDeps.now();
-  const [resetNotice, notices, seen] = await Promise.all([
+  const [resetNotice, notices, seen, examples] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
     readHiddenNotices(db, locals.user.id),
     readNotices(seenStore, locals.user.id, status),
+    ratingExamples(db),
   ]);
   const common = {
     status,
@@ -128,7 +130,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     whatsNew: seen.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
     showGuide: seen.guide,
     progress: withRankPerks(seen.progress),
-    ratingGuide: ratingGuide(),
+    ratingGuide: withExamples(ratingGuide(), examples),
   };
 
   // An Acolyte whose career reset is due falls through to the queue page, which serves nothing until it lands.

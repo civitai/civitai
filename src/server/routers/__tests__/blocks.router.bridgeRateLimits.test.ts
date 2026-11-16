@@ -594,17 +594,22 @@ describe('blocks.getMyBuzzBalance', () => {
 });
 
 describe('blocks.submitWorkflow — its own submit bucket, above every kind branch', () => {
+  // The per-app series (the procedure-only bridge counter is retired); `validClaims().appBlockId`.
   async function refusals(bucket = 'submit'): Promise<number> {
     const metric = promClient.register.getSingleMetric(
-      'civitai_app_block_bridge_rate_limit_refusals_total'
+      'civitai_app_block_rate_limit_refusals_total'
     ) as
       | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
       | undefined;
     if (!metric) return 0;
     const { values } = await metric.get();
     return (
-      values.find((v) => v.labels.procedure === 'submitWorkflow' && v.labels.bucket === bucket)
-        ?.value ?? 0
+      values.find(
+        (v) =>
+          v.labels.app_block_id === 'apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A' &&
+          v.labels.surface === 'bridge' &&
+          v.labels.bucket === bucket
+      )?.value ?? 0
     );
   }
 
@@ -672,5 +677,105 @@ describe('blocks.submitWorkflow — its own submit bucket, above every kind bran
     await expect(
       caller().submitWorkflow({ blockToken: 'tok', body: validBody() })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+  });
+});
+
+describe('civitai_app_block_rate_limit_refusals_total — every bridge refusal names its app', () => {
+  // `validClaims().appBlockId`, and unlike every other id in this file, so a label taken from the
+  // wrong claim (appId, blockInstanceId) cannot match it.
+  const APP_BLOCK_ID = 'apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A';
+
+  async function perApp(app: string, bucket: string): Promise<number> {
+    const metric = promClient.register.getSingleMetric(
+      'civitai_app_block_rate_limit_refusals_total'
+    ) as
+      | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+      | undefined;
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    return (
+      values.find(
+        (v) =>
+          v.labels.app_block_id === app &&
+          v.labels.surface === 'bridge' &&
+          v.labels.bucket === bucket
+      )?.value ?? 0
+    );
+  }
+
+  // [procedure, the limiter that refuses, bucket, the call]. Pins: one refusal per procedure,
+  // on its own bucket, under the token's app, whichever way the procedure answers (throw or a
+  // throttled snapshot).
+  const CASES: Array<
+    [string, { mockResolvedValue(v: unknown): unknown }, string, () => Promise<unknown>]
+  > = [
+    [
+      'queryAppWorkflows',
+      mockCheckBlockCatalogRateLimit,
+      'catalog',
+      () => caller().queryAppWorkflows({ blockToken: 'tok' }),
+    ],
+    [
+      'pollWorkflow',
+      mockCheckBlockPollRateLimit,
+      'poll',
+      () => caller().pollWorkflow({ blockToken: 'tok', workflowId: OWN_ID }),
+    ],
+    [
+      'cancelWorkflow',
+      mockCheckBlockCatalogRateLimit,
+      'catalog',
+      () => caller().cancelWorkflow({ blockToken: 'tok', workflowId: OWN_ID }),
+    ],
+    [
+      'estimateWorkflow',
+      mockCheckBlockCatalogRateLimit,
+      'catalog',
+      () => caller().estimateWorkflow({ blockToken: 'tok', body: validBody() }),
+    ],
+    [
+      'submitWorkflow',
+      mockCheckBlockSubmitRateLimit,
+      'submit',
+      () => caller().submitWorkflow({ blockToken: 'tok', body: validBody() }),
+    ],
+    [
+      'getMyBuzzBalance',
+      mockCheckBlockCatalogRateLimit,
+      'catalog',
+      () => caller().getMyBuzzBalance({ blockToken: 'tok' }),
+    ],
+  ];
+
+  it.each(CASES)(
+    '%s: one refusal moves {app, bridge, %s} by exactly one',
+    async (_p, limiter, bucket, call) => {
+      limiter.mockResolvedValue(REFUSED);
+      const before = await perApp(APP_BLOCK_ID, bucket);
+
+      await call().catch(() => undefined);
+
+      expect((await perApp(APP_BLOCK_ID, bucket)) - before).toBe(1);
+    }
+  );
+
+  it('a served call moves nothing', async () => {
+    const before = await perApp(APP_BLOCK_ID, 'catalog');
+    await caller().getMyBuzzBalance({ blockToken: 'tok' });
+    expect((await perApp(APP_BLOCK_ID, 'catalog')) - before).toBe(0);
+  });
+
+  it('a DEV token is labelled dev, never its (possibly synthetic) app id', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ dev: true }));
+    mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
+    const beforeDev = await perApp('dev', 'catalog');
+    const beforeApp = await perApp(APP_BLOCK_ID, 'catalog');
+
+    await caller()
+      .queryAppWorkflows({ blockToken: 'tok' })
+      .catch(() => undefined);
+
+    expect((await perApp('dev', 'catalog')) - beforeDev).toBe(1);
+    expect((await perApp(APP_BLOCK_ID, 'catalog')) - beforeApp).toBe(0);
   });
 });
