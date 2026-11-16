@@ -2602,6 +2602,9 @@ export const REDIS_SYS_KEYS = {
     // Per-user fixed-window rate limit on `blocks.getMyAppDailyLimit`, the host's read behind the
     // raise dialog: `system:blocks:daily-limit-read-rate:${userId}`.
     DAILY_LIMIT_READ_RATE: 'system:blocks:daily-limit-read-rate',
+    // One App Block output UNLOCK at a time per workflow (`block-output-unlock-lock.ts`):
+    // `system:blocks:output-unlock-lock:${workflowId}` = the holder's random token, SET NX EX.
+    OUTPUT_UNLOCK_LOCK: 'system:blocks:output-unlock-lock',
     /** App Blocks `kind:'training'` run generation per (viewer, app, body); see block-training-quote.service. */
     TRAINING_RUNS: 'system:blocks:training-runs',
     /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */

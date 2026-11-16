@@ -1739,3 +1739,21 @@ export type BlockTrainingQuote = {
 };
 
 export type BlockPublishedModel = { modelId: number; modelVersionId: number; published: boolean };
+
+/**
+ * The host's OUTPUT UNLOCK request (`blocks.previewOutputUnlock` / `blocks.unlockOutput`): one
+ * output, named by its stable position in the snapshot's `outputs`.
+ */
+export const blockOutputUnlockInputSchema = z.object({
+  blockToken: z.string().min(1),
+  workflowId: z.string().min(1).max(64),
+  position: z.number().int().min(0).max(10_000),
+});
+
+/** `blocks.unlockOutput`: the same, plus the total the viewer confirmed in the host's dialog. */
+export const blockOutputUnlockConfirmInputSchema = z.object({
+  blockToken: z.string().min(1),
+  workflowId: z.string().min(1).max(64),
+  position: z.number().int().min(0).max(10_000),
+  expectedTotal: z.number().int().min(0),
+});
