@@ -14884,7 +14884,8 @@ async function consentQuoteGrantFor(
  * subject who is the signed-in user the request arrived with (the host's own dialog is the
  * consent; the block, holding only its token, cannot present the session), App Blocks on for
  * them, and the catalog rate limit. A development or review session is refused, as for the
- * viewer-confirmed quotes: it has no consent leg to reserve against.
+ * viewer-confirmed quotes: a dev tunnel or review sandbox must not move a viewer's real Yellow
+ * Buzz.
  */
 async function authorizeOutputUnlockRequest(blockToken: string, sessionUserId: number) {
   const claims = await authorizeBlockBridgeToken(blockToken);
@@ -14918,11 +14919,10 @@ async function authorizeOutputUnlockRequest(blockToken: string, sessionUserId: n
 
 /**
  * The real-world side of `block-output-unlock.service`, bound to one verified viewer, app and
- * workflow. Every spend goes through the same reservation the submit paths use
- * (`reserveBlockBuzzSpendForClaims`: the platform cap and the viewer's per-app daily limit,
- * atomic INCRBY-then-compare, so two racing spends cannot both pass the limit). No author
- * share: an unlock never reaches the author-fee charge (operator decision; the author is paid
- * once per generation, on the original spend if at all).
+ * workflow. Operator decisions: an unlock is NET ZERO against every limit (no reservation of the
+ * viewer's daily limit, the app's aggregate cap or the platform cap: the original spend already
+ * counted, and the orchestrator's swap moves the same amount from Blue to Yellow), and it carries
+ * no author share. The only funds check is the orchestrator's own Yellow balance.
  */
 async function outputUnlockDeps(opts: {
   ctx: Context;
@@ -14953,34 +14953,12 @@ async function outputUnlockDeps(opts: {
       }),
     assertUnlockReleasesOutput: async () =>
       orchestration.assertUnlockReleasesOutput({ token: await token(), workflowId }),
-    reserveSpend: async (cost) => {
-      const reservation = await reserveBlockBuzzSpendForClaims(claims, userId, cost);
-      if (reservation.total > reservation.cap) {
-        await refundBlockBuzzReservation(reservation, cost);
-        return {
-          refused:
-            `daily Buzz cap reached: ${reservation.total - Math.ceil(cost)} already spent ` +
-            `today, this unlock costs ${cost}, daily cap is ${reservation.cap}`,
-        };
-      }
-      if (consentBudgetExceeded(reservation)) {
-        await refundBlockBuzzReservation(reservation, cost);
-        return {
-          refused: consentBudgetRejection(reservation.consent, cost, `this unlock costs ${cost}`),
-          errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
-        };
-      }
-      return { refund: (amount: number) => refundBlockBuzzReservation(reservation, amount) };
-    },
-    liftRestriction: async () => {
-      await workflows.updateWorkflow({
+    liftRestriction: async () =>
+      workflows.liftWorkflowMatureRestriction({
         token: await token(),
         workflowId,
-        allowMatureContent: true,
-        throwOnError: true,
         signal: AbortSignal.timeout(unlockService.OUTPUT_UNLOCK_ORCHESTRATOR_TIMEOUT_MS),
-      });
-    },
+      }),
     acquireLock: () => acquireOutputUnlockLock(workflowId),
   };
   return { deps, unlockService };

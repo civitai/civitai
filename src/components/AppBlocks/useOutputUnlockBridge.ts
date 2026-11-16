@@ -14,7 +14,7 @@ const OutputUnlockDialog = dynamic(() => import('./OutputUnlockDialog'), { ssr: 
  *   - `unlocked`: the output now has a url; `snapshot` is the re-read workflow.
  *   - `not-restricted`: it already had one; nothing was shown or charged.
  *   - `not-released`: the unlock ran but the output is still above the viewer's level.
- *   - `refused`: the viewer's daily limit refused the spend; `message` says so.
+ *   - `refused`: the orchestrator refused the yellow charge (Yellow balance short); `message` says so.
  *   - `linked-out`: the viewer opened civitai.red to see it. Never charged.
  *   - `dismissed`: the viewer closed the dialog.
  *   - `unavailable`: it cannot be unlocked here; `message` says why.
@@ -35,8 +35,19 @@ function errorMessage(e: unknown) {
  * host draws it. Only a click in the host's dialog spends (`blocks.unlockOutput`), at the total
  * that dialog showed.
  */
-export function useOutputUnlockBridge(opts: { appName?: string | null; disabled?: boolean }) {
+export function useOutputUnlockBridge(opts: {
+  appName?: string | null;
+  disabled?: boolean;
+  /**
+   * The app's run slug and the host's current sub-path, for a `link-out` to the same app on
+   * civitai.red (`outputUnlockRedHref`). From the host's own route, never from the app. `null`
+   * where the host has no run page to link to (the model slot): the dialog then explains only.
+   */
+  linkOut?: { slug: string; subPath: string } | null;
+}) {
   const { appName, disabled } = opts;
+  const linkOutSlug = opts.linkOut?.slug;
+  const linkOutSubPath = opts.linkOut?.subPath;
   // Reached through the vanilla client on request, never at render: every host suite's trpc mock
   // would otherwise need two more procedures for the host to render at all.
   const utils = trpc.useUtils();
@@ -74,6 +85,8 @@ export function useOutputUnlockBridge(opts: { appName?: string | null; disabled?
         props: {
           appName,
           offer: offer as OutputUnlockOffer,
+          linkOut:
+            linkOutSlug !== undefined ? { slug: linkOutSlug, subPath: linkOutSubPath ?? '' } : null,
           unlock: (expectedTotal: number) =>
             utils.client.blocks.unlockOutput.mutate({
               ...req,
@@ -100,7 +113,8 @@ export function useOutputUnlockBridge(opts: { appName?: string | null; disabled?
               reply({
                 outcome: 'refused',
                 snapshot: result.snapshot,
-                message: result.message ?? 'Your daily Buzz limit refused this unlock.',
+                message:
+                  result.message ?? 'You do not have enough yellow Buzz to unlock this output.',
               });
             } else if (result.outcome === 'not-restricted') {
               reply({ outcome: 'not-restricted' });
@@ -111,7 +125,7 @@ export function useOutputUnlockBridge(opts: { appName?: string | null; disabled?
         },
       });
     },
-    [disabled, appName, utils]
+    [disabled, appName, utils, linkOutSlug, linkOutSubPath]
   );
 
   return useMemo(() => ({ onUnlockRequest }), [onUnlockRequest]);

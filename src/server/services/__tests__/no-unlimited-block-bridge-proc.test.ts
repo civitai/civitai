@@ -254,7 +254,7 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   unlockOutput: {
     buckets: ['catalog'],
-    why: 'The confirmed output unlock: at most one per workflow at a time (a Redis NX lock refuses a concurrent second), a click in the host dialog under a signed-in session that is the token subject, and every spend reserved against the viewer daily limit first. The catalog bucket bounds the reads a refused or repeated click costs.',
+    why: 'The confirmed output unlock: at most one per workflow at a time (a Redis NX lock refuses a concurrent second), a click in the host dialog under a signed-in session that is the token subject, and the orchestrator’s own Yellow balance check (it counts against no limit: the original spend already did). The catalog bucket bounds the reads a refused or repeated click costs.',
   },
   updateUserSettings: {
     buckets: [],

@@ -34,9 +34,14 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
  *     already covers it and the viewer's own browsing level is what cuts it, a link to red does
  *     nothing, so the reply is `unavailable` with a pointer to their settings.
  *
- * The money path ({@link unlockBlockOutput}) runs under a per-workflow lock, reserves the
- * viewer's daily Buzz limit BEFORE the orchestrator is asked, and re-classifies the workflow at
- * the token's ceiling afterwards; every path that releases nothing refunds the reservation.
+ * The money path ({@link unlockBlockOutput}) runs under a per-workflow lock and re-classifies the
+ * workflow at the token's ceiling afterwards.
+ *
+ * NET ZERO AGAINST EVERY LIMIT (operator decision). An unlock reserves nothing against the
+ * viewer's per-app daily limit, the app's aggregate cap or the platform cap: the original
+ * generation's spend already counted, and the orchestrator's swap refunds the Blue and charges
+ * the same amount in Yellow. The only funds check is the orchestrator's own Yellow balance; its
+ * refusal comes back as `refused`.
  *
  * NO AUTHOR SHARE ON AN UNLOCK (operator decision). The only charge is the orchestrator's yellow
  * swap. A generation whose spend accrued an author fee already paid the author once; one whose
@@ -48,14 +53,11 @@ export const OUTPUT_UNLOCK_LOCK_TTL_SECONDS = 300;
 
 /**
  * The bound on the orchestrator write that lifts the restriction. Every other orchestrator call
- * under the lock is a read with its own 20s timeout (`ORCHESTRATOR_GET_TIMEOUT_MS`); there are
- * at most four (the plan, the release check, the update's own read-back, the re-classify), so
- * the lock's TTL must exceed this plus 80s. Pinned in the tests.
+ * under the lock is a read bounded by `ORCHESTRATOR_GET_TIMEOUT_MS` (`workflows.ts`); there are
+ * three (the plan, the release check, the re-classify), so the lock's TTL must exceed this plus
+ * three of those. Pinned in the tests against the real read timeout.
  */
 export const OUTPUT_UNLOCK_ORCHESTRATOR_TIMEOUT_MS = 30_000;
-
-/** The orchestrator read timeout the TTL above is sized against (mirrors `workflows.ts`). */
-export const OUTPUT_UNLOCK_READ_TIMEOUT_MS = 20_000;
 
 /** The claims this module reads. All come from the verified block token. */
 export type OutputUnlockClaims = {
@@ -73,6 +75,16 @@ export const OUTPUT_UNLOCK_BLOCKED_MESSAGE =
 export const OUTPUT_UNLOCK_LINK_OUT_MESSAGE =
   'This output is mature content. Open it on civitai.red to view it.';
 export const OUTPUT_UNLOCK_IN_PROGRESS_MESSAGE = 'This output is already being unlocked.';
+/**
+ * Why a paid unlock still withholds the output: the orchestrator accepted it (its yellow swap
+ * stands, operator decision), but the read-back is rated above the viewer's ceiling.
+ */
+export const OUTPUT_UNLOCK_NOT_RELEASED_MESSAGE =
+  'The unlock went through, but this output is rated above your browsing level, so it stays hidden.';
+
+/** The orchestrator refused the yellow charge: the viewer's Yellow balance is short. */
+export const OUTPUT_UNLOCK_INSUFFICIENT_FUNDS_MESSAGE =
+  'You do not have enough yellow Buzz to unlock this output.';
 export const OUTPUT_UNLOCK_PRICE_CHANGED_MESSAGE =
   'The unlock price changed. Review the new price and confirm again.';
 
@@ -176,11 +188,6 @@ export function planBlockOutputUnlock(
   return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_CANNOT_SHOW_MESSAGE };
 }
 
-/** A per-viewer daily-limit reservation, taken before the orchestrator is asked. */
-export type OutputUnlockReservation =
-  | { refused: string; errorCode?: string }
-  | { refund: (amount: number) => Promise<void> };
-
 /**
  * Everything the unlock needs from the outside world, bound by the caller to the verified viewer,
  * app and workflow. Injected so each guard below is testable on its own.
@@ -192,10 +199,11 @@ export type OutputUnlockDeps = {
   assertUnlockAllowed: () => void;
   /** `assertUnlockReleasesOutput`: the orchestrator would release something for the charge. */
   assertUnlockReleasesOutput: () => Promise<void>;
-  /** The per-viewer daily limit (and the platform cap), atomically. Refunds itself on refusal. */
-  reserveSpend: (cost: number) => Promise<OutputUnlockReservation>;
-  /** `updateWorkflow({ allowMatureContent: true })`, bounded. Throws on a refused update. */
-  liftRestriction: () => Promise<void>;
+  /**
+   * `allowMatureContent: true` at the orchestrator, bounded. The orchestrator's own Yellow
+   * balance check (its 403) comes back as `insufficientFunds`; any other failure throws.
+   */
+  liftRestriction: () => Promise<{ insufficientFunds: boolean }>;
   /** The per-workflow lock; `null` when another unlock holds it. */
   acquireLock: () => Promise<(() => Promise<void>) | null>;
 };
@@ -240,16 +248,14 @@ export type OutputUnlockResult = {
   /**
    * `unlocked`: the output now carries a url. `not-restricted`: it already did (a retry after a
    * success lands here), nothing was charged. `not-released`: the orchestrator accepted the
-   * unlock but the output is still restricted at this token's ceiling; the daily-limit
-   * reservation was refunded. `refused`: the viewer's daily limit
-   * (or the platform cap) refused the spend before the orchestrator was asked; `message` says
-   * which, and `errorCode` marks the per-app daily limit the host can offer to raise.
+   * unlock (its swap stands) but the output is still restricted at this token's ceiling;
+   * `message` says why. `refused`: the orchestrator refused the yellow charge (the viewer's
+   * Yellow balance is short); `message` says so.
    */
   outcome: 'unlocked' | 'not-restricted' | 'not-released' | 'refused';
   snapshot: BlockWorkflowSnapshot;
   charged: { unlockBuzz: number };
   message?: string;
-  errorCode?: string;
 };
 
 const NOTHING_CHARGED = { unlockBuzz: 0 } as const;
@@ -287,33 +293,28 @@ export async function unlockBlockOutput(
     deps.assertUnlockAllowed();
     await deps.assertUnlockReleasesOutput();
 
-    const reservation = await deps.reserveSpend(total);
-    if ('refused' in reservation) {
+    const { insufficientFunds } = await deps.liftRestriction();
+    if (insufficientFunds) {
       return {
         outcome: 'refused',
         snapshot: plan.snapshot,
         charged: NOTHING_CHARGED,
-        message: reservation.refused,
-        ...(reservation.errorCode ? { errorCode: reservation.errorCode } : {}),
+        message: OUTPUT_UNLOCK_INSUFFICIENT_FUNDS_MESSAGE,
       };
     }
-
-    let after: ReturnType<typeof outputAt>;
-    try {
-      await deps.liftRestriction();
-      after = outputAt(
-        await deps.readWorkflow(),
-        blockOutputCeilingFromClaims(request.claims),
-        request.position
-      );
-    } catch (error) {
-      await reservation.refund(total);
-      throw error;
-    }
+    const after = outputAt(
+      await deps.readWorkflow(),
+      blockOutputCeilingFromClaims(request.claims),
+      request.position
+    );
 
     if (!after.output || !isUnrestrictedOutput(after.output)) {
-      await reservation.refund(total);
-      return { outcome: 'not-released', snapshot: after.snapshot, charged: NOTHING_CHARGED };
+      return {
+        outcome: 'not-released',
+        snapshot: after.snapshot,
+        charged: NOTHING_CHARGED,
+        message: OUTPUT_UNLOCK_NOT_RELEASED_MESSAGE,
+      };
     }
 
     return { outcome: 'unlocked', snapshot: after.snapshot, charged: { unlockBuzz: total } };

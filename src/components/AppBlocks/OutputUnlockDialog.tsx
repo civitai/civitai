@@ -4,6 +4,7 @@ import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { useConfirmArmDelay } from '~/components/AppBlocks/GuardedConfirmDialog';
 import { useDialogContext, useDialogId } from '~/components/Dialog/DialogProvider';
 import { useIsTopDialog } from '~/components/Dialog/dialogStore';
+import { outputUnlockRedHref } from '~/components/AppBlocks/outputUnlockLinkOut';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useServerDomains } from '~/providers/AppProvider';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -30,6 +31,8 @@ export type OutputUnlockDialogProps = {
   onResult: (result: OutputUnlockServerResult) => void;
   /** The viewer followed the link to civitai.red. */
   onLinkedOut: () => void;
+  /** The same app on civitai.red at the host's current sub-path; `null` for no link. */
+  linkOut?: { slug: string; subPath: string } | null;
 };
 
 /**
@@ -40,7 +43,8 @@ export type OutputUnlockDialogProps = {
  *
  * - `pay`: civitai.com's "Unlock with yellow Buzz", at the orchestrator's price. The app takes
  *   no share of an unlock.
- * - `link-out`: the site this app runs on cannot show it; civitai.red can. No charge.
+ * - `link-out`: the site this app runs on cannot show it; civitai.red can. The button opens the
+ *   SAME app there at the current page (`outputUnlockRedHref`). No charge.
  * - `unavailable`: why it cannot be unlocked (e.g. the viewer's own mature content settings).
  */
 export default function OutputUnlockDialog({
@@ -49,6 +53,7 @@ export default function OutputUnlockDialog({
   unlock,
   onResult,
   onLinkedOut,
+  linkOut,
 }: OutputUnlockDialogProps) {
   const dialog = useDialogContext();
   const isTopMost = useIsTopDialog(useDialogId());
@@ -83,10 +88,10 @@ export default function OutputUnlockDialog({
           <Button variant="default" onClick={() => dialog.onClose()} data-autofocus>
             {offer.kind === 'unavailable' ? 'Close' : 'Not now'}
           </Button>
-          {offer.kind === 'link-out' && redDomain && (
+          {offer.kind === 'link-out' && redDomain && linkOut && (
             <Button
               component="a"
-              href={syncAccount(`//${redDomain}/generate`)}
+              href={syncAccount(outputUnlockRedHref({ redDomain, ...linkOut }))}
               target="_blank"
               rel="noreferrer nofollow"
               color="red"
@@ -111,9 +116,11 @@ export default function OutputUnlockDialog({
                   const result = await unlock(offer.unlockBuzz);
                   onResult(result);
                   if (result.outcome === 'refused' || result.outcome === 'not-released') {
+                    // The server says why (for not-released: the unlock went through, but the
+                    // output is rated above the viewer's level).
                     setError(
                       result.message ??
-                        'This result is still above your browsing level, so it stays locked.'
+                        'This result is still above your browsing level, so it stays hidden.'
                     );
                   } else {
                     dialog.onClose();

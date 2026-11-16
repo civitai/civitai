@@ -2484,7 +2484,11 @@ export function PageBlockHost({
     if (showBuzzCapNotice) buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
   }, [showBuzzCapNotice, buzzCapUtils]);
   const dailyLimitRaise = useDailyLimitRaiseBridge({ appBlockId, appName, disabled: reviewMode });
-  const outputUnlock = useOutputUnlockBridge({ appName, disabled: reviewMode });
+  const outputUnlock = useOutputUnlockBridge({
+    appName,
+    disabled: reviewMode,
+    linkOut: slug ? { slug, subPath } : null,
+  });
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
