@@ -1876,8 +1876,9 @@ export async function settleResolvedAppeals(
     refundBuzz,
     lockReview,
   }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'> & {
-    /** Set for a model's lock review: its own words, naming the settings the approval unlocked. */
-    lockReview?: { unlocked: RequestableLock[] };
+    /** Set for a model's lock review: the owner's words come from `lockReviewRulingMessage`, not
+     *  `resolvedMessage`. */
+    lockReview?: { unlocked: RequestableLock[]; reason?: string | null; cooldown?: boolean };
   }
 ) {
   const approved = status === AppealStatus.Approved;
@@ -2010,7 +2011,13 @@ export async function settleResolvedAppeals(
         entityId: appeal.entityId,
         status,
         resolvedMessage,
-        ...(lockReview && { kind: LOCK_REVIEW_KIND, unlocked: lockReview.unlocked }),
+        ...(lockReview && {
+          kind: LOCK_REVIEW_KIND,
+          unlocked: lockReview.unlocked,
+          reason: lockReview.reason ?? null,
+          // No date to promise when the ruling started no cooldown.
+          resolvedAt: lockReview.cooldown ? appeal.resolvedAt : null,
+        }),
       },
     });
   }
@@ -2045,7 +2052,12 @@ export async function settleResolvedAppeals(
           : approved
           ? 'appeal-approved'
           : 'appeal-rejected',
-        intro: lockReview && lockReviewRulingMessage(approved, lockReview.unlocked),
+        intro:
+          lockReview &&
+          lockReviewRulingMessage(approved, lockReview.unlocked, {
+            reason: lockReview.reason,
+            resolvedAt: lockReview.cooldown ? userAppeals[0].resolvedAt : null,
+          }),
         items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId, linkColor(a))),
       });
     } catch (error) {
