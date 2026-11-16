@@ -397,6 +397,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
+    // Reads back the rating columns a publish under content levels left on each copy.
+    'server/services/apps/__tests__/doc-store.publish.levels.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.publish.pg.test.ts',
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
     'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
