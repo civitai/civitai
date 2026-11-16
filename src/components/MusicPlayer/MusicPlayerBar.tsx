@@ -37,7 +37,6 @@ import {
   ACCENT,
   accentAt,
   dimmed,
-  Equalizer,
   SongArt,
   songCreatorHref,
 } from '~/components/MusicPlayer/MusicPlayerParts';
@@ -225,15 +224,12 @@ function Bar({ track }: { track: MusicTrack }) {
         <Cover url={cover?.url} accent={accent} playing={playing} />
       </SongDetailLink>
       <div className="flex w-[200px] shrink-0 flex-col gap-0.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <SongDetailLink
-            track={track}
-            className="truncate text-[15px] font-bold leading-tight text-black dark:text-white"
-          >
-            {track.title || 'Untitled song'}
-          </SongDetailLink>
-          <Equalizer playing={playing} />
-        </div>
+        <SongDetailLink
+          track={track}
+          className="truncate text-[15px] font-bold leading-tight text-black dark:text-white"
+        >
+          {track.title || 'Untitled song'}
+        </SongDetailLink>
         <CreatorLine track={track} error={error} className={clsx('text-xs', dimmed)} />
       </div>
       <Transport playing={playing} />

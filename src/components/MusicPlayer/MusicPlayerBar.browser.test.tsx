@@ -130,6 +130,14 @@ describe('the global player bar', () => {
       .toHaveAttribute('href', '/user/neonwave');
   });
 
+  test('shows no playing animation beside the song name', async () => {
+    await renderWithProviders(<MusicPlayerBar />);
+    const title = page.getByRole('link', { name: 'Midnight Arcade' }).last();
+    await expect.element(title).toBeInTheDocument();
+    expect(player().playing).toBe(true);
+    expect(title.element().parentElement!.querySelector('[aria-hidden]')).toBeNull();
+  });
+
   test('is slim: 72px tall on desktop', async () => {
     await renderWithProviders(<MusicPlayerBar />);
     await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
