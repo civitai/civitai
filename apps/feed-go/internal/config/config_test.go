@@ -231,16 +231,13 @@ func TestLoadCacheMissSettings(t *testing.T) {
 	}
 }
 
-// FEED_GO_MAX_IN_FLIGHT parses as Node's HEAVY_REQUEST_CONCURRENCY does: a positive integer is the
-// cap, and anything else (unset, zero, negative, junk) is the default 20, never an unlimited pod.
+// FEED_GO_MAX_IN_FLIGHT: a positive integer is an explicit cap; anything else (unset, zero, negative,
+// junk) is 0, "not set", which the server resolves to the pool's ceiling — never an unlimited pod.
 func TestLoadMaxInFlight(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
 	}
-	if DefaultMaxInFlight != 20 {
-		t.Fatalf("DefaultMaxInFlight = %d, want 20 (Node's HEAVY_REQUEST_CONCURRENCY default)", DefaultMaxInFlight)
-	}
-	for in, want := range map[string]int{"": 20, "0": 20, "-3": 20, "junk": 20, "1": 1, "7": 7, "64": 64} {
+	for in, want := range map[string]int{"": 0, "0": 0, "-3": 0, "junk": 0, "1": 1, "7": 7, "64": 64} {
 		t.Setenv("FEED_GO_MAX_IN_FLIGHT", in)
 		c, err := Load()
 		if err != nil {

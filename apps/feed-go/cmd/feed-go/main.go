@@ -236,11 +236,9 @@ func run(log *slog.Logger) error {
 		V1:             v1,
 		Infinite:       infinite,
 		RequestBudget:  cfg.RequestBudget,
-		MaxInFlight:    cfg.MaxInFlight,
+		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
+		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
 	}
-	// Under the env name, as the Node app logs HEAVY_REQUEST_CONCURRENCY: a typo that sheds hard is
-	// otherwise visible only in the bulkhead fallback rate.
-	log.Info("serving limits", "FEED_GO_MAX_IN_FLIGHT", srv.MaxInFlight, "FEED_GO_REQUEST_BUDGET_MS", cfg.RequestBudget.Milliseconds())
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)
 		if err != nil {

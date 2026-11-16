@@ -19,6 +19,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
+	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
@@ -96,10 +97,10 @@ type Server struct {
 	Models *modelfeed.Deps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
-	// MaxInFlight caps the public requests this pod computes at once (FEED_GO_MAX_IN_FLIGHT; 0 =
-	// config.DefaultMaxInFlight, never unlimited): the Node app's `heavy-image` bulkhead. A request
-	// past it is not computed: it is the `bulkhead` fallback, proxied to the Node app. Shadow samples
-	// and probes are bounded by their own queues and never take a serve slot.
+	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
+	// dbpool.DefaultMaxConns, never unlimited): the Node app's `heavy-image` bulkhead. A request past
+	// it is not computed: it is the `bulkhead` fallback, proxied to the Node app. Shadow samples and
+	// probes are bounded by their own queues and never take a serve slot.
 	MaxInFlight int
 
 	// inFlight counts the public requests holding a serve slot (feed_go_serve_in_flight).
@@ -418,7 +419,29 @@ func (s *Server) maxInFlight() int64 {
 	if s.MaxInFlight > 0 {
 		return int64(s.MaxInFlight)
 	}
-	return config.DefaultMaxInFlight
+	return dbpool.DefaultMaxConns
+}
+
+// ResolveMaxInFlight is the serve cap from FEED_GO_MAX_IN_FLIGHT (explicit, 0 = not set) and the
+// replica pool's connection ceiling (poolMaxConns, as dbpool resolved it: FEED_GO_DB_MAX_CONNS, a
+// pool_max_conns in the URL, or the default). Unset, the cap is the ceiling: every admitted compute
+// can then hold a connection, so a full pod sheds at once instead of admitting computes that wait in
+// the pool until the budget turns them into `deadline` fallbacks. An explicit cap wins, and one above
+// the ceiling is logged as a warning (not refused). Both values are logged under their env names.
+func ResolveMaxInFlight(log *slog.Logger, explicit, poolMaxConns int) int {
+	if poolMaxConns <= 0 {
+		poolMaxConns = dbpool.DefaultMaxConns
+	}
+	limit := poolMaxConns
+	if explicit > 0 {
+		limit = explicit
+	}
+	log.Info("serving limits", "FEED_GO_MAX_IN_FLIGHT", limit, "explicit", explicit > 0, "db_max_conns", poolMaxConns)
+	if limit > poolMaxConns {
+		log.Warn("FEED_GO_MAX_IN_FLIGHT exceeds the replica pool's max connections: computes past the pool wait for a connection, up to the request budget, instead of shedding",
+			"FEED_GO_MAX_IN_FLIGHT", limit, "db_max_conns", poolMaxConns)
+	}
+	return limit
 }
 
 // acquireServe takes a serve slot, or reports false at once when MaxInFlight are already held: never

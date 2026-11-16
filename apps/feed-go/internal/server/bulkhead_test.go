@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
 
@@ -24,15 +28,15 @@ func inFlightGauge(t *testing.T, reg *prometheus.Registry) (float64, bool) {
 
 // With every serve slot held by a compute that has not returned, the next public request is not
 // computed: it is the `bulkhead` fallback, proxied to the Node app, and exactly one such fallback is
-// counted. Once the held computes return, every slot is free again. An unset cap is the default 20,
-// never unlimited.
+// counted. Once the held computes return, every slot is free again. An unset cap is the pool
+// default (8), never unlimited.
 func TestServeBulkheadShedsExactlyTheRequestPastTheCap(t *testing.T) {
 	for _, c := range []struct {
 		name     string
 		max, cap int
 	}{
 		{"configured cap", 3, 3},
-		{"unset cap is the default, never unlimited", 0, 20},
+		{"unset cap is the pool default, never unlimited", 0, 8},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			reg := prometheus.NewRegistry()
@@ -64,8 +68,12 @@ func TestServeBulkheadShedsExactlyTheRequestPastTheCap(t *testing.T) {
 					s.ServeHTTP(httptest.NewRecorder(), publicRequest())
 				}()
 			}
-			for range c.cap {
-				<-started
+			for i := range c.cap {
+				select {
+				case <-started:
+				case <-time.After(10 * time.Second):
+					t.Fatalf("only %d of %d computes started under a cap of %d (in flight %d)", i, c.cap, c.cap, s.InFlight())
+				}
 			}
 			if got := s.InFlight(); got != int64(c.cap) {
 				t.Fatalf("in flight with every compute held = %d, want %d", got, c.cap)
@@ -104,7 +112,7 @@ func TestServeBulkheadShedsExactlyTheRequestPastTheCap(t *testing.T) {
 			if g, _ := inFlightGauge(t, reg); g != 0 {
 				t.Fatalf("feed_go_serve_in_flight after every compute returned = %v, want 0", g)
 			}
-			if n := requests(t, reg, "serve", "served"); n != float64(c.cap) {
+			if n := requests(t, reg, "served"); n != float64(c.cap) {
 				t.Fatalf("served = %v, want %d", n, c.cap)
 			}
 			// The freed slots admit again; the bulkhead count is unchanged.
@@ -142,7 +150,7 @@ func TestServeBulkheadReleasesOnEveryExit(t *testing.T) {
 		proxied bool
 	}{
 		{"served", 0, func(context.CancelFunc) func(context.Context, *http.Request) (*computed, error) {
-			return served(`{"json":{"items":[]}}`, nil)
+			return served(nil)
 		}, "", false},
 		{"fallback", 0, func(context.CancelFunc) func(context.Context, *http.Request) (*computed, error) {
 			return func(context.Context, *http.Request) (*computed, error) { return nil, fallback.New("method") }
@@ -185,7 +193,7 @@ func TestServeBulkheadReleasesOnEveryExit(t *testing.T) {
 			s.ServeHTTP(httptest.NewRecorder(), publicRequest().WithContext(ctx))
 
 			if c.reason == "" {
-				if requests(t, reg, "serve", "served") != 1 {
+				if requests(t, reg, "served") != 1 {
 					t.Fatal("first request not served")
 				}
 			} else if n := fallbackCount(t, reg, c.reason); n != 1 {
@@ -205,11 +213,11 @@ func TestServeBulkheadReleasesOnEveryExit(t *testing.T) {
 			}
 
 			// The one slot is free: the next request is computed and served.
-			s.computeFn = served(`{"json":{"items":[]}}`, nil)
-			before := requests(t, reg, "serve", "served")
+			s.computeFn = served(nil)
+			before := requests(t, reg, "served")
 			w := httptest.NewRecorder()
 			s.ServeHTTP(w, publicRequest())
-			if w.Code != http.StatusOK || requests(t, reg, "serve", "served") != before+1 || fallbackCount(t, reg, "bulkhead") != 0 {
+			if w.Code != http.StatusOK || requests(t, reg, "served") != before+1 || fallbackCount(t, reg, "bulkhead") != 0 {
 				t.Fatalf("after the %s exit: code=%d bulkhead=%v, want 200 and 0", c.name, w.Code, fallbackCount(t, reg, "bulkhead"))
 			}
 		})
@@ -276,5 +284,59 @@ func TestServeSlotAllocatesNothing(t *testing.T) {
 	// The refusal is the bulkhead fallback, before the compute (nil here) is ever called.
 	if _, err := s.computeServe(publicRequest(), nil); fallback.Reason(err) != "bulkhead" {
 		t.Fatalf("full pod: %v, want the bulkhead fallback", err)
+	}
+}
+
+// The serve cap: unset, it is the replica pool's ceiling (whatever that resolved to); an explicit
+// value wins, and one above the ceiling is a warning, not a refusal. Both values are logged.
+func TestResolveMaxInFlight(t *testing.T) {
+	if dbpool.DefaultMaxConns != 8 {
+		t.Fatalf("dbpool.DefaultMaxConns = %d, want 8", dbpool.DefaultMaxConns)
+	}
+	cases := []struct {
+		name                   string
+		explicit, pool         int
+		want                   int
+		wantExplicit, wantWarn bool
+	}{
+		{"unset: the pool default", 0, 8, 8, false, false},
+		{"unset: a raised pool", 0, 32, 32, false, false},
+		{"unknown pool: the pool default", 0, 0, 8, false, false},
+		{"explicit below the pool", 5, 32, 5, true, false},
+		{"explicit at the pool", 32, 32, 32, true, false},
+		{"explicit above the pool warns", 40, 32, 40, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			got := ResolveMaxInFlight(slog.New(slog.NewJSONHandler(&buf, nil)), c.explicit, c.pool)
+			if got != c.want {
+				t.Fatalf("cap = %d, want %d", got, c.want)
+			}
+			var info, warn map[string]any
+			dec := json.NewDecoder(&buf)
+			for dec.More() {
+				var line map[string]any
+				if err := dec.Decode(&line); err != nil {
+					t.Fatal(err)
+				}
+				switch line["level"] {
+				case "INFO":
+					info = line
+				case "WARN":
+					warn = line
+				}
+			}
+			wantPool := c.pool
+			if wantPool <= 0 {
+				wantPool = 8
+			}
+			if info == nil || info["FEED_GO_MAX_IN_FLIGHT"] != float64(c.want) || info["db_max_conns"] != float64(wantPool) || info["explicit"] != c.wantExplicit {
+				t.Fatalf("startup line = %v, want cap %d, db_max_conns %d, explicit %v", info, c.want, wantPool, c.wantExplicit)
+			}
+			if (warn != nil) != c.wantWarn {
+				t.Fatalf("warning = %v, want one: %v", warn, c.wantWarn)
+			}
+		})
 	}
 }
