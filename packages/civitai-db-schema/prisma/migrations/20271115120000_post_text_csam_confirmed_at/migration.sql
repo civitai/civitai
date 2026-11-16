@@ -168,8 +168,10 @@ BEGIN
     AND post_text_retention_skip(OLD."postId", OLD."userId") IS NULL
   THEN
     UPDATE "TextScanHold" h
-    -- Only the decision's own keys stay: the scan's reason, the moderator's note, `previous` and any
-    -- scan key may carry the text. `decisionNotePurged` records that a note existed.
+    -- The confirmed holds and the duplicates a migration superseded, which carry the same text (the
+    -- dismissed-hold sweep clears a duplicate only once the hold it points at is dismissed). Only the
+    -- decision's own keys stay: the scan's reason, the moderator's note, `previous` and any scan key may
+    -- carry the text. `decisionNotePurged` records that a note existed.
     SET "text" = '',
         "reason" = '',
         "decisionNote" = NULL,
@@ -178,11 +180,14 @@ BEGIN
           'reportChoice', h."meta" -> 'reportChoice',
           'kind', h."meta" -> 'kind',
           'priorHoldId', h."meta" -> 'priorHoldId',
+          'superseded', h."meta" -> 'superseded',
+          'supersededBy', h."meta" -> 'supersededBy',
           'decisionNotePurged', CASE WHEN coalesce(h."decisionNote", '') <> '' THEN true END,
           'retentionPurgedAt', now()
         ))
     WHERE h."entityType" = 'PostText' AND h."entityId" = OLD."id" AND h.label = 'csam'
-      AND h.status = 'Confirmed';
+      AND (h.status = 'Confirmed'
+        OR (h.status = 'Dismissed' AND h."meta" ->> 'decision' = 'superseded'));
     IF to_regprocedure('label_store.exclude(text,text,text)') IS NOT NULL THEN
       PERFORM label_store.exclude('post_text_text', OLD."id"::text, 'retention');
     END IF;

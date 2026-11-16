@@ -11,7 +11,7 @@ export type CsamTextRetentionSkip =
   | 'evidence-hold'
   | 'unknown-owner';
 
-/** Confirmed held PostText whose "none" report choice is a year old. */
+/** Confirmed held PostText a year past a confirmation where every confirmed hold chose "none". */
 const dueSql = Prisma.sql`
   FROM "PostText" t
   WHERE t."csamHeld"
@@ -19,15 +19,24 @@ const dueSql = Prisma.sql`
     AND EXISTS (
       SELECT 1 FROM "TextScanHold" h
       WHERE h."entityType" = 'PostText' AND h."entityId" = t.id AND h.label = 'csam'
-        AND h.status = 'Confirmed' AND h.meta ->> 'reportChoice' = 'none'
+        AND h.status = 'Confirmed'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM "TextScanHold" h
+      WHERE h."entityType" = 'PostText' AND h."entityId" = t.id AND h.label = 'csam'
+        AND h.status = 'Confirmed' AND h.meta ->> 'reportChoice' IS DISTINCT FROM 'none'
     )
 `;
 
-/** Due texts nothing keeps (`post_text_retention_skip`), so kept ones never use up the page budget. */
+/**
+ * Due texts nothing keeps (`post_text_retention_skip`) and the delete trigger would not refuse
+ * (`post_text_held`), so kept ones never use up the page budget.
+ */
 const purgeableSql = (afterId: number, limit: number) => Prisma.sql`
   SELECT t.id AS "textId"
   ${dueSql}
     AND post_text_retention_skip(t."postId", t."userId") IS NULL
+    AND NOT post_text_held(t.id, t."csamHeld", t."postId", t."userId")
     AND t.id > ${afterId}
   ORDER BY t.id
   LIMIT ${limit}

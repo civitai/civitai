@@ -232,12 +232,23 @@ describe('purgeConfirmedCsamText', () => {
     expect(await copies(textId, holdId)).toEqual(KEPT);
   });
 
-  it('keeps all three when the delete trigger still holds the text', async () => {
+  it('leaves a text the delete trigger would refuse, without spending a delete on it', async () => {
     const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
-    // A report that still holds names the author: not a skip of the job's own, so the trigger decides.
+    // A report that still holds names the author: `post_text_held` refuses, so the job never picks it.
     await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [AUTHOR]);
 
-    expect(await purgeConfirmedCsamText()).toMatchObject({ deleted: 0, stillHeld: 1 });
+    expect(await purgeConfirmedCsamText()).toMatchObject({ deleted: 0, stillHeld: 0 });
+    expect(await copies(textId, holdId)).toEqual(KEPT);
+  });
+
+  it('never picks a text another confirmed hold gave a reportable choice', async () => {
+    const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "meta", "decidedAt")
+       VALUES ('PostText', $1, 'csam', 'Confirmed', '{"reportChoice":"imagery"}', ${ago(366)})`,
+      [textId]
+    );
+    expect(await purgeConfirmedCsamText()).toMatchObject({ deleted: 0, stillHeld: 0 });
     expect(await copies(textId, holdId)).toEqual(KEPT);
   });
 
@@ -323,6 +334,32 @@ describe('the delete trigger on a confirmed "none" text', () => {
       priorHoldId: 3,
       decisionNotePurged: true,
       retentionPurgedAt: expect.any(String),
+    });
+  });
+
+  it("clears a migration-superseded duplicate of the purged hold's text", async () => {
+    const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
+    const dup = await pg.query<{ id: number }>(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "meta", "decisionNote", "decidedAt")
+       VALUES ('PostText', $1, 'csam', 'Dismissed', $2::jsonb, 'dup note: held words', ${ago(400)})
+       RETURNING id`,
+      [textId, JSON.stringify({ decision: 'superseded', superseded: true, supersededBy: holdId })]
+    );
+    const dupId = dup.rows[0].id;
+
+    await deleteText(textId);
+
+    const { rows } = await pg.query<{ id: number; row: string; meta: Record<string, unknown> }>(
+      `SELECT id, to_jsonb(h)::text AS row, h.meta FROM "TextScanHold" h WHERE id = ANY($1) ORDER BY id`,
+      [[holdId, dupId]]
+    );
+    expect(rows).toHaveLength(2);
+    for (const r of rows) expect(r.row).not.toMatch(/held words/);
+    expect(rows.find((r) => r.id === dupId)?.meta).toMatchObject({
+      decision: 'superseded',
+      superseded: true,
+      supersededBy: holdId,
+      decisionNotePurged: true,
     });
   });
 
