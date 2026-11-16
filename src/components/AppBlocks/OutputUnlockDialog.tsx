@@ -17,7 +17,7 @@ export type OutputUnlockOffer =
 
 /** The server's `blocks.unlockOutput` result, as far as the dialog reads it. */
 export type OutputUnlockServerResult = {
-  outcome: 'unlocked' | 'not-restricted' | 'not-released' | 'refused';
+  outcome: 'unlocked' | 'not-restricted' | 'not-released' | 'refused' | 'unavailable';
   snapshot: unknown;
   message?: string;
 };
@@ -65,7 +65,14 @@ export default function OutputUnlockDialog({
   const who = sanitizeAppChromeName(appName) ?? 'this app';
 
   return (
-    <Modal {...dialog} title={`Unlock a result from ${who}`}>
+    <Modal
+      {...dialog}
+      title={`Unlock a result from ${who}`}
+      // While an unlock is in flight the dialog cannot be dismissed, so its result always lands.
+      closeOnEscape={!pending}
+      closeOnClickOutside={!pending}
+      withCloseButton={!pending}
+    >
       <Stack gap="sm" data-testid="block-output-unlock">
         {offer.kind === 'pay' && (
           <>
@@ -85,7 +92,12 @@ export default function OutputUnlockDialog({
           </Text>
         )}
         <Group justify="flex-end">
-          <Button variant="default" onClick={() => dialog.onClose()} data-autofocus>
+          <Button
+            variant="default"
+            onClick={() => dialog.onClose()}
+            disabled={pending}
+            data-autofocus
+          >
             {offer.kind === 'unavailable' ? 'Close' : 'Not now'}
           </Button>
           {offer.kind === 'link-out' && redDomain && linkOut && (
@@ -115,7 +127,11 @@ export default function OutputUnlockDialog({
                 try {
                   const result = await unlock(offer.unlockBuzz);
                   onResult(result);
-                  if (result.outcome === 'refused' || result.outcome === 'not-released') {
+                  if (
+                    result.outcome === 'refused' ||
+                    result.outcome === 'not-released' ||
+                    result.outcome === 'unavailable'
+                  ) {
                     // The server says why (for not-released: the unlock went through, but the
                     // output is rated above the viewer's level).
                     setError(

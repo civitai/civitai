@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { OUTPUT_UNLOCK_LOCK_TTL_SECONDS } from '~/server/services/blocks/block-output-unlock.service';
 
@@ -12,8 +13,8 @@ export function outputUnlockLockKey(workflowId: string): string {
  * orchestrator twice. Returns the release, or `null` when another unlock holds it.
  *
  * The TTL outlives every bounded call made under the lock, so the lock cannot lapse mid-unlock;
- * the release deletes the key only while it still holds this caller's token, so a release after
- * a lapse cannot free someone else's lock. Fail-CLOSED: a Redis error refuses the unlock.
+ * the release is an atomic compare-and-delete (`delIfValue`), so a release after a lapse cannot
+ * free someone else's lock. Fail-CLOSED: a Redis error refuses the unlock.
  */
 export async function acquireOutputUnlockLock(
   workflowId: string
@@ -27,7 +28,7 @@ export async function acquireOutputUnlockLock(
   if (!acquired) return null;
   return async () => {
     try {
-      if ((await sysRedis.get(key as never)) === owner) await sysRedis.del(key as never);
+      await delIfValue(sysRedis, key, owner);
     } catch {
       // The TTL frees it.
     }

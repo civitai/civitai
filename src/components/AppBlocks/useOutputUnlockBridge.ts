@@ -13,14 +13,18 @@ const OutputUnlockDialog = dynamic(() => import('./OutputUnlockDialog'), { ssr: 
  * What the app learns from REQUEST_OUTPUT_UNLOCK (`OUTPUT_UNLOCK_RESULT { result }`):
  *   - `unlocked`: the output now has a url; `snapshot` is the re-read workflow.
  *   - `not-restricted`: it already had one; nothing was shown or charged.
- *   - `not-released`: the unlock ran but the output is still above the viewer's level.
+ *   - `not-released`: the unlock ran but the output is still above the viewer's level;
+ *     `message` says why.
+ *   - `unavailable` after a confirm: the orchestrator write got no response and may still land;
+ *     `message` says to check back.
  *   - `refused`: the orchestrator refused the yellow charge (Yellow balance short); `message` says so.
  *   - `linked-out`: the viewer opened civitai.red to see it. Never charged.
  *   - `dismissed`: the viewer closed the dialog.
  *   - `unavailable`: it cannot be unlocked here; `message` says why.
  */
 export type OutputUnlockBridgeResult =
-  | { outcome: 'unlocked' | 'not-released'; snapshot: unknown }
+  | { outcome: 'unlocked'; snapshot: unknown }
+  | { outcome: 'not-released'; snapshot: unknown; message?: string }
   | { outcome: 'refused'; snapshot: unknown; message: string }
   | { outcome: 'not-restricted' | 'linked-out' | 'dismissed' }
   | { outcome: 'unavailable'; message: string };
@@ -118,8 +122,19 @@ export function useOutputUnlockBridge(opts: {
               });
             } else if (result.outcome === 'not-restricted') {
               reply({ outcome: 'not-restricted' });
+            } else if (result.outcome === 'not-released') {
+              reply({
+                outcome: 'not-released',
+                snapshot: result.snapshot,
+                ...(result.message ? { message: result.message } : {}),
+              });
+            } else if (result.outcome === 'unavailable') {
+              reply({
+                outcome: 'unavailable',
+                message: result.message ?? 'This output cannot be unlocked right now.',
+              });
             } else {
-              reply({ outcome: result.outcome, snapshot: result.snapshot });
+              reply({ outcome: 'unlocked', snapshot: result.snapshot });
             }
           },
         },

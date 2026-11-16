@@ -874,9 +874,13 @@ export async function updateWorkflow({
 
 /**
  * The App Blocks output unlock's write: `allowMatureContent: true`, bounded by `signal`, with no
- * read-back. The orchestrator's 403 (it could not take the yellow charge) is reported as
- * `insufficientFunds` rather than thrown, so the caller can answer it as a refusal; every other
- * failure throws as `throwOrchestratorFailure` maps it.
+ * read-back. Two failures are REPORTED rather than thrown, because the caller answers them
+ * differently from an error:
+ *   - `insufficient-funds`: the orchestrator's 403, it could not take the yellow charge;
+ *   - `no-response`: no HTTP response at all (the client resolves with `response: undefined` when
+ *     the fetch throws, our `signal` firing included). The write may still be in flight at the
+ *     orchestrator, so the caller must not treat it as failed.
+ * Every other failure throws as `throwOrchestratorFailure` maps it.
  */
 export async function liftWorkflowMatureRestriction({
   token,
@@ -886,7 +890,7 @@ export async function liftWorkflowMatureRestriction({
   token: string;
   workflowId: string;
   signal?: AbortSignal;
-}): Promise<{ insufficientFunds: boolean }> {
+}): Promise<{ outcome: 'lifted' | 'insufficient-funds' | 'no-response' }> {
   const client = createOrchestratorClient(token);
   const { error, response } = await clientUpdateWorkflow({
     client,
@@ -894,10 +898,11 @@ export async function liftWorkflowMatureRestriction({
     body: { allowMatureContent: true },
     ...(signal ? { signal } : {}),
   });
-  if (response?.status === 403) return { insufficientFunds: true };
-  if (!response?.ok)
+  if (!response) return { outcome: 'no-response' };
+  if (response.status === 403) return { outcome: 'insufficient-funds' };
+  if (!response.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
-  return { insufficientFunds: false };
+  return { outcome: 'lifted' };
 }
 
 /**

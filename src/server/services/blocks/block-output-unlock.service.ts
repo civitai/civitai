@@ -82,6 +82,17 @@ export const OUTPUT_UNLOCK_IN_PROGRESS_MESSAGE = 'This output is already being u
 export const OUTPUT_UNLOCK_NOT_RELEASED_MESSAGE =
   'The unlock went through, but this output is rated above your browsing level, so it stays hidden.';
 
+/**
+ * The write got no response (our timeout): it may still land. Not retryable from here: the
+ * workflow's lock is KEPT until its TTL, so a retry is refused as in progress until then.
+ */
+export const OUTPUT_UNLOCK_MAY_BE_PENDING_MESSAGE =
+  'Your unlock may still be going through. Check again in a few minutes.';
+
+/** No price could be worked out from the workflow's transactions, so nothing is offered. */
+export const OUTPUT_UNLOCK_NO_PRICE_MESSAGE =
+  "We couldn't work out the price for this unlock. Try again shortly.";
+
 /** The orchestrator refused the yellow charge: the viewer's Yellow balance is short. */
 export const OUTPUT_UNLOCK_INSUFFICIENT_FUNDS_MESSAGE =
   'You do not have enough yellow Buzz to unlock this output.';
@@ -160,12 +171,13 @@ export function planBlockOutputUnlock(
   }
   if (output.reason === 'pool') {
     const list = (workflow.transactions as { list?: unknown } | null | undefined)?.list;
-    return {
-      kind: 'pay',
-      position,
-      unlockBuzz: unlockPriceFromTransactions(Array.isArray(list) ? list : []),
-      snapshot,
-    };
+    const unlockBuzz = unlockPriceFromTransactions(Array.isArray(list) ? list : []);
+    // No transactions, or nothing non-yellow to swap: there is no price to show the viewer, and a
+    // zero "price" would let the confirm through at whatever the orchestrator then charges.
+    if (!(unlockBuzz > 0)) {
+      return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_NO_PRICE_MESSAGE };
+    }
+    return { kind: 'pay', position, unlockBuzz, snapshot };
   }
 
   // 'ceiling' and 'unrated' (and any reason added later): never charged. Would the DOMAIN alone,
@@ -200,10 +212,12 @@ export type OutputUnlockDeps = {
   /** `assertUnlockReleasesOutput`: the orchestrator would release something for the charge. */
   assertUnlockReleasesOutput: () => Promise<void>;
   /**
-   * `allowMatureContent: true` at the orchestrator, bounded. The orchestrator's own Yellow
-   * balance check (its 403) comes back as `insufficientFunds`; any other failure throws.
+   * `allowMatureContent: true` at the orchestrator, bounded (`liftWorkflowMatureRestriction`).
+   * The orchestrator's Yellow balance check (its 403) is `insufficient-funds`; no response at
+   * all (our timeout) is `no-response`, the write possibly still in flight; any other failure
+   * throws.
    */
-  liftRestriction: () => Promise<{ insufficientFunds: boolean }>;
+  liftRestriction: () => Promise<{ outcome: 'lifted' | 'insufficient-funds' | 'no-response' }>;
   /** The per-workflow lock; `null` when another unlock holds it. */
   acquireLock: () => Promise<(() => Promise<void>) | null>;
 };
@@ -250,9 +264,10 @@ export type OutputUnlockResult = {
    * success lands here), nothing was charged. `not-released`: the orchestrator accepted the
    * unlock (its swap stands) but the output is still restricted at this token's ceiling;
    * `message` says why. `refused`: the orchestrator refused the yellow charge (the viewer's
-   * Yellow balance is short); `message` says so.
+   * Yellow balance is short); `message` says so. `unavailable`: the write got no response, so it
+   * may still land; the lock is kept until its TTL and `message` says to check back.
    */
-  outcome: 'unlocked' | 'not-restricted' | 'not-released' | 'refused';
+  outcome: 'unlocked' | 'not-restricted' | 'not-released' | 'refused' | 'unavailable';
   snapshot: BlockWorkflowSnapshot;
   charged: { unlockBuzz: number };
   message?: string;
@@ -276,6 +291,8 @@ export async function unlockBlockOutput(
   if (!release) {
     throw new TRPCError({ code: 'CONFLICT', message: OUTPUT_UNLOCK_IN_PROGRESS_MESSAGE });
   }
+  // Kept (not released) when the orchestrator write may still be in flight: see `no-response`.
+  let keepLock = false;
   try {
     const workflow = await readOwnedWorkflow(request, deps);
     const plan = planBlockOutputUnlock(workflow, request.claims, request.position);
@@ -293,8 +310,17 @@ export async function unlockBlockOutput(
     deps.assertUnlockAllowed();
     await deps.assertUnlockReleasesOutput();
 
-    const { insufficientFunds } = await deps.liftRestriction();
-    if (insufficientFunds) {
+    const lifted = await deps.liftRestriction();
+    if (lifted.outcome === 'no-response') {
+      keepLock = true;
+      return {
+        outcome: 'unavailable',
+        snapshot: plan.snapshot,
+        charged: NOTHING_CHARGED,
+        message: OUTPUT_UNLOCK_MAY_BE_PENDING_MESSAGE,
+      };
+    }
+    if (lifted.outcome === 'insufficient-funds') {
       return {
         outcome: 'refused',
         snapshot: plan.snapshot,
@@ -319,6 +345,6 @@ export async function unlockBlockOutput(
 
     return { outcome: 'unlocked', snapshot: after.snapshot, charged: { unlockBuzz: total } };
   } finally {
-    await release();
+    if (!keepLock) await release();
   }
 }
