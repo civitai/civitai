@@ -101,14 +101,14 @@ async function purgeOne(textId: number): Promise<'deleted' | 'held' | 'failed'> 
   } catch (error) {
     if (isHeldRefusal(error)) return 'held';
     // Name and code only: a database message can echo the row.
-    await logToAxiom({
+    void logToAxiom({
       name: 'purge-confirmed-csam-text',
       type: 'error',
       message: 'csam text purge delete failed',
       textId,
       code: (error as { code?: unknown })?.code,
       errorName: error instanceof Error ? error.name : typeof error,
-    }).catch(() => undefined);
+    });
     return 'failed';
   }
 }

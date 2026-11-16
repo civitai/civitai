@@ -8,9 +8,7 @@ export const purgeConfirmedCsamTextJob = createJob(
   '20 5 * * *',
   async () => {
     const result = await purgeConfirmedCsamText();
-    await logToAxiom({ name: 'purge-confirmed-csam-text', ...result }, 'webhooks').catch(
-      () => undefined
-    );
+    void logToAxiom({ name: 'purge-confirmed-csam-text', ...result }, 'webhooks');
     return result;
   }
 );
