@@ -2,10 +2,8 @@ import { createServer, type Server, type Socket } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-// The app's own email entry point (~/server/email/client), not @civitai/email directly, against an
-// SMTP server that accepts the connection and never sends its greeting. nodemailer's defaults wait
-// 30 s for the greeting (2 min to connect, 10 min of socket silence), so a transport built without
-// timeouts hangs past this test's 12 s race; one built with them rejects in about 5 s.
+// Goes through ~/server/email/client, not @civitai/email, so a second transport built without
+// timeouts would hang here.
 
 vi.mock('~/env/server', () => ({ env: { IS_BUILD: false } }));
 
