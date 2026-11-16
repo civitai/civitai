@@ -108,10 +108,10 @@ const outcome = (url: string, now = AFTER) =>
   );
 
 describe('assertClientKeysIssuedToCaller', () => {
-  it('accepts a key with no record and no row through 2026-11-18 15:59Z, and refuses it from 16:00Z', async () => {
-    expect(await outcome(KEY, new Date('2026-11-18T15:59:59.999Z'))).toBe('accepted');
+  it('accepts a key with no record and no row through 2026-12-09 15:59Z, and refuses it from 16:00Z', async () => {
+    expect(await outcome(KEY, new Date('2026-12-09T15:59:59.999Z'))).toBe('accepted');
     const refused = outcomeCount('unrecorded_refused');
-    expect(await outcome(KEY, new Date('2026-11-18T16:00:00Z'))).toBe('refused');
+    expect(await outcome(KEY, new Date('2026-12-09T16:00:00Z'))).toBe('refused');
     expect(outcomeCount('unrecorded_refused')).toBe(refused + 1);
   });
 
@@ -523,7 +523,7 @@ describe('the issue record, moved from sysRedis to the cluster', () => {
   const SYS_OTHERS = '6b6b6b6b-7777-4888-9999-aaaabbbbcccc';
   const CLUSTER_ONLY = '7c7c7c7c-dddd-4eee-8fff-000011112222';
   /** Inside the fallback window and after the unrecorded-key cutover. */
-  const WINDOW = new Date('2026-12-01T12:00:00Z');
+  const WINDOW = new Date('2026-12-15T12:00:00Z');
 
   // Hand-written wire values, so a key renamed in either table is caught here.
   const clusterKey = (key: string) => `system:upload-key-owner:${key}`;
