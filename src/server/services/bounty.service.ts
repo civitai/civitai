@@ -654,7 +654,8 @@ export const updateBountyById = async ({
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
-      // A text scan flagging this bounty mid-edit waits, so the edit sees the flag and record it set.
+      // Orders this edit against a text scan flagging the bounty: a flag the scan committed first is
+      // read here and kept; a scan that arrives mid-edit waits, then applies to the edited row.
       await tx.$queryRaw`SELECT 1 FROM "Bounty" WHERE id = ${id} FOR UPDATE`;
       const existing = await tx.bounty.findUniqueOrThrow({
         where: { id },
