@@ -1377,7 +1377,7 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 			return goldenEntityCosmetics(db, sql, args, false, goldenFrameColumns)
 		}},
 	}}
-	g.DB.Routes = append(g.DB.Routes, goldenTagRoutes(db)...)
+	g.Routes = append(g.Routes, goldenTagRoutes(db)...)
 	t.Cleanup(func() {
 		g.mu.Lock()
 		defer g.mu.Unlock()

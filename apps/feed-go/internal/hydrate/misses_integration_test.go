@@ -186,7 +186,7 @@ func TestIntegrationModelFrameMissComputed(t *testing.T) {
 		  (1150006, 1150106, now(), NULL, 1150502, 'Image');`)
 	ctx := integtest.Ctx(t)
 	ids := []int{1150501, 1150502}
-	got, writable := e.src.read(ctx, KeyModelFrames, ids, 0)
+	got, writable := e.src.read(ctx, KeyModelFrames, ids)
 	if err := e.src.fillModelFrames(ctx, ids, got, writable); err != nil {
 		t.Fatal(err)
 	}
