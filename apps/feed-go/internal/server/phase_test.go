@@ -39,6 +39,9 @@ func metricValue(t *testing.T, reg *prometheus.Registry, name string, labels map
 			if h := m.GetHistogram(); h != nil {
 				return float64(h.GetSampleCount()), true
 			}
+			if g := m.GetGauge(); g != nil {
+				return g.GetValue(), true
+			}
 			return m.GetCounter().GetValue(), true
 		}
 	}

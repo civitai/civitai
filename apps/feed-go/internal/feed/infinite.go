@@ -292,6 +292,39 @@ func ParseBlockedTagNames(raw []byte) (map[string]bool, error) {
 	return l.names, l.namesErr
 }
 
+// ImageTagGate is getImageTagGateIds (src/server/redis/image-tag-gate-ids.ts) as the tag-ids miss
+// computation's hydrate.MissCompute.TagGate: every tag id a browsing rule can hide content by, the
+// blocked browsing tags' ids and the excludedTagIds of every addon, the defaults' and the configured
+// ones'. A blocked-list read that fails (or a list Node would rebuild from the database) is the
+// gate's error. The returned map is the caller's.
+func ImageTagGate(blocked *BlockedTags, addons func(context.Context) []browsing.Addon) func(context.Context) (map[int]bool, error) {
+	return func(ctx context.Context) (map[int]bool, error) {
+		if blocked == nil {
+			return nil, errors.New("no blocked-tag list configured")
+		}
+		ids, err := blocked.IDs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[int]bool, len(ids))
+		for id := range ids {
+			out[id] = true
+		}
+		add := func(list []browsing.Addon) {
+			for _, a := range list {
+				for _, id := range a.ExcludedTagIDs {
+					out[id] = true
+				}
+			}
+		}
+		add(browsing.DefaultAddons)
+		if addons != nil {
+			add(addons(ctx))
+		}
+		return out, nil
+	}
+}
+
 // InfiniteDeps are image.getInfinite's collaborators: the gallery port's (feed client, replica,
 // caches, hydration, addons, flag mirrors) plus the lookups it reads itself.
 type InfiniteDeps struct {

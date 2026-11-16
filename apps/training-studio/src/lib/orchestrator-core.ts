@@ -339,7 +339,8 @@ export interface TrainingWhatIfInput extends Partial<KohyaRunParams> {
   version?: string;
   /** An edit LoRA (`isEditTraining`), priced as the submit will run it. */
   editTraining?: boolean;
-  /** Omit for the "from" floor — the orchestrator then prices its per-ecosystem default step budget. */
+  /** Omitted, the orchestrator prices its per-ecosystem default step budget, which need not be the
+   *  Review step's default (`versionStepDefault`). */
   steps?: number;
   /** Saved-checkpoint count — it moves the real price (~±5⚡ per checkpoint around the default 10). */
   epochs?: number;

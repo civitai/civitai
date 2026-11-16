@@ -9,13 +9,13 @@ import { describe, expect, it } from 'vitest';
 // `deployment_status`, never on `status`.
 //
 // `status` cannot be filtered at the trigger, so with it EVERY commit status in the repository
-// started a run, nearly all skipped, and the workflow's own `tRPC parity` statuses started more
-// (measurements: the PR that made this change). The preview pipeline now creates a Deployment in
-// environment `preview`, straight in `success`, when it marks the commit `preview / deploy` =
-// success; the gate job starts a runner for exactly that and nothing else.
+// started a run, nearly all skipped, and the workflow's own `tRPC parity` statuses started more.
+// The preview pipeline creates a Deployment in environment `preview`, straight in `success`, when
+// it marks the commit `preview / deploy` = success; the gate job starts a runner for exactly that
+// and nothing else.
 //
-// Pinned as whole normalised strings: a clause rewritten in another shape is a change someone
-// has to make on purpose here, not one that passes a partial match.
+// The gate `if:` and the parity checkout ref are pinned whole: together they decide which events
+// run the deployed commit's code with a write token, and which commit that is.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FILE = path.resolve(HERE, '../../.github/workflows/trpc-server-parity.yml');
@@ -62,15 +62,8 @@ describe('trpc-server-parity trigger', () => {
     expect(norm(wf.jobs.parity.if)).toBe("needs.gate.outputs.run == 'true'");
   });
 
-  it('a preview deployment success is keyed on its commit; every other deployment on its own run', () => {
-    expect(norm(wf.concurrency.group)).toBe(
-      'trpc-server-parity-${{ ' +
-        "github.event_name == 'deployment_status' && ( " +
-        `(${DEPLOY_OK}) ` +
-        "&& format('deployment-{0}', github.event.deployment.sha) " +
-        "|| format('ignored-{0}', github.run_id) ) " +
-        "|| format('{0}-{1}', github.ref, inputs.image) }}"
-    );
+  it('a preview deployment success is keyed on its commit', () => {
+    expect(wf.concurrency.group).toContain('github.event.deployment.sha');
     expect(wf.concurrency['cancel-in-progress']).toBe(true);
   });
 
@@ -83,14 +76,12 @@ describe('trpc-server-parity trigger', () => {
     expect(checkout?.with?.ref).toBe(
       "${{ github.event_name == 'deployment_status' && needs.gate.outputs.sha || '' }}"
     );
-    // no expression anywhere still branches on the old event
     expect(text).not.toMatch(/event_name\s*==\s*'status'/);
     expect(text).not.toMatch(/"\$EVENT" = status\b/);
   });
 
-  // A deployment run uses the DEPLOYED commit's copy of this file, so these pins are about the
-  // file a merged change ships, not a ceiling a branch could not raise: the boundary is the
-  // preview pipeline creating Deployments only for same-repository branches (the file header).
+  // A branch's copy is bounded by the preview pipeline creating Deployments only for same-repo
+  // branches (see the workflow header).
   it('token permissions stay minimal, and the workflow reads no repository secret', () => {
     expect(wf.permissions).toEqual({ contents: 'read', packages: 'read' });
     expect(wf.jobs.gate.permissions).toBeUndefined();

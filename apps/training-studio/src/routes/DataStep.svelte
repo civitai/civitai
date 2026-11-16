@@ -67,6 +67,7 @@
     labelTextAfterSwitch,
     isTrainable,
     repeatsOf,
+    clampRepeats,
     selectionTakesRepeats,
     isTriggerTag,
     labelOptions,
@@ -328,6 +329,14 @@
   function applyBulkRepeats() {
     for (const img of shownImages) img.repeats = bulkRepeats > 1 ? bulkRepeats : undefined;
     bulkRepeatsOpen = false;
+  }
+  // A skipped duplicate the user meant to keep is a weighting: one more repeat on the image it copies.
+  function keepDuplicatesAsRepeats() {
+    for (const id of dupOwnerIds) {
+      const img = images.find((i) => i.id === id);
+      if (img) img.repeats = clampRepeats(repeatsOf(img) + 1);
+    }
+    dupOwnerIds = [];
   }
   const shownImages = $derived.by(() => {
     if (!tagFilter) return statusShownImages;
@@ -1131,6 +1140,14 @@
       <span>
         Skipped {dupNotice.count} duplicate{dupNotice.count === 1 ? '' : 's'} — same content as
         <strong class="text-dark-0">{dupNotice.names}</strong>.
+        {#if takesRepeats}
+          Meant to train {dupNotice.count === 1 ? 'it' : 'them'} more?
+          <button
+            type="button"
+            class="ml-1 font-semibold text-primary underline-offset-2 hover:underline"
+            onclick={keepDuplicatesAsRepeats}>Count as repeats</button
+          >
+        {/if}
       </span>
       <Button
         variant="ghost"

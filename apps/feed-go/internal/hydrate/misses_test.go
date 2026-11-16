@@ -49,6 +49,8 @@ type missDB struct {
 	listings   map[int][][]any // cosmeticId -> [cosmeticId, addedById, status, meta, rejectionReason, createdById]
 	tombstones map[int][]any   // cosmeticId -> [id, flags]
 	records    map[int][]any   // cosmeticId -> [id, name, type, data, source, flags]
+	tagRows    map[int][][]any // imageId -> [imageId, source, tagId]
+	tags       map[int][]any   // tagId -> [id, name, type]
 	fail       string          // a route name below, answered with errMissDB
 
 	mu    sync.Mutex
@@ -95,7 +97,7 @@ func (m *missDB) load(f *pageFixture, c *MissCompute) (*Sources, *testkit.Redis)
 		}
 	}
 	many := func(v map[int][][]any) func(int) [][]any { return func(id int) [][]any { return v[id] } }
-	routes := make([]testkit.Route, 0, 6+len(db.Routes))
+	routes := make([]testkit.Route, 0, 8+len(db.Routes))
 	routes = append(routes,
 		m.route("users", `FROM "UserCosmetic" WHERE "userId" = ANY`, []string{"userId", "cosmeticId", "data"}, many(m.users)),
 		m.route("frames", `IS DISTINCT FROM 'string'`, []string{"cosmeticId", "equippedToId", "userData", "createdById"}, many(m.frames)),
@@ -103,6 +105,8 @@ func (m *missDB) load(f *pageFixture, c *MissCompute) (*Sources, *testkit.Redis)
 		m.route("listings", `FROM "CosmeticShopItem" si`, []string{"cosmeticId", "addedById", "status", "meta", "rejectionReason", "createdById"}, many(m.listings)),
 		m.route("tombstones", `SELECT id, flags FROM "Cosmetic"`, []string{"id", "flags"}, one(m.tombstones)),
 		m.route("records", `SELECT id, name, type::text AS type`, []string{"id", "name", "type", "data", "source", "flags"}, one(m.records)),
+		m.route("tagrows", `FROM "TagsOnImageDetails" WHERE "imageId" = ANY`, []string{"imageId", "source", "tagId"}, many(m.tagRows)),
+		m.route("tags", `FROM "Tag" WHERE id = ANY`, []string{"id", "name", "type"}, one(m.tags)),
 	)
 	db.Routes = append(routes, db.Routes...)
 	if c.Now == nil {
@@ -270,10 +274,11 @@ func TestComputedMissLookupFailureFallsBack(t *testing.T) {
 		{"listings", KeyUserCosmetics, "user-cosmetics-miss-failed", "user-cosmetics"},
 		{"frames", KeyImageFrames, "image-frame-miss-failed", "image-frames"},
 		{"events", KeyImageEvents, "event-decoration-miss-failed", "event-decorations"},
+		{"tagrows", KeyTagIDs, "tag-ids-miss-failed", "tag-ids"},
 	} {
 		t.Run(c.fail, func(t *testing.T) {
 			f := basePageFixture(t)
-			id := map[string]int{KeyUserCosmetics: 1002, KeyImageFrames: 13, KeyImageEvents: 13}[c.del]
+			id := map[string]int{KeyUserCosmetics: 1002, KeyImageFrames: 13, KeyImageEvents: 13, KeyTagIDs: 11}[c.del]
 			f.del(c.del, id)
 			m := userCosmeticsMissDB()
 			m.fail = c.fail

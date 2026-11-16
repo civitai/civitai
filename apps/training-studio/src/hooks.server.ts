@@ -8,6 +8,7 @@ import {
 } from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 import { isTrainingStudioAllowed } from '$lib/server/flipt';
+import { EMBED_FORWARDED_PATHS, mainAppAllowsEmbed } from '$lib/server/main-app-access';
 
 // Local UI preview without OAuth: ON by default in `vite dev` so the flow is viewable without an auth
 // hub; opt out with TRAINING_STUDIO_DEV_LOGIN=0 to exercise the real login against a local hub. `dev`
@@ -85,7 +86,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   // Closed-beta gate (Flipt): a signed-in user outside the segment can't use the app. Moderators always
   // pass (the fallback when the flag is absent), so the beta ships dark until the segment is configured.
-  if (!(await isTrainingStudioAllowed(result.user))) {
+  // A request the main app's embed forwarded is allowed for anyone that app lets use the embed.
+  const cookie = event.request.headers.get('cookie') ?? '';
+  if (
+    !(await isTrainingStudioAllowed(result.user)) &&
+    !(
+      EMBED_FORWARDED_PATHS.has(event.url.pathname) &&
+      (await mainAppAllowsEmbed(cookie, result.user.id))
+    )
+  ) {
     return withSetCookies(closedBetaPage(), result.setCookies);
   }
 

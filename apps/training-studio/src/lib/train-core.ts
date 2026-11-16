@@ -19,6 +19,8 @@ import {
   type WorkflowTemplate,
 } from '@civitai/orchestration-client';
 import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
@@ -162,7 +164,7 @@ export interface SubmitOptions {
   /** Told how each dataset maturity count was made, for the run's log line. */
   onMatureCount?: (count: MatureCount) => void;
   /** Whether this user may train with Kohya (the `KOHYA_FLAG_KEY` gate). Anything but true refuses a
-   *  Kohya run or continuation before any orchestrator call. */
+   *  Kohya run before any orchestrator call, and a Kohya continuation once its source run is read. */
   kohyaAllowed?: boolean;
 }
 
@@ -660,6 +662,10 @@ async function assertCustomModelTrainable(
       throw new TrainingBatchValidationError(`${field}.customModel: model could not be found.`);
     throw new Error(`custom model lookup failed (${response?.status ?? 'no response'})`);
   }
+  // The orchestrator's AIR is resolved from the version, so it names the model the version belongs to
+  // even when the submitted AIR pairs that version with another model id.
+  if (isBlockedCustomModel(data.air))
+    throw new TrainingBatchValidationError(`${field}.customModel: ${BLOCKED_CUSTOM_MODEL_MESSAGE}`);
   if (!isSafeTensorFormat(data.fileFormat))
     throw new TrainingBatchValidationError(
       `${field}.customModel: ${NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE}`
