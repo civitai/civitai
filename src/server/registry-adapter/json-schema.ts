@@ -1,5 +1,6 @@
 import type { ValidateFunction } from 'ajv';
 import Ajv2020 from 'ajv/dist/2020';
+import { FilterPatternError, filterRegExpEngine } from '~/server/registry-adapter/filter-pattern';
 import type { JsonSchema } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
@@ -11,6 +12,22 @@ export function newValidator() {
   return new Ajv2020({ strict: false, validateFormats: false, allErrors: false });
 }
 
+/**
+ * {@link newValidator} for a request filter: its `pattern` and `patternProperties` run on a
+ * linear-time engine (`filter-pattern.ts`), since a filter's patterns are the consumer's. The
+ * other validators keep the platform RegExp: their schemas are this source's own. With `strict`
+ * off ajv never runs a pattern at compile time either (its `allowMatchingProperties` check, the
+ * one place it calls `new RegExp` directly, is a strict-mode check).
+ */
+function newFilterValidator() {
+  return new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    allErrors: false,
+    code: { regExp: filterRegExpEngine() },
+  });
+}
+
 /** Largest request filter this source will compile, as JSON. */
 export const FILTER_MAX_BYTES = 8 * 1024;
 
@@ -19,16 +36,16 @@ export const FILTER_MAX_DEPTH = 32;
 
 /**
  * Keys that make a filter's evaluation cost unbounded by its size, refused wherever they appear:
- *   - `pattern`, `patternProperties`: ajv evaluates a pattern with the platform's backtracking
- *     RegExp, so a request could hand it one that blocks the event loop;
- *   - `$ref`, `$dynamicRef`, `$recursiveRef`, `$defs`, `definitions`: a reference lets a small
- *     filter reuse a subschema, so definitions that each hold two references to the next form a
- *     DAG whose evaluation doubles at every level. Without them every subschema is evaluated
- *     once per value it applies to, so the work is bounded by the filter's size times the body's.
+ * `$ref`, `$dynamicRef`, `$recursiveRef`, `$defs`, `definitions`. A reference lets a small filter
+ * reuse a subschema, so definitions that each hold two references to the next form a DAG whose
+ * evaluation doubles at every level. Without them every subschema is evaluated once per value it
+ * applies to, so the work is bounded by the filter's size times the body's.
+ *
+ * `pattern` and `patternProperties` are applied, not refused: they run on a linear-time engine
+ * (`filter-pattern.ts`), and a pattern it cannot run with ECMA-262's meaning (a lookaround, a
+ * backreference) or one over its length bound is `bad_request` when the filter is compiled.
  */
 const REFUSED_FILTER_KEYS = [
-  'pattern',
-  'patternProperties',
   '$ref',
   '$dynamicRef',
   '$recursiveRef',
@@ -39,7 +56,7 @@ const REFUSED_FILTER_KEYS = [
 /**
  * Keywords whose value is data, never a schema: ajv compares against it (`const`, `enum`) or
  * ignores it (`default`, `examples`), and evaluates nothing inside it. A filter matching a whole
- * body, `{"const": <body>}`, holds the body's own keys there, `pattern` or `$ref` among them.
+ * body, `{"const": <body>}`, holds the body's own keys there, `$ref` or `$defs` among them.
  */
 const DATA_KEYWORDS: ReadonlySet<string> = new Set(['const', 'enum', 'default', 'examples']);
 
@@ -64,7 +81,7 @@ const NAME_MAP_KEYWORDS: ReadonlySet<string> = new Set([
  * schema keywords one would list (`dependencies`, a member of the document), so everything but
  * data is walked. A data keyword is skipped only where it IS a keyword: under a
  * {@link NAME_MAP_KEYWORDS} map the same key is a name whose value is a schema, and is walked. It
- * can still refuse a harmless filter (a property that happens to be named `pattern`). A refused
+ * can still refuse a harmless filter (a property that happens to be named `$ref`). A refused
  * filter is answered `bad_request` ({@link createFilterCompiler}): the spec's rule 6 lets a
  * registry decline a filter that way, never ignore it, since a consumer would take what it got
  * for filtered.
@@ -105,8 +122,9 @@ export function filterRefusal(filter: unknown): string | null {
 
 /**
  * A request's `filter` as a predicate over bodies; `undefined` when there is none. A filter this
- * source will not evaluate — longer than {@link FILTER_MAX_BYTES} as JSON, or one
- * {@link filterRefusal} refuses — is `bad_request`, as is one that is not a JSON Schema: a
+ * source will not evaluate — longer than {@link FILTER_MAX_BYTES} as JSON, one
+ * {@link filterRefusal} refuses, or one with a pattern the linear-time engine refuses
+ * ({@link FilterPatternError}) — is `bad_request`, as is one that is not a JSON Schema: a
  * registry that accepts a filter applies it in full, and never ignores one (spec rule 6).
  *
  * Compiled filters are cached by their text, at most `maxCached` of them (the cache is emptied
@@ -131,8 +149,10 @@ export function createFilterCompiler(maxCached = 100) {
     if (hit) return hit;
     let validate: ValidateFunction;
     try {
-      validate = newValidator().compile(filter);
-    } catch {
+      // Each pattern is compiled here, once per distinct pattern, never per entity.
+      validate = newFilterValidator().compile(filter);
+    } catch (err) {
+      if (err instanceof FilterPatternError) throw new ProtocolError('bad_request', err.message);
       throw new ProtocolError('bad_request', 'filter is not a valid JSON Schema');
     }
     const predicate = (body: unknown) => validate(body) === true;

@@ -312,6 +312,7 @@
     "qrcode.react": "^4.2.0",
     "query-string": "^9.5.1",
     "rand-seed": "^1.0.2",
+    "re2js": "2.9.1",
     "react": "^18.3.1",
     "react-blurhash": "^0.2.0",
     "react-chartjs-2": "^5.2.0",
