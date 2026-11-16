@@ -12,8 +12,7 @@ import type { PeriodMode } from '~/server/schema/base.schema';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-import { Tooltip } from '~/components/MantineOverlays';
+import { SearchSortLock } from '~/components/Search/SearchSortLock';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
@@ -44,18 +43,7 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
       )}
       {currentUser && <FollowedFilter type="models" variant="button" />}
       {query && features.modelFeedSearch ? (
-        // The search ranks by match; a feed sort would be a promise it can't keep.
-        <Tooltip label="Clear the search to sort the feed" withArrow>
-          <div>
-            <SelectMenuV2
-              label="Best match"
-              value="best-match"
-              options={[{ label: 'Best match', value: 'best-match' }]}
-              onClick={() => undefined}
-              disabled
-            />
-          </div>
-        </Tooltip>
+        <SearchSortLock />
       ) : (
         <SortFilter
           type="models"

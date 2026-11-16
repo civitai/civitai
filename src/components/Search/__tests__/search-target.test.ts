@@ -60,6 +60,14 @@ describe('the feed search flag on its own', () => {
     expect(feedSearchPathname(modelsOnly, 'articles')).toBeUndefined();
   });
 
+  it('searches the articles feed in place under its own flag, and only on /articles', () => {
+    const articlesOnly = { articleFeedSearch: true };
+    expect(searchesFeedInPlace(articlesOnly, 'articles', '/articles')).toBe(true);
+    expect(searchesFeedInPlace({ modelFeedSearch: true }, 'articles', '/articles')).toBe(false);
+    expect(searchesFeedInPlace(articlesOnly, 'articles', '/models')).toBe(false);
+    expect(feedSearchPathname(articlesOnly, 'articles')).toBe('/articles');
+  });
+
   it('sends /search/images to the feed under feedSearch, even without imageSearch', () => {
     expect(legacyImageSearchDestination(feedOnly)).toBe('images-feed');
     expect(legacyImageSearchDestination({ imageSearch: true, feedSearch: false })).toBeUndefined();
