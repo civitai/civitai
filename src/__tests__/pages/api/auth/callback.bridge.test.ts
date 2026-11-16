@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as CivCookie from '~/server/auth/civ-cookie';
 
 // The real bridge decides the outcome, the clears and the return path; only the session read, the session
 // cookie write and the hub are faked.
@@ -10,7 +11,7 @@ const h = vi.hoisted(() => {
 });
 vi.mock('~/server/auth/session-client', () => ({ getHubSession: h.getHubSession }));
 vi.mock('~/server/auth/civ-cookie', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/auth/civ-cookie')>()),
+  ...(await importOriginal<typeof CivCookie>()),
   setSessionCookie: vi.fn(),
   cookieDomainForHost: vi.fn(() => 'civitai.red'),
 }));
