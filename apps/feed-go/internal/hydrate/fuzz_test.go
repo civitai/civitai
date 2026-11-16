@@ -37,11 +37,22 @@ func FuzzUnpack(f *testing.F) {
 	f.Add([]byte{0x83, 0xa1, 'a', 0x01, 0xa1, 'u', 0xd4, 0x00, 0x00, 0xa1, 'f', 0xcb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0})
 	f.Add([]byte{0x81, 0x01, 0x92, 0xd4, 0x00, 0x00, 0xc0}) // {1: [undefined, nil]}
 	f.Fuzz(func(t *testing.T, raw []byte) {
+		// The ordered decode reads the same bytes: it never panics, and where both decode a map they
+		// hold the same keys (the ordered one in the JS order).
+		ov, oerr := UnpackOrdered(raw)
 		v, err := Unpack(raw)
 		if err != nil {
 			return
 		}
 		checkNormalized(t, v, raw)
+		m, isMap := v.(map[string]any)
+		o, isObj := ov.(superjson.Object)
+		if oerr == nil && isMap != isObj {
+			t.Fatalf("% x: Unpack map %v, UnpackOrdered object %v", raw, isMap, isObj)
+		}
+		if oerr == nil && isMap && len(m) != len(o) {
+			t.Fatalf("% x: %d keys, %d ordered", raw, len(m), len(o))
+		}
 	})
 }
 
