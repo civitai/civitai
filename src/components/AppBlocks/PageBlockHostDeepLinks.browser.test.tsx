@@ -13,7 +13,7 @@ import type * as TrpcModule from '~/utils/trpc';
  * `__tests__/deepLinkLogic.test.ts`; this file mounts the REAL `PageBlockHost` and drives
  * the REAL postMessage bridge.
  *
- *  1. BLOCK_INIT.context and ROUTE_CHANGED carry `search` and `hash` from `router.asPath`
+ *  1. BLOCK_INIT.context and ROUTE_CHANGED carry `search` and `hash` from `routerState.asPath`
  *     (host-owned `from` stripped).
  *  2. A router move — what Next does on popstate (back/forward) — delivers ROUTE_CHANGED,
  *     including a move that changes ONLY the search or the hash.
@@ -99,7 +99,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 
 type MutableRouter = { asPath: string; query: Record<string, unknown> };
-const router = Router as unknown as typeof Router & MutableRouter;
+const router = Router;
+// The same singleton, viewed as the mutable fields a test moves (what Next does on popstate).
+const routerState = Router as unknown as MutableRouter;
 const pushMock = () => router.push as unknown as ReturnType<typeof vi.fn>;
 const replaceMock = () => router.replace as unknown as ReturnType<typeof vi.fn>;
 const writeTextMock = () => navigator.clipboard.writeText as unknown as ReturnType<typeof vi.fn>;
@@ -177,8 +179,8 @@ async function driveToReady() {
 
 /** What Next's popstate handler does to the router before React re-renders. */
 function moveRouter(path: string[], asPath: string) {
-  router.query = { slug: SLUG, path };
-  router.asPath = asPath;
+  routerState.query = { slug: SLUG, path };
+  routerState.asPath = asPath;
   window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
 }
 
@@ -186,8 +188,8 @@ let savedAsPath: string;
 let savedQuery: Record<string, unknown>;
 
 beforeEach(() => {
-  savedAsPath = router.asPath;
-  savedQuery = router.query;
+  savedAsPath = routerState.asPath;
+  savedQuery = routerState.query;
   pushMock().mockClear();
   replaceMock().mockClear();
   writeTextMock().mockReset();
@@ -200,15 +202,15 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  router.asPath = savedAsPath;
-  router.query = savedQuery;
+  routerState.asPath = savedAsPath;
+  routerState.query = savedQuery;
   delete (navigator as unknown as Record<string, unknown>).userActivation;
 });
 
 describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
-  test('🔴 BLOCK_INIT.context carries search and hash from router.asPath, host `from` stripped', async () => {
-    router.query = { slug: SLUG, path: ['c', '42'] };
-    router.asPath = `/apps/run/${SLUG}/c/42?take=3&from=home#top`;
+  test('🔴 BLOCK_INIT.context carries search and hash from routerState.asPath, host `from` stripped', async () => {
+    routerState.query = { slug: SLUG, path: ['c', '42'] };
+    routerState.asPath = `/apps/run/${SLUG}/c/42?take=3&from=home#top`;
     await renderWithProviders(<PageBlockHost {...baseProps} />);
     await waitMounted();
     const posts = listenForHostPosts();
@@ -225,8 +227,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
   });
 
   test('BLOCK_INIT.context search and hash are empty strings on a bare route', async () => {
-    router.query = { slug: SLUG };
-    router.asPath = `/apps/run/${SLUG}`;
+    routerState.query = { slug: SLUG };
+    routerState.asPath = `/apps/run/${SLUG}`;
     await renderWithProviders(<PageBlockHost {...baseProps} />);
     await waitMounted();
     const posts = listenForHostPosts();
@@ -240,8 +242,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
   });
 
   test('🔴 a router move (Next on popstate: back/forward) delivers ROUTE_CHANGED with search and hash', async () => {
-    router.query = { slug: SLUG, path: ['c', '42'] };
-    router.asPath = `/apps/run/${SLUG}/c/42?take=3`;
+    routerState.query = { slug: SLUG, path: ['c', '42'] };
+    routerState.asPath = `/apps/run/${SLUG}/c/42?take=3`;
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
@@ -271,8 +273,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
   });
 
   test('🔴 a move that changes ONLY the search (same subPath) still delivers ROUTE_CHANGED', async () => {
-    router.query = { slug: SLUG, path: ['c', '42'] };
-    router.asPath = `/apps/run/${SLUG}/c/42?take=1`;
+    routerState.query = { slug: SLUG, path: ['c', '42'] };
+    routerState.asPath = `/apps/run/${SLUG}/c/42?take=1`;
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
@@ -290,8 +292,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
   });
 
   test('🔴 a hash-only move still delivers ROUTE_CHANGED', async () => {
-    router.query = { slug: SLUG, path: ['c', '42'] };
-    router.asPath = `/apps/run/${SLUG}/c/42`;
+    routerState.query = { slug: SLUG, path: ['c', '42'] };
+    routerState.asPath = `/apps/run/${SLUG}/c/42`;
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
@@ -339,8 +341,8 @@ describe('NAVIGATE history semantics', () => {
   });
 
   test('🔴 a navigate to the URL already showing creates no history entry', async () => {
-    router.query = { slug: SLUG, path: ['c', '42'] };
-    router.asPath = `/apps/run/${SLUG}/c/42?take=3`;
+    routerState.query = { slug: SLUG, path: ['c', '42'] };
+    routerState.asPath = `/apps/run/${SLUG}/c/42?take=3`;
     await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
