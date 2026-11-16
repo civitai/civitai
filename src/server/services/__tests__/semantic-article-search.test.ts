@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   fetched: [] as number[][],
   // The feed filters each hydration was asked for.
   fetchArgs: [] as Record<string, unknown>[],
+  follows: [] as number[],
   stripBenignPhrases: vi.fn(async (text: string) => text),
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
@@ -46,6 +47,8 @@ vi.mock('~/utils/metadata/audit', () => ({
 vi.mock('~/server/services/system-cache', () => ({
   getBrowsingSettingAddons: async () => h.addons,
 }));
+
+vi.mock('~/server/redis/caches', () => ({ getUserFollows: async () => h.follows }));
 
 // The feed's fetch path: every id it is asked for comes back, owned by `owner(id)`.
 const owner = (id: number) => (id >= 20 ? 7 : id);
@@ -123,6 +126,7 @@ beforeEach(() => {
   sent = [];
   h.fetched = [];
   h.fetchArgs = [];
+  h.follows = [];
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
@@ -227,7 +231,26 @@ describe("the articles feed's filters", () => {
     }
   });
 
+  it('narrows the index to the creators the viewer follows', async () => {
+    h.follows = [7, 8];
+    await feedSearch({ followed: true });
+    expect(sent[0].userIds).toEqual([7, 8]);
+  });
+
+  it('finds nothing in Followed for a viewer who follows no one, without asking the service', async () => {
+    expect((await feedSearch({ followed: true })).items).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('leaves a very long follow list to hydration rather than the index filter', async () => {
+    h.follows = Array.from({ length: 1001 }, (_, i) => i + 1);
+    await feedSearch({ followed: true });
+    expect(sent[0].userIds).toBeUndefined();
+    expect(h.fetchArgs[0]).toMatchObject({ followed: true });
+  });
+
   it("hydrates through the feed's views of the viewer's lists", async () => {
+    h.follows = [10];
     await feedSearch({ followed: true, favorites: true, hidden: true, collectionId: 9 });
     expect(h.fetchArgs[0]).toMatchObject({
       followed: true,

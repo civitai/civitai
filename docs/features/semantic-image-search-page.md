@@ -104,8 +104,10 @@ Other feeds search in place the same way, each behind its own flag (`FEED_SEARCH
 `semantic-model-search.md`) and articles (`articleFeedSearch`, Flipt `search-v3-articles`). Articles
 reuse `semanticArticleSearch.search`, which also takes the feed's tags, period (as a published-since
 bound), followed, bookmarks, hidden and collection; /search/articles redirects to /articles. Both
-share `FeedSearchSummary` and `SearchSortLock`, and read `?query=` only on their own page
-(`useFeedSearchText`), since other pages share the feed's filter params.
+share `FeedSearchSummary` and `SearchSortLock`. Articles read `?query=` only on their own page
+(`useFeedSearchQuery`), since other pages share the article filter params. Followed narrows the
+index to the viewer's follows (up to 1,000); bookmarks, hidden and collection apply at hydration
+only, so a narrow list can leave a page sparse.
 
 ## Feedback and logging
 

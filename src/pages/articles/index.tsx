@@ -2,7 +2,7 @@ import { Stack, Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
-import { useFeedSearchText } from '~/components/Search/useFeedSearchText';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
@@ -26,7 +26,9 @@ export const getServerSideProps = createServerSideProps({
 function ArticlesPage() {
   const { query } = useArticleQueryParams();
   const features = useFeatureFlags();
-  const searchText = useFeedSearchText(!!features.articleFeedSearch);
+  // Read here, not from the article params other pages share, so only this feed is searched.
+  const feedQuery = useFeedSearchQuery();
+  const searchText = features.articleFeedSearch ? feedQuery : undefined;
 
   return (
     <>

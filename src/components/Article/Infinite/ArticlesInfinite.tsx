@@ -20,7 +20,6 @@ import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export function ArticlesInfinite(props: Props) {
-  // Only the articles page, with articleFeedSearch and a query, pays for the query checks.
   return props.searchText ? <SearchableArticlesFeed {...props} /> : <ArticlesFeed {...props} />;
 }
 
@@ -53,7 +52,6 @@ function ArticlesFeed({
   ...props
 }: Props & { search?: ReturnType<typeof useSemanticArticleFeed> }) {
   const filters = useInfiniteArticleFilters(props);
-  // A search that fails falls back to the feed's title match with a banner, never an empty page.
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
   const feed = useQueryArticles(

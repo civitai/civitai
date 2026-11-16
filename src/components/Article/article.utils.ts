@@ -92,17 +92,14 @@ export const useQueryArticles = (
   };
 };
 
-/**
- * The articles feed answered by the semantic search: the feed's filters that the search takes, with
- * the query. Idle without a query.
- */
-export const useSemanticArticleFeed = (
+/** The articles feed's filters that the semantic search takes, with the query. */
+export function toSemanticArticleSearchInput(
   filters: Partial<GetInfiniteArticlesSchema>,
-  query: string | undefined
-) => {
-  const browsingLevel = useBrowsingLevelDebounced();
-  const input: Omit<SemanticArticleSearchInput, 'limit'> = {
-    query: query ?? '',
+  query: string,
+  browsingLevel: number
+): Omit<SemanticArticleSearchInput, 'limit'> {
+  return {
+    query,
     browsingLevel,
     tagIds: filters.tags,
     usernames: filters.username ? [filters.username] : undefined,
@@ -112,6 +109,18 @@ export const useSemanticArticleFeed = (
     hidden: filters.hidden,
     collectionId: filters.collectionId,
   };
+}
+
+/**
+ * The articles feed answered by the semantic search: the feed's filters that the search takes, with
+ * the query. Idle without a query.
+ */
+export const useSemanticArticleFeed = (
+  filters: Partial<GetInfiniteArticlesSchema>,
+  query: string | undefined
+) => {
+  const browsingLevel = useBrowsingLevelDebounced();
+  const input = toSemanticArticleSearchInput(filters, query ?? '', browsingLevel);
   const { data, ...rest } = trpc.semanticArticleSearch.search.useInfiniteQuery(input, {
     enabled: !!query,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
