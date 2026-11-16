@@ -601,11 +601,13 @@ describe('BlockGenerationSourceUploadModal — scanned rows', () => {
     mocks.gateMutate.mockReset();
   });
 
-  const scannedRows = (over: Partial<ScannedRowsPath> = {}) => ({
-    usesScannedRows: vi.fn(async () => true),
-    persist: vi.fn(async () => PERSISTED),
-    ...over,
-  });
+  const scannedRows = (over: Partial<ScannedRowsPath> = {}) => {
+    const usesScannedRows = vi.fn<ScannedRowsPath['usesScannedRows']>(async () => true);
+    const persist = vi.fn<ScannedRowsPath['persist']>(async () => PERSISTED);
+    if (over.usesScannedRows) usesScannedRows.mockImplementation(over.usesScannedRows);
+    if (over.persist) persist.mockImplementation(over.persist);
+    return { usesScannedRows, persist };
+  };
 
   test('🔴 flag ON: resolves the server copy of the uploaded blob, with imageId and ready', async () => {
     const path = scannedRows();
@@ -674,7 +676,9 @@ describe('BlockGenerationSourceUploadModal — scanned rows', () => {
 
   test('closing the modal while the copy is being made resolves nothing', async () => {
     let finish: (v: typeof PERSISTED) => void = () => undefined;
-    const path = scannedRows({ persist: vi.fn(() => new Promise((r) => (finish = r))) });
+    const path = scannedRows({
+      persist: () => new Promise<typeof PERSISTED>((r) => (finish = r)),
+    });
     const onResolved = vi.fn();
     openModal(onResolved, path);
     await userEvent.upload(await fileInputEl(), makeImageFile());

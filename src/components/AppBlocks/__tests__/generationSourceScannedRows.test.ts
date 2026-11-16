@@ -30,11 +30,11 @@ const PERSISTED = {
 };
 
 function path(over: Partial<ScannedRowsPath> = {}) {
-  return {
-    usesScannedRows: vi.fn(async () => true),
-    persist: vi.fn(async () => PERSISTED),
-    ...over,
-  };
+  const usesScannedRows = vi.fn<ScannedRowsPath['usesScannedRows']>(async () => true);
+  const persist = vi.fn<ScannedRowsPath['persist']>(async () => PERSISTED);
+  if (over.usesScannedRows) usesScannedRows.mockImplementation(over.usesScannedRows);
+  if (over.persist) persist.mockImplementation(over.persist);
+  return { usesScannedRows, persist };
 }
 
 describe('toGenerationSource', () => {

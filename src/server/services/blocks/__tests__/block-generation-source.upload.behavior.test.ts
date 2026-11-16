@@ -28,6 +28,8 @@ const holder = vi.hoisted(() => ({
   nextImageId: 7000,
   nextKey: 0,
   stored: [] as Buffer[],
+  /** The keys the store stand-in minted in this test, in order. */
+  minted: [] as string[],
   fetchBytes: null as Buffer | null,
   imageLocation: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA',
 }));
@@ -53,7 +55,9 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   uploadImageBufferToStore: vi.fn(async (bytes: Buffer) => {
     holder.stored.push(bytes);
     const n = String(holder.nextKey++).padStart(12, '0');
-    return { key: `00000000-0000-4000-9000-${n}`, backend: 'backblaze' };
+    const key = `00000000-0000-4000-9000-${n}`;
+    holder.minted.push(key);
+    return { key, backend: 'backblaze' };
   }),
 }));
 vi.mock('~/server/utils/image-blurhash', () => ({
@@ -213,6 +217,7 @@ beforeEach(async () => {
   await holder.db.exec(`TRUNCATE "Post", "Image", "TagsOnImageDetails";`);
   holder.scannedRows = true;
   holder.stored = [];
+  holder.minted = [];
   holder.imageLocation = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA';
   holder.fetchBytes = await png(640, 320);
   createImage
@@ -411,7 +416,8 @@ describe('🔴 the url restriction: only a consumer blob on a trusted orchestrat
 
 describe('🔴 the written row: the viewer’s own, private, at a fresh key', () => {
   it('is owned by the viewer, carries ONLY the private key and the upload ref, and has no post', async () => {
-    const out = await persistAfterScan();
+    // Pending on purpose: the row as written, before any scan touches it.
+    const { out } = await persistPending();
     expect(createImage).toHaveBeenCalledTimes(1);
     const args = createImage.mock.calls[0][0];
     expect(args.blockProvenance).toEqual({ key: 'blockGenerationSourceAppId', appId: APP });
@@ -434,7 +440,9 @@ describe('🔴 the written row: the viewer’s own, private, at a fresh key', ()
   it('stores the bytes under a FRESH key, never the url the caller sent', async () => {
     const out = await persistAfterScan();
     const row = await imageRow(out.imageId);
-    expect(row.url).toBe('00000000-0000-4000-9000-000000000000');
+    // The key the store minted for THIS write, and nothing the caller sent.
+    expect(holder.minted).toHaveLength(1);
+    expect(row.url).toBe(holder.minted[0]);
     expect(row.url).not.toContain(BLOB_ID);
     expect(holder.stored[0].equals(holder.fetchBytes!)).toBe(true);
   });
