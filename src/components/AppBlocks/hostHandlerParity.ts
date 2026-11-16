@@ -233,6 +233,21 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // A link to a view of the app: the page host builds the canonical
+  // `/apps/run/<slug>/<subPath>` URL from its own origin and slug, copies it or opens the
+  // share sheet, and replies with `{ url, copied, method }`. Ahead of the published SDK
+  // dist union. REQUEST-style ⇒ an unhandled one HANGS the block.
+  SHARE_LINK: {
+    request: true,
+    reply: 'SHARE_LINK_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    // N/A: a model slot has no route of its own (no `subPath`, no deep-link base), so
+    // there is no app URL to build for it.
+    IframeHost: 'model slot has no app route to link to (no deep-link base); page-only',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   TRACK_EVENT: {
     request: false,
     reply: '',

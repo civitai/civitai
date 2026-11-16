@@ -124,6 +124,14 @@ export interface PageContext extends SlotContext {
    *  slash. Empty string for the page root. Forwarded so the block can deep-link. */
   subPath: string;
   /**
+   * The query string below the app route, `''` or starting with `?`, from
+   * `router.asPath` with the host-owned `from` pair removed. `''` when longer than
+   * 2048 chars. Optional on the type because hosts before this field sent none.
+   */
+  search?: string;
+  /** The fragment, `''` or starting with `#`, same source and cap as `search`. */
+  hash?: string;
+  /**
    * @deprecated Same unconditional identity disclosure as
    * `BlockInitPayload.viewer.id`, through a SECOND, currently-UNPROJECTED
    * channel. `GET_VIEWER` / `blocks.getMyViewer` is the replacement.

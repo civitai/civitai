@@ -57,6 +57,14 @@ import {
   shouldEmitMidSessionLossBeacon,
   toHostGateStatus,
 } from './pageBlockHostLogic';
+import {
+  createShareLinkLimiter,
+  navigateWantsReplace,
+  performShareLink,
+  resolveBridgeLocation,
+  resolveShareLinkRequest,
+  SHARE_LINK_RATE_LIMITED_ERROR,
+} from './deepLinkLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
@@ -1464,6 +1472,18 @@ export function PageBlockHost({
     return '';
   }, [router.query.path]);
 
+  // The search and hash below the app route, forwarded so a block can deep-link into
+  // its own state (`?take=3`, `#top`). Read from `router.asPath` (the address bar),
+  // with the host-owned `from` pair stripped and each capped — see
+  // `resolveBridgeLocation`. Separate fields from `subPath`, so nothing here can move
+  // the slug or the path the block sees. Next re-renders on every route change,
+  // including a hash-only one (its `onlyAHashChange` branch still calls `set`), so a
+  // memo keyed on the string is enough.
+  const { search: routeSearch, hash: routeHash } = useMemo(
+    () => resolveBridgeLocation(router.asPath ?? ''),
+    [router.asPath]
+  );
+
   // 🔴 THIS CONTEXT IS NOT PROJECTED, AND THAT IS THE SECOND IDENTITY CHANNEL.
   // `IframeHost` runs its slot context through `projectBlockInitContext`, whose
   // allowlist DROPS `viewerUserId` / `viewerUsername`; this host emits them
@@ -1486,11 +1506,13 @@ export function PageBlockHost({
       entityType: 'none',
       slug,
       subPath,
+      search: routeSearch,
+      hash: routeHash,
       viewerUserId: viewer?.id ?? null,
       viewerUsername: viewer?.username ?? null,
       theme,
     }),
-    [slug, subPath, viewer, theme]
+    [slug, subPath, routeSearch, routeHash, viewer, theme]
   );
 
   const buildInitPayload = useCallback(
@@ -2413,6 +2435,22 @@ export function PageBlockHost({
         window.open(req.href, '_blank', 'noopener');
         return;
       }
+      // HISTORY: an app-scoped move is a REAL history entry (a shallow `push`), so the
+      // browser's back/forward walks the app's own views and Next's popstate handler
+      // moves `router.query`/`router.asPath`, which the ROUTE_CHANGED effect below
+      // forwards. Two exceptions, both app scope only:
+      //  - `replace: true` replaces the current entry (a state tweak such as which take
+      //    is showing should not need a back press per tweak);
+      //  - a move to the URL already showing pushes NOTHING, so a block re-asserting
+      //    its route cannot stack duplicate entries.
+      // Site scope keeps its old semantics: a non-shallow push off the app.
+      if (req.scope === 'app') {
+        if (req.href === router.asPath) return;
+        if (navigateWantsReplace(raw)) {
+          void router.replace(req.href, undefined, { shallow: true });
+          return;
+        }
+      }
       void router.push(req.href, undefined, req.shallow ? { shallow: true } : undefined);
     });
     return off;
@@ -2421,11 +2459,67 @@ export function PageBlockHost({
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
-  // subPath changes AFTER init.
+  // subPath, search or hash changes AFTER init — a search-only (`?take=2`) or
+  // hash-only move is a route change to a block that deep-links into its own state.
   useEffect(() => {
     if (!initSentRef.current || status !== 'ready') return;
-    send('ROUTE_CHANGED', { subPath });
-  }, [subPath, status, send]);
+    send('ROUTE_CHANGED', { subPath, search: routeSearch, hash: routeHash });
+  }, [subPath, routeSearch, routeHash, status, send]);
+
+  // ── SHARE_LINK → SHARE_LINK_RESULT ─────────────────────────────────────────
+  //
+  // The block asks for a link to a view of itself; the HOST builds the canonical
+  // absolute URL (its own origin + deep-link base + slug, the block supplying only
+  // subPath/search/hash — `resolveShareLinkRequest`), copies it or opens the share
+  // sheet, and replies with what really happened. REQUEST-style: every path replies
+  // once, except a payload with no requestId (nothing to reply to).
+  //
+  // 🔴 `performShareLink` IS CALLED SYNCHRONOUSLY IN THE HANDLER — no `await` before
+  // it. The clipboard and the share sheet need the transient user activation of the
+  // click inside the iframe; see the measurement on `performShareLink`.
+  const shareLimiterRef = useRef<ReturnType<typeof createShareLinkLimiter> | null>(null);
+  useEffect(() => {
+    const off = onMessage<unknown>('SHARE_LINK', (raw) => {
+      const decision = resolveShareLinkRequest(raw, {
+        base: BLOCK_HOST_DEEP_LINK_BASE[surface],
+        slug,
+        origin: window.location.origin,
+        ready: readGateStatus() === 'ready',
+        reviewMode,
+      });
+      if (decision.kind === 'drop') return;
+      if (decision.kind === 'refuse') {
+        send('SHARE_LINK_RESULT', { requestId: decision.requestId, error: decision.error });
+        return;
+      }
+      const limiter = (shareLimiterRef.current ??= createShareLinkLimiter());
+      if (!limiter.admit()) {
+        send('SHARE_LINK_RESULT', {
+          requestId: decision.requestId,
+          error: SHARE_LINK_RATE_LIMITED_ERROR,
+        });
+        return;
+      }
+      const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+      const activation = (nav as { userActivation?: { isActive?: boolean } } | undefined)
+        ?.userActivation;
+      void performShareLink(decision.url, {
+        userActivation: activation ? activation.isActive === true : null,
+        coarsePointer:
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia('(pointer: coarse)').matches,
+        clipboardWriteText: nav?.clipboard?.writeText
+          ? (text) => nav.clipboard.writeText(text)
+          : undefined,
+        share: typeof nav?.share === 'function' ? (data) => nav.share(data) : undefined,
+        canShare: typeof nav?.canShare === 'function' ? (data) => nav.canShare(data) : undefined,
+      }).then((result) => {
+        limiter.settle();
+        send('SHARE_LINK_RESULT', { requestId: decision.requestId, result });
+      });
+    });
+    return off;
+  }, [onMessage, send, readGateStatus, surface, slug, reviewMode]);
 
   // #5: page-visibility SUSPEND / RESUME — tell the block to pause work when its
   // tab is hidden and resume when shown (mirrors IframeHost). Only wired once the
