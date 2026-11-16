@@ -7,12 +7,13 @@ import { collectionDocument } from './document';
 const BLOCKED = 32;
 
 /**
- * Which collections get a point: the site's `collectionSemanticEligibleWhere`
- * (collection-visibility.sql.ts) as SQL. The site's collection-eligibility parity test runs both
+ * Which collections get a point: the site's `collectionSemanticEligibleText`
+ * (semantic-collection-eligibility.ts) as SQL. The site's collection-eligibility parity test runs both
  * against one database and fails when they keep different collections, so a change to either has
  * to change both. Level 0 is a collection whose level job has not run yet: it gets a point once it
  * is rated. Only accepted items count, so a contest collection of pending or rejected entries is
- * empty. No image id is stored: the site picks a servable cover at hydration.
+ * empty. No image id is stored, and item media is not checked here: site hydration owns every
+ * media check (servableCollectionCoverSql) and serves at the level-job nsfwLevel.
  */
 export const COLLECTION_ELIGIBLE_SQL = `c.read = 'Public' AND c.availability NOT IN ('Unsearchable', 'Private')
   AND c."userId" <> -1 AND c."nsfwLevel" <> 0 AND (c."nsfwLevel" & ${BLOCKED}) = 0

@@ -7,8 +7,8 @@ import { bountyDocument } from './document';
 const BLOCKED = 32;
 
 /**
- * Which bounties get a point: the site's `bountySemanticEligibleWhere`
- * (bounty-visibility.sql.ts) as SQL. The site's bounty-eligibility parity test runs both against
+ * Which bounties get a point: the site's `bountySemanticEligibleText`
+ * (semantic-bounty-eligibility.ts) as SQL. The site's bounty-eligibility parity test runs both against
  * one database and fails when they keep different bounties, so a change to either has to change
  * both. Open, expired and awarded depend on the clock, so the dates and flags they are computed
  * from are carried in the payload and filtered per query. Level 0 is a bounty whose level job has
