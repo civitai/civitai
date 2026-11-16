@@ -11,6 +11,7 @@ import { ensureVotePartitions, lockPlayerVoting } from '../queue/queue.service';
 import { judgesNeeded } from './items';
 import { importYesNo, type YesNoRow } from './import';
 import { castYesNoVote } from './vote';
+import { pickYesNo } from './feed';
 
 const NOW = new Date('2026-12-21T12:00:00Z');
 const GOLD = 100;
@@ -406,5 +407,90 @@ describe('one player at a time', () => {
       return Number(rows[0].n);
     });
     expect(held).toBe(1);
+  });
+});
+
+describe('escalation', () => {
+  // Cap = consensus size = 4, so a 2-2 split exhausts the stage.
+  async function setup(extraRows: YesNoRow[] = [], images = [10]) {
+    const ids = await seed([row('a'), row('z', { imageId: 20 }), ...extraRows], [20, ...images]);
+    await pg.query(
+      `UPDATE "KnightsQuestion" SET "votesToResolve" = 4, "maxVotes" = 4 WHERE key LIKE 'knights.yesno.%'`
+    );
+    return ids;
+  }
+  // A rank is staffed once one of its players has voted recently: they answer the warm-up question.
+  async function staff(ids: Record<string, number>, userId: number, rank: string) {
+    await seedPlayer(pg, userId, rank);
+    expect(await vote(userId, ids.z, 'yes')).toEqual({ status: 'recorded' });
+  }
+  const split = async (itemId: number, users: number[]) => {
+    for (const [i, user] of users.entries())
+      expect(await vote(user, itemId, i % 2 === 0 ? 'yes' : 'no')).toEqual({ status: 'recorded' });
+  };
+  const offer = (userId: number, rank: string) =>
+    pickYesNo(db, { userId, rank, secret: 's', share: 1, stretch: 10, force: true });
+
+  it('moves an exhausted Knight-stage question up to the Templars instead of closing it', async () => {
+    const ids = await setup();
+    await knights(5);
+    await staff(ids, 10, 'Templar');
+    await split(ids.a, [1, 2, 3, 4]);
+
+    const moved = await item(ids.a);
+    expect(moved).toMatchObject({ status: 'Open', minRank: 'Templar', reason: null });
+    expect(moved.escalatedAt).toEqual(NOW);
+    // Yes/no questions carry no stage deadline, at any stage.
+    expect(moved.expiresAt).toBeNull();
+    expect((await votes(ids.a)).every((v) => v.verdict === 'pending' && v.stage === 'Knight')).toBe(
+      true
+    );
+
+    // A Knight can no longer be served or answer it; a Templar can.
+    expect((await offer(5, 'Knight'))?.itemId).not.toBe(ids.a);
+    expect(await vote(5, ids.a, 'yes')).toEqual({ status: 'rejected', reason: 'not-eligible' });
+    expect((await offer(10, 'Templar'))?.itemId).toBe(ids.a);
+  });
+
+  it('decides at the Templar stage on Templar answers alone, and grades the Knight answers by the outcome', async () => {
+    const ids = await setup();
+    await knights(4);
+    for (const t of [10, 11, 12, 13]) await staff(ids, t, 'Templar');
+    await split(ids.a, [1, 2, 3, 4]);
+    expect(await item(ids.a)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+
+    for (const t of [10, 11, 12]) await vote(t, ids.a, 'no');
+    // Three Templar answers: the four Knight answers do not count toward this stage.
+    expect(await item(ids.a)).toMatchObject({ status: 'Open' });
+    await vote(13, ids.a, 'no');
+    expect(await item(ids.a)).toMatchObject({ status: 'Consensus', resolvedValue: 'no' });
+
+    const graded = await votes(ids.a);
+    const verdictOf = (id: number) => graded.find((v) => v.playerId === id)?.verdict;
+    expect([1, 2, 3, 4].map(verdictOf)).toEqual(['failed', 'correct', 'failed', 'correct']);
+    expect([10, 11, 12, 13].map(verdictOf)).toEqual(['correct', 'correct', 'correct', 'correct']);
+  });
+
+  it('closes as no-consensus when the last staffed stage is exhausted, and never hands it to the Inquisitors', async () => {
+    const ids = await setup();
+    for (const p of [30, 31, 32, 33]) await staff(ids, p, 'Paladin');
+    await pg.query(`UPDATE "KnightsQueueItem" SET "minRank" = 'Paladin' WHERE id = $1`, [ids.a]);
+    await split(ids.a, [30, 31, 32, 33]);
+    expect(await item(ids.a)).toMatchObject({
+      status: 'Closed',
+      reason: 'no-consensus',
+      minRank: 'Paladin',
+    });
+  });
+
+  it('closes as before when no rank above the Knights is staffed', async () => {
+    const ids = await setup();
+    await knights(4);
+    await split(ids.a, [1, 2, 3, 4]);
+    expect(await item(ids.a)).toMatchObject({
+      status: 'Closed',
+      reason: 'no-consensus',
+      minRank: 'Knight',
+    });
   });
 });

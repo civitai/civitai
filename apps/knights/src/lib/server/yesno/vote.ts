@@ -8,9 +8,11 @@ import {
   lockItemVoters,
   lockPlayerVoting,
   pacingGate,
+  staffedRanks,
   type QueueDeps,
   type RejectReason,
 } from '../queue/queue.service';
+import { nextStaffedRank } from '../queue/ranks';
 import { creditVote, insertVote } from '../queue/vote-record';
 import { consensusRule, decideYesNo } from './decide';
 import { playableItems } from './items';
@@ -105,10 +107,12 @@ export async function castYesNoVote(
           .where('id', '=', item.id)
           .execute();
       }
+      // Each stage decides on its own answers; earlier stages' answers wait for the outcome and are graded by it.
       const answers = await trx
         .selectFrom('KnightsVote')
         .select(['answer', 'weight'])
         .where('itemId', '=', item.id)
+        .where('stage', '=', item.minRank)
         .execute();
       const decision = decideYesNo(answers, consensusRule(item));
 
@@ -122,6 +126,20 @@ export async function castYesNoVote(
         gold: vote.gold,
       });
       if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: voted };
+
+      // A stage that runs out of answers without a majority hands the question to the next staffed rank, as a rating item does.
+      // The last stage gives it up: yes/no questions never go to the Inquisitors, and carry no stage deadline.
+      if (decision.kind === 'exhausted') {
+        const next = nextStaffedRank(item.minRank, await staffedRanks(trx, now));
+        if (next && next !== 'Inquisitor') {
+          await trx
+            .updateTable('KnightsQueueItem')
+            .set({ minRank: next, escalatedAt: utc(now), updatedAt: utc(now) })
+            .where('id', '=', item.id)
+            .execute();
+          return { result: { status: 'recorded' }, xp: voted };
+        }
+      }
 
       const settled = await closeYesNoItem(
         trx,
