@@ -1,0 +1,38 @@
+import { error } from '@sveltejs/kit';
+import { RETRACTED_MEDIA_MAX_BYTES } from '@civitai/shared/retracted-media';
+import type { RequestHandler } from './$types';
+import { canAccess } from '$lib/server/access';
+import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
+import { streamStoredMedia } from '$lib/server/held-media-stream';
+import { getRetractedMedia, recordRetractedView } from '$lib/server/retracted-media';
+
+const MAX_INT = 2_147_483_647;
+
+/**
+ * A blocked image or video for any moderator, from storage rather than the public CDN, for the image
+ * queues. The browser names an image id and nothing else: the key comes from this app's own read of
+ * the row, and only for an image `getRetractedMedia` allows this moderator. One with a CSAM or minor
+ * signal needs the CSAM page's grant; held media is `/api/held-media`'s.
+ */
+export const GET: RequestHandler = async ({ params, locals, request }) => {
+  if (!locals.user) error(403, 'Not signed in.');
+  const imageId = Number(params.imageId);
+  if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_INT) error(400, 'Bad image id.');
+  const moderatorId = locals.user.id;
+
+  const media = await getRetractedMedia(imageId, {
+    csamReview: canAccess(locals.user, HELD_MEDIA_PAGE),
+  });
+  if (!media) error(404, 'Not available here.');
+
+  return streamStoredMedia({
+    media,
+    imageId,
+    moderatorId,
+    sheet: false,
+    request,
+    audit: () => recordRetractedView(moderatorId, imageId),
+    auditEveryRange: true,
+    maxBytes: RETRACTED_MEDIA_MAX_BYTES,
+  });
+};

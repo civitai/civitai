@@ -1,0 +1,137 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/**
+ * `/api/retracted-media/[imageId]`: a blocked image from storage for a moderator. Eligibility is
+ * pinned against real SQL in `retracted-media-eligibility.pglite.test.ts`; this file mocks it.
+ */
+
+const KEY = '0b9f5a4e-1d2c-4e3f-8a7b-6c5d4e3f2a1b';
+
+const getRetractedMedia = vi.hoisted(() => vi.fn());
+const recordRetractedView = vi.hoisted(() => vi.fn(async () => {}));
+const getGetUrl = vi.hoisted(() =>
+  vi.fn(async (input: { key?: string }) => ({ url: `https://store.test/signed/${input.key}` }))
+);
+const grants = vi.hoisted(() => ({ paths: new Set<string>() }));
+
+vi.mock('$lib/server/access', () => ({
+  canAccess: (_user: unknown, path: string) => grants.paths.has(path),
+}));
+vi.mock('$lib/server/retracted-media', () => ({ getRetractedMedia, recordRetractedView }));
+vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
+vi.mock('$lib/server/held-media', () => ({
+  HELD_MEDIA_PAGE: '/images/csam',
+  recordHeldServe: () => undefined,
+}));
+vi.mock('$lib/server/held-sheet', () => ({ SHEET_IMAGE_TYPES: new Set(['image/jpeg']) }));
+
+const { GET } = await import('../../../routes/api/retracted-media/[imageId]/+server');
+
+const fetchMock = vi.fn();
+
+async function call({
+  user = { id: 42 } as { id: number } | null,
+  imageId = '7',
+  headers = {} as Record<string, string>,
+} = {}): Promise<{ status: number; res?: Response }> {
+  const url = new URL(`http://mod.test/api/retracted-media/${imageId}`);
+  try {
+    const res = await GET({
+      params: { imageId },
+      url,
+      request: new Request(url, { headers }),
+      locals: { user, grants: {} },
+    } as never);
+    return { status: res.status, res };
+  } catch (e) {
+    return { status: (e as { status?: number }).status ?? 500 };
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  grants.paths = new Set();
+  getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, tier: 'plain' });
+  recordRetractedView.mockResolvedValue(undefined);
+  fetchMock.mockImplementation(
+    async () =>
+      new Response('bytes', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': '5' },
+      })
+  );
+  vi.stubGlobal('fetch', fetchMock);
+});
+afterEach(() => vi.unstubAllGlobals());
+
+describe('/api/retracted-media', () => {
+  it('refuses a request with no moderator behind it, before reading the image', async () => {
+    expect((await call({ user: null })).status).toBe(403);
+    expect(getRetractedMedia).not.toHaveBeenCalled();
+  });
+
+  it('refuses a bad id', async () => {
+    expect((await call({ imageId: 'x' })).status).toBe(400);
+    expect((await call({ imageId: String(2 ** 31) })).status).toBe(400);
+    expect(getRetractedMedia).not.toHaveBeenCalled();
+  });
+
+  it('asks for the CSAM-review tier only with the CSAM page grant', async () => {
+    await call();
+    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: false });
+    grants.paths = new Set(['/images/csam']);
+    await call();
+    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: true });
+  });
+
+  it('refuses an image it may not serve, and never touches storage', async () => {
+    getRetractedMedia.mockResolvedValue(null);
+    expect((await call()).status).toBe(404);
+    expect(getGetUrl).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('streams the stored file, keyed by the row, no-store, after its audit row', async () => {
+    const { status, res } = await call();
+    expect(status).toBe(200);
+    expect(await res!.text()).toBe('bytes');
+    expect(res!.headers.get('cache-control')).toBe('private, no-store');
+    expect(getGetUrl).toHaveBeenCalledWith(expect.objectContaining({ key: KEY, expiresIn: 60 }));
+    expect(recordRetractedView).toHaveBeenCalledWith(42, 7);
+  });
+
+  it('audits a mid-file range too', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('ytes', {
+        status: 206,
+        headers: {
+          'content-type': 'image/jpeg',
+          'content-length': '4',
+          'content-range': 'bytes 1-4/5',
+        },
+      })
+    );
+    expect((await call({ headers: { range: 'bytes=1-4' } })).status).toBe(206);
+    expect(recordRetractedView).toHaveBeenCalledWith(42, 7);
+  });
+
+  it('sends nothing when the audit row cannot be written', async () => {
+    recordRetractedView.mockRejectedValue(new Error('down'));
+    expect((await call()).status).toBe(503);
+  });
+
+  it('refuses an object over the size cap, and one with no declared length', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('x', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': String(300 * 1024 * 1024) },
+      })
+    );
+    expect((await call()).status).toBe(413);
+    fetchMock.mockResolvedValue(
+      new Response('x', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    );
+    expect((await call()).status).toBe(413);
+    expect(recordRetractedView).not.toHaveBeenCalled();
+  });
+});
