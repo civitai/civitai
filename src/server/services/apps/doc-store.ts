@@ -109,7 +109,10 @@ import type {
   DocCollection,
   DocIndexType,
   DocListQuery,
+  DocLevelGate,
   DocListResult,
+  DocRating,
+  DocRatingStatus,
   DocRecord,
   DocStoreContext,
   DocStoreLimits,
@@ -474,15 +477,46 @@ function indexRowsFor(coll: DocCollection, data: Record<string, unknown>): Index
 const SQL_ROLE_PRIVILEGES = `SELECT r.rolname, r.rolsuper, r.rolbypassrls
   FROM pg_roles r WHERE r.rolname = current_user`;
 
-/** Document columns plus its tallies and the viewer's own marks. `viewerParam` is a placeholder. */
-function docColumns(viewerParam: string): string {
+/**
+ * Document columns plus its tallies and the viewer's own marks. `viewerParam` is a placeholder.
+ * With `rating` (content levels on, `DocStoreContext.levels`), also the document's effective level
+ * and rating status; without it the text is exactly what it was before levels existed.
+ */
+function docColumns(viewerParam: string, rating = false): string {
   return `d.key, d.data, d.version, d.created_at, d.updated_at, d.author_uid, d.author_kind,
     (SELECT jsonb_object_agg(t.kind || ':' || t.name, t.count) FROM appdata.doc_tally t
       WHERE t.app_id = $1 AND t.ns = $2 AND t.coll = d.coll AND t.key = d.key AND d.scope_uid = 0) AS tallies,
     (SELECT array_agg(vm.name ORDER BY vm.name) FROM appdata.doc_mark vm
       WHERE vm.app_id = $1 AND vm.ns = $2 AND vm.coll = d.coll AND vm.key = d.key
-        AND vm.user_id = ${viewerParam} AND d.scope_uid = 0) AS viewer_marks`;
+        AND vm.user_id = ${viewerParam} AND d.scope_uid = 0) AS viewer_marks${
+    rating ? RATING_COLUMNS : ''
+  }`;
 }
+
+/**
+ * A document's CURRENT level: the moderator's override when it was given for the document's
+ * current `version`, else the rated level when it was rated at that version, else NULL. A rating
+ * or override for an older version does not count: every rewrite of the body bumps `version` (a
+ * put, a schema migration), so a rating never outlives the content it rated, whoever rewrote it
+ * and whether or not levels were on at the time.
+ */
+const CURRENT_LEVEL = `CASE
+      WHEN d.override_level IS NOT NULL AND d.override_version = d.version THEN d.override_level
+      WHEN d.level IS NOT NULL AND d.rated_version = d.version THEN d.level
+    END`;
+/** Rated (or overridden) for the current version. Never NULL. */
+const RATED_NOW = `(COALESCE(d.rating_status IN ('rated', 'overridden'), false)
+    AND ${CURRENT_LEVEL} IS NOT NULL)`;
+
+/**
+ * The rating a reader is shown: the current level and the status. A rating for an older version
+ * reads as `pending` with no level; a document never rated reads as NULL.
+ */
+const RATING_COLUMNS = `,
+    CASE WHEN ${RATED_NOW} THEN ${CURRENT_LEVEL} END AS rating_level,
+    CASE WHEN ${RATED_NOW} THEN d.rating_status
+      WHEN d.rating_status IS NULL THEN NULL
+      ELSE 'pending' END AS rating_status`;
 
 /**
  * Transaction-local cap on waiting for ANY lock in a store transaction. The case
@@ -503,11 +537,51 @@ const LOCK_TIMEOUT = '3s';
  */
 const VISIBLE = `d.hidden_at IS NULL`;
 
+/**
+ * 🔴 THE content-level predicate: whether document `d` may be returned to the viewer `viewer` whose
+ * own browsing level is `level`, on a token whose domain ceiling is `domain` (SQL placeholders;
+ * `NULL::int` as `viewer` for a read with no viewer, which then never takes the author arm).
+ * Used ONLY while content levels are on (`DocStoreContext.levels`); every statement that returns
+ * shared documents to a reader has a levels twin that ANDs this next to `VISIBLE`, and
+ * `doc-store.levels-ledger.test.ts` fails when a statement that reads documents is added outside
+ * that ledger. ONE definition; never restate it at a call site.
+ *
+ * Visible when any of:
+ * - the document is private (`scope_uid <> 0`): only its owner's key space ever reads it;
+ * - it is a counter document: created empty by an increment, it holds no `data` to rate;
+ * - the viewer is its user author and it is not rated for its current version (never rated,
+ *   `pending`, or rated for an older version): an author always sees what they wrote until it is
+ *   rated;
+ * - it is rated for its current version (`CURRENT_LEVEL`: the override given for this version,
+ *   else the rating given for it) and that level shares a bit with the CAP (the site's bitwise
+ *   browsing-level test). The cap is the domain ceiling for the document's own author
+ *   (their own R document shows on a red-capable host, not on the SFW one, whatever their own
+ *   setting), and the viewer's level for everyone else. A NULL level shares nothing.
+ * So an unrated, `pending` or stale-rated document is hidden from everyone but its author, and a
+ * `Blocked` (32) one from everyone, its author included, since no browsing level includes it.
+ *
+ * COALESCE(…, false): never NULL, so `NOT` of it (the feed's `hidden`) is never NULL either.
+ */
+export function sharedDocLevelVisible(viewer: string, level: string, domain: string): string {
+  const isAuthor = `(d.author_kind = 'user' AND d.author_uid = ${viewer})`;
+  return `COALESCE(d.scope_uid <> 0 OR d.author_kind = 'counter'
+    OR (${isAuthor} AND NOT ${RATED_NOW})
+    OR (${RATED_NOW}
+      AND (${CURRENT_LEVEL}
+        & CASE WHEN ${isAuthor} THEN ${domain} ELSE ${level} END) <> 0), false)`;
+}
+
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 viewer, $6 keys
 const SQL_GET_MANY = `SELECT ${docColumns('$5::int')}
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
     AND d.key = ANY($6::text[]) AND ${VISIBLE}`;
+// Its levels twin. $7 the viewer's level, $8 the token's domain ceiling.
+const SQL_GET_MANY_LEVELS = `SELECT ${docColumns('$5::int', true)}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
+    AND d.key = ANY($6::text[]) AND ${VISIBLE}
+    AND ${sharedDocLevelVisible('$5::int', '$7::int', '$8::int')}`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key
 const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_bytes,
@@ -534,6 +608,12 @@ const SQL_INSERT_COUNTER_DOC = `INSERT INTO appdata.doc AS d
   VALUES ($1, $2, $3, 0, $4, '{}'::jsonb, 1, 0, $5::int, 'counter', $5::int)
   ON CONFLICT DO NOTHING
   RETURNING d.size_bytes`;
+
+// A shared write while levels are on: the document must be rated again before anyone but its
+// author reads it. The level is cleared; a moderator's override, and when it was last rated, are
+// kept. $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATING_PENDING = `UPDATE appdata.doc d SET rating_status = 'pending', level = NULL
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 writer uid
 const SQL_UPDATE_DOC = `UPDATE appdata.doc d
@@ -600,6 +680,13 @@ const SQL_STAMP_SEQ = `UPDATE appdata.doc d SET seq = $6::bigint
 const SQL_STAMP_SEQ_MAJOR = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
   RETURNING ${docColumns('$7::int')}`;
+// The two above, returning the rating too (levels on). The writer's own document: no gate.
+const SQL_STAMP_SEQ_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  RETURNING ${docColumns('$7::int', true)}`;
+const SQL_STAMP_SEQ_MAJOR_LEVELS = `UPDATE appdata.doc d SET seq = $6::bigint, schema_major = $8::int
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  RETURNING ${docColumns('$7::int', true)}`;
 // Whether `appdata.doc.schema_major` exists: fails with undefined_column (42703) until the manual
 // migration is applied. Reads no row. Run under a savepoint, so that failure leaves the write's
 // transaction usable. $1 app, $2 ns
@@ -633,6 +720,17 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
     AND d.key = $4
   ORDER BY d.coll
   LIMIT 2`;
+// Its levels twin: the same `hidden` (a moderator hide only: the lookup stays level-blind, so
+// spend attribution never reads a level), plus the rating, which App Store publishing decides on
+// (`app-sub-listing.service.ts`: an unrated item is refused, a rated one's card inherits its level).
+const SQL_LOOKUP_SHARED_KEY_LEVELS = `SELECT d.coll,
+    CASE WHEN d.author_kind = 'user' THEN d.author_uid END AS author_uid,
+    d.hidden_at IS NOT NULL AS hidden${RATING_COLUMNS}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = ANY($3::text[]) AND d.scope_uid = 0
+    AND d.key = $4
+  ORDER BY d.coll
+  LIMIT 2`;
 
 // REGISTRY FEED (`createDocStoreFeed`): the SHARED documents (`scope_uid = 0`) of one collection
 // of one app namespace, read by seq range, read only. Private documents are never selected: the
@@ -642,6 +740,19 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
 const SQL_FEED_HEAD = `SELECT u.last_seq FROM appdata.usage_app u WHERE u.app_id = $1 AND u.ns = $2`;
 // $1 app, $2 ns, $3 coll, $4 after seq (exclusive), $5 up to seq (inclusive), $6 limit
 const SQL_FEED_DOCS_SINCE = `SELECT d.key, d.data, d.version, d.seq, d.hidden_at IS NOT NULL AS hidden
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.seq > $4::bigint AND d.seq <= $5::bigint
+  ORDER BY d.seq
+  LIMIT $6::int`;
+// Its levels twin: a document the gate leaves out for the audience's level reads as hidden (a
+// delete in the stream). $7 the audience's level.
+const SQL_FEED_DOCS_SINCE_LEVELS = `SELECT d.key, d.data, d.version, d.seq,
+    (d.hidden_at IS NOT NULL OR NOT ${sharedDocLevelVisible(
+      'NULL::int',
+      '$7::int',
+      '$7::int'
+    )}) AS hidden
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.seq > $4::bigint AND d.seq <= $5::bigint
@@ -658,6 +769,13 @@ const SQL_FEED_TOMBS_SINCE = `SELECT tb.key, tb.seq FROM appdata.doc_tomb tb
 const SQL_FEED_DOCS_ALL = `SELECT d.key, d.data, d.version, d.seq FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND d.key > $4::text
+  ORDER BY d.key
+  LIMIT $6::int`;
+// Its levels twin. $7 the audience's level.
+const SQL_FEED_DOCS_ALL_LEVELS = `SELECT d.key, d.data, d.version, d.seq FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND d.key > $4::text
+    AND ${sharedDocLevelVisible('NULL::int', '$7::int', '$7::int')}
   ORDER BY d.key
   LIMIT $6::int`;
 // $1 app, $2 ns, $3 coll, $4 key
@@ -1040,7 +1158,25 @@ function toDocRecord(
       ctx.viewerUid === null
         ? null
         : { marks: ((row.viewer_marks as string[] | null) ?? []).slice() },
+    ...(ctx.levels ? { rating: toDocRating(row) } : {}),
   };
+}
+
+const RATING_STATUSES: ReadonlySet<string> = new Set<DocRatingStatus>([
+  'pending',
+  'rated',
+  'overridden',
+]);
+
+/** The rating columns (`RATING_COLUMNS`) as a reader sees them. */
+function toDocRating(row: Record<string, unknown>): DocRating {
+  const level =
+    row.rating_level === null || row.rating_level === undefined ? null : Number(row.rating_level);
+  const status =
+    typeof row.rating_status === 'string' && RATING_STATUSES.has(row.rating_status)
+      ? (row.rating_status as DocRatingStatus)
+      : null;
+  return { level, status };
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,7 +1441,10 @@ export type SharedKeyMatch = {
   collection: string;
   /** Null for a document no user authored (an `app` or `counter` document). */
   authorUid: number | null;
+  /** A moderator hide. Never a level: the lookup is level-blind. */
   hidden: boolean;
+  /** Asked for (`{ rating: true }`, content levels on) only. */
+  rating?: DocRating;
 };
 
 function buildDocStore(deps: DocStoreDeps) {
@@ -1359,10 +1498,13 @@ function buildDocStore(deps: DocStoreDeps) {
   ): Promise<DocStoreQueryResult> {
     const base = [ctx.appId, ctx.ns, coll.name, scope, key, seq, viewer];
     if (coll.schemaMajor === undefined || !(await hasSchemaMajorColumn(c, ctx))) {
-      return c.query(SQL_STAMP_SEQ, base);
+      return c.query(ctx.levels ? SQL_STAMP_SEQ_LEVELS : SQL_STAMP_SEQ, base);
     }
     try {
-      return await c.query(SQL_STAMP_SEQ_MAJOR, [...base, coll.schemaMajor]);
+      return await c.query(ctx.levels ? SQL_STAMP_SEQ_MAJOR_LEVELS : SQL_STAMP_SEQ_MAJOR, [
+        ...base,
+        coll.schemaMajor,
+      ]);
     } catch (err) {
       // The column was dropped after it was found (a rollback of the migration): look again on
       // the next write. This write fails; the next one writes without the stamp.
@@ -1677,6 +1819,7 @@ function buildDocStore(deps: DocStoreDeps) {
           }
           assertMayModify(ctx, coll, existing);
           const res = await c.query(SQL_UPDATE_DOC, [...base, json, viewer]);
+          await markRatingPending(c, ctx, coll, key);
           const delta = Number(res.rows[0].size_bytes) - Number(existing.size_bytes);
           return finishWrite(c, ctx, coll, scope, key, indexRows, {
             app: appDelta(scope, { bytes: delta, docs: 0 }),
@@ -1689,6 +1832,7 @@ function buildDocStore(deps: DocStoreDeps) {
         }
         const ins = await c.query(SQL_INSERT_DOC, [...base, json, viewer]);
         if (ins.rows.length === 0) continue; // lost the race; re-read
+        await markRatingPending(c, ctx, coll, key);
         const size = Number(ins.rows[0].size_bytes);
         return finishWrite(c, ctx, coll, scope, key, indexRows, {
           app: appDelta(scope, { bytes: size, docs: 1 }),
@@ -1699,6 +1843,20 @@ function buildDocStore(deps: DocStoreDeps) {
         currentVersion: null,
       });
     });
+  }
+
+  /**
+   * While levels are on, a shared document whose body this transaction just wrote waits to be
+   * rated again (`SQL_RATING_PENDING`). Off, or a private collection, it sends nothing.
+   */
+  async function markRatingPending(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string
+  ): Promise<void> {
+    if (!ctx.levels || coll.config.visibility !== 'shared') return;
+    await c.query(SQL_RATING_PENDING, [ctx.appId, ctx.ns, coll.name, key]);
   }
 
   async function finishWrite(
@@ -1741,18 +1899,17 @@ function buildDocStore(deps: DocStoreDeps) {
     keys.forEach(assertKey);
     if (keys.length === 0) return [];
     const scope = scopeUid(ctx, coll);
+    const params = [ctx.appId, ctx.ns, coll.name, scope, ctx.viewerUid, [...new Set(keys)]];
     const rows = await withTx(
       ctx,
       async (c) =>
-        (
-          await c.query(SQL_GET_MANY, [
-            ctx.appId,
-            ctx.ns,
-            coll.name,
-            scope,
-            ctx.viewerUid,
-            [...new Set(keys)],
-          ])
+        (ctx.levels
+          ? await c.query(SQL_GET_MANY_LEVELS, [
+              ...params,
+              ctx.levels.viewerLevel,
+              ctx.levels.domainLevel ?? ctx.levels.viewerLevel,
+            ])
+          : await c.query(SQL_GET_MANY, params)
         ).rows
     );
     const byKey = new Map(rows.map((r) => [r.key as string, toDocRecord(r, ctx, coll)]));
@@ -1987,6 +2144,16 @@ function buildDocStore(deps: DocStoreDeps) {
     const viewerParam = `${p(ctx.viewerUid)}::int`;
     const joins: string[] = [];
     const conds: string[] = [];
+    // The levels gate, next to `VISIBLE` (in `listBase`).
+    if (ctx.levels) {
+      conds.push(
+        sharedDocLevelVisible(
+          viewerParam,
+          `${p(ctx.levels.viewerLevel)}::int`,
+          `${p(ctx.levels.domainLevel ?? ctx.levels.viewerLevel)}::int`
+        )
+      );
+    }
 
     const where = Object.entries(q.where ?? {});
     if (where.length > B.equalityFilters) {
@@ -2075,7 +2242,7 @@ function buildDocStore(deps: DocStoreDeps) {
     const dir = sort.desc ? 'DESC' : 'ASC';
     const orderBy = sortExpr ? `${sortExpr} ${dir}, ${keyExpr} ${dir}` : `d.key ${dir}`;
     const sql = [
-      `SELECT ${docColumns(viewerParam)}, ${sortValueExpr} AS sort_value`,
+      `SELECT ${docColumns(viewerParam, ctx.levels !== undefined)}, ${sortValueExpr} AS sort_value`,
       listBase(joins.join('\n')),
       ...conds.map((cnd) => `AND ${cnd}`),
       `ORDER BY ${orderBy}`,
@@ -2660,19 +2827,26 @@ function buildDocStore(deps: DocStoreDeps) {
   async function findSharedByKey(
     appId: string,
     collections: readonly string[],
-    key: string
+    key: string,
+    opts: { rating?: boolean } = {}
   ): Promise<SharedKeyMatch[]> {
     const names = collections.filter((n) => B.collectionName.test(n));
     if (names.length === 0 || !B.key.test(key) || DOT_ONLY_KEY.test(key)) return [];
     const ctx: DocStoreContext = { appId, ns: PUBLISHED_NS, viewerUid: null };
+    const params = [ctx.appId, ctx.ns, names, key];
     const rows = await withTx(
       ctx,
-      async (c) => (await c.query(SQL_LOOKUP_SHARED_KEY, [ctx.appId, ctx.ns, names, key])).rows
+      async (c) =>
+        (opts.rating
+          ? await c.query(SQL_LOOKUP_SHARED_KEY_LEVELS, params)
+          : await c.query(SQL_LOOKUP_SHARED_KEY, params)
+        ).rows
     );
     return rows.map((r) => ({
       collection: r.coll as string,
       authorUid: r.author_uid === null || r.author_uid === undefined ? null : Number(r.author_uid),
       hidden: r.hidden === true,
+      ...(opts.rating ? { rating: toDocRating(r) } : {}),
     }));
   }
 
@@ -2715,12 +2889,17 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: string,
     after: number,
     upTo: number,
-    limit: number
+    limit: number,
+    levels?: DocLevelGate
   ): Promise<FeedChangesPage> {
     const ctx = feedCtx(appId, coll);
     const params = [ctx.appId, ctx.ns, coll, feedSeq(after), feedSeq(upTo), feedLimit(limit)];
     return withTx(ctx, async (c) => {
-      const docs = (await c.query(SQL_FEED_DOCS_SINCE, params)).rows;
+      const docs = (
+        levels
+          ? await c.query(SQL_FEED_DOCS_SINCE_LEVELS, [...params, levels.viewerLevel])
+          : await c.query(SQL_FEED_DOCS_SINCE, params)
+      ).rows;
       const tombs = (await c.query(SQL_FEED_TOMBS_SINCE, params)).rows;
       return {
         docs: docs.map((r) => ({
@@ -2741,22 +2920,18 @@ function buildDocStore(deps: DocStoreDeps) {
     coll: string,
     afterKey: string,
     upTo: number,
-    limit: number
+    limit: number,
+    levels?: DocLevelGate
   ): Promise<FeedDocument[]> {
     const ctx = feedCtx(appId, coll);
     if (afterKey !== '' && !B.key.test(afterKey)) throw invalid('feed: malformed key');
+    const params = [ctx.appId, ctx.ns, coll, afterKey, feedSeq(upTo), feedLimit(limit)];
     const rows = await withTx(
       ctx,
       async (c) =>
-        (
-          await c.query(SQL_FEED_DOCS_ALL, [
-            ctx.appId,
-            ctx.ns,
-            coll,
-            afterKey,
-            feedSeq(upTo),
-            feedLimit(limit),
-          ])
+        (levels
+          ? await c.query(SQL_FEED_DOCS_ALL_LEVELS, [...params, levels.viewerLevel])
+          : await c.query(SQL_FEED_DOCS_ALL, params)
         ).rows
     );
     return rows.map((r) => ({
