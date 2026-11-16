@@ -2,6 +2,7 @@ import { sql } from '@civitai/db/kysely';
 import { env } from '$env/dynamic/private';
 import { RETRACTED_SERVED_ACTIVITY } from '@civitai/shared/retracted-media';
 import {
+  createScannerVerdictCache,
   retractedImageWhereSql,
   retractedSuspectSql,
   retractedTier,
@@ -14,6 +15,8 @@ import { readScannerVerdict } from './review-batch';
 
 /** No scanner verdict for the image: the route tells the moderator it needs CSAM-queue access. */
 export const NEEDS_CSAM_QUEUE = 'needs-csam-queue';
+
+export const scannerVerdicts = createScannerVerdictCache(readScannerVerdict);
 
 export type RetractedMedia = {
   url: string;
@@ -44,7 +47,7 @@ export async function getRetractedMedia(
   if (!csamReview) {
     if (tier === 'suspect') return null;
     // Refused when the scanner marks it, has no verdict for it, or cannot be read.
-    const verdict = await readScannerVerdict(imageId);
+    const verdict = await scannerVerdicts.read(imageId);
     if (verdict === 'none') return NEEDS_CSAM_QUEUE;
     if (verdict !== 'clear') return null;
   }

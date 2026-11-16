@@ -133,6 +133,7 @@ beforeAll(async () => {
 beforeEach(() => {
   patterns.current = null;
   scanner.verdict = 'clear';
+  scannerVerdicts.clear();
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
@@ -142,7 +143,9 @@ beforeEach(() => {
   }) as never);
 });
 
-const { getRetractedMedia } = await import('~/server/services/retracted-media.service');
+const { getRetractedMedia, scannerVerdicts } = await import(
+  '~/server/services/retracted-media.service'
+);
 
 /** Who sees the image: `none` (refused to every moderator), `plain` (any moderator) or `suspect`
  *  (only a moderator cleared for CSAM review). */
@@ -175,6 +178,7 @@ describe('getRetractedMedia', () => {
   it('keeps an image the scanner marks, or cannot read, to cleared moderators', async () => {
     for (const verdict of ['hit', null] as const) {
       scanner.verdict = verdict;
+      scannerVerdicts.clear();
       await expectTiers('suspect', [1]);
       expect(await getRetractedMedia(1, { csamReview: false })).toBeNull();
     }

@@ -1,7 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
@@ -30,7 +30,10 @@ vi.mock('../mod-activity', () => ({ insertModActivity }));
 const scanner = vi.hoisted(() => ({ verdict: 'clear' as 'hit' | 'clear' | 'none' | null }));
 vi.mock('../review-batch', () => ({ readScannerVerdict: async () => scanner.verdict }));
 
-const { getRetractedMedia, recordRetractedView } = await import('../retracted-media');
+const { getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
+  '../retracted-media'
+);
+beforeEach(() => scannerVerdicts.clear());
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -84,6 +87,7 @@ describe('retracted media eligibility', () => {
   it('keeps an image the scanner marks, or cannot read, to moderators cleared for CSAM review', async () => {
     for (const verdict of ['hit', null] as const) {
       scanner.verdict = verdict;
+      scannerVerdicts.clear();
       expect(await tierOf(1)).toBe('suspect');
     }
     scanner.verdict = 'clear';

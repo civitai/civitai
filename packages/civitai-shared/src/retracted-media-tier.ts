@@ -41,3 +41,31 @@ export function retractedTier(
 ): RetractedTier {
   return row.suspect || blockedForSignal(row.blockedFor, patterns) ? 'suspect' : 'plain';
 }
+
+export type ScannerVerdict = 'hit' | 'clear' | 'none';
+
+/**
+ * A process-local cache of scanner verdicts, so a page of tiles, or a video's range requests, does
+ * not query ClickHouse once per request. A blocked image's labels are written by its scan, which has
+ * finished, so a verdict held for `ttlMs` is not expected to go stale. An unreadable answer (null) is
+ * never cached: the next request asks again.
+ */
+export function createScannerVerdictCache(
+  read: (imageId: number) => Promise<ScannerVerdict | null>,
+  { ttlMs = 5 * 60_000, max = 10_000, now = () => Date.now() } = {}
+) {
+  const entries = new Map<number, { verdict: ScannerVerdict; at: number }>();
+  return {
+    async read(imageId: number): Promise<ScannerVerdict | null> {
+      const hit = entries.get(imageId);
+      if (hit && now() - hit.at < ttlMs) return hit.verdict;
+      entries.delete(imageId);
+      const verdict = await read(imageId);
+      if (verdict === null) return null;
+      if (entries.size >= max) entries.delete(entries.keys().next().value as number);
+      entries.set(imageId, { verdict, at: now() });
+      return verdict;
+    },
+    clear: () => entries.clear(),
+  };
+}

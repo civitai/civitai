@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import {
+  createScannerVerdictCache,
   retractedImageWhereSql,
   retractedSuspectSql,
   retractedTier,
@@ -10,6 +11,8 @@ import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
 import { readScannerVerdict } from '~/server/services/review-batch/review-batch.service';
 
 export const NEEDS_CSAM_QUEUE = 'needs-csam-queue';
+
+export const scannerVerdicts = createScannerVerdictCache(readScannerVerdict);
 
 export type RetractedMedia = {
   url: string;
@@ -43,7 +46,7 @@ export async function getRetractedMedia(
   const tier = retractedTier(row, blockedForPatterns());
   if (!csamReview) {
     if (tier === 'suspect') return null;
-    const verdict = await readScannerVerdict(imageId);
+    const verdict = await scannerVerdicts.read(imageId);
     if (verdict === 'none') return NEEDS_CSAM_QUEUE;
     if (verdict !== 'clear') return null;
   }
