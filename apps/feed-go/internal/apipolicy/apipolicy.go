@@ -3,7 +3,7 @@
 // the user agents a verified crawler must carry, and the default API Cache-Control.
 //
 // apipolicy.json is generated from the Node modules by scripts/feed-go-api-policy.ts, and
-// scripts/__tests__/feed-go-api-policy.test.ts fails when the two differ, so no list here is a
+// scripts/__tests__/feed-go-api-policy.schema-drift.test.ts fails when the two differ, so no list here is a
 // transcription.
 package apipolicy
 

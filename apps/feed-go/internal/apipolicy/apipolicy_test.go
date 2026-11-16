@@ -3,7 +3,7 @@ package apipolicy
 import "testing"
 
 // The embedded file decodes into the facts the route reads; the literals are the Node modules' values
-// (scripts/__tests__/feed-go-api-policy.test.ts pins the file to them).
+// (scripts/__tests__/feed-go-api-policy.schema-drift.test.ts pins the file to them).
 func TestEmbeddedPolicy(t *testing.T) {
 	if got := PrivateCacheControl(); got != "max-age=0, private, no-cache" {
 		t.Fatalf("PrivateCacheControl = %q", got)

@@ -12,7 +12,7 @@
  *
  *   pnpm exec tsx scripts/feed-go-api-policy.ts
  *
- * `scripts/__tests__/feed-go-api-policy.test.ts` fails when the committed file differs from this
+ * `scripts/__tests__/feed-go-api-policy.schema-drift.test.ts` fails when the committed file differs from this
  * output, so the Go side cannot drift from the lists it mirrors.
  */
 import { writeFileSync } from 'node:fs';
