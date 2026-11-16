@@ -9,6 +9,7 @@ import {
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { ratedEntityContentNsfwLevelSql } from '~/server/services/text-scan/scan-floor';
 import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -95,6 +96,44 @@ export async function hasSystemNsfwLock(
 const ratedLevel = (mask: number) => getHighestBrowsingLevelBit(mask & allBrowsingLevelsFlag);
 
 type Db = typeof dbRead | typeof dbWrite;
+
+const setByTextScan = (details: unknown) =>
+  !!details && typeof details === 'object' && 'textScanNsfw' in details;
+
+// The nsfw flag pins a bounty's stored level to every NSFW bit, which names no level. When the text
+// scan set the flag, its own moderation row holds the level it rated (details is owner-writable, so
+// it only says who set the flag); images can still rate the bounty higher.
+async function bountyRatedLevel(
+  id: number,
+  b: {
+    nsfw: boolean;
+    details: unknown;
+    nsfwLevel: number;
+    moderatorNsfwLevel: number | null;
+  },
+  db: Db
+) {
+  const pinned = ratedLevel(b.nsfwLevel);
+  if (!b.nsfw || b.moderatorNsfwLevel != null || !setByTextScan(b.details)) return pinned;
+  const em = await db.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Bounty', entityId: id } },
+    select: { nsfwLevel: true, result: true },
+  });
+  if (
+    !em ||
+    !isTextScanRaised({ entityType: 'Bounty', nsfwLevel: em.nsfwLevel, result: em.result })
+  )
+    return pinned;
+  const scanned = ratedLevel(em.nsfwLevel ?? 0);
+  if (!scanned) return pinned;
+  const rows = await db.$queryRaw<{ level: number | null }[]>`
+    SELECT ${ratedEntityContentNsfwLevelSql(
+      'Bounty',
+      'e'
+    )} AS level FROM "Bounty" e WHERE e.id = ${id}
+  `;
+  return Math.max(scanned, ratedLevel(rows[0]?.level ?? 0));
+}
 type Loader = (id: number, db: Db) => Promise<RatingReviewSubject | null>;
 
 const overrideSelect = { moderatorNsfwLevel: true, moderatorNsfwLevelBasis: true } as const;
@@ -170,12 +209,20 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
   Bounty: async (id, db) => {
     const b = await db.bounty.findUnique({
       where: { id },
-      select: { userId: true, nsfwLevel: true, updatedAt: true, name: true, ...overrideSelect },
+      select: {
+        userId: true,
+        nsfw: true,
+        details: true,
+        nsfwLevel: true,
+        updatedAt: true,
+        name: true,
+        ...overrideSelect,
+      },
     });
     return (
       b && {
         ownerId: b.userId,
-        currentLevel: ratedLevel(b.nsfwLevel),
+        currentLevel: await bountyRatedLevel(id, b, db),
         updatedAt: b.updatedAt,
         title: b.name,
         parentId: null,
