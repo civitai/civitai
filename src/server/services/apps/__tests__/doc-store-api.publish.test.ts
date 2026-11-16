@@ -116,8 +116,14 @@ import { DEFAULT_DOC_STORE_LIMITS } from '~/server/services/apps/doc-store.types
 import { OnboardingSteps } from '~/server/common/enums';
 import { parseManifestStorage } from '~/shared/constants/block-storage.constants';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
+// Loaded up front: the route reaches this module through `syncStoreItem`'s dynamic import, and
+// two such imports racing on a mocked module's FIRST load (an unpublish of two keys syncs two
+// cards at once) can hand one of them a module whose export is not set yet; `syncStoreItem`
+// swallows that, so one card sync would vanish from the count below. A test-harness effect only.
+import { syncSubListingForSharedRow } from '~/server/services/blocks/app-sub-listing.service';
 
 void loggingMock;
+void syncSubListingForSharedRow;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -953,6 +959,7 @@ describe('unpublish', () => {
     expect(await lastSeq(A)).toBe(seq + 2);
     // The App Store card follows each removed item, as a single delete's does.
     expect(cardSync.calls).toHaveLength(2);
+    expect(cardSync.calls.map((c) => (c as { itemKey: string }).itemKey).sort()).toEqual(['x1', 'x2']);
   });
 });
 
