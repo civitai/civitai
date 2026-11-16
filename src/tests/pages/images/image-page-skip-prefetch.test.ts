@@ -77,9 +77,9 @@ const FULL_ANONYMOUS = FULL_SIGNED_IN.filter(
 );
 const SKIP = FULL_SIGNED_IN.filter((p) => p !== 'prefetch image.getGenerationData');
 
-const page = (deferredSsr: boolean, gating: unknown = { contentNsfwLevel: 4 }) => ({
+const page = (deferredSsr: boolean) => ({
   props: { ssrClientOnlySections: false, ...(deferredSsr ? { deferredSsr: true } : {}) },
-  gating,
+  gating: { contentNsfwLevel: 4 },
 });
 
 describe('image page getServerSideProps — ssrSignedInSkipPrefetchImages', () => {
@@ -149,6 +149,6 @@ describe.each(ARMS)('image page 404 and gating — $name', ({ name, features, vi
 
     expect(procs).toContain('fetch image.get');
     // No image, no rating to declare: ads follow the page default, as before.
-    expect(result).toEqual(page(name === 'ON + signed in', undefined));
+    expect(result).toEqual({ ...page(name === 'ON + signed in'), gating: undefined });
   });
 });
