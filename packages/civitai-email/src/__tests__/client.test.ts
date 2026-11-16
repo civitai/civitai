@@ -65,6 +65,29 @@ describe('sendEmail', () => {
     ]);
   });
 
+  // The main app validates EMAIL_SECURE with z.stringbool() at boot, so every spelling it accepts
+  // must pick the same TLS mode here: a TLS-port relay reached in plaintext never greets.
+  it.each([
+    ['true', true],
+    ['TRUE', true],
+    ['True', true],
+    ['1', true],
+    ['yes', true],
+    ['on', true],
+    ['y', true],
+    ['enabled', true],
+    ['false', false],
+    ['FALSE', false],
+    ['0', false],
+    ['no', false],
+    [undefined, false],
+  ])('EMAIL_SECURE=%s sets secure: %s', async (value, secure) => {
+    if (value === undefined) delete process.env.EMAIL_SECURE;
+    else process.env.EMAIL_SECURE = value;
+    await (await load()).sendEmail({ to: 'a@example.test', subject: 'Hi', html: '<p>Hi</p>' });
+    expect(seen.options.at(-1)).toMatchObject({ secure });
+  });
+
   it.each(['off', 'OFF', '0', 'false'])(
     'bounds the SMTP connect, greeting and socket waits; EMAIL_TIMEOUTS=%s drops them',
     async (value) => {
