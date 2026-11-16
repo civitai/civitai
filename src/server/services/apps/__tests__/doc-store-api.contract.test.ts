@@ -117,29 +117,47 @@ vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOrigina
     if (cardSync.fail) throw new Error('store card sync unavailable');
   }),
 }));
-// The scanner is replaced; `enforcedBlockingHit` (which hit refuses) stays real.
+// The scanner's VERDICT is replaced; the leaf walk (`collectSharedDataLeaves`, so every hit carries
+// its real path) and `enforcedBlockingHit` (which hit refuses) stay real.
 vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) => {
   const real = await importOriginal<typeof Moderation>();
+  const { collectSharedDataLeaves } = await import('~/server/services/apps/shared-data-leaves');
   // Distinctive, so a response that leaked either would be visible.
   const SECRET_MATCH = 'scanner-matched-text-zq81';
   const SECRET_LABEL = 'scanner-label-zq82';
-  const verdict = (text: string): SharedTextScan => {
-    if (text.includes('contract-scanner-down')) throw new Error('scanner outage');
-    // The leaf is the scanned text, so a shadow record's `leafText` can be checked.
-    const leaf = { raw: text, path: 't', segments: ['t'], kind: 'value' as const };
-    const hit = (category: 'audit_regex' | 'link') => ({
-      leafCount: 1,
-      overflow: null,
-      hits: [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf }],
+  // A `minor` hit outranks the others (`CATEGORY_PRIORITY`), so a case can choose WHICH leaf
+  // refuses a write that holds two hits. Its `matched` is the term itself, as a real detector's is.
+  const MINOR_TERM = 'contract-minor-term';
+  type Leaf = Moderation.SharedTextInput;
+  const verdict = (leaves: Leaf[]): SharedTextScan => {
+    if (leaves.some((l) => l.raw.includes('contract-scanner-down'))) {
+      throw new Error('scanner outage');
+    }
+    const hits = leaves.flatMap((leaf): SharedTextScan['hits'] => {
+      const category = leaf.raw.includes('https://contract-blocked.example')
+        ? ('link' as const)
+        : leaf.raw.includes('contract-blocked-term')
+        ? ('audit_regex' as const)
+        : leaf.raw.includes(MINOR_TERM)
+        ? ('minor' as const)
+        : null;
+      if (!category) return [];
+      return category === 'minor'
+        ? [{ category, matched: MINOR_TERM, label: 'minor', leaf }]
+        : [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf }];
     });
-    if (text.includes('https://contract-blocked.example')) return hit('link');
-    if (text.includes('contract-blocked-term')) return hit('audit_regex');
-    return { leafCount: 1, overflow: null, hits: [] };
+    return { leafCount: leaves.length, overflow: null, hits };
   };
   return {
     ...real,
-    scanSharedData: vi.fn(async (data: unknown) => verdict(JSON.stringify(data))),
-    scanCounterKey: vi.fn(async (key: string) => verdict(key)),
+    scanSharedData: vi.fn(async (data: unknown) => {
+      const walked = collectSharedDataLeaves(data);
+      if ('overflow' in walked) return { leafCount: 0, overflow: null, hits: [] };
+      return verdict(walked.leaves);
+    }),
+    scanCounterKey: vi.fn(async (key: string) =>
+      verdict([{ raw: key, path: '', segments: [], kind: 'key' }])
+    ),
     recordSharedDataScan: vi.fn(async () => undefined),
   };
 });
@@ -1486,7 +1504,7 @@ describe('route faults and CORS', () => {
 });
 
 describe('review findings: refusal detail, usage, budget refunds, review gates, CORS', () => {
-  it('a moderation refusal carries only the coarse category — never the matched text or label', async () => {
+  it('a moderation refusal carries the coarse category and the field — never the matched text or label', async () => {
     const { A } = freshApps();
     const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     const r = await call({
@@ -1496,8 +1514,78 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       body: { data: { t: 'contract-blocked-term' } },
     });
     expect(r.status).toBe(422);
-    expect((r.body as { details: unknown }).details).toEqual({ category: 'blocked' });
+    expect((r.body as { details: unknown }).details).toEqual({
+      category: 'blocked',
+      field: 'data.t',
+      fieldKind: 'value',
+    });
     expect(JSON.stringify(r.body)).not.toMatch(/scanner-matched-text-zq81|scanner-label-zq82/);
+  });
+
+  describe('🔴 REGRESSION: a content_rejected refusal names the field as a JSON path', () => {
+    // Every case: the refused text sits somewhere other than a top-level value, and the refusal
+    // must say where — without the term, and without the text it sat in.
+    const TERM = 'contract-minor-term';
+    const FULL_TEXT = `the wizard says ${TERM} twice`;
+    it.each([
+      [
+        'a nested string',
+        { actions: [{ text: 'hello' }, { text: 'still fine' }, { text: FULL_TEXT }] },
+        { field: 'data.actions[2].text', fieldKind: 'value' },
+      ],
+      [
+        'an array element',
+        { tags: ['calm', 'lake', FULL_TEXT] },
+        { field: 'data.tags[2]', fieldKind: 'value' },
+      ],
+      [
+        // The key IS the refused text: the refusal names the object that holds it.
+        'an object key',
+        { meta: { [FULL_TEXT]: 1, other: 2 } },
+        { field: 'data.meta', fieldKind: 'key' },
+      ],
+      [
+        // A key on the path that is itself refused text (a lower-priority hit, so the value below
+        // it is the one the write is refused for) is replaced, not echoed.
+        'a value under a refused key',
+        { outer: { 'contract-blocked-term parent': { note: FULL_TEXT } } },
+        { field: 'data.outer[*].note', fieldKind: 'value' },
+      ],
+      [
+        'a key that is not a plain identifier',
+        { 'my list': [FULL_TEXT] },
+        { field: 'data["my list"][0]', fieldKind: 'value' },
+      ],
+    ])('%s', async (_name, data, named) => {
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const r = await call({ token: t, method: 'PUT', path: '/posts/p1', body: { data } });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect((r.body as { details: unknown }).details).toEqual({ category: 'blocked', ...named });
+      const body = JSON.stringify(r.body);
+      expect(body).not.toContain(TERM);
+      expect(body).not.toContain(FULL_TEXT);
+      expect(body).not.toContain('contract-blocked-term');
+    });
+
+    it('the document key → `key`, and the key text is not echoed', async () => {
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const r = await call({
+        token: t,
+        method: 'PUT',
+        path: `/posts/a-${TERM}-b`,
+        body: { data: { note: 'clean' } },
+      });
+      expect(r.status).toBe(422);
+      expect((r.body as { details: unknown }).details).toEqual({
+        category: 'blocked',
+        field: 'key',
+        fieldKind: 'value',
+      });
+      expect(JSON.stringify(r.body)).not.toContain(TERM);
+    });
   });
 
   it("info: the viewer's usage is their own, distinct from the app's and another viewer's", async () => {
@@ -2459,7 +2547,7 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
           blocked: 0,
           category: 'audit_regex',
           matched: 'scanner-matched-text-zq81',
-          leafText: JSON.stringify({ t: 'contract-blocked-term' }),
+          leafText: 'contract-blocked-term',
         }),
       ]);
       // One denominator row per scan: the data blob, and the app-chosen key.
