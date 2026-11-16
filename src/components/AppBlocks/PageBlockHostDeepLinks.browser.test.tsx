@@ -137,7 +137,11 @@ function postFromBlock(type: string, payload?: unknown) {
   const cw = iframeEl().contentWindow;
   if (!cw) throw new Error('iframe contentWindow missing');
   window.dispatchEvent(
-    new MessageEvent('message', { data: { type, payload }, origin: window.location.origin, source: cw })
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
   );
 }
 
@@ -246,14 +250,22 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     moveRouter([], `/apps/run/${SLUG}?sort=new#grid`);
     await rerender(<PageBlockHost {...baseProps} />);
     await vi.waitFor(() => {
-      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({ subPath: '', search: '?sort=new', hash: '#grid' });
+      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({
+        subPath: '',
+        search: '?sort=new',
+        hash: '#grid',
+      });
     });
 
     // Forward: back to the character and take.
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42?take=3`);
     await rerender(<PageBlockHost {...baseProps} />);
     await vi.waitFor(() => {
-      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({ subPath: 'c/42', search: '?take=3', hash: '' });
+      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({
+        subPath: 'c/42',
+        search: '?take=3',
+        hash: '',
+      });
     });
     posts.stop();
   });
@@ -268,7 +280,11 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42?take=2`);
     await rerender(<PageBlockHost {...baseProps} />);
     await vi.waitFor(() => {
-      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({ subPath: 'c/42', search: '?take=2', hash: '' });
+      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({
+        subPath: 'c/42',
+        search: '?take=2',
+        hash: '',
+      });
     });
     posts.stop();
   });
@@ -283,7 +299,11 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42#take-2`);
     await rerender(<PageBlockHost {...baseProps} />);
     await vi.waitFor(() => {
-      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({ subPath: 'c/42', search: '', hash: '#take-2' });
+      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({
+        subPath: 'c/42',
+        search: '',
+        hash: '#take-2',
+      });
     });
     posts.stop();
   });
@@ -299,7 +319,9 @@ describe('NAVIGATE history semantics', () => {
     postFromBlock('NAVIGATE', { path: 'c/42?take=3' });
 
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
-    expect(router.push).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/42?take=3`, undefined, { shallow: true });
+    expect(router.push).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/42?take=3`, undefined, {
+      shallow: true,
+    });
     expect(router.replace).not.toHaveBeenCalled();
   });
 
@@ -310,7 +332,9 @@ describe('NAVIGATE history semantics', () => {
     postFromBlock('NAVIGATE', { path: 'c/42?take=4', replace: true });
 
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
-    expect(router.replace).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/42?take=4`, undefined, { shallow: true });
+    expect(router.replace).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/42?take=4`, undefined, {
+      shallow: true,
+    });
     expect(router.push).not.toHaveBeenCalled();
   });
 
@@ -325,7 +349,9 @@ describe('NAVIGATE history semantics', () => {
     postFromBlock('NAVIGATE', { path: 'c/43' });
 
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
-    expect(router.push).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/43`, undefined, { shallow: true });
+    expect(router.push).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/43`, undefined, {
+      shallow: true,
+    });
   });
 
   test('replace:true does not change site-scope navigation (still a non-shallow push)', async () => {
@@ -353,16 +379,24 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
     await vi.waitFor(() => {
       expect(posts.last('SHARE_LINK_RESULT')?.payload).toEqual({
         requestId: 'share-1',
-        result: { url: `${ORIGIN}/apps/run/${SLUG}/c/42?take=3`, copied: true, method: 'clipboard' },
+        result: {
+          url: `${ORIGIN}/apps/run/${SLUG}/c/42?take=3`,
+          copied: true,
+          method: 'clipboard',
+        },
       });
     });
     expectReplyKeys('SHARE_LINK', 'success', ['result'], posts.last('SHARE_LINK_RESULT')!.payload);
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${ORIGIN}/apps/run/${SLUG}/c/42?take=3`);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      `${ORIGIN}/apps/run/${SLUG}/c/42?take=3`
+    );
     posts.stop();
   });
 
   test('🔴 a rejected clipboard write is copied:false, method none, with the url to show', async () => {
-    writeTextMock().mockRejectedValue(new DOMException('Document is not focused.', 'NotAllowedError'));
+    writeTextMock().mockRejectedValue(
+      new DOMException('Document is not focused.', 'NotAllowedError')
+    );
     await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
@@ -409,7 +443,9 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
 
     await vi.waitFor(() => expect(posts.of('SHARE_LINK_RESULT')).toHaveLength(2));
     const byId = Object.fromEntries(
-      posts.of('SHARE_LINK_RESULT').map((m) => [(m.payload as { requestId: string }).requestId, m.payload])
+      posts
+        .of('SHARE_LINK_RESULT')
+        .map((m) => [(m.payload as { requestId: string }).requestId, m.payload])
     );
     expect(byId['share-a']).toEqual({
       requestId: 'share-a',
