@@ -3094,6 +3094,10 @@ export const REDIS_SYS_KEYS = {
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
+    // Per judge: `winner>loser` for each vote, from before the set moved to the cache cluster
+    // (REDIS_KEYS.CRUCIBLE.VOTE_OUTCOMES). Read only, never written.
+    // 🔴 Delete with the fallback read after VOTE_OUTCOMES_SYS_FALLBACK_UNTIL (crucible.service.ts).
+    VOTE_OUTCOMES: 'crucible:vote-outcomes',
     // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
     ANCHOR_VOTES: 'crucible:anchor-votes',
     SERVED_PAIR: 'crucible:served-pair',

@@ -119,6 +119,7 @@ import {
   getAnchorVotesKey,
   getDismissedPairsKey,
   getJudgesKey,
+  getSysVoteOutcomesKey,
   getVoteOutcomesKey,
   getVotedPairsKey,
 } from '~/server/services/crucible-redis-keys';
@@ -129,7 +130,13 @@ import {
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
 import { delIfValue } from '~/server/redis/atomic';
-import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
+import {
+  redis,
+  sysRedis,
+  REDIS_SYS_KEYS,
+  REDIS_KEYS,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { revokeCrucibleEntry } from '~/server/services/crucible-entry-accepted';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
@@ -2801,38 +2808,80 @@ export const submitEntry = async ({
  */
 async function getJudgePairKeys(crucibleId: number, userId: number) {
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
-  const [voted = [], outcomes, dismissed = []] = await Promise.all([
+  const [voted = [], clusterOutcomes, dismissed = []] = await Promise.all([
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
-    loadVoteOutcomes(outcomesKey).catch((error: unknown) => {
-      // A cache: without it the judge is only served pairs they could have skipped.
-      logToAxiom({
-        type: 'warning',
-        name: 'crucible-vote-outcomes',
-        message: `Failed to read vote outcomes for crucible ${crucibleId}, user ${userId}`,
-        error: error instanceof Error ? error.message : String(error),
-        crucibleId,
-        userId,
-      }).catch();
+    loadVoteOutcomes(
+      () => redis.sCard(outcomesKey),
+      () => redis.sMembers(outcomesKey)
+    ).catch((error: unknown) => {
+      warnVoteOutcomes('Failed to read vote outcomes', error, crucibleId, userId);
       return undefined;
     }),
     sysRedis.sMembers(getDismissedPairsKey(crucibleId, userId)),
   ]);
+  const outcomes =
+    clusterOutcomes && clusterOutcomes.length < voted.length
+      ? await withSysVoteOutcomes(clusterOutcomes, crucibleId, userId)
+      : clusterOutcomes;
   const withDismissed = (decided: string[]) =>
     dismissed.length ? [...new Set([...decided, ...dismissed])] : decided;
   // A counted vote adds one voted pair and one outcome. Fewer outcomes than voted pairs means some
-  // are missing (a rating update or outcome write that failed, an eviction, votes from before the
-  // key moved), and a partial set can break a cycle and decide a pair the full set leaves open, so
-  // it is not used.
+  // are missing (a rating update or outcome write that failed, an eviction), and a partial set can
+  // break a cycle and decide a pair the full set leaves open, so it is not used.
   if (!outcomes || outcomes.length < voted.length) return { voted, decided: withDismissed(voted) };
   return { voted, decided: withDismissed(decidedPairKeys(voted, outcomes)) };
 }
 
-/** The judge's outcomes, or undefined when there are none or more than the closure handles. */
-async function loadVoteOutcomes(outcomesKey: RedisKeyTemplateCache) {
-  const outcomeCount = await redis.sCard(outcomesKey);
-  // Past the cap the closure is skipped anyway, so the outcomes are not loaded.
-  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return undefined;
-  return (await redis.sMembers(outcomesKey)) ?? [];
+/**
+ * A judge's outcomes: `[]` when there are none, undefined when there are more than the closure
+ * handles, which skips it anyway, so they are not loaded.
+ */
+async function loadVoteOutcomes(count: () => Promise<number>, members: () => Promise<string[]>) {
+  const outcomeCount = await count();
+  if (outcomeCount > MAX_CLOSURE_VOTES) return undefined;
+  return outcomeCount ? (await members()) ?? [] : [];
+}
+
+/**
+ * Outcomes on sysRedis expire 30 days after a judge's last vote there, which was before the set
+ * moved to the cache cluster. With the move deployed by early December 2026, the fallback finds
+ * nothing after this date.
+ * 🔴 Delete after this date: this constant, `withSysVoteOutcomes` and its call in
+ * `getJudgePairKeys`, `getSysVoteOutcomesKey`, and `REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES`.
+ */
+export const VOTE_OUTCOMES_SYS_FALLBACK_UNTIL = new Date('2027-01-01T00:00:00Z');
+
+/**
+ * `outcomes` plus the judge's outcomes still on sysRedis from before the move, deduplicated (an
+ * outcome is its `winner>loser` string, the same on both). Read only before
+ * `VOTE_OUTCOMES_SYS_FALLBACK_UNTIL`, and bounded by the sys read deadline; a read that fails or
+ * times out is logged and adds nothing. Undefined when sysRedis holds more than the closure cap.
+ */
+async function withSysVoteOutcomes(outcomes: string[], crucibleId: number, userId: number) {
+  if (Date.now() >= VOTE_OUTCOMES_SYS_FALLBACK_UNTIL.getTime()) return outcomes;
+  const sysKey = getSysVoteOutcomesKey(crucibleId, userId);
+  const sysOutcomes = await withSysReadDeadline(
+    loadVoteOutcomes(
+      () => sysRedis.sCard(sysKey),
+      () => sysRedis.sMembers(sysKey)
+    )
+  ).catch((error: unknown) => {
+    warnVoteOutcomes('Failed to read vote outcomes from sysRedis', error, crucibleId, userId);
+    return [];
+  });
+  if (!sysOutcomes) return undefined;
+  return sysOutcomes.length ? [...new Set([...outcomes, ...sysOutcomes])] : outcomes;
+}
+
+function warnVoteOutcomes(message: string, error: unknown, crucibleId: number, userId: number) {
+  logToAxiom({
+    type: 'warning',
+    name: 'crucible-vote-outcomes',
+    message: `${message} for crucible ${crucibleId}, user ${userId}`,
+    error: error instanceof Error ? error.message : String(error),
+    crucibleId,
+    userId,
+  }).catch();
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -3940,14 +3989,7 @@ export const submitVote = async ({
           userId,
         }).catch();
     })().catch((error: unknown) =>
-      logToAxiom({
-        type: 'warning',
-        name: 'crucible-vote-outcomes',
-        message: `Failed to record vote outcome for crucible ${crucibleId}, user ${userId}`,
-        error: error instanceof Error ? error.message : String(error),
-        crucibleId,
-        userId,
-      }).catch()
+      warnVoteOutcomes('Failed to record vote outcome', error, crucibleId, userId)
     ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
