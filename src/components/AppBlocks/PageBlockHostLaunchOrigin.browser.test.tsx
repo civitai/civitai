@@ -124,7 +124,7 @@ describe('PageBlockHost — launch origin', () => {
     expect(init.context?.subPath).toBe('deep/view');
     // STRUCTURAL, not a substring: the context carries exactly the page-shaped key set, so a
     // new key (a `from`, a `launchOrigin`) fails here however it is spelt. `search` and `hash`
-    // are the forwarded query and fragment (HQ app_blocks_sdk_j1gc), with the host's `from`
+    // are the forwarded query and fragment, with the host's `from`
     // pair stripped — asserted directly below, since the router's asPath here is
     // `…?from=home` and `from=home` is the only query it carries.
     expect(Object.keys(init.context ?? {}).sort()).toEqual(

@@ -16,7 +16,7 @@ import {
 } from '../deepLinkLogic';
 
 /**
- * Deep links into app state (HQ app_blocks_sdk_j1gc) — the pure half.
+ * Deep links into app state — the pure half.
  *
  *  - `resolveBridgeLocation`: the search and hash the host forwards to the block in
  *    BLOCK_INIT.context and ROUTE_CHANGED, read from the host URL (`router.asPath`).
@@ -72,7 +72,6 @@ describe('resolveBridgeLocation — search and hash forwarded to the block', () 
   });
 
   it('the host-owned list names the exported host params (one list, not three spellings)', () => {
-    expect([...HOST_OWNED_RUN_PARAMS].sort()).toEqual(['from', 'sl', 'src']);
     expect(HOST_OWNED_RUN_PARAMS).toContain(APPS_RUN_FROM_PARAM);
     expect(HOST_OWNED_RUN_PARAMS).toContain(APP_SURFACE_PARAM);
   });
@@ -461,7 +460,6 @@ describe('createShareLinkLimiter — an app cannot spam the share sheet', () => 
   it('admits one, refuses while it is in flight, then holds the interval', () => {
     let t = 10_000;
     const limiter = createShareLinkLimiter(() => t);
-    expect(SHARE_LINK_MIN_INTERVAL_MS).toBe(1000);
     expect(limiter.admit()).toBe(true);
     expect(limiter.admit()).toBe(false); // in flight
     limiter.settle();

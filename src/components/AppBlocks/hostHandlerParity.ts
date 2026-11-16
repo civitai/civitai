@@ -235,8 +235,8 @@ export const INVENTORY = {
   },
   // A link to a view of the app: the page host builds the canonical
   // `/apps/run/<slug>/<subPath>` URL from its own origin and slug, copies it or opens the
-  // share sheet, and replies with `{ url, copied, method }`. Ahead of the published SDK
-  // dist union. REQUEST-style ⇒ an unhandled one HANGS the block.
+  // share sheet, and replies with `{ url, copied, method }`. REQUEST-style ⇒ an unhandled
+  // one HANGS the block.
   SHARE_LINK: {
     request: true,
     reply: 'SHARE_LINK_RESULT',

@@ -2,16 +2,8 @@ import { stripHostOwnedRunParams } from '~/shared/utils/apps-run-origin';
 import { resolveNavigateRequest } from './pageBlockHostLogic';
 
 /**
- * Deep links into app state (HQ app_blocks_sdk_j1gc): the pure rules behind
- *
- *  - the `search` / `hash` the page host forwards to its block in
- *    `BLOCK_INIT.context` and `ROUTE_CHANGED` ({@link resolveBridgeLocation});
- *  - the `SHARE_LINK` bridge: the canonical URL ({@link resolveShareLinkRequest}),
- *    the copy or share itself ({@link performShareLink}), and its rate limit
- *    ({@link createShareLinkLimiter});
- *  - `NAVIGATE`'s `replace` flag ({@link navigateWantsReplace}).
- *
- * `PageBlockHost` owns the wiring; everything here is pure so it can be unit-tested
+ * Deep links into app state: the pure rules behind the page host's deep-link and share-link
+ * bridges. `PageBlockHost` owns the wiring; everything here is pure so it can be unit-tested
  * (`__tests__/deepLinkLogic.test.ts`).
  */
 
@@ -165,14 +157,8 @@ export type ShareLinkEnv = {
  *
  * 🔴 THE WRITE (OR SHARE) IS ISSUED SYNCHRONOUSLY, before this function returns. Both
  * APIs need TRANSIENT user activation, which reaches this frame from a click inside the
- * block's iframe but expires; anything that yields first (`await`, `setTimeout`) can lose
- * it. Measured in Chromium 153 and Brave 152 (headless): a click inside a sandboxed
- * cross-origin iframe that posts to the parent leaves the parent with
- * `userActivation.isActive === true`, `document.hasFocus() === true` and
- * `document.activeElement` = the IFRAME, and the parent's `writeText` RESOLVES (the
- * clipboard then held the parent's value). The same post sent 6.5 s after load with no
- * click was refused (`NotAllowedError`). Not measured: Firefox, Safari, a headed window
- * losing OS focus, and `navigator.share` (absent on desktop Linux Chromium).
+ * block's iframe but expires, so it must be consumed synchronously: anything that yields
+ * first (`await`, `setTimeout`) can lose it.
  *
  * Without activation (`userActivation === false`) neither API is touched: the app gets the
  * URL and `method: 'none'`, so an app cannot pop a share sheet or write the clipboard on
@@ -184,9 +170,6 @@ export type ShareLinkEnv = {
  * Requiring `frameHasFocus` (the measured state after a click inside the frame: the parent's
  * `activeElement` is the IFRAME) ties the copy to a click inside THIS app. Without it,
  * neither API is touched and the reply is `method: 'none'`.
- *
- * The host emits exactly three results: `{ copied: true, method: 'clipboard' }`,
- * `{ copied: false, method: 'share' }` and `{ copied: false, method: 'none' }`.
  */
 export function performShareLink(url: string, env: ShareLinkEnv): Promise<ShareLinkResult> {
   const none: ShareLinkResult = { url, copied: false, method: 'none' };

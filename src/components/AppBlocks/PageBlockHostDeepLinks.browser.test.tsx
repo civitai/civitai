@@ -8,10 +8,9 @@ import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
- * Deep links into app state, the share link, and back/forward (HQ app_blocks_sdk_j1gc) —
- * the HOST-INTEGRATION half. The pure rules are unit-tested in
- * `__tests__/deepLinkLogic.test.ts`; this file mounts the REAL `PageBlockHost` and drives
- * the REAL postMessage bridge.
+ * Deep links into app state, the share link, and back/forward — the HOST-INTEGRATION half.
+ * The pure rules are unit-tested in `__tests__/deepLinkLogic.test.ts`; this file mounts the
+ * REAL `PageBlockHost` and drives the REAL postMessage bridge.
  *
  *  1. BLOCK_INIT.context and ROUTE_CHANGED carry `search` and `hash` from `router.asPath`
  *     (host-owned `from`, `sl` and `src` stripped).
@@ -29,8 +28,7 @@ import type * as TrpcModule from '~/utils/trpc';
  * updating `router.query`/`router.asPath`; here that update is simulated by mutating the
  * mock and re-rendering. The real back/forward path is a manual check (the Live Characters
  * builder seat), stated in the PR. Likewise a driven MessageEvent carries no user
- * activation, so `navigator.userActivation` is stubbed; the activation-propagation
- * measurement behind the synchronous write is recorded at the handler.
+ * activation, so `navigator.userActivation` is stubbed.
  */
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -182,6 +180,38 @@ async function driveToReady() {
 /** Let queued postMessages land, so a count read afterwards is settled. */
 const settle = () => new Promise((r) => setTimeout(r, 60));
 
+type BridgeLocation = { subPath: string; search: string; hash: string };
+
+/**
+ * ROUTE_CHANGED messages whose payload IS `loc`, from the `since`-th one on. Counting by
+ * payload, not a total, so a ROUTE_CHANGED for another location (the one sent at ready,
+ * which may land after the listener is attached) cannot move the count.
+ */
+function routeChangedTo(
+  posts: ReturnType<typeof listenForHostPosts>,
+  loc: BridgeLocation,
+  since = 0
+): number {
+  return posts
+    .of('ROUTE_CHANGED')
+    .slice(since)
+    .filter((m) => {
+      const p = m.payload as Partial<BridgeLocation> | undefined;
+      return p?.subPath === loc.subPath && p?.search === loc.search && p?.hash === loc.hash;
+    }).length;
+}
+
+/** Wait for exactly one ROUTE_CHANGED to `loc` (after `since`), and no burst after it. */
+async function expectOneRouteChangedTo(
+  posts: ReturnType<typeof listenForHostPosts>,
+  loc: BridgeLocation,
+  since = 0
+) {
+  await vi.waitFor(() => expect(routeChangedTo(posts, loc, since)).toBeGreaterThan(0));
+  await settle();
+  expect(routeChangedTo(posts, loc, since)).toBe(1);
+}
+
 /** Give the app's frame focus — the parent-side state a click inside the frame leaves. */
 function focusFrame() {
   iframeEl().focus();
@@ -260,35 +290,19 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
-    await settle();
-    const before = posts.of('ROUTE_CHANGED').length;
 
-    // Back: from the character to the gallery.
+    // Back: from the character to the gallery. Exactly ONE per move, not a burst.
     moveRouter([], `/apps/run/${SLUG}?sort=new#grid`);
     await rerender(<PageBlockHost {...baseProps} />);
-    await vi.waitFor(() => {
-      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({
-        subPath: '',
-        search: '?sort=new',
-        hash: '#grid',
-      });
-    });
-    await settle();
-    // Exactly ONE per move, not a burst.
-    expect(posts.of('ROUTE_CHANGED')).toHaveLength(before + 1);
+    await expectOneRouteChangedTo(posts, { subPath: '', search: '?sort=new', hash: '#grid' });
 
-    // Forward: back to the character and take.
+    // Forward: back to the character and take. Counted from here on, because the
+    // ROUTE_CHANGED sent at ready carried this same location; postMessage keeps order, so
+    // it has landed by the time the move above was seen.
+    const mark = posts.of('ROUTE_CHANGED').length;
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42?take=3`);
     await rerender(<PageBlockHost {...baseProps} />);
-    await vi.waitFor(() => {
-      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({
-        subPath: 'c/42',
-        search: '?take=3',
-        hash: '',
-      });
-    });
-    await settle();
-    expect(posts.of('ROUTE_CHANGED')).toHaveLength(before + 2);
+    await expectOneRouteChangedTo(posts, { subPath: 'c/42', search: '?take=3', hash: '' }, mark);
     posts.stop();
   });
 
@@ -298,20 +312,10 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
-    await settle();
-    const before = posts.of('ROUTE_CHANGED').length;
 
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42?take=2`);
     await rerender(<PageBlockHost {...baseProps} />);
-    await vi.waitFor(() => {
-      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({
-        subPath: 'c/42',
-        search: '?take=2',
-        hash: '',
-      });
-    });
-    await settle();
-    expect(posts.of('ROUTE_CHANGED')).toHaveLength(before + 1);
+    await expectOneRouteChangedTo(posts, { subPath: 'c/42', search: '?take=2', hash: '' });
     posts.stop();
   });
 
@@ -321,20 +325,10 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
-    await settle();
-    const before = posts.of('ROUTE_CHANGED').length;
 
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42#take-2`);
     await rerender(<PageBlockHost {...baseProps} />);
-    await vi.waitFor(() => {
-      expect(posts.last('ROUTE_CHANGED')?.payload).toEqual({
-        subPath: 'c/42',
-        search: '',
-        hash: '#take-2',
-      });
-    });
-    await settle();
-    expect(posts.of('ROUTE_CHANGED')).toHaveLength(before + 1);
+    await expectOneRouteChangedTo(posts, { subPath: 'c/42', search: '', hash: '#take-2' });
     posts.stop();
   });
 });
@@ -407,6 +401,34 @@ describe('NAVIGATE history semantics', () => {
     postFromBlock('NAVIGATE', { path: '' });
     await settle();
     expect(router.push).toHaveBeenCalledTimes(2);
+  });
+
+  test('🔴 after an address-bar hash edit (hashchange), a NAVIGATE to that URL adds no entry', async () => {
+    // A hash-only address-bar edit never reaches the router, so `router.asPath` still reads
+    // `/c/42`. The host resyncs its "showing" href from `window.location` on `hashchange`;
+    // without that, the app re-asserting `c/42#notes` would stack a duplicate entry.
+    routerState.query = { slug: SLUG, path: ['c', '42'] };
+    routerState.asPath = `/apps/run/${SLUG}/c/42`;
+    await renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    const runnerUrl = window.location.href;
+    try {
+      window.history.replaceState(window.history.state, '', `/apps/run/${SLUG}/c/42#notes`);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+
+      postFromBlock('NAVIGATE', { path: 'c/42#notes' });
+      // Control in the same run: a DIFFERENT url does push, so the bridge is live.
+      postFromBlock('NAVIGATE', { path: 'c/43' });
+
+      await vi.waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
+      expect(pushMock().mock.calls).toEqual([
+        [`/apps/run/${SLUG}/c/43`, undefined, { shallow: true, scroll: false }],
+      ]);
+      expect(router.replace).not.toHaveBeenCalled();
+    } finally {
+      window.history.replaceState(window.history.state, '', runnerUrl);
+    }
   });
 
   test('replace:true does not change site-scope navigation (still a non-shallow push)', async () => {
@@ -564,6 +586,33 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
         },
       });
     });
+    posts.stop();
+  });
+
+  test('🔴 refused on the dev tunnel (its slug is a block id, so the link would 404)', async () => {
+    // `dev-tunnel` HAS a deep-link base (`/apps/run`), so only `BLOCK_HOST_SHARE_LINK` refuses
+    // it: the frame has focus and activation is stubbed, so a wrongly shareable surface copies.
+    await renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+      />
+    );
+    await driveToReady();
+    const posts = listenForHostPosts();
+    focusFrame();
+
+    postFromBlock('SHARE_LINK', { requestId: 'share-d', subPath: 'c/1' });
+
+    await vi.waitFor(() => {
+      expect(posts.last('SHARE_LINK_RESULT')?.payload).toEqual({
+        requestId: 'share-d',
+        error: 'sharing is not available here',
+      });
+    });
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
     posts.stop();
   });
 

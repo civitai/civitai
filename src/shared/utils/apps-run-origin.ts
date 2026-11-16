@@ -45,8 +45,8 @@ export const APPS_RUN_FROM_HOME = 'home';
  * own deep-link state (`?take=3`) is arbitrary and cannot be enumerated here. The cost is the
  * hazard this comment exists for: a NEW host-owned parameter leaks by default until it is
  * added. Spelled as literals rather than imported, so this module stays import-free of the
- * store telemetry; `__tests__/apps-run-origin.test.ts` pins that `from` and `src` here equal
- * the exported constants.
+ * store telemetry; `src/components/AppBlocks/__tests__/deepLinkLogic.test.ts` pins that `from`
+ * and `src` here equal the exported constants.
  */
 export const HOST_OWNED_RUN_PARAMS: readonly string[] = ['from', 'sl', 'src'];
 

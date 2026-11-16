@@ -225,7 +225,7 @@ export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
 };
 
 /**
- * May a block on this surface ask for a SHARE_LINK (HQ app_blocks_sdk_j1gc)? The link is
+ * May a block on this surface ask for a SHARE_LINK? The link is
  * `<origin><BLOCK_HOST_DEEP_LINK_BASE[surface]>/<slug>/…`, so it is only worth handing out
  * where that URL opens the same app for someone else. Total over `BlockHostSurface`, like the
  * two maps above, so a new surface is a compile error until someone decides.

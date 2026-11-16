@@ -238,6 +238,7 @@ import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
+import { COARSE_POINTER_QUERY } from '~/utils/phone-layout';
 import { trpc } from '~/utils/trpc';
 import {
   sharedStorageErrorReply,
@@ -1474,25 +1475,16 @@ export function PageBlockHost({
     return '';
   }, [router.query.path]);
 
-  // The search and hash below the app route, forwarded so a block can deep-link into
-  // its own state (`?take=3`, `#top`). Read from `router.asPath` (the address bar),
-  // with every host-owned pair (`from`, `sl`, `src`) stripped — see
-  // `resolveBridgeLocation`. Separate fields from `subPath`, so nothing here can move
-  // the slug or the path the block sees. Next re-renders on every route change,
-  // including a hash-only one (its `onlyAHashChange` branch still calls `set`), so a
-  // memo keyed on the string is enough.
   const { search: routeSearch, hash: routeHash } = useMemo(
     () => resolveBridgeLocation(router.asPath ?? ''),
     [router.asPath]
   );
 
-  // The href the host page is AT, for NAVIGATE's "already showing" check. 🔴 NOT
-  // `router.asPath` read at message time: a push is async, so two NAVIGATEs in one tick
-  // (`x`, then back to the index) would compare the second against the PRE-push path and
-  // swallow it; and an address-bar hash edit reaches no Next route state at all (Next's
-  // popstate handler only `replaceState`s for a state-less entry). So this ref is written
-  // SYNCHRONOUSLY when the host pushes or replaces, and resynced from the router on every
-  // committed route and from `window.location` on `hashchange` / `popstate`.
+  // The href the host page is AT, for NAVIGATE's "already showing" check. 🔴 Written
+  // SYNCHRONOUSLY when the host pushes or replaces, because `router.asPath` lags an async
+  // push (two NAVIGATEs in one tick would compare the second against the pre-push path);
+  // resynced from `window.location` on `hashchange` / `popstate`, because a hash-only
+  // address-bar edit never reaches the router.
   const currentHrefRef = useRef<string | null>(null);
   useEffect(() => {
     currentHrefRef.current = router.asPath ?? null;
@@ -2461,18 +2453,8 @@ export function PageBlockHost({
         window.open(req.href, '_blank', 'noopener');
         return;
       }
-      // HISTORY: an app-scoped move is a REAL history entry (a shallow `push`), so the
-      // browser's back/forward walks the app's own views and Next's popstate handler
-      // moves `router.query`/`router.asPath`, which the ROUTE_CHANGED effect below
-      // forwards. Two exceptions, both app scope only:
-      //  - `replace: true` replaces the current entry (a state tweak such as which take
-      //    is showing should not need a back press per tweak);
-      //  - a move to the URL already showing pushes NOTHING, so a block re-asserting
-      //    its route cannot stack duplicate entries. "Showing" is `currentHrefRef` (see
-      //    its declaration), written here before the async router call returns.
-      // `scroll: false` on both: an app's `#hash` names an element in the APP's
-      // document, and must not scroll the host page to a host element with that id.
-      // Site scope keeps its old semantics: a non-shallow push off the app.
+      // `scroll: false`: an app's `#hash` names an element in the APP's document, and must
+      // not scroll the host page to a host element with that id.
       if (req.scope === 'app') {
         if (req.href === currentHrefRef.current) return;
         currentHrefRef.current = req.href;
@@ -2498,17 +2480,9 @@ export function PageBlockHost({
     send('ROUTE_CHANGED', { subPath, search: routeSearch, hash: routeHash });
   }, [subPath, routeSearch, routeHash, status, send]);
 
-  // ── SHARE_LINK → SHARE_LINK_RESULT ─────────────────────────────────────────
-  //
-  // The block asks for a link to a view of itself; the HOST builds the canonical
-  // absolute URL (its own origin + deep-link base + slug, the block supplying only
-  // subPath/search/hash — `resolveShareLinkRequest`), copies it or opens the share
-  // sheet, and replies with what really happened. REQUEST-style: every path replies
-  // once, except a payload with no requestId (nothing to reply to).
-  //
   // 🔴 `performShareLink` IS CALLED SYNCHRONOUSLY IN THE HANDLER — no `await` before
   // it. The clipboard and the share sheet need the transient user activation of the
-  // click inside the iframe; see the measurement on `performShareLink`.
+  // click inside the iframe, which an `await` can lose.
   const shareLimiterRef = useRef<ReturnType<typeof createShareLinkLimiter> | null>(null);
   useEffect(() => {
     const off = onMessage<unknown>('SHARE_LINK', (raw) => {
@@ -2542,7 +2516,8 @@ export function PageBlockHost({
         // what ties it to a click inside the app. See `performShareLink`.
         frameHasFocus: iframeRef.current != null && document.activeElement === iframeRef.current,
         coarsePointer:
-          typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches,
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia(COARSE_POINTER_QUERY).matches,
         clipboardWriteText: nav?.clipboard?.writeText
           ? (text) => nav.clipboard.writeText(text)
           : undefined,
