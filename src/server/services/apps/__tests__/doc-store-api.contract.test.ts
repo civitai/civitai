@@ -4115,8 +4115,8 @@ describe('per-app refusal attribution: which limit, for which app', () => {
     );
   }
   async function conflicts(app: string): Promise<number> {
-    const values = await series('civitai_app_block_doc_store_version_conflicts_total');
-    return values.find((v) => v.labels.app_block_id === app)?.value ?? 0;
+    // Folded into the refusal counter: {surface="doc_store", bucket="version_conflict"}.
+    return refusals(app, 'version_conflict');
   }
   function refusalLogs() {
     return loggingMock.logToAxiom.mock.calls
@@ -4217,7 +4217,7 @@ describe('per-app refusal attribution: which limit, for which app', () => {
     expect((await refusals(A.id, 'shared-write')) - before.shared).toBe(0);
   });
 
-  it('a 409 version_conflict is counted per app, and is not a rate-limit refusal', async () => {
+  it('a 409 version_conflict is one {app, doc_store, version_conflict} refusal, with its log line', async () => {
     const { A, B } = freshApps();
     const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     const beforeA = await conflicts(A.id);
@@ -4236,6 +4236,15 @@ describe('per-app refusal attribution: which limit, for which app', () => {
 
     expect((await conflicts(A.id)) - beforeA).toBe(1);
     expect((await conflicts(B.id)) - beforeB).toBe(0);
-    expect(refusalLogs()).toHaveLength(0);
+    const logs = refusalLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      appBlockId: A.id,
+      surface: 'doc_store',
+      bucket: 'version_conflict',
+      endpoint: 'storage_write',
+      status: 409,
+      userId: VIEWER_IDS.v1,
+    });
   });
 });
