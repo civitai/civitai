@@ -250,7 +250,8 @@ async function archiveTick(tick: Tick) {
       }
       await archiveCsamDataForReport(report);
       // Each report stamped under an unreadable flag gets the archiver's copy by hand.
-      if (!tick.readable && (await wasStamped(report.id)))
+      // A read-back that fails lists the report too: a hand re-queue of an unstamped one is harmless.
+      if (!tick.readable && (await wasStamped(report.id).catch(() => true)))
         logToAxiom({
           name: 'csam-report',
           type: 'error',

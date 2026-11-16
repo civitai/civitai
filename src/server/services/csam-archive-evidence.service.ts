@@ -3,7 +3,6 @@ import type { S3Client } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { sql } from 'kysely';
 import { archiveQueueState } from '@civitai/db-queries/evidence-archive-queue';
-import { JOB_QUEUE_OVERDUE_MINUTES } from '@civitai/shared/job-queue';
 import { dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { env } from '~/env/server';
@@ -48,6 +47,9 @@ const UNSUPPORTED_SQL = sql<boolean>`(
     AND NOT COALESCE(jsonb_path_exists(r.details, '$.generatedImages[*].blobs[*].url ? (@ != "" && @ != null)'), false)
   )
 )`;
+
+/** A sent report not archived after this long is stale, and so is a queue row this old. */
+const STALE_HOURS = 6;
 
 const MEDIA_KIND: Partial<Record<string, CsamArchiveObjectKind>> = {
   Image: 'images',
@@ -161,9 +163,10 @@ export async function checkCsamArchiveEvidence({
 
   // The archive job leaves skipped and unsupported reports out, so they are counted apart rather
   // than read as stale. A report waiting in the separate archiver's queue is not stale either, but
-  // one whose queue row is failing or overdue is, and a failing row counts on its own whatever the
-  // report's archivedAt says, so a failed archiver run is never hidden.
-  const queueState = archiveQueueState('r', JOB_QUEUE_OVERDUE_MINUTES.CsamArchive);
+  // only while its row is younger than the stale window: an archiver that never claims it (stopped,
+  // or wedged on another row) is then alarmed at the same age as before. A failing row counts on its
+  // own whatever the report's archivedAt says, so a failed archiver run is never hidden.
+  const queueState = archiveQueueState('r', STALE_HOURS * 60);
   const unarchived = sql<boolean>`(r."archivedAt" IS NULL AND r.details ->> 'archiveSkipped' IS NULL)`;
   const {
     rows: [pending],
@@ -173,7 +176,7 @@ export async function checkCsamArchiveEvidence({
       count(*) FILTER (WHERE ${unarchived} AND ${UNSUPPORTED_SQL})::int AS unsupported,
       count(*) FILTER (
         WHERE ${unarchived} AND NOT ${UNSUPPORTED_SQL}
-          AND r."reportSentAt" < now() - interval '6 hours'
+          AND r."reportSentAt" < now() - make_interval(hours => ${STALE_HOURS})
           AND s.state IS DISTINCT FROM 'queued'
       )::int AS stale,
       count(*) FILTER (WHERE s.state = 'failing')::int AS queue_failing

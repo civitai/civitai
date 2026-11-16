@@ -38,6 +38,7 @@ const sw = vi.hoisted(() => ({
   queued: new Set<number>(),
   stamped: new Set<number>(),
   stampReads: [] as unknown[][],
+  stampFails: new Set<number>(),
   archiveQueueStates: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
@@ -58,7 +59,10 @@ vi.mock('~/server/db/kyselyDb', () => ({
         where: (where: string, op: string, id: number) => {
           sw.stampReads.push([table, column, where, op, id]);
           return {
-            executeTakeFirst: async () => ({ archivedAt: sw.stamped.has(id) ? new Date() : null }),
+            executeTakeFirst: async () => {
+              if (sw.stampFails.has(id)) throw new Error('synthetic read failure');
+              return { archivedAt: sw.stamped.has(id) ? new Date() : null };
+            },
           };
         },
       }),
@@ -90,6 +94,7 @@ beforeEach(() => {
   sw.queued = new Set();
   sw.stamped = new Set();
   sw.stampReads = [];
+  sw.stampFails = new Set();
   sw.archiveQueueStates.mockImplementation(
     async (_db: unknown, ids: number[]) =>
       new Map(ids.filter((id) => sw.queued.has(id)).map((id) => [id, 'queued']))
@@ -458,6 +463,17 @@ describe('archive-csam-reports and the separate archiver', () => {
       ['CsamReport', 'archivedAt', 'id', '=', 8802],
       ['CsamReport', 'archivedAt', 'id', '=', 8803],
     ]);
+  });
+
+  it('under an unreadable flag, a stamp read-back that fails still lists the report', async () => {
+    sw.flag = null;
+    sw.stampFails = new Set([8802]);
+    await archiveJob!.run({}).result;
+
+    const listed = logs('archive-flag-unreadable').filter((l) => l.reportId !== undefined);
+    expect(listed.map((l) => l.reportId)).toEqual([8802]);
+    // The archive itself succeeded: nothing reports it as failed.
+    expect(logs('archive-data')).toEqual([]);
   });
 
   it('a Flipt init that throws runs the tick as ON and logs the flag as unreadable', async () => {

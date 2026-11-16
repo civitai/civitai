@@ -678,6 +678,18 @@ describe('stale reports and the separate archiver queue', () => {
     expect(counts.queue_failing).toBe(2);
   });
 
+  it('counts a queued report as stale once its row is older than the stale window: an archiver that never claims it', async () => {
+    const neverClaimed = await unarchived(931);
+    await queue(neverClaimed, 931, {}, '7 hours');
+    const young = await unarchived(932);
+    await queue(young, 932, {}, '5 hours');
+
+    const { counts } = await run();
+
+    expect(counts.stale).toBe(1);
+    expect(counts.queue_failing).toBe(0);
+  });
+
   it('counts a failing row even when the report is already stamped archived', async () => {
     const stamped = await addReport('Image', { sentAt: OLD, archivedAt: OLD, userId: 921 });
     await queue(stamped, 921, { lastError: 'Error' });
