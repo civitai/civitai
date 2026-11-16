@@ -1150,7 +1150,7 @@ async function run(
       );
     }
     case 'publish':
-      return ok(await runPublish(body, access, store, coll));
+      return ok(await runPublish(req, body, access, store, coll));
     case 'unpublish':
       return ok(await runUnpublish(req, body, access, store, coll));
   }
@@ -1172,9 +1172,12 @@ async function run(
 // the per-user and app ceilings (charged at once, so a publish the cap cannot hold is refused
 // whole). A copy whose content is unchanged is not written, not scanned and takes no seq.
 //
-// It does NOT spend the shared write budget (`DOC_STORE_SHARED_WRITE_BUDGET`, 30 / 300): it
-// spends `DOC_STORE_PUBLISH_BUDGET` (10 a day per user and app), given back when the publish does
-// not land or changes nothing. Unpublish spends the `write` bucket once per call, like a delete.
+// It does NOT spend the shared write budget (`DOC_STORE_SHARED_WRITE_BUDGET`, 30 / 300). Every
+// publish call first spends one token of the fixed-window `write` bucket (120 a minute per app
+// and viewer, never refunded) BEFORE the trust lookup and the source/target reads, so even a
+// publish that changes nothing is throttled. It then spends `DOC_STORE_PUBLISH_BUDGET` (10 a day
+// per user and app), given back when the publish does not land or changes nothing. Unpublish
+// spends the `write` bucket once per call, like a delete.
 //
 // Keys: 1–500 (`DOC_STORE_PUBLISH_BOUNDS.maxKeys`), no duplicates, refused before anything is
 // spent. A key with no private document, a copy another user authored, and the viewer's own copy
@@ -1217,7 +1220,15 @@ function withKey(err: unknown, key: string): unknown {
   return new DocStoreError(err.code, err.message, { ...err.details, key });
 }
 
+/** A refusal of a publish that lost a race, not a bad request: no rejection token is charged. */
+const PUBLISH_RACE_REASONS: ReadonlySet<unknown> = new Set([
+  'source_changed',
+  'target_changed',
+  'concurrent_write',
+]);
+
 async function runPublish(
+  req: NextApiRequest,
   body: unknown,
   access: StorageAccess,
   store: DocStore,
@@ -1230,6 +1241,9 @@ async function runPublish(
   const from = collectionOf(access, input.from);
   assertPublishPair(from, to);
   assertPublishScope(access, to);
+  // The per-call throttle, BEFORE the trust lookup, the source/target reads and the ownership
+  // lookups below: never refunded, so a loop of publishes that change nothing is still bounded.
+  await charge('write', access, req);
   const user = await assertTrusted(uid);
 
   // What would be written, read now; every body is checked as a shared write's would be BEFORE
@@ -1279,8 +1293,8 @@ async function runPublish(
     return result;
   } catch (err) {
     if (!landed) {
-      // A source that changed mid-publish is a race, not a bad request: no rejection charge.
-      const race = err instanceof DocStoreError && err.details?.reason === 'source_changed';
+      // A publish that lost a race is not a bad request: no rejection charge.
+      const race = err instanceof DocStoreError && PUBLISH_RACE_REASONS.has(err.details?.reason);
       await reservation.release({ rejected: !race && !isOurFault(err) });
     }
     throw err;
@@ -1310,19 +1324,22 @@ async function runUnpublish(
 }
 
 /**
- * The author removed published items: their App Store cards follow, as after a delete. One at a
- * time (at most 500, one indexed lookup each); `syncStoreItem` never throws (it logs its own
- * failures).
+ * The author removed published items: their App Store cards follow, as after a delete. One call
+ * for all of them (at most 500): one parent-listing lookup, updates batched by `itemKey IN (…)`.
+ * `syncStoreItem` never throws (it logs its own failures).
  */
 async function syncWithdrawn(
   ctx: StorageAccess['ctx'],
   keys: readonly string[],
   uid: number
 ): Promise<void> {
-  if (ctx.ns !== PUBLISHED_NS) return;
-  for (const itemKey of keys) {
-    await syncStoreItem({ appBlockId: ctx.appId, itemKey, change: 'withdrawn', authorUserId: uid });
-  }
+  if (ctx.ns !== PUBLISHED_NS || keys.length === 0) return;
+  await syncStoreItem({
+    appBlockId: ctx.appId,
+    itemKey: keys,
+    change: 'withdrawn',
+    authorUserId: uid,
+  });
 }
 
 function deleteIfVersion(req: NextApiRequest): number | undefined {

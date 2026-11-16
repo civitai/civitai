@@ -1329,7 +1329,8 @@ export async function listCatalogSubListings(args: {
 
 export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
-  itemKey: string;
+  /** One item key, or several (a publish's prune or an unpublish): one lookup, batched updates. */
+  itemKey: string | readonly string[];
   change: 'withdrawn' | 'hidden';
   /**
    * Only this author's card follows. Required for `withdrawn`; for `hidden`, given when the key
@@ -1356,9 +1357,10 @@ export async function syncSubListingForSharedRow(
       select: { id: true },
     });
     if (!parent) return;
+    if (typeof args.itemKey !== 'string' && args.itemKey.length === 0) return;
     const where: Prisma.AppSubListingWhereInput = {
       parentListingId: parent.id,
-      itemKey: args.itemKey,
+      itemKey: typeof args.itemKey === 'string' ? args.itemKey : { in: [...args.itemKey] },
       ...(args.authorUserId != null ? { authorUserId: args.authorUserId } : {}),
     };
     // Moves a store-hidden row's version so a restore that read the shared row as live fails
