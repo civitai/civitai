@@ -45,7 +45,7 @@ CREATE TABLE "Report" (
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   "statusSetAt" TIMESTAMP(3),
   "statusSetBy" INTEGER,
-  "userId" INTEGER NOT NULL,
+  "userId" INTEGER,
   "details" JSONB,
   "internalNotes" TEXT,
   "alsoReportedBy" INTEGER[],
@@ -72,8 +72,9 @@ INSERT INTO "Report" ("id", "userId", "status", "alsoReportedBy") VALUES
   (2, ${AGENT_A}, 'Pending', NULL),
   (3, ${HUMAN}, 'Pending', NULL),
   (4, ${AGENT_B}, 'Pending', NULL),
-  (5, ${AGENT_A}, 'Processing', NULL);
-INSERT INTO "PostReport" ("reportId", "postId") VALUES (1, 1), (2, 1), (3, 1), (4, 1), (5, 1);
+  (5, ${AGENT_A}, 'Processing', NULL),
+  (6, NULL, 'Pending', NULL);
+INSERT INTO "PostReport" ("reportId", "postId") VALUES (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1);
 -- Image reports, alternating filer, for the keyset walk.
 INSERT INTO "Image" ("id") VALUES (100), (101), (102), (103), (104), (105);
 INSERT INTO "Report" ("id", "userId") VALUES
@@ -107,11 +108,11 @@ describe('the post report queue under ?agents=', () => {
   it('lists every report by default, marking the agent-filed ones', async () => {
     const q = await postQueue('');
     expect(q.agentFilter).toBe('all');
-    expect(q.totalItems).toBe(5);
-    expect(q.statusCounts).toEqual({ Pending: 4, Processing: 1 });
+    expect(q.totalItems).toBe(6);
+    expect(q.statusCounts).toEqual({ Pending: 5, Processing: 1 });
     expect(q.items.map((r) => [r.id, r.agentFiled])).toEqual([
+      [6, false],
       [5, true],
-      [4, true],
     ]);
   });
 
@@ -124,11 +125,13 @@ describe('the post report queue under ?agents=', () => {
     expect([...q.items, ...page2.items].map((r) => r.id)).toEqual([5, 4, 2]);
   });
 
-  it('hide agents: keeps human reports, including one an agent was merged into', async () => {
+  it('hide agents: keeps human and reporter-less reports, including one an agent was merged into', async () => {
     const q = await postQueue('&agents=hide');
-    expect(q.totalItems).toBe(2);
-    expect(q.statusCounts).toEqual({ Pending: 2 });
-    expect(q.items.map((r) => [r.id, r.agentFiled])).toEqual([
+    expect(q.totalItems).toBe(3);
+    expect(q.statusCounts).toEqual({ Pending: 3 });
+    const page2 = await postQueue('&agents=hide&page=2');
+    expect([...q.items, ...page2.items].map((r) => [r.id, r.agentFiled])).toEqual([
+      [6, false],
       [3, false],
       [1, false],
     ]);
@@ -141,7 +144,7 @@ describe('the post report queue under ?agents=', () => {
   });
 
   it('reads an unknown value as all', async () => {
-    expect((await postQueue('&agents=bogus')).totalItems).toBe(5);
+    expect((await postQueue('&agents=bogus')).totalItems).toBe(6);
   });
 });
 
@@ -149,10 +152,10 @@ describe('the sidebar badge', () => {
   // The badge is the whole queue's number. A filtered view's chips differ from it on purpose; it must
   // not start following the filter.
   it('counts agent-filed reports while a filtered queue page counts fewer', async () => {
-    expect((await postQueue('&agents=hide')).statusCounts).toEqual({ Pending: 2 });
+    expect((await postQueue('&agents=hide')).statusCounts).toEqual({ Pending: 3 });
     // Open means Pending here, so report 5 (Processing) is outside it either way.
     const counts = await getReportCounts();
-    expect(counts['report:post']).toBe(4);
+    expect(counts['report:post']).toBe(5);
     expect(counts['report:image']).toBe(6);
   });
 });

@@ -506,7 +506,11 @@ export async function getReportedImageQueue({
     )
     .$if(cursor != null, (qb) => qb.where('r.id', '>', cursor!))
     .$if(agents != null, (qb) =>
-      qb.where('r.userId', agents!.mode === 'only' ? 'in' : 'not in', agents!.ids)
+      qb.where((eb) =>
+        agents!.mode === 'only'
+          ? eb('r.userId', 'in', agents!.ids)
+          : eb.or([eb('r.userId', 'is', null), eb('r.userId', 'not in', agents!.ids)])
+      )
     )
     .orderBy('r.id', 'asc')
     .limit(limit + 1)

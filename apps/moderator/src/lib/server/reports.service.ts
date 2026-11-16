@@ -219,7 +219,12 @@ function reportQueueBase({
   if (to) base = base.where('Report.createdAt', '<', to);
   if (reportId) base = base.where('Report.id', '=', reportId);
   if (agents)
-    base = base.where('Report.userId', agents.mode === 'only' ? 'in' : 'not in', agents.ids);
+    base = base.where((eb) =>
+      agents.mode === 'only'
+        ? eb('Report.userId', 'in', agents.ids)
+        : // NOT IN alone is NULL for a NULL reporter, which would drop that report.
+          eb.or([eb('Report.userId', 'is', null), eb('Report.userId', 'not in', agents.ids)])
+    );
   if (unpublishedReason)
     base = base
       .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
