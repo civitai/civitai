@@ -70,6 +70,14 @@ class GlobGrammar(unittest.TestCase):
         # A pattern that does not compile matches everything (a broken brick is not a gap).
         self.assertTrue(opc.match_forbidden("a[b", "src/x.ts"))
 
+    def test_is_test(self):
+        for path, want in [("src/a.test.ts", True), ("packages/x/src/b.spec.tsx", True),
+                           ("src/__tests__/pages/x.test.tsx", True), ("src/a.ts", False),
+                           ("src/pages/api/x.test.ts", False), ("src/pages/x.spec.tsx", False),
+                           ("src/app/route.test.ts", False)]:
+            with self.subTest(path=path):
+                self.assertEqual(opc.is_test(path), want)
+
     def test_parse_list_refuses_a_bad_line(self):
         self.assertEqual(opc.parse_list("# c\n\n  a/  \r\nb\n"), ["a/", "b"])
         with self.assertRaises(opc.Fatal):
@@ -198,6 +206,59 @@ class Fixture(unittest.TestCase):
         rc, out = self.check()
         self.assertEqual(rc, 1, out)
         self.assertIn("'src/old/keep.test.ts': 2 -> 1", out)
+
+    # ── check 8: no added skip, focus, retry or timeout modifier in a test file ──
+    MODIFIER_LINES = ["describe.skip('a', () => {});", "it.only('b', () => {});", "test.todo('c');",
+                      "test.fails('d', () => {});", "it.skip.each([1])('e', () => {});",
+                      "test.skipIf(process.env.CI)('f', () => {});", "describe.runIf(false)('g', () => {});",
+                      "test('h', { retry: 3 }, () => {});", "vi.setConfig({ testTimeout: 60000 });",
+                      "test('i', { timeout: 60000 }, () => {});", "}, 30_000);", "vi.setConfig({ hookTimeout: 1 });"]
+
+    def test_an_added_test_modifier_in_a_modified_test_file_fails(self):
+        self.write("src/old/keep.test.ts", "expect(1).toBe(1);\nexpect(2).toBe(2);\n" + "\n".join(self.MODIFIER_LINES) + "\n")
+        self.write("src/old/keep.ts", "y\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"FAIL: {len(self.MODIFIER_LINES)} added test line(s) skip, focus, retry or re-time a test", out)
+        for i, text in enumerate(self.MODIFIER_LINES):
+            with self.subTest(line=text):
+                self.assertIn(f"'src/old/keep.test.ts' line {i + 3}: {text}", out)
+
+    def test_an_added_test_modifier_in_a_new_test_file_fails(self):
+        self.write("src/app.ts", "export const a = 2;\n")
+        self.write("src/new.test.ts", "it('x', () => { expect(1).toBe(1); });\nit.skip('y', () => {});\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("'src/new.test.ts' line 2: it.skip('y', () => {});", out)
+
+    def test_removing_a_test_modifier_and_ordinary_test_code_pass(self):
+        # Control: un-skipping a test only makes more run, and ordinary lines (a retry helper,
+        # a timeout constant, a call ending in a number) are not modifiers.
+        self.g("checkout", "-q", "--detach", "base")
+        self.write("src/old/keep.test.ts", "expect(1).toBe(1);\nexpect(2).toBe(2);\nit.skip('z', () => {});\n")
+        self.g("commit", "-q", "-am", "skipped test on base")
+        self.g("branch", "-f", "base", "HEAD")
+        self.g("checkout", "-q", "-b", "officer/x/6-y")
+        self.write("src/old/keep.test.ts", "expect(1).toBe(1);\nexpect(2).toBe(2);\nit('z', () => {});\n"
+                   "const r = withRetry(fn);\nconst DEFAULT_TIMEOUT = 5;\nadd(1, 2);\n++n;\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 0, out)
+
+    # ── a `*.test.*` name under a Next.js route root is a route, not a test ──
+    def test_a_test_named_file_under_src_pages_is_not_a_test(self):
+        self.write("src/pages/api/x.test.ts", "export default function h() {}\n")
+        self.commit(with_test=False)
+        rc, out = self.check()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL: no test file added or modified", out)
+
+    def test_a_test_named_money_route_under_src_pages_is_money_code(self):
+        self.write("src/pages/api/buzz.test.ts", "export default function h() {}\n")
+        self.commit()
+        self.assert_refused("src/pages/api/buzz.test.ts", self.MONEY_WHY + " *buzz*")
 
     def test_adding_expect_calls_to_a_test_file_passes(self):
         self.write("src/old/keep.test.ts", "expect(1).toBe(1);\nexpect(2).toBe(2);\nexpect(3).toBe(3);\n")
@@ -554,7 +615,10 @@ class RealList(unittest.TestCase):
                   ".github/officer/officer_pr_check.py", ".github/officer/money-paths.txt", "scripts/ci/x.mjs", "packages/civitai-ui/scripts/x.mjs",
                   ".env", ".env.production", "src/.env.local", "Dockerfile", "packages/x/Dockerfile.dev",
                   "docker-compose.yml", ".husky/pre-commit", "CLAUDE.md", "src/AGENTS.md", ".gitattributes",
-                  "src/x/.gitattributes", "event-engine-common", "apps/moderator/src/x.ts"]:
+                  "src/x/.gitattributes", "event-engine-common", "apps/moderator/src/x.ts",
+                  # the unit suite's global setup (vitest.config.mts `setupFiles`), and future ones there
+                  "src/__tests__/setup.ts", "src/__tests__/network-guard.ts", "src/__tests__/global-setup.ts",
+                  "src/__tests__/setup-env.mts"]:
             with self.subTest(path=p):
                 self.assertTrue(self.forbidden(p), f"{p} is not forbidden by {REAL_LIST}")
 
@@ -610,7 +674,14 @@ class RealList(unittest.TestCase):
     # dropped or added pattern is a visible change here.
     MONEY_PATTERNS = {"*auth*", "*session*", "*permission*", "*buzz*", "*payment*", "*stripe*", "*paddle*",
                       "*billing*", "*purchase*", "*payout*", "*withdraw*", "*subscription*", "*email*", "*pii*",
-                      "*nsfw*", "*browsing-level*", "*browsinglevel*", "*moderat*"}
+                      "*nsfw*", "*browsing-level*", "*browsinglevel*", "*moderat*",
+                      "src/server/trpc.ts", "src/server/middleware.trpc.ts", "src/server/createContext.ts",
+                      "src/server/utils/endpoint-helpers.ts", "*api-key*", "*apikey*", "*access-token*",
+                      "*accesstoken*", "*revocation*", "*revoke-user-token*", "*coinbase*", "*tipalti*",
+                      "*creator-program*", "*creatorprogram*", "*redeemable*", "*refund*",
+                      "src/pages/api/v1/blocks/tip*", "src/server/**/*bount*", "src/server/**/*vault*",
+                      "src/pages/api/**/*bount*", "src/pages/api/**/*bount*/**", "src/pages/api/**/*vault*",
+                      "src/pages/api/**/*vault*/**", "packages/**/*bount*", "*csam*", "*mod-gate*", "*ban-user*"}
 
     def test_the_money_list_is_the_charter_set(self):
         with open(REAL_MONEY) as f:
@@ -624,11 +695,39 @@ class RealList(unittest.TestCase):
                   "src/components/Account/UserPaymentConfigurationCard.tsx", "src/providers/SessionProvider.tsx",
                   "src/server/utils/browsingLevel.ts", "src/server/services/moderation/x.ts",
                   "src/server/services/subscriptions.service.ts", "src/server/email/templates/x.ts",
-                  "src/components/BrowsingLevel/x.tsx", "src/server/services/nsfwLevels.ts"]:
+                  "src/components/BrowsingLevel/x.tsx", "src/server/services/nsfwLevels.ts",
+                  # the request-auth core
+                  "src/server/trpc.ts", "src/server/middleware.trpc.ts", "src/server/createContext.ts",
+                  "src/server/utils/endpoint-helpers.ts",
+                  # credentials and their revocation
+                  "src/server/services/api-key.service.ts", "src/server/routers/apiKey.router.ts",
+                  "src/server/services/access-token.service.ts", "src/server/services/user-token-revocation.service.ts",
+                  "src/server/jobs/revoke-user-tokens.ts",
+                  # payment providers, payouts, redeemable value, refunds, tips
+                  "src/server/services/coinbase.service.ts", "src/server/routers/coinbase.router.ts",
+                  "src/pages/api/webhooks/coinbase.ts", "src/server/http/tipalti/tipalti.caller.ts",
+                  "src/pages/api/webhooks/tipalti.ts", "src/server/services/creator-program.service.ts",
+                  "src/server/routers/creator-program.router.ts",
+                  "src/server/services/creator-program-prepayout-review/hold.ts",
+                  "src/components/Buzz/CreatorProgramV2/CreatorProgramV2.tsx",
+                  "src/server/services/redeemableCode.service.ts", "src/server/routers/redeemableCode.router.ts",
+                  "src/server/services/blocks/app-workflow-refund.service.ts", "src/pages/api/v1/blocks/tip.ts",
+                  # bounties and the vault
+                  "src/server/services/vault.service.ts", "src/server/routers/vault.router.ts",
+                  "src/pages/api/download/vault/[vaultItemId].ts", "src/pages/api/v1/vault/get.tsx",
+                  "src/server/services/bounty.service.ts", "src/server/routers/bounty.router.ts",
+                  "src/server/services/bountyEntry.service.ts", "src/pages/api/mod/bounty-unpaid-award/resolve.ts",
+                  "packages/civitai-shared/src/bounty-award.ts",
+                  # CSAM, moderator gates and bans
+                  "src/server/services/csam.service.ts", "src/server/routers/csam.router.ts",
+                  "src/pages/api/mod/csam-upload.ts", "src/pages/api/internal/mod-gate.ts",
+                  "src/pages/api/mod/ban-user.ts"]:
             with self.subTest(path=p):
                 self.assertTrue(opc.money_hit(money, p), f"{p} is not matched by {REAL_MONEY}")
         for p in ["src/pages/index.tsx", "src/components/Image/x.tsx", "src/server/services/model.service.ts",
-                  "packages/civitai-ui/src/button.tsx"]:
+                  "packages/civitai-ui/src/button.tsx", "src/utils/trpc.ts", "src/server/trpc-helpers.ts",
+                  "src/pages/bounties/index.tsx", "src/components/Vault/ToggleVaultButton.tsx",
+                  "src/components/Banner/x.tsx", "src/pages/api/v1/blocks/list.ts"]:
             with self.subTest(path=p):
                 self.assertIsNone(opc.money_hit(money, p), f"{p} (not money code) is matched by {REAL_MONEY}")
 
@@ -643,7 +742,10 @@ class RealList(unittest.TestCase):
                   # near misses of the charter-floor entries
                   "src/environment.ts", "src/server/env-utils.ts", "src/proxy.test.ts", "src/server/proxy.ts",
                   "src/server/middleware.ts", "packages/civitai-ui/src/vitest-helpers.ts",
-                  "src/server/services/baseline.service.ts", "src/server/eslint-rules.ts"]:
+                  "src/server/services/baseline.service.ts", "src/server/eslint-rules.ts",
+                  # near misses of the src/__tests__/ setup-file globs: tests and fixtures there
+                  "src/__tests__/service-worker.test.ts", "src/__tests__/mocks/db.mock.ts",
+                  "src/__tests__/pages/setup.test.tsx"]:
             with self.subTest(path=p):
                 self.assertFalse(self.forbidden(p), f"{p} (application code) is forbidden by {REAL_LIST}")
 

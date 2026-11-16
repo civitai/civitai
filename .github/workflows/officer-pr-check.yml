@@ -22,14 +22,18 @@ name: officer-pr-check
 #   5. a path that is not a test file matches no glob of the BASE's
 #      .github/officer/money-paths.txt (money, auth and gating code, case-insensitive): only
 #      those files' tests may change;
-#   6. it deletes no test file, and no modified test file has fewer `expect(` calls.
-# An empty diff fails. Tests under src/ and packages/ are application code here.
+#   6. it deletes no test file, and no modified test file has fewer `expect(` calls;
+#   7. no line a test file gains skips, focuses, retries or re-times a test (`.skip`, `.only`,
+#      `.todo`, `.fails`, `skipIf`, `runIf`, `retry:`, `testTimeout`, `timeout:`, ...).
+# An empty diff fails. Tests under src/ and packages/ are application code here; a file under
+# src/pages/ (a Next.js route) is never a test, whatever its name.
 #
 # The self-test (.github/officer/test_officer_pr_check.py, the PR's own copy) runs only on a
 # PR that touches .github/officer/ or adds a top-level entry (`officer_pr_check.py
 # selftest-needed`, the PR's copy): it shows the walls go red on what they exist to catch,
 # and fails when a new top-level file or directory is not yet in forbidden-paths.txt (the
-# push gate has no allowlist). Any other PR cannot change what it checks.
+# push gate has no allowlist). Any other PR cannot change what it checks. Both PR-code steps
+# run LAST, after arm and check, so PR code cannot influence either.
 #
 # 🔴 FAIL CLOSED: when armed, the checker, both lists and the logins all come from the BASE
 # commit. If the base lacks one, the job fails; it never runs the PR's own copy. Before this
@@ -93,28 +97,6 @@ jobs:
           echo "base $(git rev-parse --short HEAD^1), head $(git rev-parse --short HEAD^2), merge $(git rev-parse --short HEAD)"
           echo "commits in base..head: $(git rev-list --count HEAD^1..HEAD^2) (the PR reports ${PR_COMMITS})"
 
-      # The PR's own copy decides: it only gates the PR's own self-test.
-      - name: Does the self-test apply (touches .github/officer/ or adds a top-level entry)
-        id: selftest
-        env:
-          BASE: ${{ steps.refs.outputs.base }}
-        run: |
-          set -euo pipefail
-          python3 .github/officer/officer_pr_check.py selftest-needed "$BASE" HEAD | tee "$RUNNER_TEMP/selftest-needed.out"
-          grep -m1 '^selftest=' "$RUNNER_TEMP/selftest-needed.out" >>"$GITHUB_OUTPUT"
-
-      - name: Self-test (forbidden-path grammar, fixtures, top-level coverage)
-        if: steps.selftest.outputs.selftest == 'true'
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/selftest.out"
-          python3 .github/officer/test_officer_pr_check.py >"$out" 2>&1 || { cat "$out"; exit 1; }
-          cat "$out"
-          # COUNT the result, never trust the exit code alone: a run of 0 tests is a failure.
-          n="$(sed -n 's/^Ran \([0-9][0-9]*\) tests\? in .*/\1/p' "$out")"
-          [ -n "$n" ] && [ "$n" -ge 40 ] && grep -qx 'OK' "$out" \
-            || { echo "::error::self-test ran ${n:-0} tests (expected at least 40) or did not report OK"; exit 1; }
-
       # Decided from the BASE commit's checker and logins, so a PR cannot choose whether it is
       # checked. A base without the checker falls back to the `officer/` prefix alone.
       # An armed PR whose base is not main fails here.
@@ -149,3 +131,29 @@ jobs:
             || { echo "::error::.github/officer/officer_pr_check.py is not on the base; refusing to run the PR's copy"; exit 2; }
           git show "${BASE}:.github/officer/officer_pr_check.py" >"$RUNNER_TEMP/officer_pr_check.py"
           python3 "$RUNNER_TEMP/officer_pr_check.py" check "$BASE" HEAD
+
+      # 🔴 PR-HEAD CODE RUNS ONLY FROM HERE ON. Everything above (checkout, refs, arm, check)
+      # runs git and the BASE commit's checker only, so the PR's code cannot write
+      # $GITHUB_ENV, $GITHUB_PATH or $RUNNER_TEMP before the verdict that matters is reached,
+      # and a failed check skips these steps. The PR's own copy decides whether its own
+      # self-test runs, which is all it gates.
+      - name: Does the self-test apply (touches .github/officer/ or adds a top-level entry)
+        id: selftest
+        env:
+          BASE: ${{ steps.refs.outputs.base }}
+        run: |
+          set -euo pipefail
+          python3 .github/officer/officer_pr_check.py selftest-needed "$BASE" HEAD | tee "$RUNNER_TEMP/selftest-needed.out"
+          grep -m1 '^selftest=' "$RUNNER_TEMP/selftest-needed.out" >>"$GITHUB_OUTPUT"
+
+      - name: Self-test (forbidden-path grammar, fixtures, top-level coverage)
+        if: steps.selftest.outputs.selftest == 'true'
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/selftest.out"
+          python3 .github/officer/test_officer_pr_check.py >"$out" 2>&1 || { cat "$out"; exit 1; }
+          cat "$out"
+          # COUNT the result, never trust the exit code alone: a run of 0 tests is a failure.
+          n="$(sed -n 's/^Ran \([0-9][0-9]*\) tests\? in .*/\1/p' "$out")"
+          [ -n "$n" ] && [ "$n" -ge 60 ] && grep -qx 'OK' "$out" \
+            || { echo "::error::self-test ran ${n:-0} tests (expected at least 60) or did not report OK"; exit 1; }

@@ -81,6 +81,10 @@ vitest*.config.*
 playwright*.config.*
 *baseline*.json
 .eslintrc*
+# The unit suite's global setup files (vitest.config.mts `setupFiles`: setup.ts and
+# network-guard.ts) run before every test; any future setup or guard file there too.
+src/__tests__/*setup*
+src/__tests__/*guard*
 
 # ── every other top-level entry (the second wall's allowlist, spelled out) ──────
 # Directories (anchored at the root).

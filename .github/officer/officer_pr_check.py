@@ -31,7 +31,8 @@ rename, deletions included):
      match_forbidden below).
   3. MODE: no symlink (120000) or gitlink (160000) may be added or changed to.
   4. REGRESSION TEST: at least one added or modified file is a test (TEST_GLOBS: a file
-     whose name matches `*.test.*` or `*.spec.*`). Every officer PR must carry a regression
+     whose name matches `*.test.*` or `*.spec.*`, and that is not under src/pages/ or
+     src/app/, where every file is a route). Every officer PR must carry a regression
      test for the fault it fixes (operator decision 2026-11-09); a deleted test does not count.
   5. MONEY, AUTH AND GATING: a changed, added, deleted or renamed-away path that is not a test
      file must match no glob of the BASE revision's .github/officer/money-paths.txt (same
@@ -39,6 +40,9 @@ rename, deletions included):
   6. NO DELETED TEST: no test file may be deleted (a rename is a deletion here).
   7. NO LOST ASSERTIONS: no modified test file may have fewer `expect(` calls at <head-rev>
      than at <base-rev>, counted per file (a gain in another file does not offset a loss).
+  8. NO SKIPPED OR RE-TIMED TEST: no line an added or modified test file gains may carry a
+     test-runner modifier (MODIFIER: `.skip`, `.only`, `.todo`, `.fails`, `skipIf`, `runIf`,
+     `retry:`, `testTimeout`, `hookTimeout`, `timeout:`, or `}, <number>)`).
 An empty diff FAILS: an officer PR always changes something, and "nothing changed" more
 often means wrong revisions than a clean PR.
 
@@ -61,7 +65,18 @@ BASE_REF = "main"
 SELFTEST_DIR = ".github/officer/"
 BAD_MODES = {"120000": "a symlink", "160000": "a submodule gitlink"}
 TEST_GLOBS = ("*.test.*", "*.spec.*")
+# Next.js route roots: every file under them is a route or API handler whatever its name
+# (no `pageExtensions` narrows that), so a `*.test.ts` there is application code, never a test.
+ROUTE_ROOTS = ("src/pages/", "src/app/")
 EXPECT = "expect("
+# A test-runner modifier on an ADDED line of a test file: skip/focus/todo/expected-failure
+# (`.skip`, `.only`, `.todo`, `.fails`, also as `.skip.each` and the like), conditional runs
+# (`skipIf`, `runIf`), retries, and timeout overrides (`testTimeout`, `hookTimeout`,
+# `timeout:` options, or a numeric argument right after a callback's closing brace, as in
+# `}, 30000)`). Each lets a test stop failing without its assertions changing. Removing one
+# only makes more tests run, so removed lines are not judged.
+MODIFIER = re.compile(r"\.(?:skip|only|todo|fails)\b|\b(?:skipIf|runIf|testTimeout|hookTimeout)\b"
+                      r"|\bretry\s*:|\btimeout\s*:|^\s*\}\s*,\s*[0-9][0-9_]*\s*\)")
 NOREPLY = re.compile(r"^(?:[0-9]+\+)?(?P<login>[^@]+)@users\.noreply\.github\.com$", re.IGNORECASE)
 
 
@@ -190,13 +205,32 @@ def resolve(rev):
 
 
 def is_test(path):
-    """A test file: its NAME (the last segment) matches a TEST_GLOBS pattern."""
+    """A test file: its NAME (the last segment) matches a TEST_GLOBS pattern, and it is not
+    under a ROUTE_ROOTS directory (where any file is served as a route)."""
+    if path.startswith(ROUTE_ROOTS):
+        return False
     name = path.rsplit("/", 1)[-1]
     return any(compile_glob(g).fullmatch(name) for g in TEST_GLOBS)
 
 
 def expect_count(rev, path):
     return git("show", f"{rev}:{path}").decode("utf-8", errors="replace").count(EXPECT)
+
+
+def added_modifiers(base, head, path):
+    """[(line, text)] for each line `path` gains between base and head that matches MODIFIER."""
+    raw = git("diff", "-U0", "--no-renames", "--no-color", base, head, "--", path).decode("utf-8", errors="replace")
+    out, n = [], None   # None until the first hunk: `+++ b/<path>` is a header, not a line
+    for line in raw.split("\n"):
+        m = re.match(r"^@@ -[0-9,]+ \+([0-9]+)", line)
+        if m:
+            n = int(m.group(1))
+            continue
+        if n is not None and line.startswith("+"):
+            if MODIFIER.search(line[1:]):
+                out.append((n, line[1:].strip()))
+            n += 1
+    return out
 
 
 def read_logins(base):
@@ -320,7 +354,7 @@ def cmd_check(base, head):
     if not entries:
         print("FAIL: no changed paths between base and head. Wrong revisions?")
         return 1
-    violations, tests, deleted_tests, lost = [], [], [], []
+    violations, tests, deleted_tests, lost, modified = [], [], [], [], []
     for old_mode, new_mode, status, path in entries:
         if is_test(path):
             if status == "D":
@@ -331,6 +365,8 @@ def cmd_check(base, head):
                     before, after = expect_count(base_c, path), expect_count(head_c, path)
                     if after < before:
                         lost.append(f"  {path!r}: {before} -> {after}")
+                if new_mode not in BAD_MODES:
+                    modified += [f"  {path!r} line {n}: {text}" for n, text in added_modifiers(base_c, head_c, path)]
         why = []
         if not path.startswith(ALLOWED_ROOTS):
             why.append("outside the allowed roots")
@@ -364,6 +400,11 @@ def cmd_check(base, head):
     if lost:
         print(f"FAIL: {len(lost)} test file(s) lose {EXPECT} calls; an officer PR may not weaken a test:")
         print("\n".join(lost))
+        rc = 1
+    if modified:
+        print(f"FAIL: {len(modified)} added test line(s) skip, focus, retry or re-time a test; "
+              "an officer PR may not weaken a test:")
+        print("\n".join(modified))
         rc = 1
     return rc
 
