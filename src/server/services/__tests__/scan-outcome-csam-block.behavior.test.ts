@@ -249,7 +249,7 @@ describe('a scan of a CSAM-blocked image', () => {
 
   it('keeps the block while an appeal is pending, when the block landed after the load', async () => {
     dbMock.dbWrite.appeal.findMany.mockResolvedValue([{ entityId: CSAM }] as never);
-    // Loaded under an earlier block; the CSAM reason was written before the scan's fresh read.
+    // Loaded under an earlier block; the CSAM reason was written after the load, before the verdict.
     const image = { ...(await loaded(CSAM)), ingestion: 'Rescan', blockedFor: 'moderated' };
     await holder.db.exec(`UPDATE "Image" SET ingestion = 'Rescan' WHERE id = ${CSAM}`);
 

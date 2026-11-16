@@ -1,6 +1,6 @@
 import { uniq } from 'lodash-es';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -63,7 +63,7 @@ export async function unblockAccountDeletionImages(userId: number) {
   while (passes < MAX_RESTORE_BATCHES) {
     passes++;
     const restored = await dbWrite.$queryRaw<
-      { id: number; postId: number | null; ingestion: string }[]
+      { id: number; postId: number | null; ingestion: string; blockedFor: string | null }[]
     >`
       UPDATE "Image"
       SET ingestion = ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus",
@@ -78,7 +78,7 @@ export async function unblockAccountDeletionImages(userId: number) {
           AND i."metadata"->>${PRIOR_INGESTION_KEY}::text IN (SELECT unnest(enum_range(NULL::"ImageIngestionStatus"))::text)
         LIMIT ${RESTORE_BATCH_SIZE}
       )
-      RETURNING id, "postId", ingestion
+      RETURNING id, "postId", ingestion, "blockedFor"
     `;
 
     if (!restored.length) {
@@ -86,7 +86,10 @@ export async function unblockAccountDeletionImages(userId: number) {
       break;
     }
 
-    const visible = restored.filter((x) => x.ingestion !== 'Blocked');
+    // A restored CSAM reason keeps the image hidden whatever its prior ingestion.
+    const visible = restored.filter(
+      (x) => x.ingestion !== 'Blocked' && x.blockedFor !== BlockedReason.CSAM
+    );
     const ids = visible.map((x) => x.id);
     const postIds = uniq(visible.map((x) => x.postId).filter((id): id is number => id != null));
     unblocked += ids.length;

@@ -151,7 +151,12 @@ function applyRestoreUpdate(sql: string, values: unknown[]) {
   for (const { row, next } of staged) if (!row.stuck) Object.assign(row, next);
 
   claimedPerPass.push(claimed.length);
-  return claimed.map(({ id, postId, ingestion }) => ({ id, postId, ingestion }));
+  return claimed.map(({ id, postId, ingestion, blockedFor }) => ({
+    id,
+    postId,
+    ingestion,
+    blockedFor,
+  }));
 }
 
 /**
@@ -284,6 +289,22 @@ describe('unblockAccountDeletionImages', () => {
     expect(images[0]).toMatchObject({ ingestion: 'Blocked', blockedFor: 'AiNotVerified' });
     expect(result.unblocked).toBe(0);
     expect(result.stillBlocked).toBe(1);
+  });
+
+  it('puts back a CSAM reason and leaves that image hidden', async () => {
+    images = [
+      hidden(1, 'Error', {
+        metadata: { [PRIOR_INGESTION_KEY]: 'Error', [PRIOR_BLOCKED_FOR_KEY]: 'CSAM' },
+      }),
+      hidden(2, 'Scanned'),
+    ];
+
+    const result = await unblockAccountDeletionImages(7);
+
+    expect(images[0]).toMatchObject({ ingestion: 'Error', blockedFor: 'CSAM' });
+    // Control: the other image is restored and goes through the unhide follow-ups.
+    expect(mockResetNsfwLevel.mock.calls).toEqual([[[2]]]);
+    expect(result).toMatchObject({ unblocked: 1, stillBlocked: 1 });
   });
 
   it('clears the breadcrumbs so a later moderator block is not mistaken for this one', async () => {
