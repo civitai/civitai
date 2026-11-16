@@ -60,6 +60,7 @@ const PRIMITIVE_BUCKETS: Readonly<Record<string, readonly string[]>> = {
   checkBlockPollRateLimit: ['poll'],
   checkBlockUploadAppRateLimit: ['upload-app'],
   checkBlockGenerationSourceUserRateLimit: ['gen-source-user'],
+  checkBlockUploadedGenerationSourceUserRateLimit: ['uploaded-gen-source-user'],
   checkBlockEstimateCellsRateLimit: ['estimate-cells'],
   checkBlockLLMRateLimit: ['llm'],
   checkBlockSubmitRateLimit: ['submit'],
@@ -321,6 +322,76 @@ describe('the App Blocks limiter population', () => {
     ]) {
       expect(files.has(f), `${f} has no limiter call the walk can see`).toBe(true);
     }
+  });
+});
+
+/**
+ * `withInFlightLimit` (`src/server/utils/in-flight-limit.ts`) is a limiter of a different shape:
+ * it THROWS its own TOO_MANY_REQUESTS when a per-user pool is full, so there is no `allowed`
+ * result to branch on. Its refusal is recorded through its `onFull` argument instead: every call
+ * outside `IN_FLIGHT_EXCLUDED` must pass a third argument whose body calls a recorder naming the
+ * `in-flight` bucket.
+ */
+const IN_FLIGHT_EXCLUDED: Readonly<Record<string, string>> = {
+  'src/server/middleware.trpc.ts':
+    'The site-wide tRPC `inFlightLimit` middleware: any procedure, keyed on the session user, no block token and no app. Not an App Blocks limiter.',
+};
+
+function inFlightSites(file: string, text: string): { file: string; recorded: boolean }[] {
+  const out: { file: string; recorded: boolean }[] = [];
+  walk(parse(file, text), (n) => {
+    if (!ts.isCallExpression(n) || calleeName(n) !== 'withInFlightLimit') return;
+    const onFull = n.arguments[2];
+    let recorded = false;
+    if (onFull) {
+      walk(onFull, (r) => {
+        if (
+          ts.isCallExpression(r) &&
+          RECORDERS.has(calleeName(r) ?? '') &&
+          namesBucket(r, ['in-flight'])
+        ) {
+          recorded = true;
+        }
+      });
+    }
+    out.push({ file, recorded });
+  });
+  return out;
+}
+
+function allInFlightSites(override?: { file: string; text: string }) {
+  return sourceFiles()
+    .filter((f) => f !== 'src/server/utils/in-flight-limit.ts' && !(f in IN_FLIGHT_EXCLUDED))
+    .flatMap((f) => {
+      const text = override && override.file === f ? override.text : read(f);
+      return text.includes('withInFlightLimit(') ? inFlightSites(f, text) : [];
+    });
+}
+
+describe('withInFlightLimit refusals are recorded per app', () => {
+  it('every App Blocks call passes an onFull that records the in-flight bucket', () => {
+    const sites = allInFlightSites();
+    expect(sites.length).toBeGreaterThan(0);
+    expect(sites.filter((s) => !s.recorded)).toEqual([]);
+  });
+
+  it('every excluded file still calls it (an exclusion that outlived its caller fails)', () => {
+    for (const f of Object.keys(IN_FLIGHT_EXCLUDED)) {
+      expect(read(f).includes('withInFlightLimit('), f).toBe(true);
+    }
+  });
+
+  it('POSITIVE CONTROL — a call without onFull is caught', () => {
+    const file = 'src/server/routers/blocks.router.ts';
+    const text = read(file);
+    const re =
+      /,\s*\(\) => recordBridgeRateLimitRefusal\(who\.procedure, 'in-flight', who\.claims\)/;
+    expect(
+      re.test(text),
+      'withSourceSaveBounds no longer passes onFull the way this control expects'
+    ).toBe(true);
+    const mutated = text.replace(re, '');
+    expect(allInFlightSites({ file, text: mutated }).filter((s) => !s.recorded)).toHaveLength(1);
   });
 });
 
