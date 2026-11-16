@@ -88,10 +88,7 @@ type Input struct {
 	ExcludedUserIDs       []int
 }
 
-// modelsSchema is model.getAll's input (getAllModelsSchema plus the router's `page`): its keys and
-// defaults (schemas.json, generated from the zod schema). A key outside it falls back
-// (`input-unknown-key`): a key the app added after this build was generated is one it reads, so it is
-// never treated as absent here. trpcTransportKeys are the exception.
+// modelsSchema is model.getAll's allow-list and defaults (why: the inputschema package doc).
 var modelsSchema = inputschema.Get(inputschema.AllModels)
 
 // modelsDefaults are the schema defaults Parse starts from, decoded once at package init.
@@ -148,8 +145,7 @@ func Parse(m map[string]any) (*Input, error) {
 			return nil, fallback.New("input-" + k)
 		}
 	}
-	// After the unsupported keys, so a request carrying one of them and a new key too is counted under
-	// the parity gap it names rather than under input-unknown-key.
+	// After unsupported keys so the reason names the parity gap.
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

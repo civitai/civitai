@@ -60,10 +60,7 @@ type Input struct {
 	IncludeProfilePictures bool
 }
 
-// imagesSchema is getInfiniteImagesSchema's keys and defaults (schemas.json, generated from the zod
-// schema). A key outside it falls back (`input-unknown-key`): zod would strip a key the schema does not
-// have, but a key the app ADDED after this build was generated is one it reads, so it is never treated
-// as absent here. trpcTransportKeys are the exception.
+// imagesSchema is getInfiniteImagesSchema's allow-list and defaults (why: the inputschema package doc).
 var imagesSchema = inputschema.Get(inputschema.InfiniteImages)
 
 // imagesDefaults are the schema defaults parseInput and ParseV1 start from, decoded once at package
@@ -119,13 +116,12 @@ func Parse(m map[string]any) (*Input, error) {
 
 // parseInput is Parse with the procedure's own list of keys that fall back when present.
 func parseInput(m map[string]any, unsupported []string) (*Input, error) {
-	// A known key that is not ported runs first, so a request that carries one and a new key too is
-	// counted under the parity gap it names rather than under input-unknown-key.
 	for _, k := range unsupported {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.Newf("input-"+k, "%v", v)
 		}
 	}
+	// After unsupported keys so the reason names the parity gap.
 	if k, ok := imagesSchema.Unknown(mapKeys(m), trpcTransportKeys); ok {
 		return nil, fallback.Newf("input-unknown-key", "%s", k)
 	}

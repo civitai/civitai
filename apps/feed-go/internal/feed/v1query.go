@@ -51,10 +51,8 @@ type V1Input struct {
 // batch may name.
 const imageIDsBatchMax = 100
 
-// v1Schema is imagesEndpointSchema's keys and defaults (schemas.json, generated from the zod schema).
-// A key outside it falls back (`input-unknown-key`): the schema strips it (and nextPage keeps it), but
-// a key the app added after this build was generated is one it reads, so it is never treated as
-// absent here. `token` is the exception: the API key, which Resolve then hands to the app.
+// v1Schema is imagesEndpointSchema's allow-list and defaults (why: the inputschema package doc); `token`,
+// the API key Resolve hands to the app, is also allowed.
 var v1Schema = inputschema.Get(inputschema.ImagesEndpoint)
 
 var v1TransportKeys = map[string]bool{"token": true}
@@ -228,8 +226,7 @@ func ParseV1(raw string) (*V1Input, error) {
 	case has("baseModels"):
 		return nil, fallback.New("v1-base-models")
 	}
-	// After the unported shapes, so a request carrying one of them and a new key too is counted under
-	// the shape it names (the app's shape counter classifies in this order too).
+	// After unsupported keys so the reason names the parity gap (the app's shape counter uses this order).
 	keys := make([]string, 0, len(params))
 	for _, p := range params {
 		keys = append(keys, p.Key)
