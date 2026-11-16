@@ -177,3 +177,16 @@ describe('refresh walk timers', () => {
     }
   });
 });
+
+// An owner's ban and a cover's later moderation change no challenge or crucible row, so the walk is
+// what deletes those points; moderation requires it at least daily.
+describe('challenge and crucible refresh walks', () => {
+  test.each([
+    ['challenge', () => import('@/vector-sync/challenges/domain').then((m) => m.challengeDomain)],
+    ['crucible', () => import('@/vector-sync/crucibles/domain').then((m) => m.crucibleDomain)],
+  ])('%s walks its whole table at least daily', async (_name, load) => {
+    const { refresh } = await load();
+    expect(refresh).toBeDefined();
+    expect(refresh!.everyMs).toBeLessThanOrEqual(24 * 60 * 60_000);
+  });
+});
