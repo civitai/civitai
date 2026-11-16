@@ -401,6 +401,18 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // The app asks the host to unlock ONE restricted workflow output (by workflow and position).
+  // The host's own dialog offers what the server allows; every outcome, a refusal included, is
+  // reported inside `result`, so only the shared dispatcher's NACK carries an `error`.
+  REQUEST_OUTPUT_UNLOCK: {
+    request: true,
+    reply: 'OUTPUT_UNLOCK_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // App generator SUBQUEUE bridges (tag-scoped) — the calling app's OWN slice of
   // the viewer's generation queue: read (image results) + cancel one, both scoped
   // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed

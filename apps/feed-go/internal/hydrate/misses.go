@@ -27,17 +27,17 @@ const (
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter.
-var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations}
+var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta}
 
-// MissCompute is how hydration answers a miss on the per-entity caches Node fills on read (user
-// cosmetics, image frames, event decorations): with the Node lookup's own query,
-// batched once per page and cache, instead of falling back. A Sources without one falls back on
-// those misses (FEED_GO_COMPUTE_MISSES=false).
+// MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
+// Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
+// without one falls back on those misses (FEED_GO_COMPUTE_MISSES=false).
 //
 // Each computed entry is built as the Node lookup builds it, packed exactly as Node's cache writer
 // packs `{...result, cachedAt}` (or the `{[idKey]: id, notFound: true, cachedAt}` marker), and read
 // back through the same decoder as a cache hit, so a computed miss and a later hit of what Node
-// wrote for it hydrate identically.
+// wrote for it hydrate identically. The image meta (meta.go) is the exception: its misses are
+// neither written back nor kept in process (see memoized).
 type MissCompute struct {
 	// WriteBack (FEED_GO_CACHE_WRITEBACK, default off) writes each computed entry where, and as, the
 	// Node lookup writes it: same key, same msgpackr bytes, same expiry. Only for a miss Node would
@@ -59,6 +59,10 @@ type MissCompute struct {
 	flight   singleflight.Group
 	recentMu sync.Mutex
 	recent   map[recentKey]recentEntry
+	// lastSweep is when remember last scanned recent for expired entries; sweeps counts the scans
+	// (tests read it).
+	lastSweep time.Time
+	sweeps    int
 	// beforeFlight, when set (tests), runs just before a lookup joins or starts its flight.
 	beforeFlight func()
 	// Observe counts computed miss ids: cache is a MissXxx label, result "computed" or "error".
@@ -94,14 +98,16 @@ type recentEntry struct {
 //     caller's context runs it, so a joiner sees that caller's cancellation as its own error);
 //   - with write-back off, each answer (a record or "no row") is kept for recentTTL and answers the
 //     next miss of that id without a query. With write-back on nothing is kept: the written cache
-//     entry answers repeats, and a kept answer could outlive the bust that should replace it.
+//     entry answers repeats, and a kept answer could outlive the bust that should replace it. The
+//     image meta is never kept either (memoized): Node keeps no per-pod copy of it, so a meta its
+//     owner just hid is never served again, and its multi-KB values would crowd the cap.
 //
 // The records are shared between callers and must be treated as read-only.
 func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) (map[int]jspack.Obj, error) {
 	out := make(map[int]jspack.Obj, len(ids))
 	todo := ids
-	if !c.WriteBack {
+	if c.memoized(cache) {
 		todo = c.fromRecent(cache, ids, out)
 	}
 	if len(todo) == 0 {
@@ -126,10 +132,17 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 			out[id] = rec
 		}
 	}
-	if !c.WriteBack {
+	if c.memoized(cache) {
 		c.remember(cache, todo, records)
 	}
 	return out, nil
+}
+
+// memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every
+// cache but the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
+// must not leave the old prompt served from a process's copy).
+func (c *MissCompute) memoized(cache string) bool {
+	return !c.WriteBack && cache != MissImageMeta
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.
@@ -151,8 +164,14 @@ func (c *MissCompute) fromRecent(cache string, ids []int, out map[int]jspack.Obj
 	return todo
 }
 
-// remember keeps the answers for ids. At recentMax the expired entries are dropped first; an answer
-// that still does not fit is not kept.
+// recentSweepEvery is the least time between two scans of recent for expired entries.
+const recentSweepEvery = time.Second
+
+// remember keeps the answers for ids. Near recentMax the expired entries are dropped first, by a
+// scan of the whole map that runs at most once per recentSweepEvery: a map full of live entries is
+// not rescanned on every call (each scan holds recentMu and would free nothing). An answer that does
+// not fit is not kept, so while the map stays full new ids are skipped until a later sweep frees
+// room; an id already held is refreshed.
 func (c *MissCompute) remember(cache string, ids []int, records map[int]jspack.Obj) {
 	now := c.now()
 	until := now.Add(recentTTL)
@@ -161,7 +180,9 @@ func (c *MissCompute) remember(cache string, ids []int, records map[int]jspack.O
 	if c.recent == nil {
 		c.recent = map[recentKey]recentEntry{}
 	}
-	if len(c.recent)+len(ids) > recentMax {
+	if len(c.recent)+len(ids) > recentMax && (c.lastSweep.IsZero() || now.Sub(c.lastSweep) >= recentSweepEvery) {
+		c.lastSweep = now
+		c.sweeps++
 		for k, e := range c.recent {
 			if !now.Before(e.until) {
 				delete(c.recent, k)

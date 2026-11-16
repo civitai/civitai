@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -241,6 +242,30 @@ func TestIntegrationImagesQueryFilters(t *testing.T) {
 	limited.Limit = 1 // LIMIT limit+1: the look-ahead row
 	if got, want := integIDs(integRun(t, pool, limited)), []int{2101009, 2101008}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("limit 1 = %v, want %v", got, want)
+	}
+}
+
+// The REST endpoint's `ids` batch (the legacy path): the ids' own order whatever the request's, a
+// repeated id once, OFFSET before the look-ahead LIMIT (`page`), and the inclusive id cursor.
+func TestIntegrationLegacyIDsPaging(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedImages(t, pool)
+	q := ImagesQuery{IDs: []int{2101003, 2101009, 2101001, 2101009, 2101005, 2101999}, Limit: 2, IsModerator: true, BrowsingLevel: browsing.AllLevels}
+	if got, want := integIDs(integRun(t, pool, q)), []int{2101009, 2101005, 2101003}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("first page = %v, want %v (by id descending, the look-ahead row last)", got, want)
+	}
+	skipped := q
+	skipped.Skip = 2
+	if b := skipped.Build(); !strings.Contains(b.SQL, "OFFSET 2\n    LIMIT $") {
+		t.Fatalf("OFFSET not before LIMIT:\n%s", b.SQL)
+	}
+	if got, want := integIDs(integRun(t, pool, skipped)), []int{2101003, 2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("page 2 = %v, want %v", got, want)
+	}
+	cursor := q
+	cursor.Cursor = 2101005
+	if got, want := integIDs(integRun(t, pool, cursor)), []int{2101005, 2101003, 2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("from the cursor = %v, want %v", got, want)
 	}
 }
 

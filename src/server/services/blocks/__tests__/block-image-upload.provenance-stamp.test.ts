@@ -62,13 +62,13 @@ function storedMeta(): unknown {
 beforeEach(async () => {
   vi.clearAllMocks();
   dbMock.dbWrite.image.create.mockResolvedValue({ id: IMAGE_ID } as never);
-  redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(CALLER)] as never);
   h.storedBytes = await pngWithTextChunks({ parameters: A1111_PARAMETERS });
 });
 
 describe('persistBlockUploadImage → real createImage', () => {
   it('refuses a key issued to another user before writing', async () => {
-    redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER + 1)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(CALLER + 1)] as never);
 
     await expect(
       persistBlockUploadImage({ input: { url: KEY } as never, userId: CALLER })
