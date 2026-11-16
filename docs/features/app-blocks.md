@@ -871,6 +871,34 @@ error? }`, on every path. The server half is `blocks.persistGenerationSource`.
 - Not available on App Assistant dev-tunnel previews yet: they have no `block_workflows`
   row, which this bridge requires.
 
+### Picked generation sources as scanned rows (`app-block-source-scanned-rows`)
+
+A source the viewer uploads through `OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`
+(`useImageUpload({ purpose: 'generationSource' })`) or a single `OPEN_MEDIA_UPLOAD` image is
+uploaded as a private consumer blob, as before. While the `app-block-source-scanned-rows`
+flag is on, the generation gate refuses an orchestrator url from an app, so the host then has
+`blocks.persistUploadedGenerationSource` copy that blob into a private, scanned row, through
+the same writer as `PERSIST_GENERATION_SOURCE`, and replies with that row instead:
+
+- **Reply.** The same `{ url, width, height }` (an `image.civitai.com` url, 64..2048 px), plus
+  `imageId` and `ready` with the same meaning as above. A scan that blocks or holds the image
+  is an upload error; the app gets no image. With the flag off the reply is the blob, as
+  before, with no `imageId` or `ready`. An SDK that predates the two fields passes them
+  through or ignores them; its source still works, and a submit before the scan finishes is
+  refused with `'source-scan-pending'`.
+- **Which path.** The host asks `blockImageUpload.generationSourceUsesScannedRows`, which reads
+  the gate's own flag, after the upload. If that query fails it replies with the blob: the gate
+  stays the only authority, so this never admits an unscanned source while the flag is on.
+- **Gates.** The app needs `ai:write:budgeted`, the signed-in viewer must be the token's subject
+  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag on, an app
+  without the scope gets an upload error (never the blob). The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
+  is the viewer's own, at a fresh key, not on the shared grid and not postable.
+- **Limits.** Shared with `PERSIST_GENERATION_SOURCE`: 60 per hour per viewer across both, at
+  most 2 in flight, plus the per-user 60/h request limit.
+- **Not covered.** `OPEN_MEDIA_UPLOAD_BATCH` images and `trainingData` uploads are still blobs.
+  Training data is not a generation input. Batch images are refused by the gate while the flag
+  is on.
+
 ### Inline ComfyUI graphs (`kind: 'customComfy'`, `mode: 'inline'`)
 
 Some nodes are refused in an inline graph, by the estimate and the submit alike, with a

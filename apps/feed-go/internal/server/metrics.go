@@ -3,6 +3,7 @@ package server
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
@@ -47,8 +48,9 @@ type Metrics struct {
 
 	// Panics counts recovered panics by where (serve | shadow | probe). Not per endpoint.
 	Panics *prometheus.CounterVec
-	// RevocationFailOpen counts session revocation reads that failed and allowed the request.
-	RevocationFailOpen prometheus.Counter
+	// RevocationDegraded counts session revocation reads that failed, by the verdict then given from the
+	// markers already read (verdict: deny_cached | allow_unknown).
+	RevocationDegraded *prometheus.CounterVec
 	// JWKSRefresh counts periodic JWKS refreshes by result (ok | error).
 	JWKSRefresh *prometheus.CounterVec
 	// JWKSStale counts the times the key set was dropped for being older than its maximum staleness.
@@ -58,6 +60,9 @@ type Metrics struct {
 	// response with http.ErrAbortHandler and is not counted. Not per endpoint: only the as-posts
 	// procedure is served, and so proxied.
 	FallbackProxyErrors *prometheus.CounterVec
+	// ServeInFlight is the public requests computing now, each holding a serve slot (at most
+	// Server.MaxInFlight; one past it is the `bulkhead` fallback). Per endpoint; only as-posts is served.
+	ServeInFlight prometheus.Gauge
 	// CacheMisses counts the per-entity cache misses hydration computed (cache, result: computed |
 	// error), per missed id. Not per endpoint: hydration is shared by both.
 	CacheMisses *prometheus.CounterVec
@@ -76,7 +81,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	m := &Metrics{
 		Requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_requests_total",
-			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|fallback|error).",
+			Help: "Requests by mode (serve|shadow) and outcome (served|served_empty|served_cached|fallback|error).",
 		}, []string{EndpointLabel, "mode", "outcome"}),
 		Fallbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_fallback_total",
@@ -89,7 +94,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{EndpointLabel, "mode", "outcome"}),
 		ShadowResults: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_compare_total",
-			Help: "Shadow comparisons by result: match, match_empty, fields, order, membership, unsupported, deadline, go_error, bad_request.",
+			Help: "Shadow comparisons by result: match, match_empty, match_cached, fields, order, membership, unsupported, deadline, go_error, bad_request.",
 		}, []string{EndpointLabel, "result"}),
 		ShadowDiffs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_field_diffs_total",
@@ -149,10 +154,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_panics_total",
 			Help: "Recovered panics, by where they were caught (serve: a public request, answered by the fallback; shadow: a shadow sample, dropped; probe: a Go-first probe, counted as error).",
 		}, []string{"where"}),
-		RevocationFailOpen: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "feed_go_revocation_fail_open_total",
-			Help: "Session revocation reads that failed (store slow or down) and let the session through, as the app does.",
-		}),
+		RevocationDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_revocation_degraded_total",
+			Help: "Session revocation reads that failed (store slow or down), by verdict: deny_cached (a revocation marker this process had already read applied; signed out) or allow_unknown (no known marker applied; the session was allowed), as the app's session_revocation_degraded_total.",
+		}, []string{"verdict"}),
 		JWKSRefresh: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_jwks_refresh_total",
 			Help: "Periodic JWKS refreshes by result (ok|error); an error keeps the last good key set.",
@@ -170,6 +175,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Fallback requests the proxy answered 502 because the Node app failed before a response started, by reason (upstream: unreachable or connection broken; canceled: the client left first). A failure mid-body aborts the response (http.ErrAbortHandler) and is not counted.",
 		}, []string{"reason"}),
 	}
+	serveInFlight := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "feed_go_serve_in_flight",
+		Help: "Public requests computing now, each holding a serve slot; at FEED_GO_MAX_IN_FLIGHT the next one is not computed but proxied to the Node app (feed_go_fallback_total{reason=\"bulkhead\"}).",
+	}, []string{EndpointLabel})
+	m.ServeInFlight = serveInFlight.WithLabelValues(EndpointAsPosts)
+	// A pod that never shed reads 0 rather than an absent series.
+	m.Fallbacks.WithLabelValues(EndpointAsPosts, "serve", "bulkhead")
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
 	// rather than an absent series.
 	for _, e := range Endpoints {
@@ -196,6 +208,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, r := range []string{"upstream", "canceled"} {
 		m.FallbackProxyErrors.WithLabelValues(r)
 	}
+	for _, v := range []string{auth.VerdictDenyCached, auth.VerdictAllowUnknown} {
+		m.RevocationDegraded.WithLabelValues(v)
+	}
 	for _, c := range hydrate.MissCaches {
 		for _, r := range []string{"computed", "error"} {
 			m.CacheMisses.WithLabelValues(c, r)
@@ -204,6 +219,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
-		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses)
+		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, serveInFlight)
 	return m
 }

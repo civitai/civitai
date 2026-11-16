@@ -28,7 +28,9 @@ export function resolveSearchTarget(
 }
 
 type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
-type FeedSearchFlags = Partial<Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch'>>;
+type FeedSearchFlags = Partial<
+  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch'>
+>;
 
 /**
  * Images can be searched: on the search pages (`imageSearch`) or on the images feed (`feedSearch`).
@@ -41,6 +43,7 @@ export const offersImageSearch = (features: ImageSearchFlags) =>
 const FEED_SEARCH = {
   images: { flag: 'feedSearch', pathname: '/images' },
   models: { flag: 'modelFeedSearch', pathname: '/models' },
+  articles: { flag: 'articleFeedSearch', pathname: '/articles' },
 } as const satisfies Partial<
   Record<SearchIndexKey, { flag: keyof FeedSearchFlags; pathname: string }>
 >;

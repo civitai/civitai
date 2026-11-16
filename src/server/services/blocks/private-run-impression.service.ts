@@ -155,7 +155,7 @@ function reportGateFailure(err: unknown): void {
         errorClass: err instanceof Error ? err.name : typeof err,
       },
       'clickhouse'
-    ).catch(() => undefined);
+    );
   } catch {
     // A synchronously-throwing log client must not reach the caller. See above.
   }

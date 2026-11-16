@@ -445,8 +445,6 @@ export async function purgeResizeCache({
         message: 'blob retraction was requested with a partial scope; not retracting',
         imageKey: url,
         scope,
-      }).catch(() => {
-        // swallow — best effort logging
       });
     }
     // The exact literal the service gates on; it fails closed on anything else.
@@ -490,7 +488,7 @@ export async function purgeResizeCache({
           // once multiplies the load it is shedding, so the caller decides when to come back.
           if (res.status === 429) {
             if (retractionGate) retractionGate.busy = true;
-            await logToAxiom({
+            logToAxiom({
               type: 'warning',
               name: 'image-cacher-invalidate',
               message: 'image-cacher invalidate answered 429 (busy); not done',
@@ -499,8 +497,6 @@ export async function purgeResizeCache({
               retract,
               status: res.status,
               retryAfter: res.headers.get('retry-after') ?? undefined,
-            }).catch(() => {
-              // swallow — best effort logging
             });
             return 'busy';
           }
@@ -512,15 +508,13 @@ export async function purgeResizeCache({
           // the first symptom of a stale shared secret would otherwise be stale images with no
           // signal anywhere.
           if (!res.ok) {
-            await logToAxiom({
+            logToAxiom({
               type: 'warning',
               name: 'image-cacher-invalidate',
               message: 'image-cacher invalidate returned a non-success status',
               imageKey: url,
               scope,
               status: res.status,
-            }).catch(() => {
-              // swallow — best effort logging
             });
             return 'unconfirmed';
           }
@@ -538,8 +532,6 @@ export async function purgeResizeCache({
             imageKey: url,
             scope,
             error: safeError(err),
-          }).catch(() => {
-            // swallow — best effort logging
           });
           // A slow service sheds load the same way a refusing one does.
           if (retract && timedOut) {
@@ -650,13 +642,13 @@ async function deleteImageFromStorage({
     // not of this code. A first-party url arriving here means that changed, and the skip would
     // then be dropping a real delete instead of declining someone else's.
     if (/^https?:\/\/[^/]*\bcivitai\.com/i.test(url))
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'delete-image-from-s3-skipped-first-party-url',
         message: 'Image.url holds a first-party url, not a bucket key; nothing was deleted',
         imageId: id,
         url,
-      }).catch(() => undefined);
+      });
     return { storage: 'skipped' };
   }
 
@@ -699,14 +691,14 @@ async function deleteImageFromStorage({
       // what made the gap invisible. Rate of this line is the health signal, so it carries the
       // reason too: routing a rejection here instead of to the catch below would otherwise discard
       // the only record of WHY the resolver failed.
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'delete-image-from-s3-unresolved-location',
         message: 'storage-resolver returned no location; deleting from B2 anyway',
         imageId: id,
         url,
         ...(resolverError !== undefined && { error: resolverError }),
-      }).catch(() => undefined);
+      });
     }
 
     const b2Client = getB2ImageS3Client();
@@ -723,14 +715,14 @@ async function deleteImageFromStorage({
     // The DB row is already gone, so this key is the only route back to a publicly reachable
     // object (CDN urls are unsigned). `retry-image-storage-deletes` works the queue.
     outcome = 'failed';
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'delete-image-from-s3-failed',
       message: 'S3 delete failed; the object may still be public',
       imageId: id,
       url,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
     await queueImageStorageDeleteRetry({ id, url });
   }
 
@@ -738,13 +730,13 @@ async function deleteImageFromStorage({
   // the request rather than after, so a request that is made but never confirmed still leaves a
   // record, and not at all for one held back unsent.
   const onRetractionSent = async () => {
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'image-blob-retraction-requested',
       message: 'moderation requested retraction of the public copies of this image',
       imageId: id,
       url,
-    }).catch(() => undefined);
+    });
   };
 
   // Outside the try: a failed object delete is exactly when invalidation matters, because the
@@ -784,14 +776,14 @@ export async function queueImageStorageDeleteRetry({ id, url }: { id: number; ur
         WHERE "JobQueue"."data"->>'url' IS DISTINCT FROM EXCLUDED."data"->>'url'
     `;
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'queue-image-storage-delete-retry-failed',
       message: 'failed storage delete was not queued for retry; the object may still be public',
       imageId: id,
       url,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -973,13 +965,13 @@ export const deleteImageById = async ({
     // The row may already be gone from the DB while cleanup (search-index delete,
     // cache busts, S3) failed — swallowing that silently leaves the image visible
     // in search/feeds forever, which then 500s anything that FKs to it (reports).
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'delete-image-cleanup-failed',
       message: 'deleteImageById failed; image may remain indexed',
       imageId: id,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
   }
 };
 
@@ -1030,13 +1022,13 @@ export async function queueReplacedImageDeletion(ids: number[]) {
         DO UPDATE SET "createdAt" = NOW()
       `;
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         type: 'error',
         name: 'queue-replaced-image-deletion-failed',
         message: 'replaced image was not queued for deletion; it will not be reaped',
         imageIds: batch,
         error: safeError(error),
-      }).catch(() => undefined);
+      });
     }
   }
 }
@@ -1397,9 +1389,7 @@ export async function writeModeratorBlock(
 /** Logged when an owner notice goes out for an image under the moderator-only review flag. */
 export function logNoticeUnderReview(images: { id: number; userId: number }[]) {
   for (const { id, userId } of images)
-    logToAxiom({ type: 'warning', name: 'image-notice-under-review', imageId: id, userId }).catch(
-      () => undefined
-    );
+    logToAxiom({ type: 'warning', name: 'image-notice-under-review', imageId: id, userId });
 }
 
 export async function handleBlockImages({
@@ -1819,7 +1809,7 @@ export const ingestImage = async ({
       imageId: id,
       mediaType: type,
       url,
-    }).catch(() => null);
+    });
     return false;
   }
 
@@ -1861,7 +1851,7 @@ export const ingestImage = async ({
       error: safeError(submitError),
       imageId: id,
       mediaType: type,
-    }).catch(() => null);
+    });
     return false;
   }
   const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
@@ -1904,7 +1894,7 @@ export function enqueueImageIngestion({
     userId,
     message: `Enqueuing ${images.length} images for ingestion`,
     imageIds: images.map((img) => img.id),
-  }).catch(() => undefined);
+  });
 
   const tasks = images.map(
     (img) => () =>
@@ -1915,7 +1905,7 @@ export function enqueueImageIngestion({
           userId,
           imageId: img.id,
           message: error instanceof Error ? error.message : String(error),
-        }).catch(() => undefined);
+        });
       })
   );
 
@@ -2114,7 +2104,7 @@ function noteEmptyIdsPage(
       ...details,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 // getImageMetricsObject soft-fallback rate: incremented whenever the ClickHouse
@@ -3021,7 +3011,7 @@ const getAllImagesUncaptured = async (
           tagCount: tags?.length,
           baseModelCount: baseModels?.length,
         },
-      }).catch(() => undefined);
+      });
       noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
       if (input.throwOnStatementTimeout) throw e;
       return { items: [], nextCursor: undefined };
@@ -3865,7 +3855,7 @@ const getCachedImageMetricsObject = async (ids: number[]): Promise<ImageMetricsO
           idCount: uniqueIds.length,
         },
         'clickhouse'
-      ).catch();
+      );
     });
 
     if (rejected > 0) {
@@ -3877,7 +3867,7 @@ const getCachedImageMetricsObject = async (ids: number[]): Promise<ImageMetricsO
           idCount: uniqueIds.length,
         },
         'clickhouse'
-      ).catch();
+      );
     }
 
     const result: ImageMetricsObject = {};
@@ -3899,7 +3889,7 @@ const getCachedImageMetricsObject = async (ids: number[]): Promise<ImageMetricsO
         cause: error.cause,
       },
       'clickhouse'
-    ).catch();
+    );
     return {};
   }
 };
@@ -3973,7 +3963,7 @@ export const getImageMetricsObject = async (
       logToAxiom(
         { type: 'error', name: 'Failed to getImageMetrics swr', message: error.message },
         'clickhouse'
-      ).catch();
+      );
       return getImageMetricsObjectDirect(data, remainingMs());
     }
   }
@@ -4022,7 +4012,7 @@ export const getImageMetricsObjectDirect = async (
           timeoutMs,
         },
         'clickhouse'
-      ).catch();
+      );
     });
     // Both failure exits serve the cache: an id it answers for is KNOWN (stale by
     // at most the watcher's lag), and one it cannot stays absent, which
@@ -4042,7 +4032,7 @@ export const getImageMetricsObjectDirect = async (
         cause: error.cause,
       },
       'clickhouse'
-    ).catch();
+    );
     return await getCachedImageMetricsObject(data.map((d) => d.id));
   }
 };
@@ -5193,8 +5183,6 @@ export async function createImage({
     url: mediaVerdict === 'not-applicable' ? null : image.url,
     userId: image.userId,
     postId: image.postId ?? null,
-  }).catch(() => {
-    // swallow — best-effort logging must never break the creation it is observing
   });
 
   const meta = sanitizeProvenance(
@@ -6067,8 +6055,6 @@ export async function reportCsamImages({
         type: 'warning',
         name: 'csam-queue-set-aside-not-deletable',
         message: 'the table exists but this role may not delete from it; grant DELETE',
-      }).catch(() => {
-        // swallow — best effort logging
       });
   });
   await refreshProfilePicturesForImages(imageIds);
@@ -6434,7 +6420,7 @@ export async function resolveIngestionError({
         message: 'Refused to publish an image whose media cannot be served',
         imageId: id,
         presence,
-      }).catch(() => undefined),
+      }),
     // Silent fail-open is how a guard lies for months: with credentials rotated, every publish
     // would take the `unknown` branch and this would be indistinguishable from a clean run.
     // 🔴 `reason` is what makes the count readable: `headObject` RESOLVES `{ status: 'unknown' }`
@@ -6448,7 +6434,7 @@ export async function resolveIngestionError({
         imageId: id,
         reason,
         error: summarizeProbeError(error),
-      }).catch(() => undefined),
+      }),
     /**
      * 🔴 The short-circuit needs a counter too, and for a sharper reason than the other two.
      * `isProbeableMediaKey` is a deliberate UNDER-approximation — it matches only the bare-uuid
@@ -6463,7 +6449,7 @@ export async function resolveIngestionError({
         name: 'resolveIngestionError:media-probe-skipped',
         message: 'Image.url is not a probeable media key; no existence check ran',
         imageId: id,
-      }).catch(() => undefined),
+      }),
   });
 
   // Matched on what was read, so a block or ban landing after the replica read is not lifted.
@@ -7339,7 +7325,7 @@ async function getFailedEntryDrafts({
       type: 'error',
       name: 'failed-entry-drafts',
       message: (error as Error).message,
-    }).catch(() => undefined);
+    });
     return [];
   }
 }
@@ -7412,9 +7398,7 @@ const trainingSampleFetchCounter = registerCounterWithLabels({
 export function isTrainingSampleUrlUsable(url: string) {
   if (isTrustedOrchestratorUrl(url)) return true;
   trainingSampleFetchCounter.inc({ outcome: 'skipped' });
-  logToAxiom({ type: 'info', name: 'training-sample-skipped', host: logHostOf(url) }).catch(
-    () => null
-  );
+  logToAxiom({ type: 'info', name: 'training-sample-skipped', host: logHostOf(url) });
   return false;
 }
 
@@ -7591,7 +7575,7 @@ export async function addSeenImageIds(imageIds: number[], maxSize = 10000) {
           stack: err.stack,
         },
         'temp-search'
-      ).catch();
+      );
     });
 }
 

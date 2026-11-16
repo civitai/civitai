@@ -414,7 +414,8 @@ jobs:
 
       # BLOCKING, on every PR including drafts. The `*.schema-drift.test.ts` files pin the published
       # manifest schema (public/schemas/app-block/v1.json) against the code that enforces it (the
-      # manifest validator, the scope and category constants). They live in the unit suite, which
+      # manifest validator, the scope and category constants), and the files the Go feed service
+      # embeds against the Node modules they are generated from. They live in the unit suite, which
       # runs on a PR only with the `full-ci` label, so a schema or validator edit could otherwise
       # merge without them. Unfiltered on purpose: they read the schema with readFileSync, so no
       # import graph sees it, and a hand-kept list of the files they pin would go stale silently.

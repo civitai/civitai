@@ -298,7 +298,7 @@ export async function shopArtworkUrls(urls: string[], db: Db = dbWrite): Promise
 
 const UPLOAD_KEY_OWNER_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** From then, every upload key in a client url needs an issue record or a row of the caller's. */
-export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-18T16:00:00Z');
+export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-12-09T16:00:00Z');
 
 const uploadKeyOwnerCounter = registerCounterWithLabels({
   name: 'upload_key_owner_total',
@@ -367,7 +367,7 @@ export async function recordUploadKeyOwner(key: string, userId: number): Promise
     message: 'Failed to record upload key owner',
     error: (error as Error).message,
     attempts: RECORD_ATTEMPTS,
-  }).catch(() => undefined);
+  });
   return false;
 }
 
@@ -458,7 +458,7 @@ async function ownersFromClickhouse(keys: string[]) {
       name: 'upload-key-owner',
       message: 'Failed to read the upload request log',
       error: (e as Error).message,
-    }).catch(() => undefined);
+    });
     return { owners, failed: true };
   }
 }
@@ -574,7 +574,7 @@ export async function assertClientKeysIssuedToCaller({
     userId,
     keys: remaining.join(','),
     ...(requestLogReadFailed && { reason: 'request_log_unavailable' }),
-  }).catch(() => undefined);
+  });
 }
 
 /**

@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { recordAppBlockRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
+import { blockClaimsAppLabel } from '~/server/metrics/app-block-runtime.metrics';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 
@@ -167,7 +169,7 @@ export async function syncSubListingRatingFromDoc(args: {
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
       appBlockId: args.appBlockId,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -412,7 +414,7 @@ export async function readSharedItemForSubListing(
         name: 'app-sub-listing-shared-key-ambiguous',
         type: 'warning',
         appBlockId,
-      }).catch(() => null);
+      });
     }
     return item.kind === 'found'
       ? {
@@ -427,7 +429,7 @@ export async function readSharedItemForSubListing(
       name: 'app-sub-listing-shared-read-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
   }
 }
@@ -488,6 +490,8 @@ export type UpsertSubListingResult = {
 
 export async function upsertSubListing(args: {
   appBlockId: string;
+  /** The token is a dev token: its refusals are counted under app_block_id="dev". */
+  dev?: boolean;
   subjectUser: SessionUser | null;
   hasLinkedOAuth: boolean;
   body: unknown;
@@ -521,6 +525,15 @@ export async function upsertSubListing(args: {
 
   const rate = await checkSubListingWriteRateLimit(user.id, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: blockClaimsAppLabel({ dev: args.dev, appBlockId: args.appBlockId }),
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'upsertSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: user.id,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',
@@ -705,7 +718,7 @@ async function writeSubListing(
       parentListingId: parent.id,
       fromImageId: existing.imageId,
       toImageId: content.imageId,
-    }).catch(() => null);
+    });
     return { id: existing.id, status, pendingEdit: false, catalogAffected: true };
   }
   const written = await casUpdate({
@@ -746,6 +759,8 @@ async function transitionActive(args: {
 
 export async function withdrawSubListing(args: {
   appBlockId: string;
+  /** The token is a dev token: its refusals are counted under app_block_id="dev". */
+  dev?: boolean;
   userId: number | null;
   body: unknown;
 }): Promise<{ ok: true; withdrawn: boolean }> {
@@ -758,6 +773,15 @@ export async function withdrawSubListing(args: {
   if (!parent) return { ok: true, withdrawn: false };
   const rate = await checkSubListingWriteRateLimit(args.userId, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: blockClaimsAppLabel({ dev: args.dev, appBlockId: args.appBlockId }),
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'withdrawSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: args.userId,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',
@@ -1429,7 +1453,8 @@ export async function listCatalogSubListings(args: {
 
 export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
-  itemKey: string;
+  /** One item key, or several (a publish's prune or an unpublish): one lookup, batched updates. */
+  itemKey: string | readonly string[];
   change: 'withdrawn' | 'hidden';
   /**
    * Only this author's card follows. Required for `withdrawn`; for `hidden`, given when the key
@@ -1456,9 +1481,10 @@ export async function syncSubListingForSharedRow(
       select: { id: true },
     });
     if (!parent) return;
+    if (typeof args.itemKey !== 'string' && args.itemKey.length === 0) return;
     const where: Prisma.AppSubListingWhereInput = {
       parentListingId: parent.id,
-      itemKey: args.itemKey,
+      itemKey: typeof args.itemKey === 'string' ? args.itemKey : { in: [...args.itemKey] },
       ...(args.authorUserId != null ? { authorUserId: args.authorUserId } : {}),
     };
     // Moves a store-hidden row's version so a restore that read the shared row as live fails
@@ -1473,7 +1499,7 @@ export async function syncSubListingForSharedRow(
           message: err instanceof Error ? err.message : String(err),
           appBlockId: args.appBlockId,
           change: args.change,
-        }).catch(() => null);
+        });
       });
     await transitionActive({
       where,
@@ -1497,7 +1523,7 @@ export async function syncSubListingForSharedRow(
       message: err instanceof Error ? err.message : String(err),
       appBlockId: args.appBlockId,
       change: args.change,
-    }).catch(() => null);
+    });
   }
 }
 

@@ -8,6 +8,7 @@ package hydrate
 // (node: `require('msgpackr').pack(v).toString('hex')`, cachedAt = 2026-06-15T12:00:00.000Z).
 
 import (
+	"context"
 	"encoding/hex"
 	"reflect"
 	"strconv"
@@ -130,4 +131,106 @@ func TestIntegrationEventDecorationMissComputed(t *testing.T) {
 	}
 	integWantPacked(t, e, KeyImageEvents, 1150202, integWantEvent, 24*time.Hour)
 	integWantPacked(t, e, KeyImageEvents, 1150203, integWantEventMarker, time.Hour)
+}
+
+const (
+	// {imageId:1150401, tags:[1150301,1150303,1150304], cachedAt}
+	integWantTags = "de0003a7696d6167654964ce00118dc1a47461677393ce00118d5dce00118d5fce00118d60a86361636865644174d6ff6a2fe940"
+	// {imageId:1150402, notFound:true, cachedAt}
+	integWantTagsMarker = "de0003a7696d6167654964ce00118dc2a86e6f74466f756e64c3a86361636865644174d6ff6a2fe940"
+	// {cosmeticId:1150106, equippedToId:1150501, userData:JSON.parse('{"a": 2, "lights": 4}'), cachedAt}
+	integWantModelFrame = "de0004aa636f736d657469634964ce00118c9aac6571756970706564546f4964ce00118e25a87573657244617461de0002a16102a66c696768747304a86361636865644174d6ff6a2fe940"
+)
+
+// The tag-ids lookup against the real schema: its SQL (the enum and citext columns as text, the
+// disabled filter), Node's Rekognition rule, and the written value and expiry (9h). Image 1150401 is
+// WD14-tagged: its Rekognition Label 1150302 is dropped, its Rekognition Moderation tag 1150303 and
+// gated label 1150304 kept; 1150305 is disabled and 1150399 has no Tag row. 1150402 has no row.
+func TestIntegrationTagIDsMissComputed(t *testing.T) {
+	e := integTagIDsSetup(t)
+	got, err := e.src.TagIDs(integtest.Ctx(t), []int{1150401, 1150402})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1150401}) {
+		t.Fatalf("tag ids for %v, want [1150401]", ids)
+	}
+	if s := integPlain(t, got[1150401]); s != `[1150301,1150303,1150304]` {
+		t.Fatalf("tags = %s, want [1150301,1150303,1150304]", s)
+	}
+	integWantPacked(t, e, KeyTagIDs, 1150401, integWantTags, 9*time.Hour)
+	integWantPacked(t, e, KeyTagIDs, 1150402, integWantTagsMarker, 9*time.Hour)
+}
+
+// A stale tag-ids entry (cachedAt past the 8h ttl, as a bust leaves it) on the real cluster: looked up
+// again under the revalidation lock, its value replaced (a plain SET over the existing key), the lock
+// released.
+func TestIntegrationStaleTagIDsReplaced(t *testing.T) {
+	e := integTagIDsSetup(t)
+	e.put(t, KeyTagIDs, 1150401, integtest.O("imageId", 1150401, "tags", []any{1}, "cachedAt", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+	ctx := integtest.Ctx(t)
+	got, err := e.src.TagIDs(ctx, []int{1150401})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := integPlain(t, got[1150401]); s != `[1150301,1150303,1150304]` {
+		t.Fatalf("tags = %s, want the looked-up [1150301,1150303,1150304]", s)
+	}
+	integWantPacked(t, e, KeyTagIDs, 1150401, integWantTags, 9*time.Hour)
+	if n := e.c.Exists(ctx, e.src.tagIDsLockKey(1150401)).Val(); n != 0 {
+		t.Fatal("the revalidation lock was left behind")
+	}
+}
+
+// integTagIDsSetup is integMissSetup with the tag rows of TestIntegrationTagIDsMissComputed and a
+// gate holding 1150304.
+func integTagIDsSetup(t *testing.T) *integEnv {
+	t.Helper()
+	e := integMissSetup(t)
+	integtest.Exec(t, e.pool, `DELETE FROM "TagsOnImageDetails" WHERE "imageId" BETWEEN 1150400 AND 1150499;
+		DELETE FROM "Tag" WHERE id BETWEEN 1150300 AND 1150399;
+		INSERT INTO "Tag" (id, name, type) VALUES
+		  (1150301, 'integ-miss-wd', 'Label'),
+		  (1150302, 'integ-miss-label', 'Label'),
+		  (1150303, 'integ-miss-mod', 'Moderation'),
+		  (1150304, 'integ-miss-gated', 'Label');
+		INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", disabled, source) VALUES
+		  (1150401, 1150301, false, 'WD14'),
+		  (1150401, 1150302, false, 'Rekognition'),
+		  (1150401, 1150303, false, 'Rekognition'),
+		  (1150401, 1150304, false, 'Rekognition'),
+		  (1150401, 1150305, true, 'User'),
+		  (1150401, 1150399, false, 'User');`)
+	e.src.Compute.TagGate = func(context.Context) (map[int]bool, error) { return map[int]bool{1150304: true}, nil }
+	return e
+}
+
+// The model frame lookup against the real schema: only rows placed on a Model (1150502 wears the same
+// frame on an Image), written as Node writes them.
+func TestIntegrationModelFrameMissComputed(t *testing.T) {
+	e := integMissSetup(t)
+	integtest.Exec(t, e.pool, `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "equippedAt", data, "equippedToId", "equippedToType") VALUES
+		  (1150005, 1150106, now(), '{"lights": 4, "a": 2}', 1150501, 'Model'),
+		  (1150006, 1150106, now(), NULL, 1150502, 'Image');`)
+	ctx := integtest.Ctx(t)
+	ids := []int{1150501, 1150502}
+	got, writable := e.src.read(ctx, KeyModelFrames, ids, 0)
+	if err := e.src.fillModelFrames(ctx, ids, got, writable); err != nil {
+		t.Fatal(err)
+	}
+	if fr := got[1150501]; fr.NotFound || fr.Value["cosmeticId"] == nil {
+		t.Fatalf("1150501 = %+v, want its frame row", fr)
+	}
+	if fr, ok := got[1150502]; !ok || !fr.NotFound {
+		t.Fatalf("1150502 = %+v, want a notFound entry (its frame is on an Image)", fr)
+	}
+	integWantPacked(t, e, KeyModelFrames, 1150501, integWantModelFrame, 24*time.Hour)
+	b, err := e.c.Get(ctx, e.prefix+KeyModelFrames+":1150502").Bytes()
+	if err != nil {
+		t.Fatalf("no frame marker for 1150502: %v", err)
+	}
+	t.Cleanup(func() { _ = e.c.Del(integtest.Ctx(t), e.prefix+KeyModelFrames+":1150502").Err() })
+	if v, _ := Unpack(b); !truthy(v.(map[string]any)["notFound"]) {
+		t.Fatalf("1150502 = %#v, want a notFound marker", v)
+	}
 }

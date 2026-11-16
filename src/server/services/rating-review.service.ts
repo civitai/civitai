@@ -200,7 +200,7 @@ async function resolveOverrideReview(args: {
     suggestedLevel: args.suggestedLevel,
     derivedLevel: args.derivedLevel,
     entryPoint: args.entryPoint,
-  }).catch();
+  });
   return review;
 }
 

@@ -179,5 +179,5 @@ function logAxesFailure(imageId: number, workflowId: string, error: unknown) {
       workflowId,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 }

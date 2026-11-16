@@ -7,6 +7,11 @@ import { getReactions, type ImageReactionRow, type ReactionPage } from './image-
 import type { MediaType } from '../media/edge-url';
 import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 import { approvedAppealOf } from './removal-hold';
+import { reviewHighlightCategories } from '$lib/image-review';
+import {
+  getPromptHighlightSegments,
+  type PromptHighlightResult,
+} from '@civitai/mod-utils/prompt-audit';
 
 // The PAGE LOAD half of Image Lookup (Retool's "Image Lookup" app). Everything here is Postgres and
 // sub-millisecond on the indexes, so it all rides the load; the ClickHouse half lives in
@@ -47,6 +52,8 @@ export type ImageDetail = {
   meta: unknown;
   prompt: string | null;
   negativePrompt: string | null;
+  promptHighlight: PromptHighlightResult | null;
+  ruleReason: string | null;
 };
 
 export type ImageTag = {
@@ -336,14 +343,27 @@ async function getImage(imageId: number): Promise<ImageDetail | null> {
       // The rest of the cell — seed, sampler, model hash, civitaiResources. Retool showed the whole
       // `meta` column, and two extracted strings is not the same answer to "what made this image".
       'i.meta',
+      sql<string | null>`i."metadata" ->> 'ruleReason'`.as('ruleReason'),
     ])
     .where('i.id', '=', imageId)
     .executeTakeFirst();
   if (!row) return null;
 
+  const promptHighlight =
+    row.prompt || row.negativePrompt
+      ? getPromptHighlightSegments(row.prompt, row.negativePrompt, {
+          categories: reviewHighlightCategories(row.needsReview),
+        })
+      : null;
+
   // The column is Prisma's MediaType enum; narrowing here keeps EdgeMedia's contract honest rather than
   // widening it to string at the boundary.
-  return { ...row, type: row.type as MediaType, ingestion: String(row.ingestion) };
+  return {
+    ...row,
+    type: row.type as MediaType,
+    ingestion: String(row.ingestion),
+    promptHighlight,
+  };
 }
 
 // `TagsOnImageDetails` is a VIEW over the tag tables; `disabled`/`needsReview` are what a moderator is

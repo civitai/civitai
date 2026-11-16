@@ -55,7 +55,7 @@ const log = (feedbackId: number, status: HqLogStatus) =>
     type: status === 'filed' ? 'info' : 'warning',
     feedbackId,
     status,
-  }).catch(() => undefined);
+  });
 
 const INVISIBLE_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
 const INLINE_MARKUP_RE = /[[\]()<>*_`#|!~\\]/g;

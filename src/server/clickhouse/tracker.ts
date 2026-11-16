@@ -614,7 +614,7 @@ export class Tracker {
               message: `Tracker returned ${res.status}`,
             },
             'clickhouse'
-          ).catch(() => undefined);
+          );
           failure = new Error(`tracker: ${table} rejected with ${res.status}`);
           break;
         }
@@ -637,7 +637,7 @@ export class Tracker {
             message: `Tracker returned ${res.status} after ${attempt} attempts`,
           },
           'clickhouse'
-        ).catch(() => undefined);
+        );
       } catch (e) {
         const error = e as Error;
         failure = error;
@@ -654,7 +654,7 @@ export class Tracker {
             cause: error.cause,
           },
           'clickhouse'
-        ).catch(() => undefined);
+        );
       }
     }
 
@@ -688,7 +688,7 @@ export class Tracker {
           cause: error.cause,
         },
         'clickhouse'
-      ).catch();
+      );
     }
   }
 
