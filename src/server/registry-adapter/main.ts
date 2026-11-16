@@ -40,6 +40,7 @@ import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
+import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
 import { SERVED_SCHEMAS, buildEntitiesPerRead } from '~/server/registry-adapter/entities';
 import type { ResourceConfig } from '~/server/registry-adapter/auth';
 import { verifyCivitaiToken } from '~/server/registry-adapter/auth.live';
@@ -98,7 +99,7 @@ function main() {
   });
   const docs = createDocFeed({
     source: liveSharedDocSource(),
-    resolve: resolveFromCatalog(readApps),
+    resolve: resolveFromCatalog(readApps, undefined, isSharedDocLevelsOn),
     store,
     pollMs,
     sleep: abortableSleep,

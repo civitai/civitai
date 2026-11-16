@@ -78,9 +78,11 @@ import type {
   DocAuthor,
   DocCollection,
   DocListQuery,
+  DocRatingStatus,
   DocRecord,
   DocStoreErrorCode,
 } from '~/server/services/apps/doc-store.types';
+import { withDocLevelGate } from '~/server/services/apps/doc-levels';
 import {
   DOC_STORE_BOUNDS,
   DocStoreError,
@@ -609,6 +611,13 @@ export type PresentedDoc = {
   key: string;
   data: Record<string, unknown>;
   version: number;
+  /**
+   * Content levels on only (`doc-levels.ts`): the effective level (NsfwLevel bit; the moderator's
+   * override first) and the rating status, each null when unset. Server-set: nothing an app
+   * writes reaches them. Absent while levels are off, so those responses are unchanged.
+   */
+  level?: number | null;
+  ratingStatus?: DocRatingStatus | null;
   createdAt: string;
   updatedAt: string;
   author: PresentedAuthor;
@@ -650,6 +659,7 @@ async function presentDocs(
           key: d.key,
           data: d.data,
           version: d.version,
+          ...(d.rating ? { level: d.rating.level, ratingStatus: d.rating.status } : {}),
           createdAt: d.createdAt.toISOString(),
           updatedAt: d.updatedAt.toISOString(),
           author: author(d.author),
@@ -1222,7 +1232,10 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       if (isTallyRoute(op)) {
         recordStorageTallyOp(TALLY_METRIC_OP[op.op], route.op === 'patch' ? 'v2' : 'legacy');
       }
-      const reply = await run(req, body, op, access, deps.store());
+      // Content levels (`doc-levels.ts`): with the flag on for the app whose documents this
+      // reaches, the store gates every shared read on the token's viewer level.
+      const gated = await withDocLevelGate(access, claims);
+      const reply = await run(req, body, op, gated, deps.store());
       res.status(reply.status).json(reply.body);
     } catch (err) {
       if (err instanceof BodyAbortedError) {

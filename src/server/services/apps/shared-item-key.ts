@@ -29,6 +29,9 @@
 //     authoritative again — leftover legacy copies of deleted documents come back, and items
 //     that exist only in the document store stop resolving.
 //
+// Content levels: while `app-blocks-shared-doc-levels` is on for the app, a document that is not
+// rated (or is rated Blocked) is reported `hidden` (`doc-levels.ts`).
+//
 // Document store: production namespace only, so a dev or review document never resolves; only
 // the item collections the APPROVED manifest declares are probed, so an app with none costs
 // no document-store query.
@@ -86,9 +89,16 @@ async function findInDocStore(args: {
   if (shared.length === 0) return { kind: 'not_authoritative' };
 
   const { getDocStoreLookup } = await import('~/server/services/apps/doc-store-lookup.instance');
+  // Content levels (`doc-levels.ts`): while on for the app, an item not yet rated (or rated
+  // Blocked) reads as hidden, so it cannot become a store card or take spend attribution.
+  const { lookupDocLevelGate } = await import('~/server/services/apps/doc-levels');
   let matches;
   try {
-    matches = await getDocStoreLookup().findSharedByKey(args.appBlockId, shared, args.key);
+    const levels = await lookupDocLevelGate(args.appBlockId);
+    const lookup = getDocStoreLookup();
+    matches = levels
+      ? await lookup.findSharedByKey(args.appBlockId, shared, args.key, { levels })
+      : await lookup.findSharedByKey(args.appBlockId, shared, args.key);
   } catch (err) {
     // No store here: fall back to the legacy store. Unconfigured is expected (dev, previews);
     // a configured store that refuses (its role bypasses RLS) re-opens the legacy fallback for

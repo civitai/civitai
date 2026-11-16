@@ -376,6 +376,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // store: the refusal and the block alert, no Report). Implies the scan — with
   // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
   APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
+  // CONTENT LEVELS of App Blocks shared documents: while on for an app, a shared write marks its
+  // document `pending`, and every read of that app's shared documents by anyone but their author
+  // leaves out the unrated ones and those above the viewer's level (`doc-levels.ts`). Needs the
+  // manual migration `20261116120000_appdata_doc_levels.sql` first. Same evaluation as the two
+  // above (entityId = the app block id, NO context). DEFAULT-OFF.
+  APP_BLOCKS_SHARED_DOC_LEVELS = 'app-blocks-shared-doc-levels',
   // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
   // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
   // the approve gate. Turning it off lets the job's next run take them. EVALUATED PER APP like the

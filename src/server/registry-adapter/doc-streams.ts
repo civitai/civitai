@@ -29,7 +29,12 @@ import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.c
  */
 export function resolveFromCatalog(
   readApps: () => Promise<CatalogApp[]>,
-  features: Readonly<Record<AppStorageFeature, boolean>> = APP_STORAGE_ENABLED_FEATURES
+  features: Readonly<Record<AppStorageFeature, boolean>> = APP_STORAGE_ENABLED_FEATURES,
+  /**
+   * Whether content levels are on for an app (`isSharedDocLevelsOn`). Off unless given: the
+   * process wires the flag in (`main.ts`).
+   */
+  docLevelsOn: (appBlockId: string) => Promise<boolean> = async () => false
 ): ResolveStream {
   return async (schema) => {
     if (!features.registryExport) return null;
@@ -61,13 +66,16 @@ export function resolveFromCatalog(
       ref.slug,
       derivation
     ).filter((d) => familyUrns.has(d.urn));
+    const docLevels = await docLevelsOn(app.block.id);
     return {
       appId: app.block.id,
       slug: ref.slug,
       collection: ref.collection,
-      // The rating the app entity publishes, which is every document's.
+      // The rating the app entity publishes; with content levels on, each document's own rating
+      // also applies (`docLevels`).
       contentRating: appContentRating(app),
       family,
+      ...(docLevels ? { docLevels: true } : {}),
     };
   };
 }
