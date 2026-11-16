@@ -42,7 +42,7 @@ export async function countsTowardDownloadLimit(userKey: string, fileId: number)
       throw new Error('redis MULTI exec returned an unexpected repeat count');
     return requests === 1 || requests > FREE_FILE_REPEATS + 1;
   } catch (error) {
-    // The guard has already counted and logged its own failures.
+    // The guard already reported this failure.
     if (error instanceof ClusterCacheUnavailableError) return true;
     logToAxiom({
       name: 'download-repeats',
