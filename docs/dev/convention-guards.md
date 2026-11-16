@@ -8,7 +8,7 @@ Several repo conventions are enforced by tests, not eslint. If one fails, fix th
 
 **`test:lint-rules` is a hand-maintained list.** `pnpm run test:lint-rules` is a file list in `package.json`, not a glob, so a guard missing from it fails only in a full-suite run, hours later. Add a new guard to the script in the same commit you write it, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory against the script.
 
-`test:lint-rules` names 96 files today.
+`test:lint-rules` names 97 files today.
 
 `no-lint-rules-script-drift` fails when the counts, the list, or the script disagree with the directory. It reads two exact phrasings — `<n> live in \`src/server/services/**tests**/no-\*.test.ts\`` and `` `test:lint-rules` names <n> files today `` — plus the backticked names in the list paragraph, so keep those shapes when you edit the numbers. This file is the only document it reads.
 
