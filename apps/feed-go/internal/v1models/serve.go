@@ -23,6 +23,16 @@ type Answer struct {
 	Cached bool
 }
 
+// NodeBuiltWindow is how recent an origin cache entry must be to count as the one Node built for the
+// sampled request itself. Node builds on a miss and awaits the write before it answers; the sample
+// is posted after the answer, its POST is cut at FEED_GO_SHADOW_TIMEOUT_MS (at most 10 s), and the
+// comparison then runs from a bounded queue. So an entry Node wrote for this request is at most a
+// few seconds old when it is read here, and 15 s covers the longest sample timeout with margin. Read
+// as a hit, such an entry would be Node's own answer compared with itself (always `match_cached`);
+// it is built instead, so the comparison measures the port. An entry older than this was served by
+// Node from the cache as well, and is read (DESIGN.md §16.5).
+const NodeBuiltWindow = 15 * time.Second
+
 // DetailRequest is one `GET /api/v1/models/[id]`.
 type DetailRequest struct {
 	// ID is the path segment.
@@ -46,7 +56,7 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 		level = browsing.SFWLevels
 	}
 	if d.Config.ResponseCacheTTL > 0 {
-		if body, ok := d.cachedDetail(ctx, id, level); ok {
+		if body, age, ok := d.cachedDetail(ctx, id, level); ok && age >= NodeBuiltWindow {
 			if err := refuseTrainingData(body); err != nil {
 				return nil, err
 			}
@@ -76,28 +86,30 @@ func ServeDetail(ctx context.Context, d *Deps, req DetailRequest) (*Answer, erro
 }
 
 // cachedDetail is fetchModelResponseCached's read: the packed `{ data, cachedAt }` entry, served when
-// it is within the logical TTL. A miss, a stale or malformed entry, or a read failure builds.
-func (d *Deps) cachedDetail(ctx context.Context, id, level int) (superjson.Object, bool) {
+// it is within the logical TTL, with its age. A miss, a stale or malformed entry, or a read failure
+// builds.
+func (d *Deps) cachedDetail(ctx context.Context, id, level int) (superjson.Object, time.Duration, bool) {
 	if d.Packed == nil {
-		return nil, false
+		return nil, 0, false
 	}
 	key := KeyPublicModelResponse + ":v2:" + strconv.Itoa(id) + ":" + strconv.Itoa(level)
 	entry, ok := d.Packed.GetOrdered(ctx, key)
 	if !ok {
-		return nil, false
+		return nil, 0, false
 	}
 	data, ok := getVal(entry, "data").(superjson.Object)
 	if !ok {
-		return nil, false
+		return nil, 0, false
 	}
 	at, ok := numberOf(getVal(entry, "cachedAt"))
 	if !ok {
-		return nil, false
+		return nil, 0, false
 	}
-	if float64(d.now().UnixMilli())-at > float64(d.Config.ResponseCacheTTL/time.Millisecond) {
-		return nil, false
+	ageMS := float64(d.now().UnixMilli()) - at
+	if ageMS > float64(d.Config.ResponseCacheTTL/time.Millisecond) {
+		return nil, 0, false
 	}
-	return data, true
+	return data, time.Duration(ageMS) * time.Millisecond, true
 }
 
 // refuseTrainingData falls back on a body listing a Training Data file (withListableTrainingData

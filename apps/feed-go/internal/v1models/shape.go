@@ -332,9 +332,6 @@ func shapeVersion(v superjson.Object, model nameModel, mode string, o shapeOptio
 			if f.metadata != nil {
 				meta = f.metadata
 			}
-			if f.typ == "Training Data" {
-				meta = superjson.Object{}
-			}
 			var url string
 			if o.detail {
 				meta = removeEmpty(meta.(superjson.Object))

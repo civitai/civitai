@@ -64,6 +64,8 @@ type testWorld struct {
 	privacyDB  bool
 	paidDB     bool
 	usernames  map[string]int
+	tagRows    map[int]string // the replica's Tag rows (tagCache's lookup), by id
+	tagLookups int
 }
 
 func newTestWorld() *testWorld {
@@ -164,6 +166,16 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 			w.privacyDB = true
 			return rows([]string{"id", "settings"}, []any{int32(1001), map[string]any{"hideModelDownloads": true}}), nil
 		}},
+		{Match: `SELECT id, name FROM "Tag" WHERE id = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			w.tagLookups++
+			var vals [][]any
+			for _, id := range args[0].([]int) {
+				if name, ok := w.tagRows[id]; ok {
+					vals = append(vals, []any{int32(id), name})
+				}
+			}
+			return rows([]string{"id", "name"}, vals...), nil
+		}},
 		{Match: `FROM "User" WHERE username`, Rows: func(args []any) (*testkit.Rows, error) {
 			if id, ok := w.usernames[args[0].(string)]; ok {
 				return rows([]string{"id"}, []any{int64(id)}), nil
@@ -172,14 +184,13 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 		}},
 	}}
 	packed := &hydrate.PackedReader{Redis: w.cache, Now: func() time.Time { return testNow }}
-	yes, no := true, false
 	return &Deps{
 		DB: db, Packed: packed, Sources: &hydrate.Sources{Packed: packed, Cache: w.cache, Replica: db},
 		Gallery: &feed.GalleryStore{Cache: w.cache, DB: db},
 		Addons:  (&feed.AddonSource{Sys: w.sys}).Addons,
 		Config: Config{
 			ImageLocation: "https://image.example.test", BaseURL: "https://site.example.test",
-			CoverageNext: &no, BaseModelFeedMetrics: &yes, ResponseCacheTTL: 180 * time.Second, Production: true,
+			CoverageNext: false, BaseModelFeedMetrics: true, ResponseCacheTTL: 180 * time.Second, Production: true,
 		},
 		Now: func() time.Time { return testNow },
 	}
@@ -253,7 +264,6 @@ func TestServeDetailFallbacks(t *testing.T) {
 		deps   func(d *Deps)
 		reason string
 	}{
-		{"coverage flag unknown", nil, func(d *Deps) { d.Config.CoverageNext = nil }, "v1-models-coverage-flag"},
 		{"no image location", nil, func(d *Deps) { d.Config.ImageLocation = "" }, "v1-models-unconfigured-urls"},
 		{"no base URL", nil, func(d *Deps) { d.Config.BaseURL = "" }, "v1-models-unconfigured-urls"},
 		{"model data miss", func(w *testWorld) { w.entries[KeyDataForModel+":5001"] = nil }, nil, "v1-models-data-miss"},
@@ -301,6 +311,50 @@ func TestServeDetailFallbacks(t *testing.T) {
 	}
 }
 
+// With FEED_GO_COMPUTE_MISSES a tag-name miss is named by tagCache's lookup on the replica (a tag the
+// replica lacks is dropped, as `.filter(isDefined)` drops it); off, it falls back (TestServeDetailFallbacks).
+func TestServeDetailTagNameMissComputed(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		rows    map[int]string
+		want    string
+		lookups int
+	}{
+		{"named by the replica", map[int]string{11: "style-db"}, `"tags":["style-db"]`, 1},
+		{"not on the replica", nil, `"tags":[]`, 1},
+	} {
+		w := newTestWorld()
+		w.entries[KeyBasicTags+":11"] = nil
+		w.tagRows = c.rows
+		d := w.deps(t)
+		d.Config.ComputeMisses = true
+		ans, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001"})
+		if err != nil {
+			t.Fatalf("%s: %v (%s)", c.name, err, reason(err))
+		}
+		body, _ := superjson.Plain(ans.Body)
+		if !strings.Contains(string(body), c.want) || w.tagLookups != c.lookups {
+			t.Errorf("%s: lookups %d, body:\n%s", c.name, w.tagLookups, body)
+		}
+	}
+	// A cached name is read from the cache: no lookup.
+	w := newTestWorld()
+	d := w.deps(t)
+	d.Config.ComputeMisses = true
+	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001"}); err != nil || w.tagLookups != 0 {
+		t.Errorf("hit: lookups %d, %v", w.tagLookups, err)
+	}
+	// A stale entry still falls back (Node revalidates it), with or without the flag.
+	w = newTestWorld()
+	o := w.entries[KeyBasicTags+":11"].(superjson.Object)
+	w.entries[KeyBasicTags+":11"] = append(omit(o, "cachedAt"), superjson.Field{Key: "cachedAt", Val: testNow.Add(-48 * time.Hour)})
+	d = w.deps(t)
+	d.Config.ComputeMisses = true
+	if _, err := ServeDetail(context.Background(), d, DetailRequest{ID: "5001"}); reason(err) != "v1-models-tag-name-stale" {
+		t.Errorf("stale: %v", err)
+	}
+}
+
 func TestServeDetailHeldAndNotFound(t *testing.T) {
 	w := newTestWorld()
 	w.modelRow["sfwOnly"] = true
@@ -344,6 +398,24 @@ func TestServeDetailOriginCache(t *testing.T) {
 	if body, _ := superjson.Plain(ans.Body); string(body) != `{"id":5001,"name":"cached"}` {
 		t.Errorf("cached body %s", body)
 	}
+	// An entry younger than NodeBuiltWindow is the one Node built for the sampled request: it is
+	// built here too (a comparison of the port, not of Node's answer with itself). At the window's
+	// edge and past it, the entry is read.
+	for _, c := range []struct {
+		age    time.Duration
+		cached bool
+	}{{0, false}, {time.Second, false}, {NodeBuiltWindow - time.Millisecond, false}, {NodeBuiltWindow, true}, {NodeBuiltWindow + 5*time.Second, true}} {
+		w = newTestWorld()
+		w.entries[key] = entry(c.age)
+		ans, err := detailOf(t, w)
+		if err != nil || ans.Cached != c.cached {
+			t.Fatalf("entry %v old: cached %v, want %v (%v)", c.age, ans != nil && ans.Cached, c.cached, err)
+		}
+		body, _ := superjson.Plain(ans.Body)
+		if built := !strings.Contains(string(body), `"name":"cached"`); built == c.cached {
+			t.Errorf("entry %v old: body %s", c.age, body)
+		}
+	}
 	// Past the logical TTL (physically present for 2x), and malformed entries, are built.
 	for _, v := range []any{entry(4 * time.Minute), meta("cachedAt", float64(1)), meta("data", meta("id", int64(1))), "x"} {
 		w = newTestWorld()
@@ -356,7 +428,7 @@ func TestServeDetailOriginCache(t *testing.T) {
 	// A cached body with a Training Data file falls back like a built one.
 	w = newTestWorld()
 	w.entries[key] = meta("data", meta("modelVersions", []any{meta("files", []any{meta("type", "Training Data")})}),
-		"cachedAt", float64(testNow.UnixMilli()))
+		"cachedAt", float64(testNow.Add(-time.Minute).UnixMilli()))
 	if _, err := detailOf(t, w); reason(err) != "v1-models-training-data" {
 		t.Errorf("cached training data: %v", err)
 	}
@@ -404,7 +476,6 @@ func TestServeList(t *testing.T) {
 	}{
 		{"unknown username", "username=nobody", "site.example.test", nil, "v1-models-username-miss"},
 		{"bad host", "", "bad host!", nil, "v1-models-host"},
-		{"base models flag unknown", "baseModels=Pony", "site.example.test", func(d *Deps) { d.Config.BaseModelFeedMetrics = nil }, "v1-models-base-model-flag"},
 		{"a text query", "query=x", "site.example.test", nil, "v1-models-query"},
 		{"no image location", "", "site.example.test", func(d *Deps) { d.Config.ImageLocation = "" }, "v1-models-unconfigured-urls"},
 	} {

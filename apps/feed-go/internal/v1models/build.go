@@ -37,12 +37,15 @@ type Config struct {
 	ImageLocation string
 	// BaseURL is getBaseUrl() of the Node app (NEXTAUTH_URL): the `[id]` body's download URLs.
 	BaseURL string
-	// CoverageNext mirrors `generation-coverage-next` (nextCoverageEnabled); nil = unknown, and every
-	// answer falls back (it decides each model's `supportsGeneration`).
-	CoverageNext *bool
-	// BaseModelFeedMetrics mirrors `base-model-feed-metrics`; nil = unknown (a `baseModels` request
-	// falls back).
-	BaseModelFeedMetrics *bool
+	// CoverageNext mirrors `generation-coverage-next` (nextCoverageEnabled): it decides every model's
+	// `supportsGeneration`.
+	CoverageNext bool
+	// BaseModelFeedMetrics mirrors `base-model-feed-metrics`: the statement form of a `baseModels`
+	// request.
+	BaseModelFeedMetrics bool
+	// ComputeMisses is FEED_GO_COMPUTE_MISSES: a tag-name cache miss is answered with tagCache's own
+	// lookup on the replica instead of falling back (the other caches' misses still fall back).
+	ComputeMisses bool
 	// ResponseCacheTTL is the `[id]` origin cache's logical TTL (CacheTTL.sm where the Node app runs
 	// with IS_DATAPACKET); 0 = Node does not read it.
 	ResponseCacheTTL time.Duration
@@ -163,15 +166,9 @@ type rawItem struct {
 
 // getModelsWithVersions runs getModelsRaw (include ['details']) and getModelsWithVersions.
 func (d *Deps) getModelsWithVersions(ctx context.Context, in withVersionsInput) (*withVersions, error) {
-	if d.Config.CoverageNext == nil {
-		return nil, fallback.New("v1-models-coverage-flag")
-	}
-	coverageNext := *d.Config.CoverageNext
+	coverageNext := d.Config.CoverageNext
 	if len(in.raw.BaseModels) > 0 {
-		if d.Config.BaseModelFeedMetrics == nil {
-			return nil, fallback.New("v1-models-base-model-flag")
-		}
-		in.raw.BaseModelMetrics = *d.Config.BaseModelFeedMetrics
+		in.raw.BaseModelMetrics = d.Config.BaseModelFeedMetrics
 	}
 	now := d.now()
 	in.raw.Now = now

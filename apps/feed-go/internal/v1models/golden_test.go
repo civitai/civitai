@@ -298,7 +298,6 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 
 	packed := &hydrate.PackedReader{Redis: cache, Now: nowFn}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: env.db}
-	coverage, bmMetrics := fx.Config.CoverageNext, fx.Config.BaseModelFeedMetrics
 	env.deps = &Deps{
 		DB:      env.db,
 		Packed:  packed,
@@ -308,8 +307,8 @@ func goldenSetup(t *testing.T, fx *goldenFixture) *goldenEnv {
 		Config: Config{
 			ImageLocation:        fx.Config.ImageLocation,
 			BaseURL:              fx.Config.BaseURL,
-			CoverageNext:         &coverage,
-			BaseModelFeedMetrics: &bmMetrics,
+			CoverageNext:         fx.Config.CoverageNext,
+			BaseModelFeedMetrics: fx.Config.BaseModelFeedMetrics,
 			ResponseCacheTTL:     180 * time.Second,
 			// The Node golden test runs the non-production build (isProd false): localhost origins.
 			Production: false,
@@ -417,5 +416,47 @@ func TestGoldenV1Models(t *testing.T) {
 	for _, path := range goldenFiles(t) {
 		fx := goldenLoad(t, path)
 		t.Run(fx.Name, func(t *testing.T) { goldenRun(t, fx) })
+	}
+}
+
+// The Node golden test runs the non-production build, so its nextPage and download URLs carry
+// http://localhost:3000. In production getNextPage's origin is `new URL(…, "https://" + host).origin`:
+// the WHATWG URL lowercases the host and drops https's default port, and keeps any other port. Over a
+// fixture whose answer has a nextPage with a real cursor, the production build must write Node's
+// body with only that origin changed.
+func TestGoldenV1ModelsProductionOrigin(t *testing.T) {
+	fx := goldenLoad(t, filepath.Join(goldenDir, "list-defaults-lookahead.json"))
+	if fx.Expect.Body == nil || !strings.Contains(*fx.Expect.Body, `"nextPage":"http://localhost:3000/api/v1/models?`) ||
+		!strings.Contains(*fx.Expect.Body, `cursor=300%7C999%7C5103`) {
+		t.Fatalf("the fixture no longer carries a nextPage with a cursor: %v", fx.Expect.Body)
+	}
+	for _, c := range []struct{ host, origin string }{
+		{"Site.Example.Test:443", "https://site.example.test"},
+		{"site.example.test", "https://site.example.test"},
+		{"SITE.example.test:8443", "https://site.example.test:8443"},
+	} {
+		fx := goldenLoad(t, filepath.Join(goldenDir, "list-defaults-lookahead.json"))
+		fx.Request.Headers["host"] = c.host
+		env := goldenSetup(t, fx)
+		env.deps.Config.Production = true
+		ans, err := goldenServe(context.Background(), env, fx)
+		if err != nil {
+			t.Fatalf("%s: %v (%s)", c.host, err, fallback.Reason(err))
+		}
+		got, err := superjson.Plain(ans.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := strings.ReplaceAll(*fx.Expect.Body, "http://localhost:3000", c.origin)
+		if string(got) != want {
+			t.Errorf("%s:\n go:   %s\n want: %s", c.host, got, want)
+		}
+	}
+	// A host the URL parser would not accept as is falls back rather than guess an origin.
+	fx.Request.Headers["host"] = "bad host"
+	env := goldenSetup(t, fx)
+	env.deps.Config.Production = true
+	if _, err := goldenServe(context.Background(), env, fx); fallback.Reason(err) != "v1-models-host" {
+		t.Errorf("bad host: %v", err)
 	}
 }

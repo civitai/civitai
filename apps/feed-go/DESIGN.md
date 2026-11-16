@@ -1424,7 +1424,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 | Query | every key above except those on the right; unknown keys ignored and kept for `nextPage` | `query` (`v1-models-query`: Meilisearch), every other schema key (`v1-models-<key>`: `tag`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`), a cursor timestamp with a 1- or 2-digit fraction (`v1-models-short-fraction-cursor`, §16.7) |
 | Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
-| Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads) | a model-data, model-tags, tag-name, images, files or membership miss (`v1-models-*-miss`), a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
+| Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7) | a model-data, model-tags, images, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
 | Shaping | both shapers, the file naming over ASCII model names | a Public Training Data file (`v1-models-training-data`), a name the scheme strips non-ASCII text from (`v1-models-filename`) |
 | Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
 
@@ -1443,14 +1443,25 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 One flag for both routes, sampled through the REST sampler of §13.4 (`beginFeedGoShadowV1Models`,
 `captureFeedGoShadowRest`), with its own per-second bucket per route and the shared rate and
 in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent.
+The list route does not sample a text `query` or a signed-in caller: feed-go answers every one of
+them with a fallback (`v1-models-query`, `v1-models-session`). Both routes finish every sampled
+request in a `finally`, so one that answers other than 200 is counted `skipped_status`.
 Outcomes are `civitai_app_feed_go_shadow_samples_total{feed_endpoint="v1-models"|"v1-models-id"}`.
 
 ### 16.5 Comparison and measurement
 
 `shadow.CompareJSON` as in §13.5. The list classifies by `items[].id` (models); `[id]` has one model,
-so a difference is `fields`, and a not-found answer against Node's 200 is `membership`. A `[id]`
-answer read from the origin cache is compute outcome `served_cached` and result `match_cached`, kept
-apart from `served`/`match` like a trivial answer (§13.6): it costs a cache read on both sides. Read
+so a difference is `fields`, and a not-found answer against Node's 200 is `membership`.
+
+The `[id]` origin cache: on a miss Node builds the body and awaits its write before answering, and
+the sample is posted only after the answer, so reading the cache here would mostly find the entry
+Node wrote for the sampled request and compare Node's answer with itself. An entry younger than
+`v1models.NodeBuiltWindow` (15 s) is therefore ignored and the body built: Node's side was a build
+(of this request, or of one at most 15 s earlier), so the comparison measures the port, and it is
+counted as a build (`served` / `match`). The window covers the longest sample timeout
+(`FEED_GO_SHADOW_TIMEOUT_MS`, at most 10 s) plus the compare queue. An older entry is one Node also
+served from the cache: it is read, compute outcome `served_cached` and result `match_cached`, kept
+apart from `served`/`match` like a trivial answer (§13.6) since it costs a cache read on both sides. Read
 the go/no-go per endpoint with §13.6's queries and `feed_endpoint="v1-models"` or `"v1-models-id"`.
 
 ### 16.6 Parity evidence
@@ -1470,5 +1481,19 @@ the same statement (text and bound values) from Go.
   (`v1-models-short-fraction-cursor`): the deployed Node reads it as a millisecond count (25 ms),
   main since #9075 as fractional seconds (250 ms), so no reading matches both. The fallback goes once
   the fix is deployed (the TODO on `cursorValues`), as model.getAll's does (§15.7);
-- the caches are read, never refilled or revalidated: a miss falls back, and the answer serves what
-  Node's cache held milliseconds earlier (`stats.*` and `nextCursor` noise on busy lists).
+- the caches are read, never refilled or revalidated, and the answer serves what Node's cache held
+  milliseconds earlier (`stats.*` and `nextCursor` noise on busy lists). A stale entry Node would
+  revalidate falls back. Per cache, a miss:
+  - tag names (`basic-tags`): with `FEED_GO_COMPUTE_MISSES` (§3.1) named by tagCache's own lookup on
+    the replica (`SELECT id, name FROM "Tag"`), nothing written back; off, it falls back;
+  - model data (`data-for-model-2`): falls back. Its lookup is lag-aware (it may read the primary
+    after a recent version change) and assembles versions, hashes and tags from several tables; no
+    Go port exists (model.getAll falls back on it too);
+  - model tags (`model-tags`): falls back. Its lookup reads `TagsOnModels` with no ORDER BY, so the
+    tag order Node writes is the replica's row order, which a second read cannot be held to;
+  - version images (`images-for-model-version-2`): falls back. Its lookup is lag-aware and filters
+    on columns filled asynchronously after upload (model.getAll falls back on it too);
+  - version files (`files-for-model-version-2`): falls back. Its lookup joins files, hashes and
+    metadata (`fetchModelFilesForCache`); no Go port exists;
+  - creator membership (`creator-membership-valid`): falls back. Its origin parses subscription
+    products with the app's tier key (as model.getAll's does).

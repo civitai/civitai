@@ -43,9 +43,9 @@ type modelTag struct {
 }
 
 // modelData is dataForModelsCache.fetch with its appendFn: each model's record, its `tags` replaced
-// by modelTagCache's (whose own appendFn names them from tagCache). A model-data or model-tags miss,
-// or a tag name the tag cache does not hold, falls back (each lookup is a replica read Node then
-// writes back; not ported).
+// by modelTagCache's (whose own appendFn names them from tagCache). A model-data or model-tags miss
+// falls back (DESIGN.md §16.7). A tag the tag cache does not hold is named by tagCache's own lookup on
+// the replica with Config.ComputeMisses (FEED_GO_COMPUTE_MISSES), else falls back.
 func (d *Deps) modelData(ctx context.Context, ids []int) (map[int]*modelData, error) {
 	ids = hydrate.Unique(ids)
 	b := hydrate.NewBatch()
@@ -106,27 +106,56 @@ func (d *Deps) modelData(ctx context.Context, ids []int) (map[int]*modelData, er
 	names := d.Packed.QueueOrdered(tb, KeyBasicTags, tagIDs, ttlDay)
 	tb.Exec(ctx)
 	nameEntries := names.Entries()
+	tagNames := make(map[int]any, len(tagIDs))
+	var missed []int
 	for _, id := range tagIDs {
 		e, ok := nameEntries[id]
 		if !ok {
-			return nil, fallback.New("v1-models-tag-name-miss")
+			missed = append(missed, id)
+			continue
 		}
 		if e.Stale {
 			return nil, fallback.New("v1-models-tag-name-stale")
+		}
+		if !e.NotFound {
+			tagNames[id] = getVal(e.Value, "name")
+		}
+	}
+	if len(missed) > 0 {
+		if !d.Config.ComputeMisses {
+			return nil, fallback.New("v1-models-tag-name-miss")
+		}
+		if err := d.lookupTagNames(ctx, missed, tagNames); err != nil {
+			return nil, err
 		}
 	}
 	for modelID, ts := range tagIDsOf {
 		tags := make([]modelTag, 0, len(ts))
 		for _, tid := range ts {
-			e := nameEntries[tid]
-			if e.NotFound {
-				continue // `.filter(isDefined)`
+			name, ok := tagNames[tid]
+			if !ok {
+				continue // `.filter(isDefined)`: a notFound marker, or no such tag
 			}
-			tags = append(tags, modelTag{id: tid, name: getVal(e.Value, "name")})
+			tags = append(tags, modelTag{id: tid, name: name})
 		}
 		out[modelID].tags = tags
 	}
 	return out, nil
+}
+
+// lookupTagNames is tagCache's lookupFn on the replica (dbRead), reduced to the name this endpoint
+// reads: a tag the replica does not hold is absent, as the lookup leaves it. Nothing is written back.
+func (d *Deps) lookupTagNames(ctx context.Context, ids []int, into map[int]any) error {
+	rows, err := queryRows(ctx, d.DB, `SELECT id, name FROM "Tag" WHERE id = ANY($1::int[])`, ids)
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if id, ok := intOf(r["id"]); ok {
+			into[id] = r["name"]
+		}
+	}
+	return nil
 }
 
 // paidAccessGates is getModelPaidAccessGates: the models with a live gate.

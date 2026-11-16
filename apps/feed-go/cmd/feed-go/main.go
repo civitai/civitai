@@ -234,8 +234,9 @@ func run(log *slog.Logger) error {
 			Config: v1models.Config{
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,
-				CoverageNext:         &cfg.CoverageNext,
-				BaseModelFeedMetrics: &cfg.BaseModelFeedMetrics,
+				CoverageNext:         cfg.CoverageNext,
+				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
+				ComputeMisses:        cfg.ComputeMisses,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
 			},

@@ -123,10 +123,10 @@ func TestComputeV1ModelsFallbacks(t *testing.T) {
 		return r
 	}
 	unconfigured := &Server{}
-	no := (*bool)(nil)
+	// No edge URL prefix: a request that reaches the port falls back there (v1-models-unconfigured-urls).
 	configured := &Server{
 		Resolver: &auth.Resolver{},
-		V1Models: &V1ModelsDeps{Deps: &v1models.Deps{Config: v1models.Config{CoverageNext: no, ImageLocation: "https://i.example", BaseURL: "https://s.example"}}},
+		V1Models: &V1ModelsDeps{Deps: &v1models.Deps{Config: v1models.Config{BaseURL: "https://s.example"}}},
 	}
 	for _, c := range []struct {
 		name   string
@@ -141,11 +141,11 @@ func TestComputeV1ModelsFallbacks(t *testing.T) {
 		{"id POST", configured, true, req(http.MethodPost, "/api/v1/models/1", nil), "method"},
 		{"list text query", configured, false, req(http.MethodGet, "/api/v1/models?query=x", nil), "v1-models-query"},
 		{"list API key", configured, false, req(http.MethodGet, "/api/v1/models", map[string]string{"Authorization": "Bearer k"}), "bearer-token"},
-		{"list reaches the port", configured, false, req(http.MethodGet, "/api/v1/models?limit=2", map[string]string{"cf-ipcountry": "US"}), "v1-models-coverage-flag"},
+		{"list reaches the port", configured, false, req(http.MethodGet, "/api/v1/models?limit=2", map[string]string{"cf-ipcountry": "US"}), "v1-models-unconfigured-urls"},
 		{"id API key", configured, true, req(http.MethodGet, "/api/v1/models/1", map[string]string{"Authorization": "Bearer k"}), "bearer-token"},
 		{"id nested path", configured, true, req(http.MethodGet, "/api/v1/models/1/2", nil), "v1-models-path"},
 		{"id not under the route", configured, true, req(http.MethodGet, "/api/v1/images/1", nil), "v1-models-path"},
-		{"id reaches the port", configured, true, req(http.MethodGet, "/api/v1/models/7", nil), "v1-models-coverage-flag"},
+		{"id reaches the port", configured, true, req(http.MethodGet, "/api/v1/models/7", nil), "v1-models-unconfigured-urls"},
 	} {
 		var err error
 		if c.id {
