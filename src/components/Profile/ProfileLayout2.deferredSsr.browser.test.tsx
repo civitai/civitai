@@ -8,8 +8,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
 
-// Loads the rest of the component-test environment.
-import '../../../test/component-setup';
+// No explicit `test/component-setup` import (it still runs as the project's setup file): importing
+// it here re-registers its `next/router` stub over the one below, and the route query is lost.
 
 /**
  * `/user/[username]` under `ssrSignedInSkipPrefetchUser`'s `skip` arm (`deferredSsr`), across a

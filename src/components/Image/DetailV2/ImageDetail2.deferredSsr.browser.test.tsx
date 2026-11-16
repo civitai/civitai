@@ -251,7 +251,7 @@ vi.mock('~/components/Image/Detail/ImageDetailComments', () => ({
 }));
 vi.mock('~/components/Image/DetailV2/ImageContestCollectionDetails', async (o) => ({
   ...(await o<object>()),
-  useImageContestCollectionDetails: () => ({ collectionItems: m.contestItems, post: undefined }),
+  useImageContestCollectionDetails: () => ({ collectionItems: [], post: undefined }),
   ImageContestCollectionDetails: () => <div data-testid="contest-details" />,
 }));
 vi.mock('~/components/Image/DetailV2/ImageExternalMeta', async (o) => ({
@@ -262,6 +262,12 @@ vi.mock('~/components/Image/DetailV2/ImageExternalMeta', async (o) => ({
 vi.mock('~/components/Image/DetailV2/CollapsibleCard', async (o) => ({
   ...(await o<object>()),
   CollapsibleCard: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+// The contest details `ImageDetail2` gates on: it reads them from here, not from the module above.
+vi.mock('~/components/Image/image.utils', async (o) => ({
+  ...(await o<object>()),
+  useImageContestCollectionDetails: () => ({ collectionItems: m.contestItems, post: undefined }),
 }));
 
 const { ImageDetail2 } = await import('~/components/Image/DetailV2/ImageDetail2');
