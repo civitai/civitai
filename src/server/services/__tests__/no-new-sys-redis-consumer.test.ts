@@ -198,7 +198,6 @@ const BASELINE: string[] = [
   'src/server/utils/block-tip-rate-limit.ts',
   'src/server/utils/cache-helpers.ts',
   'src/server/utils/client-config.ts',
-  'src/server/utils/download-repeats.ts',
   'src/server/utils/moderation-utils.ts',
   'src/server/utils/moderator-endpoint.ts',
   'src/server/utils/rate-limiting.ts',
