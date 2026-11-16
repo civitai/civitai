@@ -33,6 +33,46 @@ func TestParseRegionRulesEndOfDay(t *testing.T) {
 	}
 }
 
+// REGION_BLOCK_CONFIG: the variable wins when set (the app's `process.env.REGION_BLOCK_CONFIG ? … :
+// DEFAULT_REGION_BLOCK_CONFIG`); unset or empty is the app's default list from apipolicy.json.
+func TestRegionBlockRules(t *testing.T) {
+	set, err := RegionBlockRules("FR:2026-08-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []browsing.RegionRule{{Region: "FR", Effective: time.Date(2026, 8, 1, 23, 59, 59, int(999*time.Millisecond), time.UTC)}}
+	if !reflect.DeepEqual(set, want) {
+		t.Fatalf("set: rules = %+v, want %+v", set, want)
+	}
+	def, err := RegionBlockRules("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gb := browsing.RegionRule{Region: "GB", Effective: time.Date(2025, 7, 24, 23, 59, 59, int(999*time.Millisecond), time.UTC)}
+	found := false
+	for _, r := range def {
+		found = found || r == gb
+	}
+	if !found {
+		t.Fatalf("default: rules = %+v, want GB:2025-07-24 in them", def)
+	}
+	if _, err := RegionBlockRules("GB"); err == nil {
+		t.Fatal("an entry without a date must fail, as the app throws")
+	}
+	// Load reads it.
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("REGION_BLOCK_CONFIG", "FR:2026-08-01")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.RegionBlockRules, want) {
+		t.Fatalf("Load: RegionBlockRules = %+v, want %+v", c.RegionBlockRules, want)
+	}
+}
+
 func TestHostFromURL(t *testing.T) {
 	cases := map[string]string{
 		"https://Civitai.Example":         "civitai.example",
