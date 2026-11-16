@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useComputedColorScheme } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { env } from '~/env/client';
+import { trainingStudioUrl } from '~/utils/training-studio-url';
 import { isPreview } from '~/env/other';
 import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
@@ -36,10 +37,7 @@ import { trpc } from '~/utils/trpc';
  * the studio origin.
  */
 
-const STUDIO_URL =
-  process.env.NODE_ENV === 'development'
-    ? 'http://localhost:5174'
-    : env.NEXT_PUBLIC_TRAINING_STUDIO_URL;
+const STUDIO_URL = trainingStudioUrl();
 
 type StudioLocation = { view: 'home' } | { view: 'new' } | { view: 'run'; workflowId: string };
 

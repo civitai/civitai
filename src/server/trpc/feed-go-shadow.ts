@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import superjson from 'superjson';
-import { allCookieNames, SESSION_COOKIE_BASE } from '@civitai/auth/client';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import {
   FEED_GO_SHADOW_ENDPOINTS,
@@ -12,6 +11,7 @@ import {
   type FeedGoShadowOutcome,
   type FeedGoV1ShapeClass,
 } from '~/server/prom/feed-go-shadow.metrics';
+import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 
@@ -82,9 +82,6 @@ export const SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const SHADOW_MAX_TIMEOUT_MS = 10_000;
 export const SHADOW_DEFAULT_MAX_IN_FLIGHT = 8;
 export const SHADOW_DEFAULT_MAX_PER_SECOND = 5;
-
-/** The session cookie names feed-go reads (dev, `__Secure-` and `__Host-` slots). */
-const SESSION_COOKIE_NAMES = new Set(allCookieNames(SESSION_COOKIE_BASE));
 
 /** Headers forwarded verbatim when present. */
 const COPIED_HEADERS = [
@@ -181,20 +178,7 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   };
 }
 
-/** Keep only the session cookies of a raw `Cookie` header (same `name=value` text, `; `-joined). */
-// Hand-split rather than `parseCookieHeader` on purpose: that decodes %-escapes, and the compare
-// side must receive the cookie bytes exactly as the browser sent them.
-export function pickSessionCookies(header: string | undefined): string | undefined {
-  if (!header) return undefined;
-  const kept: string[] = [];
-  for (const part of header.split(';')) {
-    const pair = part.trim();
-    const eq = pair.indexOf('=');
-    if (eq <= 0) continue;
-    if (SESSION_COOKIE_NAMES.has(pair.slice(0, eq).trim())) kept.push(pair);
-  }
-  return kept.length ? kept.join('; ') : undefined;
-}
+export { pickSessionCookies } from '~/server/utils/session-cookies';
 
 type ShadowRequestLike = {
   method?: string;

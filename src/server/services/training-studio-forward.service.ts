@@ -1,6 +1,6 @@
-import { allCookieNames, parseCookieHeader, SESSION_COOKIE_BASE } from '@civitai/auth';
-import { env } from '~/env/client';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
+import { pickSessionCookies } from '~/server/utils/session-cookies';
+import { trainingStudioUrl } from '~/utils/training-studio-url';
 
 /**
  * The Training Studio server routes the embedded Studio reaches through this app, and the methods
@@ -13,30 +13,24 @@ export const STUDIO_FORWARD_ROUTES: Readonly<Record<string, readonly string[]>> 
   'dataset-rating': ['POST'],
 };
 
-const SESSION_COOKIE_NAMES = allCookieNames(SESSION_COOKIE_BASE);
-// A training submit can wait on the orchestrator for a while; past this the run may still have
-// started, which the Studio's own answer for an unconfirmed submit already covers.
+// A submit can outlast this and still have started the run, so a timeout is reported as unconfirmed.
 const FORWARD_TIMEOUT_MS = 120_000;
 
-/** The Studio's origin: https only, or a local Studio in development. Anything else refuses rather
+/** The Studio's origin: https, or a local Studio in development only. Anything else refuses rather
  *  than send the user's session to it. */
-export function studioOrigin(value = env.NEXT_PUBLIC_TRAINING_STUDIO_URL): string {
+export function studioOrigin(value = trainingStudioUrl()): string {
   const url = new URL(value);
-  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  const local =
+    process.env.NODE_ENV === 'development' &&
+    (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
   if (url.protocol !== 'https:' && !local)
-    throw new Error(
-      'NEXT_PUBLIC_TRAINING_STUDIO_URL must be an https origin to send the session to.'
-    );
+    throw new Error('The Training Studio URL must be an https origin to send the session to.');
   return url.origin;
 }
 
-/** Only the session cookies from a `Cookie` header, re-serialised; empty when there are none. */
-export function sessionCookiesOf(cookieHeader: string | undefined): string {
-  const jar = parseCookieHeader(cookieHeader ?? '');
-  return SESSION_COOKIE_NAMES.filter((name) => jar[name] !== undefined)
-    .map((name) => `${name}=${encodeURIComponent(jar[name]!)}`)
-    .join('; ');
-}
+/** Only the session cookies from a `Cookie` header, as the browser sent them; empty when none. */
+export const sessionCookiesOf = (cookieHeader: string | undefined): string =>
+  pickSessionCookies(cookieHeader) ?? '';
 
 export type StudioForwardResult = { status: number; body: unknown };
 
@@ -50,7 +44,7 @@ const UNCONFIRMED: StudioForwardResult = {
 
 /**
  * Send one request to a Studio route as this user (their session cookies, nothing else) and return
- * its status and JSON body. A redirect means the Studio did not accept the session.
+ * its status and JSON body. A redirect or 401 means the Studio did not accept the session.
  */
 export async function forwardToStudio({
   route,
@@ -82,7 +76,6 @@ export async function forwardToStudio({
   } catch {
     return UNCONFIRMED;
   }
-  // A redirect, or the Studio's own 401, means it did not accept the session.
   if ((res.status >= 300 && res.status < 400) || res.status === 401)
     return { status: 401, body: { message: 'Sign in again to continue.' } };
   const json = await res.json().catch(() => null);

@@ -20,6 +20,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 }));
 
 import handler from '~/pages/api/training-studio/studio/[route]';
+import { studioOrigin } from '~/server/services/training-studio-forward.service';
 
 const SESSION = '__Secure-civ-token=jwt.a.b';
 const COOKIES = `${SESSION}; other=secret; __Secure-civitai-token=legacy`;
@@ -168,6 +169,18 @@ describe('/api/training-studio/studio/[route]', () => {
     const res = await call({ route: 'train' });
     expect(res.statusCode).toBe(502);
     expect(res.body).toEqual({ message: expect.stringMatching(/check your runs/) });
+  });
+
+  it("sends the session cookie's bytes as the browser sent them", async () => {
+    const raw = '__Host-civ-token=a%2fb.c';
+    await call({ route: 'train', headers: { cookie: `x=1; ${raw}` } });
+    expect(outbound()[1].headers.cookie).toBe(raw);
+  });
+
+  it('never sends the session to a local Studio outside development', () => {
+    expect(() => studioOrigin('http://localhost:5174')).toThrow();
+    expect(() => studioOrigin('http://studio.example')).toThrow();
+    expect(studioOrigin('https://studio.example/x')).toBe('https://studio.example');
   });
 
   it('reads a Studio redirect as a session it did not accept', async () => {
