@@ -1,4 +1,5 @@
 import { buildKohyaInput } from './kohya-training';
+import { engineTakesRepeats, expandRepeats, isRepeatExt, MAX_REPEATS } from './repeats';
 import { kohyaFamily, type KohyaOptions, type KohyaInput } from './data/kohya';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 // Client-safe training submit builders: pure body construction + SDK calls against a provided
@@ -9,7 +10,6 @@ import {
   Air,
   deleteWorkflow,
   getResource,
-  getWorkflow,
   headBlob,
   submitWorkflow,
   updateWorkflow,
@@ -29,6 +29,7 @@ import {
   isTrainingDataNotReady,
   isFlux2,
   queryRecentWorkflows,
+  readWorkflow,
   resolveCurrencies,
   type OrchestratorClient,
 } from './orchestrator-core';
@@ -72,9 +73,14 @@ import type { TrainingTextCheck } from '$lib/training-text';
 export interface TrainingItem {
   air: string;
   caption: string;
-  /** Edit training only: where the blob sits in the dataset AI-Toolkit reads — `control_1/<name>` for a
-   *  pair's starting image, `main/<name>` (same name, captioned with the instruction) for its result. */
+  /** Edit training only (the submit also sets one on each repeat copy): where the blob sits in the
+   *  dataset AI-Toolkit reads — `control_1/<name>` for a pair's starting image, `main/<name>` (same
+   *  name, captioned with the instruction) for its result. */
   path?: string;
+  /** Non-edit only: train this image `repeats` times (2..MAX_REPEATS). The submit expands it into that
+   *  many copies, each staged under its own path, which needs the file extension `ext`. */
+  repeats?: number;
+  ext?: string;
 }
 
 /** Everything the client assembles for one training run. Params arrive as the numbers the orchestrator
@@ -153,7 +159,12 @@ export interface SubmitOptions {
   datasetRating?: DatasetRating;
   /** Told how each dataset maturity count was made, for the run's log line. */
   onMatureCount?: (count: MatureCount) => void;
+  /** Whether this user may train with Kohya (the `KOHYA_FLAG_KEY` gate). Anything but true refuses a
+   *  Kohya run or continuation before any orchestrator call. */
+  kohyaAllowed?: boolean;
 }
+
+export const KOHYA_UNAVAILABLE = 'Kohya training is not available right now.';
 
 /** Why a run can't start right now — training is off, or its model is blocked — or null when it can. */
 export function unavailableRunMessage(
@@ -219,13 +230,16 @@ function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unk
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
   // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice. An
   // edit dataset places items by path instead, where one starting image may serve several pairs.
+  // Repeat copies are expanded after it, so they are never collapsed.
   const seen = new Set<string>();
-  const items = run.items.filter((item) => {
-    const key = item.path ?? trainingBlobKey(item.air);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const items = expandRepeats(
+    run.items.filter((item) => {
+      const key = item.path ?? trainingBlobKey(item.air);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+  );
   const trainingData = { type: 'blobs' as const, items };
   if (run.engine === 'kohya')
     return {
@@ -537,6 +551,15 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     if (!isNonEmptyString(item.air))
       fail(`${field}.items[${i}].air`, 'must be a non-empty string.');
     if (!isString(item.caption)) fail(`${field}.items[${i}].caption`, 'must be a string.');
+    if (item.repeats !== undefined) {
+      if (!engineTakesRepeats(run.engine, !!run.editTraining))
+        fail(`${field}.items[${i}].repeats`, 'are not supported for this model.');
+      if (!Number.isInteger(item.repeats) || item.repeats < 2 || item.repeats > MAX_REPEATS)
+        fail(`${field}.items[${i}].repeats`, `must be an integer from 2 to ${MAX_REPEATS}.`);
+      if (!isRepeatExt(item.ext))
+        fail(`${field}.items[${i}].ext`, 'must be a media file extension.');
+    } else if (item.ext !== undefined)
+      fail(`${field}.items[${i}].ext`, 'is only sent with repeats.');
   });
   if (!Array.isArray(run.prompts) || run.prompts.some((p) => !isString(p)))
     fail(`${field}.prompts`, 'must be an array of strings.');
@@ -700,6 +723,8 @@ export async function submitTrainingBatch(
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+  if (opts.kohyaAllowed !== true && runs.some((run) => run.engine === 'kohya'))
+    throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
   for (const run of runs) {
     const unavailable = unavailableRunMessage(run, opts.status);
     if (unavailable) throw new TrainingBatchValidationError(unavailable);
@@ -862,7 +887,14 @@ function sourceMatureCount(
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  { callbacks, traceMode = 'events', status, datasetRating, onMatureCount }: SubmitOptions
+  {
+    callbacks,
+    traceMode = 'events',
+    status,
+    datasetRating,
+    onMatureCount,
+    kohyaAllowed,
+  }: SubmitOptions
 ): Promise<{
   body: WorkflowTemplate;
   steps: number | undefined;
@@ -870,10 +902,7 @@ async function buildContinuation(
   matureCount: number;
 }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
-  const { data: wf, error: getError } = await getWorkflow({
-    client,
-    path: { workflowId: opts.workflowId },
-  });
+  const { data: wf, error: getError } = await readWorkflow(client, opts.workflowId);
   if (!wf)
     throw new Error(`keep training: source run not found (${describeSubmitError(getError)})`);
 
@@ -883,6 +912,8 @@ async function buildContinuation(
   const output = (step as { output?: { epochs?: EpochOutput[] } } | undefined)?.output;
   if (!input || (input.engine !== 'ai-toolkit' && input.engine !== 'kohya'))
     throw new Error('keep training: this engine cannot continue from a checkpoint');
+  if (input.engine === 'kohya' && kohyaAllowed !== true)
+    throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
 
   const epoch = (output?.epochs ?? []).find(
     (e) => e.epochNumber === opts.fromEpoch && epochModelKey(e.model) !== undefined
@@ -924,9 +955,14 @@ async function buildContinuation(
     : undefined;
 
   const srcMeta = (wf.metadata ?? {}) as TrainingStudioMeta;
-  const airs = ((input.trainingData as { items?: { air?: unknown }[] } | undefined)?.items ?? [])
-    .map((i) => i.air)
-    .filter((a): a is string => typeof a === 'string' && a.length > 0);
+  // Deduped: a repeated image is on the wire once per copy.
+  const airs = [
+    ...new Set(
+      ((input.trainingData as { items?: { air?: unknown }[] } | undefined)?.items ?? [])
+        .map((i) => i.air)
+        .filter((a): a is string => typeof a === 'string' && a.length > 0)
+    ),
+  ];
   // A stamped positive count is trusted (it can only ask the user to confirm); 0 or none is re-checked.
   const matureCount =
     typeof srcMeta.matureCount === 'number' && srcMeta.matureCount > 0
@@ -1105,7 +1141,7 @@ export async function renameTraining(
   workflowId: string,
   name: string
 ): Promise<void> {
-  const { data: current, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  const { data: current, error: getError } = await readWorkflow(client, workflowId);
   if (!current) throw new Error(`rename: workflow not found (${describeSubmitError(getError)})`);
 
   const trimmed = name.trim();
@@ -1136,11 +1172,7 @@ export async function deleteTraining(
   client: OrchestratorClient,
   workflowId: string
 ): Promise<void> {
-  const {
-    data: current,
-    error: getError,
-    response,
-  } = await getWorkflow({ client, path: { workflowId } });
+  const { data: current, error: getError, response } = await readWorkflow(client, workflowId);
   // Already gone (another tab, a double click) is the outcome the caller asked for.
   if (response?.status === 404) return;
   if (!current) throw new Error(`delete: workflow not found (${describeSubmitError(getError)})`);

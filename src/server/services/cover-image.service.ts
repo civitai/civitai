@@ -136,8 +136,9 @@ export const RESTRICTED_COVER_IMAGE_MESSAGE = `This image can't be used as a cov
 const restrictedCoverError = () =>
   new TRPCError({ code: 'BAD_REQUEST', message: RESTRICTED_COVER_IMAGE_MESSAGE });
 
-/** Reads the primary, so a just-flagged image is seen. A missing id passes. */
+/** A missing id passes. */
 async function assertNotRestricted(id: number) {
+  // primary: guards the cover write, so a just-flagged image is seen.
   const image = await dbWrite.image.findUnique({
     where: { id },
     select: { nsfwLevel: true, modelRestricted: true },
@@ -221,8 +222,6 @@ async function objectExistsInUploads(url: string): Promise<boolean | null> {
       message: 'cover image existence check could not consult the uploads bucket',
       reason: 'client-unavailable',
       error: safeError(e),
-    }).catch(() => {
-      // swallow — best-effort logging must never break the save it is observing
     });
     return null;
   }
@@ -235,8 +234,6 @@ function logExistenceUnknown({ userId }: { userId: number }) {
     message: 'cover image created without a verified object — existence check was indeterminate',
     reason: 'proceeded-unverified',
     userId,
-  }).catch(() => {
-    // swallow — best-effort logging must never break the save it is observing
   });
 }
 

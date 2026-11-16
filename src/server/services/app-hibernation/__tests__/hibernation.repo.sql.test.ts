@@ -191,6 +191,19 @@ describe('app_sandbox_hibernations SQL', () => {
     expect((await db.query(ADVISORY)).rows).toEqual([]);
   });
 
+  // Prisma's $queryRaw cannot deserialize a `void` column ("Failed to deserialize column of type
+  // 'void'"), and pg_advisory_xact_lock returns void: selecting the call itself failed every commit
+  // in production while PGlite, which returns '' for it, stayed green. Pin the column types.
+  it('lock(user) returns no void column (Prisma $queryRaw cannot read one)', async () => {
+    const VOID_OID = 2278;
+    const fields = await db.transaction(async (tx) => {
+      const sql = hibernationSql.lock(9101);
+      return (await tx.query(sql.text, sql.values as unknown[])).fields;
+    });
+    expect(fields.length).toBeGreaterThan(0);
+    expect(fields.map((f) => f.dataTypeID)).not.toContain(VOID_OID);
+  });
+
   // Each row sets exactly some of the four secrets columns. Every partial combination must fail:
   // a bare comparison against a NULL column is NULL, and a CHECK that is NULL passes.
   it.each([

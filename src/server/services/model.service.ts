@@ -1,5 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
+import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
+import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { keepHeldReviewsCte, reviewsOnModelsSql } from '~/server/services/held-review.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
@@ -138,8 +140,9 @@ import {
 } from '~/server/selectors/model.selector';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { readModelsWithVersionsStats } from '~/server/services/hot-reads-11.reads';
+import { readSimpleModelWithOwner } from '~/server/services/hot-reads-12.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
-import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
@@ -228,6 +231,7 @@ import {
   fetchThroughCache,
 } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
@@ -259,6 +263,8 @@ import {
 import {
   pickModerationOwnedMeta,
   pickServerOwnedMeta,
+  readSystemNsfwLockAt,
+  SCAN_RATING_SOURCES,
   RESTORE_CANNOT_PROMOTE_KEY,
   type SERVER_OWNED_META_KEYS,
   filterModelMetaForClient,
@@ -268,6 +274,12 @@ import {
   withPrivateCannotPromote,
   withStoredPublishKeys,
 } from '~/server/utils/minor-flag-meta';
+import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
+import {
+  comFaceIntentMetaAfterModeratorUnlock,
+  comFaceIntentTextHash,
+  getOwnTriggerWords,
+} from '~/server/services/model-com-face-intent.service';
 import {
   buildGetAllModelImages,
   filterImagesForViewer,
@@ -283,6 +295,7 @@ import {
   allBrowsingLevelsFlag,
   modelBrowsingLevelLimit,
   nsfwBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type { CommercialUse, DomainColor, ModelType } from '~/shared/utils/prisma/enums';
@@ -1961,7 +1974,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     number,
     { modelVersionId: number; images: ImagesForModelVersions[] }
   > = {};
-  const { excludedTagIds, status } = input;
+  const { status } = input;
+  // As getModelsRaw resolved them: the viewer's own plus the browsing-settings tags.
+  const { excludedTagIds } = rawInput;
   if (!!modelVersionIds.length) {
     if (input.pending) {
       const images = await getImagesForModelVersion({
@@ -2058,21 +2073,22 @@ export const getModelsWithImagesAndModelVersions = async ({
           model,
           showSfwFace
         );
-        // The image cache holds every level; send only what this viewer's settings show.
-        const versionImages = input.browsingLevel
-          ? filterImagesForViewer(faceImages, {
-              browsingLevel: input.browsingLevel,
-              modelNsfw: model.nsfw,
-              disablePoi: rawInput.disablePoi,
-              disableMinor: rawInput.disableMinor,
-              viewer: user,
-            })
-          : faceImages;
-        const filteredImages = excludedTagIds
-          ? versionImages.filter(
-              (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
-            )
-          : versionImages;
+        // The image cache holds every level; send only what this viewer's settings show, and
+        // only public images to a caller that names no level.
+        const versionImages = filterImagesForViewer(faceImages, {
+          browsingLevel: input.browsingLevel || publicBrowsingLevelsFlag,
+          modelNsfw: model.nsfw,
+          disablePoi: rawInput.disablePoi,
+          disableMinor: rawInput.disableMinor,
+          viewer: user,
+        });
+        // The owner is exempt from the whole set, as in getModelsRaw's tag clause.
+        const filteredImages =
+          excludedTagIds && model.user.id !== user?.id
+            ? versionImages.filter(
+                (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
+              )
+            : versionImages;
 
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) &&
@@ -2269,10 +2285,12 @@ export const updateModelById = async ({
       writtenMode === ModelModifier.TakenDown ||
       priorMode === ModelModifier.TakenDown ||
       priorMode === undefined
-    )
+    ) {
       void getCollectionIdsForModelImages({ modelId: id })
         .then((found) => enqueueCollectionRebuild({ ...found, source: 'model-mode-change' }))
         .catch(() => undefined);
+      void queueModelArticlesReindex(id);
+    }
   }
 
   return withoutModeratorOnlyMeta(model);
@@ -2807,7 +2825,8 @@ export async function applyModelFlagSideEffects({
   const minorChanged = after.minor !== before.minor || after.sfwOnly !== before.sfwOnly;
 
   // Update search index if listing changes
-  if (tagsChanged || poiChanged || minorChanged) {
+  const listingChanged = tagsChanged || poiChanged || minorChanged;
+  if (listingChanged) {
     await modelTagCache.refresh(id);
     if (tagsChanged) await modelVotableTagsCache.bust(id);
     await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -2855,7 +2874,15 @@ export async function applyModelFlagSideEffects({
   }
 
   const heldLevelChanged = galleryBrowsingLevelChanged && (after.minor || after.sfwOnly);
+  // The search document carries the held showcase, so it is rebuilt at the new level.
+  if (heldLevelChanged && !listingChanged)
+    await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   if (minorChanged || heldLevelChanged) await purgeHeldShowcase(id, modelVersionIds);
+  // Not awaited: finding the collections can be slow, and it never throws.
+  if (minorChanged || heldLevelChanged) {
+    void queueModelCollectionsReindex([id]);
+    void queueModelArticlesReindex(id);
+  }
 }
 
 /**
@@ -2878,7 +2905,7 @@ export async function purgeHeldShowcase(modelId: number, modelVersionIds?: numbe
       message: 'model showcase level changed; public API edge cache not purged',
       modelId,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -3040,7 +3067,7 @@ export async function setModelMinor({
         name: 'text-scan',
         message: 'moderator minor ruling not recorded: model text unreadable',
         modelId: id,
-      }).catch(() => null);
+      });
   }
 
   const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
@@ -3106,7 +3133,7 @@ export async function setModelMinor({
       name: 'minor-flag-snapshot',
       message: snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
       modelId: id,
-    }).catch(() => null);
+    });
 
   await preventReplicationLag('model', id);
   const modActivity = activity ?? (minor ? 'setMinor' : 'unsetMinor');
@@ -3236,7 +3263,7 @@ export async function setModelSfwOnly({
         message: 'held restricted nsfw verdict not applied',
         modelId: id,
         error: error.message,
-      }).catch(() => null)
+      })
     );
   }
   const modActivity = sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly';
@@ -3370,7 +3397,7 @@ export async function setModelPoi({
         name: 'text-scan',
         message: 'moderator poi ruling not recorded: model text unreadable',
         modelId: id,
-      }).catch(() => null);
+      });
   };
   // The ruling is written on its own connection, so it cannot go inside the locked write below.
   const flagged = await dbWrite.model.findUnique({ where: { id }, select: { poi: true } });
@@ -3448,7 +3475,7 @@ export async function setModelPoi({
           error instanceof Error ? error.message : error
         }`,
         modelId: id,
-      }).catch(() => null)
+      })
     );
 
   if (poi)
@@ -3560,6 +3587,10 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
       sfwOnly: true,
       poi: true,
       gallerySettings: true,
+      name: true,
+      description: true,
+      sfwName: true,
+      sfwCoverImageId: true,
     },
   });
   return row && { ...row, meta: row.meta as ModelMeta | null };
@@ -3633,14 +3664,16 @@ function profanityRatingRefusal(
  */
 function applyRaisedRestrictions(
   stored: ContentFlags & { lockedProperties?: string[]; gallerySettings?: Prisma.JsonValue },
-  data: ContentFlagWrite & { lockedProperties?: string[] }
+  data: ContentFlagWrite & { lockedProperties?: string[] },
+  // A scan's rating carries no lock, but clearing it still has to reach a moderator.
+  { scanRated = false }: { scanRated?: boolean } = {}
 ): ModelMeta['ownerFlagOverride'] | undefined {
   const raised = raisedRestrictions(stored, data);
   if (!raised.length) return;
   data.nsfw = false;
   data.sfwOnly = true;
   const storedLocks = stored.lockedProperties ?? [];
-  if (!stored.nsfw || !storedLocks.includes('nsfw')) return;
+  if (!stored.nsfw || !(storedLocks.includes('nsfw') || scanRated)) return;
   data.lockedProperties = uniq([
     ...storedLocks,
     ...raised.flatMap((flag) =>
@@ -3945,8 +3978,24 @@ function withoutPoiFlagLocks(
   );
 }
 
-function liftsSfwOnlyLock(stored: string[] | null | undefined, next: string[] | undefined) {
-  return next !== undefined && (stored ?? []).includes('sfwOnly') && !next.includes('sfwOnly');
+function liftsLock(lock: string, stored: string[] | null | undefined, next: string[] | undefined) {
+  return next !== undefined && (stored ?? []).includes(lock) && !next.includes(lock);
+}
+
+/** Hashes the listing the save leaves, not the stored one: an unlock save may also edit the text. */
+async function intentMetaAfterModeratorUnlock(
+  tx: Prisma.TransactionClient,
+  modelId: number,
+  locked: NonNullable<LockedModelRow>,
+  data: { name?: string; description?: string | null; lockedProperties?: string[] }
+) {
+  if (!liftsLock('nsfw', locked.lockedProperties, data.lockedProperties)) return {};
+  const textHash = comFaceIntentTextHash({
+    name: data.name ?? locked.name,
+    description: data.description !== undefined ? data.description : locked.description,
+    triggerWords: await getOwnTriggerWords({ modelId, userId: locked.userId, db: tx }),
+  });
+  return comFaceIntentMetaAfterModeratorUnlock(locked.meta, textHash, new Date().toISOString());
 }
 
 function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
@@ -3987,7 +4036,7 @@ async function applyHeldVerdictAfterOwnerSave(
       message: 'held restricted nsfw verdict not applied',
       modelId: after.id,
       error: error.message,
-    }).catch(() => null)
+    })
   );
 }
 
@@ -4007,6 +4056,81 @@ export async function leavePrivateWithHeldVerdict(
     return applyHeldVerdictLeavingPrivate(tx, modelId);
   });
   if (applied) await finishHeldVerdictApply(modelId);
+}
+
+/**
+ * The private flow's locks: the stored ones, plus nsfw while the text scan's rating holds it. That
+ * rating carries no lock, but this flow keeps it, dropping the owner's nsfw as for a locked setting.
+ */
+function locksWithScanRating(row: { meta: unknown; lockedProperties: string[] | null }) {
+  const locks = row.lockedProperties ?? [];
+  const source = (row.meta as ModelMeta | null)?.systemNsfwLock?.source;
+  return source && SCAN_RATING_SOURCES.includes(source) ? uniq([...locks, 'nsfw']) : locks;
+}
+
+export const SCAN_RATING_KEPT_MESSAGE =
+  "This model was rated mature from its civitai.red title and description, so it stays marked mature, and a civitai.com version is what lists it on civitai.com. To change that, edit the title and description and save them first; once they're checked and pass, you can change the rating.";
+
+/**
+ * Holds the text scan's mature rating, which carries no lock, against an owner's save that unticks
+ * mature (face or not) or removes the face that listed a model already not mature. A text edit is no
+ * exemption: only a rescan reading the text as not mature drops the scan's marker, and this guard.
+ * Runs after `normalizeSfwFaceInput`, and again on the locked row inside the save's transaction.
+ */
+async function assertScanRatingKept({
+  modelId,
+  before,
+  data,
+}: {
+  modelId: number;
+  before: {
+    nsfw: boolean;
+    name: string;
+    description: string | null;
+    sfwName: string | null;
+    sfwCoverImageId: number | null;
+    lockedProperties: string[] | null;
+    meta: unknown;
+    minor: boolean;
+    poi: boolean;
+    sfwOnly: boolean;
+  };
+  data: {
+    nsfw?: boolean;
+    name?: string;
+    description?: string | null;
+    sfwName?: string | null;
+    sfwCoverImageId?: number | null;
+    minor?: boolean;
+    poi?: boolean;
+    sfwOnly?: boolean;
+  };
+}) {
+  const ratedAt = readSystemNsfwLockAt(before.meta);
+  if (!ratedAt || before.lockedProperties?.includes('nsfw')) return;
+  // Only a text check's rating, which a clean read of edited text releases.
+  const source = (before.meta as ModelMeta | null)?.systemNsfwLock?.source;
+  if (!source || !SCAN_RATING_SOURCES.includes(source)) return;
+  const after = <K extends keyof typeof data>(key: K) =>
+    (data[key] !== undefined ? data[key] : before[key as keyof typeof before]) as
+      | (typeof data)[K]
+      | undefined;
+  // A minor or POI flag hands the verdict to a moderator as a lead (`applyRaisedRestrictions`);
+  // SFW-only has no such handoff, so it is held to the guard like any other save.
+  if (after('minor') || after('poi')) return;
+
+  // Not `hasCompleteSfwFace`: the save's face is judged as stored, before its level is recomputed.
+  const hasFace = (face: { sfwName?: string | null; sfwCoverImageId?: number | null }) =>
+    face.sfwName != null && face.sfwCoverImageId != null;
+  const faceAfter = hasFace({
+    sfwName: after('sfwName'),
+    sfwCoverImageId: after('sfwCoverImageId'),
+  });
+  if (after('nsfw')) return;
+  // A row already not mature (an older one): only removing the face that listed it.
+  if (!before.nsfw && (faceAfter || !hasFace(before))) return;
+  if (await moderatorRuledNsfwSince(modelId, ratedAt)) return;
+  throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
 }
 
 export const upsertModel = async (
@@ -4095,6 +4219,8 @@ export const upsertModel = async (
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
+  if (beforeUpdate && id && !isModerator)
+    await assertScanRatingKept({ modelId: id, before: beforeUpdate, data });
   // `?? null`: on a create there is no stored row, and a null from the form is not a change.
   const sfwFaceChanged =
     (data.sfwName !== undefined && data.sfwName !== (beforeUpdate?.sfwName ?? null)) ||
@@ -4286,14 +4412,11 @@ export const upsertModel = async (
     if (modelMeta?.showcaseCollectionId) {
       // Best-effort — model create should not fail if the showcase collection
       // can't be written to (e.g. user references one they don't own).
-      await saveItemInCollections({
-        input: {
-          collections: [{ collectionId: modelMeta.showcaseCollectionId }],
-          modelId: result.id,
-          type: 'Model',
-          userId,
-          isModerator,
-        },
+      await addModelToShowcaseCollection({
+        modelId: result.id,
+        collectionId: modelMeta.showcaseCollectionId,
+        userId,
+        isModerator,
       }).catch((error) =>
         logToAxiom({
           type: 'error',
@@ -4378,6 +4501,9 @@ export const upsertModel = async (
           prevGallerySettings;
         if (!isModerator && locked) {
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
+          // The scan's rating has no lock to enforce here: a rating that landed since the read
+          // above is held by its guard, judged again on this row.
+          await assertScanRatingKept({ modelId: id, before: locked, data });
           const profanityRefusal = profanityDetected
             ? profanityRatingRefusal(locked, locked.lockedProperties, data)
             : null;
@@ -4391,7 +4517,9 @@ export const upsertModel = async (
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
-          const raisedOverScanLock = applyRaisedRestrictions(locked, data);
+          const raisedOverScanLock = applyRaisedRestrictions(locked, data, {
+            scanRated: !!prevMeta?.systemNsfwLock,
+          });
           const ownerFlagOverride = raisedOverScanLock ?? withRaisedFlags(locked, data);
           if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
           // The owner's flag clears a rating a scan set: the scan's verdict waits for a moderator,
@@ -4462,6 +4590,11 @@ export const upsertModel = async (
           const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;
           mergedMeta = rest;
         }
+        if (isModerator && locked)
+          mergedMeta = {
+            ...mergedMeta,
+            ...(await intentMetaAfterModeratorUnlock(tx, id, locked, data)),
+          };
         if (locked?.minor && flags && !flags.minor && mergedMeta.minorFlagSnapshot)
           mergedMeta = {
             ...mergedMeta,
@@ -4635,7 +4768,7 @@ export const upsertModel = async (
           await heldVerdict.dropLiftedBy(tx, updated.id, { flagged: true });
         else if (isModerator && (locked?.minor || locked?.poi) && !updated.minor && !updated.poi)
           await heldVerdict.holdLeadAfterFlagLift(tx, updated.id, 'moderator');
-        if (isModerator && liftsSfwOnlyLock(locked?.lockedProperties, data.lockedProperties))
+        if (isModerator && liftsLock('sfwOnly', locked?.lockedProperties, data.lockedProperties))
           await heldVerdict.holdLeadAfterSfwOnlyLift(tx, updated.id);
         if (
           (locked?.availability ?? beforeUpdate.availability) === Availability.Private &&
@@ -4723,7 +4856,7 @@ export const upsertModel = async (
         modelId: result.id,
         modelType: result.type,
         modelVersionIds: clearedLicensingSources.map((v) => v.id),
-      }).catch(() => null);
+      });
       // Flag lag BEFORE the bust (as publishModelById does): otherwise a concurrent read inside the
       // replication window refills these caches from the replica's pre-clear row and the fee stays
       // live. A type change already busts every version id below — the ordering is what this adds.
@@ -4798,24 +4931,38 @@ export const upsertModel = async (
         ).catch(() => undefined);
     }
 
+    // The model is already saved: a refused add puts the previous showcase back, and is returned
+    // only after the follow-ups below run.
+    let showcaseAddError: unknown;
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
-        await saveItemInCollections({
-          input: {
-            collections: [{ collectionId: modelMeta.showcaseCollectionId }],
-            modelId: id,
-            type: 'Model',
-            userId,
-            isModerator,
-          },
-        }).catch((error) =>
-          logToAxiom({
-            type: 'error',
-            name: 'save-model-showcase-collection',
-            error,
-            message: error.message,
-          })
-        );
+        await addModelToShowcaseCollection({
+          modelId: id,
+          collectionId: modelMeta.showcaseCollectionId,
+          userId,
+          isModerator,
+        }).catch(async (error) => {
+          showcaseAddError = error;
+          const previous = (beforeUpdate.meta as ModelMeta | null)?.showcaseCollectionId ?? null;
+          await updateModelById({
+            id,
+            data: {},
+            meta: (stored) =>
+              ({
+                ...stored,
+                ...(stored?.showcaseCollectionId === modelMeta.showcaseCollectionId && {
+                  showcaseCollectionId: previous,
+                }),
+              } as ModelMeta),
+          }).catch((revertError) =>
+            logToAxiom({
+              type: 'error',
+              name: 'revert-model-showcase-collection',
+              error: revertError,
+              message: revertError.message,
+            })
+          );
+        });
       } else {
         saveItemInCollections({
           input: {
@@ -4857,6 +5004,8 @@ export const upsertModel = async (
         context: { name: result.name, isModerator },
       });
     }
+
+    if (showcaseAddError) throw showcaseAddError;
 
     return withoutModeratorOnlyMeta(result);
   }
@@ -5796,22 +5945,13 @@ export async function toggleLockComments({ id, locked }: { id: number; locked: b
 
 export const getSimpleModelWithVersions = async ({
   id,
-  ctx,
 }: GetByIdInput & {
+  // Unused: the read never depended on the viewer (`getModel` ignores its `user`).
   ctx?: Context;
 }) => {
-  const model = await getModel({
-    id,
-    user: ctx?.user,
-    select: {
-      id: true,
-      name: true,
-      createdAt: true,
-      locked: true,
-      status: true,
-      user: { select: userWithCosmeticsSelect },
-    },
-  });
+  // `getModel`'s read with this select (`findModel`), behind `kysely-hot-reads-12`: one Kysely
+  // statement where Prisma issues one for the model and one per relation of its owner.
+  const model = await readSimpleModelWithOwner(id);
   if (!model) throw throwNotFoundError();
   return model;
 };
@@ -6196,24 +6336,33 @@ const addReciprocalAssociations = async ({
 };
 // #endregion
 
-export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
-  const cacheKey = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
+const gallerySettingsKey = (id: number) => `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
 
-  const cachedSettings = await redis.get(cacheKey);
-  if (cachedSettings) {
-    type Cached =
-      | (Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
-          creatorHiddenUserIds?: number[];
-          sfwHeld?: boolean;
-        })
-      | { none: true };
-    // A build before the hold cached a bare null.
-    const cached = fromJson<Cached>(cachedSettings) as Cached | null;
-    // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
-    // unflagged model with no settings from a flagged one.
-    if (cached && 'none' in cached) return null;
-    if (cached?.sfwHeld !== undefined) return cached;
-  }
+type CachedGallerySettings = Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
+  creatorHiddenUserIds?: number[];
+  sfwHeld?: boolean;
+};
+
+/** A cached gallery settings entry: the settings, null for none, undefined when it must be rebuilt. */
+function parseCachedGallerySettings(raw: string | null | undefined) {
+  if (!raw) return undefined;
+  // A build before the hold cached a bare null.
+  const cached = fromJson<CachedGallerySettings | { none: true }>(raw) as
+    | CachedGallerySettings
+    | { none: true }
+    | null;
+  // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
+  // unflagged model with no settings from a flagged one.
+  if (cached && 'none' in cached) return null;
+  if (cached?.sfwHeld !== undefined) return cached;
+  return undefined;
+}
+
+export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
+  const cacheKey = gallerySettingsKey(id);
+
+  const cached = parseCachedGallerySettings(await redis.get(cacheKey));
+  if (cached !== undefined) return cached;
 
   const model = await getModel({
     id: id,
@@ -6368,17 +6517,10 @@ export async function getHeldGalleryLevel(selector: ImageModelSelector) {
   const modelIds = await resolveImageModelIds(selector);
   if (!modelIds) return 0;
 
-  // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
-  const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
-  await limitConcurrency(
-    [...modelIds].map((id) => async () => {
-      galleries.push(await getGallerySettingsByModelId({ id }));
-    }),
-    5
-  );
+  const levels = await getShowcaseHeldLevels([...modelIds].map((modelId) => ({ modelId })));
   let held: number | undefined;
-  for (const gallery of galleries)
-    if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
+  for (const level of levels.values())
+    held = Flags.intersection(held ?? allBrowsingLevelsFlag, level);
   return held;
 }
 
@@ -6424,7 +6566,10 @@ export async function getWithheldVersionIds(modelVersionIds: number[], viewerId?
  * For each post on a minor or SFW-only model, the level its images may be served at and the model's
  * owner, who sees them whole. A post on no held model, or not yet on the replica, is absent.
  */
-export async function getHeldLevelsByPost(postIds: number[]) {
+export async function getHeldLevelsByPost(
+  postIds: number[],
+  { withOwners = true }: { withOwners?: boolean } = {}
+) {
   const held = new Map<number, { level: number; ownerId?: number }>();
   const ids = uniq(postIds);
   if (!ids.length) return held;
@@ -6435,19 +6580,17 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   if (!versionIds.length) return held;
   const versions = await versionModelCache().fetch(versionIds);
 
-  const levels = new Map<number, number>();
-  await limitConcurrency(
-    uniq(Object.values(versions).map((version) => version.modelId)).map((id) => async () => {
-      const gallery = await getGallerySettingsByModelId({ id });
-      if (gallery?.sfwHeld) levels.set(id, gallery.level);
-    }),
-    5
+  const levels = await getShowcaseHeldLevels(
+    Object.values(versions).map((version) => ({ modelId: version.modelId }))
   );
   if (!levels.size) return held;
-  const owners = await dbRead.model.findMany({
-    where: { id: { in: [...levels.keys()] } },
-    select: { id: true, userId: true },
-  });
+  // Readers that exempt no one skip the owner read.
+  const owners = withOwners
+    ? await dbRead.model.findMany({
+        where: { id: { in: [...levels.keys()] } },
+        select: { id: true, userId: true },
+      })
+    : [];
   const ownerOf = new Map(owners.map((model) => [model.id, model.userId]));
 
   for (const id of ids) {
@@ -6459,28 +6602,58 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   return held;
 }
 
+/** Who sees a held model's showcase whole: its owner or a moderator, on a session or full-access key. */
+export type HeldGalleryViewer = { id: number; isModerator: boolean };
+
 /**
- * Showcase images by model version, leaving out those above the gallery level of each version's
- * minor or SFW-only model. For reads no viewer sees whole, such as the public API. `models` maps
- * each version to its model, with the model's flags where the caller read the row: a flagged row is
- * held even when its cached gallery settings say otherwise. A model whose settings cannot be read
- * is served at SFW for this request. Never mutates `byVersion`: its entries can be the shared cache's.
+ * The viewer a tRPC read exempts from the showcase hold. An app or scoped key acting for a user is
+ * held like anyone else. Read it before any await: a request's other calls share `ctx`.
  */
-export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
-  byVersion: Record<number, E>,
-  models: Map<number, { modelId: number; minor?: boolean; sfwOnly?: boolean }>
-): Promise<Record<number, E>> {
+export function heldGalleryViewer(
+  ctx: Parameters<typeof isSessionOrFullUserKey>[0] & {
+    user?: { id: number; isModerator?: boolean | null } | null;
+  }
+): HeldGalleryViewer | undefined {
+  if (!ctx.user || !isSessionOrFullUserKey(ctx)) return undefined;
+  return { id: ctx.user.id, isModerator: !!ctx.user.isModerator };
+}
+
+/**
+ * For each minor or SFW-only model, the level its showcase images may be served at. Flags, where
+ * the caller read the row, decide on their own: a flagged row is held even when its cached gallery
+ * settings say otherwise, and an unflagged row is not read. A model whose settings cannot be read
+ * is held at SFW for this request.
+ */
+export async function getShowcaseHeldLevels(
+  models: { modelId: number; minor?: boolean; sfwOnly?: boolean }[]
+) {
   const flagsOf = new Map<number, { minor: boolean; sfwOnly: boolean }>();
-  for (const { modelId, minor, sfwOnly } of models.values())
+  for (const { modelId, minor, sfwOnly } of models)
     if (minor !== undefined && sfwOnly !== undefined) flagsOf.set(modelId, { minor, sfwOnly });
 
   const levels = new Map<number, number>();
+  const ids = uniq(models.map((m) => m.modelId)).filter((id) => {
+    const flags = flagsOf.get(id);
+    return !flags || flags.minor || flags.sfwOnly;
+  });
+  // One read for the whole page; a miss, or a failed read, is built one model at a time below.
+  const cached = new Map<number, CachedGallerySettings | null>();
+  if (ids.length) {
+    try {
+      const raws = await redis.mGet(ids.map(gallerySettingsKey));
+      ids.forEach((id, i) => {
+        const settings = parseCachedGallerySettings(raws[i]);
+        if (settings !== undefined) cached.set(id, settings);
+      });
+    } catch {
+      // Each model is then read on its own, and held at SFW if that fails too.
+    }
+  }
   await limitConcurrency(
-    uniq([...models.values()].map((m) => m.modelId)).map((id) => async () => {
+    ids.map((id) => async () => {
       const flags = flagsOf.get(id);
-      if (flags && !flags.minor && !flags.sfwOnly) return;
       try {
-        const gallery = await getGallerySettingsByModelId({ id });
+        const gallery = cached.has(id) ? cached.get(id) : await getGallerySettingsByModelId({ id });
         if (gallery?.sfwHeld) levels.set(id, gallery.level);
         else if (flags) levels.set(id, heldGalleryLevel(undefined, flags));
       } catch (error) {
@@ -6491,25 +6664,74 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
           message: 'gallery settings unreadable; showcase served at SFW for this request',
           modelId: id,
           error: safeError(error),
-        }).catch(() => undefined);
+        });
       }
     }),
     5
   );
+  return levels;
+}
+
+/** The images a held level allows; all of them when the level is undefined. */
+export function withinHeldLevel<T extends { nsfwLevel: number }>(images: T[], level?: number) {
+  return level === undefined
+    ? images
+    : images.filter((image) => Flags.intersects(level, image.nsfwLevel));
+}
+
+/**
+ * Showcase images by model version, leaving out those above the gallery level of each version's
+ * minor or SFW-only model (see `getShowcaseHeldLevels`). `models` maps a version to its model, with
+ * the model's flags and owner where the caller read the row; a version it leaves out is resolved
+ * through the version cache. A `viewer` sees the whole showcase when they moderate or own the
+ * model; pass none where no one is exempt (the public API, the search index, results shared
+ * between viewers). Never mutates `byVersion`: its entries can be the shared cache's.
+ */
+export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: Map<number, { modelId: number; minor?: boolean; sfwOnly?: boolean; ownerId?: number }>,
+  viewer?: HeldGalleryViewer
+): Promise<Record<number, E>> {
+  if (viewer?.isModerator) return byVersion;
+  const modelOf = new Map(models);
+  const unmapped = Object.keys(byVersion)
+    .map(Number)
+    .filter((id) => !modelOf.has(id));
+  if (unmapped.length) {
+    const versions = await versionModelCache().fetch(unmapped);
+    for (const version of Object.values(versions))
+      modelOf.set(version.id, { modelId: version.modelId });
+  }
+
+  const levels = await getShowcaseHeldLevels(
+    [...modelOf.values()].filter((m) => !viewer || m.ownerId !== viewer.id)
+  );
+  const owners = new Map<number, number>();
+  if (viewer) {
+    const unknown = uniq(
+      [...modelOf.values()]
+        .filter((m) => m.ownerId === undefined && levels.has(m.modelId))
+        .map((m) => m.modelId)
+    );
+    if (unknown.length) {
+      const rows = await dbRead.model.findMany({
+        where: { id: { in: unknown } },
+        select: { id: true, userId: true },
+      });
+      for (const row of rows) owners.set(row.id, row.userId);
+    }
+  }
 
   const result: Record<number, E> = {};
   for (const [key, entry] of Object.entries(byVersion)) {
     const versionId = Number(key);
-    const modelId = models.get(versionId)?.modelId;
+    const model = modelOf.get(versionId);
+    const ownedByViewer =
+      !!viewer && !!model && (model.ownerId ?? owners.get(model.modelId)) === viewer.id;
     // A version with no model to clear it serves none of its images.
-    const level = modelId === undefined ? 0 : levels.get(modelId);
+    const level = !model ? 0 : ownedByViewer ? undefined : levels.get(model.modelId);
     result[versionId] =
-      level === undefined
-        ? entry
-        : {
-            ...entry,
-            images: entry.images.filter((image) => Flags.intersects(level, image.nsfwLevel)),
-          };
+      level === undefined ? entry : { ...entry, images: withinHeldLevel(entry.images, level) };
   }
   return result;
 }
@@ -6907,19 +7129,54 @@ export async function copyGallerySettingsToAllModelsByUser({
   return result;
 }
 
+/**
+ * A showcase collection must list its model. A model already in it is left alone: re-saving would
+ * demand write access and a tag the caller may not have, and would clear an existing item's tag.
+ */
+async function addModelToShowcaseCollection({
+  modelId,
+  collectionId,
+  userId,
+  isModerator,
+}: {
+  modelId: number;
+  collectionId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const existing = await dbWrite.collectionItem.findFirst({
+    where: { collectionId, modelId },
+    select: { id: true },
+  });
+  if (existing) return;
+  const status = await saveItemInCollections({
+    input: { collections: [{ collectionId }], modelId, type: 'Model', userId, isModerator },
+  });
+  if (status !== 'added')
+    throw throwBadRequestError('The model could not be added to that collection');
+}
+
 export async function setModelShowcaseCollection({
   id,
   collectionId,
   userId,
   isModerator,
+  modelAlreadyInCollection,
 }: SetModelCollectionShowcaseInput & {
   userId: number;
   isModerator?: boolean;
+  /** The caller has already written this model's item into the collection; nothing to add. */
+  modelAlreadyInCollection?: boolean;
 }) {
-  const model = await getModel({ id, select: { id: true, userId: true } });
+  const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
+  if (!isModerator && isRemovedWithOwner(model.meta)) throw removedWithOwnerEditError();
+
+  // Add first so a refused add leaves the showcase unchanged.
+  if (collectionId != null && !modelAlreadyInCollection)
+    await addModelToShowcaseCollection({ modelId: id, collectionId, userId, isModerator });
 
   const updated = await updateModelById({
     id,
@@ -7073,6 +7330,7 @@ export async function migrateResourceToCollection({
     id: modelId,
     userId: model.userId,
     isModerator,
+    modelAlreadyInCollection: true,
   });
 
   // Bust caches
@@ -7179,7 +7437,7 @@ export async function getFeaturedModels() {
       message: error.message,
       stack: error.stack,
       cause: error.cause,
-    }).catch();
+    });
     return [];
   }
 }
@@ -7412,7 +7670,7 @@ export const privateModelFromTraining = async ({
 
   enforceLockedProperties({
     data,
-    storedLockedProperties: model.lockedProperties,
+    storedLockedProperties: locksWithScanRating(model),
     isModerator: user.isModerator,
   });
 
@@ -7457,10 +7715,10 @@ export const privateModelFromTraining = async ({
         try {
           if (!locked) throw throwNotFoundError(`No model with id ${id}`);
           assertPrivateFlowPublishable({ ...locked, isModerator: user.isModerator });
-          // Against this locked row as well as the read above: a lock set since then wins.
+          // Against this locked row as well as the read above: a lock or scan rating set since wins.
           enforceLockedProperties({
             data,
-            storedLockedProperties: locked.lockedProperties,
+            storedLockedProperties: locksWithScanRating(locked),
             isModerator: user.isModerator,
           });
           assertAllowedContentFlags(locked, { ...data, sfwOnly: true });
@@ -7470,6 +7728,9 @@ export const privateModelFromTraining = async ({
         }
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
+        const intentMeta = user.isModerator
+          ? await intentMetaAfterModeratorUnlock(tx, id, locked, data)
+          : {};
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
         const restoreCannotPromote =
           locked.availability !== Availability.Private && storedMeta?.cannotPromote === true;
@@ -7519,6 +7780,7 @@ export const privateModelFromTraining = async ({
                   ? withoutSystemNsfwLock(withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)))
                   : withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta))),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
+                ...intentMeta,
                 // Makes it so these models cannot go into auctions or be promoted
                 cannotPromote: true,
                 ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
@@ -7624,9 +7886,7 @@ export const privateModelFromTraining = async ({
             : 'revert left the model Private: held scan verdict not applied',
           modelId: id,
           error: revertError.message,
-        })
-          .catch(() => null)
-          .then(() => false)
+        }).then(() => false)
     );
     // The model stayed Private, so its versions stay with it; the caller sees the flow's own error.
     if (!reverted) throw throwDbError(error);
@@ -8170,7 +8430,7 @@ export async function transferModelOwnership({
         name: 'model-ownership-transfer-invalidation',
         message: `${name} failed after a committed transfer`,
         error: { name, modelIds, targetUserId, error: String(error) },
-      }).catch(() => null)
+      })
     );
 
   // Before the gallery-settings bust: its rebuild reads Model.userId to pick the owner's hidden list,
@@ -8230,7 +8490,7 @@ export async function transferModelOwnership({
       : Promise.resolve(),
   ]);
 
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'model-ownership-transfer',
     message: 'Mod transferred model ownership',
@@ -8246,7 +8506,7 @@ export async function transferModelOwnership({
       postsUpdated: Number(result[5]),
       imagesUpdated: Number(result[6]),
     },
-  }).catch(() => null);
+  });
 
   await Promise.all([...sourceUserIds, targetUserId].map((id) => deleteBasicDataForUser(id)));
 

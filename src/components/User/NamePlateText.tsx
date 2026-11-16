@@ -2,12 +2,34 @@ import type { TextProps } from '@mantine/core';
 import { Text } from '@mantine/core';
 import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAutoplayGifs } from '~/providers/BrowserSettingsProvider';
 import type { NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
+import { observeInView } from '~/utils/shared-in-view';
 
 type NamePlateData = NamePlateCosmetic['data'] | null | undefined;
 
-export const NAMEPLATE_SWEEP_CLASS = 'animate-nameplate-sweep motion-reduce:animate-none';
+// The sweep repaints the text every frame, so it holds still while the plate is off screen. The
+// attribute is set straight on the node (see `useSweepOnlyInView`) to keep scrolling free of renders.
+export const NAMEPLATE_SWEEP_CLASS =
+  'animate-nameplate-sweep motion-reduce:animate-none data-[offscreen=true]:[animation-play-state:paused]';
+const NAMEPLATE_OFFSCREEN_ATTR = 'data-offscreen';
+
+function useSweepOnlyInView(active: boolean) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!active || !el) return;
+    const stop = observeInView(el, (inView) =>
+      el.setAttribute(NAMEPLATE_OFFSCREEN_ATTR, `${!inView}`)
+    );
+    return () => {
+      stop();
+      el.removeAttribute(NAMEPLATE_OFFSCREEN_ATTR);
+    };
+  }, [active]);
+  return ref;
+}
 
 /**
  * Mantine Text props for a nameplate. `animated` is not a Text prop, so it is never passed through.
@@ -55,8 +77,16 @@ export function NamePlateText({
     style?: CSSProperties;
   };
 
+  const ref = useSweepOnlyInView(!!plateClassName);
+
   return (
-    <Text {...props} {...plateProps} className={clsx(className, plateClassName)} style={style}>
+    <Text
+      {...props}
+      {...plateProps}
+      ref={ref}
+      className={clsx(className, plateClassName)}
+      style={style}
+    >
       {children}
     </Text>
   );

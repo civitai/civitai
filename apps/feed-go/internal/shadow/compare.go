@@ -1,8 +1,10 @@
 // Package shadow compares this service's answer with the Node app's for the same request.
 //
 // Both sides are superjson envelopes `{json, meta}`. The comparison is on DECODED values, which is what
-// the client renders: `json` trees compared structurally (object key order ignored, array order kept),
-// and the `meta.values` annotation sets compared as sets (a Date annotated on one side only is a type
+// the client renders: `json` trees compared structurally (object key order ignored, array order kept)
+// after the ["undefined"] annotations are applied as superjson.deserialize applies them (Node writes
+// an undefined member as `null` + annotation, this service omits it; both decode to undefined), and the
+// `meta.values` annotation sets compared as sets (a Date annotated on one side only is a type
 // difference the client would see). `meta.referentialEqualities` is ignored: it changes object identity
 // after decode, never a value.
 package shadow
@@ -10,6 +12,7 @@ package shadow
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -30,6 +33,8 @@ type Report struct {
 	Diffs []Diff
 	// Truncated is true when more than MaxDiffs differences existed.
 	Truncated bool
+	// opaque is the key set a category stops at (nil = the superjson envelope's).
+	opaque map[string]bool
 }
 
 // MaxDiffs bounds the differences collected per comparison.
@@ -38,6 +43,11 @@ const MaxDiffs = 64
 // opaque keys: their subtrees are free-form JSON (image metadata, cosmetic data), so a category stops
 // there and metric label cardinality stays bounded by the response schema.
 var opaque = map[string]bool{"metadata": true, "data": true, "remixOfId": true}
+
+// jsonOpaque is the opaque set of the plain-JSON REST responses (CompareJSON). Their `metadata` is the
+// page's paging object (nextCursor, nextPage, …), not free-form, so it is walked; `meta` (image
+// generation metadata, a fallback shape today) is free-form.
+var jsonOpaque = map[string]bool{"meta": true}
 
 type envelope struct {
 	JSON json.RawMessage `json:"json"`
@@ -63,8 +73,6 @@ func Compare(goEnv, nodeEnv []byte) (*Report, error) {
 	if err != nil {
 		return nil, fmt.Errorf("node json: %w", err)
 	}
-	r := &Report{}
-	walk(r, gv, nv, nil)
 	ga, err := annotations(g.Meta)
 	if err != nil {
 		return nil, err
@@ -73,9 +81,66 @@ func Compare(goEnv, nodeEnv []byte) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	gv = applyUndefined(gv, ga)
+	nv = applyUndefined(nv, na)
+	r := &Report{}
+	walk(r, gv, nv, nil)
 	compareAnnotations(r, ga, na)
 	r.Match = len(r.Diffs) == 0 && !r.Truncated
 	return r, nil
+}
+
+// undefinedValue is a decoded `undefined`: what superjson.deserialize leaves at a path annotated
+// ["undefined"].
+type undefinedValue struct{}
+
+// applyUndefined does what superjson's applyValueAnnotations does for the ["undefined"] annotations:
+// it sets each annotated path to undefined (setDeep assigns `parent[lastKey]` unconditionally, so the
+// key exists after decode whether or not the json carried it). superjson.serialize writes an
+// undefined object member as `null` plus the annotation; this service's writer omits the member and
+// writes the same annotation. Both decode to the same object, so the raw json alone must not be
+// compared at those paths. Every other annotation (Date) leaves the json value as is; the annotation
+// sets are compared separately.
+func applyUndefined(v any, ann map[string]string) any {
+	paths := make([]string, 0, len(ann))
+	for p, typ := range ann {
+		if typ == "undefined" {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if p == "" {
+			return undefinedValue{}
+		}
+		segs := splitPath(p)
+		parent := v
+		for _, seg := range segs[:len(segs)-1] {
+			parent = child(parent, seg)
+		}
+		last := segs[len(segs)-1]
+		switch t := parent.(type) {
+		case map[string]any:
+			t[last] = undefinedValue{}
+		case []any:
+			if i, err := strconv.Atoi(last); err == nil && i >= 0 && i < len(t) {
+				t[i] = undefinedValue{}
+			}
+		}
+	}
+	return v
+}
+
+func child(v any, seg string) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return t[seg]
+	case []any:
+		if i, err := strconv.Atoi(seg); err == nil && i >= 0 && i < len(t) {
+			return t[i]
+		}
+	}
+	return nil
 }
 
 func decode(raw json.RawMessage) (any, error) {
@@ -160,11 +225,17 @@ func add(r *Report, path []string, kind string) {
 		r.Truncated = true
 		return
 	}
-	r.Diffs = append(r.Diffs, Diff{Path: strings.Join(path, "."), Category: Category(path), Kind: kind})
+	set := r.opaque
+	if set == nil {
+		set = opaque
+	}
+	r.Diffs = append(r.Diffs, Diff{Path: strings.Join(path, "."), Category: category(path, set), Kind: kind})
 }
 
 // Category folds array indices to `*` and truncates at the first opaque key.
-func Category(path []string) string {
+func Category(path []string) string { return category(path, opaque) }
+
+func category(path []string, opaque map[string]bool) string {
 	out := make([]string, 0, len(path))
 	for _, seg := range path {
 		if _, err := strconv.Atoi(seg); err == nil {
@@ -204,7 +275,12 @@ func walk(r *Report, g, n any, path []string) {
 			child := append(append([]string(nil), path...), k)
 			gv, gok := gt[k]
 			nv, nok := nt[k]
+			_, gUndef := gv.(undefinedValue)
+			_, nUndef := nv.(undefinedValue)
 			switch {
+			case (!gok && nUndef) || (!nok && gUndef):
+				// Absent on one side, undefined on the other: the same value after decode, and the
+				// one-sided ["undefined"] annotation is already reported by compareAnnotations.
 			case !gok:
 				add(r, child, "missing-in-go")
 			case !nok:
@@ -286,6 +362,11 @@ func Classify(r *Report, goEnv, nodeEnv []byte) string {
 	if errG != nil || errN != nil {
 		return "fields"
 	}
+	return classifyOrder(g, n)
+}
+
+// classifyOrder splits a non-matching report by its two item key sequences.
+func classifyOrder(g, n []string) string {
 	if strings.Join(g, ",") == strings.Join(n, ",") {
 		return "fields"
 	}
@@ -296,4 +377,95 @@ func Classify(r *Report, goEnv, nodeEnv []byte) string {
 		return "order"
 	}
 	return "membership"
+}
+
+// flatItemIDs returns the `json.items[].id` sequence of a superjson envelope whose items are keyed by
+// their own `id` (a flat page: image.getInfinite's images, model.getAll's models), not posts.
+func flatItemIDs(env []byte) ([]string, error) {
+	var e struct {
+		JSON struct {
+			Items []struct {
+				ID json.Number `json:"id"`
+			} `json:"items"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal(env, &e); err != nil {
+		return nil, err
+	}
+	out := make([]string, len(e.JSON.Items))
+	for i, it := range e.JSON.Items {
+		out[i] = it.ID.String()
+	}
+	return out, nil
+}
+
+// ClassifyFlat is Classify for a superjson envelope of a flat page (image.getInfinite's images,
+// model.getAll's models): its items are keyed by their own `id`, so match, order (same items,
+// different order), membership (different items), fields (same items in the same order, field
+// differences). The report itself is Compare's: the same annotation handling, and categories over the
+// flat shape (`items.*.<field>`, `items.*.user.<field>`, `nextCursor`, `source`), truncated at the same
+// opaque keys.
+func ClassifyFlat(r *Report, goEnv, nodeEnv []byte) string {
+	if r.Match {
+		return "match"
+	}
+	g, errG := flatItemIDs(goEnv)
+	n, errN := flatItemIDs(nodeEnv)
+	if errG != nil || errN != nil {
+		return "fields"
+	}
+	return classifyOrder(g, n)
+}
+
+// CompareJSON compares two plain-JSON response bodies (Go's, Node's): the public REST endpoints answer
+// with `res.json`, so there is no envelope and no annotation — a Date is its ISO string on both sides,
+// and an undefined member is absent on both (JSON.stringify drops it). The same structural walk as
+// Compare: object key order ignored, array order kept, numbers compared numerically.
+func CompareJSON(goBody, nodeBody []byte) (*Report, error) {
+	gv, err := decode(goBody)
+	if err != nil {
+		return nil, fmt.Errorf("go body: %w", err)
+	}
+	nv, err := decode(nodeBody)
+	if err != nil {
+		return nil, fmt.Errorf("node body: %w", err)
+	}
+	if _, ok := nv.(map[string]any); !ok {
+		return nil, errors.New("node body: not an object")
+	}
+	r := &Report{opaque: jsonOpaque}
+	walk(r, gv, nv, nil)
+	r.Match = len(r.Diffs) == 0 && !r.Truncated
+	return r, nil
+}
+
+// itemIDs returns the `items[].id` sequence of a plain-JSON body.
+func itemIDs(body []byte) ([]string, error) {
+	var b struct {
+		Items []struct {
+			ID json.Number `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &b); err != nil {
+		return nil, err
+	}
+	out := make([]string, len(b.Items))
+	for i, it := range b.Items {
+		out[i] = it.ID.String()
+	}
+	return out, nil
+}
+
+// ClassifyJSON is Classify for the plain-JSON REST bodies, whose items are images keyed by `id`:
+// match, order (same images, different order), membership (different images), fields.
+func ClassifyJSON(r *Report, goBody, nodeBody []byte) string {
+	if r.Match {
+		return "match"
+	}
+	g, errG := itemIDs(goBody)
+	n, errN := itemIDs(nodeBody)
+	if errG != nil || errN != nil {
+		return "fields"
+	}
+	return classifyOrder(g, n)
 }

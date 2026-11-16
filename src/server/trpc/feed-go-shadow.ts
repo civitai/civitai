@@ -3,19 +3,38 @@ import superjson from 'superjson';
 import { allCookieNames, SESSION_COOKIE_BASE } from '@civitai/auth/client';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import {
+  FEED_GO_SHADOW_ENDPOINTS,
+  recordFeedGoProbeOutcome,
   recordFeedGoShadowEncode,
   recordFeedGoShadowOutcome,
+  type FeedGoProbeOutcome,
+  type FeedGoShadowEndpoint,
   type FeedGoShadowOutcome,
+  type FeedGoV1ShapeClass,
 } from '~/server/prom/feed-go-shadow.metrics';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
+import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
- * `image.getImagesAsPostsInfinite` request, mirror what Node saw and what it answered to that
- * service's internal compare endpoint. Node keeps serving every request.
+ * request, mirror what Node saw and what it answered to that service's internal compare endpoint.
+ * Node keeps serving every request. Each mirrored route is behind its own flag:
+ *
+ * - `image.getImagesAsPostsInfinite` (tRPC; flag `feed-go-shadow`): the raw `input` and the
+ *   superjson envelope the transformer wrote, captured in an AsyncLocalStorage scope;
+ * - `image.getInfinite` (tRPC; flag `feed-go-shadow-infinite`): the same capture, posted to its
+ *   own compare path (`feed_endpoint="infinite"`);
+ * - `model.getAll` (tRPC; flag `feed-go-shadow-model-getall`): the same capture, posted to its own
+ *   compare path (`feed_endpoint="model-getall"`);
+ * - `GET /api/v1/images` (REST; flag `feed-go-shadow-v1-images`): the raw query string, the path
+ *   and the JSON body the handler passed to `res.json`, captured by the handler itself. A request
+ *   carrying an API credential is not mirrored (`skipped_credential`): the body can echo it.
  *
  * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
- * the `feed-go-shadow` Flipt flag is on (unknown or uninitialized reads as off).
+ * the route's Flipt flag is on (unknown or uninitialized reads as off). Every route shares the
+ * sample rate and the in-flight cap; each has its own per-second bucket of the same size, so one
+ * route cannot drain another's tokens. A REST sample takes its in-flight slot and its token
+ * only once the handler has answered 200 (in `finish`): it holds nothing while it runs.
  *
  * Why the per-second token bucket (`FEED_GO_SHADOW_MAX_PER_SECOND`): the send happens after the
  * response, but encoding the page (`JSON.stringify`, plus `superjson.serialize` for a devalue
@@ -28,10 +47,36 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  *
  * 🔴 The forwarded session cookie is a bearer credential: `FEED_GO_SHADOW_URL` must be an
  * in-cluster address, never a public hostname.
+ *
+ * Go-first probe (flag `feed-go-gofirst-probe`, default off; feed-go DESIGN.md "Go-first probe"):
+ * for a sampled `image.getImagesAsPostsInfinite` request, at the START of the request — before the
+ * handler computes the page and fills the per-entity caches — the route posts the input, the same
+ * forwarded headers and the request's start time to feed-go's `/internal/probe/<procedure>`. feed-go
+ * resolves the page and checks, read-only, which caches a Go-first serve would have found cold. The
+ * shadow comparison cannot see that: its sample is posted after Node has warmed those caches.
+ * Fire-and-forget: the POST is started before the handler and never awaited. It runs only for a
+ * request the shadow sampler already sampled (so it is inside that sample's per-second token), for
+ * a further `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE` fraction of them (default 0: off), takes its own
+ * slot under the shared in-flight cap, and has the shadow timeout.
  */
 
 export const FEED_GO_SHADOW_PROCEDURE = 'image.getImagesAsPostsInfinite';
 export const FEED_GO_SHADOW_PATH = `/internal/shadow/${FEED_GO_SHADOW_PROCEDURE}`;
+/** The second tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_INFINITE_PROCEDURE = 'image.getInfinite';
+export const FEED_GO_SHADOW_INFINITE_PATH = `/internal/shadow/${FEED_GO_SHADOW_INFINITE_PROCEDURE}`;
+/** The REST route mirrored under its own flag, and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_V1_IMAGES_ROUTE = '/api/v1/images';
+export const FEED_GO_SHADOW_V1_IMAGES_PATH = `/internal/shadow${FEED_GO_SHADOW_V1_IMAGES_ROUTE}`;
+/** The third tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE = 'model.getAll';
+export const FEED_GO_SHADOW_MODEL_GET_ALL_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
+/** feed-go's Go-first probe path for the procedure. */
+export const FEED_GO_PROBE_PATH = `/internal/probe/${FEED_GO_SHADOW_PROCEDURE}`;
+/** feed-go's Go-first probe path for `image.getInfinite`. */
+export const FEED_GO_PROBE_INFINITE_PATH = `/internal/probe/${FEED_GO_SHADOW_INFINITE_PROCEDURE}`;
+/** feed-go's Go-first probe path for `model.getAll`. */
+export const FEED_GO_PROBE_MODEL_GET_ALL_PATH = `/internal/probe/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
 
 export const SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const SHADOW_MAX_TIMEOUT_MS = 10_000;
@@ -53,21 +98,28 @@ const COPIED_HEADERS = [
 export type FeedGoShadowConfig = {
   /** Full compare endpoint URL, or undefined (disabled). */
   url: string | undefined;
+  /** Full compare endpoint URL for `/api/v1/images`, or undefined (disabled). */
+  v1ImagesUrl: string | undefined;
+  /** Full compare endpoint URL for `image.getInfinite`, or undefined (disabled). */
+  infiniteUrl: string | undefined;
+  /** Full compare endpoint URL for `model.getAll`, or undefined (disabled). */
+  modelGetAllUrl: string | undefined;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
   /** Samples allowed to BEGIN per second per process (token bucket, burst = one second's worth). */
   maxPerSecond: number;
+  /** Full Go-first probe URL, or undefined (disabled). */
+  probeUrl: string | undefined;
+  /** Full Go-first probe URL for `image.getInfinite`, or undefined (disabled). */
+  probeInfiniteUrl: string | undefined;
+  /** Full Go-first probe URL for `model.getAll`, or undefined (disabled). */
+  probeModelGetAllUrl: string | undefined;
+  /** The fraction of sampled requests that are also probed (0 = none, 1 = every one). */
+  probeRate: number;
 };
 
 type Env = Record<string, string | undefined>;
-
-function envNumber(raw: string | undefined, fallback: number, min: number, max: number) {
-  if (raw == null || raw.trim() === '') return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
 
 /**
  * Parse the env. `FEED_GO_SHADOW_URL` is the BASE of feed-go's internal listener (scheme + host +
@@ -75,19 +127,44 @@ function envNumber(raw: string | undefined, fallback: number, min: number, max: 
  */
 export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConfig {
   let url: string | undefined;
+  let v1ImagesUrl: string | undefined;
+  let infiniteUrl: string | undefined;
+  let modelGetAllUrl: string | undefined;
+  let probeUrl: string | undefined;
+  let probeInfiniteUrl: string | undefined;
+  let probeModelGetAllUrl: string | undefined;
   const base = env.FEED_GO_SHADOW_URL?.trim();
   if (base) {
     try {
       const parsed = new URL(base);
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
         url = new URL(FEED_GO_SHADOW_PATH, parsed).toString();
+        v1ImagesUrl = new URL(FEED_GO_SHADOW_V1_IMAGES_PATH, parsed).toString();
+        infiniteUrl = new URL(FEED_GO_SHADOW_INFINITE_PATH, parsed).toString();
+        modelGetAllUrl = new URL(FEED_GO_SHADOW_MODEL_GET_ALL_PATH, parsed).toString();
+        probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
+        probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
+        probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
       }
     } catch {
       url = undefined;
+      v1ImagesUrl = undefined;
+      infiniteUrl = undefined;
+      modelGetAllUrl = undefined;
+      probeUrl = undefined;
+      probeInfiniteUrl = undefined;
+      probeModelGetAllUrl = undefined;
     }
   }
   return {
     url,
+    v1ImagesUrl,
+    infiniteUrl,
+    modelGetAllUrl,
+    probeUrl,
+    probeInfiniteUrl,
+    probeModelGetAllUrl,
+    probeRate: envNumber(env.FEED_GO_GOFIRST_PROBE_SAMPLE_RATE, 0, 0, 1),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
       envNumber(env.FEED_GO_SHADOW_TIMEOUT_MS, SHADOW_DEFAULT_TIMEOUT_MS, 1, SHADOW_MAX_TIMEOUT_MS)
@@ -121,6 +198,8 @@ export function pickSessionCookies(header: string | undefined): string | undefin
 
 type ShadowRequestLike = {
   method?: string;
+  /** The request target as Node received it (`req.url`); read by the REST route only. */
+  url?: string;
   headers: Record<string, string | string[] | undefined>;
   query: Partial<Record<string, string | string[]>>;
 };
@@ -129,6 +208,11 @@ function headerValue(v: string | string[] | undefined): string | undefined {
   if (typeof v === 'string') return v;
   if (Array.isArray(v)) return v.join(', ');
   return undefined;
+}
+
+/** Whether the request carries an API credential (a bearer header or `?token=`). */
+function hasApiCredential(req: ShadowRequestLike) {
+  return !!headerValue(req.headers.authorization) || req.query.token !== undefined;
 }
 
 /** The headers feed-go needs, and nothing else (see the module doc). */
@@ -142,16 +226,25 @@ export function pickShadowHeaders(req: ShadowRequestLike): Record<string, string
   if (cookie) out.cookie = cookie;
   // feed-go falls back on ANY API credential (bearer header or `?token=`); only presence matters,
   // so the credential itself is never forwarded.
-  if (headerValue(req.headers.authorization) || req.query.token !== undefined)
-    out.authorization = 'present';
+  if (hasApiCredential(req)) out.authorization = 'present';
   return out;
 }
 
 type Captured = { envelope: unknown } | { data: unknown };
 
 export type FeedGoShadowSample = {
+  endpoint: FeedGoShadowEndpoint;
+  /** Whether this sample holds an in-flight slot (a REST sample takes it in `finish`). */
+  holdsSlot: boolean;
+  /** The tRPC `input`, or the REST query string (without `?`). */
   input: string;
+  /** The REST request's path (feed-go builds `metadata.nextPage` from it). */
+  path?: string;
   headers: Record<string, string>;
+  /** When the route began the request, epoch milliseconds (fractional); the probe sends it. */
+  startedAt?: number;
+  /** Whether the Go-first probe was already started for this sample (at most once). */
+  probed?: boolean;
   captured?: Captured;
   done: boolean;
 };
@@ -160,50 +253,84 @@ export type FeedGoShadowDeps = {
   config: FeedGoShadowConfig;
   /** The `feed-go-shadow` flag. */
   enabled: () => boolean;
+  /** The `feed-go-shadow-v1-images` flag (absent: the REST route is never sampled). */
+  enabledV1Images?: () => boolean;
+  /** The `feed-go-shadow-infinite` flag (absent: `image.getInfinite` is never sampled). */
+  enabledInfinite?: () => boolean;
+  /** The `feed-go-shadow-model-getall` flag (absent: `model.getAll` is never sampled). */
+  enabledModelGetAll?: () => boolean;
   random?: () => number;
   fetch?: typeof fetch;
-  record?: (outcome: FeedGoShadowOutcome) => void;
+  record?: (outcome: FeedGoShadowOutcome, endpoint: FeedGoShadowEndpoint) => void;
   /** Counts the encode work one send paid (seconds of synchronous CPU, bytes of body). */
-  recordEncode?: (seconds: number, bytes: number) => void;
+  recordEncode?: (seconds: number, bytes: number, endpoint: FeedGoShadowEndpoint) => void;
   /** Milliseconds clock for the per-second budget (production: `performance.now`). */
   now?: () => number;
   /** Runs the send after the request (production: `setImmediate`). */
   schedule?: (fn: () => void) => void;
+  /** The `feed-go-gofirst-probe` flag (absent: never probed). */
+  enabledProbe?: () => boolean;
+  /** Counts a probe's outcome. */
+  recordProbe?: (outcome: FeedGoProbeOutcome, endpoint: FeedGoShadowEndpoint) => void;
+  /** Epoch milliseconds clock for the probe's start time (production: timeOrigin + now). */
+  epochNow?: () => number;
 };
 
 /** A sampler instance. The module exports one wired to the env, the flag and the counter. */
 export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const { config, enabled } = deps;
+  const enabledV1Images = deps.enabledV1Images ?? (() => false);
+  const enabledInfinite = deps.enabledInfinite ?? (() => false);
+  const enabledModelGetAll = deps.enabledModelGetAll ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
   const recordEncode = deps.recordEncode ?? recordFeedGoShadowEncode;
   const now = deps.now ?? (() => performance.now());
   const schedule = deps.schedule ?? ((fn: () => void) => void setImmediate(fn));
+  const enabledProbe = deps.enabledProbe ?? (() => false);
+  const recordProbe = deps.recordProbe ?? recordFeedGoProbeOutcome;
+  const epochNow = deps.epochNow ?? (() => performance.timeOrigin + performance.now());
   const storage = new AsyncLocalStorage<FeedGoShadowSample>();
   let inFlight = 0;
   // A local bucket rather than `createBlockEventRateLimiter`: that one is a keyed, LRU-bounded
   // limiter for App Blocks events defaulting to Date.now; this needs one bucket on a monotonic clock.
-  // Token bucket for `maxPerSecond`: starts full, refills continuously, holds at most one
-  // second's worth (and at least one token, so a rate below 1/s still admits a sample).
-  const bucketCap = Math.max(1, config.maxPerSecond);
-  let tokens = bucketCap;
-  let refilledAt: number | undefined;
-
-  function takeToken(): boolean {
-    const t = now();
-    if (refilledAt !== undefined)
-      tokens = Math.min(bucketCap, tokens + ((t - refilledAt) / 1000) * config.maxPerSecond);
-    refilledAt = t;
-    if (tokens < 1) return false;
-    tokens -= 1;
-    return true;
-  }
+  // One bucket per endpoint, each `maxPerSecond`, so a busy route cannot starve another.
+  const buckets = createPerSecondBuckets(FEED_GO_SHADOW_ENDPOINTS, config.maxPerSecond, now);
 
   function release(sample: FeedGoShadowSample) {
     if (sample.done) return;
     sample.done = true;
-    inFlight--;
+    if (sample.holdsSlot) {
+      sample.holdsSlot = false;
+      inFlight--;
+    }
+  }
+
+  /** The mirrored tRPC procedures: each one's endpoint label, compare URL and flag. */
+  const trpcRoutes: Record<
+    string,
+    { endpoint: FeedGoShadowEndpoint; url: string | undefined; enabled: () => boolean }
+  > = {
+    [FEED_GO_SHADOW_PROCEDURE]: { endpoint: 'as-posts', url: config.url, enabled },
+    [FEED_GO_SHADOW_INFINITE_PROCEDURE]: {
+      endpoint: 'infinite',
+      url: config.infiniteUrl,
+      enabled: enabledInfinite,
+    },
+    [FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE]: {
+      endpoint: 'model-getall',
+      url: config.modelGetAllUrl,
+      enabled: enabledModelGetAll,
+    },
+  };
+
+  /** The compare URL a sample of this endpoint is posted to. */
+  function urlOf(endpoint: FeedGoShadowEndpoint) {
+    if (endpoint === 'v1-images') return config.v1ImagesUrl;
+    if (endpoint === 'infinite') return config.infiniteUrl;
+    if (endpoint === 'model-getall') return config.modelGetAllUrl;
+    return config.url;
   }
 
   /**
@@ -212,28 +339,167 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
    */
   function begin(req: ShadowRequestLike): FeedGoShadowSample | undefined {
     try {
-      if (!config.url || config.rate <= 0) return undefined;
+      if (config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
-      // Exactly this one procedure, unbatched (the web client never batches it).
-      if (req.query.trpc !== FEED_GO_SHADOW_PROCEDURE || req.query.batch !== undefined)
-        return undefined;
+      // Exactly the mirrored procedures, unbatched (the web client never batches either:
+      // NEVER_BATCH_PROCEDURES in src/utils/trpc.ts).
+      const procedure = req.query.trpc;
+      if (typeof procedure !== 'string' || req.query.batch !== undefined) return undefined;
+      const route = Object.prototype.hasOwnProperty.call(trpcRoutes, procedure)
+        ? trpcRoutes[procedure]
+        : undefined;
+      if (!route?.url) return undefined;
       const input = req.query.input;
       if (input !== undefined && typeof input !== 'string') return undefined;
-      if (!enabled()) return undefined;
+      if (!route.enabled()) return undefined;
       if (random() >= config.rate) return undefined;
-      if (inFlight >= config.maxInFlight) {
-        record('dropped_overload');
-        return undefined;
-      }
-      if (!takeToken()) {
-        record('dropped_rate_limit');
-        return undefined;
-      }
+      const startedAt = epochNow();
+      if (!admit(route.endpoint)) return undefined;
       const headers = pickShadowHeaders(req);
       inFlight++;
-      return { input: input ?? '', headers, done: false };
+      return {
+        endpoint: route.endpoint,
+        holdsSlot: true,
+        input: input ?? '',
+        headers,
+        startedAt,
+        done: false,
+      };
     } catch {
       return undefined;
+    }
+  }
+
+  /** The bounds: the shared in-flight cap, then the endpoint's per-second bucket. Counts a drop. */
+  function admit(endpoint: FeedGoShadowEndpoint): boolean {
+    if (inFlight >= config.maxInFlight) {
+      record('dropped_overload', endpoint);
+      return false;
+    }
+    if (!buckets.take(endpoint)) {
+      record('dropped_rate_limit', endpoint);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * `begin` for `GET /api/v1/images`: whether this REST request is sampled. The handler calls it
+   * after its cheap rejects and its bulkhead slot, captures its own JSON body (`captureV1Images`)
+   * and calls `finish`, which is where the in-flight slot and the token are taken. Never throws.
+   */
+  function beginV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
+    try {
+      if (!config.v1ImagesUrl || config.rate <= 0) return undefined;
+      if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
+      if (!enabledV1Images()) return undefined;
+      if (random() >= config.rate) return undefined;
+      // Node's body can echo the credential (`metadata.nextPage` keeps `?token=`), and feed-go
+      // falls back on any credential: never mirrored, only counted.
+      if (hasApiCredential(req)) {
+        record('skipped_credential', 'v1-images');
+        return undefined;
+      }
+      const target = req.url ?? '';
+      const q = target.indexOf('?');
+      const path = q < 0 ? target : target.slice(0, q);
+      const input = q < 0 ? '' : target.slice(q + 1);
+      const headers = pickShadowHeaders(req);
+      return {
+        endpoint: 'v1-images',
+        holdsSlot: false,
+        input,
+        path: path || undefined,
+        headers,
+        done: false,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The REST handler's capture: keeps a REFERENCE to the body it is about to `res.json`, encoded
+   * later, off the request path. First call wins. Never throws.
+   */
+  function captureV1Images(sample: FeedGoShadowSample, body: unknown): void {
+    try {
+      if (sample.endpoint !== 'v1-images' || sample.captured || sample.done) return;
+      sample.captured = { envelope: body };
+    } catch {
+      /* never throw from the handler */
+    }
+  }
+
+  /**
+   * The Go-first probe for a sampled `as-posts` request: call it at the start of the request, before
+   * the handler runs. Starts the POST synchronously (its bytes leave on a later turn of the event
+   * loop) and never awaits it; the probe holds its own in-flight slot until the POST settles. At most
+   * once per sample. Never throws.
+   */
+  function probe(sample: FeedGoShadowSample | undefined): void {
+    try {
+      if (!sample || sample.probed) return;
+      // The tRPC procedures feed-go has a probe for; a REST sample is never probed.
+      const url =
+        sample.endpoint === 'as-posts'
+          ? config.probeUrl
+          : sample.endpoint === 'infinite'
+          ? config.probeInfiniteUrl
+          : sample.endpoint === 'model-getall'
+          ? config.probeModelGetAllUrl
+          : undefined;
+      if (!url || config.probeRate <= 0) return;
+      if (!enabledProbe()) return;
+      if (random() >= config.probeRate) return;
+      sample.probed = true;
+      if (inFlight >= config.maxInFlight) {
+        recordProbe('dropped_overload', sample.endpoint);
+        return;
+      }
+      const body = JSON.stringify({
+        input: sample.input,
+        headers: sample.headers,
+        startedAt: sample.startedAt,
+      });
+      inFlight++;
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        inFlight--;
+      };
+      let pending: Promise<Response>;
+      try {
+        pending = doFetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+          signal: AbortSignal.timeout(config.timeoutMs),
+        });
+      } catch {
+        recordProbe('error', sample.endpoint);
+        done();
+        return;
+      }
+      pending
+        .then(
+          (res) => {
+            recordProbe(res.ok ? 'sent' : 'rejected', sample.endpoint);
+            res.body?.cancel().catch(() => undefined);
+          },
+          (err: unknown) => {
+            const name = (err as { name?: string } | undefined)?.name;
+            recordProbe(
+              name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error',
+              sample.endpoint
+            );
+          }
+        )
+        .catch(() => undefined)
+        .finally(done);
+    } catch {
+      /* never throw from the route */
     }
   }
 
@@ -252,7 +518,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (inFlight === 0) return;
     try {
       const sample = storage.getStore();
-      if (!sample || sample.captured || sample.done) return;
+      // The tRPC samples (as-posts, infinite, model-getall); a REST sample captures its own body.
+      if (!sample || sample.endpoint === 'v1-images' || sample.captured || sample.done) return;
       sample.captured = wroteDevalue ? { data } : { envelope: written };
     } catch {
       /* never throw from the serializer */
@@ -260,44 +527,49 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   function send(sample: FeedGoShadowSample): void {
+    const { endpoint } = sample;
     let body: string;
     try {
       const started = now();
       const captured = sample.captured!;
       const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
-      body = JSON.stringify({ input: sample.input, headers: sample.headers, node });
+      body = JSON.stringify(
+        endpoint === 'v1-images'
+          ? { input: sample.input, path: sample.path, headers: sample.headers, node }
+          : { input: sample.input, headers: sample.headers, node }
+      );
       // Drop the reference to the captured page now that it is encoded: only `body` is needed
       // while the POST is in flight.
       sample.captured = undefined;
-      recordEncode((now() - started) / 1000, Buffer.byteLength(body));
+      recordEncode((now() - started) / 1000, Buffer.byteLength(body), endpoint);
     } catch {
-      record('skipped_encode');
+      record('skipped_encode', endpoint);
       release(sample);
       return;
     }
     let pending: Promise<Response>;
     try {
-      pending = doFetch(config.url!, {
+      pending = doFetch(urlOf(endpoint)!, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body,
         signal: AbortSignal.timeout(config.timeoutMs),
       });
     } catch {
-      record('error');
+      record('error', endpoint);
       release(sample);
       return;
     }
     pending
       .then(
         (res) => {
-          record(res.ok ? 'sent' : 'rejected');
+          record(res.ok ? 'sent' : 'rejected', endpoint);
           // Free the connection; feed-go's 202 has no body worth reading.
           res.body?.cancel().catch(() => undefined);
         },
         (err: unknown) => {
           const name = (err as { name?: string } | undefined)?.name;
-          record(name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error');
+          record(name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error', endpoint);
         }
       )
       .catch(() => undefined)
@@ -312,14 +584,24 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       if (sample.done) return;
       if (statusCode !== 200) {
-        record('skipped_status');
+        record('skipped_status', sample.endpoint);
         release(sample);
         return;
       }
       if (!sample.captured) {
-        record('skipped_no_capture');
+        record('skipped_no_capture', sample.endpoint);
         release(sample);
         return;
+      }
+      if (!sample.holdsSlot) {
+        // A REST sample is bounded here, after the handler: it held nothing while it ran.
+        if (!admit(sample.endpoint)) {
+          sample.captured = undefined;
+          release(sample);
+          return;
+        }
+        inFlight++;
+        sample.holdsSlot = true;
       }
       schedule(() => send(sample));
     } catch {
@@ -327,7 +609,16 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
   }
 
-  return { begin, run, capture, finish, inFlight: () => inFlight };
+  return {
+    begin,
+    beginV1Images,
+    probe,
+    run,
+    capture,
+    captureV1Images,
+    finish,
+    inFlight: () => inFlight,
+  };
 }
 
 export type FeedGoShadow = ReturnType<typeof createFeedGoShadow>;
@@ -338,6 +629,18 @@ function getInstance(): FeedGoShadow {
   instance ??= createFeedGoShadow({
     config: readFeedGoShadowConfig(),
     enabled: createCachedFlagGate(readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW)),
+    enabledV1Images: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_V1_IMAGES)
+    ),
+    enabledInfinite: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_INFINITE)
+    ),
+    enabledModelGetAll: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_GET_ALL)
+    ),
+    enabledProbe: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)
+    ),
   });
   return instance;
 }
@@ -355,6 +658,75 @@ export function beginFeedGoShadow(req: ShadowRequestLike): FeedGoShadowSample | 
   const sample = owner.begin(req);
   if (sample) owners.set(sample, owner);
   return sample;
+}
+
+/** `GET /api/v1/images`: whether this request is sampled (see `beginV1Images`). Never throws. */
+export function beginFeedGoShadowV1Images(req: ShadowRequestLike): FeedGoShadowSample | undefined {
+  try {
+    const owner = getInstance();
+    const sample = owner.beginV1Images(req);
+    if (sample) owners.set(sample, owner);
+    return sample;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `GET /api/v1/images`: keep a reference to the 200 body the handler is about to write. */
+export function captureFeedGoShadowV1Images(sample: FeedGoShadowSample, body: unknown): void {
+  try {
+    (owners.get(sample) ?? getInstance()).captureV1Images(sample, body);
+  } catch {
+    /* never throw from the handler */
+  }
+}
+
+/** The `/api/v1/images` request shapes, by what feed-go can port (see FEED_GO_V1_SHAPE_CLASSES). */
+export type FeedGoV1ShapeInput = {
+  ids?: readonly unknown[];
+  imageId?: unknown;
+  modelId?: unknown;
+  modelVersionId?: unknown;
+  tags?: readonly unknown[];
+  baseModels?: readonly unknown[];
+  withMeta?: boolean;
+  withTags?: boolean;
+};
+
+/**
+ * The shape class of one `/api/v1/images` request, from its parsed query (null when it did not
+ * parse) and its final status, in feed-go's own fallback order (ParseV1). Pure and cheap.
+ */
+export function feedGoV1ShapeClass(
+  req: ShadowRequestLike,
+  data: FeedGoV1ShapeInput | null,
+  statusCode: number
+): FeedGoV1ShapeClass {
+  try {
+    if (statusCode !== 200 || !data) return 'non200';
+    if (hasApiCredential(req)) return 'api_key';
+    if (data.imageId !== undefined) return 'unported_imageId';
+    if (data.tags !== undefined) return 'unported_tags';
+    if (data.baseModels !== undefined) return 'unported_baseModels';
+    if (data.modelId && !data.modelVersionId) return 'unported_modelId_only';
+    if (data.withTags) return 'unported_withTags';
+    return 'ported';
+  } catch {
+    return 'non200';
+  }
+}
+
+/**
+ * The Go-first probe for a sampled request (see `probe`): call at the start of the request, before
+ * the handler. Never throws, never awaits.
+ */
+export function probeFeedGoShadow(sample: FeedGoShadowSample | undefined): void {
+  if (!sample) return;
+  try {
+    (owners.get(sample) ?? getInstance()).probe(sample);
+  } catch {
+    /* never throw from the route */
+  }
 }
 
 export function runWithFeedGoShadow<T>(sample: FeedGoShadowSample | undefined, fn: () => T): T {

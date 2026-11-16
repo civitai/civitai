@@ -9,6 +9,7 @@ import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { KNIGHTS_APP_FLIPT_FLAG } from '~/shared/constants/knights.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
@@ -211,6 +212,16 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'model-page-design-system-markup',
   },
+  // SSR-CPU trial: for a signed-in viewer's full page load, a route that adopts it
+  // (`~/server/utils/ssr-skip-prefetch`) keeps only the data its 404, access and redirect decisions
+  // need, skips every other prefetch, and server-renders its content as a loading shell that the
+  // client fills after hydration. Anonymous visitors, verified bots and `/_next/data` requests are
+  // never in the trial. `[]`: dark and fails CLOSED when the key is absent or Flipt is down, so the
+  // `ssr-signed-in-skip-prefetch` rollout is the only on-switch. OFF = the full render, unchanged.
+  ssrSignedInSkipPrefetch: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch',
+  },
   // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
   // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
   // on-switch.
@@ -375,6 +386,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-audio-training',
   },
+  // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
+  trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
@@ -460,6 +473,15 @@ const featureFlags = createFeatureFlags({
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
+  // Semantic search on the challenges feed. Dark: Flipt is its only switch.
+  semanticChallengeSearch: { availability: [], fliptKey: 'semantic-challenge-search' },
+  // Search v3 for models: the header bar filters the models feed (?query=) through the search
+  // service. Dark: Flipt is its only switch, and off is today's in-feed Meilisearch search.
+  modelFeedSearch: { availability: [], fliptKey: 'search-v3-models' },
+  // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
+  semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
+  // The semantic storyline search endpoint. Dark: Flipt is its only switch.
+  semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -577,6 +599,9 @@ const featureFlags = createFeatureFlags({
   // The Hat Turf feed sorts and Show filters; checked TOGETHER with `hatTurfFeedCard`, so testers can
   // have them before every player does.
   hatTurfFeedSorts: { availability: ['mod'], fliptKey: 'hat-turf-feed-sorts' },
+  // One page-wide Hat Turf watch mark set instead of one per provider (turf-watch-hub.ts). Dark:
+  // Flipt is its only switch.
+  hatTurfBatchedCalls: { availability: [], fliptKey: 'hat-turf-batched-calls' },
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
@@ -692,6 +717,9 @@ const featureFlags = createFeatureFlags({
   // loading models for free.
   resourceLoad: ['mod', 'granted'],
   newOrderGame: ['blue', 'red', 'public'],
+  // Dark and owned by Flipt: the Knights app's own access flag, so the links to it follow who the app
+  // admits (testers before launch, everyone after).
+  knightsApp: { availability: [], fliptKey: KNIGHTS_APP_FLIPT_FLAG },
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   bugsPage: ['public'],
@@ -757,6 +785,9 @@ const featureFlags = createFeatureFlags({
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
+  knightsEnqueue: ['granted'],
+  textScanPromptPublish: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
@@ -878,6 +909,9 @@ const featureFlags = createFeatureFlags({
   // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
   // fail-closed `isAppLimitsUpgradePromptEnabled`, so the two agree while the flag is absent.
   appLimitsUpgradePrompt: { availability: [], fliptKey: 'app-limits-upgrade-prompt' },
+  // The in-app raise of a viewer's own per-app daily Buzz limit. `[]`: dark for everyone until
+  // the Flipt flag turns it on; the server twin `isAppDailyLimitRaiseEnabled` gates the procedures.
+  appDailyLimitRaise: { availability: [], fliptKey: 'app-daily-limit-raise' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
@@ -963,6 +997,8 @@ const featureFlags = createFeatureFlags({
   //
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
+  // Storylines: text items between a chapter's images (PostText), their slides and threads.
+  storylineText: { availability: ['mod', 'granted'], fliptKey: 'storyline-text' },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.

@@ -14,9 +14,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { Menu } from '~/components/MantineOverlays';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconDots, IconEyeOff, IconLock, IconPlus } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
@@ -25,6 +24,7 @@ import {
   useMutateMyServices,
   useQueryMyServices,
 } from '~/components/CreatorShop/Services/creator-service.util';
+import { confirmRemoveService } from '~/components/CreatorShop/Services/service-remove-confirm';
 import { PublishServiceModal } from '~/components/CreatorShop/Services/SellerAffirmation';
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
 import { ServiceDealsList } from '~/components/CreatorShop/Services/deals/ServiceDealsList';
@@ -41,6 +41,22 @@ const statusBadge: Record<ServiceOfferingStatus, { color: string; label: string 
   Active: { color: 'green', label: 'Active' },
   Paused: { color: 'yellow', label: 'Paused' },
   Removed: { color: 'red', label: 'Removed' },
+};
+
+const reviewBadge: Record<
+  NonNullable<ServiceOffering['review']>,
+  { color: string; label: string; tooltip: string }
+> = {
+  reviewing: {
+    color: 'blue',
+    label: 'Being reviewed',
+    tooltip: 'Buyers see this service once its content checks are done, usually within minutes.',
+  },
+  held: {
+    color: 'red',
+    label: 'Hidden',
+    tooltip: 'A moderator is reviewing this service. It stays hidden from buyers until then.',
+  },
 };
 
 const openForm = (offering?: ServiceOffering) =>
@@ -202,15 +218,8 @@ function OfferingRow({
   const isActive = offering.status === ServiceOfferingStatus.Active;
 
   const confirmRemove = () =>
-    openConfirmModal({
-      title: 'Remove service',
-      children: (
-        <Text size="sm">
-          &quot;{offering.title}&quot; leaves your shop for good. Open deals are not affected.
-        </Text>
-      ),
-      labels: { confirm: 'Remove', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
+    confirmRemoveService({
+      title: offering.title,
       onConfirm: () => remove.mutate({ id: offering.id }),
     });
 
@@ -226,6 +235,13 @@ function OfferingRow({
               {badge.label}
             </Badge>
             <ServiceRatingBadge rating={offering.maxNsfwLevel} />
+            {offering.review && (
+              <Tooltip label={reviewBadge[offering.review].tooltip} multiline w={260} withArrow>
+                <Badge color={reviewBadge[offering.review].color} variant="outline" radius="sm">
+                  {reviewBadge[offering.review].label}
+                </Badge>
+              </Tooltip>
+            )}
           </Group>
           <Text size="sm" c="dimmed">
             ~{pluralize(offering.deliveryDays, 'day')} ·{' '}

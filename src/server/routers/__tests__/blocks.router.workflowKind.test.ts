@@ -242,7 +242,7 @@ function body(over: Record<string, unknown> = {}) {
     steps: [
       { name: 'gen', $type: 'imageGen', input: GEN_INPUT },
       { $type: 'imageUpscaler', input: UPSCALE_INPUT, suppressOutput: true },
-      { $type: 'transcode', input: CONVERT_INPUT },
+      { $type: 'imageBackgroundRemoval', input: CONVERT_INPUT },
     ],
     arguments: { strength: 0.4 },
     ...over,
@@ -431,7 +431,7 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(req.steps).toEqual([
       { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
       { $type: 'imageUpscaler', name: '$1', input: UPSCALE_INPUT },
-      { $type: 'transcode', name: '$2', input: CONVERT_INPUT },
+      { $type: 'imageBackgroundRemoval', name: '$2', input: CONVERT_INPUT },
     ]);
     expect(req.arguments).toEqual({ strength: 0.4 });
     // No app text in a tag: the type slot is the kind, the model slot a constant.
@@ -629,7 +629,10 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
             $type: 'repeat',
             input: {
               for: { $ref: '$arguments', path: 'frames', as: 'frame' },
-              template: { $type: 'imageScanning', input: { url: { $ref: 'frame', path: 'url' } } },
+              template: {
+                $type: 'imageScanning',
+                input: { note: { $ref: 'frame', path: 'text' } },
+              },
             },
           },
         ],
@@ -1185,7 +1188,7 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
             action: 'workflow.submit',
             amount: -64,
             outcome: 'ok',
-            steps: ['imageGen', 'imageUpscaler', 'transcode'],
+            steps: ['imageGen', 'imageUpscaler', 'imageBackgroundRemoval'],
             variant: 'workflow',
             workflowId: WORKFLOW_ID,
           },
@@ -1860,7 +1863,7 @@ describe("kind:'workflow' in a BATCH estimate", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("kind:'workflow' POLL / CANCEL", () => {
-  const blob = (url: string) => ({ id: url, url, available: true, type: 'image' });
+  const blob = (url: string) => ({ id: url, url, available: true, type: 'image', nsfwLevel: 'pg' });
   function terminalWorkflow(over: Record<string, unknown> = {}) {
     return {
       id: WORKFLOW_ID,
@@ -1906,7 +1909,13 @@ describe("kind:'workflow' POLL / CANCEL", () => {
     // The suppressed step's image is in neither place.
     expect(snapshot.imageUrls).toEqual(['https://img/gen.png']);
     expect(snapshot.steps).toEqual([
-      { name: 'gen', $type: 'imageGen', status: 'succeeded', imageUrls: ['https://img/gen.png'] },
+      {
+        name: 'gen',
+        $type: 'imageGen',
+        status: 'succeeded',
+        imageUrls: ['https://img/gen.png'],
+        outputs: [{ url: 'https://img/gen.png', nsfwLevel: 'pg' }],
+      },
       { name: '$1', $type: 'imageUpscaler', status: 'succeeded', output: { scale: 2 } },
       {
         name: '$2',
@@ -2503,12 +2512,18 @@ describe('inline customComfy — the generation input gate', () => {
   beforeEach(() => {
     const viewer = { id: VIEWER, isModerator: false, email: 'v@example.com', username: 'v' };
     dbMock.dbRead.user.findUnique.mockImplementation((async () => viewer) as never);
-    redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+    // The issue record lives in the cluster client; it shares the in-memory store.
+    redisMock.redis.set.mockImplementation((async (k: string, v: string) => {
+      store.set(k, String(v));
+      return 'OK';
+    }) as never);
+    redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
       keys.map((k) => store.get(k) ?? null)) as never);
   });
   afterEach(() => {
     dbMock.dbRead.user.findUnique.mockReset();
-    redisMock.sysRedis.mGet.mockReset();
+    redisMock.redis.set.mockReset().mockResolvedValue('OK' as never);
+    redisMock.redis.mGet.mockReset();
   });
 
   const inline = (inputs: Record<string, unknown> = {}) => ({
@@ -2577,7 +2592,7 @@ describe('inline customComfy — the generation input gate', () => {
       'store-unreadable',
       async () => {
         await recordUploadKeyOwner(OWN_KEY, VIEWER);
-        redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+        redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       },
     ],
   ])('refuses an own row-less upload (%s) before any orchestrator call', async (reason, given) => {
@@ -2682,4 +2697,58 @@ describe('inline customComfy — nodes the host does not run inline', () => {
       snapshot: { status: 'pending' },
     });
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `accountType` is PER WORKFLOW: the orchestrator takes one `currencies` list for
+// the whole workflow, so the pick sits on the body, not on a step. Asserted as the
+// literal `currencies` on the whatif AND the real submit. Each pick expects an
+// order the no-pick default cannot produce, so a path that drops it fails.
+describe("kind:'workflow' — accountType (the pool tried first)", () => {
+  const MATURE = { maxBrowsingLevel: 31 };
+  const SFW = { maxBrowsingLevel: 1 };
+  const currenciesOf = (args: SubmitArgs[]) =>
+    args.map((a) => (a.body as { currencies?: unknown }).currencies);
+  const withPick = (pick: string | undefined) =>
+    pick === undefined ? body() : body({ accountType: pick });
+  const PICKS = [
+    { name: 'a mature app, yellow pick', rating: MATURE, pick: 'yellow', want: ['yellow', 'blue'] },
+    { name: 'an SFW app, green pick', rating: SFW, pick: 'green', want: ['green', 'blue'] },
+    { name: 'an SFW app, no pick', rating: SFW, pick: undefined, want: ['blue', 'green'] },
+    { name: 'a mature app, no pick', rating: MATURE, pick: undefined, want: ['blue', 'yellow'] },
+  ] as const;
+
+  it.each(PICKS)('ESTIMATE — $name quotes with $want', async ({ rating, pick, want }) => {
+    h.authorize.mockImplementation(async () => claims(rating));
+    const { snapshot } = await estimate(withPick(pick));
+    expect(snapshot.status).toBe('pending');
+    expect(currenciesOf(whatifs())).toEqual([want]);
+  });
+
+  it.each(PICKS)(
+    'SUBMIT — $name sends $want on the quote AND the real submit',
+    async ({ rating, pick, want }) => {
+      h.authorize.mockImplementation(async () => claims(rating));
+      const { snapshot } = await submit(withPick(pick));
+      expect(snapshot.workflowId).toBe(WORKFLOW_ID);
+      expect(currenciesOf(whatifs())).toEqual([want]);
+      expect(currenciesOf(realSubmits())).toEqual([want]);
+    }
+  );
+
+  it.each([
+    ['estimate', estimate],
+    ['submit', submit],
+  ] as const)(
+    '%s — a yellow pick on an SFW app is BAD_REQUEST, nothing quoted or reserved',
+    async (_name, call) => {
+      h.authorize.mockImplementation(async () => claims(SFW));
+      await expect(call(withPick('yellow'))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: "buzz account 'yellow' is not spendable for this app's content rating",
+      });
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+      expect(counter(USER_CAP)).toBe(0);
+    }
+  );
 });

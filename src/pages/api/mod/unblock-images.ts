@@ -24,7 +24,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   logToAxiom(
     { type: 'info', name: 'unblock-images-handler-invoked', message: 'Handler invoked' },
     'webhooks'
-  ).catch();
+  );
 
   const startedAt = Date.now();
   const candidateIds: number[] = [];

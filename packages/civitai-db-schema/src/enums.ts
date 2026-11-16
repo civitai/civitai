@@ -561,6 +561,7 @@ export const CommentEntityType = {
   appListing: 'appListing',
   crucible: 'crucible',
   storyline: 'storyline',
+  postText: 'postText',
 } as const;
 
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
@@ -1050,6 +1051,7 @@ export const NewOrderRankType = {
   Acolyte: 'Acolyte',
   Knight: 'Knight',
   Templar: 'Templar',
+  Paladin: 'Paladin',
 } as const;
 
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
@@ -1337,6 +1339,16 @@ export const ServiceOfferingStatus = {
 
 export type ServiceOfferingStatus =
   (typeof ServiceOfferingStatus)[keyof typeof ServiceOfferingStatus];
+
+export const ServiceOfferingIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+
+export type ServiceOfferingIngestionStatus =
+  (typeof ServiceOfferingIngestionStatus)[keyof typeof ServiceOfferingIngestionStatus];
 
 export const ServicePreviewKind = {
   Image: 'Image',

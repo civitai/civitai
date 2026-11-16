@@ -74,7 +74,7 @@ export function useMainDb(extraSchema = ''): {
   };
 }
 
-export const MOD = 990001;
+export const MOD = 990200013;
 
 export async function seedSet(
   db: Kysely<ModeratorDB>,

@@ -8,10 +8,13 @@ import { FEEDBACK_CAPTURE_METADATA_KEY } from '@civitai/shared/feedback-capture'
  *
  *  - `blockPublishedAppId`: a workflow output the app published (`persistBlockWorkflowOutputImage`).
  *  - `blockUploadedAppId`: an image the app uploaded from bytes (`persistBlockUploadImage`).
+ *  - `blockGenerationSourceAppId`: a workflow output the app kept as a PRIVATE generation source
+ *    (`persistBlockGenerationSourceImage`). Never shared, never postable.
  */
 export const BLOCK_PROVENANCE_METADATA_KEYS = [
   'blockPublishedAppId',
   'blockUploadedAppId',
+  'blockGenerationSourceAppId',
 ] as const;
 
 export type BlockProvenanceMetadataKey = (typeof BLOCK_PROVENANCE_METADATA_KEYS)[number];

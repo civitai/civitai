@@ -19,7 +19,8 @@ import { mossImage } from './moss-image.graph';
 import { boogu } from './boogu.graph';
 import { krea2 } from './krea2.graph';
 import { krea3 } from './krea3.graph';
-import { minimaxH3Image, MINIMAX_H3_IMAGE_MAX_QUANTITY } from './minimax-h3-image.graph';
+import { minimaxH3Image } from './minimax-h3-image.graph';
+import { fibo2 } from './fibo2.graph';
 import { ponyV7 } from './pony-v7.graph';
 import { reve } from './reve.graph';
 import { ming } from './ming.graph';
@@ -94,6 +95,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['Krea2'], krea2],
       [['Krea3'], krea3],
       [['MiniMaxH3Image'], minimaxH3Image],
+      [['Fibo2'], fibo2],
       [['PonyV7'], ponyV7],
       [['Reve'], reve],
       [['MuseImage'], museImage],
@@ -139,12 +141,7 @@ export const imageHub = defineGraph<RootCtx>()
     // floor and silently dropped the CEILING: `max` is the user's own
     // `limits.maxQuantity`, so a quantity written by a trusted ingestion from a wider
     // entitlement stayed above it and dead-submitted.
-    // MiniMax H3 Image takes at most 4 per request, below the paid tiers' limits.
-    const max =
-      ecosystem === 'MiniMaxH3Image'
-        ? Math.min(_ext.limits.maxQuantity, MINIMAX_H3_IMAGE_MAX_QUANTITY)
-        : _ext.limits.maxQuantity;
-    const base = quantityDef({ max, step });
+    const base = quantityDef({ max: _ext.limits.maxQuantity, step });
     return {
       ...base,
       scope: rootScope('image'),

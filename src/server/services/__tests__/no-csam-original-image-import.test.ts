@@ -38,6 +38,8 @@ const ALLOWED = [
   'src/server/services/__tests__/csam-original-image.test.ts',
   // Lists the path in the media-fetch ledger; imports nothing.
   'src/server/services/__tests__/media-fetch-funnel-ledger.test.ts',
+  // Lists the path in its AbortSignal.timeout baseline; imports nothing.
+  'src/server/services/__tests__/no-raw-abort-timeout.test.ts',
 ];
 
 function walk(dir: string, out: string[] = []): string[] {

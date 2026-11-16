@@ -1,5 +1,7 @@
 import type { SessionUser } from '~/types/session';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { queueModelCollectionsReindex } from '~/server/services/collection-index-sync';
+import { queueModelArticlesReindex } from '~/server/services/article-cover-reindex';
 import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { Flags } from '~/shared/utils/flags';
 import { getSponsoredModel } from '~/server/services/promotion.service';
@@ -673,34 +675,37 @@ export const getModelsInfiniteHandler = async ({
   return getModelsFeed(input, ctx);
 };
 
+/** The options model.getAll reads its rows with, beside its input; the models search uses them too. */
+export async function modelFeedQueryOptions(ctx: Context) {
+  // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
+  // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
+  // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
+  // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
+  // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
+  // applies either way (see model-getall-images).
+  const slim = ctx.features.getAllModelImagesSlim;
+  return {
+    user: ctx.user,
+    heldViewer: isSessionOrFullUserKey(ctx),
+    domain: getRequestBoardDomainColor(ctx.req),
+    imagesPerModel: slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL,
+    biasImageSlice: slim,
+    // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
+    // value so the feed-hydration path skips the metric-privacy resolution when OFF.
+    metricPrivacyEnabled: !!ctx.features.modelMetricPrivacyReadtime,
+    // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+    eventDecorationViewer: eventViewerOf(ctx),
+    coverage: await coverageAudience(ctx.user ?? undefined),
+  };
+}
+
 /** model.getAll's query, at whatever levels `input` already carries. */
 export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
   try {
     let loopCount = 0;
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
-    // Serialize-freeze lever: the browse feed is the #1 producer of oversized tRPC
-    // responses. When the DARK `getAllModelImagesSlim` flag is on, cap each model's
-    // images to the SLIM count AND pick the nsfw-biased coverage slice (drives the
-    // browsing-level feed-drop regression of the smaller cap to ~0); OFF ⇒ today's
-    // `GET_ALL_IMAGES_PER_MODEL`, naive first-N. The always-on per-image field trim
-    // applies either way (see model-getall-images).
-    const slim = ctx.features.getAllModelImagesSlim;
-    const imagesPerModel = slim ? GET_ALL_IMAGES_PER_MODEL_SLIM : GET_ALL_IMAGES_PER_MODEL;
-    // Flag-gated (#3266 A/B): pass the once-per-request `modelMetricPrivacyReadtime`
-    // value so the feed-hydration path skips the metric-privacy resolution when OFF.
-    const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
-    const queryOptions = {
-      user: ctx.user,
-      heldViewer: isSessionOrFullUserKey(ctx),
-      domain: getRequestBoardDomainColor(ctx.req),
-      imagesPerModel,
-      biasImageSlice: slim,
-      metricPrivacyEnabled,
-      // model.getAll never edge-caches a signed-in response (skipEdgeCache).
-      eventDecorationViewer: eventViewerOf(ctx),
-      coverage: await coverageAudience(ctx.user ?? undefined),
-    };
+    const queryOptions = await modelFeedQueryOptions(ctx);
 
     // Hot with a base-model filter leads with the official checkpoints for that base. They are
     // dropped from the main stream on every page, so the cursor never re-emits them, and fetched on
@@ -2469,7 +2474,14 @@ export const updateGallerySettingsHandler = async ({
       },
     });
     await bustModelGallerySettings([id]);
-    if (heldLevelChanged) await purgeHeldShowcase(id);
+    if (heldLevelChanged) {
+      // The search document carries the held showcase, so it is rebuilt at the new level.
+      await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+      // Not awaited: finding the collections can be slow, and it never throws.
+      void queueModelCollectionsReindex([id]);
+      void queueModelArticlesReindex(id);
+      await purgeHeldShowcase(id);
+    }
 
     // A moderator's pin on someone else's model is curation, not the creator's credit.
     if (gallerySettings && updatedModel.userId === sessionUser.id) {
@@ -2488,7 +2500,7 @@ export const updateGallerySettingsHandler = async ({
           name: 'model-gallery-post-pinned',
           message: (e as Error).message,
           details: { modelId: id },
-        }).catch()
+        })
       );
     }
 

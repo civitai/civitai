@@ -65,6 +65,20 @@ describe('sendEmail', () => {
     ]);
   });
 
+  // Parity with the main app's zc.booleanString: only the exact string 'true' enables TLS.
+  it.each([
+    ['true', true],
+    ['1', false],
+    ['yes', false],
+    ['TRUE', false],
+    [undefined, false],
+  ])('EMAIL_SECURE=%s sets secure: %s', async (value, secure) => {
+    if (value === undefined) delete process.env.EMAIL_SECURE;
+    else process.env.EMAIL_SECURE = value;
+    await (await load()).sendEmail({ to: 'a@example.test', subject: 'Hi', html: '<p>Hi</p>' });
+    expect(seen.options.at(-1)).toMatchObject({ secure });
+  });
+
   it.each(['off', 'OFF', '0', 'false'])(
     'bounds the SMTP connect, greeting and socket waits; EMAIL_TIMEOUTS=%s drops them',
     async (value) => {

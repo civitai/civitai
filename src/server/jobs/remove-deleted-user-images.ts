@@ -15,6 +15,7 @@ import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-pr
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
+import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
 /**
  * Ceiling on users reached per run, and the second of the two limits on throughput — raising the
@@ -173,6 +174,7 @@ async function drainUser(
                 AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
             )
             AND NOT ${held}
+            AND NOT ${postHoldsHeldTextSql(Prisma.raw('p.id'))}
         )
         DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
       `;
@@ -383,13 +385,13 @@ async function drainPage(
     canceled = result.canceled;
 
     if (result.error)
-      await logToAxiom({
+      logToAxiom({
         type: 'error',
         name: 'remove-deleted-user-images',
         message: (result.error as Error).message,
         error: safeError(result.error),
         userId: user.id,
-      }).catch(() => undefined);
+      });
 
     if (result.drained) {
       deletedUsers += 1;
@@ -426,11 +428,11 @@ export const removeDeletedUserImages = createJob(
     // Without the marker view (a restore or a copy from before its migration) the drain does nothing:
     // the delete path reads the marker's other objects too, after its DELETE has committed.
     if (!markerView) {
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'remove-deleted-user-images',
         message: 'hold marker view missing: nothing drained this run',
-      }).catch(() => undefined);
+      });
       return {
         skipped: 'hold-marker-view-missing',
         deletedImages: 0,
@@ -538,7 +540,7 @@ export const removeDeletedUserImages = createJob(
       }
     }
 
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'remove-deleted-user-images',
       deletedImages,
@@ -548,7 +550,7 @@ export const removeDeletedUserImages = createJob(
       freshDeletedUsers: freshRun.deletedUsers,
       candidates,
       budget,
-    }).catch(() => undefined);
+    });
 
     return { deletedImages, blockedImages, deletedUsers, wrapped };
   },

@@ -378,7 +378,7 @@ export async function addCollaborator(opts: {
             existing: current.permission,
           },
           'webhooks'
-        ).catch(() => undefined);
+        );
       }
       return { requested, existing: current.permission, outcome: 'kept' };
     }
@@ -401,7 +401,7 @@ export async function addCollaborator(opts: {
         reason: current.kind === 'unknown' ? `unrankable "${current.raw}"` : current.reason,
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 
   const res = await fjFetch(

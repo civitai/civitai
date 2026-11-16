@@ -18,6 +18,15 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
+import {
+  beginFeedGoShadowV1Images,
+  captureFeedGoShadowV1Images,
+  feedGoV1ShapeClass,
+  finishFeedGoShadow,
+  type FeedGoShadowSample,
+  type FeedGoV1ShapeInput,
+} from '~/server/trpc/feed-go-shadow';
+import { recordFeedGoV1Shape } from '~/server/prom/feed-go-shadow.metrics';
 import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -85,7 +94,8 @@ const imagesEndpointSchema = z.object({
         return value ? nsfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
       return nsfwLevelMapDeprecated[value] as number;
     }),
-  browsingLevel: z.coerce.number().optional(),
+  // A bit mask. A fraction or a value past int32 would otherwise fail inside the search, as a 503.
+  browsingLevel: z.coerce.number().int().min(0).max(2147483647).optional(),
   tags: commaDelimitedNumberArray().optional(),
   cursor: keysetCursorSchema.optional(),
   type: z.enum(MediaType).optional(),
@@ -159,9 +169,22 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
   let endTimer: (() => void) | undefined;
 
   let releaseSlot: (() => void) | undefined;
+
+  // feed-go shadow (flag `feed-go-shadow-v1-images`, default off): decided after the cheap rejects
+  // and the bulkhead slot (below). A sampled request keeps a reference to the 200 body it writes,
+  // and after the handler its query string, the headers the answer depends on and that body are
+  // POSTed to feed-go's internal compare endpoint from `setImmediate`, never awaited. Never throws.
+  // See `~/server/trpc/feed-go-shadow`. `shape` is this request's class for the shape counter.
+  let shadow: FeedGoShadowSample | undefined;
+  let shape: FeedGoV1ShapeInput | null = null;
+  const ok = (body: unknown) => {
+    if (shadow) captureFeedGoShadowV1Images(shadow, body);
+    return res.status(200).json(body);
+  };
   try {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
+    shape = reqParams.data;
 
     const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
@@ -213,6 +236,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
 
     // Timed only for admitted requests (bulkhead 503 returns above, before this).
     endTimer = requestDurationSeconds.startTimer({ route: 'api/v1/images' });
+    shadow = beginFeedGoShadowV1Images(req);
 
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
@@ -234,13 +258,12 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
         '~/server/services/model.service'
       );
       // A taken-down model's images are withheld here from everyone, its owner included.
-      if (await isModelGalleryWithheld(data))
-        return res.status(200).json({ items: [], metadata: {} });
+      if (await isModelGalleryWithheld(data)) return ok({ items: [], metadata: {} });
       const heldLevel = await getHeldGalleryLevel(data);
       if (heldLevel !== undefined) {
         _browsingLevel = Flags.intersection(_browsingLevel, heldLevel);
         // The search reads 0 as its default level, not as none, so an empty intersection is an empty page.
-        if (!_browsingLevel) return res.status(200).json({ items: [], metadata: {} });
+        if (!_browsingLevel) return ok({ items: [], metadata: {} });
       }
     }
 
@@ -252,8 +275,9 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
       { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
-    // Images picked by id name no model, so each is held by its own post's model.
-    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
+    // Each image is held by its own post's model: a model or version search selects by resource, so
+    // it can return images posted to another model's gallery.
+    const items = await withoutHeldImages(found);
 
     const metadata: Metadata = {
       nextCursor,
@@ -265,7 +289,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     }
     metadata.nextPage = getNextPage({ req, ...metadata });
 
-    res.status(200).json({
+    ok({
       items,
       metadata,
     });
@@ -340,6 +364,8 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // Release the heavy slot as soon as the handler resolves (synchronous
     // serialization — the actual pin cost — is done by now), not on socket close.
     releaseSlot?.();
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
+    recordFeedGoV1Shape(feedGoV1ShapeClass(req, shape, res.statusCode));
   }
 }
 

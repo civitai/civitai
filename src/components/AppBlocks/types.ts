@@ -428,6 +428,12 @@ export interface BlockInitPayload {
    * wrong-shape rejections documented above.
    */
   storageMode?: 'local-preview';
+  /**
+   * Bridge capabilities this host handles, e.g. `workflowMedia:v1`. An SDK sends
+   * a capability's message only when it is listed: a host bundle loaded before
+   * the capability shipped never receives a request it would leave hanging.
+   */
+  capabilities?: string[];
 }
 
 export interface BlockManifest {

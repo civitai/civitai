@@ -225,7 +225,10 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // `pollWorkflow` docblock names:
 //   - the SDK's sequential short poll is ~1 per 2 s per workflow (0.5/s) — this is ~40×
 //     that for one workflow, or ~4× a viewer running ten concurrent generations;
-//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again.
+//   - the long poll is ~1 per 15 s per workflow while nothing changes. It returns on
+//     CHANGE (`until=change`), so a workflow that changes every 2-3 s is read ~20-30
+//     times a minute — still 1/40 to 1/60 of this bucket for one workflow, i.e. room
+//     for ~40-60 such workflows per (install, viewer) before it bites.
 //
 //     ┌─ HOLD STATUS — THE SINGLE STATEMENT. Everything below is evidence FOR this
 //     │  paragraph; none of it restates the status. Change it HERE and nowhere else.
@@ -608,6 +611,37 @@ export async function checkBlockUploadAppRateLimit(
     `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:upload-app:${appId}`,
     BLOCK_UPLOAD_APP_RATE_LIMIT_MAX,
     BLOCK_UPLOAD_APP_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
+// GENERATION-SOURCE bucket (blocks.persistGenerationSource, the server half of
+// PERSIST_GENERATION_SOURCE). One token per call: each one can fetch and store an output,
+// write a private scanned Image row and hold a scan wait of up to 30 s.
+//
+// KEYED ON THE TOKEN SUBJECT (the viewer), NOT the install: the rows are the viewer's own and
+// private, so the bound that matters is per person, and a page app's install id is shared by
+// every viewer.
+//
+// 🔴 WHY IT EXISTS BESIDE THE PROCEDURE'S 60/h `rateLimit` MIDDLEWARE: that middleware skips
+// moderators — the current flag audience — and dev, test and preview, so for exactly the
+// callers who can reach this route today it bounded nothing. This bucket has no exemption.
+// Concurrency is bounded separately (`withInFlightLimit`, 2 per user, charged first).
+//
+// 60 per 3600 s. Not data-derived; a starting value, matching the middleware's number.
+//
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file. A refused call
+// still counts toward this window.
+export const BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_MAX = 60;
+export const BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS = 3600;
+
+/** Records ONE generation-source call against `userId`'s window. Own `:gen-source-user:` key. */
+export async function checkBlockGenerationSourceUserRateLimit(
+  userId: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:gen-source-user:${userId}`,
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_MAX,
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS
   );
 }
 

@@ -96,6 +96,13 @@ export const createBountyInputSchema = z.object({
     )
     .min(1, 'At least one example image must be uploaded'),
   buzzType: z.enum(['green', 'yellow']).default('yellow'),
+  // Minted by the client once per new bounty and resent on its retries, with the time it was
+  // minted (epoch ms): the creation charge's ledger prefix derives from both, so a retry after an
+  // unanswered request charges once. Award pricing reads the charge time from the prefix's last
+  // segment, which is why the time travels with the key. Optional for clients from before keys,
+  // which get a new prefix per call as before.
+  idempotencyKey: z.string().uuid().optional(),
+  chargedAt: z.number().int().positive().optional(),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;

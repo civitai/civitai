@@ -35,6 +35,8 @@ import {
 } from '$lib/data/trainingModels';
 import type { TrainingRunPayload } from '$lib/backend';
 import type { TrainingItem } from '$lib/train-core';
+import { engineTakesRepeats, MAX_REPEATS } from '$lib/repeats';
+import { extOfAir, mediaOfExt } from '$lib/media';
 import {
   blockedRunMessage,
   modelUnavailability,
@@ -134,6 +136,15 @@ export function runVersion(run: Run): ModelVersionInfo {
 
 export const runEngine = (run: Run): string => run.engine ?? runVersion(run).engine ?? 'ai-toolkit';
 export const runSupportsKohya = (run: Run): boolean => !!kohyaFamily(runVersion(run).ecosystem);
+
+/** The run on `engine`, moved to the card's first version when its pick isn't offered there (Custom
+ *  exists for some cards only under Kohya). */
+export function withEngine(run: Run, engine: string, enabledFlags?: ReadonlySet<string>): Run {
+  const options = versionOptions(runCard(run), enabledFlags, engine);
+  return options.some((v) => v.key === run.versionKey)
+    ? { ...run, engine }
+    : { ...run, engine, versionKey: options[0]!.key, customAir: undefined, customName: undefined };
+}
 
 /** The key a version is blocked under: its checkpoint's, as a submit resolves it (an edit card reuses
  *  a base's checkpoint under its own key). */
@@ -288,6 +299,8 @@ export interface Img {
   sourceWorkflowId?: string;
   tags: string[];
   caption: string;
+  /** Per-image repeats: how many times this image goes into the dataset. Absent means once. */
+  repeats?: number;
 }
 
 /** Start one auto-label pass over `targets`. Each step is charged, so every target is marked tried
@@ -299,6 +312,29 @@ export function startLabelPass(targets: Img[]) {
   for (const t of targets) Object.assign(t, { labeling: true, labelTried: true });
   const items = [...byKey].map(([key, t]) => ({ key, mediaUrl: t.blobUrl ?? '' }));
   return { byKey, items };
+}
+
+/** Whether every run in the selection can train per-image repeats (not edit pairs, not Flux.2). */
+export const selectionTakesRepeats = (selection: Selection): boolean =>
+  selection.runs.every((run) => engineTakesRepeats(runEngine(run), runTrainsPairs(run)));
+
+export const repeatsOf = (img: Pick<Img, 'repeats'>): number => img.repeats ?? 1;
+
+/** A typed repeat count as one the submit accepts: a whole number from 1 to MAX_REPEATS. */
+export const clampRepeats = (n: number): number =>
+  Number.isFinite(n) ? Math.min(MAX_REPEATS, Math.max(1, Math.round(n))) : 1;
+
+/** How many items the dataset sends, counting each repeat. */
+export const expandedCount = (images: Img[]): number =>
+  images.reduce((sum, img) => sum + (isTrainable(img) ? repeatsOf(img) : 0), 0);
+
+const DEFAULT_EXT: Record<Media, string> = { image: 'png', video: 'mp4', audio: 'mp3' };
+
+/** The extension a repeat copy is staged under: its file name's, else its blob's, else its media's. */
+export function repeatExt(img: Pick<Img, 'name' | 'blobId' | 'mediaType'>): string {
+  for (const ext of [img.name.split('.').pop(), img.blobId && extOfAir(img.blobId)])
+    if (ext && mediaOfExt(ext)) return ext.toLowerCase();
+  return DEFAULT_EXT[img.mediaType];
 }
 
 /** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
@@ -1035,11 +1071,16 @@ export function buildTrainingRuns(
   edit?: { items: TrainingItem[]; pairs: number }
 ): TrainingRunPayload[] {
   const mode = labelMode;
-  const items = edit
+  const repeats = selectionTakesRepeats(selection);
+  const items: TrainingItem[] = edit
     ? edit.items
     : images
         .filter((i) => i.status === 'uploaded' && !!i.blobId)
-        .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
+        .map((i) => ({
+          air: i.blobId!,
+          caption: labelString(i, mode),
+          ...(repeats && repeatsOf(i) > 1 ? { repeats: repeatsOf(i), ext: repeatExt(i) } : {}),
+        }));
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
@@ -1057,7 +1098,7 @@ export function buildTrainingRuns(
         loraType: selection.loraType,
         cardType: run.cardType,
         versionKey: run.versionKey,
-        imageCount: edit?.pairs ?? items.length,
+        imageCount: edit?.pairs ?? items.reduce((sum, i) => sum + (i.repeats ?? 1), 0),
         trigger: t,
       },
     };

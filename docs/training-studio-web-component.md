@@ -70,10 +70,11 @@ interface TrainingStudioHost {
      *  `generateUrl` (relative = same-tab, absolute = new tab). Omit to render the explanation
      *  without a link. */
     pricingUrl?: string;
-    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see. The standalone shell
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see, plus
+     *  `training-studio-kohya` when they may train with Kohya. The standalone shell
      *  evaluates them server-side in `/new`'s load; the element has no server, so the host must
      *  evaluate them and pass the enabled keys (the main app maps them in
-     *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model is hidden. */
+     *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model, and Kohya, is hidden. */
     enabledModelFlags?: string[];
   };
 

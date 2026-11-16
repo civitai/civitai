@@ -69,7 +69,7 @@ export async function runArticleCategoryBackfill({
           });
           return { entityId, status };
         } catch (e) {
-          await logToAxiom({
+          logToAxiom({
             name: 'text-category',
             type: 'error',
             message: 'backfill submit threw',
@@ -82,7 +82,7 @@ export async function runArticleCategoryBackfill({
     )
   );
   const result = summary(results);
-  await logToAxiom({
+  logToAxiom({
     name: 'text-category',
     type: 'info',
     message: 'backfill chunk',

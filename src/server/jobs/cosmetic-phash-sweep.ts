@@ -95,7 +95,7 @@ export async function sweepCosmeticPerceptualHashes({
           name: 'cosmetic-phash-sweep',
           message: `Could not store a hash for cosmetic ${row.id} (${row.url})`,
           error: error instanceof Error ? error.message : String(error),
-        }).catch(() => null);
+        });
       }
       if (stored) hashed++;
       else {
@@ -122,8 +122,7 @@ export const cosmeticPerceptualHashSweepJob = createJob(
   async () => {
     try {
       const result = await sweepCosmeticPerceptualHashes();
-      if (result.scanned > 0)
-        logToAxiom({ type: 'cosmetic-phash-sweep', ...result }, 'webhooks').catch(() => undefined);
+      if (result.scanned > 0) logToAxiom({ type: 'cosmetic-phash-sweep', ...result }, 'webhooks');
       return result;
     } catch (error) {
       logToAxiom(
@@ -134,7 +133,7 @@ export const cosmeticPerceptualHashSweepJob = createJob(
           stack: (error as Error)?.stack,
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
       return { scanned: 0, hashed: 0, failed: 0, error: true as const };
     }
   }

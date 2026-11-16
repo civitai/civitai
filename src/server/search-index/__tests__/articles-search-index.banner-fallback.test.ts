@@ -45,6 +45,28 @@ describe('articles search index', () => {
     expect(record).not.toHaveProperty('bannerImage');
   });
 
+  it('🔴 indexes an article without a cover its model withholds, and not with its banner', async () => {
+    meili.updateDocs.mockClear();
+    const data = await transformData({
+      articles: [article({ coverImage: image(10, 1), bannerImage: image(11, 1) })],
+      cosmetics: {},
+      modelWithheldImageIds: new Set([10]),
+    });
+    await pushData({ indexName: 'articles' }, data);
+    const [sent] = meili.updateDocs.mock.calls[0][0].documents as Record<string, unknown>[];
+    // The key must be present: the index update merges, and an absent key keeps the stored cover.
+    expect(sent).toHaveProperty('coverImage', null);
+  });
+
+  it('indexes a banner-only article without a banner its model withholds', async () => {
+    const records = await recordsOf({
+      articles: [article({ coverImage: null, bannerImage: image(11, 1) })],
+      cosmetics: {},
+      modelWithheldImageIds: new Set([11]),
+    });
+    expect(records).toHaveLength(0);
+  });
+
   it('keeps the cover when there is one', async () => {
     const [record] = await recordsOf({
       articles: [article({ coverImage: image(10, 1), bannerImage: image(11, 1) })],
@@ -119,6 +141,7 @@ describe('articles search index', () => {
     const data = await transformData({ articles: [blocked, pending] as never, cosmetics: {} });
 
     expect(data.disqualifiedIds).toEqual([7]);
+    meili.updateDocs.mockClear();
     await pushData({ indexName: 'articles' }, data);
 
     expect(meili.cleanup).toHaveBeenCalledWith({ indexName: 'articles', ids: [7] });
@@ -126,7 +149,7 @@ describe('articles search index', () => {
       id: number;
       coverImage?: unknown;
     }[];
-    // The pending one overwrites its old document without the cover.
-    expect(sent.map((d) => [d.id, d.coverImage])).toEqual([[8, undefined]]);
+    // The pending one overwrites its old document's cover with null: the update merges.
+    expect(sent.map((d) => [d.id, 'coverImage' in d, d.coverImage])).toEqual([[8, true, null]]);
   });
 });

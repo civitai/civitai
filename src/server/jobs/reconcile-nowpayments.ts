@@ -20,7 +20,7 @@ export const reconcileNowpaymentsJob = createJob(
     try {
       results = await reconcileDeposits({ dateFrom, dateTo });
     } catch (e) {
-      await logToAxiom({
+      logToAxiom({
         name: 'reconcile-nowpayments-job',
         type: 'error',
         message: `Reconciliation API error`,
@@ -52,7 +52,7 @@ export const reconcileNowpaymentsJob = createJob(
     try {
       retryResults = await retryFailedDeposits();
     } catch (e) {
-      await logToAxiom({
+      logToAxiom({
         name: 'reconcile-nowpayments-job',
         type: 'error',
         message: `Retry sweep error`,
@@ -72,7 +72,14 @@ export const reconcileNowpaymentsJob = createJob(
     return {
       dateFrom,
       dateTo,
-      ...(results ?? { totalPayments: 0, completedPayments: 0, alreadyProcessed: 0, newlyProcessed: 0, failed: 0, skipped: 0 }),
+      ...(results ?? {
+        totalPayments: 0,
+        completedPayments: 0,
+        alreadyProcessed: 0,
+        newlyProcessed: 0,
+        failed: 0,
+        skipped: 0,
+      }),
       retryResults,
     };
   },

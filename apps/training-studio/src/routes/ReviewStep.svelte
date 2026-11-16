@@ -91,6 +91,7 @@
     openAdvanced = $bindable(),
     acknowledgedAdvanced = $bindable(),
     imageCount,
+    repeated,
     trainsPairs = false,
     matureCount: scannedMature,
     readiness = { kind: 'off' },
@@ -115,7 +116,10 @@
     openAdvanced: string;
     /** Refund-forfeit acknowledgements, keyed by `runParamsKey`. */
     acknowledgedAdvanced: Record<string, boolean>;
+    /** Items the dataset sends, counting each per-image repeat copy. */
     imageCount: number;
+    /** Images set to repeat, the extra copies they add to `imageCount`, and the highest repeat. */
+    repeated?: { images: number; extra: number; max: number };
     /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
     trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
@@ -143,6 +147,8 @@
   const datasetCount = $derived(
     trainsPairs
       ? `${imageCount.toLocaleString()} ${imageCount === 1 ? 'pair' : 'pairs'}`
+      : repeated
+      ? `${mediaCount(imageCount - repeated.extra, selection.media)} + ${repeated.extra.toLocaleString()} ${repeated.extra === 1 ? 'repeat' : 'repeats'}`
       : mediaCount(imageCount, selection.media)
   );
 
@@ -701,7 +707,7 @@
   {/if}
 {/snippet}
 
-<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-5">
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">Review &amp; start</h2>
@@ -725,7 +731,7 @@
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
       <!-- The Character/Style/Concept exposure targets are about subjects; an edit run has none. -->
-      <div class="flex items-center gap-1.5" class:hidden={trainsPairs}>
+      <div class="flex flex-wrap items-center gap-1.5" class:hidden={trainsPairs}>
         <span class="inline-flex items-center gap-1 font-mono text-xs text-dark-2">
           exposure guidance {@render help(GUIDANCE_HELP, 'exposure guidance')}
         </span>
@@ -818,6 +824,11 @@
               {@render help('Estimated from steps × batch size; partially filled batches can reduce exposure.', 'Image exposure')}
             {/if}
           </div>
+          {#if repeated}
+            <div class="bg-dark-6 px-4 pb-3 font-mono text-xs text-dark-2">
+              includes {repeated.extra.toLocaleString()} repeat {repeated.extra === 1 ? 'copy' : 'copies'} · a ×{repeated.max} image is seen ~{seen(i) * repeated.max}×
+            </div>
+          {/if}
           {/if}
 
           {#if advancedOpen(i) && !noAdvancedParams(run)}

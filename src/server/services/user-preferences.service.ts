@@ -1008,14 +1008,14 @@ async function cascadeBlockToPlacements({
     try {
       await declinePlacementsOnBlock({ ownerId, placerId, waiveFee });
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'placement-moderation',
         type: 'error',
         message: 'block cascade failed; pending placements will fall to expiry',
         ownerId,
         placerId,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 }
@@ -1117,7 +1117,7 @@ async function toggleBlockUser({
           userId,
           targetUserId,
           error: (error as Error).message,
-        }).catch(() => null)
+        })
       );
   } else {
     const removed = await clearUserEngagement({
@@ -1290,8 +1290,7 @@ export async function getHiddenImagesForUser({
           nsfwLevelLocked,
           nsfwLevelReason: (metadata as { nsfwLevelReason?: string | null } | null)
             ?.nsfwLevelReason,
-          scanFailureClass: (scanJobs as { error?: { failureClass?: string } } | null)?.error
-            ?.failureClass,
+          scanJobs,
         }) &&
           rest.nsfwLevel !== NsfwLevel.Blocked &&
           !rest.tosViolation &&

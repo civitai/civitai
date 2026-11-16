@@ -36,7 +36,11 @@ async function flush() {
   await __flushPendingEmitsForTest();
 }
 
-const ENV_KEYS = ['TRPC_SLOW_LOG_ENABLED', 'TRPC_SLOW_LOG_MS', 'TRPC_SLOW_LOG_MAX_PER_SEC'] as const;
+const ENV_KEYS = [
+  'TRPC_SLOW_LOG_ENABLED',
+  'TRPC_SLOW_LOG_MS',
+  'TRPC_SLOW_LOG_MAX_PER_SEC',
+] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -232,17 +236,5 @@ describe('maybeLogTrpcSlow payload', () => {
     await flush();
     expect(logToAxiom).toHaveBeenCalledTimes(2);
     expect((logToAxiom.mock.calls[1][0] as Record<string, unknown>).droppedSinceLastLog).toBe(1);
-  });
-});
-
-describe('maybeLogTrpcSlow safety', () => {
-  it('never throws when the logging client rejects', async () => {
-    process.env.TRPC_SLOW_LOG_MS = '1000';
-    logToAxiom.mockImplementationOnce(() => Promise.reject(new Error('axiom down')));
-    expect(() =>
-      maybeLogTrpcSlow({ path: 'a.b', type: 'query', durationMs: 9000, ok: true })
-    ).not.toThrow();
-    await flush();
-    // The rejection is swallowed — no unhandled throw reaches the caller.
   });
 });

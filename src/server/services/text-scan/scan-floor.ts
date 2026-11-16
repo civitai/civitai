@@ -4,11 +4,16 @@ import {
   collectionTextFloorBucketText,
   ratedEntityContentNsfwLevelText,
   ratedEntityDerivedNsfwLevelText,
+  serviceOfferingTextFloorText,
   type DerivedNsfwEntityType,
 } from '@civitai/shared/rated-entity-sql';
 
 export function articleModerationFloorSql(idColumn: string) {
   return Prisma.raw(articleModerationFloorText(idColumn));
+}
+
+export function serviceOfferingTextFloorSql(idColumn: string) {
+  return Prisma.raw(serviceOfferingTextFloorText(idColumn));
 }
 
 export function collectionTextFloorBucketSql(alias: string, bucket: number) {

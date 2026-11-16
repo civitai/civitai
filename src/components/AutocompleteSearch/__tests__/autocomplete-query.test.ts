@@ -230,15 +230,15 @@ describe('the AutocompleteSearch InstantSearch tree', () => {
 });
 
 describe('buildFeedSearchUrl', () => {
-  it('lands an images search on the feed, with @user as its user filter and #tag words kept', () => {
-    const url = buildFeedSearchUrl('images', 'red #dragon @someone -#blurry');
+  it('lands a search on the feed, with @user as its user filter and #tag words kept', () => {
+    const url = buildFeedSearchUrl('/images', 'red #dragon @someone -#blurry');
     const params = new URL(url!, 'https://x').searchParams;
     expect(params.get('query')).toBe('red dragon');
     expect(params.get('username')).toBe('someone');
   });
 
-  it('leaves other indexes on their search page', () => {
-    expect(buildFeedSearchUrl('models', 'flux')).toBeNull();
+  it('lands an empty search on the bare feed', () => {
+    expect(buildFeedSearchUrl('/models', '')).toBe('/models');
   });
 });
 

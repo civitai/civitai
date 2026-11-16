@@ -68,19 +68,58 @@ export function mediaFromBlobs(
     | null
     | undefined
 ): StepOutputMedia[] {
+  return mediaSlotsFromBlobs(blobs)
+    .filter((slot) => slot.blockedReason === null)
+    .map(({ url, width, height, nsfwLevel }) => ({ url, width, height, nsfwLevel }));
+}
+
+/**
+ * One output POSITION of a step, as the App Blocks producers classify it: a surfaceable
+ * blob ({@link StepOutputMedia} plus its blob `type` / `format`), OR a BLOCKED blob,
+ * which keeps its position (`blockedReason` set; its `url` — `''` when it has none —
+ * is never handed to a block). A pending blob (not available, not blocked) has no
+ * position yet and is not listed.
+ */
+export type StepOutputSlot = StepOutputMedia & {
+  type: string | null;
+  format: string | null;
+  blockedReason: string | null;
+  /** No rating will EVER arrive for this output (see `classifyBlockOutput`). */
+  neverRated?: true;
+};
+
+/** {@link mediaFromBlobs}, with BLOCKED blobs kept in position — see {@link StepOutputSlot}. */
+export function mediaSlotsFromBlobs(
+  blobs:
+    | OrchestratorBlobLike
+    | readonly (OrchestratorBlobLike | null | undefined)[]
+    | null
+    | undefined
+): StepOutputSlot[] {
   const list: readonly (OrchestratorBlobLike | null | undefined)[] =
     blobs == null ? [] : Array.isArray(blobs) ? blobs : [blobs as OrchestratorBlobLike];
-  const media: StepOutputMedia[] = [];
+  const slots: StepOutputSlot[] = [];
   for (const blob of list) {
-    if (!isSurfaceableBlob(blob) || isBlockedBlob(blob)) continue;
-    media.push({
-      url: blob.url,
+    if (!blob) continue;
+    const blocked = isBlockedBlob(blob);
+    if (!blocked && !isSurfaceableBlob(blob)) continue;
+    const typed = blob as OrchestratorBlobLike & { type?: unknown; format?: unknown };
+    slots.push({
+      url: typeof blob.url === 'string' ? blob.url : '',
       width: typeof blob.width === 'number' ? blob.width : null,
       height: typeof blob.height === 'number' ? blob.height : null,
       nsfwLevel: typeof blob.nsfwLevel === 'string' ? blob.nsfwLevel : null,
+      type: typeof typed.type === 'string' ? typed.type : null,
+      format: typeof typed.format === 'string' ? typed.format : null,
+      blockedReason: blocked ? (blob.blockedReason as string) : null,
     });
   }
-  return media;
+  return slots;
+}
+
+/** A surfaceable entry as an output position (no blob type known — a registry entry's). */
+export function slotFromMedia(media: StepOutputMedia): StepOutputSlot {
+  return { ...media, type: null, format: null, blockedReason: null };
 }
 
 /**
@@ -182,16 +221,14 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * forwarded raw — reachable by the app, invisible to both the publish path and
  * the per-viewer gated read.
  *
- * 🔴 THE MARGIN IS ONE LEVEL, NOT "room". The deepest strip the catalog requires
- * today is `training.epochs`(1) → an epoch(2) → `samples`(3) → its members(4). A
- * new upstream `$type` is ALLOWED by construction, so one extra wrapper level in
- * a future output reopens exactly this leak with no detector. Say the CATALOG
- * DEPTH when you re-measure; do not say "with room". (Re-derivable from the
- * orchestrator spec; the overflow threshold below is not.)
+ * 🔴 PAST THE CAP THE SUBTREE IS DROPPED, NOT FORWARDED. The catalog's deepest
+ * strip is 4 (`training.epochs` → an epoch → `samples` → its members), but the
+ * app controls nesting through `merge`, so a forwarded subtree past the cap would
+ * carry unwalked blobs raw. A legitimate output that reaches the cap loses that
+ * subtree instead, and `civitai_app_block_output_truncated_total` counts it.
  *
  * 🔴 IT IS A STACK BOUND, NOT ONLY A COST BOUND — AND NOT CYCLE PROTECTION. The
- * walked value is the orchestrator's JSON-parsed `step.output`, not the app's
- * `input`, so it is acyclic and no declared output type echoes the request back.
+ * walked value is the orchestrator's JSON-parsed `step.output`, so it is acyclic.
  * What it is NOT is depth-limited: V8 parses JSON iteratively (ten million
  * nested levels parse fine) while this walk is recursive and overflows the stack
  * a few thousand levels in. 🔴 THE ORDER IS THE FACT, NOT THE FIGURE — that
@@ -203,10 +240,9 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * `snapshotFromWorkflow` on `submitPassThroughStepWorkflow`'s post-submit path,
  * where a throw is caught by a handler that refunds every cap leg it reserved and
  * rethrows — on a generation the orchestrator has already created and will bill,
- * so the caps understate real spend permanently. Closing the residue means an
- * ITERATIVE walk.
+ * so the caps understate real spend permanently.
  */
-const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
+const PASS_THROUGH_OUTPUT_WALK_DEPTH = 32;
 
 /**
  * Strip every blob-shaped value out of an orchestrator step output, returning
@@ -253,11 +289,20 @@ export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
   rest: unknown;
   model3d: Model3dOutputLabel[];
+  /** Every output position, blocked ones included — see {@link StepOutputSlot}. */
+  slots: StepOutputSlot[];
+  /** Subtrees nested past the walk cap, nulled rather than forwarded. */
+  truncated: number;
 } {
-  const media: StepOutputMedia[] = [];
-  const model3d: Model3dOutputLabel[] = [];
-  const rest = walkPassThroughOutput(output, { media, model3d }, 0, []);
-  return { media, rest, model3d };
+  const sink: PassThroughOutputSink = { media: [], model3d: [], slots: [], truncated: 0 };
+  const rest = walkPassThroughOutput(output, sink, 0, []);
+  return {
+    media: sink.media,
+    rest,
+    model3d: sink.model3d,
+    slots: sink.slots,
+    truncated: sink.truncated,
+  };
 }
 
 /**
@@ -282,10 +327,16 @@ export type Model3dOutputLabel = { url: string; format: string; variant: string 
 /** The `Model3dBlob` discriminator, from `@civitai/orchestration-client`'s generated types. */
 const MODEL3D_BLOB_TYPE = 'model3d';
 
-type PassThroughOutputSink = { media: StepOutputMedia[]; model3d: Model3dOutputLabel[] };
+type PassThroughOutputSink = {
+  media: StepOutputMedia[];
+  model3d: Model3dOutputLabel[];
+  slots: StepOutputSlot[];
+  truncated: number;
+};
 
 /** Lift one blob-shaped value into the sink: its media, and its 3D label if it is one. */
 function liftBlob(value: OrchestratorBlobLike, sink: PassThroughOutputSink, path: string[]) {
+  sink.slots.push(...mediaSlotsFromBlobs(value));
   const lifted = mediaFromBlobs(value);
   sink.media.push(...lifted);
   const blob = value as OrchestratorBlobLike & { type?: unknown; format?: unknown };
@@ -342,6 +393,9 @@ export function splitPassThroughStep(
   rest: unknown;
   trainedEpochs: TrainedEpoch[];
   model3d: Model3dOutputLabel[];
+  slots: StepOutputSlot[];
+  /** Subtrees nested past the walk cap, nulled rather than forwarded. */
+  truncated: number;
 } {
   if (!isTrainingStepType(stepType)) {
     return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
@@ -349,13 +403,35 @@ export function splitPassThroughStep(
   const trainedEpochs: TrainedEpoch[] = [];
   const sampleUrls: string[] = [];
   const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
-  const { media, rest, model3d } = splitPassThroughStepOutput(stripped);
-  for (const url of sampleUrls) media.push({ url, width: null, height: null, nsfwLevel: null });
+  const { media, rest, model3d, slots, truncated } = splitPassThroughStepOutput(stripped);
+  // 🔴 These plain-string samples carry NO rating, and none will ever arrive, so as
+  // output positions they are `neverRated`: restricted `'unrated'` wherever a rating
+  // could restrict them (`classifyBlockOutput`), never held.
+  for (const url of sampleUrls) {
+    media.push({ url, width: null, height: null, nsfwLevel: null });
+    slots.push({
+      url,
+      width: null,
+      height: null,
+      nsfwLevel: null,
+      type: 'image',
+      format: null,
+      blockedReason: null,
+      neverRated: true,
+    });
+  }
   const approved =
     output !== null &&
     typeof output === 'object' &&
     (output as Record<string, unknown>).moderationStatus === 'approved';
-  return { media, rest, trainedEpochs: approved ? trainedEpochs : [], model3d };
+  return {
+    media,
+    rest,
+    trainedEpochs: approved ? trainedEpochs : [],
+    model3d,
+    slots,
+    truncated,
+  };
 }
 
 /**
@@ -416,9 +492,10 @@ function walkPassThroughOutput(
     liftBlob(value as OrchestratorBlobLike, sink, path);
     return {};
   }
-  // Past the cap the value is forwarded as-is. See PASS_THROUGH_OUTPUT_WALK_DEPTH
-  // for the measured margin this leaves.
-  if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) return value;
+  if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) {
+    sink.truncated += 1;
+    return null;
+  }
   if (Array.isArray(value)) {
     // 🔴 PER ELEMENT, NOT ALL-OR-NOTHING. An earlier rule qualified the whole
     // array on `some(isBlobLike)` and replaced it wholesale, which lost a blob

@@ -80,7 +80,7 @@ export async function getModWordBlocklist() {
         name: 'wordlists',
         type: 'warning',
         message: `wordlist ${wordlist} not found`,
-      }).catch();
+      });
     }
   }
 
@@ -115,7 +115,7 @@ export async function getModURLBlocklist() {
         name: 'wordlists',
         type: 'warning',
         message: `urllist ${urllist} not found`,
-      }).catch();
+      });
     }
   }
 

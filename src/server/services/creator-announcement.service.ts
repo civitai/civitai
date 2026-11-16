@@ -307,7 +307,7 @@ async function resolveFollowedLiveAuthors({
         error: error instanceof Error ? error.message : String(error),
         domain: domain ?? ANY_DOMAIN,
       },
-    }).catch(() => undefined);
+    });
     return undefined;
   }
 }

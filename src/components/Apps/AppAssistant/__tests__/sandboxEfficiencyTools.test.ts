@@ -19,6 +19,8 @@ import {
   checkExitCodesOf,
   createDocsTool,
   createGateCore,
+  IN_SANDBOX_GUIDE,
+  docsAliasOf,
   docsUrlOf,
   readBody,
   reportReadyDescription,
@@ -408,6 +410,46 @@ describe('read_docs', () => {
     );
     expect(fetch).not.toHaveBeenCalled();
     expect(docsUrlOf(url)).toBeNull();
+  });
+
+  // Users paste the agent-onboarding link, which is on civitai.com and redirects to the workstation
+  // prompt (install the CLI, sign in). In the sandbox the setup guide replaces it.
+  it.each([
+    'civitai.com/agent-onboarding',
+    'https://civitai.com/agent-onboarding',
+    'https://www.civitai.com/agent-onboarding/',
+    ' https://civitai.com/agent-onboarding?ref=x ',
+    'HTTPS://CIVITAI.COM/agent-onboarding#top',
+  ])('reads the in-sandbox setup guide for %j', async (url) => {
+    const fetch = vi.fn(async (_url: string) => text('# In the sandbox'));
+    await expect(read(tool(fetch as never), url)).resolves.toEqual({
+      url: 'https://developer.civitai.com/agent-setup/in-sandbox.md',
+      text: '# In the sandbox',
+    });
+    expect(fetch.mock.calls.map((c) => c[0])).toEqual([
+      'https://developer.civitai.com/agent-setup/in-sandbox.md',
+    ]);
+  });
+
+  it.each([
+    'https://civitai.com/agent-onboarding-v2',
+    'https://civitai.com/agent-onboarding/prompt.md',
+    'https://civitai.com.example.org/agent-onboarding',
+    'https://example.org/civitai.com/agent-onboarding',
+    'https://user@civitai.com/agent-onboarding',
+    'https://civitai.red/agent-onboarding',
+  ])('still refuses %s', async (url) => {
+    const fetch = vi.fn(async () => text('no'));
+    await expect(read(tool(fetch), url)).rejects.toThrow(
+      'read_docs reads only https://developer.civitai.com/ pages'
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(docsAliasOf(url)).toBeNull();
+  });
+
+  it('the in-sandbox guide is the setup guide the instructions name', () => {
+    expect(IN_SANDBOX_GUIDE).toBe('https://developer.civitai.com/agent-setup/in-sandbox.md');
+    expect(assistantRules('remote')).toContain(`Your setup guide is ${IN_SANDBOX_GUIDE};`);
   });
 
   it('follows a redirect within developer.civitai.com, never one off it', async () => {

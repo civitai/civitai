@@ -21,8 +21,10 @@ import {
   auditPostImageMeta,
   getTagsFromPrompt,
   includesInappropriate,
+  includesMinorAge,
   includesPoi,
 } from '~/utils/metadata/audit';
+import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
@@ -41,6 +43,7 @@ import {
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { queueScanSampleForKnights } from '~/server/services/knights/sources';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import {
@@ -58,6 +61,7 @@ import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import {
   hasBlockMarker,
   ingestionAfterScanErrorSql,
+  keepPermanentScanFailureSql,
   ingestionAfterVerdictSql,
   ingestionKeptAfterVerdict,
 } from '~/server/common/image-visibility';
@@ -68,6 +72,7 @@ import {
   type RatingAxes,
 } from '~/server/services/image-nsfw-axes';
 import { signalClient } from '~/utils/signal-client';
+import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -188,7 +193,7 @@ export async function sendIngestionSignal({
           source: log.source,
         },
         'webhooks'
-      ).catch(() => null)
+      )
     );
 }
 
@@ -217,7 +222,7 @@ export async function logPerceptualHashMatch({
         source: log.source,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return false;
   });
   if (!pHashBlocked) return;
@@ -233,7 +238,7 @@ export async function logPerceptualHashMatch({
       source: log.source,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 }
 
 /**
@@ -311,7 +316,7 @@ export async function markImageScanError({
         ),
         '{error}',
         ${errorJson}::jsonb
-      )
+      ) || ${keepPermanentScanFailureSql()}
     WHERE id = ${imageId}
     RETURNING ("scanJobs"->>'retryCount')::int as "retryCount", type as "mediaType",
       "userId"
@@ -786,7 +791,7 @@ export async function resolveScanOutcome({
         name: 'scan-judge-floor',
         imageId: image.id,
         message: (error as Error).message,
-      }).catch(() => null);
+      });
       await dbWrite.$executeRaw`
         UPDATE "Image" SET ingestion = ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
         WHERE id = ${image.id}
@@ -849,6 +854,8 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
 
 /** Log event for an unrated scan that would take the newer minor review routing. */
 export const UNRATED_MINOR_REVIEW_EVENT = 'unrated-minor-review-candidate';
+/** Log event for every scan that could be a candidate, so a zero count can be read against it. */
+export const MINOR_REVIEW_EVALUATED_EVENT = 'unrated-minor-review-evaluated';
 
 async function auditScanResults(args: {
   imageId: number;
@@ -911,19 +918,43 @@ async function auditScanResults(args: {
   if (associatedEntities.minor && minorRestrictedScan) minorReview = true;
 
   // Log, without routing, when an unrated scan would take the newer minor review routing.
-  if (nsfwLevel === 0 && !minorReview && !poiReview) {
-    const arms = [
-      ...(associatedEntities.minor ? ['resource'] : []),
-      ...(minorTags.length > 0 && adultTags.length === 0 ? ['tag'] : []),
-    ];
-    for (const arm of arms)
-      logToAxiom({
-        name: UNRATED_MINOR_REVIEW_EVENT,
-        type: 'info',
-        imageId: args.imageId,
-        arm,
-        at: new Date().toISOString(),
-      }).catch(() => null);
+  // Minor-review tags carry a rating of their own, so they are left out of "unrated".
+  const contentLevel = Math.max(
+    ...tags.filter((tag) => !minorTags.includes(tag)).map((x) => x.nsfwLevel),
+    0,
+    args.floorLevel ?? 0
+  );
+  const tagPrecondition = minorTags.length > 0;
+  const resourcePrecondition = !!associatedEntities.minor;
+  if (tagPrecondition || resourcePrecondition) {
+    const unrated = contentLevel === 0;
+    const routed = minorReview || poiReview;
+    const at = new Date().toISOString();
+    logToAxiom({
+      name: MINOR_REVIEW_EVALUATED_EVENT,
+      type: 'info',
+      imageId: args.imageId,
+      precondition:
+        tagPrecondition && resourcePrecondition ? 'both' : tagPrecondition ? 'tag' : 'resource',
+      unrated,
+      routed,
+      adultTag: adultTags.length > 0,
+      at,
+    });
+    if (unrated && !routed) {
+      const arms = [
+        ...(resourcePrecondition ? ['resource'] : []),
+        ...(tagPrecondition && adultTags.length === 0 ? ['tag'] : []),
+      ];
+      for (const arm of arms)
+        logToAxiom({
+          name: UNRATED_MINOR_REVIEW_EVENT,
+          type: 'info',
+          imageId: args.imageId,
+          arm,
+          at,
+        });
+    }
   }
 
   // The capture account is no one's new account: its captures get only the content keys.
@@ -943,7 +974,17 @@ async function auditScanResults(args: {
   let blockedFor: string | undefined;
   if (nsfw && prompt) {
     // The post editor's own verdict, so the scan never blocks what the editor let through.
-    const auditResult = auditPostImageMeta({ prompt }, nsfw);
+    let auditResult = auditPostImageMeta({ prompt }, nsfw);
+    const ageHit = auditResult.success ? undefined : includesMinorAge(normalizeText(prompt));
+    if (ageHit?.found && ageHit.age != null) {
+      const decision = await decideAgeRegexHit({
+        surface: 'post-scan',
+        age: ageHit.age,
+        prompt,
+        source: 'other',
+      });
+      if (!decision.block) auditResult = auditPostImageMeta({ prompt: decision.withoutAge }, nsfw);
+    }
     if (!auditResult.success)
       blockedFor = auditResult.blockedFor.join(',') ?? 'Failed audit, no explanation';
     else if (auditResult.softBlockedFor?.length)
@@ -958,7 +999,7 @@ async function auditScanResults(args: {
             matchedWord: word,
           })),
         },
-      }).catch(() => null);
+      });
   }
 
   return {
@@ -1206,7 +1247,9 @@ export async function applyIngestionSideEffects({
       }
 
       if (!reviewKey && image.type === 'image' && image.userId !== FEEDBACK_CAPTURE_OWNER_ID) {
-        await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+        if (await isV1KnightsLive())
+          await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+        await queueScanSampleForKnights({ imageId: image.id, nsfw: audit.nsfw });
       }
     }
   }

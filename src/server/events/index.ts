@@ -1,4 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageNotRestrictedSql } from '~/server/common/image-visibility';
@@ -241,14 +242,14 @@ export const eventEngine = {
               name: 'event-points-referee',
               event: eventDef.name,
               ...result,
-            }).catch(() => undefined);
+            });
           } catch (error) {
             logToAxiom({
               type: 'error',
               name: 'event-points-referee',
               event: eventDef.name,
               message: (error as Error).message,
-            }).catch(() => undefined);
+            });
           }
         }
         const standings = await refreshStandings(standingsEvent, dbWrite);
@@ -621,9 +622,18 @@ export const eventEngine = {
 
     return eventDef.getRewards();
   },
-  async donate(event: string, { userId, amount }: { userId: number; amount: number }) {
+  async donate(
+    event: string,
+    { userId, amount }: { userId: number; amount: number },
+    now = new Date()
+  ) {
     const eventDef = getEventDef(event);
-    if (eventDef.bankIndex === undefined) throw new Error('This event does not take donations');
+    // Refused before any Buzz moves, as a 400 the client shows as is. A finished event's page no
+    // longer offers donating, but the route stays callable, and a donation charged after the end
+    // counts toward no result.
+    if (eventDef.bankIndex === undefined)
+      throw throwBadRequestError('This event does not take donations');
+    if (now >= eventDef.endDate) throw throwBadRequestError('This event has ended');
 
     const { team, accountId } = await this.getUserData({ event, userId });
     if (!team || !accountId) throw new Error("You don't have a team for this event");

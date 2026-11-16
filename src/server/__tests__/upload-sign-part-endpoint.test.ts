@@ -143,30 +143,6 @@ describe('/api/upload/sign-part — telemetry cannot gate or fail the response',
     );
   });
 
-  it('CONTAINMENT: a rejecting logger leaves the 200 intact and the handler settled', async () => {
-    vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
-    const res = makeRes();
-
-    await expect(handler(makeReq(), res)).resolves.toBeUndefined();
-
-    // Without the inner try/catch this unwinds into the handler's catch and becomes a 500 on
-    // a request whose URL was signed fine — which is exactly what the outage did.
-    expect(res.statusCode).toBe(200);
-  });
-
-  it('ERROR PATH: the 500 is sent even when the logger is also failing', async () => {
-    mockGetUploadPartUrl.mockRejectedValueOnce(new Error('B2 unavailable'));
-    vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
-    const res = makeRes();
-
-    await expect(handler(makeReq(), res)).resolves.toBeUndefined();
-
-    // Pre-fix the awaited log ran FIRST, so a sick logger meant no response was written at
-    // all — the client saw an unhandled-rejection 500 with no event recorded.
-    expect(res.statusCode).toBe(500);
-    expect(res.body).toEqual({ error: 'B2 unavailable' });
-  });
-
   /**
    * 🔴 ORDERING ON THE ERROR PATH TOO — added because a mutation sweep found the test above
    * does NOT catch moving the error log back ahead of the 500. Once the log is contained, a

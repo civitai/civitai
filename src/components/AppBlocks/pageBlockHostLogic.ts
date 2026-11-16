@@ -3,6 +3,7 @@
 // (no RTL — civitai-web's unit project runs `environment: 'node'` and only
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
+import { WORKFLOW_MEDIA_MAX_REFS } from '~/shared/constants/block-workflow-media.constants';
 import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
@@ -550,6 +551,59 @@ export function resolvePublishGenerationOutputsRequest(
   return req;
 }
 
+// ── PERSIST_GENERATION_SOURCE ────────────────────────────────────────────────
+// The block asks the host to keep ONE output of one of its OWN finished workflows
+// as a PRIVATE, scanned generation source (`blocks.persistGenerationSource`). No
+// dialog: nothing is shown to anyone else, and the server owns every guard
+// (ownership, app tag, finished workflow, scan). This resolver decides only the
+// refusals the host can make by itself, in order: review mode, the handshake,
+// then the payload. Every refusal carries the requestId, because the reply
+// contract is "a GENERATION_SOURCE_PERSISTED on every path".
+
+/** Review preview runs under the moderator's real session, which must not gain a row. */
+export const PERSIST_SOURCE_REVIEW_ERROR = 'not available in review preview';
+/** The block has not finished its handshake. */
+export const PERSIST_SOURCE_NOT_READY_ERROR = 'the app is not ready yet';
+export const PERSIST_SOURCE_INVALID_ERROR =
+  'invalid request: workflowId must be a non-empty string and imageIndex a non-negative integer';
+
+export type PersistGenerationSourceGate =
+  | { kind: 'drop' }
+  | { kind: 'refuse'; requestId: string; error: string }
+  | { kind: 'proceed'; request: { requestId: string; workflowId: string; imageIndex: number } };
+
+/**
+ * Validate a raw PERSIST_GENERATION_SOURCE payload from an untrusted iframe. `drop` only when
+ * there is no requestId to reply on; every other refusal is a `refuse` the host replies with.
+ */
+export function resolvePersistGenerationSourceRequest(inputs: {
+  raw: unknown;
+  ready: boolean;
+  reviewMode: boolean;
+}): PersistGenerationSourceGate {
+  const { raw } = inputs;
+  if (!raw || typeof raw !== 'object') return { kind: 'drop' };
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return { kind: 'drop' };
+  const requestId = obj.requestId;
+  if (inputs.reviewMode) return { kind: 'refuse', requestId, error: PERSIST_SOURCE_REVIEW_ERROR };
+  if (!inputs.ready) return { kind: 'refuse', requestId, error: PERSIST_SOURCE_NOT_READY_ERROR };
+  if (
+    typeof obj.workflowId !== 'string' ||
+    obj.workflowId.length === 0 ||
+    obj.workflowId.length > 64 ||
+    typeof obj.imageIndex !== 'number' ||
+    !Number.isInteger(obj.imageIndex) ||
+    obj.imageIndex < 0
+  ) {
+    return { kind: 'refuse', requestId, error: PERSIST_SOURCE_INVALID_ERROR };
+  }
+  return {
+    kind: 'proceed',
+    request: { requestId, workflowId: obj.workflowId, imageIndex: obj.imageIndex },
+  };
+}
+
 // ── GET_IMAGES_BY_IDS (Model-Benchmarking seam) ──────────────────────────────
 // The block asks the host for per-viewer gated display data for a set of image
 // ids. The host self-binds the viewer + applies the clamp server-side; the
@@ -577,6 +631,29 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
     ? obj.imageIds.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
     : [];
   return { requestId: obj.requestId, imageIds };
+}
+
+// ── GET_WORKFLOW_MEDIA ───────────────────────────────────────────────────────
+
+export type GetWorkflowMediaRequest = { requestId: string; refs: string[] };
+
+/** Max refs the host forwards; matches `blocks.getWorkflowMedia`. */
+export const GET_WORKFLOW_MEDIA_MAX_REFS = WORKFLOW_MEDIA_MAX_REFS;
+
+/**
+ * Validate a raw GET_WORKFLOW_MEDIA payload from an untrusted iframe: `null` drops it
+ * (no requestId); non-string refs are filtered out and the list is capped.
+ */
+export function resolveGetWorkflowMediaRequest(raw: unknown): GetWorkflowMediaRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return null;
+  const refs = Array.isArray(obj.refs)
+    ? obj.refs
+        .filter((r): r is string => typeof r === 'string' && r.length > 0 && r.length <= 2048)
+        .slice(0, GET_WORKFLOW_MEDIA_MAX_REFS)
+    : [];
+  return { requestId: obj.requestId, refs };
 }
 
 // ── ESTIMATE_WORKFLOW_BATCH ──────────────────────────────────────────────────

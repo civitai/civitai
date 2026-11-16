@@ -78,7 +78,7 @@ export async function readFlagRaceConfig(event: string): Promise<FlagRaceConfig>
   }
   const parsed = flagRaceConfigSchema.safeParse(json);
   if (parsed.success) return parsed.data;
-  logToAxiom({ type: 'error', name: 'flag-race-config-invalid', event, raw }).catch(() => null);
+  logToAxiom({ type: 'error', name: 'flag-race-config-invalid', event, raw });
   return OFF;
 }
 
@@ -183,7 +183,7 @@ export async function freezeEventAwards(event: FreezeEvent, now = new Date()) {
       name: 'event-award-freeze-failed',
       event: event.name,
       error,
-    }).catch(() => null);
+    });
     return 0;
   }
 }

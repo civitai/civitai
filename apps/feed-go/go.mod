@@ -3,10 +3,12 @@ module github.com/civitai/civitai/apps/feed-go
 go 1.26.0
 
 require (
+	github.com/andybalholm/brotli v1.3.0
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
+	go.uber.org/goleak v1.3.0
 	golang.org/x/sync v0.25.0
 )
 

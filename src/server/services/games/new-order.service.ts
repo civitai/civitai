@@ -30,6 +30,7 @@ import {
   getImageRatingsCounter,
   getVotingCooldownUntil,
   getVotingRateLimitConfig,
+  legacyRank,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -175,7 +176,11 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
     getVotingCooldownUntil(playerId),
   ]);
 
-  return { ...playerData, ...user, stats, cooldownUntil };
+  // Paladin has no pools in this game; see `legacyRank`.
+  // Typed as the full enum: the client cache also stores the rank a rank-up signal carries.
+  const rankType = legacyRank(playerData.rankType) as NewOrderRankType;
+
+  return { ...playerData, rankType, ...user, stats, cooldownUntil };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
@@ -483,7 +488,7 @@ async function processImageRating({
             cooldownUntil: rateLimitResult.cooldownUntil,
           },
           message: `Player ${playerId} hit rate limit cooldown`,
-        }).catch(() => null);
+        });
       }
 
       const waitSeconds = rateLimitResult.cooldownUntil
@@ -578,7 +583,7 @@ async function processImageRating({
         name: 'new-order-duplicate-vote',
         details: { playerId, imageId },
         message: `Player ${playerId} voted again on image ${imageId}`,
-      }).catch(() => null);
+      });
       return { stats: player.stats };
     }
   } catch (e) {
@@ -645,7 +650,7 @@ async function processImageRating({
             name: 'new-order-escalation-skipped',
             details: { imageId, userId: playerId },
             message: `Image ${imageId} was not escalated to Inquisitor queue`,
-          }).catch(() => null);
+          });
         } else
           logToAxiom({
             type: 'info',
@@ -663,7 +668,7 @@ async function processImageRating({
               image.nsfwLevel,
               consensus
             )}) escalated to Inquisitor queue`,
-          }).catch(() => null);
+          });
       } else {
         // Apply the consensus decision (same level, up-rating, or down-rating by 1 level)
         if (consensus) {
@@ -781,7 +786,7 @@ async function processImageRating({
           cause: error.cause,
         },
         'clickhouse'
-      ).catch();
+      );
     }
   }
 
@@ -834,7 +839,7 @@ async function processImageRating({
           error: (error as Error).message,
         },
         message: `Failed to create report for image ${imageId}`,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -1105,7 +1110,7 @@ export async function processFinalRatings() {
         message: `Processed correct ratings from ${updateStart.toISOString()} to ${updateEnd.toISOString()}`,
       },
       'clickhouse'
-    ).catch();
+    );
 
     return {
       status: 'processed',
@@ -1129,7 +1134,7 @@ export async function processFinalRatings() {
         cause: error.cause,
       },
       'clickhouse'
-    ).catch();
+    );
     return { status: 'error', error: error.message };
   } finally {
     // Clear lock
@@ -1356,7 +1361,7 @@ export async function handleSanityCheckFailure({
     }
 
     // Log for analytics
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'new-order-sanity-check-failure',
       details: { playerId, imageId, failureCount },
@@ -1455,8 +1460,15 @@ export async function resetPlayer({
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0, startAt: new Date() },
+      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0 },
     }),
+    // Knights v2 gold: unconverted gold is forfeited like the counters below; paid and reserved gold stays.
+    // startAt must be set here (database clock, under the row lock), not by the Prisma data: Knights' conversion ordering depends on it.
+    dbWrite.$executeRaw`
+      UPDATE "NewOrderPlayer"
+      SET "startAt" = clock_timestamp(), "goldPending" = 0, "goldEarned" = "goldConverted"
+      WHERE "userId" = ${playerId}
+    `,
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
       where: { targetPlayerId: playerId, cleansedAt: null },

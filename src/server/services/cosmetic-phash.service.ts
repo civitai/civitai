@@ -154,11 +154,11 @@ export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: stri
         // would put a merely-slow submission behind the sweep's 24h backoff, when
         // the panel tells the moderator it will be picked up in about 15 minutes.
         // The sweep re-tries it on its next tick and stamps only if it fails there.
-        await logToAxiom({
+        logToAxiom({
           type: 'warning',
           name: 'cosmetic-phash',
           message: `No perceptual hash returned for cosmetic ${id} (${url})`,
-        }).catch(() => null);
+        });
         return;
       }
       await storeCosmeticPerceptualHash({ id, url, hex });
@@ -169,7 +169,7 @@ export function queueCosmeticPerceptualHash({ id, url }: { id: number; url: stri
         name: 'cosmetic-phash',
         message: `Perceptual hash failed for cosmetic ${id} (${url})`,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => null)
+      })
     );
 }
 
@@ -240,7 +240,7 @@ async function readTunableRatio(key: string, fallback: number): Promise<number> 
       name: 'cosmetic-phash',
       message: `Could not read KeyValue '${key}'; using the built-in ${fallback}.`,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
     return fallback;
   }
 
@@ -254,7 +254,7 @@ async function readTunableRatio(key: string, fallback: number): Promise<number> 
       message: `KeyValue '${key}' is not a fraction between 0 and 1 (got ${JSON.stringify(
         value
       )}); using the built-in ${fallback}.`,
-    }).catch(() => null);
+    });
     return fallback;
   }
 

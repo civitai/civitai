@@ -89,6 +89,7 @@ function request(over: Partial<StepModerationRequest> = {}): StepModerationReque
     userId: 42,
     isGreen: false,
     loadIsModerator: async () => false,
+    appBlockId: 'apb_test',
     ...over,
   };
 }
@@ -110,6 +111,7 @@ describe("step moderation — the 'promptAudit' handler", () => {
       userId: 42,
       isGreen: false,
       isModerator: false,
+      appOrigin: { appBlockId: 'apb_test', stepType: 'fixture-step' },
     });
   });
 

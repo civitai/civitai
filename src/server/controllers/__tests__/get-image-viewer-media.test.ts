@@ -5,6 +5,7 @@ import type * as UserService from '~/server/services/user.service';
 import type { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * `image.get` is public and its result is dehydrated into `/images/[id]`, so the route itself has
@@ -55,10 +56,12 @@ function ctxFor({
   user,
   canViewNsfw,
   bot,
+  token,
 }: {
   user?: { id: number; isModerator?: boolean };
   canViewNsfw: boolean;
   bot?: 'googlebot';
+  token?: 'scoped' | 'full';
 }) {
   // `cache: null` is what the SSR helpers pass (getServerProxySSGHelpers).
   return {
@@ -66,6 +69,13 @@ function ctxFor({
     features: { canViewNsfw },
     req: { headers: bot ? { [VERIFIED_BOT_HEADER]: bot } : {} },
     cache: null,
+    // A personal key, full-access or limited to reading models; no key fields is a browser session.
+    ...(token && {
+      apiKeyId: 9,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 9 },
+      tokenScope: token === 'full' ? TokenScope.Full : TokenScope.ModelsRead,
+    }),
   } as unknown as HandlerCtx;
 }
 
@@ -101,6 +111,18 @@ describe('getImageHandler', () => {
       expect(
         await urlFor(ctxFor({ canViewNsfw: false, user: { id: 43 } }), NsfwLevel.R)
       ).toBeNull();
+    } finally {
+      manages.mockImplementation(async () => false);
+    }
+  });
+
+  it('holds a collection manager to the cap on a scoped token but not a full-access one', async () => {
+    manages.mockImplementation(async ({ userId }) => userId === 42);
+    try {
+      const scoped = ctxFor({ canViewNsfw: false, user: { id: 42 }, token: 'scoped' });
+      expect(await urlFor(scoped, NsfwLevel.R)).toBeNull();
+      const full = ctxFor({ canViewNsfw: false, user: { id: 42 }, token: 'full' });
+      expect(await urlFor(full, NsfwLevel.R)).toBe('media-key');
     } finally {
       manages.mockImplementation(async () => false);
     }

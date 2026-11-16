@@ -128,6 +128,7 @@ const DERIVED_BASES: Record<string, string> = {
   sleepingAppsProcedure: 'protectedProcedure',
   storylineMemberProcedure: 'protectedProcedure',
   storylineReadProcedure: 'publicProcedure',
+  storylineTextProcedure: 'guardedProcedure',
   storylineWriteProcedure: 'guardedProcedure',
 };
 
