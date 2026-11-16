@@ -68,7 +68,7 @@ SELECT
   p."availability"::text AS availability,
   (
     CASE
-      WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+      WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' THEN FALSE
       ELSE TRUE
     END
   ) AS "hasMeta",
@@ -127,7 +127,9 @@ func (s *Sources) versionImagesDB(ctx context.Context, ids []int) (Querier, erro
 		return nil
 	})
 	for _, cmd := range cmds {
-		_ = cmd
+		if v, err := cmd.Result(); err == nil && v != "" {
+			return s.Compute.Primary, nil
+		}
 	}
 	return s.Replica, nil
 }
