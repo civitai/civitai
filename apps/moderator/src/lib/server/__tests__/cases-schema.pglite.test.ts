@@ -227,7 +227,7 @@ describe('cases/schema.sql', () => {
     await seedCase(); // source 'import'
     // The source block exactly as written, with 'import' narrowed out: psql runs it as one statement.
     const block = RAW.match(
-      /DO \$\$\nBEGIN\n  ALTER TABLE case_record DROP CONSTRAINT IF EXISTS case_record_source_check;[\s\S]*?END \$\$;/
+      /DO \$\$\nBEGIN\n {2}ALTER TABLE case_record DROP CONSTRAINT IF EXISTS case_record_source_check;[\s\S]*?END \$\$;/
     )![0];
     await expect(db.exec(block.replace("'report', 'import'", "'report'"))).rejects.toThrow();
     const { rows } = await db.query(
