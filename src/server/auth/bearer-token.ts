@@ -35,8 +35,10 @@ export type BearerTokenOptions = {
 export async function getBearerTokenUser(
   userId: number,
   tokenScope: number
-): Promise<Session['user'] | null> {
-  const user = (await sessionClient.getSessionUserById(userId)) as Session['user'] | null;
+): Promise<NonNullable<Session['user']> | null> {
+  const user = (await sessionClient.getSessionUserById(userId)) as NonNullable<
+    Session['user']
+  > | null;
   if (!user) return null;
 
   // Banned users get NO API/bearer access. Deleted users are already excluded by the hub producer (deletedAt
