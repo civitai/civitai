@@ -650,6 +650,10 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
       fn.mock.calls.filter(([key]) => key === getVoteOutcomesKey(1, JUDGE)).map(() => command)
     );
     expect(sysOutcomeCalls, 'sysRedis commands on the outcomes key').toEqual([]);
+    expect(redisMock.redis.expire, 'TTL on the cache cluster').toHaveBeenCalledWith(
+      getVoteOutcomesKey(1, JUDGE),
+      30 * 24 * 60 * 60
+    );
   });
 
   it('skips a pair from outcomes read off the cache cluster', async () => {
@@ -662,6 +666,30 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '20>30');
 
     expect(await serve(), 'pair served after A>B, B>C').toBeNull();
+  });
+
+  it('ignores an outcomes set that lost a vote, so a broken cycle decides nothing', async () => {
+    withEntries(10, 20, 30, 40);
+    // Voted A>B>C>D>A, but D>A's outcome is missing (written before the key moved, or evicted).
+    // The full set is a cycle that leaves A-C and B-D open; the partial chain would decide them.
+    for (const pair of ['10:20', '20:30', '30:40', '10:40'])
+      await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), pair);
+    for (const outcome of ['10>20', '20>30', '30>40'])
+      await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), outcome);
+
+    expect([['10', '30'].join(), ['20', '40'].join()]).toContain(String(await serve()));
+  });
+
+  it('logs a warning when the outcomes cannot be read', async () => {
+    withEntries(10, 20, 30);
+    redisMock.redis.sCard.mockRejectedValue(new Error('redis down'));
+    await serve();
+
+    const warnings = loggingMock.logToAxiom.mock.calls.filter(([entry]) => {
+      const { name, type } = entry as { name?: string; type?: string };
+      return name === 'crucible-vote-outcomes' && type === 'warning';
+    });
+    expect(warnings.length, 'read-failure warnings').toBeGreaterThan(0);
   });
 
   it('still serves pairs when the outcomes cannot be read', async () => {
@@ -752,9 +780,7 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     expect(capLogs, 'closure-cap logs').toHaveLength(1);
     redisMock.redis.sMembers.mockClear();
     await serve();
-    const outcomeReads = redisMock.redis.sMembers.mock.calls.filter(
-      ([key]) => key === outcomesKey
-    );
+    const outcomeReads = redisMock.redis.sMembers.mock.calls.filter(([key]) => key === outcomesKey);
     expect(outcomeReads, 'outcome set reads past the cap').toHaveLength(0);
   });
 
