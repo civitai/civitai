@@ -2105,6 +2105,48 @@ describe("kind:'step' / kind:'workflow' — the generation input gate", () => {
     }
   );
 
+  describe('an external url in an argument that a chat step reads as text', () => {
+    const ARG_REF = { $ref: '$arguments', path: 'prompt' };
+    const chatAndImage = (prompt: string) =>
+      body({
+        steps: [
+          {
+            name: 'chat',
+            $type: 'chatCompletion',
+            input: { model: 'm', messages: [{ role: 'user', content: ARG_REF }] },
+          },
+          { $type: 'imageGen', input: { ...GEN_INPUT, images: [ARG_REF] } },
+        ],
+        arguments: { prompt },
+      });
+
+    beforeEach(() => {
+      flags.refuseExternal = true;
+      flags.refuseExternalApp = false;
+    });
+    afterEach(() => {
+      flags.refuseExternal = false;
+    });
+
+    // A chat step's free-text exemption must not reach `arguments`: any other step can bind the
+    // same value to a media input.
+    it('is refused on estimate AND submit, before any orchestrator call', async () => {
+      const b = chatAndImage('https://example.com/a.png');
+      for (const call of [estimate, submit]) {
+        await expect(call(b)).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: expect.stringContaining('hosted outside Civitai'),
+        });
+      }
+      expect(h.submitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: the same workflow with plain text in the argument reaches the orchestrator', async () => {
+      await estimate(chatAndImage('a cat')).catch(() => undefined);
+      expect(whatifs().length).toBeGreaterThan(0);
+    });
+  });
+
   it.each(ARMS)(
     "POSITIVE CONTROL %s: the caller's own image and an orchestrator blob reach the orchestrator",
     async (_, make) => {
