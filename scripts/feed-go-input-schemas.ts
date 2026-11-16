@@ -14,8 +14,8 @@
  *
  *   pnpm exec tsx scripts/feed-go-input-schemas.ts
  *
- * `scripts/__tests__/feed-go-input-schemas.test.ts` fails when the committed file differs from this
- * output, so a schema change cannot land without regenerating it.
+ * `scripts/__tests__/feed-go-input-schemas.schema-drift.test.ts` fails when the committed file
+ * differs from this output, so a schema change cannot land without regenerating it.
  */
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
