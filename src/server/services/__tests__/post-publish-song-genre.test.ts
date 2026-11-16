@@ -125,6 +125,32 @@ describe('publishing a post with songs', () => {
     expect(await publishedAt()).not.toBeNull();
   });
 
+  it('refuses a genre that is not on the list', async () => {
+    await addImage(1, 'audio', { genre: 'Polka' });
+
+    await expect(publish()).rejects.toThrow('Pick a genre to publish');
+  });
+
+  it('refuses rescheduling a scheduled post while a song has no genre', async () => {
+    await pg.db.query(`UPDATE "Post" SET "publishedAt" = now() + interval '1 day' WHERE id = $1`, [
+      POST,
+    ]);
+    await addImage(2, 'audio', {});
+
+    await expect(
+      updatePost({ id: POST, user: owner, publishedAt: new Date(Date.now() + 2 * 86_400_000) })
+    ).rejects.toThrow('Pick a genre to publish');
+  });
+
+  it('lets a post already public through, whatever its songs', async () => {
+    await pg.db.query(`UPDATE "Post" SET "publishedAt" = now() - interval '1 day' WHERE id = $1`, [
+      POST,
+    ]);
+    await addImage(2, 'audio', {});
+
+    await expect(publish()).resolves.toBeDefined();
+  });
+
   it('leaves a draft save alone', async () => {
     await addImage(2, 'audio', {});
 

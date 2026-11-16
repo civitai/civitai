@@ -2331,6 +2331,22 @@ function writeSongGenre(imageId: number, genre: SongGenre) {
   `;
 }
 
+/**
+ * Whether the genre's tag row is one `setSongGenre` attached: only that row is taken off when the
+ * genre changes, so a tag the owner added themselves outlives a genre of the same name.
+ */
+function writeSongGenreTagAdded(imageId: number, added: boolean) {
+  return added
+    ? dbWrite.$executeRaw`
+        UPDATE "Image" SET "metadata" = COALESCE("metadata", '{}'::jsonb) || '{"genreTagAdded": true}'::jsonb
+        WHERE id = ${imageId}
+      `
+    : dbWrite.$executeRaw`
+        UPDATE "Image" SET "metadata" = COALESCE("metadata", '{}'::jsonb) || '{"genreTagAdded": false}'::jsonb
+        WHERE id = ${imageId}
+      `;
+}
+
 /** The song, when the caller owns it or moderates; refuses anything else. */
 async function readEditableSong(id: number, user: SessionUser) {
   assertCanStoreSongs(user);
@@ -2359,26 +2375,40 @@ async function afterSongTagsChanged(song: { id: number; postId: number | null })
 
 /**
  * Stores the genre on the song and mirrors it as the song's image tag, so it reaches the search
- * documents like any tag. A changed genre takes its previous tag off, when that row is still the
- * plain one this wrote.
+ * documents like any tag. The image tag writers run outside any transaction (their own pool), so
+ * the steps are ordered to never leave the stored genre and its tag apart: the new tag first, then
+ * both metadata keys in one transaction (the new tag taken back off if that fails), and the previous
+ * genre's tag last, only when this function attached it.
  */
 export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { user: SessionUser }) {
   const song = await readEditableSong(id, user);
   const previous = readSongGenre(song.metadata);
+  if (previous === genre) return { genre, tags: await readOwnSongTags(song.id, genre) };
+  const previousTagAdded =
+    (song.metadata as { genreTagAdded?: unknown } | null)?.genreTagAdded === true;
 
-  await writeSongGenre(song.id, genre);
-  if (previous !== genre) {
-    // The list is fixed, so a missing genre tag is created as a plain user tag (after the
-    // blocklist check); a same-named tag that is not a plain label is left off the song.
-    await findOrCreateTagsByName([songGenreTagName(genre)]);
-    const tag = await findAttachableTag(songGenreTagName(genre));
-    if (tag) await attachSongTag(song.id, tag.id);
-    if (previous) {
-      const previousTag = (await readSongTags([song.id]))
-        .get(song.id)
-        ?.find((t) => t.name === songGenreTagName(previous));
-      if (previousTag) await detachSongTag(song.id, previousTag.id);
-    }
+  // The list is fixed, so a missing genre tag is created as a plain user tag (after the blocklist
+  // check); a same-named tag that is not a plain label is left off the song.
+  await findOrCreateTagsByName([songGenreTagName(genre)]);
+  const tag = await findAttachableTag(songGenreTagName(genre));
+  const attach = !!tag && !(await hasSongTagRow(song.id, tag.id));
+  if (tag && attach) await attachSongTag(song.id, tag.id);
+
+  try {
+    await dbWrite.$transaction([
+      writeSongGenre(song.id, genre),
+      writeSongGenreTagAdded(song.id, attach),
+    ]);
+  } catch (error) {
+    if (tag && attach) await detachSongTag(song.id, tag.id);
+    throw error;
+  }
+
+  if (previous && previousTagAdded) {
+    const previousTag = (await readSongTags([song.id]))
+      .get(song.id)
+      ?.find((t) => t.name === songGenreTagName(previous));
+    if (previousTag) await detachSongTag(song.id, previousTag.id);
   }
   await afterSongTagsChanged(song);
 

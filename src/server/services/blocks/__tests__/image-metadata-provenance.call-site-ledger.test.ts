@@ -590,6 +590,10 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'raw-literal-key-text-value',
     sites: 1,
   },
+  'src/server/services/post.service.ts#writeSongGenreTagAdded': {
+    decision: 'raw-server-keys',
+    sites: 2,
+  },
   'src/pages/api/webhooks/youtube-upload.ts#handler': {
     decision: 'raw-literal-key-text-value',
     sites: 1,

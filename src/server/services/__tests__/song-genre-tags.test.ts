@@ -83,7 +83,9 @@ import {
 } from '~/server/schema/post.schema';
 import { addSongTag, removeSongTag, setSongGenre } from '~/server/services/post.service';
 import { readSongTags } from '~/server/services/tagsOnSong.service';
+import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 
+const NOT_AUTHORIZED = 'You are not authorized to perform this action';
 const OWNER = 5;
 const SONG = 7;
 const IMAGE = 8;
@@ -178,6 +180,9 @@ beforeAll(async () => {
   dbMock.dbWrite.$executeRaw.mockImplementation(
     (async (...a: Parameters<typeof run>) => (await run(...a)).affectedRows ?? 0) as never
   );
+  // The array form: these statements already ran on PGlite when they were built.
+  dbMock.dbWrite.$transaction.mockImplementation((async (ops: Promise<unknown>[]) =>
+    Promise.all(ops)) as never);
 });
 afterAll(() => db.close());
 
@@ -239,6 +244,7 @@ describe('setSongGenre', () => {
       title: 'Midnight Arcade',
       coverImageId: 41,
       genre: 'Pop',
+      genreTagAdded: true,
     });
   });
 
@@ -255,7 +261,7 @@ describe('setSongGenre', () => {
   });
 
   it("refuses someone else's song and lets a moderator set it", async () => {
-    await expect(genre(stranger, 'Pop')).rejects.toThrow();
+    await expect(genre(stranger, 'Pop')).rejects.toThrow(NOT_AUTHORIZED);
     expect((await metadataOf()).genre).toBeUndefined();
 
     await genre(moderator, 'Jazz');
@@ -266,6 +272,39 @@ describe('setSongGenre', () => {
     await expect(genre(owner, 'Pop', IMAGE)).rejects.toThrow(/song/i);
     expect(await metadataOf(IMAGE)).toEqual({});
     expect(await tagNames(IMAGE)).toEqual([]);
+  });
+
+  it('refuses while songs are not available to the caller', async () => {
+    mocks.music = false;
+
+    await expect(genre(owner, 'Pop')).rejects.toThrow('Songs are not available yet.');
+    expect((await metadataOf()).genre).toBeUndefined();
+  });
+
+  it('leaves the genre unchanged when attaching its tag fails', async () => {
+    await genre(owner, 'Pop');
+    vi.mocked(insertTagsOnImageNew).mockRejectedValueOnce(new Error('tag store down'));
+
+    await expect(genre(owner, 'Rock')).rejects.toThrow('tag store down');
+    expect((await metadataOf()).genre).toBe('Pop');
+    expect(await tagNames()).toEqual(['pop']);
+  });
+
+  it('keeps a tag the owner added before picking the genre of that name', async () => {
+    await add(owner, 'rock');
+    await genre(owner, 'Rock');
+    await genre(owner, 'Pop');
+
+    expect(await tagNames()).toEqual(['pop', 'rock']);
+  });
+
+  it('stores a genre whose same-named tag is restricted, without attaching that tag', async () => {
+    await insertTag(60, 'metal', { type: 'Moderation' });
+
+    await genre(owner, 'Metal');
+
+    expect((await metadataOf()).genre).toBe('Metal');
+    expect(await tagNames()).toEqual([]);
   });
 });
 
@@ -327,13 +366,14 @@ describe('addSongTag', () => {
   });
 
   it("refuses someone else's song and an image that is not a song", async () => {
-    await expect(add(stranger, 'chill')).rejects.toThrow();
+    await expect(add(stranger, 'chill')).rejects.toThrow(NOT_AUTHORIZED);
     await expect(add(owner, 'chill', IMAGE)).rejects.toThrow(/song/i);
     expect(await tagNames()).toEqual([]);
     expect(await tagNames(IMAGE)).toEqual([]);
   });
 
-  it('never re-enables a tag row a moderator disabled', async () => {
+  // The service refuses before writing; the real writer's ON CONFLICT DO NOTHING is not exercised here.
+  it('refuses a tag whose row a moderator disabled, leaving the row disabled', async () => {
     await insertTag(30, 'lofi beats');
     await attach(30, { disabled: true });
 
@@ -372,8 +412,21 @@ describe('removeSongTag', () => {
     const [{ id }] = (await db.query<{ id: number }>(`SELECT id FROM "Tag" WHERE name = 'chill'`))
       .rows;
 
-    await expect(remove(stranger, id)).rejects.toThrow();
+    await expect(remove(stranger, id)).rejects.toThrow(NOT_AUTHORIZED);
     expect(await tagNames()).toEqual(['chill']);
+  });
+});
+
+describe('removeSongTag on rows an owner cannot manage', () => {
+  it('refuses a rated tag and a disabled row', async () => {
+    await insertTag(70, 'rated thing', { nsfwLevel: 4 });
+    await insertTag(71, 'mod hidden');
+    await attach(70);
+    await attach(71, { disabled: true });
+
+    await expect(remove(owner, 70)).rejects.toThrow("This tag can't be removed.");
+    await expect(remove(owner, 71)).rejects.toThrow("This tag can't be removed.");
+    expect(await tagNames()).toEqual(['mod hidden', 'rated thing']);
   });
 });
 
