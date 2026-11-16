@@ -8,7 +8,7 @@ import { getCollectionDocs } from '@/vector-sync/collections/source';
 type Pg = Parameters<typeof getCollectionDocs>[0];
 
 describe('collection payload, against the real query', () => {
-  test('keeps public, rated, non-empty collections of active owners', async () => {
+  test('keeps public, rated, unblocked collections with an accepted item, of active unheld owners', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     const pg = new PGlite();
     await pg.exec(`
@@ -16,19 +16,28 @@ describe('collection payload, against the real query', () => {
         "deletedAt" timestamp);
       CREATE TABLE "Collection" (id int PRIMARY KEY, name text, description text, type text,
         mode text, read text, availability text, "nsfwLevel" int, "userId" int, "imageId" int);
-      CREATE TABLE "CollectionItem" (id int PRIMARY KEY, "collectionId" int);
-      INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'banned', now(), NULL);
+      CREATE TABLE "CollectionItem" (id int PRIMARY KEY, "collectionId" int, status text);
+      CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, details jsonb, images jsonb);
+      CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+      INSERT INTO "EvidenceHeldUser" VALUES (9);
+      INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'banned', now(), NULL),
+        (9, 'held', NULL, NULL);
       INSERT INTO "Collection" VALUES
         (1, 'Neon  Cities', '<p>Bright <b>towers</b></p>', 'Image', NULL, 'Public', 'Public', 3, 7, 70),
         (2, 'Unlisted', NULL, 'Image', NULL, 'Unlisted', 'Public', 1, 7, NULL),
         (3, 'Empty', NULL, 'Image', NULL, 'Public', 'Public', 1, 7, NULL),
         (4, 'Unrated', NULL, 'Image', NULL, 'Public', 'Public', 0, 7, NULL),
         (5, 'Banned owner', NULL, 'Image', NULL, 'Public', 'Public', 1, 8, NULL),
-        (6, 'Hidden', NULL, 'Image', NULL, 'Public', 'Unsearchable', 1, 7, NULL);
-      INSERT INTO "CollectionItem" VALUES (10, 1), (20, 2), (40, 4), (50, 5), (60, 6);
+        (6, 'Hidden', NULL, 'Image', NULL, 'Public', 'Unsearchable', 1, 7, NULL),
+        (7, 'Blocked', NULL, 'Image', NULL, 'Public', 'Public', 33, 7, NULL),
+        (8, 'Held owner', NULL, 'Image', NULL, 'Public', 'Public', 1, 9, NULL),
+        (9, 'Only pending entries', NULL, 'Image', 'Contest', 'Public', 'Public', 1, 7, NULL);
+      INSERT INTO "CollectionItem" VALUES (10, 1, 'ACCEPTED'), (11, 1, 'REJECTED'),
+        (20, 2, 'ACCEPTED'), (40, 4, 'ACCEPTED'), (50, 5, 'ACCEPTED'), (60, 6, 'ACCEPTED'),
+        (70, 7, 'ACCEPTED'), (80, 8, 'ACCEPTED'), (90, 9, 'REVIEW'), (91, 9, 'REJECTED');
     `);
     try {
-      const docs = await getCollectionDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6]);
+      const docs = await getCollectionDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
       expect([...docs.keys()]).toEqual([1]);
       expect(docs.get(1)).toMatchObject({
         title_normalized: 'neon cities',
@@ -37,8 +46,9 @@ describe('collection payload, against the real query', () => {
         nsfwLevel: [1, 2],
         userId: 7,
         username: 'someone',
-        imageId: 70,
       });
+      // The point surfaces no image: the site picks a servable cover at hydration.
+      expect(docs.get(1)).not.toHaveProperty('imageId');
       expect(docs.get(1)?.search_text).toBe(
         'Name: Neon Cities\nCreator: someone\nType: Image\nDescription: Bright towers'
       );
@@ -49,7 +59,7 @@ describe('collection payload, against the real query', () => {
 });
 
 describe('bounty payload, against the real query', () => {
-  test('keeps visible, rated, non-poi bounties of active owners, with their feed fields', async () => {
+  test('keeps visible, rated, unblocked, non-poi bounties of active unheld owners, with their feed fields', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     const pg = new PGlite();
     await pg.exec(`
@@ -61,7 +71,11 @@ describe('bounty payload, against the real query', () => {
       CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
       CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
       CREATE TABLE "TagsOnBounty" ("bountyId" int, "tagId" int);
-      INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'banned', now(), NULL);
+      CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, details jsonb, images jsonb);
+      CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+      INSERT INTO "EvidenceHeldUser" VALUES (9);
+      INSERT INTO "User" VALUES (7, 'someone', NULL, NULL), (8, 'banned', now(), NULL),
+        (9, 'held', NULL, NULL);
       INSERT INTO "Tag" VALUES (1, 'style'), (2, 'anime');
       INSERT INTO "Bounty" VALUES
         (1, 'Anime  LoRA', '<p>Need a <b>style</b></p>', 'LoraCreation', 'Split', 'Open',
@@ -75,12 +89,16 @@ describe('bounty payload, against the real query', () => {
         (5, 'Banned owner', '', 'Other', 'Individual', 'Open', NULL, 1, '2026-11-01', '2026-11-30',
           false, false, false, 'Public', 8),
         (6, 'No owner', '', 'Other', 'Individual', 'Open', NULL, 1, '2026-11-01', '2026-11-30',
-          false, false, false, 'Public', NULL);
+          false, false, false, 'Public', NULL),
+        (7, 'Blocked', '', 'Other', 'Individual', 'Open', NULL, 33, '2026-11-01', '2026-11-30',
+          false, false, false, 'Public', 7),
+        (8, 'Held owner', '', 'Other', 'Individual', 'Open', NULL, 1, '2026-11-01', '2026-11-30',
+          false, false, false, 'Public', 9);
       INSERT INTO "TagsOnBounty" VALUES (1, 1), (1, 2);
       INSERT INTO "BountyEntry" VALUES (100, 1);
     `);
     try {
-      const docs = await getBountyDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6]);
+      const docs = await getBountyDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8]);
       expect([...docs.keys()]).toEqual([1]);
       expect(docs.get(1)).toMatchObject({
         title_normalized: 'anime lora',

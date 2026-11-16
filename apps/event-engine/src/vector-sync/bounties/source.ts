@@ -1,6 +1,10 @@
 import type { Pool } from 'pg';
+import { heldUserSql } from '../held';
 import { normalizeTitle, nsfwLevels } from '../models/document';
 import { bountyDocument } from './document';
+
+/** NsfwLevel.Blocked: a level that blocks on its own. */
+const BLOCKED = 32;
 
 /**
  * Which bounties get a point: the site's `bountySemanticEligibleWhere`
@@ -8,11 +12,13 @@ import { bountyDocument } from './document';
  * one database and fails when they keep different bounties, so a change to either has to change
  * both. Open, expired and awarded depend on the clock, so the dates and flags they are computed
  * from are carried in the payload and filtered per query. Level 0 is a bounty whose level job has
- * not run yet: it gets a point once it is rated.
+ * not run yet: it gets a point once it is rated. A takedown or an owner-removal sets Private (and the
+ * latter clears userId). No image id is stored: the site checks images at hydration.
  */
 export const BOUNTY_ELIGIBLE_SQL = `b."userId" IS NOT NULL AND b."userId" <> -1
-  AND b.availability NOT IN ('Unsearchable', 'Private') AND NOT b.poi AND b."nsfwLevel" <> 0
-  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL`;
+  AND b.availability NOT IN ('Unsearchable', 'Private') AND NOT b.poi
+  AND b."nsfwLevel" <> 0 AND (b."nsfwLevel" & ${BLOCKED}) = 0
+  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT ${heldUserSql('b."userId"')}`;
 
 export type BountyPayload = {
   /** Exact-title key, see normalizeTitle. */

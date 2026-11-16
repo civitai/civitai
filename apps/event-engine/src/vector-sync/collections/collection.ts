@@ -4,7 +4,7 @@ import type { CollectionPayload } from './source';
 
 /**
  * The fields the site filters on, plus the two the search service needs for exact-title and
- * quoted-phrase search. name, username, imageId and docHash are stored, never filtered.
+ * quoted-phrase search. name, username and docHash are stored, never filtered.
  */
 export const COLLECTION_COLLECTION: CollectionSpec<CollectionPayload> = {
   ...SITE_REPLICATION,

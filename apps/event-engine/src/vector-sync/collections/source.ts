@@ -1,18 +1,24 @@
 import type { Pool } from 'pg';
+import { heldUserSql } from '../held';
 import { normalizeTitle, nsfwLevels } from '../models/document';
 import { collectionDocument } from './document';
+
+/** NsfwLevel.Blocked: a level that blocks on its own. */
+const BLOCKED = 32;
 
 /**
  * Which collections get a point: the site's `collectionSemanticEligibleWhere`
  * (collection-visibility.sql.ts) as SQL. The site's collection-eligibility parity test runs both
  * against one database and fails when they keep different collections, so a change to either has
  * to change both. Level 0 is a collection whose level job has not run yet: it gets a point once it
- * is rated.
+ * is rated. Only accepted items count, so a contest collection of pending or rejected entries is
+ * empty. No image id is stored: the site picks a servable cover at hydration.
  */
 export const COLLECTION_ELIGIBLE_SQL = `c.read = 'Public' AND c.availability NOT IN ('Unsearchable', 'Private')
-  AND c."userId" <> -1 AND c."nsfwLevel" <> 0
-  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
-  AND EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."collectionId" = c.id)`;
+  AND c."userId" <> -1 AND c."nsfwLevel" <> 0 AND (c."nsfwLevel" & ${BLOCKED}) = 0
+  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT ${heldUserSql('c."userId"')}
+  AND EXISTS (SELECT 1 FROM "CollectionItem" ci
+    WHERE ci."collectionId" = c.id AND ci.status = 'ACCEPTED')`;
 
 export type CollectionPayload = {
   /** Exact-title key, see normalizeTitle. */
@@ -28,7 +34,6 @@ export type CollectionPayload = {
   nsfwLevel: number[];
   userId: number;
   username: string | null;
-  imageId: number | null;
   /** sha256 of search_text: a point whose hash differs is re-embedded. */
   docHash: string;
   /** Set on write, see withPayloadHash. */
@@ -44,7 +49,6 @@ type Row = {
   nsfwLevel: number;
   userId: number;
   username: string | null;
-  imageId: number | null;
 };
 
 /** The payloads of the eligible collections among `ids`; an id missing from the map gets no point. */
@@ -55,7 +59,7 @@ export async function getCollectionDocs(
   if (!ids.length) return new Map();
   const { rows } = await pg.query<Row>(
     `SELECT c.id, c.name, left(c.description, 20000) AS description, c.type::text AS type,
-       c.mode::text AS mode, c."nsfwLevel", c."userId", u.username, c."imageId"
+       c.mode::text AS mode, c."nsfwLevel", c."userId", u.username
      FROM "Collection" c
      JOIN "User" u ON u.id = c."userId"
      WHERE c.id = ANY($1::int[]) AND ${COLLECTION_ELIGIBLE_SQL}`,
@@ -73,7 +77,6 @@ export async function getCollectionDocs(
       nsfwLevel: nsfwLevels(row.nsfwLevel),
       userId: row.userId,
       username: row.username,
-      imageId: row.imageId,
       docHash,
     });
   }
