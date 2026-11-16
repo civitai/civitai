@@ -22,6 +22,7 @@ import {
   trainingDataReady,
   type TrainingRunInput,
   type TrainingTextCheck,
+  unavailableRunMessage,
 } from './train-core';
 import type { DatasetRating, StoredRating } from './dataset-rating';
 
@@ -1114,6 +1115,13 @@ describe('Flux.2 (imageResourceTraining takes only a zip URL, the Studio holds b
       ).rejects.toThrow(message);
     expect(submitWorkflow).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
+  });
+
+  // The batch cases above stop at validateRun's engine check; this one reaches the status path, which
+  // must refuse a catalog Flux.2 base even when no status was loaded.
+  it('reports its catalog base unavailable with or without a loaded status', () => {
+    for (const status of [undefined, null, parseServiceStatus(null)])
+      expect(unavailableRunMessage(flux2Run(), status)).toBe(message);
   });
 
   it('still sends an ai-toolkit run its dataset as a blob list', async () => {

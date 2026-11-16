@@ -225,11 +225,10 @@ function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unk
   return out;
 }
 
-/** Build one run's training step. The `training` shape carries the dataset as a blob list. The
- *  `imageResourceTraining` shape is unreachable while Flux.2 is refused (`FLUX2_UNAVAILABLE`): the
- *  orchestrator takes its `trainingData` only as one zip URL, never a blob list. That engine takes no
- *  hyperparameters — only the base model + data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
- *  minimal SDK type doesn't declare — the same cast-past-the-type the whatif and the main app's builders use. */
+/** Build one run's training step. The `imageResourceTraining` branch is unreachable while Flux.2 is
+ *  refused (`FLUX2_UNAVAILABLE`): the orchestrator takes its `trainingData` only as one zip URL, not
+ *  the blob list built here. Ai-toolkit hyperparameters are extra input fields the minimal SDK type
+ *  doesn't declare, hence the cast. */
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
   // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice. An
   // edit dataset places items by path instead, where one starting image may serve several pairs.
