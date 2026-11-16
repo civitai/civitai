@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'crypto';
 
 const h = vi.hoisted(() => ({ loadAuthEnv: vi.fn() }));
 vi.mock('../env', () => ({ loadAuthEnv: h.loadAuthEnv }));
@@ -234,5 +235,62 @@ describe('spokeSessionCookies', () => {
     expect(set).toContain(
       '__Secure-civ-device=D1; Path=/; HttpOnly; SameSite=Lax; Secure; Domain=civitai.com; Max-Age=2592000'
     );
+  });
+});
+
+describe('parallel sign-in tabs', () => {
+  // The hub's half of PKCE: a code redeems only with the verifier whose challenge it was issued for.
+  function pkceHub() {
+    const challengeByCode = new Map<string, string>();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!String(url).endsWith('/api/auth/oauth/session'))
+          return new Response(null, { status: 404 });
+        const { code, code_verifier } = JSON.parse(String(init?.body));
+        const challenge = createHash('sha256').update(String(code_verifier)).digest('base64url');
+        return challengeByCode.get(code) === challenge
+          ? Response.json({ token: TOKEN, deviceId: 'D1' })
+          : new Response(null, { status: 400 });
+      })
+    );
+    return (authorize: Response): string => {
+      const params = new URL(authorize.headers.get('location')!).searchParams;
+      const code = `code-${params.get('state')}`;
+      challengeByCode.set(code, params.get('code_challenge')!);
+      return `/api/auth/callback?code=${code}&state=${params.get('state')}`;
+    };
+  }
+
+  it('tabs that start sign-in before any finishes each land signed in on their own page', async () => {
+    const hub = pkceHub();
+    const b = browser();
+    const tabs = ['/a', '/b', '/c'].map((page) => {
+      const start = spokeAuthorize(
+        b.get(`/api/auth/authorize?returnUrl=${encodeURIComponent(page)}`)
+      );
+      b.apply(start);
+      return { page, callback: hub(start) };
+    });
+
+    const outcomes = [];
+    for (const tab of tabs) {
+      b.jar.delete(HOST);
+      const events: string[] = [];
+      const done = await spokeCallback(b.get(tab.callback), {
+        onEvent: (outcome, extra) => events.push(String(extra?.detail ?? outcome)),
+      });
+      b.apply(done);
+      outcomes.push({
+        location: done.headers.get('location'),
+        signedIn: b.jar.get(HOST) === TOKEN,
+        events,
+      });
+    }
+    expect(outcomes).toEqual(
+      tabs.map((tab) => ({ location: tab.page, signedIn: true, events: ['success'] }))
+    );
+    // Each callback cleared its own stash, so nothing is left to ride later callbacks.
+    expect([...b.jar.keys()].filter((k) => k.startsWith('oauth_bridge_'))).toEqual([]);
   });
 });

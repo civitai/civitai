@@ -13,7 +13,7 @@ vi.mock('~/server/auth/oauth-bridge', () => ({
   clearBridgeCookie: () => 'oauth_bridge=; Path=/; Max-Age=0; SameSite=Lax',
   buildAuthorizeRedirect: () => ({
     location: 'https://auth.test/api/auth/oauth/authorize?x=1',
-    setCookie: ['oauth_bridge=abc; Path=/; SameSite=Lax'],
+    setCookies: ['oauth_bridge=abc; Path=/; SameSite=Lax'],
   }),
 }));
 

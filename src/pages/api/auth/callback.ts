@@ -10,10 +10,9 @@ import {
 import {
   resolveSelfOrigin,
   completeFirstPartyCallback,
-  clearBridgeCookie,
-  OAUTH_BRIDGE_COOKIE,
   HUB_BASE_URL,
 } from '~/server/auth/oauth-bridge';
+import { getHubSession } from '~/server/auth/session-client';
 import { logToAxiom } from '~/server/logging/client';
 
 // Fire-and-forget structured log — see the note in authorize.ts. `['civitai-prod'] | where name == 'auth-flow'`;
@@ -46,10 +45,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  // Single-use clear of the bridge cookie regardless of outcome (setSessionCookie appends to this on success).
-  // Pass the registrable Domain so a Domain-scoped bridge cookie is actually cleared (host-only clear wouldn't).
+  // The registrable Domain the bridge cookies were set with (authorize.ts), so their clears match.
   const cookieDomain = cookieDomainForHost(req.headers.host);
-  res.setHeader('Set-Cookie', clearBridgeCookie(undefined, cookieDomain));
 
   const result = await completeFirstPartyCallback({
     selfOrigin,
@@ -58,7 +55,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       state: typeof req.query.state === 'string' ? req.query.state : null,
       error: typeof req.query.error === 'string' ? req.query.error : null,
     },
-    bridgeCookieValue: req.cookies[OAUTH_BRIDGE_COOKIE],
+    cookies: req.cookies,
+    cookieDomain,
     // The end-user address, forwarded to the hub on the server-to-server exchange
     // (the bridge sends it as a single-value `x-forwarded-for`; see
     // `packages/civitai-auth/src/first-party-bridge.ts`). Null is coerced to undefined
@@ -88,17 +86,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     clientIp: resolveClientIpOrNull(req) ?? undefined,
   });
 
+  // Single-use clear of this flow's stash regardless of outcome (setSessionCookie appends to this on success).
+  res.setHeader('Set-Cookie', result.clearCookies);
+
   if ('error' in result) {
     // `detail` sub-classifies oauth_state (no_code / no_cookie / state_mismatch) + oauth_exchange (declined /
     // network). `cookieCount` separates a real failure (>0 = other cookies reached the callback) from a full
     // cross-site block / bot (0 = no cookies at all) — the .red no_cookie residual was ~2/3 already-logged-in
     // duplicate callbacks + ~1/3 bots, with a negligible genuine-failure slice (ClickUp 868k9gug8).
+    // A failed state check for a browser that already holds a valid session here (a duplicate or
+    // back-button callback) needs no sign-in page: continue as signed in. Nothing is minted on this path.
+    const signedIn =
+      result.error === 'oauth_state' && !!(await getHubSession(req).catch(() => null));
     logAuth(req, 'exchange-error', {
       error: result.error,
       detail: result.detail,
       cookieCount: Object.keys(req.cookies ?? {}).length,
+      ...(signedIn ? { signedIn: true } : {}),
     });
-    res.redirect(302, `/login?error=${encodeURIComponent(result.error)}`);
+    res.redirect(
+      302,
+      signedIn ? result.returnUrl : `/login?error=${encodeURIComponent(result.error)}`
+    );
     return;
   }
   logAuth(req, 'success');

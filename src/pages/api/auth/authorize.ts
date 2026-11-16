@@ -85,12 +85,11 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     cookieOps.push(clearLoginRetryCookie());
   }
 
-  const { location, setCookie } = buildAuthorizeRedirect({
+  const { location, setCookies } = buildAuthorizeRedirect({
     selfOrigin,
     returnUrl: safePath(req.query.returnUrl),
     cookieDomain,
   });
-  const bridge = Array.isArray(setCookie) ? setCookie : [setCookie];
-  res.setHeader('Set-Cookie', [...bridge, ...cookieOps]);
+  res.setHeader('Set-Cookie', [...setCookies, ...cookieOps]);
   res.redirect(302, location);
 }
