@@ -310,9 +310,8 @@ const ownerKey = (key: string) =>
   `${REDIS_KEYS.SYSTEM.UPLOAD_KEY_OWNER}:${key}` as RedisKeyTemplateCache;
 
 /**
- * Until then, a key the cluster has no issue record for is also looked up in sysRedis, where the
- * records were written before they moved to the cluster. Every sysRedis record expires 30 days
- * after it was written, so after this date the fallback finds nothing.
+ * Issue records written to sysRedis before the move expire 30 days after their write, so the
+ * sysRedis fallback finds nothing after this date.
  * 🔴 Delete the fallback (`sysOwnerKey`, its read in `ownersFromRedis`) and
  * `REDIS_SYS_KEYS.SYSTEM.UPLOAD_KEY_OWNER` after this date.
  */
