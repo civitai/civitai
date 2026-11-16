@@ -2,11 +2,7 @@
 // Codemod: strip the dead `.catch(...)` (and a pointless statement-level `await`) from
 // `logToAxiom(...)` calls.
 //
-// WHY. `logToAxiom` never rejects (packages/civitai-axiom/src/client.ts: the Axiom dual-write is
-// contained and not awaited; pinned by packages/civitai-axiom/src/__tests__/logToAxiom.test.ts).
-// A `.catch(() => {})` on it is unreachable, and every copy teaches the next author that a
-// blanket promise-swallow is the house style. The ratchet that keeps it gone is
-// src/server/services/__tests__/no-logtoaxiom-catch.test.ts.
+// WHY: see src/server/services/__tests__/no-logtoaxiom-catch.test.ts, the ratchet that keeps it gone.
 //
 // WHAT IT CHANGES — an AST transform over the TypeScript compiler's syntax tree, never a regex:
 //   1. `X.catch(h)` where X (parentheses skipped) is DIRECTLY a call to `logToAxiom(...)` or

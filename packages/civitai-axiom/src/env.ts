@@ -119,10 +119,8 @@ const schema = z.object({
   PODNAME: z.string().optional(),
   LOG_ERRORS_TO_STDOUT: booleanString.default(false),
   // `true` makes the promise `logToAxiom` returns settle only after the dual-write's outcome,
-  // bounded by the 2 s budget. Unset = it settles once the stderr line is written. This blocks
-  // only a caller that AWAITS the call, and almost no production caller does any more (the
-  // statement-level awaits were removed), so it is no longer an off-switch that restores blocking
-  // writes across the app; that now takes a code change.
+  // bounded by the 2 s budget. Unset = it settles once the stderr line is written. It only
+  // affects a caller that awaits the call.
   AXIOM_AWAIT_UPLOADS: booleanString.default(false),
 });
 

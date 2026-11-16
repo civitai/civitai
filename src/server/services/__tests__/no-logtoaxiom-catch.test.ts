@@ -8,10 +8,9 @@ import { describe, expect, it } from 'vitest';
  *
  * `packages/civitai-axiom/src/client.ts` writes the stderr line synchronously, contains the Axiom
  * dual-write and does not wait for it (pinned by `packages/civitai-axiom/src/__tests__/logToAxiom.test.ts`).
- * A `.catch(() => {})` on the call is unreachable, and an `await` buys nothing but a yield. Both
- * were on ~1,350 call sites; every copy taught the next author that a blanket promise-swallow is
- * the house style, and that idiom then spread to promises where it hides real failures.
- * `scripts/codemod-logtoaxiom-no-catch.mjs` removed them.
+ * A `.catch(() => {})` on the call is unreachable, and an `await` buys nothing but a yield. Each
+ * copy teaches the next author that a blanket promise-swallow is the house style, and that idiom
+ * spreads to promises where it hides real failures.
  *
  * What counts, from the parse (so a comment or a string never does), in every non-test source file
  * under `src/`, `apps/` and `packages/`:

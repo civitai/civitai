@@ -349,8 +349,9 @@ export function createAxiomLogger(
       // Alloy pipeline (sample/drop + line-size cap), not an app-side gate.
       //
       // SERIALIZATION GUARD: this write is UNCONDITIONAL and logToAxiom is called on hot
-      // paths (the central tRPC 500 handler, payment webhooks, uploads) with arbitrary objects. JSON.stringify THROWS on BigInt / circular refs, so an
-      // unguarded stringify could break a caller that previously never hit this line.
+      // paths (the central tRPC 500 handler, payment webhooks, uploads) with arbitrary
+      // objects. JSON.stringify THROWS on BigInt / circular refs, so an unguarded
+      // stringify could break a caller that previously never hit this line.
       // Contain it: a serialization failure must NEVER break the caller — emit a minimal,
       // stringify-safe fallback (itself wrapped) so the event isn't silently lost.
       //
