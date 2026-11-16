@@ -1050,6 +1050,11 @@ const describeFields = (keys: string[]) =>
 const widens = <T>(current: T[], next: T[]) =>
   current.length > 0 && current.every((value) => next.includes(value));
 
+const entryLimitReachedMessage = (entryLimit: number) =>
+  `You have reached the maximum of ${entryLimit} ${
+    entryLimit === 1 ? 'entry' : 'entries'
+  } for this crucible`;
+
 /**
  * Reads the live entries under the crucible's row lock, which submitEntry's write also takes, so
  * a lowered cap can't land below an entry saved meanwhile.
@@ -2604,11 +2609,7 @@ export const submitEntry = async ({
     ]);
 
     if (liveUserEntryCount >= crucible.entryLimit) {
-      return throwBadRequestError(
-        `You have reached the maximum of ${crucible.entryLimit} ${
-          crucible.entryLimit === 1 ? 'entry' : 'entries'
-        } for this crucible`
-      );
+      return throwBadRequestError(entryLimitReachedMessage(crucible.entryLimit));
     }
 
     // Fetch the image to validate requirements
@@ -2851,25 +2852,23 @@ export const submitEntry = async ({
           );
         // Under the row lock the UPDATE took, so this reads the caps a moderator may have lowered
         // since the checks above, and every entry saved before this one.
-        const [full] = await tx.$queryRaw<{ total: boolean; user: boolean }[]>`
+        const [full] = await tx.$queryRaw<{ total: boolean; user: boolean; entryLimit: number }[]>`
           SELECT
-            c."maxTotalEntries" IS NOT NULL AND (
+            CASE WHEN c."maxTotalEntries" IS NULL THEN false ELSE (
               SELECT COUNT(*) FROM "CrucibleEntry" e
               WHERE e."crucibleId" = c.id AND e."imageId" IS NOT NULL
-            ) >= c."maxTotalEntries" AS total,
+            ) >= c."maxTotalEntries" END AS total,
             (
               SELECT COUNT(*) FROM "CrucibleEntry" e
               WHERE e."crucibleId" = c.id AND e."userId" = ${userId} AND e."imageId" IS NOT NULL
-            ) >= c."entryLimit" AS "user"
+            ) >= c."entryLimit" AS "user",
+            c."entryLimit" AS "entryLimit"
           FROM "Crucible" c
           WHERE c.id = ${crucibleId}
         `;
         if (full?.total)
           throw throwBadRequestError('This crucible has reached its maximum number of entries');
-        if (full?.user)
-          throw throwBadRequestError(
-            'You have reached the maximum number of entries for this crucible'
-          );
+        if (full?.user) throw throwBadRequestError(entryLimitReachedMessage(full.entryLimit));
         if (draftPostId) {
           // Scheduled for the end so the entry stays off the entrant's profile, feeds and search while
           // judging is blind. The UPDATE above refused an ended crucible, so endAt is still ahead.

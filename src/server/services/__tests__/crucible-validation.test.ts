@@ -1222,14 +1222,18 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
 
   // The checks before the write read the crucible as it was; a moderator can lower a cap to the
   // live count between them and this entry's write.
-  const capsAtWrite = (full: { total: boolean; user: boolean }) =>
+  const capsAtWrite = (full: { total: boolean; user: boolean; entryLimit?: number }) =>
     dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
       strings.join('?').includes('"maxTotalEntries"') ? [full] : []
     );
 
   it.each([
     ['total cap', { total: true, user: false }, 'reached its maximum number of entries'],
-    ['per-user limit', { total: false, user: true }, 'maximum number of entries for this crucible'],
+    [
+      'per-user limit',
+      { total: false, user: true, entryLimit: 2 },
+      'reached the maximum of 2 entries',
+    ],
   ])(
     'refuses an entry over a %s lowered since its checks, read after the row lock, and refunds it',
     async (_, full, message) => {
