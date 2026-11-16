@@ -52,6 +52,8 @@ export const dbEnvSchema = z.object({
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
+  // Seconds before a pooled node-pg connection is closed and replaced; 0 (default) = never by age.
+  DATABASE_POOL_MAX_LIFETIME_SECONDS: intString(0).default(0),
   DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
   DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
   IS_DATAPACKET: booleanString.default(false),
@@ -85,6 +87,7 @@ function buildEnv() {
     poolMax: parsed.data.DATABASE_POOL_MAX,
     notificationPoolMax: parsed.data.NOTIFICATION_POOL_MAX,
     poolIdleTimeout: parsed.data.DATABASE_POOL_IDLE_TIMEOUT,
+    poolMaxLifetimeSeconds: parsed.data.DATABASE_POOL_MAX_LIFETIME_SECONDS,
     readTimeout: parsed.data.DATABASE_READ_TIMEOUT,
     writeTimeout: parsed.data.DATABASE_WRITE_TIMEOUT,
     isDatapacket: parsed.data.IS_DATAPACKET,

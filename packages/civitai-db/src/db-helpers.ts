@@ -98,6 +98,12 @@ export type CreatePoolOptions = {
   /** Bounds both a new connection's handshake and the wait for a pooled one. Default
    * {@link DEFAULT_POOL_CONNECTION_TIMEOUT_MS}; pg's own default (0) waits forever. */
   connectionTimeoutMillis?: number;
+  /**
+   * Close a connection once it is this many seconds old (pg-pool's `maxLifetimeSeconds`): an idle
+   * one at once, a checked-out one when it is released. 0 (the default) never recycles by age.
+   * Recycling bounds how long one connection can sit on a pooler or server that may go away.
+   */
+  maxLifetimeSeconds?: number;
   /** Startup `statement_timeout` (ms). Omit for PgBouncer-fronted pools, which reject it as a startup
    * param — use `perConnectionStatementTimeout` there instead. */
   statementTimeout?: number;
@@ -144,6 +150,7 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     min = 0,
     idleTimeoutMillis = 30_000,
     connectionTimeoutMillis = DEFAULT_POOL_CONNECTION_TIMEOUT_MS,
+    maxLifetimeSeconds = 0,
     statementTimeout,
     perConnectionStatementTimeout,
     ssl = true,
@@ -165,6 +172,7 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     min,
     max,
     idleTimeoutMillis,
+    maxLifetimeSeconds,
     statement_timeout: statementTimeout,
     application_name: applicationName,
     keepAlive: true,

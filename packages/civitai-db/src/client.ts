@@ -3,12 +3,15 @@
 import type { Prisma } from '@civitai/db-schema';
 import { PrismaClient } from '@civitai/db-schema';
 import { loadDbEnv, type DbConfig } from './env';
+import { connectionRetryExtension, type ConnectionRetryEvent } from './connection-retry';
 
 export type PrismaClients = { dbRead: PrismaClient; dbWrite: PrismaClient };
 
 export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   /** Structured slow-query telemetry (the old logToAxiom call). Injected by the app. */
   onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
+  /** Called after a read is retried because its pooled connection had been closed. Must not throw. */
+  onConnectionRetry?: (e: ConnectionRetryEvent & { target: 'read' | 'write' }) => void;
 };
 
 /**
@@ -18,7 +21,7 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
  * that calls this. See the `~/server/db/client` shim.
  */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
-  const { onSlowQuery, ...envOverrides } = options;
+  const { onSlowQuery, onConnectionRetry, ...envOverrides } = options;
   const config = { ...loadDbEnv(), ...envOverrides };
 
   const singleClient = config.replicaUrl === config.databaseUrl;
@@ -88,5 +91,17 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
     // @ts-ignore - necessary to get the query event
     dbRead.$on('query', logFor('read'));
 
-  return { dbRead, dbWrite };
+  // After the `$on` calls: an extended client has no `$on`. Every client gets the read retry (see
+  // ./connection-retry); writes on the write client pass through it untouched. The extended client's
+  // type is not the base client's, but every call site uses the same API.
+  const withRetry = (client: PrismaClient, target: 'read' | 'write') =>
+    client.$extends(
+      connectionRetryExtension({
+        onRetry: onConnectionRetry && ((e) => onConnectionRetry({ ...e, target })),
+      })
+    ) as unknown as PrismaClient;
+  const retryingWrite = withRetry(dbWrite, 'write');
+  const retryingRead = singleClient ? retryingWrite : withRetry(dbRead, 'read');
+
+  return { dbRead: retryingRead, dbWrite: retryingWrite };
 }

@@ -107,6 +107,7 @@ export function getClient(options: GetClientOptions = {}) {
         ? config.readTimeout
         : config.writeTimeout,
     perConnectionStatementTimeout,
+    maxLifetimeSeconds: config.poolMaxLifetimeSeconds,
     log,
     acquireHistogram: pgPoolAcquireHistogram,
   });

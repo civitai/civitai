@@ -2,6 +2,8 @@
 // the app injects the slow-query sink (→ Axiom), owns the process singleton + Next build
 // guard, and re-exports dbRead/dbWrite for existing call sites.
 import { createPrismaClients, type PrismaClients } from '@civitai/db/client';
+import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai/telemetry/client';
+import client from 'prom-client';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { withServableProfilePictures } from '~/server/db/servable-profile-picture.extension';
@@ -13,10 +15,35 @@ declare global {
   var __civitaiPrismaClients: PrismaClients | undefined;
 }
 
+// In the cross-graph registry: the clients are process-global, so whichever module graph builds them
+// owns the closure that counts.
+const connectionRetryCounter = registerInstrumentationMetric(
+  'prisma_connection_closed_retry_total',
+  () =>
+    new client.Counter({
+      name: 'prisma_connection_closed_retry_total',
+      help: 'Prisma reads retried once because their pooled connection had been closed, by result',
+      labelNames: ['target', 'operation', 'result'] as const,
+      registers: [instrumentationRegistry],
+    })
+);
+
 const make = (): PrismaClients => {
   const base = createPrismaClients({
     onSlowQuery: ({ query, duration, target }) =>
       logToAxiom({ query, duration, target }, 'db-logs'),
+    onConnectionRetry: ({ target, model, operation, result, error }) => {
+      connectionRetryCounter.inc({ target, operation, result });
+      logToAxiom({
+        type: 'warning',
+        name: 'prisma-connection-retry',
+        target,
+        model,
+        operation,
+        result,
+        message: (error as Error)?.message,
+      }).catch(() => undefined);
+    },
   });
   return withServableProfilePictures(base, (error) => {
     logToAxiom({
