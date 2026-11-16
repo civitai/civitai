@@ -94,6 +94,7 @@ import {
   scanCounterKey,
   scanSharedData,
   scheduleSharedDataShadow,
+  sharedRefusalField,
   type SharedDataSurface,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
@@ -806,8 +807,9 @@ const nothingAfterCommit: AfterCommit = () => undefined;
  *   is logged there and reaches nobody. The caller runs it only once the store has committed, so a
  *   write that fails records nothing.
  * - `enforce`: scanned inline, before the write. A scan that cannot run is refused as retryable
- *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category,
- *   never the matched text, and raises the shared block alert.
+ *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category and
+ *   the field it sits in (`sharedRefusalField`: a JSON path such as `data.actions[2].text`, or
+ *   `key`), never the matched term or text, and raises the shared block alert.
  */
 async function moderate(
   access: StorageAccess,
@@ -877,6 +879,7 @@ async function moderate(
       );
       throw new DocStoreError('content_rejected', 'content was rejected by moderation', {
         category: COARSE_CATEGORY[hit.category] ?? 'blocked',
+        ...sharedRefusalField(scan, hit, field),
       });
     }
   }

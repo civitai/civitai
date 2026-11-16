@@ -1405,7 +1405,7 @@
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
     <div
       {...drop}
-      class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
+      class="relative grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
     >
       {#if dragging}
         <!-- pointer-events-none: the overlay must not intercept the drag, or its appearance would

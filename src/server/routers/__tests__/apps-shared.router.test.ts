@@ -767,6 +767,54 @@ describe('H1/H2 vote counter integrity (SQL shape + FK)', () => {
 });
 
 describe('C3 content safety (blocking on append)', () => {
+  describe('🔴 REGRESSION: a title/body refusal names the field, never the term or the text', () => {
+    const appendValue = (value: { title: string; body?: string }) => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      return caller()
+        .append({ blockToken: 't', value })
+        .catch((e: unknown) => e as TRPCError);
+    };
+
+    it.each([
+      ['the title', { title: '13 year old girl', body: 'a calm lake' }, 'title'],
+      ['the body', { title: 'A calm lake', body: 'then a 13 year old girl' }, 'body'],
+    ])('a minor term in %s → (field: %s)', async (_where, value, field) => {
+      const err = await appendValue(value);
+      expect(err).toBeInstanceOf(TRPCError);
+      expect(err).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: `Content flagged for review (field: ${field})`,
+      });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    });
+
+    it('a distinctive pattern term in the body → (field: body), and neither the term nor the text is told', async () => {
+      const TERM = 'zqvexterm9917';
+      const BODY = `the wizard whispers ${TERM} at dawn`;
+      mockThrowOnBlockedUserContent.mockImplementationOnce(
+        async (content: unknown, options?: unknown) => {
+          if ((content as Array<string | undefined>).some((v) => v?.includes(TERM))) {
+            (options as { onBlocked: (k: string) => never }).onBlocked('pattern');
+          }
+        }
+      );
+      mockFindBlocked.mockImplementation(async (values: unknown) =>
+        (values as Array<string | undefined>).flatMap((v, index) =>
+          v?.includes(TERM)
+            ? [{ kind: 'pattern', index, matched: TERM, patternId: 0, listId: null }]
+            : []
+        )
+      );
+      const err = await appendValue({ title: 'A calm lake', body: BODY });
+      expect(err).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content flagged for review (field: body)',
+      });
+      expect(JSON.stringify({ message: (err as TRPCError).message })).not.toContain(TERM);
+      expect((err as TRPCError).message).not.toContain(BODY);
+    });
+  });
+
   it('rejects minor content + files a Report', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     await expect(
@@ -2501,16 +2549,20 @@ describe('shared `data` local moderation', () => {
     beforeEach(() => setFlags({ enforce: true }));
 
     it.each([
-      ['a string value `data.x`', { x: MINOR }],
-      ['an OBJECT KEY', { tags: { [MINOR]: true } }],
-      ['a leaf 20 arrays deep', { nest: deepArray(20, MINOR) }],
-      ['a format-character-split term', { x: 'lo​li' }],
+      ['a string value `data.x`', { x: MINOR }, 'field: data.x'],
+      ['an OBJECT KEY', { tags: { [MINOR]: true } }, 'field: an object key in data.tags'],
+      [
+        'a leaf 20 arrays deep',
+        { nest: deepArray(20, MINOR) },
+        `field: data.nest${'[0]'.repeat(20)}`,
+      ],
+      ['a format-character-split term', { x: 'lo​li' }, 'field: data.x'],
     ])(
-      '🔴 REGRESSION: a flagged term in %s → BAD_REQUEST, nothing written',
-      async (_name, data) => {
+      '🔴 REGRESSION: a flagged term in %s → BAD_REQUEST naming the field, nothing written',
+      async (_name, data, named) => {
         await expect(appendData(data)).rejects.toMatchObject({
           code: 'BAD_REQUEST',
-          message: 'Content flagged for review',
+          message: `Content flagged for review (${named})`,
         });
         expect(mockPool.connect).not.toHaveBeenCalled();
         expect(insertedValue()).toBeUndefined();
@@ -2535,7 +2587,7 @@ describe('shared `data` local moderation', () => {
     it('🔴 REGRESSION: an over-cap blob (33 deep) is rejected, without a Report row', async () => {
       await expect(appendData(deepArray(33, 'x'))).rejects.toMatchObject({
         code: 'BAD_REQUEST',
-        message: 'Data is too large or too deeply nested to review',
+        message: 'Data is too large or too deeply nested to review (field: data)',
       });
       expect(mockPool.connect).not.toHaveBeenCalled();
       expect(reportReasons()).toEqual([]);
@@ -2546,7 +2598,7 @@ describe('shared `data` local moderation', () => {
       mockFindBlocked.mockResolvedValue([{ kind: 'link', index: 1, matched: ['bad.example'] }]);
       await expect(appendData({ url: 'see bad.example' })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
-        message: 'Content contains a blocked link',
+        message: 'Content contains a blocked link (field: data.url)',
       });
       expect(reportReasons()).toEqual([]);
     });
@@ -2581,7 +2633,7 @@ describe('shared `data` local moderation', () => {
       const site = new URL('https://example.com/gallery/loli');
       await expect(appendData({ site })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
-        message: 'Content flagged for review',
+        message: 'Content flagged for review (field: data.site)',
       });
       expect(mockPool.connect).not.toHaveBeenCalled();
       expect(mockFindBlocked.mock.calls[0][0]).toContain(site.href);
@@ -2638,7 +2690,10 @@ describe('shared `data` local moderation', () => {
       });
       await expect(
         updateSharedRow('tok', 'ROW-KEY-1', { title: 'clean', data: { [MINOR]: 1 } })
-      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Content flagged for review' });
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content flagged for review (field: an object key in data)',
+      });
       expect(mockPool.connect).not.toHaveBeenCalled();
       await vi.waitFor(() => expect(chRows(HITS_TABLE)).toBeDefined());
       expect(chRows(HITS_TABLE)).toContainEqual(
@@ -2687,10 +2742,51 @@ describe('shared `data` local moderation', () => {
       ]);
       await expect(appendData({ note: 'a scam phrase here' })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
-        message: 'Content flagged for review',
+        message: 'Content flagged for review (field: data.note)',
       });
       expect(mockPool.connect).not.toHaveBeenCalled();
       expect(reportReasons()).toEqual([]);
+    });
+
+    describe('🔴 REGRESSION: the refusal names the field, never the matched term or text', () => {
+      // A distinctive term, flagged by the (mocked) pattern list wherever it appears, so the
+      // assertions below can prove it is absent from what the caller is told.
+      const TERM = 'zqvexterm7731';
+      const FULL_TEXT = `the wizard whispers ${TERM} at dawn`;
+      beforeEach(() => {
+        mockGetFliptBoolean.mockResolvedValue(true);
+        mockFindBlocked.mockImplementation(async (values: unknown) =>
+          (values as string[]).flatMap((text, index) =>
+            text.includes(TERM)
+              ? [{ kind: 'pattern', index, matched: TERM, patternId: 0, listId: null }]
+              : []
+          )
+        );
+      });
+
+      it.each([
+        [
+          'a nested string',
+          { actions: [{ text: 'hi' }, { text: 'still fine' }, { text: FULL_TEXT }] },
+          'field: data.actions[2].text',
+        ],
+        ['an array element', { tags: ['calm', 'lake', FULL_TEXT] }, 'field: data.tags[2]'],
+        ['an object key', { meta: { [FULL_TEXT]: 1 } }, 'field: an object key in data.meta'],
+        [
+          // The minor hit outranks the pattern hit on the key above it, so the write is refused
+          // for the value, and the key on its path, itself refused text, is replaced.
+          'a value under a key that holds the term',
+          { outer: { [`${TERM} group`]: [MINOR] } },
+          'field: data.outer[*][0]',
+        ],
+      ])('%s', async (_name, data, named) => {
+        const error = (await appendData(data).catch((e: unknown) => e)) as TRPCError;
+        expect(error).toBeInstanceOf(TRPCError);
+        expect(error.message).toBe(`Content flagged for review (${named})`);
+        expect(error.message).not.toContain(TERM);
+        expect(error.message).not.toContain(FULL_TEXT);
+        expect(mockPool.connect).not.toHaveBeenCalled();
+      });
     });
 
     it('reads user-content-pattern-enforce only when a pattern hit exists', async () => {
@@ -2704,7 +2800,7 @@ describe('shared `data` local moderation', () => {
     ])('🔴 REGRESSION: a blob over the %s cap is rejected', async (_cap, data) => {
       await expect(appendData(data)).rejects.toMatchObject({
         code: 'BAD_REQUEST',
-        message: 'Data is too large or too deeply nested to review',
+        message: 'Data is too large or too deeply nested to review (field: data)',
       });
       expect(mockPool.connect).not.toHaveBeenCalled();
     });
@@ -2735,7 +2831,7 @@ describe('shared `data` local moderation', () => {
     it('🔴 a minor hit is still REPORTED when the same write also overflows (legal signal wins attribution)', async () => {
       await expect(appendData({ x: MINOR, big: 'a '.repeat(10_001) })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
-        message: 'Content flagged for review',
+        message: 'Content flagged for review (field: data.x)',
       });
       expect(reportReasons()).toEqual(['auto:data:minor']);
       expect(eventNames()).toContain('app-blocks-shared-storage-legal-block');
@@ -2744,7 +2840,7 @@ describe('shared `data` local moderation', () => {
     it('a single leaf too long to audit is rejected as unreviewable — WITHOUT a Report row', async () => {
       await expect(appendData({ big: 'a '.repeat(10_001) })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
-        message: 'Data is too large or too deeply nested to review',
+        message: 'Data is too large or too deeply nested to review (field: data.big)',
       });
       expect(reportReasons()).toEqual([]);
       expect(eventNames()).not.toContain('app-blocks-shared-storage-content-block');

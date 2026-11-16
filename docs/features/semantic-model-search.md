@@ -100,6 +100,21 @@ after the writes land.
   or a backfill re-run embeds it.
 - `HEALTH_CHECK_PORT` reports `healthy`, `pending` and whether it is embedding.
 
+## Searching the models feed
+
+Behind `modelFeedSearch` (Flipt `search-v3-models`, dark), the header bar filters `/models` in
+place on Enter or blur, as it does `/images`, and `/search/models` redirects to the feed with its
+query (`modelFeedUrlFromLegacySearch`). Off, the feed's `?query=` stays the Meilisearch search.
+
+- `semanticModelSearch.search` (`semantic-model-search.service.ts`) runs the shared query audit,
+  level clamp and candidate cache, then hydrates each batch through the models feed's own query
+  (`getModelsWithImagesAndModelVersions` with `modelFeedQueryOptions` and `onlyModelIds`), so every
+  feed filter, the private-model rule and moderation apply as on the feed. It never accepts `ids`.
+- The index filters on level, type, checkpoint type, base models, the feed's user and the
+  published range. Period is not applied, as on today's searched feed. Sort is Best match.
+- Hidden models and users are dropped on the server; hidden tags by the feed's client-side
+  preferences. A failed search falls back to the keyword feed with a Retry banner.
+
 ## Caveats
 
 - `title_normalized` is computed with the Unicode version of the Node runtime and the query key

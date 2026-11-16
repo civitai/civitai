@@ -178,8 +178,9 @@ const legacyImageSorts: [RegExp, ImageSort][] = [
   [/collectedCount/i, ImageSort.MostCollected],
 ];
 
-const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value);
-const all = (value: string | string[] | undefined) =>
+export const first = (value: string | string[] | undefined) =>
+  Array.isArray(value) ? value[0] : value;
+export const all = (value: string | string[] | undefined) =>
   value === undefined ? [] : Array.isArray(value) ? value : [value];
 
 /**
