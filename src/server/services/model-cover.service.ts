@@ -320,6 +320,7 @@ export async function saveModelCovers({
   systemReason?: string;
   tracker?: Tracker;
 }) {
+  // primary: the before-values the optimistic cover write is conditioned on.
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {

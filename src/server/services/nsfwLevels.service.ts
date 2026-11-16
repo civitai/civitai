@@ -660,14 +660,14 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
     try {
       await dropInvalidCommunityCovers(mature);
     } catch (error) {
-      void logToAxiom(
+      logToAxiom(
         {
           type: 'error',
           name: 'version-showcase-mature-cover-check-failed',
           message: (error as Error).message,
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     }
   }
 }

@@ -420,10 +420,10 @@ async function findShowcaseCommunityCovers(
 }
 
 function logShowcaseError(name: string, error: unknown, fields?: Record<string, unknown>) {
-  void logToAxiom(
+  logToAxiom(
     { type: 'error', name, ...fields, message: (error as Error)?.message ?? String(error) },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /** Refreshes the showcase cache for these versions, reading from the primary. */
@@ -568,6 +568,7 @@ export type VersionShowcaseItemInput = {
 };
 
 async function getVersionForWrite(modelVersionId: number) {
+  // primary: the ownership and status check guarding a showcase write.
   const version = await dbWrite.modelVersion.findUnique({
     where: { id: modelVersionId },
     select: {
@@ -659,10 +660,12 @@ export async function setVersionShowcase({
   const [ownerIds, tombstones, existing] = await Promise.all([
     getOwnerImageIds(modelVersionId, ids),
     // An author's removal holds on both sites, whichever site the image was featured on.
+    // primary: the tombstone check guarding this write.
     dbWrite.modelVersionShowcaseItem.findMany({
       where: { modelVersionId, removed: true },
       select: { imageId: true },
     }),
+    // primary: who is newly featured, to notify only them after the write.
     dbWrite.modelVersionShowcaseItem.findMany({
       where: { modelVersionId, removed: false, source: 'Community' },
       select: { imageId: true },
@@ -749,6 +752,7 @@ export async function setVersionShowcaseCover({
   userId: number;
   isModerator: boolean;
 }) {
+  // primary: the ownership check guarding a cover write.
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {
@@ -767,6 +771,7 @@ export async function setVersionShowcaseCover({
   if (imageId && latest) {
     const isOwner = (await getOwnerImageIds(latest, [imageId])).has(imageId);
     if (!isOwner) {
+      // primary: the featured-row check guarding a cover write.
       const row = await dbWrite.modelVersionShowcaseItem.findUnique({
         where: { modelVersionId_site_imageId: { modelVersionId: latest, site, imageId } },
         select: { source: true, removed: true },
@@ -801,6 +806,7 @@ export async function removeMyImageFromVersionShowcase({
   imageId: number;
   userId: number;
 }) {
+  // primary: the authorship check guarding a removal.
   const image = await dbWrite.image.findUnique({
     where: { id: imageId },
     select: { userId: true },
@@ -853,7 +859,7 @@ async function notifyFeaturedAuthors({
   if (!images.length) return;
   const [{ createNotification }, owner] = await Promise.all([
     import('~/server/services/notification.service'),
-    dbWrite.user.findUnique({ where: { id: version.model.userId }, select: { username: true } }),
+    dbRead.user.findUnique({ where: { id: version.model.userId }, select: { username: true } }),
   ]);
   for (const image of images) {
     if (image.userId === actorUserId || image.userId === version.model.userId) continue;
@@ -887,6 +893,7 @@ export async function getVersionShowcaseEditor({
   assertCanCurate(version.model, userId, isModerator);
   const [{ imagesForModelVersionsCache }, model, tombstones] = await Promise.all([
     import('~/server/services/image.service'),
+    // primary: the editor reloads right after a save and must show it.
     dbWrite.model.findUnique({
       where: { id: version.model.id },
       select: {
@@ -900,6 +907,7 @@ export async function getVersionShowcaseEditor({
         },
       },
     }),
+    // primary: the editor reloads right after a save and must show it.
     dbWrite.modelVersionShowcaseItem.findMany({
       where: { modelVersionId, removed: true },
       select: { imageId: true, site: true },
