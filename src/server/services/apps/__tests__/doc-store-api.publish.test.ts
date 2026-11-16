@@ -876,14 +876,11 @@ describe('prune', () => {
     ]);
   });
 
-  it('prunePrefix narrows the prune to keys under it', async () => {
+  it('a pruned copy takes one seq and leaves a tombstone, like any delete', async () => {
     const { A, t1 } = await twoCharacters();
     await expectOk(call({ token: t1, method: 'DELETE', path: '/drafts/A:2' }));
-    await expectOk(call({ token: t1, method: 'DELETE', path: '/drafts/B:2' }));
     const seq = await lastSeq(A);
-    const r = await expectOk(
-      publish(t1, { from: 'drafts', keys: ['A:1'], prune: true, prunePrefix: 'A:' })
-    );
+    const r = await expectOk(publish(t1, { from: 'drafts', keys: ['A:1'], prune: true }));
     expect(r.body).toEqual({
       ...EMPTY,
       unchanged: ['A:1'],
@@ -920,10 +917,29 @@ describe('prune', () => {
     ]);
   });
 
-  it('prunePrefix without prune is refused', async () => {
+  it("is scoped by `from`: a prune from one private collection deletes the caller's copies published from another", async () => {
     const A = freshApp();
     const t = await mint(A, V1);
-    const r = await publish(t, { from: 'drafts', keys: ['a'], prunePrefix: 'A:' });
+    await expectOk(putPrivate(t, 'd1', { src: 'drafts' }));
+    await expectOk(putPrivate(t, 'n1', { src: 'notes' }, 'notes'));
+    await expectOk(publish(t, { from: 'drafts', keys: ['d1'] }));
+    await expectOk(publish(t, { from: 'notes', keys: ['n1'] }));
+    expect((await sharedRows(A)).map((x) => x.key)).toEqual(['d1', 'n1']);
+    // `n1` still has its private document — in `notes`, not in `drafts`.
+    const r = await expectOk(publish(t, { from: 'drafts', keys: ['d1'], prune: true }));
+    expect(r.body).toEqual({
+      ...EMPTY,
+      unchanged: ['d1'],
+      pruned: ['n1'],
+      pruneIncomplete: false,
+    });
+    expect((await sharedRows(A)).map((x) => x.key)).toEqual(['d1']);
+  });
+
+  it('takes no prunePrefix (an unknown body field)', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const r = await publish(t, { from: 'drafts', keys: ['a'], prune: true, prunePrefix: 'A:' });
     expect(r.status).toBe(400);
     expect(r.body).toMatchObject({ code: 'invalid_request' });
   });

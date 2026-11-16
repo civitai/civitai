@@ -18,7 +18,7 @@
 //                                    PATCH  one update operator: $inc, $mark or $unmark
 //   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
 //   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
-//   ['_publish', to]                 POST   publish   { from, keys, prune?, prunePrefix? }
+//   ['_publish', to]                 POST   publish   { from, keys, prune? }
 //   ['_unpublish', to]               POST   unpublish { keys }
 // `_publish` / `_unpublish` exist only while the per-app Flipt flag `app-blocks-storage-publish`
 // is on; off, they answer exactly as an unknown route (see PUBLISH below).
@@ -1157,7 +1157,7 @@ async function run(
 // PUBLISH — server-side publish and unpublish
 // ---------------------------------------------------------------------------
 //
-// `POST /_publish/:to { from, keys, prune?, prunePrefix? }` copies the CALLING viewer's own
+// `POST /_publish/:to { from, keys, prune? }` copies the CALLING viewer's own
 // private documents at `keys` from the private collection `from` into the shared collection `to`,
 // authored by that viewer — the data is read by the server from the viewer's own private key
 // space, never taken from the request. One call, one transaction, one publish-budget token.
@@ -1178,10 +1178,11 @@ async function run(
 // a moderator hid are skipped and reported (`skipped[].reason`: `missing` / `not_author` /
 // `hidden`), never refused and never touched.
 //
-// `prune`: the viewer's own visible copies in `to` whose key no longer has a private document in
-// `from` (only under `prunePrefix` when given) are deleted, at most 500 per call
-// (`pruneIncomplete: true` when more remain). Copies of other groups whose private documents
-// still exist are never pruned.
+// `prune`: the viewer's own visible copies in `to` whose key has no private document in `from` are
+// deleted, at most 500 per call (`pruneIncomplete: true` when more remain). Copies of other groups
+// whose private documents still exist in `from` are never pruned. ⚠️ Prune is scoped by `from`,
+// not by where a copy came from: an app that feeds one shared collection from SEVERAL private
+// collections deletes the other sources' copies when it prunes from one of them.
 //
 // FLAG: `app-blocks-storage-publish`, evaluated per app (entityId = the app block id, no context).
 // Off — the default, and when Flipt is unreachable — both paths answer as an unknown route.
@@ -1204,7 +1205,6 @@ const publishBody = z.strictObject({
   from: z.string(),
   keys: z.array(z.string()),
   prune: z.boolean().optional(),
-  prunePrefix: z.string().optional(),
 });
 const unpublishBody = z.strictObject({ keys: z.array(z.string()) });
 
@@ -1224,14 +1224,6 @@ async function runPublish(
   const uid = requireViewer(access);
   const input = parseBody(publishBody, body);
   const keys = assertPublishKeys(input.keys);
-  if (input.prunePrefix !== undefined) {
-    if (input.prune !== true) {
-      throw invalid('prunePrefix needs prune: true', { reason: 'prune_prefix_without_prune' });
-    }
-    if (!DOC_STORE_BOUNDS.key.test(input.prunePrefix)) {
-      throw invalid('prunePrefix must be 1–128 characters of [A-Za-z0-9._:-]');
-    }
-  }
   const from = collectionOf(access, input.from);
   assertPublishPair(from, to);
   assertPublishScope(access, to);
@@ -1273,9 +1265,7 @@ async function runPublish(
     const result = await store.publishCopies(ctx, from, await withSchemaMajor(access, to), {
       keys,
       checked: new Map(toWrite.map((d) => [d.key, d.hash])),
-      prune: input.prune
-        ? { prefix: input.prunePrefix, limit: DOC_STORE_PUBLISH_BOUNDS.pruneLimit }
-        : undefined,
+      prune: input.prune ? { limit: DOC_STORE_PUBLISH_BOUNDS.pruneLimit } : undefined,
     });
     landed = true;
     const changed = result.created.length + result.updated.length + result.pruned.length;

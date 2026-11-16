@@ -1095,16 +1095,16 @@ const SQL_PUBLISH_LOCK_TARGETS = `SELECT d.key, d.author_uid, d.author_kind, d.s
   ORDER BY d.key
   FOR UPDATE`;
 // The caller's OWN visible copies in the target collection whose key no longer has a private
-// document in the source collection, optionally only under a key prefix ('' = every key).
-// $1 app, $2 ns, $3 target coll, $4 source coll, $5 viewer, $6 prefix, $7 limit
+// document in the SOURCE collection. Scoped by the source, not by how the copy got there: a copy
+// published from another private collection has no document in this one, so it is a candidate.
+// $1 app, $2 ns, $3 target coll, $4 source coll, $5 viewer, $6 limit
 const SQL_PUBLISH_PRUNE_CANDIDATES = `SELECT d.key FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.author_kind = 'user' AND d.author_uid = $5::int AND ${VISIBLE}
-    AND starts_with(d.key, $6::text)
     AND NOT EXISTS (SELECT 1 FROM appdata.doc p
       WHERE p.app_id = $1 AND p.ns = $2 AND p.coll = $4 AND p.scope_uid = $5::int AND p.key = d.key)
   ORDER BY d.key
-  LIMIT $7::int`;
+  LIMIT $6::int`;
 // `SQL_CHARGE_APP` for a transaction that changes several documents at once: `last_seq` moves
 // by $7, one seq per changed document, and the caller numbers them `last_seq - $7 + 1 …
 // last_seq`. Same ceilings, same row lock.
@@ -2764,19 +2764,6 @@ function buildDocStore(deps: DocStoreDeps) {
   // Server-side publish
   // -------------------------------------------------------------------------
 
-  /**
-   * HOOK POINT — content levels (civitai/civitai#9093, open when this was written). A copy a
-   * publish just wrote must wait to be rated again exactly as a shared write does: when #9093
-   * lands, this calls its `markRatingPending(c, ctx, coll, key)`, and the copy reads as `pending`
-   * to everyone but its author. Until then a shared document carries no rating state, so there is
-   * nothing to mark. Called once per created or updated copy, never for an unchanged one.
-   */
-  async function markPublishedCopyPending(
-    ...copy: [c: DocStoreClient, ctx: DocStoreContext, coll: DocCollection, key: string]
-  ): Promise<void> {
-    void copy;
-  }
-
   type PublishTargetRow = Record<string, unknown> & { key: string; hash: string };
   type PublishSourceRow = { key: string; data: Record<string, unknown>; hash: string };
 
@@ -2846,7 +2833,8 @@ function buildDocStore(deps: DocStoreDeps) {
    *   `previewPublish`); a source that changed since is refused whole as `version_conflict` with
    *   `reason: 'source_changed'`, so nothing unchecked is ever written.
    * - `prune`: the caller's own visible copies in `to` whose key has no private document in
-   *   `from` (under `prefix` when given) are deleted, at most `limit` per call.
+   *   `from` are deleted, at most `limit` per call — including copies the caller published from
+   *   ANOTHER private collection, which have no document in `from`.
    * - The usage of every change is charged at once (`charge` with one seq per changed document),
    *   so the per-user and app ceilings refuse the whole publish or none of it.
    *
@@ -2861,7 +2849,7 @@ function buildDocStore(deps: DocStoreDeps) {
     req: {
       keys: string[];
       checked: ReadonlyMap<string, string>;
-      prune?: { prefix?: string; limit: number };
+      prune?: { limit: number };
     }
   ): Promise<PublishResult> {
     assertPublishPair(from, to);
@@ -2872,7 +2860,6 @@ function buildDocStore(deps: DocStoreDeps) {
       if (!Number.isSafeInteger(prune.limit) || prune.limit < 1) {
         throw invalid('prune limit must be a positive integer');
       }
-      if (prune.prefix !== undefined && prune.prefix !== '') assertKey(prune.prefix);
     }
     await resolveCeilings(ctx, [viewer]);
 
@@ -2894,7 +2881,6 @@ function buildDocStore(deps: DocStoreDeps) {
             to.name,
             from.name,
             viewer,
-            prune.prefix ?? '',
             prune.limit + 1,
           ])
         ).rows.map((r) => r.key as string);
@@ -3008,7 +2994,6 @@ function buildDocStore(deps: DocStoreDeps) {
       for (const key of written) {
         seq += 1;
         await stampWrittenDoc(c, ctx, to, 0, key, seq, viewer);
-        await markPublishedCopyPending(c, ctx, to, key);
       }
       for (const key of pruneKeys) {
         seq += 1;
