@@ -445,6 +445,7 @@ export async function blockImageFromRating({
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
+      "updatedAt" = NOW(),
       "pHash" = COALESCE(${pHash ?? null}, "pHash"),
       ingestion = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
       "nsfwLevel" = ${NsfwLevel.Blocked}::int,

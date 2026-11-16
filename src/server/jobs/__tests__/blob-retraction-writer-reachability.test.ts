@@ -403,7 +403,9 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
     return 1;
   }
 
-  if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values).length;
+  // Not the scan verdict's `"blockedFor" = CASE WHEN <raw CSAM test>`, which this fixture does not model.
+  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? THEN'))
+    return moderatorBlock(values).length;
 
   if (sql.includes('INSERT INTO "ModActivity"')) {
     const [userId, entityType, activity] = values as [number, string, string];
