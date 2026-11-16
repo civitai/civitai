@@ -898,7 +898,7 @@
         {primaryPairs ? 'Edit pairs' : labelMode === 'tag' ? 'Tags' : 'Captions'}
       </span>
     </div>
-    <div class="mt-1.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
+    <div class="flex items-baseline justify-between border-t border-dark-4 pt-2">
       <span class="text-sm font-semibold text-white">Starting at</span>
       {@render totalTag('text-2xl', 20)}
     </div>
