@@ -258,6 +258,17 @@ describe('purgeConfirmedCsamText', () => {
     expect(await copies(textId, holdId)).toEqual(KEPT);
   });
 
+  it('counts a delete that fails for another reason and carries on', async () => {
+    await confirmed({ confirmedDaysAgo: 366 });
+    const second = await confirmed({ confirmedDaysAgo: 366, postId: 2 });
+    dbMock.dbWrite.$executeRaw.mockImplementationOnce((async () => {
+      throw new Error('connection reset');
+    }) as never);
+
+    expect(await purgeConfirmedCsamText()).toMatchObject({ deleted: 1, failed: 1, stillHeld: 0 });
+    expect((await copies(second.textId, second.holdId)).row).toBe(false);
+  });
+
   it('pages past rows it skips', async () => {
     await pg.query(`INSERT INTO "Post" ("id", "userId") VALUES (3, ${AUTHOR + 1})`);
     await pg.query(`INSERT INTO "Appeal" ("userId", status) VALUES ($1, 'Pending')`, [AUTHOR]);
@@ -394,6 +405,36 @@ describe('the delete trigger on a confirmed "none" text', () => {
     await expect(
       pg.query(`SELECT label_store.drop_label_notes('post_text_text', '1', 'other_family')`)
     ).rejects.toThrow(/not allowed/);
+  });
+
+  it('keeps holding the text for a role not yet granted the note scrub, and releases it once granted', async () => {
+    const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
+    await pg.exec(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'retention_app') THEN
+          CREATE ROLE retention_app NOLOGIN;
+        END IF;
+      END $$;
+      GRANT USAGE ON SCHEMA public, label_store TO retention_app;
+      GRANT ALL ON ALL TABLES IN SCHEMA public, label_store TO retention_app;
+      REVOKE EXECUTE ON FUNCTION label_store.drop_label_notes(TEXT, TEXT, TEXT) FROM retention_app;
+    `);
+    const asApp = (sql: string) =>
+      pg.transaction(async (tx) => {
+        await tx.query('SET LOCAL ROLE retention_app');
+        await tx.query(sql);
+      });
+
+    await expect(asApp(`DELETE FROM "PostText" WHERE id = ${textId}`)).rejects.toThrow(
+      /cannot be deleted while it is held/
+    );
+    expect(await copies(textId, holdId)).toEqual(KEPT);
+
+    await pg.exec(
+      `GRANT EXECUTE ON FUNCTION label_store.drop_label_notes(TEXT, TEXT, TEXT) TO retention_app`
+    );
+    await asApp(`DELETE FROM "PostText" WHERE id = ${textId}`);
+    expect(await copies(textId, holdId)).toEqual({ row: false, holdText: '', snapshot: null });
   });
 
   it('drops nothing inside the year', async () => {

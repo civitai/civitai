@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 
 const PAGE = 200;
 /** Pages per run; purgeable texts past them wait for the next run. */
@@ -53,7 +54,8 @@ export type CsamTextRetentionResult = {
   deleted: number;
   skipped: Record<CsamTextRetentionSkip, number>;
   /** Refused by the delete trigger: another hold `post_text_held` knows of still applies. */
-  stillHeld: number;
+  stillHeld: number /** Deletes that raised anything else; logged by count, and the run goes on. */;
+  failed: number;
 };
 
 /**
@@ -68,6 +70,7 @@ export async function purgeConfirmedCsamText({
     deleted: 0,
     skipped: { 'quoted-in-report': 0, 'pending-appeal': 0, 'evidence-hold': 0, 'unknown-owner': 0 },
     stillHeld: 0,
+    failed: 0,
   };
   const skips = await dbWrite.$queryRaw<{ skip: CsamTextRetentionSkip; count: number }[]>(
     skipCountsSql
@@ -78,8 +81,10 @@ export async function purgeConfirmedCsamText({
   for (let i = 0; i < maxPages; i++) {
     const rows = await dbWrite.$queryRaw<{ textId: number }[]>(purgeableSql(afterId, page));
     for (const { textId } of rows) {
-      if (await purgeOne(textId)) result.deleted++;
-      else result.stillHeld++;
+      const outcome = await purgeOne(textId);
+      if (outcome === 'deleted') result.deleted++;
+      else if (outcome === 'held') result.stillHeld++;
+      else result.failed++;
     }
     if (rows.length < page) break;
     afterId = rows[rows.length - 1].textId;
@@ -87,15 +92,24 @@ export async function purgeConfirmedCsamText({
   return result;
 }
 
-async function purgeOne(textId: number): Promise<boolean> {
+async function purgeOne(textId: number): Promise<'deleted' | 'held' | 'failed'> {
   try {
     // The delete trigger drops the hold's copy and the label-store snapshot in the same statement, or
     // raises while any hold applies.
     await dbWrite.$executeRaw`DELETE FROM "PostText" WHERE id = ${textId}`;
-    return true;
+    return 'deleted';
   } catch (error) {
-    if (isHeldRefusal(error)) return false;
-    throw error;
+    if (isHeldRefusal(error)) return 'held';
+    // Name and code only: a database message can echo the row.
+    await logToAxiom({
+      name: 'purge-confirmed-csam-text',
+      type: 'error',
+      message: 'csam text purge delete failed',
+      textId,
+      code: (error as { code?: unknown })?.code,
+      errorName: error instanceof Error ? error.name : typeof error,
+    }).catch(() => undefined);
+    return 'failed';
   }
 }
 

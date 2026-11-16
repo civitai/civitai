@@ -85,6 +85,10 @@ BEGIN
             AND h.meta ->> 'reportChoice' IS DISTINCT FROM 'none'
         )
         AND post_text_retention_skip(post_id, author_id) IS NULL
+        -- The purge needs this role to run `label_store.drop_label_notes`; without the grant the text
+        -- stays held, as it did before this retention existed, rather than failing the delete midway.
+        AND CASE WHEN to_regprocedure('label_store.drop_label_notes(text,text,text)') IS NULL THEN false
+          ELSE has_function_privilege('label_store.drop_label_notes(text,text,text)', 'EXECUTE') END
       )
     )
   ) THEN
@@ -151,8 +155,8 @@ $$ LANGUAGE plpgsql STABLE SET search_path = public, pg_temp;
 
 -- 4b. The moderator's note is also copied into the label store as the label's reasonNote, which
 -- `label_store.exclude` keeps. Clears it on one subject's csam text-hold labels and nothing else. Its
--- EXECUTE goes to the app role the way `label_store.exclude`'s does (ask an infra owner); until then the
--- purge raises and the text stays.
+-- EXECUTE goes to the app role the way `label_store.exclude`'s does (ask an infra owner); until then
+-- `post_text_held` keeps holding the text.
 CREATE OR REPLACE FUNCTION label_store.drop_label_notes(
   p_subject_type TEXT, p_subject_id TEXT, p_family TEXT
 )
