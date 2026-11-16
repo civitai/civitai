@@ -71,7 +71,7 @@ const expired = (token: VerifiedToken, now: number) =>
  *
  * `regionRestricted` says whether the request is held to SFW content: from a region the site
  * restricts or blocks, or with no region at all (`request-origin.ts`); its audience is then the
- * SFW one (`audienceForUser`). Without it, every request is held to SFW (fail closed). It is
+ * SFW one (`audienceForUser`). It is required, so every caller decides it. It is
  * asked again at each re-check, with the same answer for the same request until a restriction's
  * effective date passes, so a re-check compares like with like and a restriction that starts
  * mid-stream ends the stream with `cursor_expired`.
@@ -81,8 +81,8 @@ export async function authenticate(
   verify: VerifyToken | undefined,
   {
     now = Date.now,
-    regionRestricted = () => true,
-  }: { now?: () => number; regionRestricted?: () => boolean } = {}
+    regionRestricted,
+  }: { now?: () => number; regionRestricted: () => boolean }
 ): Promise<Principal> {
   if (authorization === undefined || authorization === '') return ANONYMOUS_PRINCIPAL;
   const token = BEARER_RE.exec(authorization)?.[1];

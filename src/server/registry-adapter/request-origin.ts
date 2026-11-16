@@ -100,8 +100,7 @@ export function peerAddress(peer: string | undefined): string | undefined {
 
 /**
  * The startup lines describing the region lists in force, so a missing configuration is visible:
- * each list's count and codes (with effective dates), that a request with no region is held to
- * SFW, and a warning when no region is restricted.
+ * each list's count and codes (with effective dates), and a warning when no region is restricted.
  */
 export function describeRegionConfig(
   restricted: readonly RegionBlockConfig[] = REGION_RESTRICTION_CONFIG,
@@ -114,7 +113,6 @@ export function describeRegionConfig(
   const info = [
     `SFW-restricted regions (${restricted.length}): ${list(restricted)}`,
     `blocked regions, held to SFW (${blocked.length}): ${list(blocked)}`,
-    'a request with no region (no country header, XX or T1) is held to SFW',
   ];
   const warn =
     restricted.length === 0

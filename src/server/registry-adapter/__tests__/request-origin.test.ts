@@ -117,7 +117,6 @@ describe('describeRegionConfig: the startup lines', () => {
       info: [
         'SFW-restricted regions (2): ZZ from 2026-01-01, US:NY from 2026-02-01',
         'blocked regions, held to SFW (2): GB from 2025-07-24, AU from 2026-03-15',
-        'a request with no region (no country header, XX or T1) is held to SFW',
       ],
       warn: [],
     });
@@ -129,7 +128,6 @@ describe('describeRegionConfig: the startup lines', () => {
       info: [
         'SFW-restricted regions (0): none',
         'blocked regions, held to SFW (1): ZX from 2026-01-01',
-        'a request with no region (no country header, XX or T1) is held to SFW',
       ],
       warn: [
         'REGION_RESTRICTION_CONFIG is empty or unset: no region is restricted to SFW ' +
