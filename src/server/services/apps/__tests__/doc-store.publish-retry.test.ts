@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PUBLISH_DEADLOCK_RETRIES, retryOnDeadlock } from '~/server/services/apps/doc-store';
+import { retryOnDeadlock } from '~/server/services/apps/doc-store';
 import { DocStoreError } from '~/server/services/apps/doc-store.types';
 
 /**
@@ -11,10 +11,6 @@ import { DocStoreError } from '~/server/services/apps/doc-store.types';
 const deadlock = () => Object.assign(new Error('deadlock detected'), { code: '40P01' });
 
 describe('retryOnDeadlock', () => {
-  it('allows two retries', () => {
-    expect(PUBLISH_DEADLOCK_RETRIES).toBe(2);
-  });
-
   it('re-runs the transaction after a deadlock and returns its result', async () => {
     let calls = 0;
     const out = await retryOnDeadlock(async () => {

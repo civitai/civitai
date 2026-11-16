@@ -1170,35 +1170,28 @@ async function run(
 // PUBLISH — server-side publish and unpublish
 // ---------------------------------------------------------------------------
 //
-// `POST /_publish/:to { from, keys, prune? }` copies the CALLING viewer's own
-// private documents at `keys` from the private collection `from` into the shared collection `to`,
-// authored by that viewer — the data is read by the server from the viewer's own private key
-// space, never taken from the request. One call, one transaction, one publish-budget token.
-// `POST /_unpublish/:to { keys }` deletes the viewer's own copies at `keys`, in one transaction.
+// `POST /_publish/:to { from, keys, prune? }` copies the CALLING viewer's own private documents
+// at `keys` from the private `from` into the shared `to`, authored by that viewer: the server
+// reads the data from the viewer's own key space, never from the request. `POST /_unpublish/:to
+// { keys }` deletes the viewer's own copies. What a copy, a skip (`skipped[].reason`) and a prune
+// do, and how the per-user and app ceilings are charged: `publishCopies` / `unpublishCopies`
+// (`doc-store.ts`).
 //
-// Each copy is checked as a normal shared write is: the collection schema and the
-// `ownedModelVersions` rule (before any budget), the moderation scan in the app's mode (enforce:
-// inline, any hit refuses the WHOLE publish with the key it was found in; shadow: after commit),
-// the per-user and app ceilings (charged at once, so a publish the cap cannot hold is refused
-// whole). A copy whose content is unchanged is not written, not scanned and takes no seq.
+// Each copy is checked as a shared write is: the target's schema and `ownedModelVersions` rule
+// before any budget, then the moderation scan in the app's mode. Enforce: any hit refuses the
+// WHOLE publish, naming its key; shadow: scanned after commit. An unchanged copy is not scanned.
+// A key list over `DOC_STORE_PUBLISH_BOUNDS.maxKeys`, empty or with a duplicate is refused before
+// anything is spent.
 //
-// It does NOT spend the shared write budget (`DOC_STORE_SHARED_WRITE_BUDGET`, 30 / 300). Every
-// publish call first spends one token of the fixed-window `write` bucket (120 a minute per app
-// and viewer, never refunded) BEFORE the trust lookup and the source/target reads, so even a
-// publish that changes nothing is throttled. It then spends `DOC_STORE_PUBLISH_BUDGET` (10 a day
-// per user and app), given back when the publish does not land or changes nothing. Unpublish
-// spends the `write` bucket once per call, like a delete.
+// Budgets: every publish call first spends one token of the `write` bucket
+// (`DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX`) BEFORE the trust lookup and the source/target reads,
+// never refunded, so even a publish that changes nothing is throttled. It then spends one token of
+// `DOC_STORE_PUBLISH_BUDGET` — never `DOC_STORE_SHARED_WRITE_BUDGET` — given back when the publish
+// does not land or changes nothing.
 //
-// Keys: 1–500 (`DOC_STORE_PUBLISH_BOUNDS.maxKeys`), no duplicates, refused before anything is
-// spent. A key with no private document, a copy another user authored, and the viewer's own copy
-// a moderator hid are skipped and reported (`skipped[].reason`: `missing` / `not_author` /
-// `hidden`), never refused and never touched.
-//
-// `prune`: the viewer's own visible copies in `to` whose key has no private document in `from` are
-// deleted, at most 500 per call (`pruneIncomplete: true` when more remain). Copies of other groups
-// whose private documents still exist in `from` are never pruned. ⚠️ Prune is scoped by `from`,
-// not by where a copy came from: an app that feeds one shared collection from SEVERAL private
-// collections deletes the other sources' copies when it prunes from one of them.
+// ⚠️ `prune` is scoped by `from`, not by where a copy came from: an app that feeds one shared
+// collection from SEVERAL private collections deletes the other sources' copies when it prunes
+// from one of them.
 //
 // FLAG: `app-blocks-storage-publish`, evaluated per app (entityId = the app block id, no context).
 // Off — the default, and when Flipt is unreachable — both paths answer as an unknown route.
