@@ -5843,6 +5843,7 @@ export const updateEntityImages = async ({
   userId,
   keysCheckedFor,
   shownImageIds,
+  maxLinked,
 }: {
   tx?: Prisma.TransactionClient;
   entityId: number;
@@ -5854,9 +5855,11 @@ export const updateEntityImages = async ({
   /**
    * The linked images the edit form was shown. Only these can be removed by leaving them out of
    * `images`: a capped read hides some links, and ratings can change between the read and the
-   * save. Without it, no link is removed.
+   * save. Without it, no link is removed; `'all'` replaces the set, for a caller that read none.
    */
-  shownImageIds?: number[];
+  shownImageIds?: number[] | 'all';
+  /** The most images the entity may have linked after the save, hidden ones included. */
+  maxLinked?: number;
 }) => {
   const dbClient = tx ?? dbWrite;
   const connections = await dbClient.imageConnection.findMany({
@@ -5868,7 +5871,9 @@ export const updateEntityImages = async ({
   });
 
   const keptIds = new Set(images.map((i) => i.id).filter(isDefined));
-  const shown = new Set(shownImageIds);
+  const shown = new Set(
+    shownImageIds === 'all' ? connections.map((c) => c.imageId) : shownImageIds
+  );
   const removedIds = connections
     .map((c) => c.imageId)
     .filter((id) => shown.has(id) && !keptIds.has(id));
@@ -5888,6 +5893,8 @@ export const updateEntityImages = async ({
   const linkedAfter =
     connections.length - removedIds.length + new Set(linkIds).size + newImages.length;
   if (linkedAfter === 0) throw throwBadRequestError('At least one example image must be uploaded');
+  if (maxLinked !== undefined && linkedAfter > maxLinked)
+    throw throwBadRequestError(`At most ${maxLinked} images can be linked`);
 
   if (removedIds.length > 0)
     await dbClient.imageConnection.deleteMany({

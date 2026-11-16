@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { constants } from '~/server/common/constants';
 
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: vi.fn(),
@@ -47,6 +48,21 @@ describe('upsertBountyEntry — images the edit form was not shown', () => {
       entityId: 3,
       entityType: 'BountyEntry',
       shownImageIds: [1, 2],
+    });
+  });
+
+  it('replaces the set and holds it to the entry limit for a caller that read none', async () => {
+    await upsertBountyEntry({
+      id: 3,
+      bountyId: 9,
+      userId: 5,
+      files: [],
+      images: [{ url: '00000000-0000-4000-8000-000000000000' }],
+      replaceImages: true,
+    } as never);
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({
+      shownImageIds: 'all',
+      maxLinked: constants.bounties.maxEntryImagesForEdit,
     });
   });
 

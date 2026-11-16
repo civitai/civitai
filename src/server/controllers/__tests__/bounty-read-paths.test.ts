@@ -10,6 +10,7 @@ import type * as UserService from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { upsertBountyEntryInputSchema } from '~/server/schema/bounty-entry.schema';
 
 const {
   mockAssert,
@@ -18,6 +19,7 @@ const {
   mockGetEntryById,
   mockGetEntryFiles,
   mockUpsertBounty,
+  mockUpsertEntry,
   mockDeleteBounty,
   mockBountyImages,
   mockImagesForBounties,
@@ -29,6 +31,7 @@ const {
   mockGetEntryById: vi.fn(async () => ({ id: 3, user: { id: 5 } })),
   mockGetEntryFiles: vi.fn(async () => []),
   mockUpsertBounty: vi.fn(),
+  mockUpsertEntry: vi.fn(async () => ({ id: 3 })),
   mockDeleteBounty: vi.fn(),
   mockBountyImages: vi.fn(async (): Promise<unknown[]> => []),
   mockImagesForBounties: vi.fn(async (): Promise<Record<number, unknown[]>> => ({})),
@@ -51,6 +54,7 @@ vi.mock('~/server/services/bountyEntry.service', async (importOriginal) => ({
   getEntryById: mockGetEntryById,
   getBountyEntryFilteredFiles: mockGetEntryFiles,
   getBountyEntryEarnedBuzz: vi.fn(async () => []),
+  upsertBountyEntry: mockUpsertEntry,
 }));
 vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BountyService>()),
@@ -220,6 +224,59 @@ describe('bounty write responses', () => {
     const modCtx = { ...(ctx as object), user: { id: 5, isModerator: true } } as never;
     const asMod = await upsertBountyHandler({ input: { id: 9 } as never, ctx: modCtx });
     expect(asMod).toEqual({ id: 9, name: 'B', details });
+  });
+
+  // The headless submit never reads the entry's images, so its edit replaces the set; the web
+  // form's edit removes only what it was shown.
+  it.each([
+    ['submit', true],
+    ['upsert', undefined],
+  ])('an entry edit through %s replaces its images: %s', async (path, replaceImages) => {
+    const editor = {
+      user: { id: 5 },
+      ...uncapped,
+      track: { bountyEntry: vi.fn(async () => undefined) },
+    } as never;
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      userId: 99,
+      complete: false,
+      entries: [],
+    } as never);
+    const file = { url: 'https://example.com/f.zip', name: 'f.zip', sizeKB: 1 };
+    if (path === 'submit')
+      await submitBountyEntryHandler({
+        input: { id: 3, bountyId: 9, files: [file], imageUuids: ['u'] } as never,
+        ctx: editor,
+      });
+    else await upsertBountyEntryHandler({ input: { id: 3, bountyId: 9 } as never, ctx: editor });
+    expect(mockUpsertEntry.mock.calls[0][0]).toMatchObject({ replaceImages });
+  });
+
+  // Replace is decided by the route; a client that sends it to upsert gets the shown-ids rule.
+  it('the upsert route ignores a replaceImages sent by the client', async () => {
+    const sent = {
+      id: 3,
+      bountyId: 9,
+      files: [{ url: 'https://example.com/f.zip', name: 'f.zip', sizeKB: 1, metadata: {} }],
+      images: [],
+      replaceImages: true,
+    };
+    expect(upsertBountyEntryInputSchema.parse(sent)).not.toHaveProperty('replaceImages');
+
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      userId: 99,
+      complete: false,
+      entries: [],
+    } as never);
+    const editor = {
+      user: { id: 5 },
+      ...uncapped,
+      track: { bountyEntry: vi.fn(async () => undefined) },
+    } as never;
+    await upsertBountyEntryHandler({ input: sent as never, ctx: editor });
+    expect(mockUpsertEntry.mock.calls[0][0].replaceImages).toBeUndefined();
   });
 
   it('delete never returns meta', async () => {

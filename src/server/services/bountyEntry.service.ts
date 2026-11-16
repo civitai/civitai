@@ -18,6 +18,7 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -141,8 +142,12 @@ export const upsertBountyEntry = async ({
   description,
   userId,
   shownImageIds,
-}: UpsertBountyEntryInput & { userId: number }) => {
-  // Updates are checked in updateEntityImages, which counts links the form was not shown.
+  replaceImages,
+}: UpsertBountyEntryInput & {
+  userId: number;
+  /** Replace every linked image, for a caller that never read the entry's images. */
+  replaceImages?: boolean;
+}) => {
   if (!id && images?.length === 0)
     throw throwBadRequestError('At least one example image must be uploaded');
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
@@ -177,7 +182,8 @@ export const upsertBountyEntry = async ({
           tx,
           userId,
           keysCheckedFor,
-          shownImageIds,
+          shownImageIds: replaceImages ? 'all' : shownImageIds,
+          maxLinked: constants.bounties.maxEntryImagesForEdit,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });

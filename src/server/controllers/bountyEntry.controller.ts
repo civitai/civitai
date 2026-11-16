@@ -112,9 +112,12 @@ export const getBountyEntryHandler = async ({
 export const upsertBountyEntryHandler = async ({
   input,
   ctx,
+  replaceImages,
 }: {
   input: UpsertBountyEntryInput;
   ctx: ProtectedContext;
+  /** See `upsertBountyEntry`. */
+  replaceImages?: boolean;
 }) => {
   const { id: userId } = ctx.user;
   try {
@@ -147,6 +150,7 @@ export const upsertBountyEntryHandler = async ({
     const entry = await upsertBountyEntry({
       ...input,
       userId,
+      replaceImages,
     });
 
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id as number}`);
@@ -194,7 +198,8 @@ export const submitBountyEntryHandler = async ({
     images: imageUuids.map((url) => ({ url, type: MediaType.image })),
   };
 
-  return upsertBountyEntryHandler({ input: upsertInput, ctx });
+  // Sends the entry's whole image set and never reads the stored one, so an edit replaces it.
+  return upsertBountyEntryHandler({ input: upsertInput, ctx, replaceImages: true });
 };
 
 export const awardBountyEntryHandler = async ({

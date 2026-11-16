@@ -481,7 +481,7 @@ describe('entity image writers', () => {
       dbMock.dbWrite.imageConnection.findMany.mockReset();
       dbMock.dbWrite.imageConnection.deleteMany.mockReset();
     });
-    const save = (keep: number[], shownImageIds?: number[]) =>
+    const save = (keep: number[], shownImageIds?: number[] | 'all') =>
       updateEntityImages({
         images: keep.map((id) => ({ id, url: URL_KEY, type: 'image' })),
         userId: OWNER,
@@ -520,6 +520,31 @@ describe('entity image writers', () => {
       linked = [3];
       await expect(save([], [])).resolves.toBeDefined();
       expect(linked).toEqual([3]);
+    });
+
+    it('replaces the set for a caller that read none', async () => {
+      linked = [1, 2, 3];
+      await save([1], 'all');
+      expect(linked).toEqual([1]);
+    });
+
+    it('refuses a save that would link more than the limit, before removing any', async () => {
+      linked = [1, 2];
+      await expect(
+        updateEntityImages({
+          images: [
+            { id: 1, url: URL_KEY, type: 'image' },
+            { id: 2, url: URL_KEY, type: 'image' },
+            { url: URL_KEY, type: 'image' },
+          ],
+          userId: OWNER,
+          entityType: 'BountyEntry',
+          entityId: 1,
+          shownImageIds: [1, 2],
+          maxLinked: 2,
+        })
+      ).rejects.toThrow('At most 2 images');
+      expect(linked).toEqual([1, 2]);
     });
 
     it('refuses a save that would leave no image, before removing any', async () => {
