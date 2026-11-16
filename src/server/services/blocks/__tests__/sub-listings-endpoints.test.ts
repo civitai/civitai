@@ -97,6 +97,7 @@ describe('POST sub-listings/upsert', () => {
     expect(res.body).toEqual({ id: 'asl_1', status: 'pending', pendingEdit: false });
     expect(mockUpsert).toHaveBeenCalledWith({
       appBlockId: APP_BLOCK_ID,
+      dev: false,
       subjectUser: expect.objectContaining({ id: VIEWER }),
       hasLinkedOAuth: false,
       body,
@@ -163,6 +164,7 @@ describe('POST sub-listings/withdraw and GET sub-listings/mine', () => {
     expect(res.body).toEqual({ ok: true, withdrawn: true });
     expect(mockWithdraw).toHaveBeenCalledWith({
       appBlockId: APP_BLOCK_ID,
+      dev: false,
       userId: VIEWER,
       body: { itemKey: 'k' },
     });

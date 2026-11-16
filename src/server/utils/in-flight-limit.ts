@@ -32,7 +32,12 @@ export async function withInFlightLimit<T>(
     errorMessage,
     userId,
   }: InFlightLimit & { userId: number },
-  run: () => Promise<T>
+  run: () => Promise<T>,
+  /**
+   * Called once, just before a FULL pool refuses with TOO_MANY_REQUESTS (never on the fail-open
+   * path). For the caller's refusal counter; it must not throw, and a throw is swallowed.
+   */
+  onFull?: () => void
 ): Promise<T> {
   const key = `${REDIS_KEYS.TRPC.IN_FLIGHT}:${bucket}:${userId}`;
   const acquiring = acquireConcurrencySlot(key, limit, ttlMs);
@@ -41,8 +46,14 @@ export async function withInFlightLimit<T>(
     void acquiring.then((late) => (late.acquired ? late.release() : undefined));
   });
   if (!slot.acquired) {
-    if (slot.reason === 'full')
+    if (slot.reason === 'full') {
+      try {
+        onFull?.();
+      } catch {
+        /* instrument-only — never change the refusal */
+      }
       throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: errorMessage });
+    }
     logSysRedisFailOpen('read-degraded', 'middleware.trpc.inFlightLimit', slot.error, {
       bucket,
       userId,
