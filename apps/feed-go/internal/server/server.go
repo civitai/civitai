@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
@@ -70,6 +71,9 @@ type Server struct {
 	Deps        *feed.Deps
 	Hosts       browsing.HostColors
 	RegionRules []browsing.RegionRule
+	// RegionBlockRules is REGION_BLOCK_CONFIG (config.RegionBlockRules): a public request from a region
+	// on it is handed to Fallback, where applyApiRequestPolicy answers the 451.
+	RegionBlockRules []browsing.RegionRule
 	// Fallback serves what this service does not (a reverse proxy to the Node app). Required to serve
 	// public traffic; nil only in shadow-only deployments, where the public route is not exposed.
 	Fallback http.Handler
@@ -385,6 +389,30 @@ func (c *computed) release() {
 	c.buf, c.payload = nil, nil
 }
 
+// apiRequestPolicy is the part of applyApiRequestPolicy (src/server/middleware/api-request-policy.ts)
+// that the tRPC route runs before anything else and this service hands to the app rather than answer:
+//
+//   - a region on REGION_BLOCK_CONFIG (getRegion: cf-ipcountry, cf-region-code for US states, x-isuk
+//     true|1 as GB) is `region-blocked`, and the app answers its 451 with its own body and headers.
+//   - a user agent matching a crawler pattern is `crawler-user-agent`: verifyBot may then set the
+//     verified-crawler header (it also needs the IP in that crawler's published ranges), which changes
+//     the answer, and only the app holds those ranges. A request whose user agent matches none can
+//     never be verified, so its incoming header is the app's to strip; one that still carries it
+//     falls back in prepare (`verified-bot`).
+//
+// The policy's default response headers need nothing here: Cache-Control is written with every
+// answer (trpc.WriteResult; the app's private default unless the answer is edge-cacheable).
+func (s *Server) apiRequestPolicy(r *http.Request) error {
+	// IsRegionRestricted is isRegionBlocked's match over any rule list (same region key and date).
+	if browsing.IsRegionRestricted(s.RegionBlockRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now()) {
+		return fallback.New("region-blocked")
+	}
+	if apipolicy.IsCrawlerUserAgent(r.Header.Get("User-Agent")) {
+		return fallback.New("crawler-user-agent")
+	}
+	return nil
+}
+
 func countryOf(r *http.Request) string {
 	if v := r.Header.Get("x-isuk"); v == "true" || v == "1" {
 		return "GB"
@@ -491,13 +519,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		c   *computed
 		err error
 	)
-	if AcceptableOrigin(r, s.AllowedOrigins) {
+	switch err = s.apiRequestPolicy(r); {
+	case err != nil:
+	case AcceptableOrigin(r, s.AllowedOrigins):
 		fn := s.compute
 		if s.computeFn != nil {
 			fn = s.computeFn
 		}
 		c, err = s.computeWithin(r.Context(), r, "serve", fn)
-	} else {
+	default:
 		// The app's answer differs by environment and credential (non-production and bearer callers
 		// are accepted, a cookie caller in production is refused): never decided here.
 		err = fallback.New("origin")
