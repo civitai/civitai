@@ -658,14 +658,39 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
 
   it('skips a pair from outcomes read off the cache cluster', async () => {
     withEntries(10, 20, 30);
-    // Voted 10-20 and 20-30, with only their outcomes on the cache cluster, as after a deploy that
-    // moved the key.
+    // Voted 10-20 and 20-30, with both outcomes on the cache cluster.
     await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
     await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
     await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '10>20');
     await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '20>30');
 
     expect(await serve(), 'pair served after A>B, B>C').toBeNull();
+  });
+
+  const sysOutcomesKey = `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:1:${JUDGE}`;
+
+  it('skips a pair from outcomes found only on sysRedis', async () => {
+    withEntries(10, 20, 30);
+    // Voted 10-20 and 20-30, with both outcomes on sysRedis and none on the cache cluster.
+    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
+    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
+    await redisMock.sysRedis.sAdd(sysOutcomesKey, '10>20');
+    await redisMock.sysRedis.sAdd(sysOutcomesKey, '20>30');
+
+    expect(await serve(), 'pair served after A>B, B>C').toBeNull();
+  });
+
+  it('skips a pair from outcomes split between sysRedis and the cache cluster', async () => {
+    withEntries(10, 20, 30);
+    // Voted 10-20 with its outcome on sysRedis, and 20-30 with its outcome on the cache cluster.
+    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '10:20');
+    await redisMock.sysRedis.sAdd(getVotedPairsKey(1, JUDGE), '20:30');
+    await redisMock.sysRedis.sAdd(sysOutcomesKey, '10>20');
+    await redisMock.redis.sAdd(getVoteOutcomesKey(1, JUDGE), '20>30');
+
+    expect(await serve(), 'pair served after A>B, B>C').toBeNull();
+    const progress = await getJudgingProgress({ crucibleId: 1, userId: JUDGE });
+    expect(progress, 'progress agrees nothing is left').toMatchObject({ remainingPairs: 0 });
   });
 
   it('ignores an outcomes set that lost a vote, so a broken cycle decides nothing', async () => {
