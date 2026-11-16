@@ -319,7 +319,7 @@ describe('custom base model', () => {
   const custom = 'urn:air:sdxl:checkpoint:civitai:1@2';
 
   it('trains an SDXL run on the pasted base', async () => {
-    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    getResource.mockResolvedValueOnce({ data: { air: custom, fileFormat: 'SafeTensor' } });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
     await submitTrainingBatch(client, [{ ...baseRun(), customModel: custom }], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(custom);
@@ -1142,7 +1142,7 @@ describe('the checkpoint a run actually trains', () => {
 
   it('checks a custom base by its own AIR, even when the base it overrides is blocked', async () => {
     const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
-    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    getResource.mockResolvedValueOnce({ data: { air: customAir, fileFormat: 'SafeTensor' } });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
     const blockedBase = parseServiceStatus({ blockedModels: ['sdxl'] });
     await expect(
@@ -1157,6 +1157,22 @@ describe('the checkpoint a run actually trains', () => {
         status: parseServiceStatus({ blockedModels: [customAir] }),
       })
     ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+  });
+
+  it('refuses a custom base whose version belongs to a blocked model, whatever model id its AIR names', async () => {
+    // 53761 is blocked; the submitted AIR pairs one of its versions with an unblocked model id.
+    getResource.mockResolvedValueOnce({
+      data: { air: 'urn:air:sdxl:checkpoint:civitai:53761@67890', fileFormat: 'SafeTensor' },
+    });
+    submitWorkflow.mockClear();
+    await expect(
+      submitTrainingBatch(
+        client,
+        [{ ...baseRun(), customModel: 'urn:air:sdxl:checkpoint:civitai:12345@67890' }],
+        { checkText }
+      )
+    ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+    expect(submitWorkflow).not.toHaveBeenCalled();
   });
 });
 
@@ -1232,10 +1248,10 @@ describe('Kohya training', () => {
     'accepts an arbitrary compatible %s checkpoint',
     async (family) => {
       const ecosystem = ['pony', 'illustrious', 'noobai'].includes(family) ? 'sdxl' : family;
-      getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+      const customModel = `urn:air:${family}:checkpoint:civitai:123@456`;
+      getResource.mockResolvedValueOnce({ data: { air: customModel, fileFormat: 'SafeTensor' } });
       headBlob.mockResolvedValue({ data: {}, response: { ok: true } });
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom-kohya' } });
-      const customModel = `urn:air:${family}:checkpoint:civitai:123@456`;
       await submitTrainingBatch(client, [{ ...run(), ecosystem, customModel }], {
         checkText,
         kohyaAllowed: true,
@@ -1597,7 +1613,9 @@ describe('dataset maturity under the v2 rating', () => {
 
     it('a custom base that is not SafeTensor', async () => {
       const calls = submitWorkflow.mock.calls.length;
-      getResource.mockResolvedValueOnce({ data: { fileFormat: 'PickleTensor' } });
+      getResource.mockResolvedValueOnce({
+        data: { air: 'urn:air:sdxl:checkpoint:civitai:1@2', fileFormat: 'PickleTensor' },
+      });
       await expect(
         submitTrainingBatch(
           client,
