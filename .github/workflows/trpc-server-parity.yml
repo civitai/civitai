@@ -43,9 +43,9 @@ name: tRPC server parity
 #   - a PR whose image is already there runs the parity job straight away.
 #
 # Why `deployment_status` and not the `status` event: GitHub cannot filter `status` at the
-# trigger, so EVERY commit status in the repository started a run of this workflow (~1,340 a
-# day, 2026-11-13..15, for ~30 that did work). Deployments are created only by the preview
-# pipeline (once per verified preview) and by production deploys.
+# trigger, so EVERY commit status in the repository started a run of this workflow, nearly all
+# of them skipped (measurements: the PR that made this change). Deployments here come from the
+# preview pipeline (once per verified preview) and production deploys.
 #
 # 🔴 A `deployment_status` run uses this file as it is on the DEPLOYED commit (the PR head), not
 # the default branch's copy. So:
@@ -277,6 +277,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           # The tag the PR-preview pipeline pushes for a PR head: pr-<number>-<first 7 of the sha>.
           IMAGE: ${{ steps.scope.outputs.image || format('ghcr.io/civitai/civitai-web:pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # The template above puts the full sha in the tag; the pipeline uses the first 7.
           case "$IMAGE" in
@@ -298,7 +299,17 @@ jobs:
               if [ "${{ github.event_name }}" != pull_request ]; then
                 echo "::error::$IMAGE does not exist"; exit 1
               fi
-              echo "::notice::The preview image for this commit is not built yet. Parity runs when the preview pipeline has pushed it, and reports on this commit as the \`tRPC parity\` status."
+              # The later run is a deployment run, which uses the HEAD's copy of this file (this
+              # run uses the merge commit's). A head older than the `deployment_status` trigger
+              # gets no such run, so say so rather than promise one.
+              wf=.github/workflows/trpc-server-parity.yml
+              head_has=$(gh api "repos/${{ github.repository }}/contents/$wf?ref=$HEAD_SHA" --jq .content 2>/dev/null \
+                | base64 -d | yq -r '.on | has("deployment_status")' 2>/dev/null || echo unknown)
+              if [ "$head_has" = false ]; then
+                echo "::warning::The preview image for this commit is not built yet, and this branch's copy of $wf predates its \`deployment_status\` trigger, so NO parity run will follow the preview deploy. Merge main into the branch to get one."
+              else
+                echo "::notice::The preview image for this commit is not built yet. Parity runs when the preview pipeline has pushed it, and reports on this commit as the \`tRPC parity\` status."
+              fi
               echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
             fi
             sleep $((attempt * 5))
@@ -345,8 +356,8 @@ jobs:
       CANDIDATE_IMAGE: trpc-server-parity:candidate
       STATUS_CONTEXT: tRPC parity
     steps:
-      # A dispatch or deployment run's check is not listed on the PR, so it reports as a commit
-      # status: pending now, the verdict at the end.
+      # A dispatch or deployment run is not a pull_request run, so its check is not reliably
+      # shown as the PR's own; it reports as a commit status: pending now, the verdict at the end.
       - name: Report pending on the head commit
         if: github.event_name != 'pull_request'
         env:

@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest';
 // `deployment_status`, never on `status`.
 //
 // `status` cannot be filtered at the trigger, so with it EVERY commit status in the repository
-// started a run (~1,340 a day, 2026-11-13..15, for ~30 that did work), and the workflow's own
-// `tRPC parity` statuses started more. The preview pipeline now creates a Deployment in
+// started a run, nearly all skipped, and the workflow's own `tRPC parity` statuses started more
+// (measurements: the PR that made this change). The preview pipeline now creates a Deployment in
 // environment `preview`, straight in `success`, when it marks the commit `preview / deploy` =
 // success; the gate job starts a runner for exactly that and nothing else.
 //
@@ -21,7 +21,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FILE = path.resolve(HERE, '../../.github/workflows/trpc-server-parity.yml');
 const text = readFileSync(FILE, 'utf8');
 
-type Step = { id?: string; name?: string; uses?: string; with?: Record<string, unknown>; env?: Record<string, string>; run?: string };
+type Step = {
+  id?: string;
+  name?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
+  env?: Record<string, string>;
+  run?: string;
+};
 type Job = { if?: string; permissions?: Record<string, string>; steps?: Step[] };
 type Workflow = {
   on: Record<string, unknown>;
@@ -37,7 +44,11 @@ const DEPLOY_OK =
 
 describe('trpc-server-parity trigger', () => {
   it('listens to deployment_status (unfiltered: GitHub allows no types), never to status', () => {
-    expect(Object.keys(wf.on).sort()).toEqual(['deployment_status', 'pull_request', 'workflow_dispatch']);
+    expect(Object.keys(wf.on).sort()).toEqual([
+      'deployment_status',
+      'pull_request',
+      'workflow_dispatch',
+    ]);
     expect(wf.on.deployment_status).toBeNull();
     expect(wf.on).not.toHaveProperty('status');
   });
@@ -69,7 +80,9 @@ describe('trpc-server-parity trigger', () => {
     expect(scope?.env?.SHA).toBe('${{ github.event.deployment.sha || github.sha }}');
     expect(scope?.run).toContain('if [ "$EVENT" = deployment_status ]; then');
     const checkout = wf.jobs.parity.steps?.find((s) => s.uses?.startsWith('actions/checkout@'));
-    expect(checkout?.with?.ref).toBe("${{ github.event_name == 'deployment_status' && needs.gate.outputs.sha || '' }}");
+    expect(checkout?.with?.ref).toBe(
+      "${{ github.event_name == 'deployment_status' && needs.gate.outputs.sha || '' }}"
+    );
     // no expression anywhere still branches on the old event
     expect(text).not.toMatch(/event_name\s*==\s*'status'/);
     expect(text).not.toMatch(/"\$EVENT" = status\b/);
@@ -81,7 +94,11 @@ describe('trpc-server-parity trigger', () => {
   it('token permissions stay minimal, and the workflow reads no repository secret', () => {
     expect(wf.permissions).toEqual({ contents: 'read', packages: 'read' });
     expect(wf.jobs.gate.permissions).toBeUndefined();
-    expect(wf.jobs.parity.permissions).toEqual({ contents: 'read', packages: 'read', statuses: 'write' });
+    expect(wf.jobs.parity.permissions).toEqual({
+      contents: 'read',
+      packages: 'read',
+      statuses: 'write',
+    });
     expect(text).not.toMatch(/secrets\./);
   });
 });
