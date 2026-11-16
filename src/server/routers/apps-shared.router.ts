@@ -1439,7 +1439,7 @@ async function reportSharedRowUnmetered(
       key,
     },
     'block-audit'
-  ).catch(() => {});
+  );
 
   return { ok: true as const };
 }
@@ -2040,7 +2040,7 @@ async function enforceScan(
         error: error instanceof Error ? error.name : typeof error,
       },
       'block-audit'
-    ).catch(() => undefined);
+    );
     throw tagSharedStorageOutcome(
       escalateToServerFault(
         new TRPCError({

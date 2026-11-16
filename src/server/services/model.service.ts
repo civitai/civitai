@@ -2905,7 +2905,7 @@ export async function purgeHeldShowcase(modelId: number, modelVersionIds?: numbe
       message: 'model showcase level changed; public API edge cache not purged',
       modelId,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -3067,7 +3067,7 @@ export async function setModelMinor({
         name: 'text-scan',
         message: 'moderator minor ruling not recorded: model text unreadable',
         modelId: id,
-      }).catch(() => null);
+      });
   }
 
   const heldVerdict = await import('~/server/services/text-scan/actions/model-nsfw');
@@ -3133,7 +3133,7 @@ export async function setModelMinor({
       name: 'minor-flag-snapshot',
       message: snapshotError instanceof Error ? snapshotError.message : String(snapshotError),
       modelId: id,
-    }).catch(() => null);
+    });
 
   await preventReplicationLag('model', id);
   const modActivity = activity ?? (minor ? 'setMinor' : 'unsetMinor');
@@ -3263,7 +3263,7 @@ export async function setModelSfwOnly({
         message: 'held restricted nsfw verdict not applied',
         modelId: id,
         error: error.message,
-      }).catch(() => null)
+      })
     );
   }
   const modActivity = sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly';
@@ -3397,7 +3397,7 @@ export async function setModelPoi({
         name: 'text-scan',
         message: 'moderator poi ruling not recorded: model text unreadable',
         modelId: id,
-      }).catch(() => null);
+      });
   };
   // The ruling is written on its own connection, so it cannot go inside the locked write below.
   const flagged = await dbWrite.model.findUnique({ where: { id }, select: { poi: true } });
@@ -3475,7 +3475,7 @@ export async function setModelPoi({
           error instanceof Error ? error.message : error
         }`,
         modelId: id,
-      }).catch(() => null)
+      })
     );
 
   if (poi)
@@ -4036,7 +4036,7 @@ async function applyHeldVerdictAfterOwnerSave(
       message: 'held restricted nsfw verdict not applied',
       modelId: after.id,
       error: error.message,
-    }).catch(() => null)
+    })
   );
 }
 
@@ -4856,7 +4856,7 @@ export const upsertModel = async (
         modelId: result.id,
         modelType: result.type,
         modelVersionIds: clearedLicensingSources.map((v) => v.id),
-      }).catch(() => null);
+      });
       // Flag lag BEFORE the bust (as publishModelById does): otherwise a concurrent read inside the
       // replication window refills these caches from the replica's pre-clear row and the fee stays
       // live. A type change already busts every version id below — the ordering is what this adds.
@@ -6664,7 +6664,7 @@ export async function getShowcaseHeldLevels(
           message: 'gallery settings unreadable; showcase served at SFW for this request',
           modelId: id,
           error: safeError(error),
-        }).catch(() => undefined);
+        });
       }
     }),
     5
@@ -7437,7 +7437,7 @@ export async function getFeaturedModels() {
       message: error.message,
       stack: error.stack,
       cause: error.cause,
-    }).catch();
+    });
     return [];
   }
 }
@@ -7887,7 +7887,6 @@ export const privateModelFromTraining = async ({
           modelId: id,
           error: revertError.message,
         })
-          .catch(() => null)
           .then(() => false)
     );
     // The model stayed Private, so its versions stay with it; the caller sees the flow's own error.
@@ -8432,7 +8431,7 @@ export async function transferModelOwnership({
         name: 'model-ownership-transfer-invalidation',
         message: `${name} failed after a committed transfer`,
         error: { name, modelIds, targetUserId, error: String(error) },
-      }).catch(() => null)
+      })
     );
 
   // Before the gallery-settings bust: its rebuild reads Model.userId to pick the owner's hidden list,
@@ -8492,7 +8491,7 @@ export async function transferModelOwnership({
       : Promise.resolve(),
   ]);
 
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'model-ownership-transfer',
     message: 'Mod transferred model ownership',
@@ -8508,7 +8507,7 @@ export async function transferModelOwnership({
       postsUpdated: Number(result[5]),
       imagesUpdated: Number(result[6]),
     },
-  }).catch(() => null);
+  });
 
   await Promise.all([...sourceUserIds, targetUserId].map((id) => deleteBasicDataForUser(id)));
 

@@ -274,7 +274,7 @@ export const getCollectionByIdHandler = async ({
             message: error instanceof Error ? error.message : String(error),
             stack: error instanceof Error ? error.stack : undefined,
             collectionId: input.id,
-          }).catch(() => undefined);
+          });
           return [] as Collaborator[];
         })
       : [];
@@ -759,7 +759,7 @@ export const addSimpleImagePostHandler = async ({
           message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
           postId: post.id,
           collectionId,
-        }).catch(() => undefined)
+        })
       );
       throw error;
     }
@@ -787,7 +787,7 @@ export const addSimpleImagePostHandler = async ({
           message: error instanceof Error ? error.message : String(error),
           postId: post.id,
           collectionId,
-        }).catch(() => undefined)
+        })
       );
     }
 

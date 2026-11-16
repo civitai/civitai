@@ -86,7 +86,7 @@ export async function decideAgeRegexHit({
     classifierVerdict: verdict,
     classifierStatus: status,
     blocked: block,
-  }).catch(() => null);
+  });
 
   return block || withoutAge === undefined ? { block: true } : { block: false, withoutAge };
 }

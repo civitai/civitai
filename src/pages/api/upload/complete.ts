@@ -250,7 +250,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       // probe's verdict — so a silently-empty completion is distinguishable from a
       // healthy one in the log, which is exactly what the incident lacked.
       // partCount also catches a truncated manifest.
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-complete',
         userId,
         type,
@@ -270,7 +270,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       // see the bucket is measurable on its own rather than being folded into either the
       // healthy or the defective count.
       if (verdict === 'indeterminate') {
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-complete-verify-unknown',
           userId,
           type,
@@ -284,7 +284,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
         // Distinct event name so this class is alertable on its own rather than hiding
         // inside the generic completion log. `verifyEnforced` separates "we would have
         // rejected this" during the observe-only phase from an actual rejection.
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-complete-unverified',
           userId,
           type,
@@ -372,7 +372,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       // for the same reason as the success path above: nothing about the client's
       // outcome may depend on telemetry.
       try {
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-complete-error',
           userId,
           type,

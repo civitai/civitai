@@ -186,7 +186,7 @@ async function persistDroppedEnqueue(key: string, ids: number[]) {
         type: 'error',
         name: 'search-index-queue-fallback',
         message: `parking lot for ${key} is at the ${FALLBACK_MAX_IDS_PER_KEY} id cap; ${ids.length} id(s) discarded`,
-      }).catch(() => undefined);
+      });
     }
   } catch (err) {
     // Both stores are now failing. Nothing left to try — log and let the caller
@@ -195,7 +195,7 @@ async function persistDroppedEnqueue(key: string, ids: number[]) {
       type: 'error',
       name: 'search-index-queue-fallback',
       message: `could not park ${ids.length} dropped id(s) for ${key}: ${(err as Error).message}`,
-    }).catch(() => undefined);
+    });
   }
 }
 

@@ -42,7 +42,7 @@ export const invalidateSubscriptionCaches = async (userId: number) => {
           stack: result.reason instanceof Error ? result.reason.stack : undefined,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   }
 };

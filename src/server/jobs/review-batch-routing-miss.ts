@@ -56,7 +56,7 @@ export async function checkReviewBatchRoutingMisses(now = new Date()) {
     VALUES (${SYSTEM_USER_ID}, 'reviewBatchMissCheck', ${dayNumber(now)}, ${MISS_CHECK_ACTIVITY})
     ON CONFLICT DO NOTHING
   `;
-  await logToAxiom({
+  logToAxiom({
     name: 'review-batch-routing-miss-check',
     type: fresh.length || !misses.scannerRead ? 'error' : 'info',
     served: served.length,
@@ -138,7 +138,7 @@ export const reviewBatchRoutingMissJob = createJob(
         type: 'error',
         name: 'review-batch-routing-miss-check',
         message: error instanceof Error ? error.message : 'Unknown error',
-      }).catch(() => null);
+      });
       throw error;
     }
   }

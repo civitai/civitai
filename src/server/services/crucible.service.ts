@@ -3918,7 +3918,7 @@ export const submitVote = async ({
           message: `Judge ${userId} passed ${MAX_CLOSURE_VOTES} votes in crucible ${crucibleId}; the judge-side skip is off for them`,
           crucibleId,
           userId,
-        }).catch();
+        });
     })().catch((error: unknown) =>
       log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
     ),

@@ -24,7 +24,7 @@ export function getDocStoreModeration(): DocStoreModeration {
           bypassRls: role.bypassRls,
         },
         'app-blocks'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

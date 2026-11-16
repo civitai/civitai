@@ -105,7 +105,7 @@ async function findInDocStore(args: {
             appBlockId: args.appBlockId,
           },
           'app-blocks'
-        ).catch(() => undefined);
+        );
       }
       return { kind: 'not_authoritative' };
     }

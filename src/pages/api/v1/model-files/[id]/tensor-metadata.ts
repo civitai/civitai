@@ -189,7 +189,7 @@ export default MixedAuthEndpoint(async function handler(
       fileId: id,
       modelVersionId: file.modelVersionId,
       format,
-    }).catch(() => undefined);
+    });
 
     // 🔴 civitai#3845 TIER 1. This was `{ error: err.message }` on a
     // `MixedAuthEndpoint` whose read path is public, so an anonymous caller got

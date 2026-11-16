@@ -26,7 +26,7 @@ const logAuth = (req: NextApiRequest, outcome: string, extra?: Record<string, un
   logToAxiom(
     { name: 'auth-flow', step: 'authorize', outcome, host: req.headers.host, ...extra },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 
 // GET /api/auth/authorize — INITIATE first-party cross-domain login. A spoke on a different registrable domain
 // (civitai.red / a test host / localhost) can't read the hub's `.civitai.com` cookie, so it runs the OAuth

@@ -63,7 +63,7 @@ function noteDegradedChipRead(err: unknown, surface: AppChipSurface, read?: 'ite
     ...(read && { read }),
     message: err instanceof Error ? err.message : String(err),
     code: (err as { code?: unknown })?.code ?? null,
-  }).catch(() => null);
+  });
 }
 
 /**

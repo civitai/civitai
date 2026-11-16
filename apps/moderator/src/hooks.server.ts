@@ -144,7 +144,7 @@ function logCredentialAttribution(
       path: event.url.pathname,
       method: event.request.method,
       userAgent: event.request.headers.get('user-agent'),
-    }).catch(() => {});
+    });
   } catch {
     /* see above: a logging fault must not surface as a failed moderation call */
   }
@@ -213,7 +213,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       name: 'held-sheet-refused-beside-session',
       type: 'warning',
       userId: webSession.user.id,
-    }).catch(() => undefined);
+    });
     return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
   }
   if (webSession && webSession.status !== 'ok' && webSession.reason === 'unavailable') {

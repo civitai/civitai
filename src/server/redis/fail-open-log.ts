@@ -91,7 +91,5 @@ export function logSysRedisFailOpen(
     type: 'warning',
     subtype,
     fn,
-  }).catch(() => {
-    /* fail-open logger never blocks the request */
   });
 }

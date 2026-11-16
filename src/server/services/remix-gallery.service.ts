@@ -505,7 +505,7 @@ export async function createRemixGallerySubmission({
         message: 'compensating settle failed; escrow may be held for a rejected submission',
         placementId: placement.id,
         error: settleError instanceof Error ? settleError.message : String(settleError),
-      }).catch(() => undefined)
+      })
     );
     throw error;
   }
@@ -760,7 +760,7 @@ export async function actOnRemixGallerySubmission({
           message: 'accept reward failed; the submission is approved and the owner unpaid',
           placementId: placement.id,
           error: error instanceof Error ? error.message : String(error),
-        }).catch(() => undefined)
+        })
       );
 
   return result;
@@ -851,13 +851,13 @@ export async function declineOutOfBandRemixGallerySubmissions({
       await actOnRemixGallerySubmission({ placementId: row.id, action: 'decline', userId });
       settled++;
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'remix-gallery',
         type: 'error',
         message: 'decline-out-of-band: one row failed to settle',
         placementId: row.id,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
     }
   }
 
@@ -1123,7 +1123,7 @@ async function hydrateGalleryImages({
       requested: imageIds.length,
       hydrated: byId.size,
       missing: imageIds.filter((id) => !byId.has(id)),
-    }).catch(() => undefined);
+    });
 
   return byId;
 }
@@ -2321,7 +2321,7 @@ export const getTeamWaiverStanding = (input: { hostImageId: number; placerId: nu
       type: 'error',
       message: 'team waiver standing failed; shown as no waiver',
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     return null;
   });
 
@@ -2398,13 +2398,13 @@ async function refundUnreadySubmission(placementId: number, data: RemixGalleryPl
     const result = await settlePlacement({ placementId, action: 'expire' });
     return result.settled;
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       name: 'remix-gallery',
       type: 'error',
       message: 'readiness refund failed',
       placementId,
       error: (error as Error).message,
-    }).catch(() => null);
+    });
     return false;
   }
 }
@@ -2578,7 +2578,7 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
               message: 'marking a review-blocked submission undeliverable failed',
               placementId: row.id,
               error: (error as Error).message,
-            }).catch(() => null)
+            })
           );
       continue;
     }

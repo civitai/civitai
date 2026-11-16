@@ -165,7 +165,7 @@ export async function reapDeletedAppStorage(
             rows: out.rows,
           },
           'webhooks'
-        ).catch(() => undefined);
+        );
       }
     } catch (err) {
       // A disabled store or a missing migration fails every purge alike; stop rather than count
@@ -180,7 +180,7 @@ export async function reapDeletedAppStorage(
           message: err instanceof Error ? err.message : String(err),
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
     }
   }
   return result;
@@ -197,9 +197,7 @@ export const reapDeletedAppStorageJob = createJob(
     try {
       const result = await reapDeletedAppStorage({ jobContext });
       if (result.scanned > 0) {
-        logToAxiom({ name: 'reap-deleted-app-storage', type: 'info', ...result }, 'webhooks').catch(
-          () => undefined
-        );
+        logToAxiom({ name: 'reap-deleted-app-storage', type: 'info', ...result }, 'webhooks');
       }
       return result;
     } catch (error) {
@@ -215,7 +213,7 @@ export const reapDeletedAppStorageJob = createJob(
           ...(migration ? { migrationPending: migration } : {}),
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
       return migration ? { migrationPending: migration } : { error: true as const };
     }
   }

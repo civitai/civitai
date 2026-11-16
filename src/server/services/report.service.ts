@@ -1489,7 +1489,7 @@ async function usersWithNoticeWithheld(userIds: number[]): Promise<Set<number>> 
       type: 'error',
       name: 'deferred-notice-withheld-check',
       message: (e as Error).message,
-    }).catch(() => undefined);
+    });
     return new Set(userIds);
   }
 }
@@ -1724,13 +1724,13 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
         type: 'error',
         name: 'deferred-effect-failed',
         imageId: appeal.entityId,
-      }).catch(() => undefined)
+      })
     );
     logToAxiom({
       type: 'warning',
       name: 'deferred-notice-withheld',
       imageId: appeal.entityId,
-    }).catch(() => undefined);
+    });
   }
 
   return {
@@ -1932,7 +1932,7 @@ export async function settleResolvedAppeals(
         appealId: appeal.id,
         imageId: appeal.entityId,
         ...(failure ? { revertFailed: failure } : {}),
-      }).catch(() => undefined);
+      });
       continue;
     }
 

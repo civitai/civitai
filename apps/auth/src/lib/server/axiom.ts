@@ -20,7 +20,7 @@ export function logToAxiom(data: Record<string, unknown>, datastream = 'civitai-
 // `{namespace="civitai-auth"} |~ "(?i)(unhandled server error|handler error|action failed|…)" != "invalid_grant"`
 // key off them. Swallows its own failure so logging can never break the request.
 export function logAxiomError(error: unknown, extra?: Record<string, unknown>) {
-  return logToAxiom({ type: 'error', ...extra, ...safeError(error) }).catch(() => {});
+  return logToAxiom({ type: 'error', ...extra, ...safeError(error) });
 }
 
 export { safeError };

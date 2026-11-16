@@ -19,7 +19,7 @@ export function noteDegradedRead(name: string, err: unknown): void {
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
       code: (err as { code?: unknown })?.code ?? null,
-    }).catch(() => null);
+    });
   } catch {
     // The degraded path's whole job is to keep its caller going.
   }

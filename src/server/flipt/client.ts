@@ -756,7 +756,7 @@ const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
         stack: error.stack,
       },
       'temp-search'
-    ).catch();
+    );
   },
 }));
 

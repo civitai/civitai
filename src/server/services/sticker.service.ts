@@ -211,7 +211,7 @@ export function recordStickerUsage({
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined)
+    )
   );
 }
 
@@ -515,7 +515,7 @@ export async function purchaseStickerUses({
         level: 'error',
         message: 'Sticker top-up refund failed — buyer charged with no uses',
         data: { cosmeticId, userId, transactionId, amount, error, refundError },
-      }).catch(() => undefined);
+      });
     }
     throw throwBadRequestError('Failed to buy sticker uses');
   }
@@ -544,7 +544,7 @@ export async function purchaseStickerUses({
       level: 'error',
       message: 'Sticker top-up bookkeeping failed after the grant committed',
       data: { cosmeticId, userId, transactionId, error },
-    }).catch(() => undefined);
+    });
   }
 
   // Payout follows the sale, never the buyer's own money back: a creator
@@ -585,7 +585,7 @@ export async function purchaseStickerUses({
         level: 'error',
         message: 'Failed to distribute sticker top-up funds',
         data: { cosmeticId, userId, transactionId, error },
-      }).catch(() => undefined);
+      });
     }
   }
 

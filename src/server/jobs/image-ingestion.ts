@@ -572,7 +572,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       deferredError: deferred.error,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   if (failedSends > 0) {
     logToAxiom(
@@ -584,7 +584,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         failedSends,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   return {
@@ -820,7 +820,7 @@ export const removeBlockedImages = createJob(
         message: 'finished',
         ...summary,
         durationMs: Date.now() - startedAt,
-      }).catch(() => undefined);
+      });
       return summary;
     };
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
@@ -880,7 +880,7 @@ export const removeBlockedImages = createJob(
         type: 'warning',
         name: 'remove-blocked-images',
         message: 'hold marker view missing: nothing deleted this run',
-      }).catch(() => undefined);
+      });
       return { skipped: 'hold-marker-view-missing' };
     }
 
@@ -895,7 +895,7 @@ export const removeBlockedImages = createJob(
           name: 'remove-blocked-images',
           message: 'evidence hold sweep failed',
           error: (error as Error)?.message,
-        }).catch(() => undefined)
+        })
       );
 
     // A pending review decides this image's fate, so it is held until a moderator resolves it.
@@ -1156,7 +1156,7 @@ export const removeBlockedImages = createJob(
           type: 'error',
           message: 'could not queue takedown retractions; not deleting takedowns this run',
           error: error instanceof Error ? error.message : String(error),
-        }).catch(() => undefined);
+        });
         retractionStoppedBy = 'retry-queue-unavailable';
         retractionDeferred.push(...ids);
         continue;
@@ -1214,7 +1214,7 @@ export const removeBlockedImages = createJob(
         message: 'retracting deletes stopped for this run; the rest stay queued',
         reason: retractionStoppedBy,
         count: retractionDeferred.length,
-      }).catch(() => undefined);
+      });
     if (deletedWithoutRetraction.length > 0) {
       const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
       deleted.push(...rows.map((x) => x.id));

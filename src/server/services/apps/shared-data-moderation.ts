@@ -370,7 +370,7 @@ export function emitSharedBlockAlert(
       appBlockId: ctx.appBlockId,
     },
     'block-audit'
-  ).catch(() => undefined);
+  );
 }
 
 // ── Recording ─────────────────────────────────────────────────────────────────
@@ -546,7 +546,7 @@ export async function recordSharedDataScan(
   ctx: SharedDataScanContext
 ): Promise<void> {
   const counts = categoryCounts(scan);
-  await logToAxiom(
+  logToAxiom(
     {
       name: 'app-blocks-shared-data-moderation-scan',
       type: 'info',
@@ -562,7 +562,7 @@ export async function recordSharedDataScan(
       ...counts,
     },
     'block-audit'
-  ).catch(() => undefined);
+  );
 
   const client = clickhouse;
   if (!client) return;
@@ -572,7 +572,7 @@ export async function recordSharedDataScan(
     try {
       await client.insert({ table, values: rows(), format: 'JSONEachRow' });
     } catch (error) {
-      await logToAxiom(
+      logToAxiom(
         {
           name: 'app-blocks-shared-data-moderation-record-failed',
           type: 'error',
@@ -584,7 +584,7 @@ export async function recordSharedDataScan(
           error: error instanceof Error ? error.name : typeof error,
         },
         'block-audit'
-      ).catch(() => undefined);
+      );
     }
   };
   await Promise.all([
@@ -623,7 +623,7 @@ export function scheduleSharedDataShadow(
             error: error instanceof Error ? error.name : typeof error,
           },
           'block-audit'
-        ).catch(() => undefined)
+        )
       );
   });
 }

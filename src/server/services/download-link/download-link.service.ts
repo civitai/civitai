@@ -132,7 +132,7 @@ function logMint(
     error: result.ok ? null : result.error,
     linkId: result.ok ? result.linkId : null,
     reused: result.ok ? result.reused : null,
-  }).catch(() => undefined);
+  });
 }
 
 /**
@@ -352,9 +352,7 @@ async function isCredentialLive(credential: DownloadLinkCredential, now: number)
 }
 
 function logUse(linkId: string, outcome: string, fetch?: number) {
-  logToAxiom({ name: 'download-link', type: 'info', message: 'use', linkId, outcome, fetch }).catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'download-link', type: 'info', message: 'use', linkId, outcome, fetch });
 }
 
 /** Logs why a fetch was refused and answers the refusal. */

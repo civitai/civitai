@@ -124,7 +124,7 @@ export default HeaderTokenSecuredEndpoint(
       type: minted instanceof Error || !auditRecorded ? 'error' : 'info',
       name: 'system-account-api-key-minted',
       details: { userId, keyId, name, tokenScope, asserted_actor: actorUserId, auditRecorded },
-    }).catch(() => null);
+    });
 
     // Never throws. The outcome is read from the table rather than from deleteApiKeys' result.
     // Logged as 'error' even when 'revoked': a revoke only follows a mint that failed or was refused.
@@ -137,7 +137,7 @@ export default HeaderTokenSecuredEndpoint(
         type: 'error',
         name: `system-account-api-key-${outcome}`,
         details: { userId, keyId, name, reason },
-      }).catch(() => null);
+      });
     };
 
     try {
@@ -162,7 +162,7 @@ export default HeaderTokenSecuredEndpoint(
           type: 'error',
           name: 'system-account-api-key-rotation-failed',
           details: { userId, keyId, name },
-        }).catch(() => null);
+        });
         return null;
       }
     );

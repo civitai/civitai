@@ -298,7 +298,7 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
         message: err instanceof Error ? err.message : String(err),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
     sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
     return;
   }
@@ -853,7 +853,7 @@ async function moderate(
           error: err instanceof Error ? err.name : typeof err,
         },
         'block-audit'
-      ).catch(() => undefined);
+      );
       throw new DocStoreError('moderation_unavailable', 'content could not be reviewed right now', {
         retryAfter: 5,
       });

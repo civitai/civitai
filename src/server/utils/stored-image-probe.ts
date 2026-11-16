@@ -255,7 +255,7 @@ export async function probeStoredImageWithBytes(
       message: err instanceof Error ? err.message : String(err),
       errorName: err instanceof Error ? err.name : undefined,
       statusCode: (err as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode,
-    }).catch(() => null);
+    });
     throw new StoredImageProbeError('store-unavailable', 'could not read the stored image', {
       cause: err,
     });

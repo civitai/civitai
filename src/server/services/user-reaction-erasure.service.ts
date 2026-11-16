@@ -149,6 +149,6 @@ async function followUp(
       name: 'user-reaction-erasure-follow-up',
       message: (error as Error).message,
       details: { table, step, entities: entityIds.length },
-    }).catch(() => undefined);
+    });
   }
 }

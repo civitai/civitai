@@ -38,7 +38,7 @@ export async function dispatchEmail(
           type: 'error',
           message: 'notification email endpoint failed',
           data: { status: res.status, notificationType: type },
-        }).catch(() => null);
+        });
     } catch (e) {
       emailDispatchTotal.inc({ outcome: 'failure' });
       logAxiomError(e as Error);

@@ -90,7 +90,7 @@ export type MysteryBoxOddsPage = NonNullable<Awaited<ReturnType<typeof getMyster
 const oddsPageErrorLog = createFallbackDedup({ windowMs: 60_000, maxSize: 1000 });
 function logOddsPageError(message: string, fields: { boxDefinitionId: number; version: number }) {
   if (!oddsPageErrorLog.shouldLog(`${fields.boxDefinitionId}:${fields.version}:${message}`)) return;
-  logToAxiom({ type: 'error', name: 'mystery-box-odds-page', message, ...fields }).catch();
+  logToAxiom({ type: 'error', name: 'mystery-box-odds-page', message, ...fields });
 }
 
 /**

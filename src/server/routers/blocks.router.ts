@@ -6829,7 +6829,7 @@ export const blocksRouter = router({
             type: 'error',
             postId: created.postId,
             error: String(error),
-          }).catch(() => undefined)
+          })
         );
 
         // ClickHouse tracking — the native create+publish pair. Issued here rather
@@ -10306,7 +10306,7 @@ function estimateBatchCellErrorMessage(err: unknown): string {
       code: trpcError.code,
       message: trpcError.message,
       stack: trpcError.cause instanceof Error ? trpcError.cause.stack : trpcError.stack,
-    }).catch(() => undefined);
+    });
     return safe.message;
   }
   return trpcError.message;
@@ -15154,7 +15154,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
         attempt: failure?.attempt ?? null,
         status: failure?.status ?? null,
         error: e instanceof Error ? e.message : String(e),
-      }).catch(() => undefined);
+      });
       if (definite) throw e;
       // AMBIGUOUS: the reservations are NOT refunded. With no workflow id there is no
       // settle record, so nothing reconciles them later — each stays counted until its
@@ -15219,7 +15219,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
       confirmedBuzz: confirmedTotal,
       chargedBuzz: jobBuzz,
       realizedBuzz: realizedTotal,
-    }).catch(() => undefined);
+    });
   }
 
   const genResult = { snapshot };
@@ -16070,7 +16070,7 @@ async function maybeAutoClaimDailyBoost({
         err: (err as Error).message,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return undefined;
   }
 
@@ -16103,7 +16103,7 @@ async function maybeAutoClaimDailyBoost({
         err: (err as Error).message,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return undefined;
   }
 

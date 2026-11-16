@@ -739,7 +739,7 @@ async function assertStoredObjectUnchanged(
     reason: verdict.status === 'unverifiable' ? verdict.reason : null,
     kind,
     imageId: image.id,
-  }).catch(() => null);
+  });
   // 🔴 That `.catch(() => null)` is LOAD-BEARING, not tidiness. Nothing awaits the
   // call above, so a rejecting sink — `logToAxiom` awaits an ingest that rejects
   // when Axiom itself is degraded — has nowhere to go but `unhandledRejection`, and

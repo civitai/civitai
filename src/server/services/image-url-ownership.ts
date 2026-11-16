@@ -344,7 +344,7 @@ export async function recordUploadKeyOwner(key: string, userId: number): Promise
     message: 'Failed to record upload key owner',
     error: (error as Error).message,
     attempts: RECORD_ATTEMPTS,
-  }).catch(() => undefined);
+  });
   return false;
 }
 
@@ -415,7 +415,7 @@ async function ownersFromClickhouse(keys: string[]) {
       name: 'upload-key-owner',
       message: 'Failed to read the upload request log',
       error: (e as Error).message,
-    }).catch(() => undefined);
+    });
     return { owners, failed: true };
   }
 }
@@ -528,7 +528,7 @@ export async function assertClientKeysIssuedToCaller({
     userId,
     keys: remaining.join(','),
     ...(requestLogReadFailed && { reason: 'request_log_unavailable' }),
-  }).catch(() => undefined);
+  });
 }
 
 /**

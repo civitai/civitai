@@ -186,7 +186,7 @@ export async function assertSharedTextSafe(
         errorName: error instanceof Error ? error.name : typeof error,
         errorMessage: error instanceof Error ? error.message : String(error),
       },
-    }).catch(() => undefined);
+    });
     throw new SharedContentBlockedError('link', retryMessage, { unchecked: true });
   }
 

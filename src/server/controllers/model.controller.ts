@@ -2497,7 +2497,7 @@ export const updateGallerySettingsHandler = async ({
           name: 'model-gallery-post-pinned',
           message: (e as Error).message,
           details: { modelId: id },
-        }).catch()
+        })
       );
     }
 

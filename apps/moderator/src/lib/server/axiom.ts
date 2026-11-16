@@ -27,7 +27,7 @@ export function logToAxiom(data: Record<string, unknown>, datastream = 'civitai-
 // serialized line MUST keep the literal `unhandled server error` substring: the datapacket-talos Loki
 // alerts match on it, so rewording the label silently unhooks the alert.
 export function logAxiomError(error: unknown, extra?: Record<string, unknown>) {
-  return logToAxiom({ type: 'error', ...extra, ...safeError(error) }).catch(() => {});
+  return logToAxiom({ type: 'error', ...extra, ...safeError(error) });
 }
 
 export { safeError };
