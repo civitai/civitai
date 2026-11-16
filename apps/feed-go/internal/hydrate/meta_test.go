@@ -225,6 +225,45 @@ func (s *Sources) metaOnly(ctx context.Context, ids []int) (map[int]any, error) 
 	return p.Meta, nil
 }
 
+// An image-meta miss is never answered from lookupShared's in-process memo (Node keeps no per-pod
+// copy: a meta its owner hides must not be served again): a second miss within the memo's window
+// queries again and sees the hidden meta. The cosmetic caches keep their memo (the control).
+func TestImageMetaMissNotMemoized(t *testing.T) {
+	s, _, db, _ := metaFixture(t)
+	hidden := false
+	db.Routes[0].Rows = func([]any) (*testkit.Rows, error) {
+		var meta any = `{"prompt": "p47"}`
+		if hidden {
+			meta = nil
+		}
+		return testkit.NewRows([]string{"id", "meta"}, []any{47, meta}), nil
+	}
+	if got, err := s.metaOnly(context.Background(), []int{47}); err != nil || plainJSON(t, got[47]) != `{"v":{"prompt":"p47"}}` {
+		t.Fatalf("first miss: %v %v", got, err)
+	}
+	hidden = true // the owner flips hideMeta
+	if got, err := s.metaOnly(context.Background(), []int{47}); err != nil || plainJSON(t, got[47]) != `{"v":null}` {
+		t.Fatalf("second miss within the memo window: %v %v, want the hidden (null) meta", got, err)
+	}
+	if len(db.Calls) != 2 {
+		t.Fatalf("replica queries = %d, want 2 (no memo)", len(db.Calls))
+	}
+	// Control: the same MissCompute still memoizes a cosmetic cache's answers.
+	calls := 0
+	lookup := func(context.Context, []int) (map[int]jspack.Obj, error) {
+		calls++
+		return map[int]jspack.Obj{7: jspack.O("userId", 7)}, nil
+	}
+	for range 2 {
+		if _, err := s.Compute.lookupShared(context.Background(), MissUserCosmetics, []int{7}, lookup); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("user-cosmetics lookups = %d, want 1 (memoized)", calls)
+	}
+}
+
 func TestV1PageMetaFallbacks(t *testing.T) {
 	// No miss computation: a miss falls back; hits alone are served.
 	s, _, _, _ := metaFixture(t)

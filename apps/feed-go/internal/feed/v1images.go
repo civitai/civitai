@@ -74,8 +74,10 @@ func emptyGate() superjson.Object {
 type V1Answer struct {
 	// Body is what Node writes with `res.status(200).json(...)`.
 	Body superjson.Object
-	// Trivial marks an answer computed without loading any image: a withheld or fully held gallery,
-	// `limit=0`, a shape the feed cannot express, or a feed page with no ids. Such answers cost
+	// Trivial marks an answer computed without loading any image or running a page query: a withheld
+	// or fully held gallery, `limit=0` on the feed path, a shape the feed cannot express, a feed page
+	// with no ids, a legacy page of unselectable levels only. A legacy page whose query ran is not
+	// trivial, even when it found nothing. Such answers cost
 	// almost nothing on either side, so they are kept out of the CPU-per-served-call and match series
 	// (outcome `served_empty`, result `match_empty`).
 	Trivial bool
@@ -199,7 +201,8 @@ type v1Result struct {
 	// the legacy path the look-ahead row's cursor column, a number (int64) or null (nil, a NULL index).
 	next    any
 	hasNext bool
-	// hydrated: the page's rows were loaded (false = a trivial answer, see V1Answer).
+	// hydrated: the page's rows were loaded, or on the legacy path its query ran (false = a trivial
+	// answer, see V1Answer).
 	hydrated bool
 }
 
@@ -443,7 +446,7 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 		}
 		return nil, fallback.Newf("v1-legacy-error", "%v", err) // Node: a 500
 	}
-	res := &v1Result{}
+	res := &v1Result{hydrated: true} // the query ran, whatever it found
 	if len(rows) > q.Limit {
 		// The look-ahead row (LIMIT limit + 1) is popped; its cursor column is the next cursor.
 		look := rows[len(rows)-1]
@@ -465,7 +468,7 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 	if err != nil {
 		return nil, err
 	}
-	res.items, res.hydrated = items, true
+	res.items = items
 	return res, nil
 }
 

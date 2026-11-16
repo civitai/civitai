@@ -99,14 +99,16 @@ type recentEntry struct {
 //     caller's context runs it, so a joiner sees that caller's cancellation as its own error);
 //   - with write-back off, each answer (a record or "no row") is kept for recentTTL and answers the
 //     next miss of that id without a query. With write-back on nothing is kept: the written cache
-//     entry answers repeats, and a kept answer could outlive the bust that should replace it.
+//     entry answers repeats, and a kept answer could outlive the bust that should replace it. The
+//     image meta is never kept either (memoized): Node keeps no per-pod copy of it, so a meta its
+//     owner just hid is never served again, and its multi-KB values would crowd the cap.
 //
 // The records are shared between callers and must be treated as read-only.
 func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) (map[int]jspack.Obj, error) {
 	out := make(map[int]jspack.Obj, len(ids))
 	todo := ids
-	if !c.WriteBack {
+	if c.memoized(cache) {
 		todo = c.fromRecent(cache, ids, out)
 	}
 	if len(todo) == 0 {
@@ -131,10 +133,17 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 			out[id] = rec
 		}
 	}
-	if !c.WriteBack {
+	if c.memoized(cache) {
 		c.remember(cache, todo, records)
 	}
 	return out, nil
+}
+
+// memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every
+// cache but the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
+// must not leave the old prompt served from a process's copy).
+func (c *MissCompute) memoized(cache string) bool {
+	return !c.WriteBack && cache != MissImageMeta
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.

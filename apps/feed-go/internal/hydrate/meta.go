@@ -171,7 +171,8 @@ func (s *Sources) queueMeta(b *Batch, ids []int) *metaRead {
 // Exec: per image its `meta` (nil = null; an id with no row is nil too). A hit is served whatever its
 // age: Node serves a stale entry too unless its refresh lock is free, and then reads the same row
 // again. A miss (no key, an unreadable value, a debounce marker, a failed read) is looked up with the
-// Node lookup's query on the replica, as Node's fetch looks it up; without s.Compute it falls back
+// Node lookup's query on the replica, as Node's fetch looks it up (concurrent identical lookups
+// shared, none kept in process: MissCompute.memoized); without s.Compute it falls back
 // (`image-meta-miss`). Nothing is written back: Node writes these values brotli-compressed, which this
 // service does not reproduce byte for byte, so a Go-only miss stays a miss.
 func (s *Sources) imageMetasFrom(ctx context.Context, r *metaRead) (map[int]any, error) {

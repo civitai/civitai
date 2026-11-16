@@ -818,13 +818,14 @@ func TestServeV1LegacyAnswersAndFallbacks(t *testing.T) {
 	if got, err := serveV1(t, f, "ids=10&browsingLevel=32", nil); err != nil || got != `{"items":[],"metadata":{}}` || len(f.hq) != 0 {
 		t.Fatalf("blocked-only level: %s %v, queries %d", got, err, len(f.hq))
 	}
-	// No row, or only a hidden one: an empty page (no read rescue on this path), trivial.
+	// No row, or only a hidden one: an empty page (no read rescue on this path), and not trivial: its
+	// query ran. The unselectable-level page above ran none, and is.
 	for _, q := range []string{"ids=99", "ids=13"} {
 		if got, err := serveV1(t, f, q, nil); err != nil || got != `{"items":[],"metadata":{}}` {
 			t.Fatalf("%s: %s %v", q, got, err)
 		}
 	}
-	if !reflect.DeepEqual(f.trivial, []bool{true, true, true}) {
+	if !reflect.DeepEqual(f.trivial, []bool{true, false, false}) {
 		t.Fatalf("trivial = %v", f.trivial)
 	}
 	// ... the owner's unpublished image is theirs.
@@ -845,46 +846,47 @@ func TestServeV1LegacyAnswersAndFallbacks(t *testing.T) {
 }
 
 // withMeta: the meta is read for the page's images only when asked; flat on the feed path and
-// `{ id, meta }` on the legacy path unless flatMeta says otherwise.
+// `{ id, meta }` on the legacy path unless flatMeta says otherwise. Each item's `meta` is decoded
+// and compared whole, so a wrapped meta cannot pass for a flat one (or the reverse).
 func TestServeV1WithMeta(t *testing.T) {
 	meta := map[int]any{11: superjson.Object{{Key: "prompt", Val: "p11"}, {Key: "cfg", Val: 7.5}}, 10: nil}
 	feedPage := newV1Fixture([]RawImage{row(10, 100, "image", "a", 1, ""), row(11, 101, "image", "b", 1, "")})
 	legacy := newV1Fixture([]RawImage{legacyRow(11, 101, 11), legacyRow(10, 100, 10)})
 	feedPage.src.meta, legacy.src.meta = meta, meta
-	// The flat forms carry what precedes them (each image's stats), so a wrapped meta, whose inner
-	// `"meta":{…}` reads the same, does not match them.
-	const (
-		flat11    = `"commentCount":1},"meta":{"prompt":"p11","cfg":7.5}`
-		flat10    = `"commentCount":0},"meta":null`
-		wrapped11 = `"meta":{"id":11,"meta":{"prompt":"p11","cfg":7.5}}`
-		wrapped10 = `"meta":{"id":10,"meta":null}`
-	)
+	flat := map[int]string{11: `{"prompt":"p11","cfg":7.5}`, 10: `null`}
+	wrapped := map[int]string{11: `{"id":11,"meta":{"prompt":"p11","cfg":7.5}}`, 10: `{"id":10,"meta":null}`}
+	none := map[int]string{11: `null`, 10: `null`}
 	cases := []struct {
 		f     *v1Fixture
 		query string
-		want  []string
-		not   []string
+		want  map[int]string // item id -> its `meta`, as written
 	}{
-		{feedPage, "withMeta=true", []string{flat11, flat10}, []string{wrapped11}},
-		{feedPage, "withMeta=true&flatMeta=false", []string{wrapped11, wrapped10}, []string{flat11}},
-		{legacy, "ids=10,11&withMeta=true", []string{wrapped11, wrapped10}, []string{flat11}},
-		{legacy, "ids=10,11&withMeta=true&flatMeta=true", []string{flat11, flat10}, []string{wrapped11}},
-		{legacy, "ids=10,11&withMeta=false&flatMeta=true", []string{flat10}, []string{"p11"}},
+		{feedPage, "withMeta=true", flat},
+		{feedPage, "withMeta=true&flatMeta=false", wrapped},
+		{legacy, "ids=10,11&withMeta=true", wrapped},
+		{legacy, "ids=10,11&withMeta=true&flatMeta=true", flat},
+		{legacy, "ids=10,11&withMeta=false&flatMeta=true", none},
 	}
 	for _, c := range cases {
 		got, err := serveV1(t, c.f, c.query, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", c.query, err)
 		}
-		for _, w := range c.want {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s: no %s in %s", c.query, w, got)
-			}
+		var body struct {
+			Items []struct {
+				ID   int             `json:"id"`
+				Meta json.RawMessage `json:"meta"`
+			} `json:"items"`
 		}
-		for _, n := range c.not {
-			if strings.Contains(got, n) {
-				t.Errorf("%s: %s in %s", c.query, n, got)
-			}
+		if err := json.Unmarshal([]byte(got), &body); err != nil {
+			t.Fatalf("%s: %v", c.query, err)
+		}
+		metas := map[int]string{}
+		for _, it := range body.Items {
+			metas[it.ID] = string(it.Meta)
+		}
+		if !reflect.DeepEqual(metas, c.want) {
+			t.Errorf("%s: metas %v, want %v", c.query, metas, c.want)
 		}
 	}
 	// The meta ids asked: the page's images with withMeta, none without.
