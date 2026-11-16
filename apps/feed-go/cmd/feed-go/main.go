@@ -1,6 +1,6 @@
 // Command feed-go serves `image.getImagesAsPostsInfinite` for the request shapes it has ported and
 // proxies everything else to the Node app, and shadow-compares that procedure and the REST
-// `GET /api/v1/images`. See apps/feed-go/DESIGN.md.
+// `GET /api/v1/images`, `GET /api/v1/models` and `GET /api/v1/models/[id]`. See apps/feed-go/DESIGN.md.
 package main
 
 import (
@@ -30,6 +30,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
+	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
 func main() {
@@ -227,6 +228,27 @@ func run(log *slog.Logger) error {
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
 	}
+	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
+	mc := config.LoadV1Models()
+	v1Models := &server.V1ModelsDeps{
+		Deps: &v1models.Deps{
+			DB:      pool,
+			Packed:  packed,
+			Sources: sources,
+			Gallery: deps.Gallery,
+			Addons:  deps.Addons.Addons,
+			Config: v1models.Config{
+				ImageLocation:        cfg.ImageLocation,
+				BaseURL:              mc.BaseURL,
+				CoverageNext:         cfg.CoverageNext,
+				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
+				ComputeMisses:        cfg.ComputeMisses,
+				ResponseCacheTTL:     mc.ResponseCacheTTL,
+				Production:           true,
+			},
+		},
+		Users: sources,
+	}
 	srv := &server.Server{
 		Resolver:    resolver,
 		Deps:        deps,
@@ -241,7 +263,10 @@ func run(log *slog.Logger) error {
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
 		Infinite:       infinite,
+		V1Models:       v1Models,
 		RequestBudget:  cfg.RequestBudget,
+		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
+		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
 	}
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)
