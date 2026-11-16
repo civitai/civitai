@@ -779,7 +779,7 @@ describe('publish', () => {
     expect((r.body as { created: string[] }).created).toEqual(['o1', 'o2', 'o3']);
     // Every document is still scanned; the two mode flags are each evaluated once.
     expect(h.scans).toBe(3);
-    expect([...h.modeFlagLookups].sort()).toEqual([ENFORCE_FLAG, SHADOW_FLAG]);
+    expect([...h.modeFlagLookups].sort()).toEqual([SHADOW_FLAG, ENFORCE_FLAG]);
   });
 
   it('in shadow moderation the same batch lands (scanned after the write)', async () => {
