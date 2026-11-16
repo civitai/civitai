@@ -46,14 +46,14 @@ import { RE2JS } from 're2js';
 export const FILTER_PATTERN_MAX_LENGTH = 1024;
 
 /**
- * Largest size a pattern may have, counted as {@link translateFilterPattern} says: the size of
- * the longest literal pattern {@link FILTER_PATTERN_MAX_LENGTH} admits, so counted repetitions
- * never make a pattern larger than a literal one of the allowed length. Matching is linear in the
- * input with a factor of the size (the NFA can hold one thread per instruction), so the size, not
- * the length, is what a match costs: `.{1000}` written 146 times fits in 1022 characters, is size
- * 146 000, and took ~0.7 s against a 10 000-character string.
+ * Largest size a pattern may have, counted as {@link translateFilterPattern} says. Matching is
+ * linear in the input with a factor of the size (the NFA can hold one thread per instruction), so
+ * the size, not the length, is what a match costs: `.{1000}` written 146 times fits in 1022
+ * characters, is size 146 000, and took ~0.7 s against a 10 000-character string. A literal
+ * pattern's size is its length, so this also bounds literals below the length bound. What a
+ * pattern at this bound costs is measured at `FILTER_PATTERNS_MAX_TOTAL_SIZE` (`json-schema.ts`).
  */
-export const FILTER_PATTERN_MAX_SIZE = FILTER_PATTERN_MAX_LENGTH;
+export const FILTER_PATTERN_MAX_SIZE = 256;
 
 /** A pattern this source will not evaluate. Its message is the `bad_request` sent. */
 export class FilterPatternError extends Error {}

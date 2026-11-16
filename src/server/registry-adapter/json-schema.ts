@@ -19,16 +19,20 @@ export function newValidator() {
 
 /**
  * Largest total size of a filter's patterns, each counted once per place it is applied and as
- * {@link FILTER_PATTERN_MAX_SIZE} counts it: all of a filter's patterns together may be no larger
- * than one of the largest. A pattern runs on re2js's DFA where its states fit the DFA's memory,
- * and on its NFA, which takes time in its size times the input's length, where they do not.
- * Measured against 20 000 characters of random `a`/`b`, through ajv: `[ab]*a[ab]{500}$` (size
- * 503) ~110 ms on every match (~640 ms against 200 000), `[ab]*a[ab]{1000}$` (1003) ~165 ms, two
- * patterns of 1007 in all that both run ~220 ms, `^x` 0 ms; the 146-fold `.{1000}` the size bound
- * refuses took ~2.4 s. That is the worst case found, for text that keeps the DFA from fitting; a
- * pattern whose DFA fits runs at ~0.1 ms per 20 000 characters once it is built.
+ * {@link FILTER_PATTERN_MAX_SIZE} counts it: two patterns of the largest size. A pattern runs on
+ * re2js's DFA where its states fit the DFA's memory, and otherwise rebuilds the DFA and falls back
+ * to its NFA, which takes time in its size times the input's length.
+ *
+ * Measured through ajv against 20 000 characters of random `a`/`b` (text that keeps the DFA from
+ * fitting), best of 3, `^x` 0 ms throughout:
+ *   - one `[ab]*a[ab]{250}$` (size 253): ~95 ms, ~360 ms against 200 000 characters;
+ *   - one `[ab]{0,125}b[ab]{125}c` (253): ~160 ms, ~720 ms against 200 000;
+ *   - that shape in 2 places of ~253: ~270-350 ms; in 8 places of ~61: ~610 ms.
+ * Each place that thrashes the DFA costs tens of milliseconds whatever its size, so the worst case
+ * grows with the number of places more than with their size. At 1024 for both bounds the same
+ * shapes took ~310 ms for one pattern and ~970 ms for 8 places.
  */
-export const FILTER_PATTERNS_MAX_TOTAL_SIZE = FILTER_PATTERN_MAX_SIZE;
+export const FILTER_PATTERNS_MAX_TOTAL_SIZE = 2 * FILTER_PATTERN_MAX_SIZE;
 
 /**
  * Most distinct patterns a filter may hold. Each keeps a DFA re2js lets grow to ~8 MB as bodies

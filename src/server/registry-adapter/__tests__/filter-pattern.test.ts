@@ -176,8 +176,8 @@ describe('🔴 a pattern the linear-time engine cannot run with its meaning is r
     ['a script property', '\\p{Script=Greek}', 'a Unicode property escape'],
     ['a binary property', '\\p{Alphabetic}', 'a Unicode property escape'],
     ['a lone surrogate', '\\uD800', 'a lone surrogate'],
-    ['a repeat count over the size bound', 'a{1100}', 'is larger than 1024 once'],
-    ['nested counts over the size bound', '(a{100}){100}', 'is larger than 1024 once'],
+    ['a repeat count over the size bound', 'a{1100}', 'is larger than 256 once'],
+    ['nested counts over the size bound', '(a{100}){100}', 'is larger than 256 once'],
     ['an invalid ECMA-262 pattern', '[', 'not a valid ECMA-262 regular expression'],
     ['RE2-only syntax', '(?i)a', 'not a valid ECMA-262 regular expression'],
   ])('%s: refused, saying why', (_name, p, why) => {
@@ -190,7 +190,13 @@ describe('🔴 a pattern the linear-time engine cannot run with its meaning is r
     expect(() => compileFilterPattern('a'.repeat(1025))).toThrow(
       'is longer than 1024 characters, which this registry does not apply'
     );
-    expect(compileFilterPattern('a'.repeat(1024)).test('a'.repeat(1024))).toBe(true);
+    // 1024 characters but size 1 (one class), so only the length bound is at stake.
+    const atLength = `[${'a'.repeat(1022)}]`;
+    expect(atLength.length).toBe(1024);
+    expect([
+      compileFilterPattern(atLength).test('a'),
+      compileFilterPattern(atLength).test('b'),
+    ]).toEqual([true, false]);
   });
 });
 
@@ -199,9 +205,9 @@ const fill = (unit: string, max = FILTER_PATTERN_MAX_LENGTH) =>
   unit.repeat(Math.floor(max / unit.length));
 
 describe('🔴 a pattern whose counted repetitions multiply out too large is refused', () => {
-  it('the bound is the length bound: a literal pattern of the longest length fits', () => {
-    expect(FILTER_PATTERN_MAX_SIZE).toBe(1024);
-    expect(compileFilterPattern('a'.repeat(1024)).size).toBe(1024);
+  it('the bound is 256, and a literal pattern counts its length', () => {
+    expect(FILTER_PATTERN_MAX_SIZE).toBe(256);
+    expect(compileFilterPattern('a'.repeat(200)).size).toBe(200);
   });
 
   // Each fits the length bound and every single count RE2 accepts, so only the size refuses them.
@@ -211,19 +217,21 @@ describe('🔴 a pattern whose counted repetitions multiply out too large is ref
     ['(?:.{1000}){1} side by side', fill('(?:.{1000}){1}')],
     ['.{0,1000} side by side', fill('.{0,1000}')],
     ['two .{1000}', '.{1000}.{1000}'],
-    ['nested counts multiplying past the bound', '(?:a{40}){40}'],
+    ['one count past the bound', '.{300}'],
+    ['nested counts multiplying past the bound', '(?:a{20}){15}'],
     ['empty groups repeated', '(){1000}(){1000}'],
+    ['a literal longer than the size bound', 'a'.repeat(300)],
   ])('%s: refused before it is compiled', (_name, p) => {
     expect(p.length).toBeLessThanOrEqual(FILTER_PATTERN_MAX_LENGTH);
     expect(() => compileFilterPattern(p)).toThrow(FilterPatternError);
     expect(() => compileFilterPattern(p)).toThrow(
-      'is larger than 1024 once its counted repetitions are multiplied out'
+      'is larger than 256 once its counted repetitions are multiplied out'
     );
   });
 
   it.each([
-    ['.{900}', 900],
-    ['(?:a{30}){30}', 930],
+    ['.{199}', 199],
+    ['(?:a{12}){15}', 195],
     ['^[a-z0-9-]{1,64}$', 66],
     ['a{01}', 1],
   ])('%s is under the bound, with size %i, and is compiled', (p, size) => {
@@ -278,20 +286,26 @@ describe('createFilterCompiler with patterns', () => {
       'a backreference',
     ],
     ['an over-long pattern', { pattern: 'x'.repeat(1025) }, 'longer than 1024 characters'],
-    ['a pattern over the size bound', { pattern: fill('.{1000}') }, 'is larger than 1024 once'],
+    ['a pattern over the size bound', { pattern: fill('.{1000}') }, 'is larger than 256 once'],
     ['a Unicode property', { pattern: '\\p{L}' }, 'a Unicode property escape'],
     ['a negated Unicode property', { pattern: '\\P{L}' }, 'a Unicode property escape'],
-    // Each is under the per-pattern bound (size 401); together they are 1203.
+    // Each is under the per-pattern bound (size 200); together they are 600.
     [
       'three patterns over the total size',
-      { allOf: ['x', 'y', 'z'].map((e) => ({ properties: { d: { pattern: `[ab]{400}${e}` } } })) },
-      'larger than 1024 in total',
+      { allOf: ['x', 'y', 'z'].map((e) => ({ properties: { d: { pattern: `[ab]{199}${e}` } } })) },
+      'larger than 512 in total',
     ],
-    // One pattern of size 600, applied in two places: counted in each.
+    // One pattern of size 200, applied in three places: counted in each, so 600.
     [
-      'one pattern applied in two places, over the total size',
-      { properties: { a: { pattern: 'a{600}' }, b: { pattern: 'a{600}' } } },
-      'larger than 1024 in total',
+      'one pattern applied in three places, over the total size',
+      {
+        properties: {
+          a: { pattern: 'a{200}' },
+          b: { pattern: 'a{200}' },
+          c: { pattern: 'a{200}' },
+        },
+      },
+      'larger than 512 in total',
     ],
     [
       'more distinct patterns than the bound',
@@ -314,18 +328,26 @@ describe('createFilterCompiler with patterns', () => {
     expect((err as Error).message).toContain(why);
   });
 
-  it('the filter bounds: the total is one largest pattern, and 8 distinct patterns', () => {
-    expect([FILTER_PATTERNS_MAX_TOTAL_SIZE, FILTER_MAX_PATTERNS]).toEqual([1024, 8]);
+  it('the filter bounds: the total is two largest patterns, and 8 distinct patterns', () => {
+    expect([FILTER_PATTERNS_MAX_TOTAL_SIZE, FILTER_MAX_PATTERNS]).toEqual([512, 8]);
   });
 
-  // Positive controls for the filter bounds: just under each, the filter is applied.
-  it('patterns under the total size (two of size 401) are applied', () => {
+  // Positive controls for the filter bounds: under each, the filter is applied.
+  it('patterns under the total size (two of size 200) are applied', () => {
     const f = compile({
-      allOf: ['x', 'y'].map((e) => ({ properties: { d: { pattern: `[ab]{400}${e}` } } })),
+      allOf: ['x', 'y'].map((e) => ({ properties: { d: { pattern: `[ab]{199}${e}` } } })),
     })!;
-    expect([f({ d: `${'a'.repeat(400)}x${'b'.repeat(400)}y` }), f({ d: 'a'.repeat(400) })]).toEqual(
+    expect([f({ d: `${'a'.repeat(199)}x${'b'.repeat(199)}y` }), f({ d: 'a'.repeat(199) })]).toEqual(
       [true, false]
     );
+  });
+
+  it('one pattern of size 200 in two places (400) is applied', () => {
+    const f = compile({ properties: { a: { pattern: 'a{200}' }, b: { pattern: 'a{200}' } } })!;
+    expect([f({ a: 'a'.repeat(200), b: 'a'.repeat(200) }), f({ a: 'a'.repeat(199) })]).toEqual([
+      true,
+      false,
+    ]);
   });
 
   // ajv's meta-schema holds patterns of its own; they must not count against the filter's bound.
