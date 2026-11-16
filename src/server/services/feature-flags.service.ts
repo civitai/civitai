@@ -222,6 +222,21 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'ssr-signed-in-skip-prefetch',
   },
+  // The same trial for `/images/[imageId]`, `/posts/[postId]` and `/user/[username]`, one flag per
+  // page (`SSR_SKIP_PREFETCH_FLAGS` in `~/server/utils/ssr-skip-prefetch` maps each route to its
+  // flag), so each page is rolled out and rolled back on its own. Dark and fail CLOSED, as above.
+  ssrSignedInSkipPrefetchImages: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-images',
+  },
+  ssrSignedInSkipPrefetchPosts: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-posts',
+  },
+  ssrSignedInSkipPrefetchUser: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-user',
+  },
   // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
   // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
   // on-switch.
@@ -471,10 +486,16 @@ const featureFlags = createFeatureFlags({
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
+  // Search v3 for articles: the header bar filters the articles feed (?query=) through the search
+  // service. Dark: Flipt is its only switch.
+  articleFeedSearch: { availability: [], fliptKey: 'search-v3-articles' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
   // Semantic search on the challenges feed. Dark: Flipt is its only switch.
   semanticChallengeSearch: { availability: [], fliptKey: 'semantic-challenge-search' },
+  // Search v3 for models: the header bar filters the models feed (?query=) through the search
+  // service. Dark: Flipt is its only switch, and off is today's in-feed Meilisearch search.
+  modelFeedSearch: { availability: [], fliptKey: 'search-v3-models' },
   // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
   // The semantic storyline search endpoint. Dark: Flipt is its only switch.

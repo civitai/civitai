@@ -75,7 +75,7 @@ export async function rewardReportReporters(input: {
         // Omitted rather than reported when every floored raw overflowed: `Math.min()` of no
         // arguments is +Infinity, which is the opposite sign of the alert and serializes to `null`.
         ...(finiteFloored.length ? { minRaw: Math.min(...finiteFloored) } : {}),
-      }).catch(() => null);
+      });
     }
     if (clamped.length) {
       logToAxiom({
@@ -85,7 +85,7 @@ export async function rewardReportReporters(input: {
         clampedEvents: clamped.length,
         batchSize: rows.length,
         maxRaw: Math.max(...clamped),
-      }).catch(() => null);
+      });
     }
     await getClickhouse().insert({ table: 'buzzEvents', values: rows, format: 'JSONEachRow' });
   } catch (err) {
@@ -139,7 +139,7 @@ async function getBaseRewardsMultiplier(userId: number): Promise<number> {
         type: 'error',
         message: 'Cached rewards multiplier was not finite; paid the base multiplier instead',
         userId,
-      }).catch(() => null);
+      });
     }
   } catch {
     // Shared-cache read is best-effort; fall back to the base multiplier.

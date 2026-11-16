@@ -68,9 +68,7 @@ export const sweepStaleAgentReviewsJob = createJob(
     try {
       const swept = await sweepStaleAgentReviews();
       if (swept > 0) {
-        logToAxiom({ type: 'sweep-stale-agent-reviews', swept }, 'webhooks').catch(
-          () => undefined
-        );
+        logToAxiom({ type: 'sweep-stale-agent-reviews', swept }, 'webhooks');
       }
       return { swept };
     } catch (error) {
@@ -82,7 +80,7 @@ export const sweepStaleAgentReviewsJob = createJob(
           stack: (error as Error)?.stack,
         },
         'webhooks'
-      ).catch(() => undefined);
+      );
       return { swept: 0, error: true as const };
     }
   }

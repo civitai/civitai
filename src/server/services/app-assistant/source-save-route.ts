@@ -70,7 +70,7 @@ export async function runnerSourceSaveRoute(req: AxiomAPIRequest, res: NextApiRe
       userId: grant.userId,
       app: body.app,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res.status(503).json({ error: 'Could not save the app right now', code: 'unavailable' });
   }
 }

@@ -104,7 +104,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
       range,
       upstream: upstream.headers,
     })
-  ).catch(() => null);
+  );
   // Awaited, so the row is there before the page that loads these bytes reports them shown.
   if (isAuditedServe(upstream))
     await trackModActivity(user.id, {

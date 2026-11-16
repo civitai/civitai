@@ -296,7 +296,7 @@ export async function cleanupNotifications(before: Date): Promise<number> {
     message: `Cleaned up notifications older than ${before.toISOString()}`,
     deleted,
     bustsAcked,
-  }).catch(() => null);
+  });
   return deleted;
 }
 
@@ -403,7 +403,7 @@ async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Pr
           all,
           category,
           attempt,
-        }).catch(() => null);
+        });
       return;
     } catch (err) {
       const transient = isTransientWriteError(err);
@@ -418,7 +418,7 @@ async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Pr
           all,
           category,
           attempt,
-        }).catch(() => null);
+        });
         return;
       }
       const backoff =

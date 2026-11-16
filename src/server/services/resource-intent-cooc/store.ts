@@ -244,7 +244,7 @@ function decodeSectionOrNull(contentHash: string, raw: unknown): CheckpointAttac
         error: e instanceof Error ? e.message : String(e),
       },
       'temp-search'
-    ).catch(() => undefined);
+    );
     return null;
   }
 }

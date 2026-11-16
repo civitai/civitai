@@ -160,7 +160,7 @@ export interface SubmitOptions {
   /** Told how each dataset maturity count was made, for the run's log line. */
   onMatureCount?: (count: MatureCount) => void;
   /** Whether this user may train with Kohya (the `KOHYA_FLAG_KEY` gate). Anything but true refuses a
-   *  Kohya run or continuation before any orchestrator call. */
+   *  Kohya run before any orchestrator call, and a Kohya continuation once its source run is read. */
   kohyaAllowed?: boolean;
 }
 

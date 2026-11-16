@@ -112,7 +112,7 @@ function logRestServerFault(e: unknown, res: NextApiResponse) {
   logToAxiom(
     { ...buildCentralErrorLog(e), source: 'handleEndpointError', ...(route ? { route } : null) },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -149,7 +149,7 @@ function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
       ...(route ? { route } : null),
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -956,7 +956,7 @@ export function OrchestratorEndpoint(
         route: req.url?.split('?')[0],
         requiredScope,
         ...credentialLogFields(credential),
-      }).catch(() => undefined);
+      });
       return res
         .status(403)
         .json({ error: 'Your API key does not have the required scope for this action' });

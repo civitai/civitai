@@ -1,5 +1,5 @@
 import type { GetServerSidePropsContext } from 'next';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { FeatureAccess, FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { Session } from '~/types/session';
 import { isNextDataRequest } from '~/server/utils/next-data-request';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
@@ -17,7 +17,21 @@ type CohortRequest = GetServerSidePropsContext['req'] & {
 };
 
 /**
- * The `ssrSignedInSkipPrefetch` arm a page request is in, or `null` when it is outside the trial
+ * Every route in the trial, by its page pattern (`ctx.pathname` in `_document`, the route label of
+ * its SSR metrics), and the flag that turns its `skip` arm on. One flag per route, so each page is
+ * rolled out, and rolled back, on its own.
+ */
+export const SSR_SKIP_PREFETCH_FLAGS = {
+  '/models/[id]/[[...slug]]': 'ssrSignedInSkipPrefetch',
+  '/images/[imageId]': 'ssrSignedInSkipPrefetchImages',
+  '/posts/[postId]/[[...postSlug]]': 'ssrSignedInSkipPrefetchPosts',
+  '/user/[username]': 'ssrSignedInSkipPrefetchUser',
+} as const satisfies Record<string, FeatureFlagKey>;
+
+export type SsrSkipPrefetchRoute = keyof typeof SSR_SKIP_PREFETCH_FLAGS;
+
+/**
+ * The `ssrSignedInSkipPrefetch*` arm a page request is in, or `null` when it is outside the trial
  * and must get the full server render. A page adopts the trial by calling this from its
  * `getServerSideProps` once its 404, access and redirect decisions are made — so a request that
  * ends in one of those is never counted — and, on `skip`, by issuing only the prefetches those
@@ -39,8 +53,8 @@ export function resolveSsrPrefetchCohort({
   route,
 }: {
   ctx: Pick<GetServerSidePropsContext, 'req'>;
-  /** The page pattern, e.g. `/models/[id]/[[...slug]]` — never the URL. */
-  route: string;
+  /** The page pattern, e.g. `/models/[id]/[[...slug]]` — never the URL. It picks the flag. */
+  route: SsrSkipPrefetchRoute;
   session?: Session | null;
   features?: FeatureAccess;
 }): SsrPrefetchCohort | null {
@@ -49,7 +63,7 @@ export function resolveSsrPrefetchCohort({
   if (isNextDataRequest(req as never)) return null;
   if (parseVerifiedBotHeader(req.headers[VERIFIED_BOT_HEADER])) return null;
   if (req[BOT_CACHE_REQ_KEY]) return null;
-  const cohort: SsrPrefetchCohort = features?.ssrSignedInSkipPrefetch ? 'skip' : 'full';
+  const cohort: SsrPrefetchCohort = features?.[SSR_SKIP_PREFETCH_FLAGS[route]] ? 'skip' : 'full';
   req[SSR_PREFETCH_COHORT_REQ_KEY] = cohort;
   req[SSR_PREFETCH_ROUTE_REQ_KEY] = route;
   return cohort;

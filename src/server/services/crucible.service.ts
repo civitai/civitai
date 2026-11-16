@@ -117,7 +117,9 @@ import {
 } from '~/server/services/crucible-judge-closure';
 import {
   getAnchorVotesKey,
+  getDismissedPairsKey,
   getJudgesKey,
+  getSysVoteOutcomesKey,
   getVoteOutcomesKey,
   getVotedPairsKey,
 } from '~/server/services/crucible-redis-keys';
@@ -128,7 +130,13 @@ import {
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
 import { delIfValue } from '~/server/redis/atomic';
-import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
+import {
+  redis,
+  sysRedis,
+  REDIS_SYS_KEYS,
+  REDIS_KEYS,
+  withSysReadDeadline,
+} from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { revokeCrucibleEntry } from '~/server/services/crucible-entry-accepted';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
@@ -2794,19 +2802,86 @@ export const submitEntry = async ({
 };
 
 /**
- * `voted`: pairs this judge voted on. `decided`: voted plus pairs their votes settle, which are not
- * served again. Progress counts `voted` as judged; only serving and "pairs left" use `decided`.
+ * `voted`: pairs this judge voted on. `decided`: voted, pairs their votes settle and pairs they
+ * dismissed, none of which is served again. Progress counts `voted` as judged; only serving and
+ * "pairs left" use `decided`.
  */
 async function getJudgePairKeys(crucibleId: number, userId: number) {
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
-  const [voted = [], outcomeCount = 0] = await Promise.all([
+  const [voted = [], clusterOutcomes, dismissed = []] = await Promise.all([
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
-    sysRedis.sCard(outcomesKey),
+    loadVoteOutcomes(
+      () => redis.sCard(outcomesKey),
+      () => redis.sMembers(outcomesKey)
+    ).catch((error: unknown) => {
+      warnVoteOutcomes('Failed to read vote outcomes', error, crucibleId, userId);
+      return undefined;
+    }),
+    sysRedis.sMembers(getDismissedPairsKey(crucibleId, userId)),
   ]);
-  // Past the cap the closure is skipped anyway, so the outcomes are not loaded.
-  if (!outcomeCount || outcomeCount > MAX_CLOSURE_VOTES) return { voted, decided: voted };
-  const outcomes = (await sysRedis.sMembers(outcomesKey)) ?? [];
-  return { voted, decided: decidedPairKeys(voted, outcomes) };
+  const outcomes =
+    clusterOutcomes && clusterOutcomes.length < voted.length
+      ? await withSysVoteOutcomes(clusterOutcomes, crucibleId, userId)
+      : clusterOutcomes;
+  const withDismissed = (decided: string[]) =>
+    dismissed.length ? [...new Set([...decided, ...dismissed])] : decided;
+  // A counted vote adds one voted pair and one outcome. Fewer outcomes than voted pairs means some
+  // are missing (a rating update or outcome write that failed, an eviction), and a partial set can
+  // break a cycle and decide a pair the full set leaves open, so it is not used.
+  if (!outcomes || outcomes.length < voted.length) return { voted, decided: withDismissed(voted) };
+  return { voted, decided: withDismissed(decidedPairKeys(voted, outcomes)) };
+}
+
+/**
+ * A judge's outcomes: `[]` when there are none, undefined when there are more than the closure
+ * handles, which skips it anyway, so they are not loaded.
+ */
+async function loadVoteOutcomes(count: () => Promise<number>, members: () => Promise<string[]>) {
+  const outcomeCount = await count();
+  if (outcomeCount > MAX_CLOSURE_VOTES) return undefined;
+  return outcomeCount ? (await members()) ?? [] : [];
+}
+
+/**
+ * Outcomes on sysRedis expire 30 days after a judge's last vote there, which was before the set
+ * moved to the cache cluster, so the fallback finds nothing once the move is 30 days deployed.
+ * This date must stay at least that far past the deploy.
+ * 🔴 Delete after this date: this constant, `withSysVoteOutcomes` and its call in
+ * `getJudgePairKeys`, `getSysVoteOutcomesKey`, and `REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES`.
+ */
+export const VOTE_OUTCOMES_SYS_FALLBACK_UNTIL = new Date('2027-01-01T00:00:00Z');
+
+/**
+ * `outcomes` plus the judge's outcomes still on sysRedis from before the move, deduplicated (an
+ * outcome is its `winner>loser` string, the same on both). Read only before
+ * `VOTE_OUTCOMES_SYS_FALLBACK_UNTIL`, and bounded by the sys read deadline; a read that fails or
+ * times out is logged and adds nothing. Undefined when sysRedis holds more than the closure cap.
+ */
+async function withSysVoteOutcomes(outcomes: string[], crucibleId: number, userId: number) {
+  if (Date.now() >= VOTE_OUTCOMES_SYS_FALLBACK_UNTIL.getTime()) return outcomes;
+  const sysKey = getSysVoteOutcomesKey(crucibleId, userId);
+  const sysOutcomes = await withSysReadDeadline(
+    loadVoteOutcomes(
+      () => sysRedis.sCard(sysKey),
+      () => sysRedis.sMembers(sysKey)
+    )
+  ).catch((error: unknown) => {
+    warnVoteOutcomes('Failed to read vote outcomes from sysRedis', error, crucibleId, userId);
+    return [];
+  });
+  if (!sysOutcomes) return undefined;
+  return sysOutcomes.length ? [...new Set([...outcomes, ...sysOutcomes])] : outcomes;
+}
+
+function warnVoteOutcomes(message: string, error: unknown, crucibleId: number, userId: number) {
+  logToAxiom({
+    type: 'warning',
+    name: 'crucible-vote-outcomes',
+    message: `${message} for crucible ${crucibleId}, user ${userId}`,
+    error: error instanceof Error ? error.message : String(error),
+    crucibleId,
+    userId,
+  });
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -2872,6 +2947,63 @@ async function reserveJudgeEntryVotes(
  */
 function createServedPairValue(pairKey: string, anchorEntryId: number | null): string {
   return anchorEntryId === null ? pairKey : `${pairKey}|anchor:${anchorEntryId}`;
+}
+
+/**
+ * Claims the served pair (KEYS[1]) and adds it to the dismissed set (KEYS[2]), only while the judge
+ * is still being served that pair (ARGV[1], with or without its anchor suffix). Returns 1 when
+ * dismissed. Claiming it means the dismissed pair can no longer be voted on.
+ */
+export const DISMISS_SERVED_PAIR_SCRIPT = `
+local served = redis.call('GET', KEYS[1])
+if not served then return 0 end
+if served ~= ARGV[1] and string.sub(served, 1, #ARGV[1] + 1) ~= ARGV[1] .. '|' then return 0 end
+redis.call('DEL', KEYS[1])
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+return 1`;
+
+/**
+ * "Don't show again": the judge never gets this pair served again in this crucible. Only the pair
+ * on their screen can be dismissed. It is not a vote, so ratings, vote counts and progress's
+ * judged count are untouched.
+ */
+export async function dismissJudgingPair({
+  crucibleId,
+  entryIds: [entryA, entryB],
+  userId,
+}: {
+  crucibleId: number;
+  entryIds: [number, number];
+  userId: number;
+}) {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: { status: true, endAt: true },
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  const now = Date.now();
+  if (
+    crucible.status !== CrucibleStatus.Active ||
+    (crucible.endAt && now > crucible.endAt.getTime())
+  )
+    throw throwBadRequestError('This crucible is not currently active for judging');
+
+  // TTL to endAt: dismissals only matter while judging is open.
+  const ttlSeconds = crucible.endAt
+    ? Math.max(1, Math.ceil((crucible.endAt.getTime() - now) / 1000))
+    : JUDGE_KEY_TTL_SECONDS;
+  const dismissed = Number(
+    await sysRedis.eval(DISMISS_SERVED_PAIR_SCRIPT, {
+      keys: [getServedPairKey(crucibleId, userId), getDismissedPairsKey(crucibleId, userId)],
+      arguments: [createPairKey(entryA, entryB), String(ttlSeconds)],
+    })
+  );
+  if (!dismissed)
+    throw throwBadRequestError(
+      'This pair is no longer available. Please wait for the next pair to load.'
+    );
+  return { dismissed: true };
 }
 
 /**
@@ -3285,7 +3417,8 @@ export type JudgingPairCount = {
 };
 
 /**
- * Pairs left for one judge across several crucibles: two Redis reads each, then one entries query.
+ * Pairs left for one judge across several crucibles: the judge's Redis pair state for each, then one
+ * entries query.
  * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
  * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
  * query off crucibles the judge never voted in, which the feed asks about most.
@@ -3314,7 +3447,7 @@ export async function countJudgingPairs({
       return { id, judgeEntryVotes, voted, decided };
     })
   );
-  const counted = judgedOnly ? judgeState.filter(({ voted }) => voted.length > 0) : judgeState;
+  const counted = judgedOnly ? judgeState.filter(({ decided }) => decided.length > 0) : judgeState;
   if (!counted.length) return counts;
 
   const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
@@ -3844,19 +3977,19 @@ export const submitVote = async ({
   await Promise.all([
     // A lost outcome only means this judge is served a pair they could have skipped.
     (async () => {
-      await sysRedis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
-      await sysRedis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
+      await redis.sAdd(outcomesKey, createVoteOutcome(winnerEntryId, loserEntryId));
+      await redis.expire(outcomesKey, JUDGE_KEY_TTL_SECONDS);
       // At most once per judge and crucible: concurrent votes can both read past 201 and skip it.
-      if ((await sysRedis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
+      if ((await redis.sCard(outcomesKey)) === MAX_CLOSURE_VOTES + 1)
         logToAxiom({
           type: 'info',
           name: 'crucible-closure-cap',
           message: `Judge ${userId} passed ${MAX_CLOSURE_VOTES} votes in crucible ${crucibleId}; the judge-side skip is off for them`,
           crucibleId,
           userId,
-        }).catch();
+        });
     })().catch((error: unknown) =>
-      log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
+      warnVoteOutcomes('Failed to record vote outcome', error, crucibleId, userId)
     ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),

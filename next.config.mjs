@@ -201,6 +201,7 @@ export default defineNextConfig(
       '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
+      '@civitai/email',
       '@civitai/clickhouse',
       '@civitai/axiom',
       '@civitai/flipt',

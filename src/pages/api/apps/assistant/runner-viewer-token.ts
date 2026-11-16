@@ -28,7 +28,7 @@ export default AuthedEndpoint(async (req, res, user) => {
       type: 'app-assistant.runner-viewer-token.failed',
       message: `App Assistant runner viewer token failed for user ${user.id}`,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res.status(503).json({ error: 'The App Assistant runner is not available' });
   }
 });

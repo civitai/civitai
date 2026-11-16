@@ -227,13 +227,11 @@ export const bustImageDeliveryMetadataCache = async (url: string) => {
   }
 
   recordImageDeliveryBustFailure();
-  await logToAxiom({
+  logToAxiom({
     type: 'warning',
     name: 'image-delivery-metadata-bust',
     message: 'image-delivery metadata cache bust failed after retry',
     imageKey: url,
     error: safeError(lastError),
-  }).catch(() => {
-    // swallow — best effort logging
   });
 };

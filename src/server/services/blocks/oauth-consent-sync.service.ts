@@ -189,7 +189,7 @@ export async function writeOauthConsent(opts: {
         type: 'oauth.bust-cache.failed',
         message: `bust-cache failed for oauth client ${clientId} user ${userId}`,
         error: safeError(err),
-      }).catch(() => undefined);
+      });
     }
   }
 }
@@ -218,7 +218,7 @@ export async function withdrawCatalogItemsOnConsentRevoke(opts: {
       type: 'oauth.withdraw-catalog-items.failed',
       message: `catalog item withdraw failed for oauth client ${opts.clientId} user ${opts.userId}`,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return null;
   }
 }
@@ -247,7 +247,7 @@ export async function withdrawCatalogItemsOnClientDelete(opts: {
       clientId: opts.clientId,
       parentListingIds: opts.parentListingIds,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return null;
   }
 }
@@ -276,7 +276,7 @@ export async function revokeOauthConsentForBlock(opts: {
       type: 'oauth.delete-subject.failed',
       message: `delete-subject failed for oauth client ${clientId} user ${userId}`,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
   });
   await revokeCivitaiUserTokens({ userId });
 }

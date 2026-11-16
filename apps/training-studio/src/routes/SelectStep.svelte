@@ -471,7 +471,7 @@
   </div>
 {/snippet}
 
-<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-6">
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">What do you want to train?</h2>

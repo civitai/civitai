@@ -1333,6 +1333,9 @@ describe('Kohya training', () => {
     await expect(submitTrainingBatch(client, [run()], { checkText })).rejects.toThrow(
       KOHYA_UNAVAILABLE
     );
+    await expect(
+      submitTrainingBatch(client, [run()], { checkText, kohyaAllowed: false })
+    ).rejects.toThrow(KOHYA_UNAVAILABLE);
     await expect(continueTrainingWhatIf(client, opts)).rejects.toThrow(KOHYA_UNAVAILABLE);
     await expect(continueTraining(client, opts, { checkText })).rejects.toThrow(KOHYA_UNAVAILABLE);
     expect(submitWorkflow.mock.calls.length).toBe(calls);

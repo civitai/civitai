@@ -40,10 +40,11 @@ linters:
         - shadow
   exclusions:
     rules:
-      # integtest's msgpack encoder writes length and integer fields as wire bytes: each int->byte /
-      # uint16 / uint32 conversion is a deliberate truncation inside a branch that bounds the value
-      # (it mirrors msgpackr's own encoder). Test-only code, behind the integration build tag.
-      - path: internal/integtest/msgpackr\.go
+      # jspack's msgpack encoder and decoder read and write length and integer fields as wire bytes:
+      # each int->byte / uint16 / uint32 conversion (and the decoder's uint->int8/16/32/64 and
+      # length->int) is a deliberate truncation or reinterpretation inside a branch that bounds the
+      # value, mirroring msgpackr's own codec; every decoded length is checked against the bytes left.
+      - path: internal/jspack/jspack\.go
         linters:
           - gosec
         text: G115

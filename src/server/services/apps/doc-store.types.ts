@@ -44,11 +44,40 @@ export type DocCollection = {
  *   - `ns`: `prod`, `dev:<uid>` or `rev:<publishRequestId>:<moderatorUid>` (the app id of a
  *     review context is the publish request id, and its viewer is that moderator).
  *   - `viewerUid`: the signed-in viewer, or null for an anonymous viewer.
+ *   - `levels`: present only while the app's `app-blocks-shared-doc-levels` flag is on
+ *     (`doc-levels.ts`). Absent, every statement is the one the store ran before levels existed.
  */
 export type DocStoreContext = {
   appId: string;
   ns: string;
   viewerUid: number | null;
+  levels?: DocLevelGate;
+};
+
+/**
+ * Content levels of shared documents, on (see `DocStoreContext.levels`). A shared write marks its
+ * document `pending`; a read leaves out the documents whose status is unrated or `pending` (unless
+ * the reader is their author), and rated ones whose effective level (`override_level` if set, else
+ * `level`) has no bit in common with `viewerLevel` — or, for the reader's own documents, with
+ * `domainLevel` (`sharedDocLevelVisible` in `doc-store.ts`).
+ */
+export type DocLevelGate = {
+  /** The viewer's browsing level, a bitwise NsfwLevel flag set (`viewerDocLevel`). */
+  viewerLevel: number;
+  /**
+   * The token's domain ceiling (`domainDocLevel`), which caps an author's own RATED documents.
+   * Absent for a read with no viewer (the registry feed), where `viewerLevel` stands in.
+   */
+  domainLevel?: number;
+};
+
+export type DocRatingStatus = 'pending' | 'rated' | 'overridden';
+
+/** A shared document's content level as a reader sees it. Set only while levels are on. */
+export type DocRating = {
+  /** The effective level: the moderator's override when set, else the rated level. */
+  level: number | null;
+  status: DocRatingStatus | null;
 };
 
 export type DocAuthor =
@@ -69,6 +98,8 @@ export type DocRecord = {
   marks: Record<string, number>;
   /** Null for an anonymous viewer. */
   viewer: { marks: string[] } | null;
+  /** Server-set and read only; present only while levels are on (`DocStoreContext.levels`). */
+  rating?: DocRating;
 };
 
 export type DocListQuery = {
@@ -267,7 +298,7 @@ export async function docStoreDependency<T>(read: Promise<T>): Promise<T> {
         message: err instanceof Error ? err.message : String(err),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
     throw docStoreUnavailable();
   }
 }
@@ -275,3 +306,50 @@ export async function docStoreDependency<T>(read: Promise<T>): Promise<T> {
 export function isDocStoreError(err: unknown, code?: DocStoreErrorCode): err is DocStoreError {
   return err instanceof DocStoreError && (code === undefined || err.code === code);
 }
+
+// ---------------------------------------------------------------------------
+// Server-side publish (`DocStore.publishCopies` / `unpublishCopies`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Bounds of one publish or unpublish call. `maxKeys` caps the keys a call names (more is refused
+ * whole, `invalid_request` with `reason: 'too_many_keys'`); `pruneLimit` caps the copies one
+ * publish prunes (the rest wait for the next call, `pruneIncomplete: true`).
+ */
+export const DOC_STORE_PUBLISH_BOUNDS = { maxKeys: 500, pruneLimit: 500 } as const;
+
+/**
+ * What a publish does with one requested key, decided from the caller's private document (the
+ * source) and the shared document at the same key (the copy):
+ * - `create`: no copy yet; `update`: the caller's own copy, with different content;
+ * - `unchanged`: the caller's own copy with the same content: nothing is written;
+ * - `missing`: the caller has no private document at that key;
+ * - `not_author`: the copy belongs to someone else (or to no user): never touched;
+ * - `hidden`: the caller's own copy, hidden by a moderator: never rewritten.
+ */
+export type PublishAction = 'create' | 'update' | 'unchanged' | 'missing' | 'not_author' | 'hidden';
+export type PublishSkipReason = Extract<PublishAction, 'missing' | 'not_author' | 'hidden'>;
+
+/** One requested key as a publish would treat it now (`DocStore.previewPublish`). */
+export type PublishPreviewEntry = {
+  key: string;
+  action: PublishAction;
+  /** The private body and its content hash; only for `create` and `update`. */
+  source?: { data: Record<string, unknown>; hash: string };
+};
+
+/** Every list holds keys in key order. */
+export type PublishResult = {
+  created: string[];
+  updated: string[];
+  unchanged: string[];
+  pruned: string[];
+  skipped: { key: string; reason: PublishSkipReason }[];
+  /** More copies were prunable than one call prunes: call again. */
+  pruneIncomplete: boolean;
+};
+
+export type UnpublishResult = {
+  deleted: string[];
+  skipped: { key: string; reason: 'missing' | 'not_author' }[];
+};

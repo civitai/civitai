@@ -53,7 +53,7 @@ function inactive(reason: string, extra?: Record<string, unknown>): JwtIntrospec
     result: 'inactive',
     reason,
     ...extra,
-  }).catch(() => undefined);
+  });
   return { kind: 'inactive' };
 }
 
@@ -70,9 +70,7 @@ export async function introspectAccessTokenJwt(
     verifier ??= createAccessTokenJwtVerifier();
     payload = await verifier(token, issuer);
   } catch (err) {
-    void logToAxiom({ type: 'error', name: 'introspect-jwt-verifier', message: String(err) }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'introspect-jwt-verifier', message: String(err) });
     return inactive('verifier not configured');
   }
   if (!payload) return inactive('signature or claims');
@@ -150,7 +148,7 @@ export async function introspectAccessTokenJwt(
       name: 'introspect-jwt-indeterminate',
       message: String(err),
       ...log,
-    }).catch(() => undefined);
+    });
     return { kind: 'indeterminate' };
   }
 }

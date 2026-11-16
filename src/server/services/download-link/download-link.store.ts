@@ -320,7 +320,7 @@ export async function revokeLinksOfRevokedCredentials(credentials: DownloadLinkC
         credentialKind: credential.kind,
         credentialId: credential.id,
         error: (error as Error).message,
-      }).catch(() => undefined);
+      });
     }
   }
 }

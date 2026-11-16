@@ -62,7 +62,7 @@ export const POST: RequestHandler = async ({ request }) => {
   const conversions = await settle('conversion retries', async () => {
     if (!conversionEnabled()) return { retried: 0, paid: 0, failed: 0 };
     if (!buzzConfigured()) {
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'knights-conversion-retries-skipped',
         message: 'BUZZ_ENDPOINT is not configured; unconfirmed conversions were not retried',
@@ -112,7 +112,7 @@ export const POST: RequestHandler = async ({ request }) => {
   const failing = Object.entries(itemFailures).filter(([, count]) => count > 0);
   if (failing.length > 0) {
     for (const [step, count] of failing) metrics.tickItemFailures(step as TickFailureStep, count);
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'knights-tick-item-failures',
       message: 'Some items failed in the tick; the next tick retries them',

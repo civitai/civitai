@@ -996,7 +996,9 @@ describe('blocks.pollWorkflow', () => {
           name: 's',
           status: 'succeeded',
           metadata: {},
-          output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+          output: {
+            images: [{ id: 'b', url: 'https://cdn/i.png', available: true, nsfwLevel: 'pg' }],
+          },
         },
       ],
     });
@@ -1185,6 +1187,63 @@ describe('blocks.cancelWorkflow', () => {
     await expect(
       caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+});
+
+// 🔴 RESTRICTED OUTPUTS ON THE SUBMIT REPLY. The poll / cancel / listing / publish
+// procedures are run end to end with a restricted fixture in
+// `blocks.router.restrictedOutputs.seam.test.ts`; the submit lives here because this
+// suite carries its mocks. A submit reply normally has no output yet, but an
+// orchestrator answering with a finished workflow must not hand the block a restricted
+// url either.
+describe('blocks.submitWorkflow — a restricted output on the reply', () => {
+  const OK = 'https://cdn/submit-ok.png';
+  const SECRET = 'https://cdn/submit-restricted.png';
+
+  it.each([
+    ['an SFW app', undefined, 'ceiling'],
+    ['a mature app', 1 | 2 | 4 | 8 | 16, 'pool'],
+  ] as const)('%s is never handed the restricted url', async (_label, maxBrowsingLevel, reason) => {
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({
+        buzzBudget: 100,
+        // The viewer's own level matches the domain, so the domain ceiling decides.
+        ...(maxBrowsingLevel ? { maxBrowsingLevel, viewerBrowsingLevel: maxBrowsingLevel } : {}),
+      })
+    );
+    happyVersionLookup();
+    happyUser();
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 25 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'succeeded',
+        cost: { total: 25 },
+        allowMatureContent: false,
+        steps: [
+          {
+            $type: 'textToImage',
+            name: 's',
+            status: 'succeeded',
+            metadata: {},
+            output: {
+              images: [
+                { id: 'r', url: SECRET, available: true, nsfwLevel: 'r' },
+                { id: 'p', url: OK, available: true, nsfwLevel: 'pg' },
+              ],
+            },
+          },
+        ],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    expect(result.snapshot.outputs).toStrictEqual([
+      { restricted: true, reason },
+      { url: OK, nsfwLevel: 'pg' },
+    ]);
+    expect(result.snapshot.imageUrls).toStrictEqual([OK]);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 });
 
@@ -10084,7 +10143,9 @@ describe('blocks — #3520 model substitution observability', () => {
             name: 's',
             status: 'succeeded',
             metadata: {},
-            output: { images: [{ id: 'b', url: 'https://cdn/i.png', available: true }] },
+            output: {
+              images: [{ id: 'b', url: 'https://cdn/i.png', available: true, nsfwLevel: 'pg' }],
+            },
           },
         ],
       });
@@ -10533,14 +10594,16 @@ describe('blocks — #3520 model substitution observability', () => {
       $type: 'convertImage',
       name: 'block-step',
       status: 'succeeded',
-      output: { blob: { id: 'b1', url, available: true, width: 797, height: 1024 } },
+      output: {
+        blob: { id: 'b1', url, available: true, width: 797, height: 1024, nsfwLevel: 'pg' },
+      },
     });
     const textToImageStep = (url: string) => ({
       $type: 'textToImage',
       name: 's1',
       status: 'succeeded',
       metadata: {},
-      output: { images: [{ id: 'i1', url, available: true }] },
+      output: { images: [{ id: 'i1', url, available: true, nsfwLevel: 'pg' }] },
     });
     const isWhatIf = (c: unknown[]) =>
       (c[0] as { query?: { whatif?: boolean } } | undefined)?.query?.whatif === true;
@@ -10737,7 +10800,10 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
             {
               $type: opts.body.steps[0].$type,
               name: opts.body.steps[0].name,
-              output: { blobs: [{ url: PT_BLOB_URL, available: true }], note: 'kept' },
+              output: {
+                blobs: [{ url: PT_BLOB_URL, available: true, nsfwLevel: 'pg' }],
+                note: 'kept',
+              },
             },
           ],
           cost: { total: realizedCost },
