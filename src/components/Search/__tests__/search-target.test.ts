@@ -45,9 +45,8 @@ describe('the feed search flag on its own', () => {
 
   it('searches the images feed in place with feedSearch alone, and only on /images', () => {
     expect(searchesFeedInPlace(feedOnly, 'images', '/images')).toBe(true);
-    expect(searchesFeedInPlace({ imageSearch: true, feedSearch: false }, 'images', '/images')).toBe(
-      false
-    );
+    const searchPagesOnly = { imageSearch: true, feedSearch: false };
+    expect(searchesFeedInPlace(searchPagesOnly, 'images', '/images')).toBe(false);
     expect(searchesFeedInPlace(feedOnly, 'images', '/models')).toBe(false);
     expect(searchesFeedInPlace(feedOnly, 'models', '/images')).toBe(false);
   });
