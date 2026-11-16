@@ -32,6 +32,8 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptVariant: vi.fn(),
   getFliptBoolean: vi.fn(),
   ensureFliptInitialized: vi.fn(async () => undefined),
+  // No client: Flipt is down, not answering without the key.
+  getFliptClientSync: () => null,
   FLIPT_FEATURE_FLAGS: {},
 }));
 
@@ -89,5 +91,10 @@ describe('static fallback while Flipt is unavailable', () => {
   it('still grants flux2Training to a moderator', async () => {
     const features = await getFeatureFlagsAsync({ user: moderator });
     expect(features.flux2Training).toBe(true);
+  });
+
+  it('keeps the fallback of a flag that requires its Flipt key', async () => {
+    const mod = { id: 102, isModerator: true, tier: 'free' } as SessionUser;
+    expect((await getFeatureFlagsAsync({ user: mod })).storylineText).toBe(true);
   });
 });

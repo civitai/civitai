@@ -140,6 +140,33 @@ func TestLoadPprofDefaultsOff(t *testing.T) {
 	}
 }
 
+// SESSION_REVOCATION_CACHE is a default-on switch (isEnvSwitchOn): only off/0/false, any case and
+// surrounding whitespace, turn it off; unset, empty and unknown values keep it on. The cases are the
+// package's own env-switch.test.ts.
+func TestLoadRevocationMarkerCacheSwitch(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	off := []string{"off", "OFF", "Off", "0", "false", "FALSE", "False", " off ", "\tfalse\n"}
+	on := []string{"", " ", "on", "true", "1", "no", "offf", "disabled", "00", "false!"}
+	for _, in := range append(off, on...) {
+		t.Setenv("SESSION_REVOCATION_CACHE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := true
+		for _, o := range off {
+			if in == o {
+				want = false
+			}
+		}
+		if c.RevocationMarkerCache != want {
+			t.Errorf("SESSION_REVOCATION_CACHE=%q -> %v, want %v", in, c.RevocationMarkerCache, want)
+		}
+	}
+}
+
 func TestLoadModerationAccountID(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -228,5 +255,23 @@ func TestLoadCacheMissSettings(t *testing.T) {
 	}
 	if c.ComputeMisses || !c.CacheWriteBack || !c.FrameCacheNegative || c.PrimaryDatabaseURL != "x://primary" {
 		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q", c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	}
+}
+
+// FEED_GO_MAX_IN_FLIGHT: a positive integer is an explicit cap; anything else (unset, zero, negative,
+// junk) is 0, "not set", which the server resolves to the pool's ceiling — never an unlimited pod.
+func TestLoadMaxInFlight(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]int{"": 0, "0": 0, "-3": 0, "junk": 0, "1": 1, "7": 7, "64": 64} {
+		t.Setenv("FEED_GO_MAX_IN_FLIGHT", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.MaxInFlight != want {
+			t.Errorf("FEED_GO_MAX_IN_FLIGHT=%q -> %d, want %d", in, c.MaxInFlight, want)
+		}
 	}
 }

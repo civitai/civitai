@@ -11,7 +11,10 @@ export const APPRENTICE = {
   /** A recap offers the rating guide when accuracy is below this after `coachAfter` answers. */
   coachBelow: 0.6,
   coachAfter: 50,
-  /** Once the curated core set is used up, every this-many-th item is a yes/no question. */
+  /** Every this-many-th item is a yes/no question; core and harvested images take turns in the rest. */
   yesNoEvery: 3,
+  /** A smite once this many of the player's last `smiteWindow` answers are wrong; the count starts over after one. */
+  smiteWrong: 6,
+  smiteWindow: 20,
   milestones: [5, 10, 15],
 } as const;

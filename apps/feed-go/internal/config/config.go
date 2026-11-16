@@ -57,6 +57,10 @@ type Config struct {
 	// listener only (never the public one).
 	Pprof bool
 
+	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
+	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
+	RevocationMarkerCache bool
+
 	// System redis through its Sentinels (internal/sysredis). Same names and precedence as the
 	// Node app: a non-empty REDIS_SYS_SENTINELS selects Sentinel mode, else REDIS_SYS_URL is used.
 	RedisSysSentinels        string // REDIS_SYS_SENTINELS: comma-separated host[:port]
@@ -73,6 +77,11 @@ type Config struct {
 	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
 	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
 	RequestBudget time.Duration
+	// MaxInFlight is FEED_GO_MAX_IN_FLIGHT: the public requests one pod computes at once. Past it a
+	// request is not computed but proxied to the Node app (fallback reason `bulkhead`). 0 = not set
+	// explicitly (unset, zero, negative or junk): the cap is then the replica pool's connection ceiling
+	// (server.ResolveMaxInFlight). There is no unlimited setting.
+	MaxInFlight int
 	// CompletionConcurrency is FEED_GO_COMPLETION_CONCURRENCY: the lazy-post-images completion
 	// fetches one request runs at once. The default is sized for shadow load; serving may want more.
 	CompletionConcurrency int
@@ -141,6 +150,7 @@ func Load() (*Config, error) {
 	}
 	ms := intEnv("REDIS_SYS_READ_TIMEOUT_MS", 1000)
 	c.SysReadTimeout = time.Duration(ms) * time.Millisecond
+	c.RevocationMarkerCache = envSwitchOn(os.Getenv("SESSION_REVOCATION_CACHE"))
 	c.Hosts = browsing.HostColors{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
@@ -153,6 +163,7 @@ func Load() (*Config, error) {
 	}
 	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
 	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
+	c.MaxInFlight = positiveIntEnv("FEED_GO_MAX_IN_FLIGHT", 0)
 	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
 	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond
 	c.JWKSMaxStaleness = time.Duration(positiveIntEnv("FEED_GO_JWKS_MAX_STALENESS_MS", 3*int(c.JWKSRefresh/time.Millisecond))) * time.Millisecond
@@ -281,6 +292,16 @@ func boolEnv(k string, def bool) bool {
 		return false
 	}
 	return def
+}
+
+// envSwitchOn is isEnvSwitchOn (packages/civitai-shared/src/env-switch.ts): a default-ON switch that only
+// `off`, `0` or `false` (any case, surrounding whitespace ignored) turns off, so a typo never disables it.
+func envSwitchOn(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "0", "false":
+		return false
+	}
+	return true
 }
 
 func intEnv(k string, def int) int {

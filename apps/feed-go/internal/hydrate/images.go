@@ -251,8 +251,8 @@ func Stats(m Metrics, ok bool) superjson.Object {
 }
 
 // tagIDsFrom is tagIdsForImagesCache.fetch over the cache's answer got for (unique) image ids: per
-// image, the `tags` id array. A miss falls back (the lookup joins the tag cache and drops some
-// Rekognition tags; not ported). Read with ttl 0: entries are served regardless of age.
+// image, the `tags` id array. An id got does not answer falls back (with Sources.Compute, fillTagIDs
+// has computed the misses into got first). Read with ttl 0: entries are served regardless of age.
 func tagIDsFrom(imageIDs []int, got map[int]Entry) (map[int]any, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("tag-ids-miss", "%d ids", len(miss))
