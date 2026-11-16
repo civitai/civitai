@@ -1,9 +1,9 @@
-import { Autocomplete, Select, UnstyledButton } from '@mantine/core';
+import { Combobox, Select, Text, TextInput, UnstyledButton, useCombobox } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { withMetadata } from '~/components/Post/EditV2/PostImageCards/SongDetails';
+import { withMetadata } from '~/components/Post/EditV2/PostImageCards/song-metadata';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -11,6 +11,7 @@ import {
   SONG_GENRE_REQUIRED_MESSAGE,
   SONG_GENRES,
   SONG_TAG_LIMIT,
+  SONG_TAG_LIMIT_MESSAGE,
   SONG_TAG_MAX_LENGTH,
 } from '~/shared/constants/song-genres';
 import type { SongGenre } from '~/shared/constants/song-genres';
@@ -65,6 +66,7 @@ export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
           if (value && value !== genre) setGenre.mutate({ id, genre: value as SongGenre });
         }}
         allowDeselect={false}
+        searchable
         error={!genre ? SONG_GENRE_REQUIRED_MESSAGE : undefined}
         // Inside the card, which clips: the theme renders Popover dropdowns in place.
         comboboxProps={{ withinPortal: true }}
@@ -81,7 +83,8 @@ export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
             {tag.name}
             <UnstyledButton
               aria-label={`Remove tag ${tag.name}`}
-              className="flex rounded text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-dark-0"
+              // A 24px target around the 11px icon; the negative margins keep the chip's size.
+              className="-my-1 -mr-1.5 flex size-6 items-center justify-center rounded text-gray-6 hover:text-gray-9 dark:text-dark-2 dark:hover:text-dark-0"
               disabled={removeTag.isPending}
               onClick={() => removeTag.mutate({ id, tagId: tag.id })}
             >
@@ -89,12 +92,16 @@ export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
             </UnstyledButton>
           </span>
         ))}
-        {songTags.length < SONG_TAG_LIMIT && (
+        {songTags.length < SONG_TAG_LIMIT ? (
           <SongTagInput
             taken={songTags.map((tag) => tag.name)}
             disabled={addTag.isPending}
             onAdd={(name) => addTag.mutate({ id, name })}
           />
+        ) : (
+          <Text size="xs" c="dimmed" title={SONG_TAG_LIMIT_MESSAGE}>
+            {SONG_TAG_LIMIT}/{SONG_TAG_LIMIT} tags
+          </Text>
         )}
       </div>
     </div>
@@ -112,42 +119,66 @@ function SongTagInput({
 }) {
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query.trim(), 300);
+  const combobox = useCombobox({ onDropdownClose: () => combobox.resetSelectedOption() });
   // Only plain PG tags can go on a song, so only those are suggested.
   const { data } = trpc.post.getTags.useQuery(
     { query: debounced, nsfwLevel: NsfwLevel.PG },
     { enabled: debounced.length > 1 }
   );
-  const suggestions = [...new Set((data ?? []).map((tag) => tag.name))].filter(
-    (name) => !taken.includes(name)
-  );
+  const typed = query.trim().toLowerCase();
+  const suggestions = [...new Set((data ?? []).map((tag) => tag.name))]
+    .filter((name) => !taken.includes(name) && (!typed || name.includes(typed)))
+    .slice(0, 8);
 
   const submit = (value: string) => {
     const name = value.trim().toLowerCase();
     setQuery('');
+    combobox.closeDropdown();
     if (name && !taken.includes(name)) onAdd(name);
   };
 
   return (
-    <Autocomplete
-      aria-label="Add a tag"
-      placeholder="Add a tag"
-      value={query}
-      onChange={setQuery}
-      data={suggestions}
-      limit={8}
-      maxLength={SONG_TAG_MAX_LENGTH}
-      disabled={disabled}
+    <Combobox
+      store={combobox}
       onOptionSubmit={submit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' && query.trim()) {
-          e.preventDefault();
-          submit(query);
-        }
-      }}
-      comboboxProps={{ withinPortal: true }}
-      size="xs"
-      radius={4}
-      w={140}
-    />
+      // Inside the card, which clips: the theme renders Popover dropdowns in place.
+      withinPortal
+    >
+      <Combobox.Target>
+        <TextInput
+          aria-label="Add a tag"
+          placeholder="Add a tag"
+          value={query}
+          maxLength={SONG_TAG_MAX_LENGTH}
+          disabled={disabled}
+          onChange={(e) => {
+            setQuery(e.currentTarget.value);
+            combobox.openDropdown();
+            combobox.resetSelectedOption();
+          }}
+          onFocus={() => combobox.openDropdown()}
+          onBlur={() => combobox.closeDropdown()}
+          // Runs before the combobox's own Enter handling, which submits a highlighted option:
+          // the typed text is added only when no option is highlighted.
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || combobox.getSelectedOptionIndex() !== -1) return;
+            e.preventDefault();
+            if (typed) submit(query);
+          }}
+          radius={4}
+          w={140}
+          classNames={{ input: 'h-[34px] min-h-[34px] text-[13px]' }}
+        />
+      </Combobox.Target>
+      <Combobox.Dropdown hidden={!suggestions.length}>
+        <Combobox.Options>
+          {suggestions.map((name) => (
+            <Combobox.Option value={name} key={name}>
+              {name}
+            </Combobox.Option>
+          ))}
+        </Combobox.Options>
+      </Combobox.Dropdown>
+    </Combobox>
   );
 }

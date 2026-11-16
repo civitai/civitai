@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
+import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as PostEditProviderMod from '~/components/Post/EditV2/PostEditProvider';
@@ -91,8 +91,7 @@ const added = (id: number, type: string, metadata: object) => ({
 });
 
 const publish = () => page.getByRole('button', { name: 'Publish', exact: true });
-/** The clock button beside Publish (icon only, no accessible name). */
-const schedule = () => publish().element().parentElement!.querySelectorAll('button')[1];
+const schedule = () => page.getByRole('button', { name: 'Schedule Publish', exact: true });
 
 beforeEach(() => {
   mocks.collectionId = undefined;
@@ -100,16 +99,14 @@ beforeEach(() => {
 });
 
 describe('publishing a post with songs from the edit sidebar', () => {
-  test('Publish and Schedule are disabled with the reason while a song has no genre', async () => {
+  test('Publish and Schedule are disabled, with the reason written under them, while a song has no genre', async () => {
     mocks.images = [added(7, 'audio', { genre: 'Pop' }), added(8, 'audio', {})];
     renderWithProviders(<PostEditSidebar post={post} />);
 
     await expect.element(publish()).toBeDisabled();
-    expect(schedule()).toBeDisabled();
-    await userEvent.hover(publish().element().parentElement as HTMLElement);
-    await expect
-      .element(page.getByText('Pick a genre for every song to publish'))
-      .toBeInTheDocument();
+    await expect.element(schedule()).toBeDisabled();
+    // Readable without hover (touch screens).
+    await expect.element(page.getByText('Pick a genre for every song to publish')).toBeVisible();
   });
 
   test('Publish is enabled once every song has a genre', async () => {
@@ -117,6 +114,10 @@ describe('publishing a post with songs from the edit sidebar', () => {
     renderWithProviders(<PostEditSidebar post={post} />);
 
     await expect.element(publish()).toBeEnabled();
+    await expect.element(schedule()).toBeEnabled();
+    await expect
+      .element(page.getByText('Pick a genre for every song to publish'))
+      .not.toBeInTheDocument();
   });
 
   test('a post without songs publishes as before', async () => {
@@ -124,5 +125,26 @@ describe('publishing a post with songs from the edit sidebar', () => {
     renderWithProviders(<PostEditSidebar post={post} />);
 
     await expect.element(publish()).toBeEnabled();
+  });
+
+  test('a scheduled post with a genre-less song cannot be rescheduled', async () => {
+    mocks.images = [added(8, 'audio', {})];
+    const scheduled = { ...post, publishedAt: new Date(Date.now() + 86_400_000) };
+    renderWithProviders(<PostEditSidebar post={scheduled as PostDetailEditable} />);
+
+    await expect
+      .element(page.getByRole('button', { name: 'Reschedule Publish', exact: true }))
+      .toBeDisabled();
+  });
+
+  test('a post already public is not blocked by a genre-less song', async () => {
+    mocks.images = [added(8, 'audio', {})];
+    const published = { ...post, publishedAt: new Date(Date.now() - 86_400_000) };
+    renderWithProviders(<PostEditSidebar post={published as PostDetailEditable} />);
+
+    await expect.element(page.getByRole('button', { name: 'Share', exact: true })).toBeVisible();
+    await expect
+      .element(page.getByText('Pick a genre for every song to publish'))
+      .not.toBeInTheDocument();
   });
 });

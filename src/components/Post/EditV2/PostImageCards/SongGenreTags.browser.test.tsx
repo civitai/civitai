@@ -1,3 +1,7 @@
+// The real cascade, so sizes are measured against the styles the app renders.
+import '../../../../../test/cascade-layer-order.css';
+import '@mantine/core/styles.layer.css';
+import '~/styles/globals.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../../test/component-setup';
@@ -20,7 +24,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       'post.setSongGenre': { useMutation: () => ({ mutate: mocks.setGenre, isPending: false }) },
       'post.addSongTag': { useMutation: () => ({ mutate: mocks.addTag, isPending: false }) },
       'post.removeSongTag': { useMutation: () => ({ mutate: mocks.removeTag, isPending: false }) },
-      'post.getTags': { useQuery: () => ({ data: [{ id: 3, name: 'night drive' }] }) },
+      'post.getTags': {
+        useQuery: () => ({
+          data: [
+            { id: 3, name: 'night drive' },
+            { id: 4, name: 'guitarist' },
+          ],
+        }),
+      },
     }),
   };
 });
@@ -56,6 +67,14 @@ describe('the song card genre select', () => {
     expect(mocks.setGenre).toHaveBeenCalledExactlyOnceWith({ id: 7, genre: 'Lo-fi' });
   });
 
+  test('filters the genres by what is typed', async () => {
+    renderWithProviders(<SongGenreTags image={song({})} />);
+
+    await genreSelect().fill('hou');
+    await expect.element(page.getByRole('option', { name: 'House' })).toBeVisible();
+    await expect.element(page.getByRole('option', { name: 'Jazz' })).not.toBeInTheDocument();
+  });
+
   test('shows the error state without a genre, and none with one', async () => {
     const screen = renderWithProviders(<SongGenreTags image={song({})} />);
 
@@ -84,24 +103,69 @@ describe('the song card tags', () => {
     expect(mocks.removeTag).toHaveBeenCalledExactlyOnceWith({ id: 7, tagId: 2 });
   });
 
-  test('adds a typed tag on Enter, and a suggested one when picked', async () => {
+  test('Enter adds the typed text when no suggestion is highlighted, and clears the field', async () => {
     renderWithProviders(<SongGenreTags image={song({ genre: 'Pop' })} />);
     const input = page.getByRole('textbox', { name: 'Add a tag' });
 
     await input.fill('Late Night');
     await userEvent.keyboard('{Enter}');
-    expect(mocks.addTag).toHaveBeenLastCalledWith({ id: 7, name: 'late night' });
 
-    await input.fill('ni');
-    await page.getByRole('option', { name: 'night drive' }).click();
-    expect(mocks.addTag).toHaveBeenLastCalledWith({ id: 7, name: 'night drive' });
+    expect(mocks.addTag).toHaveBeenCalledExactlyOnceWith({ id: 7, name: 'late night' });
+    await expect.element(input).toHaveValue('');
   });
 
-  test('hides the add control at five tags', async () => {
+  test('Enter on a highlighted suggestion adds only that suggestion', async () => {
+    renderWithProviders(<SongGenreTags image={song({ genre: 'Pop' })} />);
+    const input = page.getByRole('textbox', { name: 'Add a tag' });
+
+    await input.fill('guitari');
+    await expect.element(page.getByRole('option', { name: 'guitarist' })).toBeVisible();
+    await userEvent.keyboard('{ArrowDown}{Enter}');
+
+    expect(mocks.addTag).toHaveBeenCalledExactlyOnceWith({ id: 7, name: 'guitarist' });
+    await expect.element(input).toHaveValue('');
+  });
+
+  test('clicking a suggestion adds it', async () => {
+    renderWithProviders(<SongGenreTags image={song({ genre: 'Pop' })} />);
+
+    await page.getByRole('textbox', { name: 'Add a tag' }).fill('ni');
+    await page.getByRole('option', { name: 'night drive' }).click();
+
+    expect(mocks.addTag).toHaveBeenCalledExactlyOnceWith({ id: 7, name: 'night drive' });
+  });
+
+  test('the tag field is as tall as the genre select', async () => {
+    await renderWithProviders(<SongGenreTags image={song({ genre: 'Pop' })} />);
+    await expect.element(page.getByRole('textbox', { name: 'Add a tag' })).toBeVisible();
+
+    const tag = page.getByRole('textbox', { name: 'Add a tag' }).element();
+    expect(tag.getBoundingClientRect().height).toBe(
+      genreSelect().element().getBoundingClientRect().height
+    );
+    expect(getComputedStyle(tag).fontSize).toBe('13px');
+  });
+
+  test('each remove button is at least 24px square', async () => {
+    await renderWithProviders(
+      <SongGenreTags image={song({ genre: 'Pop' }, [{ id: 1, name: 'chill' }])} />
+    );
+    await expect.element(page.getByRole('button', { name: 'Remove tag chill' })).toBeVisible();
+
+    const rect = page
+      .getByRole('button', { name: 'Remove tag chill' })
+      .element()
+      .getBoundingClientRect();
+    expect(rect.width).toBeGreaterThanOrEqual(24);
+    expect(rect.height).toBeGreaterThanOrEqual(24);
+  });
+
+  test('at five tags the add control gives way to a 5/5 note', async () => {
     const five = [1, 2, 3, 4, 5].map((id) => ({ id, name: `t${id}` }));
     renderWithProviders(<SongGenreTags image={song({ genre: 'Pop' }, five)} />);
 
     await expect.element(page.getByText('t5')).toBeInTheDocument();
+    await expect.element(page.getByText('5/5 tags')).toBeVisible();
     await expect.element(page.getByRole('textbox', { name: 'Add a tag' })).not.toBeInTheDocument();
   });
 });

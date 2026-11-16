@@ -115,9 +115,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     (image) => hasImageLicenseViolation(image).violation
   );
 
-  const songsMissingGenre = addedImages.some(
-    (image) => image.type === MediaType.audio && !readSongGenre(image.metadata)
-  );
+  // As on the server: a post already public is left alone, so older songs never lock its edits.
+  const isPublic = !!post.publishedAt && post.publishedAt.getTime() <= Date.now();
+  const songsMissingGenre =
+    !isPublic &&
+    addedImages.some((image) => image.type === MediaType.audio && !readSongGenre(image.metadata));
 
   const canPublish =
     hasImages &&
@@ -481,6 +483,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               </Button>
               <Tooltip label="Schedule Publish" disabled={!hasImages} withArrow>
                 <Button
+                  aria-label="Schedule Publish"
                   variant="outline"
                   loading={updatePostMutation.isPending}
                   onClick={handleScheduleClick}
@@ -506,6 +509,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           {canSchedule && (
             <Tooltip label="Reschedule Publish" disabled={!hasImages} withArrow>
               <Button
+                aria-label="Reschedule Publish"
                 variant="filled"
                 color="gray"
                 loading={updatePostMutation.isPending}
@@ -517,6 +521,13 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             </Tooltip>
           )}
         </Button.Group>
+      )}
+
+      {/* Touch screens have no hover, so the reason also shows under the button. */}
+      {!post.publishedAt && !isUnpublishedByParent && songsMissingGenre && (
+        <Text size="xs" c="dimmed">
+          {SONG_GENRE_REQUIRED_PUBLISH_REASON}
+        </Text>
       )}
 
       {!post.publishedAt && !isUnpublishedByParent && storylinePublish.caption && (
