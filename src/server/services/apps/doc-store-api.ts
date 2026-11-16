@@ -1122,6 +1122,24 @@ async function run(
         return write(null, () => undefined);
       }
       const user = await assertTrusted(uid);
+      // A shared put that changes nothing is free (FLAG: `app-blocks-storage-unchanged-writes-free`,
+      // per app; off, this block is skipped). After every check above, so it refuses exactly what
+      // any write does; then, when the store says the body equals the caller's own stored
+      // document (`putIfUnchanged`: the publish rule, compared under the row lock), the answer is
+      // that document as a write returns it — no shared-write token, no moderation scan, nothing
+      // written. Anything else (a change, a stale `ifVersion`, another author's or a hidden
+      // document) takes the ordinary write below, unchanged. A create always writes a new key, so
+      // it is never unchanged.
+      if (
+        putIn &&
+        route.op === 'put' &&
+        (await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE, ctx.appId))
+      ) {
+        const stored = await store.putIfUnchanged(ctx, coll, route.key, putIn.data, {
+          ifVersion: putIn.ifVersion,
+        });
+        if (stored) return ok(await presentDoc(stored, decl));
+      }
       return withSharedWriteBudget(access, uid, (landed) => write(user, landed));
     }
     case 'increment': {

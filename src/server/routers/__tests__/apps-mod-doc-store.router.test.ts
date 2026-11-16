@@ -836,6 +836,8 @@ describe('the moderation operations are reachable from the moderator service onl
         'mark',
         'unmark',
         'put',
+        // A shared put that would change nothing: the caller's OWN document only.
+        'putIfUnchanged',
         'usage',
         'viewerLimits',
         // Server-side publish: the viewer's OWN documents only, never a moderator operation.

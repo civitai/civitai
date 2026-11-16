@@ -691,6 +691,28 @@ const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_byte
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
   FOR UPDATE`;
 
+// `putIfUnchanged`'s lock read: what `classifyPublish` decides on (author, hidden, the stored
+// content hash) plus the hash of the body the caller would write. The SAME hash a publish compares
+// (`md5` of jsonb's canonical text form, see SQL_PUBLISH_TARGETS), taken of `$6::jsonb` exactly as
+// SQL_UPDATE_DOC would store it, so equal hashes mean the write would store what is there.
+// Returns hashes, never a body. $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data
+const SQL_LOCK_DOC_HASH = `SELECT d.version, d.author_uid, d.author_kind,
+    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash, md5($6::jsonb::text) AS written_hash
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
+  FOR UPDATE`;
+
+// `putIfUnchanged`'s response: the caller's own document, read back untouched — what a write
+// returns (SQL_STAMP_SEQ), without stamping anything. $1 app, $2 ns, $3 coll, $4 scope_uid,
+// $5 key, $6 viewer
+const SQL_READ_OWN_DOC = `SELECT ${docColumns('$6::int')}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5`;
+// The same, with its rating (levels on). The writer's own document: no gate.
+const SQL_READ_OWN_DOC_LEVELS = `SELECT ${docColumns('$6::int', true)}
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5`;
+
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 writer uid
 const SQL_INSERT_DOC = `INSERT INTO appdata.doc AS d
     (app_id, ns, coll, scope_uid, key, data, version, seq, author_uid, author_kind, last_writer_uid)
@@ -2099,6 +2121,57 @@ function buildDocStore(deps: DocStoreDeps) {
     return writeDoc(ctx, coll, newUlid(), data, { ifVersion: 0 });
   }
 
+  /**
+   * A shared `put` that would change nothing, answered without writing: the stored document,
+   * untouched (no version, seq or `updated_at` bump, no index sync, no usage charge, no
+   * `markRatingPending`, so a rating given for its version stands), when ALL of:
+   * - a document is stored at `key` and `classifyPublish` calls it `unchanged` against `data` —
+   *   the ONE rule a publish uses: the caller's own, not hidden, and the same content hash;
+   * - `opts.ifVersion`, when given, is its current version.
+   * Otherwise `null`, having written nothing; the caller then makes the ordinary write, which
+   * refuses (or writes) exactly as it always did. So a stale `ifVersion`, someone else's or a hidden
+   * document, an absent key, a private collection and a body the store would refuse are all
+   * `null`, never a refusal of their own.
+   *
+   * The comparison runs on the row locked FOR UPDATE (SQL_LOCK_DOC_HASH, the lock `writeDoc`
+   * takes), so no concurrent write can change the document between the hash check and the answer:
+   * a write that lands before the lock is compared against, one queued behind it lands after.
+   */
+  async function putIfUnchanged(
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string,
+    data: Record<string, unknown>,
+    opts: { ifVersion?: number } = {}
+  ): Promise<DocRecord | null> {
+    const policy = assertCollection(coll);
+    const viewer = requireViewer(ctx);
+    assertShareWritable(coll, policy);
+    if (coll.config.visibility !== 'shared') return null;
+    let json: string;
+    try {
+      assertKey(key);
+      json = serializeData(data);
+    } catch {
+      // `writeDoc` refuses it, after the caller's budget and scan, as it always has.
+      return null;
+    }
+    const base = [ctx.appId, ctx.ns, coll.name, 0, key];
+    return withTx(ctx, async (c) => {
+      const row = (await c.query(SQL_LOCK_DOC_HASH, [...base, json])).rows[0];
+      if (!row) return null;
+      if (classifyPublish(viewer, { hash: String(row.written_hash) }, row) !== 'unchanged') {
+        return null;
+      }
+      if (opts.ifVersion !== undefined && opts.ifVersion !== Number(row.version)) return null;
+      const res = await c.query(ctx.levels ? SQL_READ_OWN_DOC_LEVELS : SQL_READ_OWN_DOC, [
+        ...base,
+        ctx.viewerUid,
+      ]);
+      return toDocRecord(res.rows[0], ctx, coll);
+    });
+  }
+
   async function remove(
     ctx: DocStoreContext,
     coll: DocCollection,
@@ -3345,6 +3418,7 @@ function buildDocStore(deps: DocStoreDeps) {
     get,
     getMany,
     put,
+    putIfUnchanged,
     create,
     delete: remove,
     list,
