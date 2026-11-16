@@ -22,8 +22,7 @@ import {
  * `src/server/utils/fetch-timeout.ts`, which is where the canonical helpers call it.
  *
  * Known gap: `const T = AbortSignal.timeout; T(5)` or a reference through another alias is not
- * counted. Some baselined sites are not outbound HTTP (a stream read, a child process); they are
- * grandfathered as found and may still move to the helper.
+ * counted. Baselined sites are grandfathered as found, including any that are not outbound HTTP.
  */
 
 const GLOBS = ['src/server/**/*.{ts,tsx}', 'src/pages/api/**/*.{ts,tsx}'];

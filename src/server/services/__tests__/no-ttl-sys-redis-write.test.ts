@@ -25,7 +25,7 @@ import {
  * Matching is on the AST, so a comment or a string never counts.
  *
  * Known gaps: a sys client handed in as a parameter or object property under another name is not
- * followed (the events/points modules inject one as `redis`). A TTL set inside a Lua script
+ * followed. A TTL set inside a Lua script
  * (`sysRedis.eval(SCRIPT, …)` whose script calls `EXPIRE`/`PEXPIRE`) or through `sendCommand` is
  * not counted. Locks, rate-limit windows and
  * idempotency markers are counted alongside caches: whether one of those may live on sysRedis is
