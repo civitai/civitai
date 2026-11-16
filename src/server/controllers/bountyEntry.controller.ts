@@ -9,7 +9,7 @@ import {
 } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
-import { capNestedImages } from '~/server/utils/browsing-level';
+import { capNestedImages, requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
 import {
   awardBountyEntry,
   deleteBountyEntry,
@@ -89,7 +89,7 @@ export const getBountyEntryHandler = async ({
 
     return {
       ...entry,
-      images: capNestedImages(images, ctx, { ownerId: entry.user?.id }).map((i) => ({
+      images: capNestedImages(images, ctx).map((i) => ({
         ...i,
         metadata: i.metadata as MixedObject,
       })),
@@ -147,6 +147,7 @@ export const upsertBountyEntryHandler = async ({
     const entry = await upsertBountyEntry({
       ...input,
       userId,
+      editorCap: requestDomainBrowsingLevelCap(ctx),
     });
 
     if (!entry) throw throwNotFoundError(`No bounty entry with id ${input.id as number}`);

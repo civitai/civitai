@@ -203,6 +203,20 @@ describe('updateBountyById — lock enforcement', () => {
   });
 });
 
+describe('upsertBounty — images the edit form was not shown', () => {
+  it('passes the editor’s cap through to the image links', async () => {
+    await upsertBounty({
+      isModerator: false,
+      ...baseUpdate,
+      startsAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      images: [{ url: '00000000-0000-4000-8000-000000000000' }],
+      editorCap: 3,
+    } as never);
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({ editorCap: 3 });
+  });
+});
+
 describe('upsertBounty — profanity filter vs stored locks', () => {
   // upsertBounty re-parses through updateBountyInputSchema, which requires at least one
   // image and an expiry in the future.

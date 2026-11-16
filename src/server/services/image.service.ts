@@ -179,6 +179,7 @@ import type {
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
   entryDraftImageWhere,
@@ -5842,6 +5843,7 @@ export const updateEntityImages = async ({
   images,
   userId,
   keysCheckedFor,
+  editorCap,
 }: {
   tx?: Prisma.TransactionClient;
   entityId: number;
@@ -5850,22 +5852,33 @@ export const updateEntityImages = async ({
   userId: number;
   /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
   keysCheckedFor?: string[];
+  /**
+   * The browsing-level cap the edit form's read was held to. Linked images outside it were never
+   * shown to the editor, so leaving them out of `images` does not remove them.
+   */
+  editorCap?: number;
 }) => {
   const dbClient = tx ?? dbWrite;
   const connections = await dbClient.imageConnection.findMany({
-    select: { imageId: true },
+    select: { imageId: true, image: { select: { nsfwLevel: true } } },
     where: {
       entityId,
       entityType,
     },
   });
+  const unshownIds =
+    editorCap === undefined
+      ? []
+      : connections
+          .filter((c) => !isRatingWithinCap(c.image.nsfwLevel, editorCap))
+          .map((c) => c.imageId);
 
   // Delete any images that are no longer in the list.
   await dbClient.imageConnection.deleteMany({
     where: {
       entityId,
       entityType,
-      imageId: { notIn: images.map((i) => i.id).filter(isDefined) },
+      imageId: { notIn: [...images.map((i) => i.id).filter(isDefined), ...unshownIds] },
     },
   });
 

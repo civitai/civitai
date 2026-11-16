@@ -42,7 +42,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
-import { capNestedImages } from '~/server/utils/browsing-level';
+import { capNestedImages, requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -116,8 +116,7 @@ export const getInfiniteBountiesHandler = async ({
               // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
               nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
             })),
-            ctx,
-            { ownerId: user?.id }
+            ctx
           );
           // if there are no images, we don't want to show the bounty
           if (!itemImages.length || !user) return null;
@@ -204,7 +203,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
             ctx?.user?.isModerator
           )
         : ({} as BountyDetailsSchema),
-      images: capNestedImages(images, ctx, { ownerId: bounty.user?.id }).map((image) => ({
+      images: capNestedImages(images, ctx).map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,
         metadata: image?.metadata as MixedObject,
@@ -304,8 +303,7 @@ export const getBountyEntriesHandler = async ({
             user,
             images: capNestedImages(
               images.filter((i) => i.entityId === entry.id),
-              ctx,
-              { ownerId: user.id }
+              ctx
             ).map((i) => ({
               ...i,
               tagIds: i.tags?.map((x) => x.id),
@@ -369,6 +367,7 @@ export const upsertBountyHandler = async ({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator ?? false,
+      editorCap: requestDomainBrowsingLevelCap(ctx),
     });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id as number}`);
 

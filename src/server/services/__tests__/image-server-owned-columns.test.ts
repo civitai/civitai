@@ -12,6 +12,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 import { upsertCreatorAnnouncementSchema } from '~/server/schema/announcement.schema';
@@ -43,6 +44,7 @@ import {
   type AssertPostOwnedBy,
 } from '~/server/services/image.service';
 import { CLIENT_IMAGE_COLUMNS, pickClientImageColumns } from '~/server/utils/image-columns';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const URL_KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 const OWNER = 7;
@@ -458,6 +460,44 @@ describe('entity image writers', () => {
     });
     expect(dbMock.dbWrite.imageConnection.createMany).toHaveBeenCalledWith({
       data: [{ imageId: 555, entityId: 1, entityType: 'Bounty' }],
+    });
+  });
+
+  describe('links the edit form was not shown', () => {
+    const linked = [
+      { imageId: 1, image: { nsfwLevel: NsfwLevel.PG } },
+      { imageId: 2, image: { nsfwLevel: NsfwLevel.PG } },
+      { imageId: 3, image: { nsfwLevel: NsfwLevel.X } },
+      { imageId: 4, image: { nsfwLevel: 0 } },
+      { imageId: 5, image: { nsfwLevel: NsfwLevel.PG | NsfwLevel.X } },
+    ];
+    const keptIds = () =>
+      dbMock.dbWrite.imageConnection.deleteMany.mock.calls[0][0].where.imageId.notIn;
+    const saveKeepingOnly = (editorCap?: number) =>
+      updateEntityImages({
+        images: [{ id: 1, url: URL_KEY, type: 'image' }],
+        userId: OWNER,
+        entityType: 'Bounty',
+        entityId: 1,
+        editorCap,
+      });
+    beforeEach(() => {
+      dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(linked as never);
+    });
+
+    it('keeps the images above, mixed past, or unrated under the editor’s cap', async () => {
+      await saveKeepingOnly(sfwBrowsingLevelsFlag);
+      expect([...keptIds()].sort()).toEqual([1, 3, 4, 5]);
+    });
+
+    it('still removes a dropped image the editor was shown', async () => {
+      await saveKeepingOnly(sfwBrowsingLevelsFlag);
+      expect(keptIds()).not.toContain(2);
+    });
+
+    it('with no cap, keeps only the images in the list', async () => {
+      await saveKeepingOnly(undefined);
+      expect(keptIds()).toEqual([1]);
     });
   });
 });

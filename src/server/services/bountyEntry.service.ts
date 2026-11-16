@@ -140,7 +140,12 @@ export const upsertBountyEntry = async ({
   images,
   description,
   userId,
-}: UpsertBountyEntryInput & { userId: number }) => {
+  editorCap,
+}: UpsertBountyEntryInput & {
+  userId: number;
+  /** The browsing-level cap the edit form's read was held to; see `updateEntityImages`. */
+  editorCap?: number;
+}) => {
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
 
   let imagesToIngest: IngestImageInput[] = [];
@@ -173,6 +178,7 @@ export const upsertBountyEntry = async ({
           tx,
           userId,
           keysCheckedFor,
+          editorCap,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });
