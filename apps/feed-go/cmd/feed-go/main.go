@@ -200,6 +200,10 @@ func run(log *slog.Logger) error {
 	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
 	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
+	if sources.Compute != nil {
+		// The tag-ids miss computation's browsing gate: the same blocked list and addons.
+		sources.Compute.TagGate = feed.ImageTagGate(blocked, deps.Addons.Addons)
+	}
 	infinite := &feed.InfiniteDeps{
 		Deps:    deps,
 		Sources: sources,

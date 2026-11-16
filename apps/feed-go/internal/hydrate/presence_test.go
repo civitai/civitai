@@ -236,7 +236,8 @@ func TestPresenceReadFailures(t *testing.T) {
 }
 
 // MissReason is the table's Reason without a miss computation, and "" for the caches it answers
-// (MissCaches, the computation's own list) with one; the caches it does not answer keep theirs.
+// (MissCaches, the computation's own list) with one; the caches it does not answer keep theirs. The
+// model frames are not a page cache: their reason is the computation's own.
 func TestMissReason(t *testing.T) {
 	plain, computed := &Sources{}, &Sources{Compute: &MissCompute{}}
 	for _, c := range PageCaches {
@@ -244,17 +245,39 @@ func TestMissReason(t *testing.T) {
 			t.Errorf("no computation: %s = %q, want %q", c.Name, got, c.Reason)
 		}
 	}
+	if got := plain.MissReason(MissModelFrames); got != "model-frame-miss" {
+		t.Errorf("no computation: model-frames = %q, want model-frame-miss", got)
+	}
 	want := map[string]string{
 		CacheUserCosmetics: "", CacheImageFrames: "", CacheEventDecorations: "",
-		CacheTagIDs: "tag-ids-miss", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
+		CacheTagIDs: "", MissModelFrames: "", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
 	}
 	for name, w := range want {
 		if got := computed.MissReason(name); got != w {
 			t.Errorf("computed: %s = %q, want %q", name, got, w)
 		}
 	}
-	if plain.MissReason("nope") != "" {
-		t.Error("an unknown cache has a reason")
+	for _, s := range []*Sources{plain, computed} {
+		if s.MissReason("nope") != "" {
+			t.Error("an unknown cache has a reason")
+		}
+	}
+}
+
+// Every MissCaches label that names a page cache is that cache's probe label, and each has its
+// fallback reason (the one the cache raises without the computation).
+func TestMissCachesLabels(t *testing.T) {
+	for _, m := range MissCaches {
+		reason, ok := missReasons[m]
+		if !ok || reason == "" {
+			t.Errorf("%s has no fallback reason", m)
+		}
+		if c, ok := PageCacheNamed(m); ok && c.Reason != reason {
+			t.Errorf("%s: PageCaches reason %q, the computation's %q", m, c.Reason, reason)
+		}
+	}
+	if _, ok := PageCacheNamed(MissTagIDs); !ok || MissTagIDs != CacheTagIDs {
+		t.Fatalf("tag-ids: the computation's label %q is not the page cache's %q", MissTagIDs, CacheTagIDs)
 	}
 }
 

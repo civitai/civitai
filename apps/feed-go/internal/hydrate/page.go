@@ -50,8 +50,8 @@ type Page struct {
 // Everything that is not a cache read is as in the per-lookup reads, which share these halves:
 // each lookup's misses, markers and staleness (decodeEntry), its fallback reasons, and its replica
 // queries, which run after the pipeline, concurrently, one per lookup that has misses. With
-// s.Compute, the misses of the caches Node fills on read (user cosmetics, frames, event decorations)
-// are computed the same way: one batched lookup per cache that has misses, after the pipeline,
+// s.Compute, the misses of the caches Node fills on read (user cosmetics, frames, tag ids, event
+// decorations) are computed the same way: one batched lookup per cache that has misses, after the pipeline,
 // concurrently (misses.go). The reactions query reads no cache and starts with
 // stage 1. A lookup's error (the first, as with errgroup) is the page's error.
 func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
@@ -97,7 +97,14 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 		return
 	}))
 	g.Go(safe.Go(func() (err error) { out.Metrics, err = metrics.result(); return }))
-	g.Go(safe.Go(func() (err error) { out.TagIDs, err = tagIDsFrom(images, tags.Entries()); return }))
+	g.Go(safe.Go(func() (err error) {
+		got, writable := tags.read()
+		if err := s.fillTagIDs(gctx, images, got, writable); err != nil {
+			return err
+		}
+		out.TagIDs, err = tagIDsFrom(images, got)
+		return
+	}))
 	g.Go(safe.Go(func() (err error) {
 		if !readEvents {
 			out.Decorations = map[int]superjson.Object{}
