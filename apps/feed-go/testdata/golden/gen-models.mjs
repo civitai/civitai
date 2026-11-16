@@ -1117,14 +1117,6 @@ const SPECS = [
     pages: [{ cursor: '2026-06-11 10:00:00.125|5002', ids: [5002, 5004] }],
   },
   {
-    name: 'fallback-short-fraction-cursor',
-    description:
-      'A cursor timestamp with a 1- or 2-digit fraction (250 ms written ".25"): the deployed Node binds it as 25 ms (fixed on main by #9075, not yet deployed), so feed-go falls back until that fix is deployed.',
-    host: HOST.blue,
-    input: { sort: 'Newest', limit: 1, browsingLevel: 31, cursor: '2026-06-12 10:00:00.25|5001' },
-    fallback: 'short-fraction-cursor',
-  },
-  {
     name: 'base-model-single-moderator',
     description:
       'One base model (the per-base-model table drives): the version filter selects the Pony version; a moderator sees held and mature images.',

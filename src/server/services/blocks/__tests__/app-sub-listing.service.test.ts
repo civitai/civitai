@@ -32,6 +32,18 @@ vi.mock('~/server/utils/shared-storage-rate-limit', async (importOriginal) => ({
   checkSubListingWriteRateLimit: mockRateLimit,
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQuery }) }));
+// `app-blocks-shared-doc-levels`, for every app; off unless a case turns it on.
+const docLevels = vi.hoisted(() => ({ on: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const real = await importOriginal<typeof import('~/server/flipt/client')>();
+  return {
+    ...real,
+    isFlipt: (flag: string, entityId?: string, context?: unknown) =>
+      flag === 'app-blocks-shared-doc-levels'
+        ? Promise.resolve(docLevels.on)
+        : real.isFlipt(flag, entityId, context as never),
+  };
+});
 vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
 // The App Blocks document store's server lookup (its SQL is covered against a real Postgres in
 // `shared-item-doc-store.pglite.test.ts`).
@@ -47,6 +59,7 @@ const {
   moderateSubListing,
   SubListingError,
   syncSubListingForSharedRow,
+  syncSubListingRatingFromDoc,
   upsertSubListing,
   withdrawSubListing,
 } = await import('~/server/services/blocks/app-sub-listing.service');
@@ -121,6 +134,7 @@ async function expectError(p: Promise<unknown>, status: number, code: string) {
 }
 
 beforeEach(() => {
+  docLevels.on = false;
   resetSharedMocks();
   for (const m of [
     mockBust,
@@ -282,6 +296,83 @@ describe('upsertSubListing — refusals', () => {
       // Asked for the calling app, its SHARED collections only, and the item's key.
       expect(mockFindShared).toHaveBeenCalledWith('apb_1', ['generators'], 'gen-1');
       expect(mockPoolQuery).not.toHaveBeenCalled();
+    });
+
+    describe('🔴 content levels on: the card inherits the item’s effective level', () => {
+      const rated = (level: number | null, status: string | null) => [
+        { collection: 'generators', authorUid: AUTHOR, hidden: false, rating: { level, status } },
+      ];
+      beforeEach(() => {
+        docLevels.on = true;
+      });
+
+      it('an R (4) item’s card carries r, and the lookup was asked for the rating', async () => {
+        mockFindShared.mockResolvedValueOnce(rated(4, 'rated'));
+        await expect(upsert()).resolves.toMatchObject({ status: 'pending' });
+        expect(mockFindShared).toHaveBeenCalledWith('apb_1', ['generators'], 'gen-1', {
+          rating: true,
+        });
+        expect(write.appSubListing.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ contentRating: 'r' }) })
+        );
+      });
+
+      it('an overridden X (8) item’s card carries x', async () => {
+        mockFindShared.mockResolvedValueOnce(rated(8, 'overridden'));
+        await upsert();
+        expect(write.appSubListing.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ contentRating: 'x' }) })
+        );
+      });
+
+      it('the author may still choose a stricter rating than the item’s', async () => {
+        mockFindShared.mockResolvedValueOnce(rated(4, 'rated'));
+        await upsert({ ...BODY, contentRating: 'x' });
+        expect(write.appSubListing.create).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ contentRating: 'x' }) })
+        );
+      });
+
+      it.each([
+        ['pending', null, 'pending'],
+        ['never rated', null, null],
+      ])('a %s item cannot be published', async (_name, level, status) => {
+        mockFindShared.mockResolvedValueOnce(rated(level, status));
+        const err = await upsert().catch((e: unknown) => e);
+        expect(err).toMatchObject({
+          status: 409,
+          code: 'item_not_rated',
+          message: 'This item has not been rated yet. Publish it once it has a content rating.',
+        });
+        expect(write.appSubListing.create).not.toHaveBeenCalled();
+      });
+
+      it('a Blocked (32) item cannot be published', async () => {
+        mockFindShared.mockResolvedValueOnce(rated(32, 'rated'));
+        await expectError(upsert(), 404, 'item_not_found');
+        expect(write.appSubListing.create).not.toHaveBeenCalled();
+      });
+
+      it('🔴 a re-rate keeps an author’s stricter choice: picked x, re-rated r, the card stays x', async () => {
+        write.appSubListing.findMany.mockResolvedValueOnce([
+          { id: 'asl_STRICT', contentRating: 'x', pendingContentRating: null },
+          { id: 'asl_LOOSE', contentRating: 'pg', pendingContentRating: 'pg13' },
+        ]);
+        await syncSubListingRatingFromDoc({ appBlockId: 'apb_1', itemKey: 'gen-1', level: 4 });
+        expect(write.appSubListing.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { parentListingId: PARENT, itemKey: 'gen-1' } })
+        );
+        expect(write.appSubListing.update.mock.calls).toEqual([
+          [
+            {
+              where: { id: 'asl_STRICT' },
+              data: { contentRating: 'x', pendingContentRating: null },
+            },
+          ],
+          [{ where: { id: 'asl_LOOSE' }, data: { contentRating: 'r', pendingContentRating: 'r' } }],
+        ]);
+        expect(mockBust).toHaveBeenCalled();
+      });
     });
 
     it("refuses a document-store item that is hidden, or that is someone else's", async () => {
@@ -1108,5 +1199,70 @@ describe('moderateSubListing', () => {
 
   it('a missing row is 404', async () => {
     await expectError(mod({ id: 'asl_x', action: 'approve' }), 404, 'not_found');
+  });
+});
+
+describe('🔴 content levels on: a card is approved or restored only for a rated item', () => {
+  const mod = (input: Record<string, unknown>) =>
+    moderateSubListing({ input: { version: VERSION, ...input } as never, moderatorId: 9 });
+  const rated = (level: number | null, status: string | null) => [
+    { collection: 'generators', authorUid: AUTHOR, hidden: false, rating: { level, status } },
+  ];
+  const EDIT = {
+    status: 'approved',
+    pendingTitle: 'Gen Two',
+    pendingSubPath: 'g/TWO',
+    pendingSubmittedAt: new Date('2026-10-02'),
+  };
+  beforeEach(() => {
+    docLevels.on = true;
+    read.appBlock.findUnique.mockResolvedValue({
+      blockId: 'custom-generators',
+      manifest: {
+        storage: { collections: { generators: { visibility: 'shared', write: 'own' } } },
+      },
+    });
+  });
+
+  it.each([
+    ['approve', { status: 'pending' }],
+    ['approve-edit', EDIT],
+    ['restore', { status: 'hidden' }],
+  ] as const)('%s is refused while the item is pending', async (action, state) => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow(state));
+    mockFindShared.mockResolvedValue(rated(null, 'pending'));
+    await expectError(mod({ id: 'asl_x', action }), 409, 'item_not_rated');
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['approve', { status: 'pending' }],
+    ['approve-edit', EDIT],
+    ['restore', { status: 'hidden' }],
+  ] as const)('%s goes through for a rated item', async (action, state) => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow(state));
+    mockFindShared.mockResolvedValue(rated(4, 'rated'));
+    await mod({ id: 'asl_x', action });
+    expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('restore treats a Blocked item as not found', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
+    mockFindShared.mockResolvedValue(rated(32, 'rated'));
+    const err = await mod({ id: 'asl_x', action: 'restore' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      status: 409,
+      code: 'invalid_transition',
+      message: 'This item is hidden or removed in the app; it cannot be restored here',
+    });
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('INVARIANT GUARD: flag off, approve reads no rating', async () => {
+    docLevels.on = false;
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));
+    await mod({ id: 'asl_x', action: 'approve' });
+    expect(mockFindShared).not.toHaveBeenCalled();
+    expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
   });
 });
