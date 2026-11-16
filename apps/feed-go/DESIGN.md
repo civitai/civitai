@@ -242,6 +242,19 @@ the same window Node has. The user-cosmetics lookup reads the replica, as Node's
 caches Go already filled from the replica before this change (basic users, `cosmetics2`, profile
 pictures, thumbnails) are still never written.
 
+**Repeated misses** (`lookupShared`). Concurrent requests that miss the same ids of one cache share
+one lookup (singleflight per cache and id set). With write-back off, each lookup's answer (a record,
+or "no row") is also kept in process for 10 s (at most 50 000 ids), so the same miss within seconds
+sends no query: without a write, Node's next fill is the only thing that would otherwise end the
+repeats. With write-back on nothing is kept (the written entry answers repeats). The kept answer is a
+§9 divergence.
+
+**Rollout order** (operator decision, 2026-11-15): `FEED_GO_COMPUTE_MISSES` on first, then
+`FEED_GO_CACHE_WRITEBACK` on (with `DATABASE_URL`) **before any serving ramp past 10%**. Below that,
+Node still serves most requests and refills these caches; past it a Go-served request's misses recur
+on every Go-served request for those ids (the reason §7.1's probe miss rate understates the steady
+state with write-back off). Read the ramp decision against §7.1's go/no-go queries.
+
 The golden fixtures `as-posts/cold-*` (`testdata/golden/`) carry, per reason, Node's answer and Node's
 writes for a cold key, and every served fixture is run with write-back off (nothing written) and on
 (exactly Node's writes). Their Node side is a hand transcription of the lookups (`gen.mjs`; only the
@@ -524,7 +537,8 @@ pages it checked, `feed_go_gofirst_pages_total{feed_endpoint}`. **These miss fre
 measured while Node re-warms the cache**: every probed request is also answered by Node, which
 writes back what it reads. A Go-first serve with write-back OFF (`FEED_GO_CACHE_WRITEBACK`, default
 off) writes nothing, so its misses recur on every Go-served request for those ids and the measured
-rate understates the steady state. **Write-back must be ON before ramping past 10%.**
+rate understates the steady state. **Write-back must be ON before ramping past 10%** (the rollout
+order, §3.1).
 
 **Adding a procedure.** One entry in `probes` (`internal/server/probe.go`): the `feed_endpoint`
 label and a `run` that resolves that procedure's ids as its serving path does, with the
@@ -651,6 +665,11 @@ no hash was cached — a case this service falls back on (`metrics-miss`) instea
 - with write-back off, the frame and event-decoration lookups read the replica; Node's read the
   primary. Within replica lag of an equip or unequip, Go can answer the previous state for that one
   request (nothing is cached). With write-back on they read the primary, as Node's do;
+- with write-back off, a computed answer is reused in process for 10 s (§3.1, repeated misses): an
+  equip, unequip or withhold within that window shows on this pod up to 10 s late, where Node, which
+  reads its own fresh write or the lookup again, shows it at once. Concurrent requests for the same
+  cold ids share one lookup, run under the first request's context (its cancellation fails the
+  others' computation, which then falls back);
 - a nested json member order in a written entry follows the jsonb text Postgres prints, as Prisma
   parses it for Node (the integration tests pin that order against a real Postgres); a cached record
   carried into a new entry (an event decoration's cosmetic `data`) keeps its cached order.

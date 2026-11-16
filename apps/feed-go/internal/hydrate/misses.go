@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
@@ -48,10 +53,128 @@ type MissCompute struct {
 	// frame cache's notFound markers are live. Off, a marker is read as a miss and none is written,
 	// as Node does while the flag is off.
 	FrameNegative bool
+
+	// flight coalesces concurrent lookups of one cache and id set; recent keeps answers for a few
+	// seconds with write-back off (lookupShared).
+	flight   singleflight.Group
+	recentMu sync.Mutex
+	recent   map[recentKey]recentEntry
+	// beforeFlight, when set (tests), runs just before a lookup joins or starts its flight.
+	beforeFlight func()
 	// Observe counts computed miss ids: cache is a MissXxx label, result "computed" or "error".
 	Observe func(cache, result string, n int)
 	// Now stamps `cachedAt` / `_populatedAt` (time.Now when nil).
 	Now func() time.Time
+}
+
+// Recent lookups (write-back off only): how long a computed entry answers repeat misses in this
+// process, and how many entries are held at most.
+const (
+	recentTTL = 10 * time.Second
+	recentMax = 50_000
+)
+
+// recentKey is one cache's id.
+type recentKey struct {
+	cache string
+	id    int
+}
+
+// recentEntry is one id's lookup answer: its record, or found false (the lookup had no row).
+type recentEntry struct {
+	rec   jspack.Obj
+	found bool
+	until time.Time
+}
+
+// lookupShared is lookup(ids) with two in-process savings, so concurrent and repeated requests for
+// the same cold ids stop repeating the same queries:
+//
+//   - concurrent calls for the same cache and id set share one lookup (singleflight; the first
+//     caller's context runs it, so a joiner sees that caller's cancellation as its own error);
+//   - with write-back off, each answer (a record or "no row") is kept for recentTTL and answers the
+//     next miss of that id without a query. With write-back on nothing is kept: the written cache
+//     entry answers repeats, and a kept answer could outlive the bust that should replace it.
+//
+// The records are shared between callers and must be treated as read-only.
+func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
+	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) (map[int]jspack.Obj, error) {
+	out := make(map[int]jspack.Obj, len(ids))
+	todo := ids
+	if !c.WriteBack {
+		todo = c.fromRecent(cache, ids, out)
+	}
+	if len(todo) == 0 {
+		return out, nil
+	}
+	sorted := slices.Clone(todo)
+	slices.Sort(sorted)
+	parts := make([]string, len(sorted))
+	for i, id := range sorted {
+		parts[i] = strconv.Itoa(id)
+	}
+	if c.beforeFlight != nil {
+		c.beforeFlight()
+	}
+	v, err, _ := c.flight.Do(cache+":"+strings.Join(parts, ","), func() (any, error) { return lookup(ctx, todo) })
+	if err != nil {
+		return nil, err
+	}
+	records, _ := v.(map[int]jspack.Obj)
+	for _, id := range todo {
+		if rec, ok := records[id]; ok {
+			out[id] = rec
+		}
+	}
+	if !c.WriteBack {
+		c.remember(cache, todo, records)
+	}
+	return out, nil
+}
+
+// fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.
+func (c *MissCompute) fromRecent(cache string, ids []int, out map[int]jspack.Obj) []int {
+	now := c.now()
+	c.recentMu.Lock()
+	defer c.recentMu.Unlock()
+	var todo []int
+	for _, id := range ids {
+		e, ok := c.recent[recentKey{cache, id}]
+		if !ok || !now.Before(e.until) {
+			todo = append(todo, id)
+			continue
+		}
+		if e.found {
+			out[id] = e.rec
+		}
+	}
+	return todo
+}
+
+// remember keeps the answers for ids. At recentMax the expired entries are dropped first; an answer
+// that still does not fit is not kept.
+func (c *MissCompute) remember(cache string, ids []int, records map[int]jspack.Obj) {
+	now := c.now()
+	until := now.Add(recentTTL)
+	c.recentMu.Lock()
+	defer c.recentMu.Unlock()
+	if c.recent == nil {
+		c.recent = map[recentKey]recentEntry{}
+	}
+	if len(c.recent)+len(ids) > recentMax {
+		for k, e := range c.recent {
+			if !now.Before(e.until) {
+				delete(c.recent, k)
+			}
+		}
+	}
+	for _, id := range ids {
+		if _, held := c.recent[recentKey{cache, id}]; !held && len(c.recent) >= recentMax {
+			continue
+		}
+		rec, found := records[id]
+		c.recent[recentKey{cache, id}] = recentEntry{rec: rec, found: found, until: until}
+	}
 }
 
 func (c *MissCompute) now() time.Time {
@@ -120,7 +243,7 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 		return nil
 	}
 	c := s.Compute
-	records, err := lookup(ctx, miss)
+	records, err := c.lookupShared(ctx, spec.cache, miss, lookup)
 	if err != nil {
 		c.observe(spec.cache, "error", len(miss))
 		return fallback.Newf(spec.reason+"-failed", "%v", err)
