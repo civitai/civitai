@@ -56,7 +56,6 @@ const SYS_KEY_LEDGER = [
   'download:count',
   'download:limits',
   'download:provider',
-  'download:repeats',
   'entities',
   'event',
   'feed:image:exists',
