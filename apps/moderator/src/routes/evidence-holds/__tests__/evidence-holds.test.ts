@@ -110,16 +110,16 @@ const post = (
 
 describe('placing a hold', () => {
   it('refuses a moderator without the csam permission and writes nothing', async () => {
-    const result = await post('place', { userId: '5', role: 'manual', reason: 'r' }, {});
+    const result = await post('place', { userId: '5', reason: 'r' }, {});
     expect(result.status).toBe(403);
     expect(placeEvidenceHold).not.toHaveBeenCalled();
   });
 
-  it('places it as the signed-in moderator, ending at the start of the chosen UTC day, and audits it', async () => {
+  it('places a manual hold as the signed-in moderator, ending at the start of the chosen UTC day, and audits it', async () => {
     placeEvidenceHold.mockResolvedValue({ id: 41, created: true });
     const result = await post('place', {
       userId: '5',
-      role: 'manual',
+      role: 'subject', // ignored: report-linked roles never come from this form
       reason: ' DMCA put-back ',
       releaseAt: '2099-01-15',
     });
@@ -138,16 +138,16 @@ describe('placing a hold', () => {
 
   it('a repeat of an open hold is reported and not audited twice', async () => {
     placeEvidenceHold.mockResolvedValue({ id: 41, created: false });
-    const result = await post('place', { userId: '5', role: 'manual', reason: 'again' });
+    const result = await post('place', { userId: '5', reason: 'again' });
     expect(result).toMatchObject({ holdId: 41, created: false });
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
-  it('refuses a past end date, an unknown role and an empty reason before writing', async () => {
+  it('refuses a past end date, a bad user id and an empty reason before writing', async () => {
     const refused: Record<string, string>[] = [
-      { userId: '5', role: 'manual', reason: 'r', releaseAt: '2001-01-01' },
-      { userId: '5', role: 'owner', reason: 'r' },
-      { userId: '5', role: 'manual', reason: '   ' },
+      { userId: '5', reason: 'r', releaseAt: '2001-01-01' },
+      { userId: 'abc', reason: 'r' },
+      { userId: '5', reason: '   ' },
     ];
     for (const fields of refused) {
       expect((await post('place', fields)).status).toBe(400);

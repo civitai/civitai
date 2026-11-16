@@ -64,19 +64,11 @@
   </p>
 
   <details class="rounded border border-dark-4 p-3">
-    <summary class="cursor-pointer text-sm font-medium text-white">Place a hold</summary>
+    <summary class="cursor-pointer text-sm font-medium text-white">Place a manual hold</summary>
     <form method="POST" action="?/place" use:enhance class="mt-3 flex flex-wrap items-end gap-3 text-sm">
       <label class="flex flex-col gap-1">
         <span class="text-dark-2">User id</span>
         <Input name="userId" inputmode="numeric" required class="w-32" />
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-dark-2">Role</span>
-        <select name="role" class="rounded bg-dark-5 px-2 py-1.5 text-dark-0">
-          <option value="manual">manual</option>
-          <option value="subject">subject</option>
-          <option value="secondary">secondary</option>
-        </select>
       </label>
       <label class="flex min-w-64 flex-1 flex-col gap-1">
         <span class="text-dark-2">Reason</span>

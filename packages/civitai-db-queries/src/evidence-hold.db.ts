@@ -103,18 +103,17 @@ export async function listEvidenceHeldOwners(
   };
 }
 
-export type EvidenceHoldRole = 'subject' | 'secondary' | 'manual';
-
 /**
- * Places a hold on an owner unless an open one with the same role and reason already exists, so a
- * repeated request does not stack rows. `releaseAt` NULL holds until released; a date ends the hold
+ * Places a manual hold on an owner unless an open one with the same reason already exists, so a
+ * repeated request does not stack rows. Only `manual`: `subject` and `secondary` holds belong to a
+ * CSAM report, and the table's role check refuses them without one. `releaseAt` NULL holds until released; a date ends the hold
  * through "EvidenceHeldUser" with no job.
  */
 export async function placeEvidenceHold(
   db: Kysely<DB>,
   input: {
     userId: number;
-    role: EvidenceHoldRole;
+    role: 'manual';
     reason: string;
     createdById: number | null;
     releaseAt?: Date | null;

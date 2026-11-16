@@ -21,7 +21,10 @@ vi.mock('~/server/services/csam.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CsamService>()),
   createCsamReport,
 }));
-vi.mock('@civitai/db-queries/evidence-hold', () => ({ placeEvidenceHold }));
+vi.mock('@civitai/db-queries/evidence-hold', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  placeEvidenceHold,
+}));
 vi.mock('~/server/http/orchestrator/flagged-consumers', async (importOriginal) => ({
   ...(await importOriginal<typeof FlaggedConsumers>()),
   reviewConsumerStrikes,
@@ -157,6 +160,7 @@ describe('preserveGeneratorEvidence', () => {
       expect.anything(),
       expect.objectContaining({ userId: USER, role: 'manual', createdById: 1 })
     );
+    expect(placeEvidenceHold).toHaveBeenCalledTimes(1);
     expect(reviewConsumerStrikes).not.toHaveBeenCalled();
     expect(softDeleteUser).not.toHaveBeenCalled();
     for (const write of [

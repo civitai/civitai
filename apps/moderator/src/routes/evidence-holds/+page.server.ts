@@ -48,7 +48,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
 const placeSchema = z.object({
   userId: int4Id,
-  role: z.enum(['manual', 'subject', 'secondary']),
   reason: z.string().trim().min(1, 'Give a reason.').max(500),
   // A date only: the hold ends at the start of that day, UTC.
   releaseAt: z
@@ -63,13 +62,14 @@ const releaseSchema = z.object({
   releaseReason: z.string().trim().min(1, 'Give a reason for releasing.').max(500),
 });
 
-// Same grant as the page: placing or releasing a hold is a csam filer's call.
+// Same grant as the load.
 export const actions: Actions = {
   place: requiresGrant('csam.report.file', async ({ request, locals }) => {
     const input = parseForm(placeSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { scope: 'place', error: input });
     const { id, created } = await placeEvidenceHold(dbWrite, {
       ...input,
+      role: 'manual',
       createdById: locals.user.id,
     });
     if (created)
