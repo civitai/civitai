@@ -147,6 +147,45 @@ const (
 // WD14-tagged: its Rekognition Label 1150302 is dropped, its Rekognition Moderation tag 1150303 and
 // gated label 1150304 kept; 1150305 is disabled and 1150399 has no Tag row. 1150402 has no row.
 func TestIntegrationTagIDsMissComputed(t *testing.T) {
+	e := integTagIDsSetup(t)
+	got, err := e.src.TagIDs(integtest.Ctx(t), []int{1150401, 1150402})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1150401}) {
+		t.Fatalf("tag ids for %v, want [1150401]", ids)
+	}
+	if s := integPlain(t, got[1150401]); s != `[1150301,1150303,1150304]` {
+		t.Fatalf("tags = %s, want [1150301,1150303,1150304]", s)
+	}
+	integWantPacked(t, e, KeyTagIDs, 1150401, integWantTags, 9*time.Hour)
+	integWantPacked(t, e, KeyTagIDs, 1150402, integWantTagsMarker, 9*time.Hour)
+}
+
+// A stale tag-ids entry (cachedAt past the 8h ttl, as a bust leaves it) on the real cluster: looked up
+// again under the revalidation lock, its value replaced (a plain SET over the existing key), the lock
+// released.
+func TestIntegrationStaleTagIDsReplaced(t *testing.T) {
+	e := integTagIDsSetup(t)
+	e.put(t, KeyTagIDs, 1150401, integtest.O("imageId", 1150401, "tags", []any{1}, "cachedAt", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+	ctx := integtest.Ctx(t)
+	got, err := e.src.TagIDs(ctx, []int{1150401})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := integPlain(t, got[1150401]); s != `[1150301,1150303,1150304]` {
+		t.Fatalf("tags = %s, want the looked-up [1150301,1150303,1150304]", s)
+	}
+	integWantPacked(t, e, KeyTagIDs, 1150401, integWantTags, 9*time.Hour)
+	if n := e.c.Exists(ctx, e.src.tagIDsLockKey(1150401)).Val(); n != 0 {
+		t.Fatal("the revalidation lock was left behind")
+	}
+}
+
+// integTagIDsSetup is integMissSetup with the tag rows of TestIntegrationTagIDsMissComputed and a
+// gate holding 1150304.
+func integTagIDsSetup(t *testing.T) *integEnv {
+	t.Helper()
 	e := integMissSetup(t)
 	integtest.Exec(t, e.pool, `DELETE FROM "TagsOnImageDetails" WHERE "imageId" BETWEEN 1150400 AND 1150499;
 		DELETE FROM "Tag" WHERE id BETWEEN 1150300 AND 1150399;
@@ -163,18 +202,7 @@ func TestIntegrationTagIDsMissComputed(t *testing.T) {
 		  (1150401, 1150305, true, 'User'),
 		  (1150401, 1150399, false, 'User');`)
 	e.src.Compute.TagGate = func(context.Context) (map[int]bool, error) { return map[int]bool{1150304: true}, nil }
-	got, err := e.src.TagIDs(integtest.Ctx(t), []int{1150401, 1150402})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ids := integKeys(got); !reflect.DeepEqual(ids, []int{1150401}) {
-		t.Fatalf("tag ids for %v, want [1150401]", ids)
-	}
-	if s := integPlain(t, got[1150401]); s != `[1150301,1150303,1150304]` {
-		t.Fatalf("tags = %s, want [1150301,1150303,1150304]", s)
-	}
-	integWantPacked(t, e, KeyTagIDs, 1150401, integWantTags, 9*time.Hour)
-	integWantPacked(t, e, KeyTagIDs, 1150402, integWantTagsMarker, 9*time.Hour)
+	return e
 }
 
 // The model frame lookup against the real schema: only rows placed on a Model (1150502 wears the same
@@ -186,7 +214,7 @@ func TestIntegrationModelFrameMissComputed(t *testing.T) {
 		  (1150006, 1150106, now(), NULL, 1150502, 'Image');`)
 	ctx := integtest.Ctx(t)
 	ids := []int{1150501, 1150502}
-	got, writable := e.src.read(ctx, KeyModelFrames, ids)
+	got, writable := e.src.read(ctx, KeyModelFrames, ids, 0)
 	if err := e.src.fillModelFrames(ctx, ids, got, writable); err != nil {
 		t.Fatal(err)
 	}

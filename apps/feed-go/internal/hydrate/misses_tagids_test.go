@@ -2,10 +2,10 @@ package hydrate
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -254,11 +254,113 @@ func TestMemoizedCaches(t *testing.T) {
 	}
 }
 
-// The tag-ids lookup's own SQL is the Node lookup's (getImageTagRows): enabled rows only, by image id.
-func TestTagIDsLookupSQL(t *testing.T) {
-	for _, want := range []string{`FROM "TagsOnImageDetails"`, `"imageId" = ANY($1::int[])`, `"disabled" = false`, `"source"::text AS "source"`, `"tagId"`} {
-		if !strings.Contains(sqlImageTagRows, want) {
-			t.Errorf("sqlImageTagRows lacks %q: %s", want, sqlImageTagRows)
+// tagLockKey is the revalidation lock Node's fetch takes for a stale tag-ids entry.
+func tagLockKey(id int) string { return pageNS + "cache-lock:" + pageNS + missKey(KeyTagIDs, id) }
+
+// staleTagIDsFixture is tagIDsMissFixture with image 12's entry back, stale: cachedAt past the 8h ttl
+// (as a bust backdates it), holding tags Node has since replaced; image 11's entry is back and
+// fresh (an hour old).
+func staleTagIDsFixture(t *testing.T) (*pageFixture, *missDB) {
+	t.Helper()
+	f, m := tagIDsMissFixture(t)
+	f.put(t, KeyTagIDs, 12, map[string]any{"imageId": 12, "tags": []any{77}, "cachedAt": pageNow.Add(-8*time.Hour - time.Minute)})
+	f.put(t, KeyTagIDs, 11, map[string]any{"imageId": 11, "tags": []any{66}, "cachedAt": pageNow.Add(-time.Hour)})
+	return f, m
+}
+
+// A stale tag-ids entry is looked up again, as Node's fetch revalidates it, and a fresh one is served:
+// with write-back off nothing is written; with it on the stale entry is replaced (a plain SET, where
+// every other write is SET NX) under Node's revalidation lock, which is released after.
+func TestStaleTagIDsAreRevalidated(t *testing.T) {
+	for _, writeBack := range []bool{false, true} {
+		t.Run(strconv.FormatBool(writeBack), func(t *testing.T) {
+			f, m := staleTagIDsFixture(t)
+			s, r := m.load(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, TagGate: (&tagGateSpy{}).fn})
+			got, err := s.TagIDs(context.Background(), []int{11, 12})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s := pagePlain(t, got[12]); s != `[22]` {
+				t.Fatalf("stale 12 = %s, want [22] (looked up again)", s)
+			}
+			if s := pagePlain(t, got[11]); s != `[66]` {
+				t.Fatalf("fresh 11 = %s, want the cached [66]", s)
+			}
+			if q := m.queries("tagrows"); !reflect.DeepEqual(q, [][]int{{12}}) {
+				t.Fatalf("tag row queries %v, want only the stale 12", q)
+			}
+			if r.Has(tagLockKey(12)) || r.Has(tagLockKey(11)) {
+				t.Fatal("a revalidation lock was left behind")
+			}
+			b, _ := r.String(pageNS + missKey(KeyTagIDs, 12))
+			if !writeBack {
+				if hex.EncodeToString(b) == wantTags12 {
+					t.Fatal("write-back off wrote the revalidated entry")
+				}
+				return
+			}
+			wantPacked(t, r, missKey(KeyTagIDs, 12), wantTags12, 9*time.Hour)
+		})
+	}
+}
+
+// With write-back on, a stale entry whose revalidation lock another process holds is served, as
+// Node's fetch serves it, and neither looked up nor written; the lock is left to its holder.
+func TestStaleTagIDsLockHeldServesStale(t *testing.T) {
+	f, m := staleTagIDsFixture(t)
+	s, r := m.load(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	r.SetString(tagLockKey(12), []byte("1"))
+	before, _ := r.String(pageNS + missKey(KeyTagIDs, 12))
+	got, err := s.TagIDs(context.Background(), []int{12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := pagePlain(t, got[12]); s != `[77]` {
+		t.Fatalf("12 = %s, want the stale [77] (the lock is held)", s)
+	}
+	if q := m.queries("tagrows"); len(q) != 0 {
+		t.Fatalf("tag row queries %v, want none", q)
+	}
+	if after, _ := r.String(pageNS + missKey(KeyTagIDs, 12)); string(after) != string(before) || !r.Has(tagLockKey(12)) {
+		t.Fatal("the stale entry or another holder's lock was touched")
+	}
+}
+
+// A stale entry the lookup no longer finds: the marker write is SET NX, as Node's, so the stale value
+// stays (and is revalidated again on the next read).
+func TestStaleTagIDsMarkerKeepsNX(t *testing.T) {
+	f, m := staleTagIDsFixture(t)
+	f.put(t, KeyTagIDs, 13, map[string]any{"imageId": 13, "tags": []any{88}, "cachedAt": pageNow.Add(-9 * time.Hour)})
+	s, r := m.load(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	before, _ := r.String(pageNS + missKey(KeyTagIDs, 13))
+	got, err := s.TagIDs(context.Background(), []int{13})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got[13]; ok {
+		t.Fatalf("13 = %v, want no tags (no row now)", got[13])
+	}
+	if after, _ := r.String(pageNS + missKey(KeyTagIDs, 13)); string(after) != string(before) {
+		t.Fatal("a notFound marker replaced a stale value")
+	}
+}
+
+// The probe's presence check counts a stale tag-ids entry as a miss with the computation on (a serve
+// looks it up again), and as an answer without it (a serve then serves it).
+func TestPresenceStaleTagIDs(t *testing.T) {
+	for _, tc := range []struct {
+		compute *MissCompute
+		want    int
+	}{{nil, 0}, {&MissCompute{}, 1}} {
+		f, _ := staleTagIDsFixture(t)
+		s, _, _ := f.load()
+		s.Compute = tc.compute
+		got, err := s.Presence(context.Background(), PageRequest{ImageIDs: []int{11, 12}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[CacheTagIDs] != tc.want {
+			t.Errorf("compute %v: tag-ids missed %d, want %d", tc.compute != nil, got[CacheTagIDs], tc.want)
 		}
 	}
 }

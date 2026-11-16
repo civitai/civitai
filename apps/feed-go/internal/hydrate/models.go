@@ -379,7 +379,7 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		return out, nil
 	}
 	tb := NewBatch()
-	tagRead := s.Packed.Queue(tb, KeyTagIDs, imageIDs, 0)
+	tagRead := s.Packed.Queue(tb, KeyTagIDs, imageIDs, tagIDsTTL)
 	tb.Exec(ctx)
 	tagGot, tagWritable := tagRead.read()
 	if err := s.fillTagIDs(ctx, imageIDs, tagGot, tagWritable); err != nil {

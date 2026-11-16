@@ -61,8 +61,8 @@ var PageCaches = []PageCache{
 
 // MissReason is the fallback reason a miss on the named cache raises when s serves: "" for a cache
 // s.Compute answers (MissCaches, shared with the miss computation); else the PageCaches Reason of a
-// page cache, the computation's own reason for another MissCaches cache (model-frames), and "" for
-// any other name.
+// page cache, the lookup spec's reason for another computed cache (model-frames), and "" for any
+// other name.
 func (s *Sources) MissReason(name string) string {
 	if s.Compute != nil && slices.Contains(MissCaches, name) {
 		return ""
@@ -70,7 +70,7 @@ func (s *Sources) MissReason(name string) string {
 	if c, ok := PageCacheNamed(name); ok {
 		return c.Reason
 	}
-	return missReasons[name]
+	return specReason(name)
 }
 
 // PageCacheNamed is the PageCaches entry of that name.
@@ -134,7 +134,7 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 		{CacheProfilePictures, profileUsers, s.Packed.Queue(stage1, KeyProfilePictures, profileUsers, 0)},
 		{CacheImageFrames, images, s.Packed.Queue(stage1, KeyImageFrames, images, 0)},
 		{CacheThumbnails, videos, s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)},
-		{CacheTagIDs, images, s.Packed.Queue(stage1, KeyTagIDs, images, 0)},
+		{CacheTagIDs, images, s.Packed.Queue(stage1, KeyTagIDs, images, tagIDsTTL)},
 	}
 	// As Page: no visible event, no decoration read at all.
 	if len(images) > 0 && len(req.VisibleEvents) > 0 {
@@ -170,6 +170,16 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 			// fetch ignores markers then), so the lookup runs for it.
 			for id, e := range entries {
 				if e.NotFound {
+					delete(entries, id)
+				}
+			}
+		}
+		if r.name == CacheTagIDs && s.Compute != nil {
+			// As fillTagIDs: a stale entry (past the cache's ttl, or backdated by a bust) is looked up
+			// again. Counted as a miss: with write-back on a serve that finds its revalidation lock
+			// held serves it instead, so this can overstate that case's reads.
+			for id, e := range entries {
+				if e.Stale {
 					delete(entries, id)
 				}
 			}

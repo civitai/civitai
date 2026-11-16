@@ -245,8 +245,12 @@ func TestMissReason(t *testing.T) {
 			t.Errorf("no computation: %s = %q, want %q", c.Name, got, c.Reason)
 		}
 	}
-	if got := plain.MissReason(MissModelFrames); got != "model-frame-miss" {
-		t.Errorf("no computation: model-frames = %q, want model-frame-miss", got)
+	// Not page caches: the model frames' reason is their lookup spec's; the image meta (not probed)
+	// has no spec, so none.
+	for name, w := range map[string]string{MissModelFrames: "model-frame-miss", MissImageMeta: ""} {
+		if got := plain.MissReason(name); got != w {
+			t.Errorf("no computation: %s = %q, want %q", name, got, w)
+		}
 	}
 	want := map[string]string{
 		CacheUserCosmetics: "", CacheImageFrames: "", CacheEventDecorations: "",
@@ -261,23 +265,6 @@ func TestMissReason(t *testing.T) {
 		if s.MissReason("nope") != "" {
 			t.Error("an unknown cache has a reason")
 		}
-	}
-}
-
-// Every MissCaches label that names a page cache is that cache's probe label, and each has its
-// fallback reason (the one the cache raises without the computation).
-func TestMissCachesLabels(t *testing.T) {
-	for _, m := range MissCaches {
-		reason, ok := missReasons[m]
-		if !ok || reason == "" {
-			t.Errorf("%s has no fallback reason", m)
-		}
-		if c, ok := PageCacheNamed(m); ok && c.Reason != reason {
-			t.Errorf("%s: PageCaches reason %q, the computation's %q", m, c.Reason, reason)
-		}
-	}
-	if _, ok := PageCacheNamed(MissTagIDs); !ok || MissTagIDs != CacheTagIDs {
-		t.Fatalf("tag-ids: the computation's label %q is not the page cache's %q", MissTagIDs, CacheTagIDs)
 	}
 }
 

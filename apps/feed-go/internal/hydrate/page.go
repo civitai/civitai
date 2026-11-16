@@ -69,7 +69,7 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	}
 	frames := s.Packed.Queue(stage1, KeyImageFrames, images, 0)
 	thumbs := s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)
-	tags := s.Packed.Queue(stage1, KeyTagIDs, images, 0)
+	tags := s.Packed.Queue(stage1, KeyTagIDs, images, tagIDsTTL)
 	// No visible event: no decoration read at all (decorationsForEvents returns before its fetch).
 	readEvents := len(images) > 0 && len(req.VisibleEvents) > 0
 	var events *PackedRead

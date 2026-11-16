@@ -225,6 +225,18 @@ keeps every Rekognition label (`getImageTagGateIds` answers null); where this se
 gate (its blocked-tag list is absent or one Node would rebuild from the database) a row that needs it
 fails the computation (`tag-ids-miss-failed`) instead of guessing.
 
+**Stale tag ids.** `tagIdsForImagesCache` is stale-while-revalidate: an entry whose `cachedAt` is
+older than its 8 h ttl is stale, and a bust (`bust`, which on an SWR cache is `invalidate`: the tag
+edits in `src/server/services/tagsOnImageNew.service.ts` call it) backdates `cachedAt` so the entry is
+stale within seconds. Node's next fetch takes the revalidation lock (`cache-lock:<key>:<id>`, `SET NX`, 10 s),
+looks the id up again and writes the new value over the stale one; a fetch that finds the lock held
+serves the stale entry. This service reads tag ids with the same ttl and does the same: with
+write-back on it takes the same lock, recomputes an id whose lock it took and writes the value with a
+plain `SET` (the stale entry is replaced, where every other write here is `SET NX`; a notFound marker
+keeps `NX`, as Node's does, so it never replaces the stale value), and serves the stale entry of an
+id whose lock is held; with write-back off it recomputes every stale id (nothing is written, so
+there is no write to guard). Without the computation a stale entry is served, as before.
+
 Not computed: `metrics-miss` (Node populates the hash from ClickHouse, which this service does not
 read), and on the REST endpoint `image-resources-miss` (Node picks a replica by write lag). On
 model.getAll the other cache misses still fall back (§15.2). `input-techniques` is an input shape, not
@@ -245,7 +257,8 @@ two `dbWrite.$queryRaw` lookups). That primary read is the guard against re-cach
 from a lagging replica, a frame just unequipped or withheld would be written back and served for a
 day. With the primary read, a fill races an equip or unequip exactly as Node's own fill does.
 
-`SET NX` (where Node's write is a plain `SET`) is a second, narrower guard: it never overwrites a key
+`SET NX` (where Node's write is a plain `SET`; the one plain `SET` here is a revalidated stale
+tag-ids value, above) is a second, narrower guard: it never overwrites a key
 that holds a value or a bust's debounce marker at write time. It does not stop a value read before a
 change from landing after the change's debounce marker expired; only the primary read bounds that, to
 the same window Node has. The user-cosmetics and tag-ids lookups read the replica, as Node's do. The
@@ -506,6 +519,17 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
    - it does not model the serving budget: its reads are fewer and cheaper than a serve's (no miss
      queries, no hydration), so a request a serve would cut at `FEED_GO_REQUEST_BUDGET_MS`
      (`deadline`) can probe `would_serve`;
+   - it counts a stale tag-ids entry as a miss Go computes, as a serve with write-back off does; a
+     serve with write-back on whose revalidation lock is held elsewhere serves it instead, so there
+     the probe overstates the reads;
+   - it does not evaluate the tag-ids browsing gate (deliberately): whether a miss needs the gate is
+     known only from the tag rows a serve queries, which the probe never does. A serve fails such a
+     miss (`tag-ids-miss-failed`) only when the image has a Rekognition label beside a WD14 tag AND
+     the blocked-tag list cannot be read (its key absent, or a value Node would rebuild); the probe
+     reports that case `would_serve`. On `image.getInfinite` the list is read before hydration, so an
+     unreadable one is already `would_miss` there (`blocked-tags`); on the other procedures the
+     overstatement is bounded by how often that key is absent, which
+     `feed_go_cache_miss_total{cache="tag-ids",result="error"}` counts on the serving side;
 3. records the result in `feed_go_gofirst_total{feed_endpoint,result}`:
    - `would_serve`: every cache answered, or missed only where Go answers the miss itself
      (`Sources.MissReason` is `""`): from the replica (basic users, profile pictures, thumbnails,
@@ -548,9 +572,10 @@ cache, and costed (below). The probe never computes a miss.
 **The cost gate.** A miss Go answers itself (replica path or computed) is served, but each costs a
 database query a warm cache does not. Per served probe (`would_serve`, `raced`), the probe counts
 one query per page and cache with such misses, `feed_go_gofirst_db_reads_total{feed_endpoint,cache}`
-(a lower bound: the user-cosmetics computation can add two withheld-cosmetic queries), over the
-pages it checked, `feed_go_gofirst_pages_total{feed_endpoint}` (a computed tag-ids miss counts one
-read, its tag-records query for tags `basic-tags` misses and its gate read not included). **These miss frequencies are
+(a lower bound: the user-cosmetics and frame computations, image and model, can each add the
+withheld-cosmetic check's two queries, and a computed tag-ids miss counts one read, its tag-records
+query for the tags `basic-tags` misses not included), over the pages it checked,
+`feed_go_gofirst_pages_total{feed_endpoint}`. **These miss frequencies are
 measured while Node re-warms the cache**: every probed request is also answered by Node, which
 writes back what it reads. A Go-first serve with write-back OFF (`FEED_GO_CACHE_WRITEBACK`, default
 off) writes nothing, so its misses recur on every Go-served request for those ids and the measured

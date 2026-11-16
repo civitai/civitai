@@ -33,16 +33,6 @@ const (
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames}
 
-// missReasons is the fallback reason a miss on each MissCaches cache raises without a computation.
-var missReasons = map[string]string{
-	MissUserCosmetics:    "user-cosmetics-miss",
-	MissImageFrames:      "image-frame-miss",
-	MissEventDecorations: "event-decoration-miss",
-	MissImageMeta:        "image-meta-miss",
-	MissTagIDs:           "tag-ids-miss",
-	MissModelFrames:      "model-frame-miss",
-}
-
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
 // without one falls back on those misses (FEED_GO_COMPUTE_MISSES=false).
@@ -264,9 +254,14 @@ type lookupSpec struct {
 	notFoundTTL time.Duration
 }
 
-// tagIDsEX is tagIdsForImagesCache's EX: ttl 8h with staleWhileRevalidate on (the default) and a 1h
-// staleWhileRevalidateTtl, so 9h; no notFoundTtl, so its markers get the same.
-const tagIDsEX = 8*time.Hour + time.Hour
+// tagIDsTTL is tagIdsForImagesCache's ttl: an entry whose cachedAt is older is stale, and Node's
+// fetch revalidates it (staleWhileRevalidate is on) — a bust (invalidate) backdates cachedAt so it
+// is. The tag-ids reads mark entries past it Stale (fillTagIDs).
+const tagIDsTTL = 8 * time.Hour
+
+// tagIDsEX is tagIdsForImagesCache's EX: the 8h ttl plus the 1h staleWhileRevalidateTtl, so 9h; no
+// notFoundTtl, so its markers get the same.
+const tagIDsEX = tagIDsTTL + time.Hour
 
 var (
 	// userCosmeticCache: ttl a day, cacheNotFound (default) on, no notFoundTtl.
@@ -281,19 +276,38 @@ var (
 	tagIDsSpec = lookupSpec{cache: MissTagIDs, reason: "tag-ids-miss", key: KeyTagIDs, idKey: "imageId", ttl: tagIDsEX, notFoundTTL: tagIDsEX}
 )
 
-// packedWrite is one cache write: SET key val EX ttl NX.
+// missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
+// the fallbacks those misses raise without a computation (Sources.MissReason).
+var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, tagIDsSpec}
+
+// specReason is the fallback reason of the named cache's lookup spec ("" for none).
+func specReason(cache string) string {
+	for _, sp := range missSpecs {
+		if sp.cache == cache {
+			return sp.reason
+		}
+	}
+	return ""
+}
+
+// packedWrite is one cache write: SET key val EX ttl NX, or without NX when overwrite (a stale
+// entry revalidated under its lock, as Node's refill overwrites it).
 type packedWrite struct {
-	key string
-	val []byte
-	ttl time.Duration
+	key       string
+	val       []byte
+	ttl       time.Duration
+	overwrite bool
 }
 
 // fill answers the ids of ids that got does not, with lookup (the Node lookupFn, batched: one call
 // for every miss), adding each answer to got as the entry Node would have cached: the record, or a
 // notFound marker for an id the lookup found nothing for. writable says which misses Node would
-// write back (PackedRead.read); writeNotFound whether the cache writes markers.
+// write back (PackedRead.read); writeNotFound whether the cache writes markers; replace which
+// misses are stale entries being revalidated (revalidateStaleTagIDs): their value is written without NX,
+// as Node's refill overwrites the stale entry, while their marker keeps NX (Node's marker write is
+// always NX, so it never replaces the stale value).
 func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[int]Entry, writable map[int]bool, writeNotFound bool,
-	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) error {
+	replace map[int]bool, lookup func(context.Context, []int) (map[int]jspack.Obj, error)) error {
 	miss := Missing(ids, got)
 	if len(miss) == 0 {
 		return nil
@@ -328,8 +342,8 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 			return fmt.Errorf("%s: a computed entry for %d does not decode", spec.cache, id)
 		}
 		got[id] = e
-		if c.WriteBack && writable[id] && (found || writeNotFound) {
-			writes = append(writes, packedWrite{key: s.Packed.key(spec.key, id), val: b, ttl: ttl})
+		if c.WriteBack && (writable[id] || replace[id]) && (found || writeNotFound) {
+			writes = append(writes, packedWrite{key: s.Packed.key(spec.key, id), val: b, ttl: ttl, overwrite: found && replace[id]})
 		}
 	}
 	c.observe(spec.cache, "computed", len(miss))
@@ -343,7 +357,7 @@ func (s *Sources) fillUserCosmetics(ctx context.Context, users []int, got map[in
 	if s.Compute == nil {
 		return nil
 	}
-	return s.fill(ctx, userCosmeticsSpec, users, got, writable, true, s.lookupUserCosmetics)
+	return s.fill(ctx, userCosmeticsSpec, users, got, writable, true, nil, s.lookupUserCosmetics)
 }
 
 // fillFrames computes the frame misses of got (cosmeticEntityCaches.Image.fetch's lookup). While
@@ -372,16 +386,95 @@ func (s *Sources) fillEntityFrames(ctx context.Context, spec lookupSpec, lookup 
 			}
 		}
 	}
-	return s.fill(ctx, spec, ids, got, writable, s.Compute.FrameNegative, lookup)
+	return s.fill(ctx, spec, ids, got, writable, s.Compute.FrameNegative, nil, lookup)
 }
 
-// fillTagIDs computes the tag-ids misses of got (tagIdsForImagesCache.fetch's lookup); a no-op
-// without s.Compute (the miss then falls back in tagIDsFrom).
+// fillTagIDs computes the tag-ids misses of got (tagIdsForImagesCache.fetch's lookup), got read with
+// tagIDsTTL; a no-op without s.Compute (a miss then falls back in tagIDsFrom, a stale entry is
+// served). A stale entry is revalidated as Node's fetch revalidates it (revalidateStaleTagIDs).
 func (s *Sources) fillTagIDs(ctx context.Context, images []int, got map[int]Entry, writable map[int]bool) error {
 	if s.Compute == nil {
 		return nil
 	}
-	return s.fill(ctx, tagIDsSpec, images, got, writable, true, s.lookupTagIDs)
+	replace, locks := s.revalidateStaleTagIDs(ctx, got)
+	if err := s.fill(ctx, tagIDsSpec, images, got, writable, true, replace, s.lookupTagIDs); err != nil {
+		return err
+	}
+	s.releaseLocks(ctx, locks)
+	return nil
+}
+
+// tagIDsLockKey is fetch's revalidation lock for one tag-ids entry,
+// `${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`: both halves namespace-prefixed (applyCacheKeyPrefix
+// prefixes every leaf of the key table).
+func (s *Sources) tagIDsLockKey(id int) string {
+	return s.Packed.Prefix + "cache-lock:" + s.Packed.key(KeyTagIDs, id)
+}
+
+// cacheLockTTL is the revalidation lock's EX (setNxKeepTtlWithEx(…, '1', 10)).
+const cacheLockTTL = 10 * time.Second
+
+// revalidateStaleTagIDs is fetch's stale-while-revalidate step over the tag-ids answer got (Stale
+// entries, read with tagIDsTTL), removing from got the stale ids to look up again:
+//
+//   - write-back on, as Node: each stale id takes the revalidation lock Node's fetch takes (SET NX EX
+//     10); an id whose lock is held elsewhere, or whose lock write failed, keeps its stale entry
+//     (served, as Node serves it), and one whose lock is taken is looked up and its value written
+//     over the stale one (replace). The locks taken are returned for releaseLocks;
+//   - write-back off: every stale id is looked up (nothing is written, so no lock guards a write),
+//     so a busted entry is never served past its backdated stamp;
+//   - under a Go-first probe (WithPresence): every stale id is a miss (recorded by fill), no lock.
+func (s *Sources) revalidateStaleTagIDs(ctx context.Context, got map[int]Entry) (map[int]bool, []string) {
+	stale := make([]int, 0, len(got))
+	for id, e := range got {
+		if e.Stale {
+			stale = append(stale, id)
+		}
+	}
+	if len(stale) == 0 {
+		return nil, nil
+	}
+	if presenceOf(ctx) != nil || !s.Compute.WriteBack || s.Packed.Redis == nil {
+		for _, id := range stale {
+			delete(got, id)
+		}
+		return nil, nil
+	}
+	slices.Sort(stale)
+	cmds := make([]*redis.BoolCmd, len(stale))
+	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, id := range stale {
+			cmds[i] = p.SetNX(ctx, s.tagIDsLockKey(id), "1", cacheLockTTL)
+		}
+		return nil
+	})
+	replace := map[int]bool{}
+	var locks []string
+	for i, id := range stale {
+		if ok, err := cmds[i].Result(); err != nil || !ok {
+			continue // held by another revalidation, or the lock write failed: serve the stale entry
+		}
+		delete(got, id)
+		replace[id] = true
+		locks = append(locks, s.tagIDsLockKey(id))
+	}
+	return replace, locks
+}
+
+// releaseLocks deletes the revalidation locks taken, best effort, after the writes (Node deletes
+// them after its write; a failed delete leaves the lock to its 10 s expiry). A failed lookup leaves
+// them to expire, as Node's does.
+func (s *Sources) releaseLocks(ctx context.Context, locks []string) {
+	if len(locks) == 0 {
+		return
+	}
+	// One DEL per key: the locks of different ids live in different cluster slots.
+	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for _, k := range locks {
+			p.Del(ctx, k)
+		}
+		return nil
+	})
 }
 
 // fillEvents computes the event-decoration misses of got (eventDecorationEntityCaches.Image.fetch's
@@ -390,7 +483,7 @@ func (s *Sources) fillEvents(ctx context.Context, images []int, got map[int]Entr
 	if s.Compute == nil {
 		return nil
 	}
-	return s.fill(ctx, eventSpec, images, got, writable, true, s.lookupImageEvents)
+	return s.fill(ctx, eventSpec, images, got, writable, true, nil, s.lookupImageEvents)
 }
 
 // writePacked sends writes in one pipeline, best effort: Node swallows a failed cache write too (the
@@ -401,6 +494,10 @@ func (s *Sources) writePacked(ctx context.Context, writes []packedWrite) {
 	}
 	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for _, w := range writes {
+			if w.overwrite {
+				p.Set(ctx, w.key, w.val, w.ttl)
+				continue
+			}
 			p.SetNX(ctx, w.key, w.val, w.ttl)
 		}
 		return nil
