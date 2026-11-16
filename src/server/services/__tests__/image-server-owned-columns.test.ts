@@ -564,6 +564,25 @@ describe('entity image writers', () => {
       expect(linked).toEqual([1, 2]);
     });
 
+    // Entries saved before the limit can be past it; trimming one, or editing only its text, saves.
+    it.each([
+      ['removes an image', [1, 2, 3], [1, 2, 3]],
+      ['keeps every image', [1, 2, 3, 4], [1, 2, 3, 4]],
+    ])('saves an entry already past the limit when the edit %s', async (_l, keep, after) => {
+      linked = [1, 2, 3, 4];
+      await expect(
+        updateEntityImages({
+          images: keep.map((id) => ({ id, url: URL_KEY, type: 'image' })),
+          userId: OWNER,
+          entityType: 'BountyEntry',
+          entityId: 1,
+          shownImageIds: [1, 2, 3, 4],
+          maxLinked: 2,
+        })
+      ).resolves.toBeDefined();
+      expect(linked).toEqual(after);
+    });
+
     it('refuses a save that would leave no image, before removing any', async () => {
       linked = [2];
       await expect(save([], [2])).rejects.toThrow('At least one example image');

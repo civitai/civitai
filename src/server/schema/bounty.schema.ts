@@ -53,11 +53,11 @@ export const bountyDetailsSchema = z.object({
     .optional(),
 });
 
-export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
 // May be empty when the domain's cap hides every image; updateEntityImages enforces one stays linked.
 export const bountyImagesSchema = z.array(comfylessImageSchema);
-/** The linked images an edit form was shown; only these can be removed. See `updateEntityImages`. */
 export const shownImageIdsSchema = z.number().array().optional();
+
+export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
 
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),

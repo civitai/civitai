@@ -5898,7 +5898,8 @@ export const updateEntityImages = async ({
   const linkedAfter =
     connections.length - removedIds.length + new Set(linkIds).size + newImages.length;
   if (linkedAfter === 0) throw throwBadRequestError('At least one example image must be uploaded');
-  if (maxLinked !== undefined && linkedAfter > maxLinked)
+  // Only a save that grows the set is held to it: an entry already past it can still be edited.
+  if (maxLinked !== undefined && linkedAfter > maxLinked && linkedAfter > connections.length)
     throw throwBadRequestError(`At most ${maxLinked} images can be linked`);
 
   if (removedIds.length > 0)
