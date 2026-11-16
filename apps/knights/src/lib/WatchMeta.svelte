@@ -44,7 +44,12 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 8px 28px 0;
+    box-sizing: border-box;
+    /* Same width as the question column, so the two left edges line up between 40rem and 75rem. */
+    width: 100%;
+    max-width: 1056px;
+    margin: 0 auto;
+    padding: 8px 28px;
     color: var(--io-parchment-muted);
     font: 400 12px/1.2 var(--io-font-ui);
   }
@@ -98,7 +103,7 @@
   }
   @media (max-width: 40rem) {
     .meta {
-      padding: 6px 16px 0;
+      padding: 6px 16px 8px;
     }
   }
 </style>
