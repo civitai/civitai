@@ -37,15 +37,24 @@ function modelStep(
   stored: Model,
   now: number,
   op: { kind: 'reserve' } | { kind: 'release'; rejected: boolean }
-): { model: Model; refusedWaitMs?: number } {
+): { model: Model; refusedWaitMs?: number; binding?: 'burst' | 'daily' | 'rejections' } {
   const buckets: Bucket[] = [P.burst, P.daily, P.rejections];
   const full = [stored?.b, stored?.d, stored?.r].map((v) => Math.max(v ?? now, now));
   if (op.kind === 'reserve') {
     const waits = full.map(
       (f, i) => f - now - (buckets[i].capacity - 1) * buckets[i].refillIntervalMs
     );
-    const wait = Math.max(0, ...waits);
-    if (wait > 0) return { model: stored, refusedWaitMs: wait };
+    // The binding bucket is the FIRST one with the longest wait — the script's strict `>`.
+    let wait = 0;
+    let bound = -1;
+    waits.forEach((w, i) => {
+      if (w > wait) {
+        wait = w;
+        bound = i;
+      }
+    });
+    const names = ['burst', 'daily', 'rejections'] as const;
+    if (wait > 0) return { model: stored, refusedWaitMs: wait, binding: names[bound] };
     full[0] += P.burst.refillIntervalMs;
     full[1] += P.daily.refillIntervalMs;
   } else {
@@ -115,6 +124,7 @@ describe('write-budget Lua ≡ TypeScript reference', () => {
             expect(actual).toEqual({
               allowed: false,
               retryAfterSeconds: Math.max(1, Math.ceil(expected.refusedWaitMs / 1000)),
+              binding: expected.binding,
             });
           } else {
             expect(actual.allowed).toBe(true);

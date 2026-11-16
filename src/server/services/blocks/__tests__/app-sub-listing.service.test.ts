@@ -1266,3 +1266,49 @@ describe('🔴 content levels on: a card is approved or restored only for a rate
     expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('per-app refusal attribution (civitai_app_block_rate_limit_refusals_total)', () => {
+  async function refusals(): Promise<number> {
+    const { default: promClient } = await import('prom-client');
+    const metric = promClient.register.getSingleMetric(
+      'civitai_app_block_rate_limit_refusals_total'
+    ) as
+      | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+      | undefined;
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    return (
+      values.find(
+        (v) =>
+          v.labels.app_block_id === 'apb_1' &&
+          v.labels.surface === 'sub_listings' &&
+          v.labels.bucket === 'sub-listing-write'
+      )?.value ?? 0
+    );
+  }
+
+  // RED before this change: both refused 429 rate_limited and moved no per-app series.
+  it('an upsert refusal is one {apb_1, sub_listings, sub-listing-write}', async () => {
+    mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 77 });
+    const before = await refusals();
+    await expectError(upsert(), 429, 'rate_limited');
+    expect((await refusals()) - before).toBe(1);
+  });
+
+  it('a withdraw refusal is one {apb_1, sub_listings, sub-listing-write}', async () => {
+    mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 78 });
+    const before = await refusals();
+    await expectError(
+      withdrawSubListing({ appBlockId: 'apb_1', userId: AUTHOR, body: { itemKey: 'gen-1' } }),
+      429,
+      'rate_limited'
+    );
+    expect((await refusals()) - before).toBe(1);
+  });
+
+  it('an allowed upsert moves nothing', async () => {
+    const before = await refusals();
+    await upsert().catch(() => undefined);
+    expect((await refusals()) - before).toBe(0);
+  });
+});

@@ -149,6 +149,7 @@ const OPTIONS: BlockBridgeViewerOptions = {
   scope: 'buzz:read:self',
   anonMessage: 'probe requires a viewer',
   rateLimit: {
+    bucket: 'catalog',
     check: (viewer) => {
       h.events.push('rate-limit');
       return check(viewer);
@@ -274,6 +275,17 @@ describe('the buzz reads on the middleware', () => {
     await expect(read('getMyBuzzBalance')).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(h.recordRefusal.mock.calls).toEqual([['getMyBuzzBalance', 'catalog']]);
   });
+
+  // Red before the middleware recorded: these three charged `catalog` through buzzReadOptions and
+  // shed a refusal with no signal at all.
+  it.each(READS.filter(([proc]) => proc !== 'getMyBuzzBalance'))(
+    '%s counts a refusal as itself on the catalog bucket',
+    async (proc, extra) => {
+      h.catalogLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 4 });
+      await expect(read(proc, extra)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+      expect(h.recordRefusal.mock.calls).toEqual([[proc, 'catalog']]);
+    }
+  );
 });
 
 describe('blocks.getMyViewer on the middleware', () => {
@@ -301,13 +313,14 @@ describe('blocks.getMyViewer on the middleware', () => {
     expect(h.catalogLimit.mock.calls).toEqual([[INSTANCE_ID]]);
   });
 
-  it('past the ceiling it refuses without counting the refusal or reading the primary', async () => {
+  it('past the ceiling it refuses, counts the refusal, and does not read the primary', async () => {
     h.catalogLimit.mockResolvedValue({ allowed: false });
 
     await expect(
       blocksRouter.createCaller(ctx() as never).getMyViewer({ blockToken: await mint() })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    expect(h.recordRefusal).not.toHaveBeenCalled();
+    // Counted since every bridge limiter records (it was the one catalog read that did not).
+    expect(h.recordRefusal.mock.calls).toEqual([['getMyViewer', 'catalog']]);
     expect(dbMock.dbWrite.user.findUnique).not.toHaveBeenCalled();
   });
 });
