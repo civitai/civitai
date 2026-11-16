@@ -14,7 +14,7 @@ import {
 } from '../queue/queue.service';
 import { nextStaffedRank } from '../queue/ranks';
 import { creditVote, insertVote } from '../queue/vote-record';
-import { consensusRule, decideYesNo } from './decide';
+import { decideYesNo } from './decide';
 import { playableItems } from './items';
 import { YESNO_ANSWERS } from './keys';
 import { closeYesNoItem } from './close';
@@ -60,15 +60,7 @@ export async function castYesNoVote(
 
       const item = await playableItems(trx)
         .where('i.id', '=', input.itemId)
-        .select([
-          'i.id',
-          'i.questionKey',
-          'i.imageId',
-          'i.minRank',
-          'q.votesToResolve',
-          'i.prompt',
-          'q.maxVotes',
-        ])
+        .select(['i.id', 'i.questionKey', 'i.imageId', 'i.minRank', 'i.prompt'])
         .executeTakeFirst();
       if (!item) return rejected('unavailable');
 
@@ -107,14 +99,14 @@ export async function castYesNoVote(
           .where('id', '=', item.id)
           .execute();
       }
-      // Each stage decides on its own answers; earlier stages' answers wait for the outcome and are graded by it.
+      // Each stage decides on its own answers, by the rating stage rule; earlier stages' answers wait for the outcome and are graded by it.
       const answers = await trx
         .selectFrom('KnightsVote')
         .select(['answer', 'weight'])
         .where('itemId', '=', item.id)
         .where('stage', '=', item.minRank)
         .execute();
-      const decision = decideYesNo(answers, consensusRule(item));
+      const decision = decideYesNo(answers, item.minRank);
 
       // Closing settles every voter's player row; taking the locks first, in id order, keeps all transactions in one order.
       if (decision.kind !== 'pending') await lockItemVoters(trx, item.id);
