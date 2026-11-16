@@ -191,6 +191,6 @@ export default MixedAuthEndpoint(async function handler(
   } catch (e) {
     return handleEndpointError(res, e);
   } finally {
-    if (shadow) finishFeedGoShadow(shadow, res.statusCode, res.getHeaders());
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode, res);
   }
 });

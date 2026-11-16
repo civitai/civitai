@@ -121,6 +121,9 @@ const RESPONSE_HEADER_MAX_CHARS = 1024;
 /** A response's headers as `res.getHeaders()` returns them. */
 export type ShadowResponseHeaders = Record<string, string | string[] | number | undefined>;
 
+/** The route's response, read for its headers once the handler has answered. */
+export type ShadowResponseLike = { getHeaders?: () => ShadowResponseHeaders };
+
 /**
  * The FEED_GO_COMPARED_RESPONSE_HEADERS a response carries, lowercased, each a string (an array
  * joined with `, `, cut at RESPONSE_HEADER_MAX_CHARS); Set-Cookie as `present`. Never throws.
@@ -680,12 +683,14 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   function finish(
     sample: FeedGoShadowSample,
     statusCode: number,
-    responseHeaders?: ShadowResponseHeaders
+    response?: ShadowResponseLike
   ): void {
     try {
       if (sample.done) return;
       sample.status = statusCode;
-      if (responseHeaders) sample.responseHeaders = pickShadowResponseHeaders(responseHeaders);
+      const headers =
+        typeof response?.getHeaders === 'function' ? response.getHeaders() : undefined;
+      if (headers) sample.responseHeaders = pickShadowResponseHeaders(headers);
       if (statusCode !== 200) {
         record('skipped_status', sample.endpoint);
         release(sample);
@@ -870,7 +875,7 @@ export function captureFeedGoShadowResponse(data: unknown, written: unknown, dev
 export function finishFeedGoShadow(
   sample: FeedGoShadowSample,
   statusCode: number,
-  responseHeaders?: ShadowResponseHeaders
+  response?: ShadowResponseLike
 ): void {
-  (owners.get(sample) ?? getInstance()).finish(sample, statusCode, responseHeaders);
+  (owners.get(sample) ?? getInstance()).finish(sample, statusCode, response);
 }

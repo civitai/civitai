@@ -298,9 +298,11 @@ describe('createFeedGoShadow — response status and headers', () => {
     const data = { items: [] };
     h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
     h.shadow.finish(sample, 200, {
-      'cache-control': 'max-age=0, private, no-cache',
-      'set-cookie': 'a=secret',
-      'x-handled-by': 'pod-a',
+      getHeaders: () => ({
+        'cache-control': 'max-age=0, private, no-cache',
+        'set-cookie': 'a=secret',
+        'x-handled-by': 'pod-a',
+      }),
     });
     await h.flush();
     const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
@@ -311,6 +313,18 @@ describe('createFeedGoShadow — response status and headers', () => {
     });
     // The cookie's value never leaves the process.
     expect(h.fetchMock.mock.calls[0][1].body as string).not.toContain('secret');
+  });
+
+  it('omits responseHeaders for a response without getHeaders (a test double), and still sends', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    h.shadow.finish(sample, 200, {});
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.status).toBe(200);
+    expect(body).not.toHaveProperty('responseHeaders');
   });
 
   it('omits responseHeaders when the route passes none', async () => {
