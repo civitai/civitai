@@ -58,7 +58,7 @@ name: App suites
 # `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
 # added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
 # events only); later pushes are: a PR that touches nothing these suites read starts no PR run
-# here even with the label.
+# here, label or not.
 #
 # ── PUSH TO `main` USES THE SAME FILTER ────────────────────────────────────────────────────────
 #
@@ -70,8 +70,8 @@ name: App suites
 # entry when its scan can see it. What is lost is attribution: the red lands on that later
 # commit, not on the one that caused it.
 #
-# Why: once push runs queued instead of cancelling (#8877), every push run reached its end and
-# this job's push cost doubled. docs/testing/reading-ci-results.md has the measurement.
+# Why: once push runs queued instead of cancelling (#8877), every push run that started reached
+# its end (a pending one is still replaced by a newer push) and this job's push cost doubled. docs/testing/reading-ci-results.md has the measurement.
 #
 # ── ON A PR, THE MODERATOR SUITE RUNS ONLY WHEN SOMETHING IT READS CHANGED ───────────────────
 #

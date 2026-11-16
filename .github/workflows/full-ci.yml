@@ -9,19 +9,15 @@ name: Full CI on label
 # along with moderator-boot.yml, feed-go.yml, beacon-go.yml and registry-adapter-image.yml, which
 # have the same draft gate.
 #
-# ── ONE-SHOT: THE LABEL IS REMOVED ONCE IT HAS STARTED ONE FULL RUN ──────────────────────────
+# ── THE LABEL STAYS ON UNTIL THE FULL UNIT SUITE HAS PASSED ONCE ON THE PR ───────────────────
 #
-# After the full run is started (dispatched here, or already running in the PR's own Lint run),
-# the last step removes the label. So the label buys ONE full run on the current head; later
-# pushes go back to the normal PR run (no unit shards, ESLint only on a draft). To ask again,
-# re-add it. Before this, the label stayed on and every later push ran the four unit shards,
-# which is how most PR runs came to carry it.
-#
-# A run already started keeps its shards: a job's `if` reads the label set in its own event's
-# payload, fixed when that event fired. The removal fires `unlabeled`, which nothing listens
-# to (this file is `labeled` only; lint.yml and the other suites list their `types` without
-# it), and an event made with the job's GITHUB_TOKEN starts no workflow run anyway. If the
-# removal fails, the job stays green and its summary says so.
+# lint.yml's `full-ci-done` job removes the label after a Lint run whose four unit shards all
+# passed: the PR's own run (it carries the label), or the dispatch below (it passes `pr`). So
+# the label buys one PASSING full unit run; after that, pushes go back to the normal PR run (no
+# unit shards, ESLint only on a draft). To ask again, re-add it. A cancelled, failed or skipped
+# unit run leaves the label on, so the next push runs the shards again. (This job does not
+# remove it itself: a run it found running can still be cancelled by the next push, since PR
+# runs share a cancel-in-progress group, and then no full run would ever finish.)
 #
 # ── WHY A DISPATCHER, AND NOT `labeled` IN lint.yml / apps.yml ────────────────────────────────
 #
@@ -48,8 +44,8 @@ name: Full CI on label
 # the head commit (the commit's check-runs API, the Actions tab), but `gh pr checks` and the PR's
 # status rollup list only pull_request-event runs, so they still show the draft run's skipped
 # `Unit tests` there. This job's summary links the two runs; open `Start full CI on label` to
-# reach them. Later PR runs (on push) test the merge commit as usual, without the unit shards,
-# since the label is gone by then (see ONE-SHOT above).
+# reach them. Later PR runs (on push) test the merge commit as usual, with the unit shards
+# until a full unit run has passed (see the label section above).
 # The dispatched Lint run is `only: all`: every suite but ESLint, which is PR-only and already
 # ran on the PR. Its concurrency group is the dispatch one, so it does not cancel the PR's own
 # run in flight. The dispatched apps.yml run is not path-filtered (`paths:` applies to
@@ -95,11 +91,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.label.name == 'full-ci' && github.event.pull_request.head.repo.full_name == github.repository
     # `actions: write` is what workflow_dispatch needs. A dispatch is the one event a
-    # GITHUB_TOKEN may start another workflow with. `pull-requests: write` removes the label.
+    # GITHUB_TOKEN may start another workflow with.
     permissions:
       actions: write
       contents: read
-      pull-requests: write
     timeout-minutes: 5
     steps:
       # Only the classifier the step below runs. No credentials are persisted: this job's token
@@ -118,6 +113,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -148,13 +144,17 @@ jobs:
               echo "### Full CI already running in the PR's own checks"
               echo "The pull_request Lint run on \`$HEAD_SHA\` runs every suite, unit shards included: $url"
               echo "App suites and Moderator boot smoke follow their \`paths:\` filters, as on every push."
+              echo "The \`full-ci\` label stays on until a full unit run passes on this PR (lint.yml, \`full-ci-done\`)."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           # skip_passed: the dispatch skips the suites the PR run on this commit already passed
-          # (lint.yml, the `passed` job). A branch cut before that input existed answers 422
-          # (unexpected input), so dispatch it without.
-          gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \
+          # (lint.yml, the `passed` job). pr: lint.yml's `full-ci-done` job removes this PR's
+          # label once the dispatch's unit shards pass. A branch cut before an input existed
+          # answers 422 (unexpected input), so dispatch it without, newest input first; without
+          # `pr` the label stays until a PR run's shards pass.
+          gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true -f pr="$PR" \
+            || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \
             || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
           gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
           # moderator-boot.yml arrived in #7673: a branch cut before it has no such workflow, and the
@@ -175,25 +175,10 @@ jobs:
           # them (see the header). A dispatch's run appears a few seconds after the call returns.
           sleep 10
           echo "### Full CI dispatched on \`$HEAD_REF\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "The \`full-ci\` label stays on until a full unit run passes on this PR (lint.yml, \`full-ci-done\`)." >> "$GITHUB_STEP_SUMMARY"
           for wf in lint.yml apps.yml moderator-boot.yml feed-go.yml beacon-go.yml registry-adapter-image.yml; do
             url=$(gh run list -R "$REPO" --workflow "$wf" --branch "$HEAD_REF" --event workflow_dispatch \
               --limit 1 --json url -q '.[0].url' || true)
             echo "$wf: ${url:-not found yet, see the Actions tab}"
             echo "- $wf: ${url:-not found yet, see the Actions tab}" >> "$GITHUB_STEP_SUMMARY"
           done
-
-      # One-shot (see the header). Runs only when the step above succeeded: it dispatched, or
-      # found the PR's own run covering the shards. Its failure never fails the job.
-      - name: Remove the full-ci label (one full run per label)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          if gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci" > /dev/null; then
-            echo "Removed the full-ci label: later pushes run the normal PR suites." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::warning title=full-ci label not removed::later pushes keep running the unit shards until it is removed"
-            echo "**Could not remove the full-ci label**; remove it by hand, or later pushes keep running the unit shards." >> "$GITHUB_STEP_SUMMARY"
-          fi
-          echo "To run the full suite again on a later commit, re-add the label: \`gh pr edit $PR --add-label full-ci\`" >> "$GITHUB_STEP_SUMMARY"

@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { classifyUnitJobs } from '../ci/full-ci-unit-shards.mjs';
 import { SUITES } from '../ci/lint-dispatch-passed.mjs';
+import { dispatchArgs } from '../ci/unit-batched.mjs';
 
 // The `full-ci` PR label: lint.yml, apps.yml and moderator-boot.yml read it on every PR run, and
 // full-ci.yml dispatches all three when it is added.
@@ -37,6 +38,7 @@ const DISPATCH_IF =
 type Step = {
   name?: string;
   if?: string;
+  'continue-on-error'?: boolean | string;
   run?: string;
   uses?: string;
   with?: Record<string, string | boolean>;
@@ -153,6 +155,7 @@ describe('the full-ci label', () => {
         'component',
         'component-ledger',
         'eslint',
+        'full-ci-done',
         'packages',
         'passed',
         'typecheck',
@@ -291,9 +294,11 @@ describe('the full-ci label', () => {
     );
   });
 
-  // Removing the label (full-ci.yml, one-shot) fires `unlabeled`. Nothing may listen to it: a
-  // workflow on `unlabeled` would start a run whose skipped jobs overlay the PR's checks, or
-  // re-dispatch. Every workflow file, not just the three that read the label.
+  // A person removing the label by hand fires `unlabeled` with their own token, which starts
+  // runs (the `full-ci-done` job's removal uses GITHUB_TOKEN, whose events start none). A
+  // workflow on `unlabeled` would then start a run whose skipped jobs overlay the PR's real
+  // checks under the same names, the hazard full-ci.yml's header measured for `labeled`. Every
+  // workflow file, not just the ones that read the label.
   it('no workflow fires on unlabeled', () => {
     const listeners = readdirSync(WORKFLOW_DIR)
       .filter((f) => /\.ya?ml$/.test(f))
@@ -303,6 +308,93 @@ describe('the full-ci label', () => {
         )
       );
     expect(listeners).toEqual([]);
+  });
+
+  // The label stays on until the full unit suite has passed once on the PR. lint.yml's
+  // `full-ci-done` removes it after a run whose four shards all passed: a PR run carrying the
+  // label from this repo, or a dispatch that names the PR (`pr`, which only full-ci.yml passes).
+  describe('lint.yml, `full-ci-done` removes the label after a passing full unit run', () => {
+    const doc = load('lint.yml');
+    const job = doc.jobs?.['full-ci-done'] ?? {};
+    const c = conjuncts(job.if ?? '');
+    const SUCCESS = "needs.unit.result == 'success'";
+    const FULL_RUN =
+      "(github.event_name == 'pull_request' || inputs.only == 'all' || inputs.only == 'unit')";
+    const PR_ALT = `(github.event_name == 'pull_request' && ${FULL} && github.event.pull_request.head.repo.full_name == github.repository)`;
+    const DISPATCH_ALT = "(github.event_name == 'workflow_dispatch' && inputs.pr != '')";
+    const who = splitTop(unwrap(c[2] ?? ''), '||');
+
+    it('needs unit and runs only when it succeeded', () => {
+      expect(([] as string[]).concat(job.needs ?? [])).toEqual(['unit']);
+      expect(c[0], 'the first conjunct must require a unit success').toBe(SUCCESS);
+      expect(norm(job.if ?? ''), 'no status function may widen it past success').not.toMatch(
+        /always\(\)|cancelled\(\)|failure\(\)/
+      );
+    });
+
+    // `only: unit-<n>` runs one shard; its success says nothing about the other three.
+    it('only after a full run of all four shards', () => {
+      expect(c[1], 'the second conjunct must exclude single-shard dispatches').toBe(FULL_RUN);
+    });
+
+    it('on a PR, only with the label and from a branch in this repo', () => {
+      expect(who[0], 'the pull_request alternative').toBe(PR_ALT);
+    });
+
+    // The batch verification on `main` and a hand dispatch pass no `pr`, so they remove nothing.
+    it('on a dispatch, only when `pr` names the PR', () => {
+      expect(who[1], 'the workflow_dispatch alternative').toBe(DISPATCH_ALT);
+      expect(who).toHaveLength(2);
+      expect(c).toHaveLength(3);
+      expect(dispatchArgs('main', 'o/r').some((a) => a.startsWith('pr='))).toBe(false);
+    });
+
+    it('`pr` is an optional dispatch input outside the concurrency group', () => {
+      const inputs = (
+        (doc.on as Record<string, unknown> | undefined)?.workflow_dispatch as
+          | { inputs?: Record<string, { required?: boolean; default?: unknown }> }
+          | undefined
+      )?.inputs;
+      expect(inputs?.pr?.required).toBe(false);
+      expect(inputs?.pr?.default).toBe('');
+      const raw = parse(readFileSync(path.join(WORKFLOW_DIR, 'lint.yml'), 'utf8')) as {
+        concurrency?: { group?: string };
+      };
+      expect(raw.concurrency?.group ?? '').not.toMatch(/inputs\.pr\b/);
+    });
+
+    it('is the only job in lint.yml that may edit pull requests', () => {
+      expect(job.permissions).toEqual({ 'pull-requests': 'write' });
+      const writers = Object.entries(doc.jobs ?? {})
+        .filter(([, j]) => j.permissions?.['pull-requests'] === 'write')
+        .map(([id]) => id);
+      expect(writers).toEqual(['full-ci-done']);
+    });
+
+    it('warns instead of failing, treats 404 as already gone, and says how to re-ask', () => {
+      const step = (job.steps ?? []).find((st) => (st.run ?? '').includes('labels/full-ci'));
+      const run = step?.run ?? '';
+      expect(run).toContain(
+        'if out=$(gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci" 2>&1); then'
+      );
+      expect(run).toContain('elif grep -q \'HTTP 404\' <<< "$out"; then');
+      expect(run).toContain('::warning title=full-ci label not removed::');
+      expect(run).toMatch(/--add-label full-ci/);
+      expect(step?.['continue-on-error']).toBeUndefined();
+      expect(run).not.toContain('${{');
+      expect(step?.env?.PR).toBe('${{ github.event.pull_request.number || inputs.pr }}');
+    });
+
+    // On a dispatch `pr` is free text: it must be a number naming an open PR whose head is the
+    // dispatched branch in this repo, checked before the DELETE.
+    it("checks a dispatch's `pr` against the branch before removing anything", () => {
+      const run =
+        (job.steps ?? []).find((st) => (st.run ?? '').includes('labels/full-ci'))?.run ?? '';
+      const check = 'if [ "$head" != "open $REPO $GITHUB_REF_NAME" ]; then';
+      expect(run).toContain('if ! [[ "$PR" =~ ^[0-9]+$ ]]; then');
+      expect(run).toContain(check);
+      expect(run.indexOf(check)).toBeLessThan(run.indexOf('gh api -X DELETE'));
+    });
   });
 
   describe('full-ci.yml, the dispatcher', () => {
@@ -319,11 +411,8 @@ describe('the full-ci label', () => {
       expect(jobs).toHaveLength(1);
       expect(jobs[0].name).toBe('Start full CI on label');
       expect(norm(jobs[0].if ?? '')).toBe(DISPATCH_IF);
-      expect(jobs[0].permissions).toEqual({
-        actions: 'write',
-        contents: 'read',
-        'pull-requests': 'write',
-      });
+      // No `pull-requests: write`: this job no longer removes the label (lint.yml does).
+      expect(jobs[0].permissions).toEqual({ actions: 'write', contents: 'read' });
     });
 
     // Script injection: the branch name is attacker-chosen text. It must reach the shell as an
@@ -337,9 +426,13 @@ describe('the full-ci label', () => {
       expect(dispatching).toHaveLength(1);
       const step = dispatching[0];
       expect(step.env?.HEAD_REF).toBe('${{ github.event.pull_request.head.ref }}');
+      // `pr`: lint.yml's `full-ci-done` removes this PR's label once the dispatch's shards pass.
       expect(step.run).toContain(
-        'gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true'
+        'gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true -f pr="$PR"'
       );
+      expect(step.env?.PR).toBe('${{ github.event.pull_request.number }}');
+      // A continue-on-error dispatch step would read green after failing to start anything.
+      expect(step['continue-on-error']).toBeUndefined();
       expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
       expect(step.run).toContain('gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"');
     });
@@ -351,6 +444,7 @@ describe('the full-ci label', () => {
     it("classifies the head commit's PR runs before the first dispatch", () => {
       const steps = jobs[0].steps ?? [];
       const idx = steps.findIndex((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
+      expect(idx, 'no step dispatches lint.yml').toBeGreaterThan(-1);
       const run = steps[idx]?.run ?? '';
       expect(steps[idx]?.env?.HEAD_SHA).toBe('${{ github.event.pull_request.head.sha }}');
       expect(run).toContain(
@@ -366,42 +460,17 @@ describe('the full-ci label', () => {
       expect(checkout?.with?.['persist-credentials']).toBe(false);
     });
 
-    // ONE-SHOT: the label buys one full run, then the job removes it, so later pushes run the
-    // normal PR suites. The removal must come after the dispatch decision and only when that
-    // step succeeded (it dispatched, or the PR's own run covers the shards), must not fail the
-    // job, and must tell the author how to ask again.
-    describe('removes the label once its full run has started', () => {
-      const DELETE = 'gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci"';
-      const steps = jobs[0]?.steps ?? [];
-      const removeIdx = steps.findIndex((s) => (s.run ?? '').includes(DELETE));
-      const remove = steps[removeIdx] ?? {};
-
-      it('is the last step, after the dispatch decision, gated only on its success', () => {
-        const dispatchIdx = steps.findIndex((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
-        expect(removeIdx, 'no step removes the label').toBeGreaterThan(-1);
-        expect(removeIdx, 'removal must come after the dispatch step').toBeGreaterThan(dispatchIdx);
-        expect(removeIdx, 'removal must be the last step').toBe(steps.length - 1);
-        // No `if`: the default `success()`, so a failed dispatch keeps the label on.
-        expect(remove.if, 'the removal step must not override success()').toBeUndefined();
-        expect(remove.env?.PR).toBe('${{ github.event.pull_request.number }}');
-      });
-
-      it('runs only in a job with the same-repo gate (forks never reach it)', () => {
-        const removers = Object.values(doc.jobs ?? {}).filter((j) =>
-          (j.steps ?? []).some((s) => (s.run ?? '').includes(DELETE))
-        );
-        expect(removers).toHaveLength(1);
-        expect(norm(removers[0].if ?? '')).toBe(DISPATCH_IF);
-      });
-
-      it('warns instead of failing when the removal fails, and says how to re-ask', () => {
-        const run = remove.run ?? '';
-        expect(run.trimStart().startsWith(`if ${DELETE}`), 'the DELETE must be an `if` test').toBe(
-          true
-        );
-        expect(run).toContain('::warning title=full-ci label not removed::');
-        expect(run).toMatch(/--add-label full-ci.*>> "\$GITHUB_STEP_SUMMARY"/);
-      });
+    // The label comes off in lint.yml (`full-ci-done`), only after its unit shards PASSED. Removing
+    // it here, as soon as the full run started, lost the full run whenever the next push cancelled
+    // the PR's own run (PR runs share a cancel-in-progress group).
+    it('does not remove the label itself', () => {
+      for (const j of jobs) {
+        for (const st of j.steps ?? []) {
+          expect(st.run ?? '', `step "${st.name}" removes a label`).not.toMatch(
+            /labels\/full-ci|--remove-label/
+          );
+        }
+      }
     });
   });
 

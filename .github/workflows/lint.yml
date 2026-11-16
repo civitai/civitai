@@ -167,10 +167,12 @@ name: Lint
 # With the `full-ci` label on a PR (draft or not), a PR run here includes the
 # four `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
 # `github.event.pull_request.labels`, the label set in that run's event payload.
-# apps.yml honours the same label, behind its own `paths:` filter. The label is
-# ONE-SHOT: full-ci.yml removes it once it has started one full run, so later pushes
-# run without the shards; re-add it to ask again. Add it only when the change touches
-# code the unit or component suites cover and the PR is near merge-ready.
+# apps.yml honours the same label, behind its own `paths:` filter. The label stays
+# on until the full unit suite has passed once on the PR: the `full-ci-done` job
+# removes it after a run whose four shards all passed, so later pushes run without
+# the shards; a cancelled or red unit run leaves it on. Re-add it to ask again. Add it
+# only when the change touches code the unit or component suites cover and the PR is
+# near merge-ready.
 #   gh pr edit <n> --add-label full-ci
 #
 # ADDING the label does not fire this workflow: `types` deliberately omits
@@ -236,6 +238,13 @@ on:
           Geometry still runs.
         type: boolean
         default: false
+      # Set by full-ci.yml. See the `full-ci-done` job. Not part of the concurrency group.
+      pr:
+        description: >-
+          PR number whose full-ci label to remove once every unit shard passes. Leave empty.
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -684,8 +693,8 @@ jobs:
     # ── NOT RUN ON PULL REQUESTS UNLESS ASKED, NOT RUN ON PUSH; VERIFIED IN BATCHES ON `main` ──
     #
     # The `if` below skips this job on `pull_request` unless the PR carries the
-    # `full-ci` label (draft or not; full-ci.yml removes the label after one full run —
-    # see the header), and skips it on every push to `main`. It runs on `workflow_dispatch`,
+    # `full-ci` label (draft or not; the label comes off once all four shards have
+    # passed for the PR — `full-ci-done`, see the header), and skips it on every push to `main`. It runs on `workflow_dispatch`,
     # where `only` still selects it — including the batch dispatch on `main` from
     # unit-batched.yml, after which `unit-verify` posts the verdict as a commit status
     # (on the first bad commit when red). See "THE UNIT SUITE IS THE EXCEPTION" in the header.
@@ -1621,3 +1630,59 @@ jobs:
             -f "description=Batch verification crashed at step: $step. The next batch run re-verifies." \
             -f "target_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           echo "::error title=Unit batch verification crashed::step $step failed; posted error on ${GITHUB_SHA:0:10}"
+
+  # ── THE `full-ci` LABEL COMES OFF ONCE THE FULL UNIT SUITE HAS PASSED ───────────────────────
+  #
+  # The label stays on a PR until one Lint run has passed all four unit shards for it; this job
+  # then removes it, so later pushes run without the shards (re-add it to ask again). Which runs:
+  #   - a pull_request run whose payload carries the label, from a branch in this repo (a fork's
+  #     token cannot edit labels);
+  #   - a dispatch with the `pr` input, which only full-ci.yml passes. The batch verification
+  #     on `main` (`only: unit`, no `pr`) and a hand dispatch without `pr` remove nothing.
+  # And only after a FULL unit run: every shard (no `only: unit-<n>`) and `success` (a matrix
+  # job is `success` only when every shard is). A cancelled, failed or skipped unit run keeps
+  # the label, so the next push runs the shards again: PR runs share a cancel-in-progress
+  # group, and removing the label before the shards finished could leave no full run at all.
+  # A failed removal warns and never fails the job; a 404 means the label is already gone.
+  full-ci-done:
+    name: Remove the full-ci label (unit suite passed)
+    needs: unit
+    runs-on: ubuntu-latest
+    if: ${{ needs.unit.result == 'success' && (github.event_name == 'pull_request' || inputs.only == 'all' || inputs.only == 'unit') && ((github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci') && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.pr != '')) }}
+    permissions:
+      pull-requests: write
+    timeout-minutes: 5
+    steps:
+      # Values reach the shell through env, never pasted into the script. On a dispatch `pr` is
+      # free text, so it must be a number and name an open PR whose head is this branch in this
+      # repo, or nothing is removed.
+      - name: Remove the full-ci label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          REPO: ${{ github.repository }}
+        run: |
+          say() { echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if ! [[ "$PR" =~ ^[0-9]+$ ]]; then
+              echo "::warning title=full-ci label not removed::pr input '$PR' is not a PR number"
+              say "**full-ci label not removed**: the \`pr\` input is not a PR number."
+              exit 0
+            fi
+            head=$(gh api "repos/$REPO/pulls/$PR" --jq '[.state, .head.repo.full_name, .head.ref] | join(" ")' || true)
+            if [ "$head" != "open $REPO $GITHUB_REF_NAME" ]; then
+              echo "::warning title=full-ci label not removed::PR #$PR is not an open PR from $GITHUB_REF_NAME in this repo ($head)"
+              say "**full-ci label not removed**: PR #$PR is not an open PR whose head is \`$GITHUB_REF_NAME\`."
+              exit 0
+            fi
+          fi
+          if out=$(gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci" 2>&1); then
+            say "The full unit suite passed: removed the \`full-ci\` label from #$PR. Later pushes run the normal PR suites."
+          elif grep -q 'HTTP 404' <<< "$out"; then
+            say "The full unit suite passed; the \`full-ci\` label was already off #$PR."
+          else
+            echo "::warning title=full-ci label not removed::$out"
+            say "**Could not remove the \`full-ci\` label** from #$PR; remove it by hand, or later pushes keep running the unit shards."
+          fi
+          say "To run the full suite again, re-add it: \`gh pr edit $PR --add-label full-ci\`"

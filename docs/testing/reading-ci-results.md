@@ -50,12 +50,13 @@ label (`gh pr edit <pr> --add-label full-ci`) — only when the change touches c
 component suites cover and the PR is near merge-ready, not on every PR. Adding it dispatches Lint (`only: all`, every job but
 ESLint) and the app suites on the branch head straight away (`.github/workflows/full-ci.yml`;
 nothing is dispatched when the PR's own run on that commit already started the unit shards; so a
-PR opened WITH the label gets the app suites only if its paths reach them). The label is one-shot:
-once that full run has started, full-ci.yml removes it, so later pushes run the normal PR suites;
-re-add it to ask again. Same-repo PRs only; it does not lift the draft
+PR opened WITH the label gets the app suites only if its paths reach them). The label stays on
+until the full unit suite has passed once on the PR: lint.yml's `full-ci-done` job then removes it,
+so later pushes run the normal PR suites (a cancelled or red unit run leaves it on); re-add it to
+ask again. Same-repo PRs only; it does not lift the draft
 gate on schema drift or tRPC parity. Or dispatch one on the branch, which
 runs against the branch head rather than the merge with `main` — only a suite the PR's own run on
-that commit did not run (with the label on, it ran every Lint suite a PR runs, unit shards included; read `gh pr checks <pr>`):
+that commit did not run (read `gh pr checks <pr>`; with the label on, the full run may be a dispatched one that `gh pr checks` does not list, linked from the `Start full CI on label` check's summary):
 
 ```bash
 gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>   # typecheck, unit, packages, component, ...
