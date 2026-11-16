@@ -397,11 +397,8 @@ describe('backfill', () => {
 
 /**
  * Founding Legends and the showcase's "new this month" read achievedAtIsObserved, so each grant path
- * has to leave the row shape it expects. Not pinned here: a crossing before a definition launches is
- * inserted unseen and stamped seen in a later statement, so it reads as observed unless both land in
- * the same millisecond, in which case it reads as unobserved and simply goes undated. Wrapping the
- * grant and markMilestonesSeen in one transaction would make that every time, and nothing here would
- * notice.
+ * has to leave the row shape it expects. A crossing silenced before its definition launches is pinned
+ * under 'nightly grant before a definition launches'.
  */
 describe('achievedAtIsObserved on every grant path', () => {
   const rowOf = async (userId: number, key: string) => {
@@ -612,6 +609,34 @@ describe('nightly grant before a definition launches', () => {
       { milestoneKey: 'score:kindle', seen: false },
       { milestoneKey: 'score:spark', seen: true },
     ]);
+    expect(notifiedKeys()).toEqual([]);
+  });
+
+  it('stamps a silenced crossing seen in its INSERT, as a dated crossing', async () => {
+    // A seen stamp issued as a later statement fails here, as a dropped connection would.
+    const failingStamp = {
+      cancellableQuery: async (sql: string, params?: unknown[]) => {
+        if (sql.includes('UPDATE "UserCreatorMilestone"')) throw new Error('stamp failed');
+        return (pg as { cancellableQuery: typeof failingStamp.cancellableQuery }).cancellableQuery(
+          sql,
+          params
+        );
+      },
+    };
+    const ctx = {
+      pg: failingStamp as never,
+      jobContext: { on: vi.fn(), checkIfCanceled: vi.fn() } as never,
+      tierUnlocks: [],
+      tierGrantErrors: [] as unknown[],
+    };
+    await persistScoreBatch(ctx, [[String(ELIGIBLE), { models: 600 }]], { now: BEFORE_LAUNCH });
+
+    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'score:spark', seen: true }]);
+    const [row] = await q<{ achievedAt: Date; seenAt: Date | null }>(
+      `SELECT "achievedAt", "seenAt" FROM "UserCreatorMilestone" WHERE "userId" = $1`,
+      [ELIGIBLE]
+    );
+    expect(achievedAtIsObserved(row)).toBe(true);
     expect(notifiedKeys()).toEqual([]);
   });
 
