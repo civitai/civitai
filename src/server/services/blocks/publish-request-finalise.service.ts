@@ -23,16 +23,21 @@ export type PriorListing = {
   tagline: string | null;
   description: string | null;
   category: string | null;
-  sourceRepoUrl: string | null;
+  /** Absent when the manual-apply column is not there yet. */
+  sourceRepoUrl?: string | null;
   appBlockId: string | null;
   /** Unset when the column is not there yet, so there is nothing to put back. */
   issueTracker?: { value: string | null };
 };
 
-/** Read on the primary before step (3), next to the block snapshot. */
+/**
+ * Read on the primary before (3b) writes the listing. The two manual-apply columns are read only
+ * when their probes say they exist: naming a missing column would fail the approve.
+ */
 export async function snapshotOnsiteListing(
   db: Prisma.TransactionClient,
-  slug: string
+  slug: string,
+  columns: { sourceRepoAvailable: boolean; issueTrackerAvailable: boolean }
 ): Promise<PriorListing | undefined> {
   const row = await db.appListing.findUnique({
     where: { slug },
@@ -45,12 +50,13 @@ export async function snapshotOnsiteListing(
       tagline: true,
       description: true,
       category: true,
-      sourceRepoUrl: true,
+      ...(columns.sourceRepoAvailable ? { sourceRepoUrl: true } : {}),
       appBlockId: true,
     },
   });
   if (!row || row.kind !== 'onsite') return undefined;
   const { kind: _kind, ...listing } = row;
+  if (!columns.issueTrackerAvailable) return listing;
   const { readListingIssueTrackerUrl } = await import('./app-listing-issue-tracker.service');
   const tracker = await readListingIssueTrackerUrl(row.id, db);
   return tracker.available ? { ...listing, issueTracker: { value: tracker.value } } : listing;
@@ -111,15 +117,8 @@ export async function finaliseOnsiteApprove(
           screenshots: input.screenshots,
         },
   });
-  if (late.length) await rollBackHeldVersion(tx, input);
-  return { lateHoldIds: late };
-}
-
-/** The held version's client ceiling and store copy go back to what they were before step (3). */
-async function rollBackHeldVersion(
-  tx: Prisma.TransactionClient,
-  input: { appBlockId: string; priorVersion?: PriorRuntime; priorListing?: PriorListing }
-) {
+  if (!late.length) return { lateHoldIds: late };
+  // The held version's client ceiling and store copy go back to what they were before step (3).
   if (input.priorVersion) {
     await tx.oauthClient.update({
       where: { id: input.priorVersion.oauthClientId },
@@ -133,7 +132,7 @@ async function rollBackHeldVersion(
       where: { appBlockId: input.appBlockId, kind: 'onsite' },
       data: { status: 'draft' },
     });
-    return;
+    return { lateHoldIds: late };
   }
   const { id, issueTracker, ...fields } = prior;
   await tx.appListing.update({ where: { id }, data: fields });
@@ -141,4 +140,5 @@ async function rollBackHeldVersion(
     const { writeListingIssueTrackerUrl } = await import('./app-listing-issue-tracker.service');
     await writeListingIssueTrackerUrl(tx, id, issueTracker.value);
   }
+  return { lateHoldIds: late };
 }

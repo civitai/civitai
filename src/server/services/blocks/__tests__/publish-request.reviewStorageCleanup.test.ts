@@ -106,6 +106,8 @@ function installDb() {
     client.appBlock.update.mockImplementation(async (a: { data?: unknown }) => a?.data ?? {});
     client.appBlock.updateMany.mockResolvedValue({ count: 0 });
     client.oauthClient.update.mockResolvedValue({});
+    // The ceiling a late hold would put back, read on the primary before step (3).
+    client.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0 });
     client.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'onsite' });
     client.appListing.updateMany.mockResolvedValue({ count: 0 });
   }

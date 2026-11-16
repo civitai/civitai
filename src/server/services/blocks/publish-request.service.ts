@@ -20,7 +20,10 @@ import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
-import type { PriorRuntime } from '~/server/services/blocks/publish-request-finalise.service';
+import type {
+  PriorListing,
+  PriorRuntime,
+} from '~/server/services/blocks/publish-request-finalise.service';
 import { createHash } from 'crypto';
 import { structuredPatch } from 'diff';
 import JSZip from 'jszip';
@@ -3623,9 +3626,8 @@ async function approveRequestUnderClaim(
   let appBlockId: string;
   let repoUrl: string;
   let priorVersion: PriorRuntime | undefined;
-  // Read on the primary before anything below writes, for a late hold to put back.
-  const { snapshotOnsiteListing } = await import('./publish-request-finalise.service');
-  const priorListing = await snapshotOnsiteListing(dbWrite, request.slug);
+  // The on-site listing as it was before (3b) writes it, for a late hold to put back.
+  let priorListing: PriorListing | undefined;
 
   if (isFirstVersion) {
     const blockIdError = newBlockIdError(request.slug);
@@ -3927,6 +3929,12 @@ async function approveRequestUnderClaim(
       writeOnsiteListingIssueTrackerUrlByAppBlock,
     } = await import('./app-listing-issue-tracker.service');
     const issueTrackerAvailable = await isIssueTrackerColumnAvailable(dbWrite);
+    // Before any listing write below. If it fails, a late hold falls back to hiding the listing.
+    const { snapshotOnsiteListing } = await import('./publish-request-finalise.service');
+    priorListing = await snapshotOnsiteListing(dbWrite, request.slug, {
+      sourceRepoAvailable,
+      issueTrackerAvailable,
+    });
     // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
     // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
     // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying

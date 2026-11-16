@@ -58,7 +58,13 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
     oauthClient: {
-      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // Only the late-hold ceiling read (select: allowedScopes) finds the client.
+      findUnique: vi.fn(
+        async (...a: unknown[]): Promise<unknown> =>
+          (a[0] as { select?: { allowedScopes?: boolean } } | undefined)?.select?.allowedScopes
+            ? { allowedScopes: 0 }
+            : null
+      ),
       create: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
     },

@@ -111,7 +111,10 @@ describe('finaliseOnsiteApprove', () => {
     };
     tx.appListing.findUnique.mockResolvedValueOnce({ ...before, kind: 'onsite' });
     tx.$queryRaw.mockResolvedValueOnce([{ issueTrackerUrl: 'https://example.test/old' }]);
-    const priorListing = await snapshotOnsiteListing(tx as never, 'app-a');
+    const priorListing = await snapshotOnsiteListing(tx as never, 'app-a', {
+      sourceRepoAvailable: true,
+      issueTrackerAvailable: true,
+    });
 
     await finaliseOnsiteApprove(tx as never, { ...input, priorListing });
 
@@ -123,6 +126,22 @@ describe('finaliseOnsiteApprove', () => {
       'https://example.test/old',
       'al_1'
     );
+  });
+
+  it('🔴 the snapshot never names a manual-apply column that is not there yet', async () => {
+    const tx = fakeTx();
+    tx.appListing.findUnique.mockResolvedValueOnce({ id: 'al_1', kind: 'onsite', name: 'n' });
+    const prior = await snapshotOnsiteListing(tx as never, 'app-a', {
+      sourceRepoAvailable: false,
+      issueTrackerAvailable: false,
+    });
+    const [{ select }] = tx.appListing.findUnique.mock.calls[0] as unknown as [
+      { select: Record<string, boolean> }
+    ];
+    // Naming a missing column throws, which would fail the whole approve.
+    expect(select).not.toHaveProperty('sourceRepoUrl');
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(prior).not.toHaveProperty('issueTracker');
   });
 
   it('🔴 a listing the approve created goes back to a draft on a late hold', async () => {

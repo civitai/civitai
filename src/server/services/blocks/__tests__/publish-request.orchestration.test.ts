@@ -3046,7 +3046,7 @@ describe('approveRequest', () => {
       sourceRepoUrl: null,
       appBlockId: 'apb_existing',
     };
-    mockDbWrite.appListing.findUnique.mockImplementationOnce(async (args: unknown) =>
+    mockDbWrite.appListing.findUnique.mockImplementation(async (args: unknown) =>
       (args as { where: { slug?: string } }).where.slug === 'hello' ? listingBefore : null
     );
 
@@ -3075,6 +3075,7 @@ describe('approveRequest', () => {
         }),
       })
     );
+    mockDbWrite.appListing.findUnique.mockImplementation(async () => null);
 
     // 🔴 The approved flip goes through the final hold check, never around it.
     expect(finalise).toHaveBeenCalledTimes(1);
