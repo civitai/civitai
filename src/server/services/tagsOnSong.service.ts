@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
-import type { dbRead } from '~/server/db/client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getModeratedTags } from '~/server/services/system-cache';
 import {
   deleteTagsOnImageNew,
@@ -64,6 +63,29 @@ export async function readSongTags(
   for (const { imageId, id, name } of rows)
     byImage.set(imageId, [...(byImage.get(imageId) ?? []), { id, name }]);
   return byImage;
+}
+
+/**
+ * Tags an owner may attach whose name starts with `prefix`, for the song card's suggestions. The
+ * range on `name` (citext) is what lets the unique name index answer it; a `LIKE 'x%'` cannot use
+ * that index under the database collation. The `left()` check keeps the result exact wherever the
+ * collation's order and a plain prefix disagree.
+ */
+export async function searchSongTags(prefix: string, limit = 8): Promise<SongTag[]> {
+  const chars = Array.from(prefix.trim().toLowerCase());
+  if (!chars.length) return [];
+  const lower = chars.join('');
+  const last = chars[chars.length - 1].codePointAt(0) as number;
+  const upper = chars.slice(0, -1).join('') + String.fromCodePoint(last + 1);
+  // Name order puts an exact match first, since it sorts before every longer name it prefixes.
+  return dbRead.$queryRaw<SongTag[]>`
+    SELECT t.id, t.name FROM "Tag" t
+    WHERE t.name >= ${lower}::citext AND t.name < ${upper}::citext
+      AND left(t.name::text, ${chars.length}) = ${lower}
+      AND ${await attachableTagSql('t')}
+    ORDER BY t.name
+    LIMIT ${limit}
+  `;
 }
 
 /** Whether the song has any row for this tag, whoever attached it and whatever its state. */

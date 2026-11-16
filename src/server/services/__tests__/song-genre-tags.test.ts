@@ -81,8 +81,13 @@ import {
   removeSongTagSchema,
   setSongGenreSchema,
 } from '~/server/schema/post.schema';
-import { addSongTag, removeSongTag, setSongGenre } from '~/server/services/post.service';
-import { readSongTags } from '~/server/services/tagsOnSong.service';
+import {
+  addSongTag,
+  removeSongTag,
+  setSongGenre,
+  suggestSongTags,
+} from '~/server/services/post.service';
+import { readSongTags, searchSongTags } from '~/server/services/tagsOnSong.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 
 const NOT_AUTHORIZED = 'You are not authorized to perform this action';
@@ -155,6 +160,8 @@ beforeAll(async () => {
   db = new PGlite();
   mocks.db = db;
   await db.exec(`
+    -- Tag names are citext in the real schema; the suggestion range casts to it.
+    CREATE DOMAIN citext AS text;
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, type text NOT NULL, metadata jsonb
     );
@@ -175,6 +182,9 @@ beforeAll(async () => {
     return db.query(sql.text, sql.values, { paramTypes });
   };
   dbMock.dbWrite.$queryRaw.mockImplementation(
+    (async (...a: Parameters<typeof run>) => (await run(...a)).rows) as never
+  );
+  dbMock.dbRead.$queryRaw.mockImplementation(
     (async (...a: Parameters<typeof run>) => (await run(...a)).rows) as never
   );
   dbMock.dbWrite.$executeRaw.mockImplementation(
@@ -444,5 +454,35 @@ describe('readSongTags (the editor read)', () => {
     const tags = await readSongTags([SONG]);
 
     expect(tags.get(SONG)).toEqual([{ id: 50, name: 'chill' }]);
+  });
+});
+
+describe('searchSongTags (the tag field suggestions)', () => {
+  beforeEach(async () => {
+    await insertTag(80, 'rock');
+    await insertTag(81, 'rocket');
+    await insertTag(82, 'roam');
+    await insertTag(83, 'pop rock');
+    await insertTag(84, 'rock nsfw', { nsfwLevel: 4 });
+    await insertTag(85, 'rock mod', { type: 'Moderation' });
+    await insertTag(86, 'rock admin', { adminOnly: true });
+    await insertTag(MODERATED, 'rockmoderated');
+  });
+
+  it('suggests only tags an owner may attach, by name prefix', async () => {
+    expect((await searchSongTags('ro')).map((t) => t.name)).toEqual(['roam', 'rock', 'rocket']);
+  });
+
+  it('puts an exact match first and caps the list', async () => {
+    expect((await searchSongTags('Rock ')).map((t) => t.name)).toEqual(['rock', 'rocket']);
+    expect(await searchSongTags('ro', 2)).toHaveLength(2);
+  });
+
+  it('refuses while songs are not available to the caller', async () => {
+    mocks.music = false;
+
+    await expect(suggestSongTags({ query: 'ro', user: owner })).rejects.toThrow(
+      'Songs are not available yet.'
+    );
   });
 });

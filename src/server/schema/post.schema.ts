@@ -209,6 +209,11 @@ export const addSongTagSchema = z.object({
   name: z.string().trim().toLowerCase().min(1).max(SONG_TAG_MAX_LENGTH),
 });
 
+export type SearchSongTagsInput = z.infer<typeof searchSongTagsSchema>;
+export const searchSongTagsSchema = z.object({
+  query: z.string().trim().toLowerCase().min(1).max(SONG_TAG_MAX_LENGTH),
+});
+
 export type RemoveSongTagInput = z.infer<typeof removeSongTagSchema>;
 export const removeSongTagSchema = z.object({
   /** The song. */

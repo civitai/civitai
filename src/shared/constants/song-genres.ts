@@ -44,3 +44,13 @@ export function readSongGenre(metadata: unknown): SongGenre | undefined {
 
 /** The image tag a genre is mirrored as (tag names are stored lowercase). */
 export const songGenreTagName = (genre: SongGenre) => genre.toLowerCase();
+
+/** `tags` without the genre's own tag: the genre select shows that one. */
+export function withoutGenreTag<T extends { name: string }>(
+  tags: T[],
+  genre: SongGenre | undefined
+) {
+  if (!genre) return tags;
+  const genreTag = songGenreTagName(genre);
+  return tags.filter((tag) => tag.name !== genreTag);
+}

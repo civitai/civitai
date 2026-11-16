@@ -54,6 +54,7 @@ import {
   setSongGenreSchema,
   addSongTagSchema,
   removeSongTagSchema,
+  searchSongTagsSchema,
 } from './../schema/post.schema';
 import {
   addPostImage,
@@ -62,6 +63,7 @@ import {
   getPostImageIds,
   removeSongTag,
   setSongGenre,
+  suggestSongTags,
 } from './../services/post.service';
 import { getImageMoveTargets, moveImagesToPost } from './../services/post-image-move.service';
 import {
@@ -193,6 +195,10 @@ export const postRouter = router({
     .input(setSongGenreSchema)
     .use(isImageOwnerOrModerator)
     .mutation(({ ctx, input }) => setSongGenre({ ...input, user: ctx.user })),
+  searchSongTags: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(searchSongTagsSchema)
+    .query(({ ctx, input }) => suggestSongTags({ ...input, user: ctx.user })),
   addSongTag: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(addSongTagSchema)

@@ -181,6 +181,7 @@ import type {
   SetSongGenreInput,
   AddSongTagInput,
   RemoveSongTagInput,
+  SearchSongTagsInput,
 } from './../schema/post.schema';
 import {
   attachSongTag,
@@ -188,6 +189,7 @@ import {
   findAttachableTag,
   hasSongTagRow,
   readSongTags,
+  searchSongTags,
 } from '~/server/services/tagsOnSong.service';
 import {
   readSongGenre,
@@ -197,6 +199,7 @@ import {
   SONG_TAG_NOT_REMOVABLE_MESSAGE,
   SONG_TAG_UNAVAILABLE_MESSAGE,
   songGenreTagName,
+  withoutGenreTag,
 } from '~/shared/constants/song-genres';
 import type { SongGenre } from '~/shared/constants/song-genres';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
@@ -1108,10 +1111,7 @@ async function combinePostEditImageData(
       lyrics: lyrics.get(image.id) ?? null,
       cover: covers.get(image.id) ?? null,
       /** A song's own tags, its genre's tag left out. */
-      songTags: (songTags.get(image.id) ?? []).filter((tag) => {
-        const genre = readSongGenre(image.metadata);
-        return !genre || tag.name !== songGenreTagName(genre);
-      }),
+      songTags: withoutGenreTag(songTags.get(image.id) ?? [], readSongGenre(image.metadata)),
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
@@ -2323,28 +2323,16 @@ export async function setSongCover({
   return saved;
 }
 
-function writeSongGenre(imageId: number, genre: SongGenre) {
+/**
+ * The genre, and whether its tag row is one `setSongGenre` attached: only that row is taken off when
+ * the genre changes, so a tag the owner added themselves outlives a genre of the same name.
+ */
+function writeSongGenre(imageId: number, genre: SongGenre, tagAdded: boolean) {
   return dbWrite.$executeRaw`
     UPDATE "Image"
-    SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object('genre', ${genre}::text)
+    SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object('genre', ${genre}::text, 'genreTagAdded', ${tagAdded}::boolean)
     WHERE id = ${imageId}
   `;
-}
-
-/**
- * Whether the genre's tag row is one `setSongGenre` attached: only that row is taken off when the
- * genre changes, so a tag the owner added themselves outlives a genre of the same name.
- */
-function writeSongGenreTagAdded(imageId: number, added: boolean) {
-  return added
-    ? dbWrite.$executeRaw`
-        UPDATE "Image" SET "metadata" = COALESCE("metadata", '{}'::jsonb) || '{"genreTagAdded": true}'::jsonb
-        WHERE id = ${imageId}
-      `
-    : dbWrite.$executeRaw`
-        UPDATE "Image" SET "metadata" = COALESCE("metadata", '{}'::jsonb) || '{"genreTagAdded": false}'::jsonb
-        WHERE id = ${imageId}
-      `;
 }
 
 /** The song, when the caller owns it or moderates; refuses anything else. */
@@ -2362,8 +2350,16 @@ async function readEditableSong(id: number, user: SessionUser) {
 
 /** The song's own tags, its genre's tag left out (the genre select shows that one). */
 async function readOwnSongTags(songId: number, genre: SongGenre | undefined) {
-  const genreTag = genre && songGenreTagName(genre);
-  return ((await readSongTags([songId])).get(songId) ?? []).filter((t) => t.name !== genreTag);
+  return withoutGenreTag((await readSongTags([songId])).get(songId) ?? [], genre);
+}
+
+/** Suggestions for a song's tag field: only tags an owner may attach. */
+export async function suggestSongTags({
+  query,
+  user,
+}: SearchSongTagsInput & { user: SessionUser }) {
+  assertCanStoreSongs(user);
+  return searchSongTags(query);
 }
 
 async function afterSongTagsChanged(song: { id: number; postId: number | null }) {
@@ -2377,7 +2373,7 @@ async function afterSongTagsChanged(song: { id: number; postId: number | null })
  * Stores the genre on the song and mirrors it as the song's image tag, so it reaches the search
  * documents like any tag. The image tag writers run outside any transaction (their own pool), so
  * the steps are ordered to never leave the stored genre and its tag apart: the new tag first, then
- * both metadata keys in one transaction (the new tag taken back off if that fails), and the previous
+ * both metadata keys in one statement (the new tag taken back off if that fails), and the previous
  * genre's tag last, only when this function attached it.
  */
 export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { user: SessionUser }) {
@@ -2395,10 +2391,7 @@ export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { us
   if (tag && attach) await attachSongTag(song.id, tag.id);
 
   try {
-    await dbWrite.$transaction([
-      writeSongGenre(song.id, genre),
-      writeSongGenreTagAdded(song.id, attach),
-    ]);
+    await writeSongGenre(song.id, genre, attach);
   } catch (error) {
     if (tag && attach) await detachSongTag(song.id, tag.id);
     throw error;
