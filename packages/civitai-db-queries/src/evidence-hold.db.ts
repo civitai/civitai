@@ -136,6 +136,15 @@ export async function placeEvidenceHold(
     .where('releasedAt', 'is', null)
     // Still in force, by the same test as "EvidenceHeldUser": a row past its dates holds nothing.
     .where(sql<boolean>`("releaseAt" IS NULL OR "releaseAt" > now() OR "extendedUntil" > now())`)
+    // ...and lasting at least as long as the one asked for: an indefinite request is met only by an
+    // indefinite hold, never by a dated one that would lapse first.
+    .where(
+      input.releaseAt
+        ? sql<boolean>`("releaseAt" IS NULL OR GREATEST("releaseAt", COALESCE("extendedUntil", "releaseAt")) >= ${toUtcTimestamp(
+            input.releaseAt
+          )})`
+        : sql<boolean>`"releaseAt" IS NULL`
+    )
     .executeTakeFirst();
   if (open) return { id: open.id, created: false };
 

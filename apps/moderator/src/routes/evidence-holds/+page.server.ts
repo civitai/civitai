@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   countEvidenceHoldsEnding,
   EVIDENCE_HOLD_ENDING_DAYS,
+  GENERATOR_EVIDENCE_HOLD_REASON,
   listEvidenceHeldOwners,
   placeEvidenceHold,
   releaseEvidenceHold,
@@ -48,7 +49,15 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
 const placeSchema = z.object({
   userId: int4Id,
-  reason: z.string().trim().min(1, 'Give a reason.').max(500),
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'Give a reason.')
+    .max(500)
+    .refine(
+      (r) => r !== GENERATOR_EVIDENCE_HOLD_REASON,
+      'That reason is reserved for generator evidence; describe this hold in your own words.'
+    ),
   releaseAt: z
     .union([z.literal(''), z.string().date('Use a date like 2026-12-31.')])
     .optional()

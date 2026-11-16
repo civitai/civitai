@@ -25,6 +25,9 @@ vi.mock('@civitai/db-queries/evidence-hold', async (importOriginal) => ({
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
 
 const { load, actions } = await import('../+page.server');
+const { GENERATOR_EVIDENCE_HOLD_REASON } = await vi.importActual<
+  typeof import('@civitai/db-queries/evidence-hold')
+>('@civitai/db-queries/evidence-hold');
 
 type LoadEvent = Parameters<typeof load>[0];
 
@@ -143,11 +146,12 @@ describe('placing a hold', () => {
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
-  it('refuses a past end date, a bad user id and an empty reason before writing', async () => {
+  it('refuses a past end date, a bad user id, an empty reason and the reserved generator-evidence reason before writing', async () => {
     const refused: Record<string, string>[] = [
       { userId: '5', reason: 'r', releaseAt: '2001-01-01' },
       { userId: 'abc', reason: 'r' },
       { userId: '5', reason: '   ' },
+      { userId: '5', reason: GENERATOR_EVIDENCE_HOLD_REASON },
     ];
     for (const fields of refused) {
       expect((await post('place', fields)).status).toBe(400);

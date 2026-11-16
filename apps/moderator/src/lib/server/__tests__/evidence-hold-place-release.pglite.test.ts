@@ -98,6 +98,42 @@ describe('placeEvidenceHold', () => {
     expect(await heldUntil(LAPSED)).toEqual({ heldUntil: null });
   });
 
+  it('an indefinite hold is not satisfied by a dated one with the same reason', async () => {
+    const DATED = 10;
+    await pg.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (${DATED}, 'dated');
+      INSERT INTO "EvidenceHold" ("userId", "role", "reason", "releaseAt")
+        VALUES (${DATED}, 'manual', '${GENERATOR_EVIDENCE_HOLD_REASON}', now() + interval '2 days');
+    `);
+    const placed = await placeEvidenceHold(db, {
+      userId: DATED,
+      role: 'manual',
+      reason: GENERATOR_EVIDENCE_HOLD_REASON,
+      createdById: MOD,
+    });
+    expect(placed.created).toBe(true);
+    expect(await heldUntil(DATED)).toEqual({ heldUntil: null });
+  });
+
+  it('a dated request is met by a hold lasting at least as long, and not by a shorter one', async () => {
+    const SHORT = 11;
+    await pg.exec(`INSERT INTO "User" ("id", "username") VALUES (${SHORT}, 'short');`);
+    const place = (iso: string) =>
+      placeEvidenceHold(db, {
+        userId: SHORT,
+        role: 'manual',
+        reason: 'dated twice',
+        createdById: MOD,
+        releaseAt: new Date(iso),
+      });
+    const first = await place('2031-01-01T00:00:00Z');
+    const earlier = await place('2030-06-01T00:00:00Z');
+    const later = await place('2032-01-01T00:00:00Z');
+    expect(earlier).toEqual({ id: first.id, created: false });
+    expect(later.created).toBe(true);
+    expect((await heldUntil(SHORT))?.heldUntil?.toISOString()).toBe('2032-01-01T00:00:00.000Z');
+  });
+
   it('a different reason is a separate hold', async () => {
     const other = await placeEvidenceHold(db, {
       userId: 1,
