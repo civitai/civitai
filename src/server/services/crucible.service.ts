@@ -1024,10 +1024,77 @@ async function assertRequiredModelsAllowContentLevel(versionIds: number[], nsfwL
 }
 
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
+/**
+ * What a moderator can fix on a running crucible: none of these moves Buzz or prices the setup
+ * fee, and each is checked below so no entry already in becomes invalid. Duration is not here:
+ * it prices the setup fee, and every entry's post is scheduled to publish at the current end.
+ */
+const MODERATOR_RUNNING_FIELDS = [
+  'maxTotalEntries',
+  'entryLimit',
+  'entryWarningPercent',
+  'entryCutoffPercent',
+  'allowedResources',
+  'allowedBaseModels',
+] as const;
+const CRUCIBLE_FIELD_LABELS: Record<string, string> = {
+  nsfwLevel: 'content levels',
+  contentType: 'content type',
+  entryFee: 'entry fee',
+  seededPrizePool: 'seeded prize pool',
+  entryLimit: 'entries per user',
+  freeEntriesPerUser: 'free entries',
+  maxTotalEntries: 'maximum total entries',
+  entryWarningPercent: 'entry warning point',
+  entryCutoffPercent: 'entry cutoff point',
+  prizePositions: 'prize places',
+  allowedResources: 'required models',
+  allowedBaseModels: 'base models',
+  duration: 'duration',
+  startAt: 'start time',
+  minViewSeconds: 'minimum view time',
+  maxClipSeconds: 'maximum clip length',
+};
+const describeFields = (keys: string[]) =>
+  keys.map((key) => CRUCIBLE_FIELD_LABELS[key] ?? key).join(', ');
+
+const widens = <T>(current: T[], next: T[]) =>
+  current.length > 0 && current.every((value) => next.includes(value));
+
+/**
+ * Reads the live entries under the crucible's row lock, which submitEntry's write also takes, so
+ * a lowered cap can't land below an entry saved meanwhile.
+ */
+async function assertEntryCapsHoldLiveEntries(
+  tx: Prisma.TransactionClient,
+  crucibleId: number,
+  { maxTotalEntries, entryLimit }: { maxTotalEntries?: number; entryLimit?: number }
+) {
+  await tx.$queryRaw`SELECT id FROM "Crucible" WHERE id = ${crucibleId} FOR UPDATE`;
+  const [live] = await tx.$queryRaw<{ total: number; perUser: number }[]>`
+    SELECT COALESCE(SUM(n), 0)::int AS total, COALESCE(MAX(n), 0)::int AS "perUser"
+    FROM (
+      SELECT COUNT(*) AS n FROM "CrucibleEntry"
+      WHERE "crucibleId" = ${crucibleId} AND "imageId" IS NOT NULL
+      GROUP BY "userId"
+    ) per_user
+  `;
+  const total = live?.total ?? 0;
+  const perUser = live?.perUser ?? 0;
+  if (maxTotalEntries !== undefined && maxTotalEntries < total)
+    throw throwBadRequestError(
+      `While it's running, this crucible's maximum total entries can't go below the ${total} entries already in.`
+    );
+  if (entryLimit !== undefined && entryLimit < perUser)
+    throw throwBadRequestError(
+      `While it's running, this crucible's entries per user can't go below ${perUser}, the most one entrant already has.`
+    );
+}
 
 /**
  * An upcoming crucible has no entries, so everything can change and any cost difference is
- * settled; once running only the presentation can, so the outcome stays fair.
+ * settled. Once running, the creator can change only the presentation; a moderator (their own
+ * crucible included) can also fix MODERATOR_RUNNING_FIELDS, never anything that moves Buzz.
  */
 export const updateCrucible = async ({
   id,
@@ -1084,18 +1151,32 @@ export const updateCrucible = async ({
 
   const hasStarted = hasCrucibleStarted(crucible);
   const canEditSettings = isOwner && !hasStarted;
+  const isModeratorFixingRunning = isModerator && hasStarted && !hasEnded;
   const provided = (Object.keys(changes) as (keyof typeof changes)[]).filter(
     (key) => changes[key] !== undefined
   );
   if (!canEditSettings) {
-    const allowed: readonly string[] =
-      isModerator && !hasStarted ? [...PRESENTATION_FIELDS, 'nsfwLevel'] : PRESENTATION_FIELDS;
+    const allowed: readonly string[] = isModeratorFixingRunning
+      ? [...PRESENTATION_FIELDS, ...MODERATOR_RUNNING_FIELDS]
+      : isModerator && !hasStarted
+      ? [...PRESENTATION_FIELDS, 'nsfwLevel']
+      : PRESENTATION_FIELDS;
     const locked = provided.filter((key) => !allowed.includes(key));
     if (locked.length)
       throw throwBadRequestError(
-        `Once a crucible has started only its name, description and images can change (not ${locked.join(
-          ', '
-        )}).`
+        isModeratorFixingRunning
+          ? `While it's running, a crucible's ${describeFields(
+              locked
+            )} can't change: that would move Buzz or change entries already in.`
+          : hasEnded
+          ? `Once a crucible has ended only its name, description and images can change (not ${describeFields(
+              locked
+            )}).`
+          : hasStarted
+          ? `While it's running, only a crucible's name, description and images can change (not ${describeFields(
+              locked
+            )}).`
+          : `Only the creator can change this crucible's ${describeFields(locked)}.`
       );
   }
 
@@ -1130,6 +1211,24 @@ export const updateCrucible = async ({
   if (provided.includes('nsfwLevel') && isNonSfwForGreen(buzzType, next.nsfwLevel))
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
   assertCrucibleSettings(next);
+  const changedSettings = isModeratorFixingRunning
+    ? MODERATOR_RUNNING_FIELDS.filter((key) => provided.includes(key))
+    : [];
+  if (
+    changedSettings.includes('allowedResources') &&
+    !widens(current.allowedResources, next.allowedResources)
+  )
+    throw throwBadRequestError(
+      "While it's running, required models can only be added to the list it already has, so entries already in stay valid."
+    );
+  if (
+    changedSettings.includes('allowedBaseModels') &&
+    next.allowedBaseModels.length > 0 &&
+    !widens(current.allowedBaseModels, next.allowedBaseModels)
+  )
+    throw throwBadRequestError(
+      "While it's running, base models can only be added to the list it already has, or cleared, so entries already in stay valid."
+    );
 
   const nextName = changes.name ?? crucible.name;
   const nextDescription =
@@ -1149,7 +1248,7 @@ export const updateCrucible = async ({
   );
   await assertPublishedModelVersions(addedResources);
   // A content type switch re-checks every pick, since an earlier one can now make the wrong media.
-  if (canEditSettings) {
+  if (canEditSettings || isModeratorFixingRunning) {
     const contentTypeChanged = next.contentType !== current.contentType;
     await assertRequiredModelsMakeContentType(
       contentTypeChanged ? next.allowedResources : addedResources,
@@ -1198,6 +1297,35 @@ export const updateCrucible = async ({
       : undefined,
     nsfwLevel: changes.nsfwLevel,
     ...(textChanged && { ingestion: CrucibleIngestionStatus.Pending, scannedAt: null }),
+  };
+
+  if (changedSettings.length)
+    Object.assign(
+      data,
+      Object.fromEntries(
+        changedSettings.map((key) => [
+          key,
+          key === 'maxTotalEntries'
+            ? next.maxTotalEntries ?? null
+            : key === 'allowedResources'
+            ? next.allowedResources.length
+              ? (next.allowedResources as Prisma.JsonArray)
+              : Prisma.JsonNull
+            : next[key],
+        ])
+      )
+    );
+  const lowersEntryCaps = {
+    maxTotalEntries:
+      changedSettings.includes('maxTotalEntries') &&
+      next.maxTotalEntries != null &&
+      (current.maxTotalEntries == null || next.maxTotalEntries < current.maxTotalEntries)
+        ? next.maxTotalEntries
+        : undefined,
+    entryLimit:
+      changedSettings.includes('entryLimit') && next.entryLimit < current.entryLimit
+        ? next.entryLimit
+        : undefined,
   };
 
   let settlement: Awaited<ReturnType<typeof settleCrucibleCostChange>> = null;
@@ -1279,8 +1407,11 @@ export const updateCrucible = async ({
   // On the status read above: a cancel since then has already refunded the creator, and writing
   // the status back would revive a crucible whose seed is gone.
   // The row goes back to the creator, and event tags are moderator data.
-  const write = (where: Pick<Prisma.CrucibleWhereInput, 'ingestion' | 'image'> = {}) =>
-    dbWrite.crucible.update({
+  const write = (
+    where: Pick<Prisma.CrucibleWhereInput, 'ingestion' | 'image'> = {},
+    client: Prisma.TransactionClient = dbWrite
+  ) =>
+    client.crucible.update({
       where: { id, status: crucible.status, ...where },
       data,
       omit: { eventTags: true },
@@ -1300,6 +1431,11 @@ export const updateCrucible = async ({
             data.status = CrucibleStatus.Pending;
             return write();
           })
+        : lowersEntryCaps.maxTotalEntries !== undefined || lowersEntryCaps.entryLimit !== undefined
+        ? await dbWrite.$transaction(async (tx) => {
+            await assertEntryCapsHoldLiveEntries(tx, id, lowersEntryCaps);
+            return write({}, tx);
+          })
         : await write();
   } catch (error) {
     await settlement?.rollback();
@@ -1308,6 +1444,32 @@ export const updateCrucible = async ({
         'This crucible changed while you were editing it. Reload the page and try again.'
       );
     throw error;
+  }
+
+  if (changedSettings.length) {
+    logToAxiom({
+      type: 'info',
+      name: 'crucible-moderator-settings-edit',
+      crucibleId: id,
+      moderatorId: userId,
+      isOwner,
+      changes: Object.fromEntries(
+        changedSettings.map((key) => [key, { from: current[key], to: next[key] }])
+      ),
+    });
+    // The edit is saved, so a failed audit row must not fail it.
+    await trackModActivity(userId, {
+      entityType: 'crucible',
+      activity: 'updateSettings',
+      entityId: id,
+    }).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-moderator-settings-edit-audit-failed',
+        message: error instanceof Error ? error.message : String(error),
+        crucibleId: id,
+      })
+    );
   }
 
   if (textChanged) await scanCrucible(id);
@@ -2704,6 +2866,27 @@ export const submitEntry = async ({
             areCrucibleEntriesClosed(crucible)
               ? CRUCIBLE_ENTRIES_CLOSED_MESSAGE
               : 'This crucible is not accepting entries'
+          );
+        // Under the row lock the UPDATE took, so this reads the caps a moderator may have lowered
+        // since the checks above, and every entry saved before this one.
+        const [full] = await tx.$queryRaw<{ total: boolean; user: boolean }[]>`
+          SELECT
+            c."maxTotalEntries" IS NOT NULL AND (
+              SELECT COUNT(*) FROM "CrucibleEntry" e
+              WHERE e."crucibleId" = c.id AND e."imageId" IS NOT NULL
+            ) >= c."maxTotalEntries" AS total,
+            (
+              SELECT COUNT(*) FROM "CrucibleEntry" e
+              WHERE e."crucibleId" = c.id AND e."userId" = ${userId} AND e."imageId" IS NOT NULL
+            ) >= c."entryLimit" AS "user"
+          FROM "Crucible" c
+          WHERE c.id = ${crucibleId}
+        `;
+        if (full?.total)
+          throw throwBadRequestError('This crucible has reached its maximum number of entries');
+        if (full?.user)
+          throw throwBadRequestError(
+            'You have reached the maximum number of entries for this crucible'
           );
         if (draftPostId) {
           // Scheduled for the end so the entry stays off the entrant's profile, feeds and search while

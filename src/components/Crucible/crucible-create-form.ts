@@ -393,14 +393,28 @@ export const CRUCIBLE_EDITABLE_WHILE_ACTIVE = [
   'heroImage',
 ] as const satisfies readonly CrucibleEditableField[];
 
+/** The server's MODERATOR_RUNNING_FIELDS, on top of the presentation. */
+export const CRUCIBLE_EDITABLE_BY_MODERATOR_WHILE_RUNNING = [
+  ...CRUCIBLE_EDITABLE_WHILE_ACTIVE,
+  'maxTotalEntries',
+  'entryLimit',
+  'entryWarningPercent',
+  'entryCutoffPercent',
+  'allowedResources',
+  'allowedBaseModels',
+] as const satisfies readonly CrucibleEditableField[];
+
 export function getCrucibleEditableFields({
   canEditAll,
   canEditContentLevels,
+  canFixRunning = false,
 }: {
   canEditAll: boolean;
   canEditContentLevels: boolean;
+  canFixRunning?: boolean;
 }): readonly CrucibleEditableField[] {
   if (canEditAll) return CRUCIBLE_EDITABLE_FIELDS;
+  if (canFixRunning) return CRUCIBLE_EDITABLE_BY_MODERATOR_WHILE_RUNNING;
   return canEditContentLevels
     ? [...CRUCIBLE_EDITABLE_WHILE_ACTIVE, 'nsfwLevel']
     : CRUCIBLE_EDITABLE_WHILE_ACTIVE;
