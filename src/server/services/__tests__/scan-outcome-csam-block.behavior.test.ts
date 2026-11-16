@@ -1,0 +1,273 @@
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Audit from '~/utils/metadata/audit';
+import type * as Blocklist from '~/server/services/blocklist.service';
+import type * as ImageService from '~/server/services/image.service';
+import type * as ModRules from '~/server/utils/mod-rules';
+import type * as NotificationService from '~/server/services/notification.service';
+
+/**
+ * A CSAM block is lifted or re-labelled only by a moderator's CSAM review. No scan verdict does it:
+ * not a clean audit, an audit block for another reason, a moderation rule or the rating block.
+ */
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
+  ...(await importOriginal<typeof Audit>()),
+  auditPostImageMeta: vi.fn(() => ({ success: true })),
+  includesInappropriate: vi.fn(() => false),
+  includesPoi: vi.fn(() => false),
+}));
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof Blocklist>()),
+  stripBenignPhrases: vi.fn(async (text: string) => text),
+}));
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageService>()),
+  getImagesModRules: vi.fn(async () => []),
+}));
+vi.mock('~/server/utils/mod-rules', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModRules>()),
+  evaluateRules: vi.fn(() => undefined),
+}));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification: vi.fn(async () => undefined),
+}));
+vi.mock('../../../../event-engine-common/services/metrics', () => ({
+  MetricService: class {
+    fetch = vi.fn();
+  },
+}));
+vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
+vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
+
+import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
+import { blockImageFromRating } from '../image-scan-result.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { auditPostImageMeta } from '~/utils/metadata/audit';
+import { getImagesModRules } from '~/server/services/image.service';
+import { evaluateRules } from '~/server/utils/mod-rules';
+import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
+
+const holder = vi.hoisted(() => ({
+  db: null as unknown as PGlite,
+  tagNsfwLevel: 1,
+  /** Set to an image id: that row turns CSAM-blocked right after the scan's fresh read of it. */
+  csamLandsAfterRead: null as number | null,
+}));
+
+const OWNER = 8;
+// Its own owner: an owner with a CSAM block is held, which would keep any block of theirs.
+const OTHER_OWNER = 9;
+const CSAM = 61;
+const OTHER = 62;
+
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
+    CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3));
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY,
+      "userId" int NOT NULL REFERENCES "User"(id),
+      "updatedAt" timestamp(3),
+      "pHash" bigint,
+      ingestion "ImageIngestionStatus",
+      "blockedFor" text,
+      "nsfwLevel" int NOT NULL DEFAULT 0,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      "needsReview" text,
+      minor boolean NOT NULL DEFAULT false,
+      poi boolean NOT NULL DEFAULT false,
+      "scannedAt" timestamp(3),
+      metadata jsonb,
+      "scanJobs" jsonb
+    );
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY,
+      "userId" int,
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]',
+      "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3)
+    );
+  `);
+});
+
+const runOnPglite = async (strings: TemplateStringsArray, values: unknown[]) => {
+  const flat = Prisma.sql(strings, ...(values as never[]));
+  return holder.db.query(flat.text, flat.values as unknown[]);
+};
+
+beforeEach(async () => {
+  vi.clearAllMocks();
+  vi.mocked(auditPostImageMeta).mockReturnValue({ success: true } as never);
+  vi.mocked(getImagesModRules).mockResolvedValue([]);
+  vi.mocked(evaluateRules).mockReturnValue(undefined);
+  dbMock.dbWrite.$executeRaw.mockImplementation(
+    (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+      (await runOnPglite(strings, values)).affectedRows ?? 0) as never
+  );
+  dbMock.dbWrite.appeal.findMany.mockResolvedValue([] as never);
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    const text = strings.join('');
+    if (text.includes('TagsOnImageDetails'))
+      return [
+        { id: 10, name: 'tag', type: 'Label', nsfwLevel: holder.tagNsfwLevel, confidence: 90 },
+      ];
+    if (text.includes('is_new_user')) return [{ isNewUser: false }];
+    if (text.includes(' AS held ')) return (await runOnPglite(strings, values)).rows;
+    if (text.includes('"User"')) {
+      const { rows } = await runOnPglite(strings, values);
+      if (holder.csamLandsAfterRead != null)
+        await holder.db.query(
+          `UPDATE "Image" SET ingestion = 'Blocked', "blockedFor" = 'CSAM', "nsfwLevel" = 32 WHERE id = $1`,
+          [holder.csamLandsAfterRead]
+        );
+      return rows;
+    }
+    if (text.includes('UPDATE "Image"')) return (await runOnPglite(strings, values)).rows;
+    return [{ poi: false, minor: false, hasResource: false }];
+  }) as never);
+  holder.tagNsfwLevel = 1;
+  holder.csamLandsAfterRead = null;
+  await holder.db.exec(`
+    TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
+    INSERT INTO "User" (id, "bannedAt") VALUES (${OWNER}, NULL), (${OTHER_OWNER}, NULL);
+    INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel") VALUES
+      (${CSAM}, ${OWNER}, 'Blocked', 'CSAM', 32),
+      (${OTHER}, ${OTHER_OWNER}, 'Blocked', 'moderated', 32);
+    -- Reported over a year ago and archived: no account hold is left to keep the block, only its
+    -- CSAM reason.
+    INSERT INTO "CsamReport" ("userId", images, "reportSentAt", "archivedAt")
+      VALUES (${OWNER}, '[{"id": ${CSAM}}]', now() - interval '2 years', now() - interval '2 years');
+  `);
+});
+
+/** The image as `loadImageForScan` hands it over. */
+const loaded = async (id: number) => {
+  const row = (
+    await holder.db.query<{
+      userId: number;
+      ingestion: string;
+      blockedFor: string | null;
+      nsfwLevel: number;
+    }>(`SELECT "userId", ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = $1`, [id])
+  ).rows[0];
+  return {
+    id,
+    createdAt: new Date('2025-12-01T00:00:00.000Z'),
+    scannedAt: null,
+    type: 'image',
+    meta: { prompt: 'a landscape' },
+    metadata: {},
+    postId: null,
+    nsfwLevelLocked: false,
+    needsReview: null,
+    ...row,
+  } as unknown as ScanImage;
+};
+
+const imageRow = async (id: number) =>
+  (
+    await holder.db.query<{ ingestion: string; blockedFor: string | null; nsfwLevel: number }>(
+      `SELECT ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = $1`,
+      [id]
+    )
+  ).rows[0];
+
+const scan = async (id: number) =>
+  resolveScanOutcome({ image: await loaded(id), workflowId: 'wf', prompt: 'a landscape' });
+
+const STILL_CSAM = { ingestion: 'Blocked', blockedFor: 'CSAM', nsfwLevel: 32 };
+
+describe('a scan of a CSAM-blocked image', () => {
+  it('keeps the block when the audit comes back clean', async () => {
+    const outcome = await scan(CSAM);
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+    expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', nsfwLevel: 32 });
+    // Control: the same clean scan lifts a block with any other reason.
+    await scan(OTHER);
+    expect(await imageRow(OTHER)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+  });
+
+  it('keeps the CSAM reason when the audit blocks for another reason', async () => {
+    holder.tagNsfwLevel = 16;
+    vi.mocked(auditPostImageMeta).mockReturnValue({
+      success: false,
+      blockedFor: ['tos-term'],
+    } as never);
+
+    await scan(CSAM);
+    await scan(OTHER);
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+    // Control: the audit's block does reach the row.
+    expect((await imageRow(OTHER)).blockedFor).toBe('tos-term');
+  });
+
+  it('keeps the CSAM reason when a moderation rule blocks it', async () => {
+    vi.mocked(getImagesModRules).mockResolvedValue([{ id: 1 }] as never);
+    vi.mocked(evaluateRules).mockReturnValue({
+      id: 1,
+      action: ModerationRuleAction.Block,
+      reason: 'rule',
+    } as never);
+    await holder.db.exec(
+      `UPDATE "Image" SET "blockedFor" = NULL, ingestion = 'Rescan' WHERE id = ${OTHER}`
+    );
+
+    await scan(CSAM);
+    await scan(OTHER);
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+    // Control: the rule's reason does reach a row without a CSAM block.
+    expect((await imageRow(OTHER)).blockedFor).toBe('moderated');
+  });
+
+  it('keeps the block once a rescan request has moved it to Rescan', async () => {
+    await holder.db.exec(`UPDATE "Image" SET ingestion = 'Rescan' WHERE id = ${CSAM}`);
+
+    await scan(CSAM);
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+  });
+
+  it('keeps a CSAM block that lands after the scan read the row', async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = NULL, "nsfwLevel" = 0 WHERE id = ${CSAM}`
+    );
+    holder.csamLandsAfterRead = CSAM;
+
+    await scan(CSAM);
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+  });
+});
+
+describe('the rating block', () => {
+  it('keeps a stored CSAM reason and the short-circuit reports it', async () => {
+    await blockImageFromRating({ imageId: CSAM, blockedReason: 'tos' });
+    await blockImageFromRating({ imageId: OTHER, blockedReason: 'tos' });
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+    // Control: the rating's reason does reach a row without a CSAM block.
+    expect((await imageRow(OTHER)).blockedFor).toBe('tos');
+
+    const outcome = await resolveScanOutcome({
+      image: await loaded(CSAM),
+      blocked: { reason: 'tos' },
+      workflowId: 'wf',
+    });
+    expect(outcome.blockedFor).toBe('CSAM');
+  });
+});

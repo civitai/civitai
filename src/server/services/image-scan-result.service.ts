@@ -2,7 +2,7 @@ import type { MediaRatingOutput } from '@civitai/orchestration-client';
 import { dbWrite } from '~/server/db/client';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import type { MediaMetadata } from '~/server/schema/media.schema';
@@ -432,7 +432,7 @@ function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
   );
 }
 
-async function blockImageFromRating({
+export async function blockImageFromRating({
   imageId,
   pHash,
   blockedReason,
@@ -441,13 +441,17 @@ async function blockImageFromRating({
   pHash?: bigint;
   blockedReason?: string | null;
 }) {
-  await dbWrite.image.updateMany({
-    where: { id: imageId },
-    data: {
-      pHash,
-      ingestion: ImageIngestionStatus.Blocked,
-      nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: blockedReason,
-    },
-  });
+  // A stored CSAM reason is kept: only a moderator's CSAM review re-labels it.
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      "pHash" = COALESCE(${pHash ?? null}, "pHash"),
+      ingestion = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
+      "nsfwLevel" = ${NsfwLevel.Blocked}::int,
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} OR ${
+    blockedReason === undefined
+  }
+        THEN "blockedFor" ELSE ${blockedReason ?? null} END
+    WHERE id = ${imageId}
+  `;
 }

@@ -535,8 +535,8 @@ function isBlockKeptByHold(imageId: number) {
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
  *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it, unless the owner is banned or held, a hold kept the image, or the
- *    image is under appeal.
+ *    rescan can clear it, unless the owner is banned or held, a hold kept the image, the
+ *    image is under appeal, or the block is CSAM.
  *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
  *    moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
@@ -584,7 +584,8 @@ export async function resolveScanOutcome({
     );
     return {
       ingestion: ImageIngestionStatus.Blocked,
-      blockedFor: blocked.reason,
+      // The caller's block write keeps a stored CSAM reason, and `image` was loaded after it.
+      blockedFor: image.blockedFor === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
       reviewKey: null,
     };
   }
@@ -675,46 +676,55 @@ export async function resolveScanOutcome({
     reviewKey = 'csam';
   }
 
-  // A block on a banned or held owner's image, or on one a hold kept, is that decision, not a stale
-  // automated one, so a scan never lifts it. Read fresh, not from `image`: the ban or hold can block
-  // the row after this scan loaded it.
-  if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
-    const [current] = await dbWrite.$queryRaw<
-      {
-        ingestion: ImageIngestionStatus;
-        blockedFor: string | null;
-        nsfwLevel: number;
-        ownerBanned: boolean;
-      }[]
-    >`
-      SELECT i.ingestion, i."blockedFor", i."nsfwLevel", u."bannedAt" IS NOT NULL AS "ownerBanned"
-      FROM "Image" i
-      JOIN "User" u ON u.id = i."userId"
-      WHERE i.id = ${image.id}
-    `;
-    if (
-      current &&
-      hasBlockMarker(current) &&
-      (current.ownerBanned || (await isBlockKeptByHold(image.id)))
-    ) {
-      toUpdate.ingestion = ImageIngestionStatus.Blocked;
-      toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
-      toUpdate.nsfwLevel = NsfwLevel.Blocked;
-    }
+  // Read fresh, not from `image`: a CSAM block, a ban or a hold can land after this scan loaded it.
+  const [current] = await dbWrite.$queryRaw<
+    {
+      ingestion: ImageIngestionStatus;
+      blockedFor: string | null;
+      nsfwLevel: number;
+      ownerBanned: boolean;
+    }[]
+  >`
+    SELECT i.ingestion, i."blockedFor", i."nsfwLevel", u."bannedAt" IS NOT NULL AS "ownerBanned"
+    FROM "Image" i
+    JOIN "User" u ON u.id = i."userId"
+    WHERE i.id = ${image.id}
+  `;
+  if (current?.blockedFor === BlockedReason.CSAM) {
+    // Only a moderator's CSAM review lifts or re-labels this block; no scan verdict does.
+    toUpdate.ingestion = ImageIngestionStatus.Blocked;
+    toUpdate.blockedFor = BlockedReason.CSAM;
+    toUpdate.nsfwLevel = NsfwLevel.Blocked;
+  } else if (
+    // A block on a banned or held owner's image, or on one a hold kept, is that decision, not a
+    // stale automated one, so a scan never lifts it.
+    toUpdate.ingestion !== ImageIngestionStatus.Blocked &&
+    current &&
+    hasBlockMarker(current) &&
+    (current.ownerBanned || (await isBlockKeptByHold(image.id)))
+  ) {
+    toUpdate.ingestion = ImageIngestionStatus.Blocked;
+    toUpdate.blockedFor = current.blockedFor ?? BlockedReason.Moderated;
+    toUpdate.nsfwLevel = NsfwLevel.Blocked;
   }
 
   const scanLevel = toUpdate.nsfwLevel as number;
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
+  // Re-checked per row, for a CSAM block that lands after the read above.
+  const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
   await writeWithNsfwAxes(
     (axesTerm) => dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
       "pHash" = ${pHash ?? null},
-      "ingestion" = ${ingestionAfterVerdictSql(toUpdate.ingestion as string)},
-      "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
-      "nsfwLevel" = ${scanLevel},
+      "ingestion" = CASE WHEN ${csamBlocked} THEN 'Blocked'::"ImageIngestionStatus"
+        ELSE ${ingestionAfterVerdictSql(toUpdate.ingestion as string)} END,
+      "blockedFor" = CASE WHEN ${csamBlocked} THEN "blockedFor"
+        ELSE ${(toUpdate.blockedFor as string) ?? null} END,
+      "nsfwLevel" = CASE WHEN ${csamBlocked} THEN ${Prisma.raw(String(NsfwLevel.Blocked))}
+        ELSE ${scanLevel}::int END,
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
         ELSE ${(toUpdate.needsReview as string) ?? null} END,
       "minor" = ${(toUpdate.minor as boolean) ?? false},

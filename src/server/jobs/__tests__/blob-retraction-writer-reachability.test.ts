@@ -383,6 +383,26 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
 function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
   const sql = strings.join('?');
 
+  // `blockImageFromRating`, the orchestrator content-rating block.
+  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? OR ?')) {
+    const [, ingestion, nsfwLevel, kept, keepAny, reason, id] = values as [
+      unknown,
+      string,
+      number,
+      string,
+      boolean,
+      string | null,
+      number
+    ];
+    const row = store.images.find((i) => i.id === id);
+    if (!row) return 0;
+    row.ingestion = ingestion;
+    row.nsfwLevel = nsfwLevel;
+    if (!keepAny && row.blockedFor !== kept) row.blockedFor = reason;
+    fireQueueTrigger(row);
+    return 1;
+  }
+
   if (sql.includes('"blockedFor" = CASE')) return moderatorBlock(values).length;
 
   if (sql.includes('INSERT INTO "ModActivity"')) {
@@ -1032,7 +1052,7 @@ describe('who can reach blob retraction, driven through the real block writers',
 
 /**
  * The orchestrator content-rating block, driven through the exported webhook entry point rather
- * than the module-private `blockImageFromRating`. The scan continues past the block into tag
+ * than `blockImageFromRating` itself. The scan continues past the block into tag
  * processing, which this fixture does not model; the throw is swallowed because the block write
  * has already happened by then and is what the assertions read.
  */
