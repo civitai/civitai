@@ -317,8 +317,10 @@ const CONSUMER_BLOB_PATHNAME = /^\/v\d+\/consumer\/blobs\/([A-Za-z0-9_.-]+)$/;
  *   control bytes), so the host judged here is the host any fetcher sees;
  * - https on a trusted orchestrator host, the port included, with no userinfo (`@` refused
  *   anywhere) and no fragment (`isTrustedOrchestratorUrl`);
- * - a consumer blob path, whole. A job asset or a workflow output path is refused: those are
- *   not uploads, and an app's own outputs have `blocks.persistGenerationSource`.
+ * - a consumer blob path, whole: `/v<n>/consumer/blobs/<id>` with nothing before or after it
+ *   (a query is allowed). Any url of that shape is accepted, the blob of a workflow output
+ *   included: the check is on the url's form, not on how the blob was made. A job asset path
+ *   (`/consumer/jobs/...`) or any other path is refused.
  *
  * Its id is the idempotency ref; an output's ref always holds `#`, which an id cannot, so the two
  * never collide.
