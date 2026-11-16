@@ -683,7 +683,6 @@ export function captureFeedGoShadowV1Images(sample: FeedGoShadowSample, body: un
 
 /** The `/api/v1/images` request shapes, by what feed-go can port (see FEED_GO_V1_SHAPE_CLASSES). */
 export type FeedGoV1ShapeInput = {
-  ids?: readonly unknown[];
   imageId?: unknown;
   modelId?: unknown;
   modelVersionId?: unknown;
@@ -705,12 +704,11 @@ export function feedGoV1ShapeClass(
   try {
     if (statusCode !== 200 || !data) return 'non200';
     if (hasApiCredential(req)) return 'api_key';
-    if (data.ids !== undefined) return 'unported_ids';
+    // An `ids` batch and `withMeta` are ported (the legacy Postgres path, the meta cache).
     if (data.imageId !== undefined) return 'unported_imageId';
     if (data.tags !== undefined) return 'unported_tags';
     if (data.baseModels !== undefined) return 'unported_baseModels';
     if (data.modelId && !data.modelVersionId) return 'unported_modelId_only';
-    if (data.withMeta) return 'unported_withMeta';
     if (data.withTags) return 'unported_withTags';
     return 'ported';
   } catch {

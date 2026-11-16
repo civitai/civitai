@@ -1,12 +1,12 @@
 {
-  "name": "fallback-ids",
-  "description": "`ids` takes the legacy Postgres path.",
+  "name": "ids-limit-zero",
+  "description": "`ids` with `limit=0`: LIMIT 1 reads one row and pops it, so the page is empty but carries a nextCursor and nextPage.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "imageLocation": "https://image.example.test/golden"
   },
   "request": {
-    "query": "ids=8001,8003",
+    "query": "ids=8001,8003&limit=0",
     "path": "/api/v1/images",
     "headers": {
       "host": "blue.example.test"
@@ -21,8 +21,181 @@
     }
   },
   "db": {
-    "images": [],
-    "posts": [],
+    "images": [
+      {
+        "id": 8001,
+        "name": "golden-8001.png",
+        "url": "00000000-0000-4000-8000-000000008001",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8001",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-12T09:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8001"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-12T09:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1001,
+        "postId": 7001,
+        "postTitle": "Golden post 7001",
+        "index": 0,
+        "publishedAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6001,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "_resources": [
+          {
+            "modelVersionId": 6001,
+            "detected": true
+          },
+          {
+            "modelVersionId": 6002,
+            "detected": false
+          }
+        ]
+      },
+      {
+        "id": 8002,
+        "name": "golden-8002.png",
+        "url": "00000000-0000-4000-8000-000000008002",
+        "nsfwLevel": 2,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8002",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-08T08:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8002"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-08T08:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1001,
+        "postId": 7001,
+        "postTitle": "Golden post 7001",
+        "index": 1,
+        "publishedAt": {
+          "$date": "2026-06-12T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6001,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "_resources": [
+          {
+            "modelVersionId": 6001,
+            "detected": true
+          }
+        ]
+      },
+      {
+        "id": 8003,
+        "name": "golden-8003.png",
+        "url": "00000000-0000-4000-8000-000000008003",
+        "nsfwLevel": 1,
+        "width": 832,
+        "height": 1216,
+        "hash": "UGOLDEN8003",
+        "hideMeta": false,
+        "hasMeta": true,
+        "hasPositivePrompt": true,
+        "onSite": false,
+        "remixOfId": null,
+        "createdAt": {
+          "$date": "2026-06-08T09:00:00.000Z"
+        },
+        "sortAt": {
+          "$date": "2026-06-08T10:00:00.000Z"
+        },
+        "mimeType": "image/png",
+        "type": "image",
+        "metadata": {
+          "width": 832,
+          "height": 1216,
+          "hash": "UGOLDEN8003"
+        },
+        "ingestion": "Scanned",
+        "blockedFor": null,
+        "scannedAt": {
+          "$date": "2026-06-08T09:01:00.000Z"
+        },
+        "needsReview": null,
+        "userId": 1002,
+        "postId": 7002,
+        "postTitle": "Golden post 7002",
+        "index": 0,
+        "publishedAt": {
+          "$date": "2026-06-08T10:00:00.000Z"
+        },
+        "unpublishedAt": null,
+        "modelVersionId": 6001,
+        "model3dId": null,
+        "availability": "Public",
+        "minor": false,
+        "poi": false,
+        "acceptableMinor": false,
+        "_resources": [
+          {
+            "modelVersionId": 6001,
+            "detected": true
+          }
+        ]
+      }
+    ],
+    "posts": [
+      {
+        "id": 7001,
+        "modelVersionId": 6001
+      },
+      {
+        "id": 7002,
+        "modelVersionId": 6001
+      }
+    ],
     "modelVersions": [
       {
         "id": 6001,
@@ -338,6 +511,12 @@
     "usernames": []
   },
   "expect": {
-    "fallback": "v1-ids"
+    "body": {
+      "items": [],
+      "metadata": {
+        "nextCursor": 8003,
+        "nextPage": "https://blue.example.test/api/v1/images?ids=8001%2C8003&limit=0&cursor=8003"
+      }
+    }
   }
 }

@@ -24,10 +24,11 @@ const (
 	MissUserCosmetics    = "user-cosmetics"    // userCosmeticCache
 	MissImageFrames      = "image-frames"      // cosmeticEntityCaches.Image
 	MissEventDecorations = "event-decorations" // eventDecorationEntityCaches.Image
+	// MissImageMeta (meta.go) is imageMetaCache, read by the public images endpoint's withMeta.
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter.
-var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations}
+var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read (user
 // cosmetics, image frames, event decorations): with the Node lookup's own query,
