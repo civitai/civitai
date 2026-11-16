@@ -1912,7 +1912,9 @@ async function assertSharedValueSafeAndSerialize(params: {
         { schema, slug, appBlockId, uid },
         { policy: e.category, category: e.category, reason: `auto:${e.category}` }
       );
-      const refusal = new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
+      // The field the belt refused (never the term or the text), when it could be placed.
+      const message = e.field ? `${e.message} (field: ${e.field})` : e.message;
+      const refusal = new TRPCError({ code: 'BAD_REQUEST', message, cause: e });
       // `unchecked`, not escalation, picks the outcome: a scan that threw is unchecked but charged.
       const outcome = e.unchecked ? 'moderation_unavailable' : 'moderation_blocked';
       // An outage the belt refused on (its blocklist read failing, or its prompt audit unable to

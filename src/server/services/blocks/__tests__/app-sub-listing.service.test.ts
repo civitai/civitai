@@ -381,7 +381,7 @@ describe('upsertSubListing — refusals', () => {
   it.each([
     ['title', 'The title was not accepted'],
     ['body', 'The tagline was not accepted'],
-    ['title and body', 'The title and tagline were not accepted together'],
+    ['title and body', 'The title and tagline were not accepted'],
   ] as const)(
     '🔴 a refusal of the %s names it, in the card’s own words',
     async (field, message) => {

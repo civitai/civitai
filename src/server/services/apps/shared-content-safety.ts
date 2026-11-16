@@ -2,7 +2,11 @@ import { includesMinor, includesPoi } from '~/utils/metadata/audit';
 import { BlocklistType } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { escalateToServerFault } from '~/server/logging/server-fault-override';
-import { getBlocklistData, throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import {
+  findBlockedUserContent,
+  getBlocklistData,
+  throwOnBlockedUserContent,
+} from '~/server/services/blocklist.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-check-unavailable';
 
@@ -58,6 +62,12 @@ export const SHARED_BODY_MAX = 4096;
 export type SharedBlockedCategory = 'minor' | 'poi' | 'link' | 'audit' | 'size' | 'pattern';
 
 /**
+ * Which field a refusal is for: one of the two, or `title and body` when only the two read
+ * together trip the check (or each trips it on its own). Never the term or the text.
+ */
+export type SharedBlockedField = 'title' | 'body' | 'title and body';
+
+/**
  * Thrown by `assertSharedTextSafe` when the text is rejected. Carries the
  * `category` so the caller can decide whether to file a Report (minor/poi/audit)
  * before converting to a user-facing TRPCError. NEVER leak the raw matched word to
@@ -69,12 +79,89 @@ export type SharedBlockedCategory = 'minor' | 'poi' | 'link' | 'audit' | 'size' 
 export class SharedContentBlockedError extends Error {
   readonly category: SharedBlockedCategory;
   readonly unchecked: boolean;
-  constructor(category: SharedBlockedCategory, message: string, options?: { unchecked?: boolean }) {
+  /** The refused field, when it could be placed (`locateRefusedField`); unset otherwise. */
+  readonly field?: SharedBlockedField;
+  constructor(
+    category: SharedBlockedCategory,
+    message: string,
+    options?: { unchecked?: boolean; field?: SharedBlockedField }
+  ) {
     super(message);
     this.name = 'SharedContentBlockedError';
     this.category = category;
     this.unchecked = options?.unchecked ?? false;
+    if (options?.field) this.field = options.field;
   }
+}
+
+/** `title`, `body` or `title and body` from which of the two trip a check on their own. */
+function fieldFrom(title: boolean, body: boolean): SharedBlockedField {
+  if (title && !body) return 'title';
+  if (body && !title) return 'body';
+  // Both on their own, or neither: only the two together trip it.
+  return 'title and body';
+}
+
+/**
+ * Where a refusal came from, found AFTER the belt refused, by re-checking the two fields one at
+ * a time with the check that refused. Runs only on a refusal, so a clean write costs nothing.
+ * Only the field is kept: never the matched term or the text. Returns undefined when the field
+ * cannot be placed (a re-check that fails, or a list hit that no single field carries), so a
+ * refusal never names a guessed field.
+ */
+async function locateRefusedField(
+  category: SharedBlockedCategory,
+  input: SharedTextSafetyInput
+): Promise<SharedBlockedField | undefined> {
+  const { title, body, userId, isModerator } = input;
+  try {
+    switch (category) {
+      case 'minor':
+        return fieldFrom(!!includesMinor(title), !!includesMinor(body));
+      case 'poi':
+        return fieldFrom(!!includesPoi(title), !!includesPoi(body));
+      case 'link':
+      case 'pattern': {
+        // The lists read each value on its own, so a hit names its value by index.
+        const hits = (
+          await findBlockedUserContent([title, body ?? ''], {
+            exemptFromPatterns: isModerator ?? false,
+          })
+        ).filter((h) => h.kind === category);
+        const t = hits.some((h) => h.index === 0);
+        const b = hits.some((h) => h.index === 1);
+        return t || b ? fieldFrom(t, b) : undefined;
+      }
+      case 'audit': {
+        const trips = async (prompt: string | undefined) => {
+          if (!prompt) return false;
+          try {
+            await auditPromptServer({ prompt, userId, isGreen: true, isModerator });
+            return false;
+          } catch (e) {
+            if (isPromptCheckUnavailable(e)) throw e;
+            return true;
+          }
+        };
+        return fieldFrom(await trips(title), await trips(body));
+      }
+      case 'size':
+        return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/** `err` with the refused field set, when it can be placed. */
+async function withRefusedField(
+  err: SharedContentBlockedError,
+  input: SharedTextSafetyInput
+): Promise<SharedContentBlockedError> {
+  if (err.unchecked || err.field) return err;
+  const field = await locateRefusedField(err.category, input);
+  if (!field) return err;
+  return new SharedContentBlockedError(err.category, err.message, { field });
 }
 
 export interface SharedTextSafetyInput {
@@ -101,14 +188,33 @@ export interface SharedTextSafetyInput {
 export async function assertSharedTextSafe(
   input: SharedTextSafetyInput
 ): Promise<{ title: string; body?: string }> {
+  try {
+    return await checkSharedText(input);
+  } catch (err) {
+    // A verdict names the field it is for (`locateRefusedField`); an outage, or anything that is
+    // not a verdict, is rethrown as it is (an escalated outage keeps its server-fault mark).
+    if (err instanceof SharedContentBlockedError && !err.unchecked) {
+      throw await withRefusedField(err, input);
+    }
+    throw err;
+  }
+}
+
+async function checkSharedText(
+  input: SharedTextSafetyInput
+): Promise<{ title: string; body?: string }> {
   const { title, body, userId, isModerator } = input;
 
   // M3 — belt re-check (the schema is the primary gate).
   if (title.length > SHARED_TITLE_MAX) {
-    throw new SharedContentBlockedError('size', 'Title exceeds the maximum length');
+    throw new SharedContentBlockedError('size', 'Title exceeds the maximum length', {
+      field: 'title',
+    });
   }
   if (body != null && body.length > SHARED_BODY_MAX) {
-    throw new SharedContentBlockedError('size', 'Body exceeds the maximum length');
+    throw new SharedContentBlockedError('size', 'Body exceeds the maximum length', {
+      field: 'body',
+    });
   }
 
   const combined = body ? `${title}\n${body}` : title;
