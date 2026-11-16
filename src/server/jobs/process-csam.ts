@@ -176,7 +176,11 @@ export const CSAM_ARCHIVE_JOB_LOCK_SECONDS = 4 * 60 * 60;
  * a missing key) counts as ON, so a Flipt problem keeps reports archiving.
  */
 async function readInAppArchive() {
-  await ensureFliptInitialized();
+  try {
+    await ensureFliptInitialized();
+  } catch {
+    // No client: the read below is null, so the tick runs ON and logs the flag as unreadable.
+  }
   const value = isFliptSync(FLIPT_FEATURE_FLAGS.EVIDENCE_ARCHIVE_IN_APP);
   return { inAppOn: value !== false, readable: value !== null };
 }

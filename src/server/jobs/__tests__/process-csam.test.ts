@@ -32,25 +32,35 @@ vi.mock('~/server/services/csam-archive-evidence.service', () => evidence);
 // The archive switch: the flag, the separate archiver's queue, and the stamp read-back.
 const sw = vi.hoisted(() => ({
   flag: true as boolean | null,
+  // Like the real client: nothing to evaluate until init has run, so a read before init is null.
+  initialised: false,
+  initFails: false,
   queued: new Set<number>(),
   stamped: new Set<number>(),
+  stampReads: [] as unknown[][],
   archiveQueueStates: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  ensureFliptInitialized: vi.fn(async () => undefined),
-  isFliptSync: vi.fn(() => sw.flag),
+  ensureFliptInitialized: vi.fn(async () => {
+    if (sw.initFails) throw new Error('synthetic init failure');
+    sw.initialised = true;
+  }),
+  isFliptSync: vi.fn(() => (sw.initialised ? sw.flag : null)),
 }));
 vi.mock('@civitai/db-queries/evidence-archive-queue', () => ({
   archiveQueueStates: sw.archiveQueueStates,
 }));
 vi.mock('~/server/db/kyselyDb', () => ({
   kyselyWrite: {
-    selectFrom: () => ({
-      select: () => ({
-        where: (_c: string, _op: string, id: number) => ({
-          executeTakeFirst: async () => ({ archivedAt: sw.stamped.has(id) ? new Date() : null }),
-        }),
+    selectFrom: (table: string) => ({
+      select: (column: string) => ({
+        where: (where: string, op: string, id: number) => {
+          sw.stampReads.push([table, column, where, op, id]);
+          return {
+            executeTakeFirst: async () => ({ archivedAt: sw.stamped.has(id) ? new Date() : null }),
+          };
+        },
       }),
     }),
   },
@@ -64,6 +74,8 @@ import {
 } from '~/server/jobs/process-csam';
 import { createDisconnectHandler, createJob } from '~/server/jobs/job';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { JOB_QUEUE_OVERDUE_MINUTES } from '@civitai/shared/job-queue';
+import { kyselyWrite } from '~/server/db/kyselyDb';
 
 const archiveJob = csamJobs.find((job) => job.name === 'archive-csam-reports');
 const sendJob = csamJobs.find((job) => job.name === 'send-csam-reports');
@@ -73,8 +85,11 @@ const reports = [{ id: 8801 }, { id: 8802 }, { id: 8803 }];
 beforeEach(() => {
   vi.clearAllMocks();
   sw.flag = true;
+  sw.initialised = false;
+  sw.initFails = false;
   sw.queued = new Set();
   sw.stamped = new Set();
+  sw.stampReads = [];
   sw.archiveQueueStates.mockImplementation(
     async (_db: unknown, ids: number[]) =>
       new Map(ids.filter((id) => sw.queued.has(id)).map((id) => [id, 'queued']))
@@ -412,6 +427,11 @@ describe('archive-csam-reports and the separate archiver', () => {
     expect(archived()).toEqual([8801, 8803]);
     // The null-user report needs no lookup: nothing queues it.
     expect(sw.archiveQueueStates.mock.calls.map(([, ids]) => ids)).toEqual([[8801], [8802]]);
+    // On the primary, with the queue's own overdue window.
+    for (const [db, , minutes] of sw.archiveQueueStates.mock.calls) {
+      expect(db).toBe(kyselyWrite);
+      expect(minutes).toBe(JOB_QUEUE_OVERDUE_MINUTES.CsamArchive);
+    }
   });
 
   it('OFF: archives only the report with no user', async () => {
@@ -432,6 +452,24 @@ describe('archive-csam-reports and the separate archiver', () => {
       8801,
     ]);
     expect(unreadable.every((l) => l.type === 'error')).toBe(true);
+    // The stamp read-back reads archivedAt by report id.
+    expect(sw.stampReads).toEqual([
+      ['CsamReport', 'archivedAt', 'id', '=', 8801],
+      ['CsamReport', 'archivedAt', 'id', '=', 8802],
+      ['CsamReport', 'archivedAt', 'id', '=', 8803],
+    ]);
+  });
+
+  it('a Flipt init that throws runs the tick as ON and logs the flag as unreadable', async () => {
+    sw.flag = false;
+    sw.initFails = true;
+    await archiveJob!.run({}).result;
+
+    expect(archived()).toEqual([8801, 8802, 8803]);
+    expect(logs('archive-tick').map((t) => [t.phase, t.inAppOn, t.readable])).toEqual([
+      ['start', true, false],
+      ['end', true, false],
+    ]);
   });
 
   it('control: a readable flag logs nothing as unreadable', async () => {
