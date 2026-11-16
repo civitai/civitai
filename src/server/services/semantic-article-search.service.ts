@@ -1,4 +1,8 @@
+import type { ManipulateType } from 'dayjs';
 import { ArticleSort } from '~/server/common/enums';
+import { getUserFollows } from '~/server/redis/caches';
+import dayjs from '~/shared/utils/dayjs';
+import { decreaseDate } from '~/utils/date-helpers';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { SemanticArticleSearchInput } from '~/server/schema/semantic-article-search.schema';
@@ -39,6 +43,17 @@ export { MAX_HITS_PER_USER };
 
 type HydratedArticle = Awaited<ReturnType<typeof getArticles>>['items'][number];
 
+// Most followed creators sent to the index as a user filter; past it, hydration alone applies Followed.
+const MAX_INDEXED_FOLLOWS = 1000;
+
+// The feed's period as a published-since bound. Truncated to the hour so the cached candidates'
+// key, which carries the filter, holds still between requests.
+function publishedSince(period: MetricTimeframe | undefined) {
+  if (!period || period === MetricTimeframe.AllTime) return undefined;
+  const hour = dayjs().startOf('hour').toDate();
+  return decreaseDate(hour, 1, period.toLowerCase() as ManipulateType).toISOString();
+}
+
 const searchServiceCandidates = searchServiceSource('articles', {
   notFoundMessage: 'Article not found',
 });
@@ -60,15 +75,26 @@ export async function searchSemanticArticles({
     user,
     await isNonModClampOn()
   );
-  const [hidden, addonData, userIds, tagIds] = await Promise.all([
+  const [hidden, addonData, namedUserIds, namedTagIds, follows] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
     input.usernames?.length ? resolveUserIds(input.usernames) : undefined,
     input.tagNames?.length ? resolveTagIds(input.tagNames) : undefined,
+    input.followed && user ? getUserFollows(user.id) : undefined,
   ]);
-  // A named user or tag that does not exist can match nothing.
+  // Followed narrows the ranking itself, so a short follow list doesn't leave a page of misses.
+  const followedIds = follows && follows.length <= MAX_INDEXED_FOLLOWS ? follows : undefined;
+  const userIds =
+    namedUserIds && followedIds
+      ? namedUserIds.filter((id) => followedIds.includes(id))
+      : namedUserIds ?? followedIds;
+  // A named user or tag that does not exist, or no one followed, can match nothing.
   if (userIds && !userIds.length) return none;
-  if (tagIds && tagIds.length < new Set(input.tagNames).size) return none;
+  if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size) return none;
+  const tagIds =
+    namedTagIds || input.tagIds?.length
+      ? [...new Set([...(namedTagIds ?? []), ...(input.tagIds ?? [])])]
+      : undefined;
   const addonsFor = (level: number) =>
     resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
   let addons = addonsFor(browsingLevel);
@@ -109,6 +135,7 @@ export async function searchSemanticArticles({
     excludedTagIds,
     userIds,
     excludedUserIds,
+    range: { key: 'publishedAt', gte: publishedSince(input.period) },
   };
   // Refused before any search: the audit may run it after the response, for its row only.
   if (queryRefused)
@@ -156,6 +183,11 @@ export async function searchSemanticArticles({
         browsingLevel,
         excludedUserIds,
         excludedTagIds,
+        // The feed's views of the viewer's own lists; the index can't apply them.
+        followed: input.followed,
+        favorites: input.favorites,
+        hidden: input.hidden,
+        collectionId: input.collectionId,
       }),
       sessionUser: user,
       include: ['cosmetics'],
