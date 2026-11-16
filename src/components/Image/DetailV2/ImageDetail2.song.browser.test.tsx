@@ -50,6 +50,7 @@ const state = vi.hoisted(() => ({
   realCarousel: false,
   images: null as unknown[] | null,
   index: 0,
+  highlight: undefined as number | undefined,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -70,6 +71,7 @@ vi.mock('~/components/Image/Detail/ImageDetailProvider', async (importOriginal) 
     hasMore: false,
     collection: undefined,
     hideReactions: false,
+    highlight: state.highlight,
   }),
 }));
 vi.mock('~/components/HatTurf/detail/HatTurfDetailProvider', async (importOriginal) => ({
@@ -308,6 +310,8 @@ beforeEach(async () => {
   state.realCarousel = false;
   state.images = null;
   state.index = 0;
+  state.highlight = undefined;
+  localStorage.removeItem('image-detail-open');
 });
 
 describe('a song in the image detail view', () => {
@@ -371,5 +375,26 @@ describe('a song between other songs (the creator’s list the global player ope
     const sheet = page.getByTestId('image-detail-sheet').element().getBoundingClientRect();
     expect(sheet.width).toBe(450);
     expect(sheet.right).toBeLessThanOrEqual(1920);
+  });
+});
+
+describe('a link to one of the song’s comments', () => {
+  // The reader folded the sidebar away on an earlier visit.
+  beforeEach(() => localStorage.setItem('image-detail-open', 'false'));
+
+  test('shows the sidebar the comment is in', async () => {
+    state.highlight = 777;
+    await renderDetail();
+    await expect.element(page.getByTestId('creator-card')).toBeInTheDocument();
+    await expect
+      .poll(() => page.getByTestId('image-detail-sheet').element().getBoundingClientRect().width)
+      .toBe(450);
+    await expect.poll(() => localStorage.getItem('image-detail-open')).toBe('true');
+  });
+
+  test('without one, the folded sidebar stays folded', async () => {
+    await renderDetail();
+    await expect.element(page.getByTestId('song-backdrop')).toBeInTheDocument();
+    expect(page.getByTestId('image-detail-sheet').element().getBoundingClientRect().width).toBe(0);
   });
 });

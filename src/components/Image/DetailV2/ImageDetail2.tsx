@@ -31,7 +31,7 @@ import {
   IconPhoto,
   IconShare3,
 } from '@tabler/icons-react';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   StorylineChapterDescription,
   StorylineStageOverlay,
@@ -180,12 +180,24 @@ function ImageDetail2Content() {
     index,
     collection,
     hideReactions,
+    highlight,
   } = useImageDetailContext();
 
-  const [sidebarOpen, setSidebarOpen] = useLocalStorage({
+  const [storedSidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
   });
+  // A link to a comment (`?highlight=`, as the music player's timed comments open it) shows the
+  // sidebar the comment is in, even when the reader folded it away; from the first render, since
+  // the comment section scrolls to it on mount.
+  const [sidebarShownFor, setSidebarShownFor] = useState<number>();
+  const showingHighlight = highlight !== undefined && highlight !== sidebarShownFor;
+  const sidebarOpen = storedSidebarOpen || showingHighlight;
+  useEffect(() => {
+    if (!showingHighlight) return;
+    setSidebarOpen(true);
+    setSidebarShownFor(highlight);
+  }, [showingHighlight, highlight, setSidebarOpen]);
 
   // Here rather than in the overlay: the overlay is behind the `safe` gate in
   // the carousel, so on a blurred image it never mounts and the link would
@@ -803,6 +815,7 @@ function ImageDetail2Content() {
                         title="Discussion"
                         icon={<IconBrandWechat />}
                         storageKey="discussion"
+                        expandFor={highlight}
                       >
                         <ImageDetailComments
                           imageId={image.id}
