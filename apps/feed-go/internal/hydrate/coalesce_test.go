@@ -72,7 +72,7 @@ func TestConcurrentLookupsShareOne(t *testing.T) {
 		}
 	}
 	// Another cache with the same ids is another flight.
-	if _, err := c.lookupShared(context.Background(), MissImageEvents, []int{1, 2}, (&countingLookup{}).lookup); err != nil {
+	if _, err := c.lookupShared(context.Background(), MissEventDecorations, []int{1, 2}, (&countingLookup{}).lookup); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -58,7 +58,7 @@ type MissCompute struct {
 	// seconds with write-back off (lookupShared).
 	flight   singleflight.Group
 	recentMu sync.Mutex
-	recent   map[missKey]recentEntry
+	recent   map[recentKey]recentEntry
 	// beforeFlight, when set (tests), runs just before a lookup joins or starts its flight.
 	beforeFlight func()
 	// Observe counts computed miss ids: cache is a MissXxx label, result "computed" or "error".
@@ -74,8 +74,8 @@ const (
 	recentMax = 50_000
 )
 
-// missKey is one cache's id.
-type missKey struct {
+// recentKey is one cache's id.
+type recentKey struct {
 	cache string
 	id    int
 }
@@ -139,7 +139,7 @@ func (c *MissCompute) fromRecent(cache string, ids []int, out map[int]jspack.Obj
 	defer c.recentMu.Unlock()
 	var todo []int
 	for _, id := range ids {
-		e, ok := c.recent[missKey{cache, id}]
+		e, ok := c.recent[recentKey{cache, id}]
 		if !ok || !now.Before(e.until) {
 			todo = append(todo, id)
 			continue
@@ -159,7 +159,7 @@ func (c *MissCompute) remember(cache string, ids []int, records map[int]jspack.O
 	c.recentMu.Lock()
 	defer c.recentMu.Unlock()
 	if c.recent == nil {
-		c.recent = map[missKey]recentEntry{}
+		c.recent = map[recentKey]recentEntry{}
 	}
 	if len(c.recent)+len(ids) > recentMax {
 		for k, e := range c.recent {
@@ -169,11 +169,11 @@ func (c *MissCompute) remember(cache string, ids []int, records map[int]jspack.O
 		}
 	}
 	for _, id := range ids {
-		if _, held := c.recent[missKey{cache, id}]; !held && len(c.recent) >= recentMax {
+		if _, held := c.recent[recentKey{cache, id}]; !held && len(c.recent) >= recentMax {
 			continue
 		}
 		rec, found := records[id]
-		c.recent[missKey{cache, id}] = recentEntry{rec: rec, found: found, until: until}
+		c.recent[recentKey{cache, id}] = recentEntry{rec: rec, found: found, until: until}
 	}
 }
 
