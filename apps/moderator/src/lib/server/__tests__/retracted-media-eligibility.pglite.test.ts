@@ -24,8 +24,10 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../blocked-for-patterns', () => ({ blockedForPatterns: () => null }));
+const insertModActivity = vi.hoisted(() => vi.fn(async (_row: Record<string, unknown>) => {}));
+vi.mock('../mod-activity', () => ({ insertModActivity }));
 
-const { getRetractedMedia } = await import('../retracted-media');
+const { getRetractedMedia, recordRetractedView } = await import('../retracted-media');
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -93,5 +95,18 @@ describe('retracted media eligibility', () => {
   it('never serves held media, an unblocked image, an evidence-held one or a missing id', async () => {
     for (const id of [4, 5, 6, 999])
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
+  });
+});
+
+describe('recordRetractedView', () => {
+  // The main app's shown record looks for exactly this activity on the moderator's serve row.
+  it("writes the moderator's serve row under the retracted-media activity", async () => {
+    await recordRetractedView(42, 7);
+    expect(insertModActivity).toHaveBeenCalledWith({
+      userId: 42,
+      entityType: 'image',
+      entityId: 7,
+      activity: 'retractedMedia:view',
+    });
   });
 });

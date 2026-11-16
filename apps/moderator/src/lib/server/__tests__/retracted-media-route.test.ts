@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { retractedMediaUrl } from '$lib/held-media';
 
 /**
  * `/api/retracted-media/[imageId]`: a blocked image from storage for a moderator. Eligibility is
@@ -133,5 +135,17 @@ describe('/api/retracted-media', () => {
     );
     expect((await call()).status).toBe(413);
     expect(recordRetractedView).not.toHaveBeenCalled();
+  });
+});
+
+describe('retractedMediaUrl', () => {
+  // The queue tiles build this url by hand; a moved route would leave every fallback a 404.
+  it('names this route', () => {
+    expect(retractedMediaUrl(7)).toBe('/api/retracted-media/7');
+    const route = new URL(
+      '../../../routes/api/retracted-media/[imageId]/+server.ts',
+      import.meta.url
+    );
+    expect(existsSync(route)).toBe(true);
   });
 });

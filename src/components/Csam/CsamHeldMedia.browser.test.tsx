@@ -69,11 +69,29 @@ describe('CsamHeldMedia', () => {
   test('loads a blocked image that is not held from the retracted-media route, never the CDN', async () => {
     probeAnswers(404, { 'x-held-media': 'not-held' });
     const blocked = { ...image, ingestion: 'Blocked' } as ModerationImageModel;
+    // Every src an <img> is given, in order: the transient retracted state is gone by the time the
+    // error tile shows, so it is read from the record, not the DOM.
+    const srcs: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const r of records) {
+        const nodes = r.type === 'attributes' ? [r.target] : [...r.addedNodes];
+        for (const node of nodes)
+          if (node instanceof HTMLImageElement) srcs.push(node.getAttribute('src') ?? '');
+      }
+    });
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['src'],
+    });
     renderWithProviders(<CsamHeldMedia image={blocked} onClick={() => undefined} />);
     await expect
       .element(page.getByText('Could not load this file.', { exact: false }))
       .toBeVisible();
+    observer.disconnect();
     expect(page.getByTestId('cdn-media').query()).toBeNull();
+    expect([...new Set(srcs)]).toEqual(['/api/mod/held-media/41', '/api/mod/retracted-media/41']);
     // Only the held-media probe: the retracted route is not probed, its own failure is final.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
