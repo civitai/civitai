@@ -275,9 +275,8 @@ jobs:
         run: go mod verify
 
   # Each fuzz target for a fixed number of executions, one at a time (`-fuzz` takes one target in one
-  # package). A fixed count rather than a fixed time: a time budget makes the engine stop on a
-  # deadline, which it can report as a failure ("context deadline exceeded") with no crasher, and it
-  # made the amount of fuzzing depend on the runner's speed. Their seed corpora (testdata/fuzz/<Target>
+  # package). A fixed count, not a time budget: -fuzztime in seconds can end in a "context deadline
+  # exceeded" failure with no crasher, and makes coverage depend on runner speed. Their seed corpora (testdata/fuzz/<Target>
   # in each package, plus the f.Add seeds) also run in the plain `go test` of job `test`. A crasher is
   # written to the package's testdata/fuzz/<Target>/ and uploaded; commit it as a regression seed with
   # the fix.
@@ -296,10 +295,9 @@ jobs:
       FUZZ_MINIMIZE: 100x
       # <package dir>:<target>:<executions>. The first step fails when this list and the Fuzz functions
       # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
-      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). Each count is about half
-      # the median final `execs` the target reached in 20 s over 12 green runs of the earlier
-      # time-based job on shared runners. The lowest of those counts were about half the median, so
-      # a slow runner takes about the old 20 s per target and a typical one less.
+      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). Counts are sized for
+      # roughly 20 s per target on a shared runner; re-measure from the log of a green run before
+      # changing one.
       FUZZ_TARGETS: >-
         internal/auth:FuzzTokenFromCookieHeader:170000
         internal/auth:FuzzVerify:95000
