@@ -484,6 +484,7 @@ describe('entity image writers', () => {
     beforeEach(() => {
       dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(linked as never);
     });
+    afterEach(() => dbMock.dbWrite.imageConnection.findMany.mockReset());
 
     it('keeps the images above, mixed past, or unrated under the editor’s cap', async () => {
       await saveKeepingOnly(sfwBrowsingLevelsFlag);
