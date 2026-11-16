@@ -223,7 +223,7 @@ describe('updateCrucible — once running', () => {
 });
 
 describe('updateCrucible — a moderator fixing a running crucible', () => {
-  const MOD = 1;
+  const MOD = 77;
   const queryRaw = dbMock.dbWrite.$queryRaw;
   const executeRaw = dbMock.dbWrite.$executeRaw;
   /** The entry-cap check reads the row lock, then the live entries. */
@@ -245,28 +245,74 @@ describe('updateCrucible — a moderator fixing a running crucible', () => {
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
+  it('checks a raise under the lock too, since the cap it read may be stale', async () => {
+    // Another edit already raised it to 50 and 20 entries came in; this read still shows 10.
+    liveEntries(20, 2);
+
+    await expect(edit({ maxTotalEntries: 12 }, MOD, true)).rejects.toThrow(
+      /can't go below the 20 entries already in/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('removes the entry cap', async () => {
     await edit({ maxTotalEntries: null }, MOD, true);
     expect(written()).toMatchObject({ maxTotalEntries: null });
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 
   it('records the edit as moderator activity', async () => {
     await edit({ maxTotalEntries: 50 }, MOD, true);
 
     expect(modActivity()).toHaveLength(1);
-    expect(modActivity()[0]).toEqual(
-      expect.arrayContaining([MOD, 'crucible', 'updateSettings', 1])
-    );
+    expect(modActivity()[0].slice(1)).toEqual([MOD, 'crucible', 'updateSettings', [1]]);
   });
 
-  it('lowers the cap to exactly the live entries, read under the row lock', async () => {
-    liveEntries(6, 2);
+  it('records no moderator activity for a presentation-only edit', async () => {
+    await edit({ name: 'New name' }, MOD, true);
+    expect(modActivity()).toHaveLength(0);
+  });
+
+  it('keeps the edit when the activity row fails to write', async () => {
+    executeRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (strings.join('?').includes('"ModActivity"')) throw new Error('db blip');
+      return 0;
+    });
+
+    await expect(edit({ maxTotalEntries: 50 }, MOD, true)).resolves.toBeDefined();
+    expect(written()).toMatchObject({ maxTotalEntries: 50 });
+  });
+
+  it('lowers the cap to exactly the live entries, reading and writing inside one transaction', async () => {
+    const tx = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ total: 6, perUser: 2 }]),
+      crucible: { update: vi.fn(async ({ data }: { data: object }) => ({ id: 1, ...data })) },
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (run: (client: unknown) => unknown) =>
+      run(tx)
+    );
 
     await edit({ maxTotalEntries: 6 }, MOD, true);
 
-    expect(written()).toMatchObject({ maxTotalEntries: 6 });
-    expect(sql(queryRaw.mock.calls[0])).toMatch(/FOR UPDATE/);
-    expect(queryRaw.mock.invocationCallOrder[1]).toBeLessThan(update.mock.invocationCallOrder[0]);
+    expect(sql(tx.$queryRaw.mock.calls[0])).toMatch(/FOR UPDATE/);
+    expect(tx.crucible.update.mock.calls[0][0].data).toMatchObject({ maxTotalEntries: 6 });
+    expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.crucible.update.mock.invocationCallOrder[0]
+    );
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('lowers entries per user to exactly what one entrant already has', async () => {
+    findUnique.mockResolvedValue(crucible({ maxTotalEntries: 10, entryLimit: 4 }));
+    liveEntries(5, 3);
+
+    await edit({ entryLimit: 3 }, MOD, true);
+
+    expect(written()).toMatchObject({ entryLimit: 3 });
   });
 
   it('refuses a cap below the entries already in, naming the count', async () => {

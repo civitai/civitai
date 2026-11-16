@@ -21,6 +21,7 @@ import {
   CRUCIBLE_MAX_TOTAL_ENTRIES,
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
+  CRUCIBLE_MODERATOR_RUNNING_FIELDS,
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
@@ -393,15 +394,9 @@ export const CRUCIBLE_EDITABLE_WHILE_ACTIVE = [
   'heroImage',
 ] as const satisfies readonly CrucibleEditableField[];
 
-/** The server's MODERATOR_RUNNING_FIELDS, on top of the presentation. */
-export const CRUCIBLE_EDITABLE_BY_MODERATOR_WHILE_RUNNING = [
+const CRUCIBLE_EDITABLE_BY_MODERATOR_WHILE_RUNNING = [
   ...CRUCIBLE_EDITABLE_WHILE_ACTIVE,
-  'maxTotalEntries',
-  'entryLimit',
-  'entryWarningPercent',
-  'entryCutoffPercent',
-  'allowedResources',
-  'allowedBaseModels',
+  ...CRUCIBLE_MODERATOR_RUNNING_FIELDS,
 ] as const satisfies readonly CrucibleEditableField[];
 
 export function getCrucibleEditableFields({

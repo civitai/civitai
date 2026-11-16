@@ -22,6 +22,20 @@ export const CRUCIBLE_ENTRY_WARNING_PERCENT = { min: 10, max: 50, default: 20 } 
 export const CRUCIBLE_ENTRY_CUTOFF_PERCENT = { min: 0, max: 40, default: 10 } as const;
 export const CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE =
   'Entries must close later than the late-entry warning starts';
+/**
+ * What a moderator can fix on a running crucible besides its name, description and images: none
+ * of these moves Buzz or prices the setup fee, and the server checks each so no entry already in
+ * becomes invalid. Duration is not here: it prices the setup fee, and every entry's post is
+ * scheduled to publish at the current end.
+ */
+export const CRUCIBLE_MODERATOR_RUNNING_FIELDS = [
+  'maxTotalEntries',
+  'entryLimit',
+  'entryWarningPercent',
+  'entryCutoffPercent',
+  'allowedResources',
+  'allowedBaseModels',
+] as const;
 export const CRUCIBLE_ENTRIES_CLOSED_MESSAGE =
   'Entries are closed. This crucible stops taking entries near the end so every entry has time to be judged.';
 

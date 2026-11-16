@@ -1245,7 +1245,7 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
         dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[capRead]
       );
       expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
-      expect(refundMultiAccountTransaction).toHaveBeenCalled();
+      expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     }
   );
 

@@ -83,6 +83,7 @@ import {
   CRUCIBLE_ENTRY_WARNING_PERCENT,
   CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
   CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+  CRUCIBLE_MODERATOR_RUNNING_FIELDS,
   CRUCIBLE_TAKEDOWN_CREATOR_FUNDS,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
@@ -1024,19 +1025,6 @@ async function assertRequiredModelsAllowContentLevel(versionIds: number[], nsfwL
 }
 
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
-/**
- * What a moderator can fix on a running crucible: none of these moves Buzz or prices the setup
- * fee, and each is checked below so no entry already in becomes invalid. Duration is not here:
- * it prices the setup fee, and every entry's post is scheduled to publish at the current end.
- */
-const MODERATOR_RUNNING_FIELDS = [
-  'maxTotalEntries',
-  'entryLimit',
-  'entryWarningPercent',
-  'entryCutoffPercent',
-  'allowedResources',
-  'allowedBaseModels',
-] as const;
 const CRUCIBLE_FIELD_LABELS: Record<string, string> = {
   nsfwLevel: 'content levels',
   contentType: 'content type',
@@ -1094,7 +1082,7 @@ async function assertEntryCapsHoldLiveEntries(
 /**
  * An upcoming crucible has no entries, so everything can change and any cost difference is
  * settled. Once running, the creator can change only the presentation; a moderator (their own
- * crucible included) can also fix MODERATOR_RUNNING_FIELDS, never anything that moves Buzz.
+ * crucible included) can also fix CRUCIBLE_MODERATOR_RUNNING_FIELDS, never anything that moves Buzz.
  */
 export const updateCrucible = async ({
   id,
@@ -1157,7 +1145,7 @@ export const updateCrucible = async ({
   );
   if (!canEditSettings) {
     const allowed: readonly string[] = isModeratorFixingRunning
-      ? [...PRESENTATION_FIELDS, ...MODERATOR_RUNNING_FIELDS]
+      ? [...PRESENTATION_FIELDS, ...CRUCIBLE_MODERATOR_RUNNING_FIELDS]
       : isModerator && !hasStarted
       ? [...PRESENTATION_FIELDS, 'nsfwLevel']
       : PRESENTATION_FIELDS;
@@ -1212,7 +1200,7 @@ export const updateCrucible = async ({
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
   assertCrucibleSettings(next);
   const changedSettings = isModeratorFixingRunning
-    ? MODERATOR_RUNNING_FIELDS.filter((key) => provided.includes(key))
+    ? CRUCIBLE_MODERATOR_RUNNING_FIELDS.filter((key) => provided.includes(key))
     : [];
   if (
     changedSettings.includes('allowedResources') &&
@@ -1315,17 +1303,13 @@ export const updateCrucible = async ({
         ])
       )
     );
-  const lowersEntryCaps = {
-    maxTotalEntries:
-      changedSettings.includes('maxTotalEntries') &&
-      next.maxTotalEntries != null &&
-      (current.maxTotalEntries == null || next.maxTotalEntries < current.maxTotalEntries)
-        ? next.maxTotalEntries
-        : undefined,
-    entryLimit:
-      changedSettings.includes('entryLimit') && next.entryLimit < current.entryLimit
-        ? next.entryLimit
-        : undefined,
+  // Every cap the moderator sets is checked under the lock, raises included: the cap read above
+  // is a replica's and may predate another edit, so it can't tell a raise from a cut.
+  const entryCaps = {
+    maxTotalEntries: changedSettings.includes('maxTotalEntries')
+      ? next.maxTotalEntries ?? undefined
+      : undefined,
+    entryLimit: changedSettings.includes('entryLimit') ? next.entryLimit : undefined,
   };
 
   let settlement: Awaited<ReturnType<typeof settleCrucibleCostChange>> = null;
@@ -1431,9 +1415,9 @@ export const updateCrucible = async ({
             data.status = CrucibleStatus.Pending;
             return write();
           })
-        : lowersEntryCaps.maxTotalEntries !== undefined || lowersEntryCaps.entryLimit !== undefined
+        : entryCaps.maxTotalEntries !== undefined || entryCaps.entryLimit !== undefined
         ? await dbWrite.$transaction(async (tx) => {
-            await assertEntryCapsHoldLiveEntries(tx, id, lowersEntryCaps);
+            await assertEntryCapsHoldLiveEntries(tx, id, entryCaps);
             return write({}, tx);
           })
         : await write();
