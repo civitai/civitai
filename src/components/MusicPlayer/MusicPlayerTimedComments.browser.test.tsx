@@ -390,6 +390,35 @@ describe('a cluster of nearby comments', () => {
     await expect.poll(listOpen).toBeNull();
   });
 
+  for (const scheme of ['light', 'dark'])
+    test(`its list's times read at WCAG AA in ${scheme} mode`, async () => {
+      try {
+        await renderBar();
+        // After the render: the provider sets the scheme on mount.
+        document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+        await expect.poll(() => cluster(1)).toBeTruthy();
+        cluster(1).focus();
+        await expect.poll(listOpen).toBeTruthy();
+        const rgb = (css: string) => css.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+        const lum = (c: number[]) =>
+          c
+            .map((v) => v / 255)
+            .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+            .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+        const time = [...listOpen()!.querySelectorAll('span')].find((el) => el.textContent === '0:50')!;
+        const [a, b] = [
+          lum(rgb(getComputedStyle(time).color)),
+          lum(rgb(getComputedStyle(listOpen()!).backgroundColor)),
+        ];
+        // The list is on the scheme's own surface: near white, or dark-5.
+        if (scheme === 'dark') expect(b).toBeLessThan(0.05);
+        else expect(b).toBeGreaterThan(0.95);
+        expect((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)).toBeGreaterThanOrEqual(4.5);
+      } finally {
+        document.documentElement.removeAttribute('data-mantine-color-scheme');
+      }
+    });
+
   test('focusing it lists its comments too', async () => {
     await renderBar();
     await expect.poll(() => cluster(1)).toBeTruthy();

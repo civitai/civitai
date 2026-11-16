@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+// The real cascade, for the chip's colours in each scheme.
+import '../../../../../test/cascade-layer-order.css';
+import '@mantine/core/styles.layer.css';
+import '~/styles/globals.css';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../../test/component-setup';
 import type * as MusicPlayerAudio from '~/components/MusicPlayer/MusicPlayerAudio';
@@ -137,6 +141,35 @@ describe('a timed comment’s time in the list', () => {
     expect(player().playback?.startAtSec).toBe(42);
     expect(player().list.map((t) => t.id)).toEqual([palm.id]);
     expect(player().listName).toBe('neonwave');
+  });
+
+  describe('reads at WCAG AA on the comment card', () => {
+    afterEach(() => document.documentElement.removeAttribute('data-mantine-color-scheme'));
+    const rgb = (css: string) => css.match(/[\d.]+/g)!.map(Number);
+    const lum = ([r, g, b]: number[]) =>
+      [r, g, b]
+        .map((c) => c / 255)
+        .map((s) => (s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+    // The chip's tint over the card (Mantine Card: white, dark-6), as the eye sees it.
+    const over = ([r, g, b, a = 1]: number[], card: number[]) =>
+      [r, g, b].map((c, i) => c * a + card[i] * (1 - a));
+
+    for (const [scheme, card] of [
+      ['light', [255, 255, 255]],
+      ['dark', [0x25, 0x26, 0x2b]],
+    ] as const)
+      test(`in ${scheme} mode`, async () => {
+        await renderChip();
+        // After the render: the provider sets the scheme on mount.
+        document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+        const chip = page.getByRole('button', { name: 'Play from 0:42' }).element();
+        const style = getComputedStyle(chip);
+        const text = lum(rgb(style.color));
+        const background = lum(over(rgb(style.backgroundColor), [...card]));
+        const ratio = (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+        expect(ratio).toBeGreaterThanOrEqual(4.5);
+      });
   });
 
   test('is not shown outside a song’s comments', async () => {
