@@ -162,6 +162,15 @@ export async function placeEvidenceHold(
   return { id, created: true };
 }
 
+/** Whether `releaseEvidenceHold` would accept this open hold, for a page deciding what to offer. */
+export const isReleasableHold = (
+  hold: { role: string; reason: string; extendedUntil: Date | null },
+  now: Date
+) =>
+  hold.role === 'manual' &&
+  hold.reason !== GENERATOR_EVIDENCE_HOLD_REASON &&
+  (!hold.extendedUntil || hold.extendedUntil <= now);
+
 /**
  * Releases one open manual hold. False when there is no such hold: unknown, already released, a
  * report hold, the generator-evidence hold, or a hold under an extension still in force. Those are

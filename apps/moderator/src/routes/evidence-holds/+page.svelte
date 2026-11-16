@@ -12,7 +12,6 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
-  import { GENERATOR_EVIDENCE_HOLD_REASON } from '@civitai/db-queries/evidence-hold';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { csamReportUrl } from '$lib/entity-url';
   import { dateTime, LINK_CLASS, plural } from '$lib/format';
@@ -22,7 +21,7 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   // The grant wrapper widens ActionData to `{}`; these are the shapes the two actions return.
-  type HoldResult = { scope?: 'place' | 'release' | 'denied'; error?: string; holdId?: number; created?: boolean };
+  type HoldResult = { scope?: 'place' | 'release' | 'denied'; error?: string; holdId?: number; created?: boolean; username?: string | null };
   const result = $derived(form as HoldResult | null);
   const formError = $derived(result?.error ?? null);
 
@@ -30,12 +29,6 @@
 
   const daysLeft = (end: Date) =>
     Math.max(0, Math.ceil((end.getTime() - data.asOf) / DAY_MS));
-
-  // Mirrors what releaseEvidenceHold accepts, so no row offers a release the server refuses.
-  const releasable = (hold: { role: string; reason: string; extendedUntil: Date | null }) =>
-    hold.role === 'manual' &&
-    hold.reason !== GENERATOR_EVIDENCE_HOLD_REASON &&
-    (!hold.extendedUntil || hold.extendedUntil.getTime() <= data.asOf);
 
   const rowEnd = (hold: { releaseAt: Date | null; extendedUntil: Date | null }) => {
     if (!hold.releaseAt) return null;
@@ -93,8 +86,8 @@
           {formError}
         {:else if result?.holdId}
           {result.created
-            ? `Hold #${result.holdId} placed.`
-            : `Already held for that reason: hold #${result.holdId}.`}
+            ? `Hold #${result.holdId} placed on ${result.username ?? 'that account'}.`
+            : `${result.username ?? 'That account'} is already held for that reason: hold #${result.holdId}.`}
         {/if}
       </p>
     {/if}
@@ -175,7 +168,7 @@
                         {hold.extensionReference ?? '—'}
                       </span>
                     {/if}
-                    {#if releasable(hold)}
+                    {#if hold.releasable}
                     <form method="POST" action="?/release" use:enhance class="flex items-center gap-1">
                       <input type="hidden" name="holdId" value={hold.id} />
                       <Input

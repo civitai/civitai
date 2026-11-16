@@ -4,6 +4,7 @@ import {
   countEvidenceHoldsEnding,
   EVIDENCE_HOLD_ENDING_DAYS,
   GENERATOR_EVIDENCE_HOLD_REASON,
+  isReleasableHold,
   listEvidenceHeldOwners,
   placeEvidenceHold,
   releaseEvidenceHold,
@@ -34,8 +35,12 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     limit: PER_PAGE,
     offset,
   });
+  const now = new Date();
   return {
-    items,
+    items: items.map((owner) => ({
+      ...owner,
+      holds: owner.holds.map((hold) => ({ ...hold, releasable: isReleasableHold(hold, now) })),
+    })),
     hasMore,
     page,
     endingOnly,
@@ -61,7 +66,7 @@ const placeSchema = z.object({
   releaseAt: z
     .union([z.literal(''), z.string().date('Use a date like 2026-12-31.')])
     .optional()
-    // Held through the chosen day: the hold ends at the start of the next one, UTC. Erring late keeps evidence.
+    // Held through the chosen day.
     .transform((v) => (v ? new Date(Date.parse(`${v}T00:00:00Z`) + 24 * 60 * 60 * 1000) : null))
     .refine((d) => d === null || d.getTime() > Date.now(), 'The end date must be in the future.'),
 });
@@ -75,6 +80,12 @@ export const actions: Actions = {
   place: requiresGrant('csam.report.file', async ({ request, locals }) => {
     const input = parseForm(placeSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { scope: 'place', error: input });
+    const user = await dbRead
+      .selectFrom('User')
+      .select('username')
+      .where('id', '=', input.userId)
+      .executeTakeFirst();
+    if (!user) return fail(404, { scope: 'place', error: `No user with id ${input.userId}.` });
     const { id, created } = await placeEvidenceHold(dbWrite, {
       ...input,
       role: 'manual',
@@ -87,7 +98,7 @@ export const actions: Actions = {
         entityId: id,
         activity: 'placeEvidenceHold',
       });
-    return { scope: 'place', holdId: id, created };
+    return { scope: 'place', holdId: id, created, username: user.username };
   }),
   release: requiresGrant('csam.report.file', async ({ request, locals }) => {
     const input = parseForm(releaseSchema, await request.formData());
