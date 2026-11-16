@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTicketWriter, type WriteDeps } from '../tickets/write';
 import type { WriteResult } from '../freshdesk-write.service';
 
-const FIELDS = { tags: ['a', 'sent-to-support'], group_id: 154000246097 };
+const FIELDS = { tags: ['a', 'sent-to-support'], group_id: 990000000003 };
 const ok: WriteResult = { status: 'ok' };
 const boom: WriteResult = { status: 'error', httpStatus: 500, certain: false, message: 'down' };
 const refused: WriteResult = {

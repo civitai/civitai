@@ -10,7 +10,8 @@ const MODES = new Set(['off', 'shadow', 'enforce']);
 export type GuardStatus = {
   /** Mode and artifact version; `unknown` when unreadable, which no cached block is keyed on. */
   key: string;
-  /** Rules whose audit rows keep no result ids; `null` when unreadable or not sent. */
+  /** Rules whose audit rows keep no result ids; `null` (every rule withholds) when unreadable, not
+   * sent or empty: an empty list from a healthy service is read as misconfigured, not as "none". */
   withholdResults: ReadonlySet<string> | null;
 };
 

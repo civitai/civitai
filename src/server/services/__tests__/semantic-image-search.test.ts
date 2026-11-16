@@ -38,6 +38,7 @@ const h = vi.hoisted(() => {
 vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   recordSemanticAudit: h.recordAudit,
+  recordRefusedSemanticAudit: h.recordAudit,
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
@@ -978,4 +979,5 @@ describeSemanticAuditContract({
   recorded: h.recordAudit,
   narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
   refuse: () => h.includesInappropriate.mockReturnValue('poi'),
+  ownCache: true,
 });

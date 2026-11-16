@@ -15,6 +15,9 @@
     stampMature,
     defaultRunParams,
     isTrainable,
+    expandedCount,
+    repeatsOf,
+    selectionTakesRepeats,
     labelOptions,
     labelString,
     runCard,
@@ -106,9 +109,26 @@
   // typed before switching to an edit model must not ride along.
   const runTrigger = $derived(trainsPairs ? '' : trigger);
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
+  const takesRepeats = $derived(!!selection && selectionTakesRepeats(selection));
+  // Counts every repeat copy: the "seen ~N×" hint and the quote (Kohya prices by item count) must
+  // see what the submit sends.
   const trainableCount = $derived(
-    trainsPairs ? readyPairs.length : images.filter(isTrainable).length
+    trainsPairs
+      ? readyPairs.length
+      : takesRepeats
+      ? expandedCount(images)
+      : images.filter(isTrainable).length
   );
+  const repeated = $derived.by(() => {
+    if (trainsPairs || !takesRepeats) return undefined;
+    const imgs = images.filter((i) => isTrainable(i) && repeatsOf(i) > 1);
+    if (imgs.length === 0) return undefined;
+    return {
+      images: imgs.length,
+      extra: imgs.reduce((sum, i) => sum + repeatsOf(i) - 1, 0),
+      max: Math.max(...imgs.map(repeatsOf)),
+    };
+  });
   const matureCount = $derived(
     trainsPairs
       ? readyPairs.filter(
@@ -455,6 +475,7 @@
       bind:openAdvanced
       bind:acknowledgedAdvanced
       imageCount={trainableCount}
+      {repeated}
       {trainsPairs}
       matureCount={reviewMatureCount}
       readiness={readinessView}

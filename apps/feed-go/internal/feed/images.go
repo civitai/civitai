@@ -11,7 +11,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -53,6 +52,9 @@ type RawImage struct {
 	Poi               bool            `json:"poi"`
 	AcceptableMinor   bool            `json:"acceptableMinor"`
 	CursorID          int             `json:"cursorId"`
+	// CursorNull: the cursor column was NULL (only an index-ordered query's, ImagesQuery.IndexOrder,
+	// can be: `i."index"` is nullable).
+	CursorNull bool `json:"cursorNull,omitempty"`
 }
 
 // Querier runs the page query.
@@ -68,6 +70,8 @@ type QueryCache struct {
 	Redis   redis.UniversalClient
 	Prefix  string // CACHE_KEY_NAMESPACE prefix; empty in production
 	Enabled bool   // IMAGE_QUERY_CACHING
+	// ReadOnly reads entries but never writes one (the Go-first probe: it makes no writes).
+	ReadOnly bool
 }
 
 // Key is the cache key for a built query: sha256 over the SQL text and its bound values.
@@ -117,7 +121,7 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 		}
 		return nil, err
 	}
-	if useCache {
+	if useCache && !cache.ReadOnly {
 		if raw, err := json.Marshal(out); err == nil {
 			// One pipelined round trip for the entry and its bust-tag memberships (a cluster client
 			// splits it per node). Fail open: a cache write error never fails the request.
@@ -139,14 +143,20 @@ func scanRows(rows pgx.Rows) ([]RawImage, error) {
 	for rows.Next() {
 		var r RawImage
 		var remix, meta []byte
+		var cursorID *int
 		if err := rows.Scan(
 			&r.ID, &r.Name, &r.URL, &r.NsfwLevel, &r.Width, &r.Height, &r.Hash, &r.HideMeta, &r.HasMeta,
 			&r.HasPositivePrompt, &r.OnSite, &remix, &r.CreatedAt, &r.SortAt, &r.MimeType, &r.Type, &meta,
 			&r.Ingestion, &r.BlockedFor, &r.ScannedAt, &r.NeedsReview, &r.UserID, &r.PostID, &r.PostTitle,
 			&r.Index, &r.PublishedAt, &r.UnpublishedAt, &r.ModelVersionID, &r.Model3DID, &r.Availability,
-			&r.Minor, &r.Poi, &r.AcceptableMinor, &r.CursorID,
+			&r.Minor, &r.Poi, &r.AcceptableMinor, &cursorID,
 		); err != nil {
 			return nil, err
+		}
+		if cursorID != nil {
+			r.CursorID = *cursorID
+		} else {
+			r.CursorNull = true
 		}
 		if remix != nil {
 			r.RemixOfID = json.RawMessage(remix)
@@ -187,15 +197,8 @@ type Viewer struct {
 
 // Hydrator is the hydration surface FetchImages needs (implemented by *hydrate.Sources).
 type Hydrator interface {
-	BasicUsers(ctx context.Context, ids []int) (map[int]hydrate.BasicUser, error)
-	UserCosmetics(ctx context.Context, ids []int) (map[int][]any, error)
-	ProfilePictures(ctx context.Context, ids []int) (map[int]superjson.Object, error)
-	ImageFrames(ctx context.Context, ids []int) (map[int]superjson.Object, error)
-	Thumbnails(ctx context.Context, ids []int) (map[int]hydrate.Thumbnail, error)
-	ImageMetrics(ctx context.Context, ids []int) (map[int]hydrate.Metrics, error)
-	TagIDs(ctx context.Context, ids []int) (map[int]any, error)
-	EventDecorations(ctx context.Context, ids []int, visible map[string]bool) (map[int]superjson.Object, error)
-	Reactions(ctx context.Context, ids []int, viewerID int) (map[int][]any, error)
+	// Page is every cache-backed lookup of a page, its cache reads in one pipeline per dependency stage.
+	Page(ctx context.Context, req hydrate.PageRequest) (*hydrate.Page, error)
 	VisibleModel3DIDs(ctx context.Context, ids []int, viewerID int, isModerator bool) (map[int]bool, error)
 }
 
@@ -213,35 +216,41 @@ type Hydrated struct {
 	VisibleModel3D map[int]bool
 }
 
-// Hydrate runs the parallel fetch of getAllImagesUncaptured for include = [cosmetics, tagIds,
-// profilePictures] (what the gallery handler always passes).
+// Hydrate runs the hydration of getAllImagesUncaptured for include = [cosmetics, tagIds,
+// profilePictures] (what the gallery handler always passes): every lookup of the page in one
+// Hydrator.Page call, then the Model3D visibility of the linked models.
 func Hydrate(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool) (*Hydrated, error) {
-	imageIDs := make([]int, 0, len(rows))
-	userIDs := make([]int, 0, len(rows))
-	var videoIDs, model3dIDs []int
+	return hydrateRows(ctx, h, rows, viewer, visibleEvents, true)
+}
+
+// hydrateRows is Hydrate; profilePictures is whether the include list holds 'profilePictures'
+// (without it every creator's profilePicture is null, and its cache is not read).
+func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, profilePictures bool) (*Hydrated, error) {
+	req := hydrate.PageRequest{
+		UserIDs:           make([]int, 0, len(rows)),
+		ImageIDs:          make([]int, 0, len(rows)),
+		VisibleEvents:     visibleEvents,
+		ViewerID:          viewer.ID,
+		NoProfilePictures: !profilePictures,
+	}
+	var model3dIDs []int
 	for _, r := range rows {
-		imageIDs = append(imageIDs, r.ID)
-		userIDs = append(userIDs, r.UserID)
+		req.ImageIDs = append(req.ImageIDs, r.ID)
+		req.UserIDs = append(req.UserIDs, r.UserID)
 		if r.Type == "video" {
-			videoIDs = append(videoIDs, r.ID)
+			req.VideoIDs = append(req.VideoIDs, r.ID)
 		}
 		if r.Model3DID != nil {
 			model3dIDs = append(model3dIDs, *r.Model3DID)
 		}
 	}
-	out := &Hydrated{}
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() (err error) { out.Basic, err = h.BasicUsers(gctx, userIDs); return })
-	g.Go(func() (err error) { out.UserCosmetics, err = h.UserCosmetics(gctx, userIDs); return })
-	g.Go(func() (err error) { out.ProfilePics, err = h.ProfilePictures(gctx, userIDs); return })
-	g.Go(func() (err error) { out.Frames, err = h.ImageFrames(gctx, imageIDs); return })
-	g.Go(func() (err error) { out.Thumbs, err = h.Thumbnails(gctx, videoIDs); return })
-	g.Go(func() (err error) { out.Metrics, err = h.ImageMetrics(gctx, imageIDs); return })
-	g.Go(func() (err error) { out.TagIDs, err = h.TagIDs(gctx, imageIDs); return })
-	g.Go(func() (err error) { out.Decorations, err = h.EventDecorations(gctx, imageIDs, visibleEvents); return })
-	g.Go(func() (err error) { out.Reactions, err = h.Reactions(gctx, imageIDs, viewer.ID); return })
-	if err := g.Wait(); err != nil {
+	p, err := h.Page(ctx, req)
+	if err != nil {
 		return nil, err
+	}
+	out := &Hydrated{
+		Basic: p.Basic, UserCosmetics: p.UserCosmetics, ProfilePics: p.ProfilePics, Frames: p.Frames,
+		Thumbs: p.Thumbs, Metrics: p.Metrics, TagIDs: p.TagIDs, Decorations: p.Decorations, Reactions: p.Reactions,
 	}
 	if len(model3dIDs) > 0 {
 		vis, err := h.VisibleModel3DIDs(ctx, model3dIDs, viewer.ID, viewer.IsModerator)
@@ -302,12 +311,12 @@ func BuildImages(rows []RawImage, hy *Hydrated, viewer Viewer, now time.Time) []
 				continue
 			}
 		}
-		out = append(out, buildImage(r, hy, viewer))
+		out = append(out, buildImage(r, hy))
 	}
 	return out
 }
 
-func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
+func buildImage(r RawImage, hy *Hydrated) Image {
 	thumb, hasThumb := hy.Thumbs[r.ID]
 	nsfw := r.NsfwLevel
 	if hasThumb && thumb.NsfwLevel > nsfw {

@@ -22,7 +22,6 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { hasBlockMarker } from '~/server/common/image-visibility';
-import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   bustContestCollectionItemsCache,
@@ -68,6 +67,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   readCollectionByIdViaKysely,
@@ -142,6 +142,7 @@ import { liveInviteWhere } from '~/server/services/collection-invite.utils';
 import {
   collectionItemCoversSql,
   getServableCoverCollectionIds,
+  isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
 import {
   assertImagesVisibleToViewer,
@@ -694,6 +695,14 @@ export const getUserCollectionsWithPermissions = async <
             id: {
               in: collectionImageIds,
             },
+          },
+          // The blocks collections route gates covers on these (`PublicCollectionImageFields`).
+          select: {
+            ...imageSelect,
+            poi: true,
+            minor: true,
+            acceptableMinor: true,
+            tosViolation: true,
           },
         })
       : [];
@@ -3921,21 +3930,6 @@ type CollectionImageRaw = {
   src: string | null;
 };
 
-/**
- * Whether a cover may be served at `browsingLevel`: rated within it, and never Blocked or a ToS
- * violation, whatever the level.
- */
-export function isCoverWithinBrowsingLevel(
-  image: { nsfwLevel?: number | null; tosViolation?: boolean | null },
-  browsingLevel: number
-) {
-  return (
-    !image.tosViolation &&
-    image.nsfwLevel !== NsfwLevel.Blocked &&
-    isRatingWithinCap(image.nsfwLevel, browsingLevel)
-  );
-}
-
 export const getCollectionCoverImages = async ({
   collectionIds,
   imagesPerCollection,
@@ -3972,6 +3966,8 @@ export const getCollectionCoverImages = async ({
           collectionIds,
           itemsPerCollection: imagesPerCollection,
           imageSql,
+          // The string is dropped below with an image above the viewer's level.
+          srcImageLevels: allBrowsingLevelsFlag,
         })}`
       : [];
   // An article's cover string carries no rating of its own: it is served only beside a cover

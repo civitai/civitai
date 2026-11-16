@@ -1,8 +1,11 @@
 # feed-go (apps/feed-go)
 
-A Go port of the tRPC procedure `image.getImagesAsPostsInfinite` (the model / Model3D gallery feed),
-built to measure CPU per request against the Node path on the same traffic. It answers the request
-shapes it has ported and proxies everything else to the Node app unchanged. **Read
+A Go port of the tRPC procedure `image.getImagesAsPostsInfinite` (the model / Model3D gallery feed)
+and, in shadow only, of the tRPC procedures `image.getInfinite` (the flat image feed) and `model.getAll`
+(the model browse feed) and the public
+REST endpoint `GET /api/v1/images`, built to measure CPU per
+request against the Node path on the same traffic. It answers the request shapes it has ported and
+proxies everything else to the Node app unchanged. **Read
 [DESIGN.md](DESIGN.md) first** — it covers scope, auth, wire format, routing, shadow comparison, the
 measurement plan, the parity gaps and deploy prerequisites.
 
@@ -17,6 +20,9 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 | `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz` | liveness / readiness |
 | | `GET /metrics` | Prometheus (`feed_go_*`, Go runtime, process CPU) |
 | | `POST /internal/shadow/image.getImagesAsPostsInfinite` | shadow comparison (DESIGN.md §7) |
+| | `POST /internal/shadow/api/v1/images` | shadow comparison of the REST endpoint (DESIGN.md §13); never served publicly |
+| | `POST /internal/shadow/image.getInfinite` | shadow comparison of `image.getInfinite` (DESIGN.md §14); never served publicly |
+| | `POST /internal/shadow/model.getAll` | shadow comparison of `model.getAll` (DESIGN.md §15); never served publicly |
 | | `GET /debug/pprof/…` | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2) |
 
 ## Run locally
@@ -30,11 +36,30 @@ set -a; . ./.env; set +a
 go run ./cmd/feed-go
 ```
 
-Tests run in CI (`feed-go vet + test + build`). Unit tests sit next to the code and need no services.
+Tests run in CI (`feed-go vet + test + build`). Unit tests sit next to the code and need no services
+(`internal/testkit` holds the in-memory Redis and `pgx.Rows` fakes); the golden tests compare whole
+answers with Node's for fixed inputs (`testdata/golden/`). The integration tier carries the
+`integration` build tag and runs only in CI, against a real Redis Cluster and Postgres
+(`testdata/integration/schema.sql`); under the tag a missing `FEED_GO_TEST_REDIS_CLUSTER` /
+`FEED_GO_TEST_PG_URL` fails the run.
 
 ## Config
 
 See `.env.example`. Variable names match the main app's where the value is the same thing. The
-`FEED_GO_*` flag mirrors default to ON; set each to its Flipt flag's real value (DESIGN.md §8). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
+`FEED_GO_*` flag mirrors default to ON (`FEED_GO_FRAME_CACHE_NEGATIVE` to off); set each to its Flipt flag's real value (DESIGN.md §8).
+Cache misses on user cosmetics, image frames and event decorations are computed with the Node
+lookup's own query (`FEED_GO_COMPUTE_MISSES`, default on) and written back only with
+`FEED_GO_CACHE_WRITEBACK=true` (default off; it then needs `DATABASE_URL`, the primary; DESIGN.md §3.1). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
 `FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
-falls back (`index-feed-unconfigured`).
+falls back (`index-feed-unconfigured`). The REST endpoint's shadow also needs
+`NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds
+`metadata.nextPage` as the production Node app does (`https://<host>`).
+
+Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `infinite` |
+`model-getall`), so parity and CPU per call read per endpoint (DESIGN.md §10, §13, §14, §15). The Node
+samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
+`feed-go-shadow-infinite` and `feed-go-shadow-model-getall` (both default off), sharing
+`FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
+are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
+label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
+`endpoint` would overwrite it.

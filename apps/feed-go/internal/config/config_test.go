@@ -90,6 +90,40 @@ func TestLoadFeedServiceMirrors(t *testing.T) {
 	}
 }
 
+// model.getAll's flag mirrors: unset, each is its flag's production value (on); each one is read from
+// its own variable, so turning one off moves that one alone.
+func TestLoadModelGetAllMirrors(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	vars := []string{"FEED_GO_BASE_MODEL_FEED_METRICS", "FEED_GO_MODEL_IMAGES_SLIM", "FEED_GO_GENERATION_COVERAGE_NEXT", "FEED_GO_GENERATION_LOADING_OPEN_TO_ALL"}
+	read := func(c *Config) [4]bool {
+		return [4]bool{c.BaseModelFeedMetrics, c.ModelImagesSlim, c.CoverageNext, c.LoadingOpenToAll}
+	}
+	for _, v := range vars {
+		t.Setenv(v, "")
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(c); got != [4]bool{true, true, true, true} {
+		t.Fatalf("defaults %v, want all on", got)
+	}
+	for i, v := range vars {
+		t.Setenv(v, "false")
+		if c, err = Load(); err != nil {
+			t.Fatal(err)
+		}
+		want := [4]bool{true, true, true, true}
+		want[i] = false
+		if got := read(c); got != want {
+			t.Fatalf("%s=false: %v, want %v", v, got, want)
+		}
+		t.Setenv(v, "")
+	}
+}
+
 func TestLoadPprofDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -119,5 +153,80 @@ func TestLoadModerationAccountID(t *testing.T) {
 		if c.ModerationAccountID != want {
 			t.Errorf("CIVITAI_MODERATION_USER_ID=%q -> %d, want %d", in, c.ModerationAccountID, want)
 		}
+	}
+}
+
+func TestLoadServingLimits(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	cases := []struct {
+		budget, concurrency, jwks, stale string
+		wantBudget                       time.Duration
+		wantConcurrency                  int
+		wantJWKS, wantStale              time.Duration
+	}{
+		{"", "", "", "", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
+		// The staleness default follows the refresh interval (3 ×); an explicit value wins.
+		{"2500", "12", "30000", "", 2500 * time.Millisecond, 12, 30 * time.Second, 90 * time.Second},
+		{"", "", "", "120000", 6 * time.Second, 4, 10 * time.Minute, 2 * time.Minute},
+		// Zero, negative or junk is the default, never an unbounded or zero budget.
+		{"0", "0", "0", "0", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
+		{"-1", "-3", "junk", "-5", 6 * time.Second, 4, 10 * time.Minute, 30 * time.Minute},
+	}
+	for _, c := range cases {
+		t.Setenv("FEED_GO_REQUEST_BUDGET_MS", c.budget)
+		t.Setenv("FEED_GO_COMPLETION_CONCURRENCY", c.concurrency)
+		t.Setenv("FEED_GO_JWKS_REFRESH_MS", c.jwks)
+		t.Setenv("FEED_GO_JWKS_MAX_STALENESS_MS", c.stale)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.JWKSMaxStaleness != c.wantStale {
+			t.Errorf("jwks=%q stale=%q -> staleness %v, want %v", c.jwks, c.stale, cfg.JWKSMaxStaleness, c.wantStale)
+		}
+		if cfg.RequestBudget != c.wantBudget || cfg.CompletionConcurrency != c.wantConcurrency || cfg.JWKSRefresh != c.wantJWKS {
+			t.Errorf("budget=%q concurrency=%q jwks=%q -> %v %d %v, want %v %d %v", c.budget, c.concurrency, c.jwks,
+				cfg.RequestBudget, cfg.CompletionConcurrency, cfg.JWKSRefresh, c.wantBudget, c.wantConcurrency, c.wantJWKS)
+		}
+	}
+}
+
+// The miss computation is on by default, write-back and the frame negative-cache mirror off; write-back
+// needs the primary (DATABASE_URL), which is read only then.
+func TestLoadCacheMissSettings(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_FRAME_CACHE_NEGATIVE", "DATABASE_URL"} {
+		t.Setenv(k, "")
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.ComputeMisses || c.CacheWriteBack || c.FrameCacheNegative || c.PrimaryDatabaseURL != "" {
+		t.Fatalf("defaults: compute %v, writeback %v, frame negative %v, primary %q; want true, false, false, unset",
+			c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	}
+	t.Setenv("DATABASE_URL", "x://primary")
+	if c, _ = Load(); c.PrimaryDatabaseURL != "" {
+		t.Fatalf("primary %q read with write-back off", c.PrimaryDatabaseURL)
+	}
+
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", "true")
+	t.Setenv("DATABASE_URL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("write-back without DATABASE_URL loaded")
+	}
+	t.Setenv("DATABASE_URL", "x://primary")
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
+	t.Setenv("FEED_GO_FRAME_CACHE_NEGATIVE", "true")
+	if c, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if c.ComputeMisses || !c.CacheWriteBack || !c.FrameCacheNegative || c.PrimaryDatabaseURL != "x://primary" {
+		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q", c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
 	}
 }

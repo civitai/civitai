@@ -9,6 +9,7 @@ import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { KNIGHTS_APP_FLIPT_FLAG } from '~/shared/constants/knights.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { CLASSIC_TRAINER_RETIRES_AT } from '~/shared/constants/training.constants';
@@ -210,6 +211,16 @@ const featureFlags = createFeatureFlags({
   modelPageDesignSystemMarkup: {
     availability: [],
     fliptKey: 'model-page-design-system-markup',
+  },
+  // SSR-CPU trial: for a signed-in viewer's full page load, a route that adopts it
+  // (`~/server/utils/ssr-skip-prefetch`) keeps only the data its 404, access and redirect decisions
+  // need, skips every other prefetch, and server-renders its content as a loading shell that the
+  // client fills after hydration. Anonymous visitors, verified bots and `/_next/data` requests are
+  // never in the trial. `[]`: dark and fails CLOSED when the key is absent or Flipt is down, so the
+  // `ssr-signed-in-skip-prefetch` rollout is the only on-switch. OFF = the full render, unchanged.
+  ssrSignedInSkipPrefetch: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch',
   },
   // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
   // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
@@ -585,6 +596,9 @@ const featureFlags = createFeatureFlags({
   // The Hat Turf feed sorts and Show filters; checked TOGETHER with `hatTurfFeedCard`, so testers can
   // have them before every player does.
   hatTurfFeedSorts: { availability: ['mod'], fliptKey: 'hat-turf-feed-sorts' },
+  // One page-wide Hat Turf watch mark set instead of one per provider (turf-watch-hub.ts). Dark:
+  // Flipt is its only switch.
+  hatTurfBatchedCalls: { availability: [], fliptKey: 'hat-turf-batched-calls' },
   // Hat Turf on the image detail page; read through useHatTurfDetail, which also checks the event
   // is playable and the turf is not off. Separate from the feed flag so each can roll out alone.
   hatTurfImageDetail: { availability: ['mod'], fliptKey: 'birthday2026-turf-image-detail' },
@@ -700,6 +714,9 @@ const featureFlags = createFeatureFlags({
   // loading models for free.
   resourceLoad: ['mod', 'granted'],
   newOrderGame: ['blue', 'red', 'public'],
+  // Dark and owned by Flipt: the Knights app's own access flag, so the links to it follow who the app
+  // admits (testers before launch, everyone after).
+  knightsApp: { availability: [], fliptKey: KNIGHTS_APP_FLIPT_FLAG },
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
   bugsPage: ['public'],
@@ -765,6 +782,8 @@ const featureFlags = createFeatureFlags({
   // in sync with the camelCase flag key here.
   retoolUpdateIdentity: ['granted'],
   retoolToggleModerator: ['granted'],
+  // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
+  knightsEnqueue: ['granted'],
   textScanPromptPublish: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.

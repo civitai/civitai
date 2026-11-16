@@ -138,13 +138,14 @@ vi.mock('~/server/services/blocks/block-collections.service', async () => {
 });
 // The held gallery level of a cover's post; by default no post is held.
 const heldCoverPosts = vi.hoisted(() => new Map<number, number>());
-vi.mock('~/server/utils/public-cover-image', () => ({
-  getCoverBrowsingLevels:
-    async (_covers: unknown[], browsingLevel: number) =>
-    (cover?: { postId?: number | null } | null) => {
-      const held = cover?.postId != null ? heldCoverPosts.get(cover.postId) : undefined;
-      return held === undefined ? browsingLevel : held & browsingLevel;
-    },
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getHeldLevelsByPost: async (postIds: number[]) =>
+    new Map(
+      postIds
+        .filter((id) => heldCoverPosts.has(id))
+        .map((id) => [id, { level: heldCoverPosts.get(id)! }])
+    ),
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: mockRate,
@@ -1227,6 +1228,39 @@ describe('GET /api/v1/blocks/collections', () => {
     // The clamped-out own cover is the one sent to the fallback lookup, at the
     // token ceiling — same authority as public discovery.
     expect(mockFallbackCovers).toHaveBeenCalledWith([21, 20], 3);
+  });
+
+  it("mode=mine: a cover flagged minor is not served on the subject's own collection", async () => {
+    claimsBox.claims = fakeClaims({
+      scopes: ['collections:read:self', 'collections:read:private'],
+    });
+    mockUserCollections.mockResolvedValueOnce([
+      {
+        id: 23,
+        name: 'Own minor cover',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: { ...SCANNED, minor: true, url: 'own23', type: 'image', nsfwLevel: 1 },
+      },
+      {
+        id: 24,
+        name: 'Own clean cover',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: { ...SCANNED, url: 'own24', type: 'image', nsfwLevel: 1 },
+      },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(new Map());
+    mockItemCount.mockResolvedValueOnce([]);
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const byId = Object.fromEntries((res._json() as any).items.map((i: any) => [i.id, i]));
+    expect(byId[23].coverImageUrl).toBeNull();
+    expect(byId[24].coverImageUrl).toBe('edge:own24');
   });
 
   it('the item never carries a bare `nsfwLevel` key (that name means the COLLECTION bitmask)', async () => {

@@ -3,6 +3,7 @@ package hydrate
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -26,6 +27,9 @@ type Sources struct {
 	Cache redis.UniversalClient
 	// Replica is the read replica the Node path reads for these lookups.
 	Replica Querier
+	// Compute answers the misses of the caches Node fills on read (misses.go); nil = those misses
+	// fall back.
+	Compute *MissCompute
 }
 
 // Cache keys (REDIS_KEYS.CACHES in packages/civitai-redis/src/client.ts), without the per-id suffix.
@@ -102,6 +106,9 @@ func Int(v any) (int, bool) {
 	case int64:
 		return int(t), true
 	case uint64:
+		if t > math.MaxInt {
+			return 0, false
+		}
 		return int(t), true
 	case float64:
 		if t == float64(int(t)) {

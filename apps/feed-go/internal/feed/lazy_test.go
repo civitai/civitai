@@ -154,7 +154,7 @@ func TestCompletePosts(t *testing.T) {
 	posts := newPosts()
 	src := &fakeSource{posts: []Image{pimg(103, 10), pimg(101, 10), pimg(302, 30), pimg(999, 40), pimg(102, 10), pimg(5, 0)}}
 	// Post 20 is whole (2 rows, 2 held); post 30 has no count, so it counts as POST_IMAGE_LIMIT (20).
-	if err := completePosts(context.Background(), src, posts, []int{10, 20, 30}, map[int]int{10: 3, 20: 2}); err != nil {
+	if err := completePosts(context.Background(), src, posts, []int{10, 20, 30}, map[int]int{10: 3, 20: 2}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if want := [][]int{{10, 30, 23}}; !reflect.DeepEqual(src.postCalls, want) {
@@ -173,7 +173,7 @@ func TestCompletePosts(t *testing.T) {
 
 	// Counts unknown (the count query failed): every post is completed.
 	src = &fakeSource{}
-	if err := completePosts(context.Background(), src, newPosts(), []int{10, 20, 30}, nil); err != nil {
+	if err := completePosts(context.Background(), src, newPosts(), []int{10, 20, 30}, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if want := [][]int{{10, 20, 30, 60}}; !reflect.DeepEqual(src.postCalls, want) {
@@ -182,7 +182,7 @@ func TestCompletePosts(t *testing.T) {
 
 	// A completion that fails fails the request (Promise.all rejects).
 	src = &fakeSource{err: fallback.New("feed-unavailable")}
-	err := completePosts(context.Background(), src, newPosts(), []int{10}, map[int]int{10: 2})
+	err := completePosts(context.Background(), src, newPosts(), []int{10}, map[int]int{10: 2}, 0)
 	if fallback.Reason(err) != "feed-unavailable" {
 		t.Fatalf("err = %v", err)
 	}
@@ -225,7 +225,7 @@ func TestCompletePostsBoundsConcurrentFetches(t *testing.T) {
 		ids = append(ids, id)
 	}
 	src := &slowPosts{}
-	if err := completePosts(context.Background(), src, posts, ids, counts); err != nil {
+	if err := completePosts(context.Background(), src, posts, ids, counts, 0); err != nil {
 		t.Fatal(err)
 	}
 	if src.calls != 12 {
@@ -266,7 +266,7 @@ func wireKeys(o superjson.Object) []string {
 
 func TestBuildPostLazySlice(t *testing.T) {
 	// Eight images fetched out of index order; image 8 (index 7) carries the only R bit.
-	var images []Image
+	images := make([]Image, 0, 8)
 	for i, idx := range []int{7, 0, 1, 2, 3, 4, 5, 6} {
 		nsfw := 1
 		if idx == 7 {
@@ -283,8 +283,9 @@ func TestBuildPostLazySlice(t *testing.T) {
 		t.Fatalf("imageCount = %v, want 8 (the whole post, before the slice)", n)
 	}
 	got, _ := p.wire.Get("images")
-	var ids []int64
-	for _, w := range got.([]any) {
+	list := got.([]any)
+	ids := make([]int64, 0, len(list))
+	for _, w := range list {
 		v, _ := w.(superjson.Object).Get("id")
 		ids = append(ids, v.(int64))
 	}

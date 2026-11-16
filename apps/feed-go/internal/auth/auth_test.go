@@ -66,7 +66,7 @@ func jwksServer(t *testing.T, fetches *int32, keys ...keyPair) *httptest.Server 
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(fetches, 1)
-		set := []map[string]string{}
+		set := make([]map[string]string, 0, len(keys))
 		for _, k := range keys {
 			set = append(set, k.jwk())
 		}
@@ -264,7 +264,7 @@ func TestResolveRefusesTheModerationAccountBySub(t *testing.T) {
 		// Sessions is nil: reaching the session-cache read would panic, so a pass proves the refusal
 		// happens on the token's sub, before any lookup.
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/trpc/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/x", nil)
 	req.Header.Set("Cookie", "civ-token="+tok)
 	u, err := r.Resolve(context.Background(), req)
 	if u != nil || err != nil {

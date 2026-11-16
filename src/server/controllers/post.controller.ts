@@ -372,6 +372,7 @@ export const updatePostHandler = async ({
             postId: input.id,
             tools: { none: {} },
           },
+          select: { id: true },
         });
 
         if (exists) throw throwBadRequestError('All images must have tools to be submitted');

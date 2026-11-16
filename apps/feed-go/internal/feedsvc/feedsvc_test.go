@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // Expected strings are what mapSearchInputToFeedQuery's URLSearchParams.toString() writes for the
@@ -56,6 +57,14 @@ func TestMapQueries(t *testing.T) {
 			want: "levels=1%2C2&model3dIds=5&sort=oldest&limit=100",
 		},
 		{
+			// image.getInfinite's creator and tag scopes: `tags` right after `levels` (insertion order
+			// of the mapper), non-positive ids dropped, no dedupe; `userIds` after the version scope.
+			name: "creator and tag scope (image.getInfinite)",
+			q: Query{BrowsingLevel: 3, ExcludedTagIDs: []int{9901}, Tags: []int{77, -1, 77, 5}, UserID: 1001,
+				DisablePoi: true, ViewerID: 1001, Sort: "Newest", Limit: 50},
+			want: "levels=1%2C2&tags=77%2C77%2C5&excludedTags=9901&userIds=1001&excludePoi=1&viewerId=1001&sort=newest&limit=50",
+		},
+		{
 			name: "the Blocked bit is a feed level",
 			q:    Query{BrowsingLevel: 32 | 4, ModelVersionID: 2, Sort: "Oldest", Limit: 10, CursorText: "0"},
 			want: "levels=4%2C32&versionIds=2&sort=oldest&limit=10",
@@ -94,6 +103,10 @@ func TestMapRefusals(t *testing.T) {
 		{"model without a version", func(q *Query) { q.ModelVersionID = 0; q.ModelID = 7 }, "modelId", false},
 		{"no level", func(q *Query) { q.BrowsingLevel = 0 }, "browsingLevel:0", false},
 		{"too many excluded tags", func(q *Query) { q.ExcludedTagIDs = many }, "excludedTags>100", false},
+		{"only impossible tags", func(q *Query) { q.Tags = []int{0, -3} }, "tags:none", false},
+		{"too many tags", func(q *Query) { q.Tags = many }, "tags>100", false},
+		// Tags are checked before the excluded tags, as in the mapper.
+		{"tags before excluded tags", func(q *Query) { q.Tags = many; q.ExcludedTagIDs = many }, "tags>100", false},
 		{"generation", func(q *Query) { q.HasGeneration = true }, "input:generation", false},
 		{"remixOfId", func(q *Query) { q.HasRemixOfID = true }, "input:remixOfId", false},
 		{"requiringMeta", func(q *Query) { q.RequiringMeta = true }, "flag:requiringMeta", false},
@@ -150,8 +163,9 @@ func TestClientFetch(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	c := &Client{BaseURL: srv.URL + "/"}
-	a, err := c.Fetch(context.Background(), "levels=1&sort=newest&limit=2")
+	c := &Client{BaseURL: srv.URL + "/", HTTP: srv.Client()}
+	shadowCtx := WithShadow(context.Background())
+	a, err := c.Fetch(shadowCtx, "levels=1&sort=newest&limit=2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,8 +179,66 @@ func TestClientFetch(t *testing.T) {
 	if a.Status != 200 || !reflect.DeepEqual(a.IDs, []int{30, 10, 20}) || a.NextCursor != "1700|10" {
 		t.Fatalf("answer = %+v", a)
 	}
-	a, err = c.Fetch(context.Background(), "sort=oldest")
+	a, err = c.Fetch(shadowCtx, "sort=oldest")
 	if err != nil || a.Status != 400 || len(a.IDs) != 0 {
 		t.Fatalf("a 400 is an answer with its status: %+v %v", a, err)
+	}
+}
+
+// A served request is the site's own traffic: it sends Node's served source and no replay id, so it
+// lands in the feed service's live series. Only a shadow compute (WithShadow) is marked as replay.
+func TestClientFetchServedRequestIsNotMarkedShadow(t *testing.T) {
+	var gotSource string
+	var replaySent bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSource = r.Header.Get("x-request-source")
+		_, replaySent = r.Header["X-Replay-Id"]
+		_, _ = w.Write([]byte(`{"items":[5]}`))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if _, err := c.Fetch(context.Background(), "levels=1&sort=newest&limit=1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotSource != "primary" || replaySent {
+		t.Fatalf("served: x-request-source=%q replay header sent=%v, want primary and none", gotSource, replaySent)
+	}
+	// The mark is carried by the context, through derived contexts too.
+	derived, cancel := context.WithTimeout(WithShadow(context.Background()), time.Minute)
+	defer cancel()
+	if _, err := c.Fetch(derived, "levels=1&sort=newest&limit=1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotSource != "shadow" || !replaySent {
+		t.Fatalf("shadow: x-request-source=%q replay header sent=%v, want shadow and sent", gotSource, replaySent)
+	}
+	if IsShadow(context.Background()) || !IsShadow(derived) {
+		t.Fatal("IsShadow must be false for an unmarked context and true for a marked one")
+	}
+}
+
+// The public images endpoint ('rest' caller): a post's media are paged in the requested sort, and the
+// creator filter is sent as `userIds`, between versionIds and types as URLSearchParams appends them.
+func TestMapRestCaller(t *testing.T) {
+	q := Query{Rest: true, BrowsingLevel: 1, ExcludedTagIDs: []int{5}, ModelVersionID: 9, PostID: 30, UserID: 42,
+		Types: []string{"video"}, DisableMinor: true, DisablePoi: true, ViewerID: 7, Sort: "Oldest", Period: "Week",
+		Limit: 50, CursorText: "100"}
+	got, ref := Map(q)
+	if ref != nil {
+		t.Fatalf("refused %+v", ref)
+	}
+	want := "levels=1&excludedTags=5&versionIds=9&userIds=42&types=video&excludeMinor=1&excludePoi=1&viewerId=7&postIds=30&sort=oldest&periodDays=7&limit=50&offset=100"
+	if got != want {
+		t.Fatalf("\n got %s\nwant %s", got, want)
+	}
+	// The site's own post page keeps the author's order, which the feed cannot give.
+	q.Rest = false
+	if _, ref := Map(q); ref == nil || ref.Reason != "input:postId" || ref.Rejected {
+		t.Fatalf("website postId: %+v, want the input:postId skip", ref)
+	}
+	// The completion's limit bound applies to the completion only.
+	rest := Query{Rest: true, BrowsingLevel: 1, PostID: 30, Sort: "Newest", Limit: 300}
+	if got, ref := Map(rest); ref != nil || got != "levels=1&postIds=30&sort=newest&limit=200" {
+		t.Fatalf("rest postId over the feed limit: %q %+v", got, ref)
 	}
 }

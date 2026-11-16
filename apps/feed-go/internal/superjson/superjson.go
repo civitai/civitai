@@ -20,11 +20,14 @@
 package superjson
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -74,8 +77,37 @@ type segment struct {
 	index int
 }
 
-// initialBufSize pre-sizes the output; a feed page is tens of KiB, and append doubles from here.
-const initialBufSize = 16 << 10
+// Writers come from two pools, both emptied by every GC cycle, so a get after a cycle allocates a
+// fresh writer:
+//
+//   - pagePool serves SerializeBuffer and PlainBuffer, the served answers (a feed page is a few hundred
+//     KiB). Its writers start at pageBufSize, page-sized, so a cold get does not regrow through append
+//     (BenchmarkSerializeColdStart reports what a cold get costs).
+//   - ownedPool serves Serialize and Plain, whose output is copied out (error bodies, tests). Its
+//     writers start at ownedBufSize, so a tiny body's cold get costs 16 KiB, not a page buffer.
+//
+// A writer whose buffer grew past maxPooledBufSize is put back in neither, so a rare huge page does not
+// pin its memory.
+const (
+	pageBufSize      = 512 << 10
+	ownedBufSize     = 16 << 10
+	maxPooledBufSize = 1 << 20
+)
+
+var (
+	pagePool  = &sync.Pool{}
+	ownedPool = &sync.Pool{}
+)
+
+func init() {
+	pagePool.New = func() any { return newWriter(pageBufSize, pagePool) }
+	ownedPool.New = func() any { return newWriter(ownedBufSize, ownedPool) }
+}
+
+// newWriter is a writer whose buffer starts at size bytes, returned to pool when done (nil: never).
+func newWriter(size int, pool *sync.Pool) *writer {
+	return &writer{buf: make([]byte, 0, size), path: make([]segment, 0, 8), pool: pool}
+}
 
 type writer struct {
 	buf []byte
@@ -83,12 +115,115 @@ type writer struct {
 	// joined into a string by note() and the error paths, which are rare.
 	path  []segment
 	notes []annotation
+	// plain writes JSON.stringify's output (no envelope, no annotations): see Plain.
+	plain bool
+	// pool is the pool the writer came from and goes back to.
+	pool *sync.Pool
+}
+
+func getWriter(pool *sync.Pool, plain bool) *writer {
+	w, _ := pool.Get().(*writer)
+	w.plain = plain
+	return w
+}
+
+// putWriter resets w and returns it to its pool, unless its buffer outgrew maxPooledBufSize (then it
+// is left to the collector) or it has no pool. It reports whether w was pooled. The caller must hold
+// no reference to w.buf afterwards: the next writer taken from the pool writes over it.
+func putWriter(w *writer) bool {
+	if w.pool == nil || cap(w.buf) > maxPooledBufSize {
+		return false
+	}
+	clear(w.notes) // the annotations' path strings are not kept alive by the pool
+	w.buf, w.path, w.notes, w.plain = w.buf[:0], w.path[:0], w.notes[:0], false
+	w.pool.Put(w)
+	return true
+}
+
+// Buffer is serialized output held in a pooled buffer. It has one owner, who calls Release once
+// nothing reads Bytes any more (the response is written, the comparison is done); until then the
+// bytes are the owner's alone. Release is idempotent; after it Bytes is nil.
+type Buffer struct {
+	w *writer
+}
+
+// Bytes is the output. It is valid until Release; do not keep it (or a sub-slice) past that.
+func (b *Buffer) Bytes() []byte {
+	if b == nil || b.w == nil {
+		return nil
+	}
+	return b.w.buf
+}
+
+// Release hands the buffer back to the pool. Safe on a nil Buffer and when called twice.
+func (b *Buffer) Release() {
+	if b == nil || b.w == nil {
+		return
+	}
+	w := b.w
+	b.w = nil
+	putWriter(w)
+}
+
+// Plain returns v as JSON.stringify writes it, for a plain-JSON response (the public REST endpoints
+// answer with `res.json`, not superjson): Dates as their ISO string, undefined object members omitted,
+// undefined array elements as null. No envelope and no annotations. The result is a copy the caller
+// owns; PlainBuffer avoids the copy.
+func Plain(v any) ([]byte, error) {
+	return owned(plainInto(ownedPool, v))
+}
+
+// PlainBuffer is Plain into a pooled Buffer the caller must Release.
+func PlainBuffer(v any) (*Buffer, error) {
+	return plainInto(pagePool, v)
+}
+
+func plainInto(pool *sync.Pool, v any) (*Buffer, error) {
+	if _, isUndef := v.(Undefined); isUndef {
+		return nil, errors.New("superjson: undefined has no JSON form")
+	}
+	w := getWriter(pool, true)
+	if err := w.value(v, false); err != nil {
+		putWriter(w)
+		return nil, err
+	}
+	return &Buffer{w: w}, nil
 }
 
 // Serialize returns the superjson envelope for v as JSON bytes: `{"json":…}` or
-// `{"json":…,"meta":{"values":{…},"v":1}}`.
+// `{"json":…,"meta":{"values":{…},"v":1}}`. The result is a copy the caller owns; SerializeBuffer
+// avoids the copy.
 func Serialize(v any) ([]byte, error) {
-	w := &writer{buf: make([]byte, 0, initialBufSize), path: make([]segment, 0, 8)}
+	return owned(serializeInto(ownedPool, v))
+}
+
+// owned copies a Buffer's output out of the pool and releases it.
+func owned(b *Buffer, err error) ([]byte, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := bytes.Clone(b.Bytes())
+	b.Release()
+	return out, nil
+}
+
+// SerializeBuffer is Serialize into a pooled Buffer the caller must Release. A failed serialization
+// returns no Buffer (its writer is already back in the pool).
+func SerializeBuffer(v any) (*Buffer, error) {
+	return serializeInto(pagePool, v)
+}
+
+func serializeInto(pool *sync.Pool, v any) (*Buffer, error) {
+	w := getWriter(pool, false)
+	if err := w.envelope(v); err != nil {
+		putWriter(w)
+		return nil, err
+	}
+	return &Buffer{w: w}, nil
+}
+
+// envelope writes the superjson envelope for v.
+func (w *writer) envelope(v any) error {
 	_, isUndef := v.(Undefined)
 	if isUndef {
 		// JSON.stringify drops an undefined top-level json; superjson then reads `json` as undefined.
@@ -98,7 +233,7 @@ func Serialize(v any) ([]byte, error) {
 		w.buf = append(w.buf, `{"json":`...)
 	}
 	if err := w.value(v, false); err != nil {
-		return nil, err
+		return err
 	}
 	if len(w.notes) > 0 {
 		if !isUndef {
@@ -126,7 +261,7 @@ func Serialize(v any) ([]byte, error) {
 		w.buf = append(w.buf, `,"v":1}`...)
 	}
 	w.buf = append(w.buf, '}')
-	return w.buf, nil
+	return nil
 }
 
 // EscapeKey mirrors superjson's pathstringifier.escapeKey.
@@ -158,6 +293,9 @@ func (w *writer) joinPath() string {
 }
 
 func (w *writer) note(typ string) {
+	if w.plain {
+		return
+	}
 	w.notes = append(w.notes, annotation{path: w.joinPath(), typ: typ})
 }
 

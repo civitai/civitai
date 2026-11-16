@@ -824,6 +824,10 @@ describe('POST /api/v1/block-tokens', () => {
       expect(body.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
       expect(body.effectiveBrowsingLevel).toBe(publicBrowsingLevelsFlag);
       expect(body.effectiveBrowsingLevel).not.toBe(body.maxBrowsingLevel);
+      // 🔴 The signed token carries the same per-viewer level the media gate judges by.
+      expect(mockTokenService.sign).toHaveBeenLastCalledWith(
+        expect.objectContaining({ viewerBrowsingLevel: publicBrowsingLevelsFlag })
+      );
     });
 
     it('red domain + a full-NSFW viewer → the full ceiling (not a blanket clamp)', async () => {

@@ -12,6 +12,7 @@ package shadow
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -32,6 +33,8 @@ type Report struct {
 	Diffs []Diff
 	// Truncated is true when more than MaxDiffs differences existed.
 	Truncated bool
+	// opaque is the key set a category stops at (nil = the superjson envelope's).
+	opaque map[string]bool
 }
 
 // MaxDiffs bounds the differences collected per comparison.
@@ -40,6 +43,11 @@ const MaxDiffs = 64
 // opaque keys: their subtrees are free-form JSON (image metadata, cosmetic data), so a category stops
 // there and metric label cardinality stays bounded by the response schema.
 var opaque = map[string]bool{"metadata": true, "data": true, "remixOfId": true}
+
+// jsonOpaque is the opaque set of the plain-JSON REST responses (CompareJSON). Their `metadata` is the
+// page's paging object (nextCursor, nextPage, …), not free-form, so it is walked; `meta` (image
+// generation metadata, a fallback shape today) is free-form.
+var jsonOpaque = map[string]bool{"meta": true}
 
 type envelope struct {
 	JSON json.RawMessage `json:"json"`
@@ -217,11 +225,17 @@ func add(r *Report, path []string, kind string) {
 		r.Truncated = true
 		return
 	}
-	r.Diffs = append(r.Diffs, Diff{Path: strings.Join(path, "."), Category: Category(path), Kind: kind})
+	set := r.opaque
+	if set == nil {
+		set = opaque
+	}
+	r.Diffs = append(r.Diffs, Diff{Path: strings.Join(path, "."), Category: category(path, set), Kind: kind})
 }
 
 // Category folds array indices to `*` and truncates at the first opaque key.
-func Category(path []string) string {
+func Category(path []string) string { return category(path, opaque) }
+
+func category(path []string, opaque map[string]bool) string {
 	out := make([]string, 0, len(path))
 	for _, seg := range path {
 		if _, err := strconv.Atoi(seg); err == nil {
@@ -348,6 +362,11 @@ func Classify(r *Report, goEnv, nodeEnv []byte) string {
 	if errG != nil || errN != nil {
 		return "fields"
 	}
+	return classifyOrder(g, n)
+}
+
+// classifyOrder splits a non-matching report by its two item key sequences.
+func classifyOrder(g, n []string) string {
 	if strings.Join(g, ",") == strings.Join(n, ",") {
 		return "fields"
 	}
@@ -358,4 +377,95 @@ func Classify(r *Report, goEnv, nodeEnv []byte) string {
 		return "order"
 	}
 	return "membership"
+}
+
+// flatItemIDs returns the `json.items[].id` sequence of a superjson envelope whose items are keyed by
+// their own `id` (a flat page: image.getInfinite's images, model.getAll's models), not posts.
+func flatItemIDs(env []byte) ([]string, error) {
+	var e struct {
+		JSON struct {
+			Items []struct {
+				ID json.Number `json:"id"`
+			} `json:"items"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal(env, &e); err != nil {
+		return nil, err
+	}
+	out := make([]string, len(e.JSON.Items))
+	for i, it := range e.JSON.Items {
+		out[i] = it.ID.String()
+	}
+	return out, nil
+}
+
+// ClassifyFlat is Classify for a superjson envelope of a flat page (image.getInfinite's images,
+// model.getAll's models): its items are keyed by their own `id`, so match, order (same items,
+// different order), membership (different items), fields (same items in the same order, field
+// differences). The report itself is Compare's: the same annotation handling, and categories over the
+// flat shape (`items.*.<field>`, `items.*.user.<field>`, `nextCursor`, `source`), truncated at the same
+// opaque keys.
+func ClassifyFlat(r *Report, goEnv, nodeEnv []byte) string {
+	if r.Match {
+		return "match"
+	}
+	g, errG := flatItemIDs(goEnv)
+	n, errN := flatItemIDs(nodeEnv)
+	if errG != nil || errN != nil {
+		return "fields"
+	}
+	return classifyOrder(g, n)
+}
+
+// CompareJSON compares two plain-JSON response bodies (Go's, Node's): the public REST endpoints answer
+// with `res.json`, so there is no envelope and no annotation — a Date is its ISO string on both sides,
+// and an undefined member is absent on both (JSON.stringify drops it). The same structural walk as
+// Compare: object key order ignored, array order kept, numbers compared numerically.
+func CompareJSON(goBody, nodeBody []byte) (*Report, error) {
+	gv, err := decode(goBody)
+	if err != nil {
+		return nil, fmt.Errorf("go body: %w", err)
+	}
+	nv, err := decode(nodeBody)
+	if err != nil {
+		return nil, fmt.Errorf("node body: %w", err)
+	}
+	if _, ok := nv.(map[string]any); !ok {
+		return nil, errors.New("node body: not an object")
+	}
+	r := &Report{opaque: jsonOpaque}
+	walk(r, gv, nv, nil)
+	r.Match = len(r.Diffs) == 0 && !r.Truncated
+	return r, nil
+}
+
+// itemIDs returns the `items[].id` sequence of a plain-JSON body.
+func itemIDs(body []byte) ([]string, error) {
+	var b struct {
+		Items []struct {
+			ID json.Number `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &b); err != nil {
+		return nil, err
+	}
+	out := make([]string, len(b.Items))
+	for i, it := range b.Items {
+		out[i] = it.ID.String()
+	}
+	return out, nil
+}
+
+// ClassifyJSON is Classify for the plain-JSON REST bodies, whose items are images keyed by `id`:
+// match, order (same images, different order), membership (different images), fields.
+func ClassifyJSON(r *Report, goBody, nodeBody []byte) string {
+	if r.Match {
+		return "match"
+	}
+	g, errG := itemIDs(goBody)
+	n, errN := itemIDs(nodeBody)
+	if errG != nil || errN != nil {
+		return "fields"
+	}
+	return classifyOrder(g, n)
 }

@@ -10,6 +10,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -19,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -98,10 +100,127 @@ type Verifier struct {
 	Now         func() time.Time
 	// MinRefetch bounds how often an unknown `kid` may trigger a JWKS refetch.
 	MinRefetch time.Duration
+	// FetchTimeout bounds one JWKS fetch (0 = the JWKS_TIMEOUT_MS default).
+	FetchTimeout time.Duration
+	// RefreshInterval is how often Run refetches the key set (0 = DefaultJWKSRefresh), jittered by
+	// ±10% so replicas do not refetch in step. RetryMin is the first retry delay after a failed
+	// refresh (0 = 5 s); each further failure doubles it, up to RefreshInterval.
+	RefreshInterval time.Duration
+	RetryMin        time.Duration
+	// OnRefresh, when set, is called after every periodic refresh with its error (nil = success).
+	OnRefresh func(err error)
+	// MaxStaleness bounds keep-last-good (0 = 3 × the refresh interval): once no fetch has succeeded
+	// for this long, the key set is dropped and every session verifies as signed out until a fetch
+	// succeeds again. OnStale, when set, is called once each time that happens.
+	MaxStaleness time.Duration
+	OnStale      func(age time.Duration)
 
 	mu        sync.RWMutex
 	keys      map[string]*ecdsa.PublicKey
 	lastFetch time.Time
+	// lastGood is when a fetch last returned a usable key set (zero = never).
+	lastGood time.Time
+}
+
+func (v *Verifier) maxStaleness() time.Duration {
+	if v.MaxStaleness > 0 {
+		return v.MaxStaleness
+	}
+	interval := v.RefreshInterval
+	if interval <= 0 {
+		interval = DefaultJWKSRefresh
+	}
+	return 3 * interval
+}
+
+// expireIfStale drops the key set once the last good fetch is older than the maximum staleness, so a
+// hub that stays unreachable (or keeps answering an empty set) eventually fails closed, as Node's
+// remote JWKS does once its cached set ages out. It reports the drop once per stale episode.
+func (v *Verifier) expireIfStale() {
+	now := v.now()
+	limit := v.maxStaleness()
+	v.mu.Lock()
+	if v.keys == nil || v.lastGood.IsZero() || now.Sub(v.lastGood) <= limit {
+		v.mu.Unlock()
+		return
+	}
+	age := now.Sub(v.lastGood)
+	v.keys = nil
+	v.mu.Unlock()
+	if v.OnStale != nil {
+		v.OnStale(age)
+	}
+}
+
+// DefaultJWKSRefresh is the periodic refresh interval. Without it a signing key the hub removed stayed
+// trusted until a restart: the set was only refetched for an unknown kid.
+const DefaultJWKSRefresh = 10 * time.Minute
+
+// defaultRetryMin is the first retry delay after a failed periodic refresh.
+const defaultRetryMin = 5 * time.Second
+
+// Run refetches the key set right away and then every RefreshInterval (jittered) until ctx ends,
+// retrying a failed fetch with exponential backoff. A failed fetch keeps the last good key set (refresh
+// replaces the set only on success), so a short hub outage never signs everyone out — but only for
+// MaxStaleness: past it the set is dropped (expireIfStale) and verification fails closed.
+func (v *Verifier) Run(ctx context.Context) {
+	interval := v.RefreshInterval
+	if interval <= 0 {
+		interval = DefaultJWKSRefresh
+	}
+	retry := v.RetryMin
+	if retry <= 0 {
+		retry = defaultRetryMin
+	}
+	var delay time.Duration // the first fetch runs at once: it warms the set before the first request
+	failures := 0
+	for {
+		if delay > 0 {
+			t := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		err := v.refresh(ctx)
+		if ctx.Err() != nil {
+			return // shutting down: not a refresh failure
+		}
+		if v.OnRefresh != nil {
+			v.OnRefresh(err)
+		}
+		if err != nil {
+			v.expireIfStale()
+			failures++
+			delay = backoff(retry, interval, failures)
+		} else {
+			failures = 0
+			delay = jitter(interval)
+		}
+	}
+}
+
+// backoff is retry·2^(failures-1), capped at limit.
+func backoff(retry, limit time.Duration, failures int) time.Duration {
+	d := retry
+	for i := 1; i < failures && d < limit; i++ {
+		d *= 2
+	}
+	return min(d, limit)
+}
+
+// jitter spreads d over [0.9d, 1.1d).
+func jitter(d time.Duration) time.Duration {
+	spread := int64(d / 5)
+	if spread <= 0 {
+		return d
+	}
+	return d - d/10 + time.Duration(rand.Int64N(spread)) //nolint:gosec // G404: refresh-timing jitter, not a secret
 }
 
 // ErrInvalid is returned for any token that is not a valid session.
@@ -200,6 +319,7 @@ func (v *Verifier) checkClaims(c *Claims) error {
 }
 
 func (v *Verifier) key(ctx context.Context, kid string) (*ecdsa.PublicKey, error) {
+	v.expireIfStale()
 	v.mu.RLock()
 	k, ok := v.keys[kid]
 	last := v.lastFetch
@@ -239,7 +359,11 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	v.mu.Lock()
 	v.lastFetch = v.now()
 	v.mu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond) // JWKS_TIMEOUT_MS in verify.ts
+	timeout := v.FetchTimeout
+	if timeout <= 0 {
+		timeout = 2500 * time.Millisecond // JWKS_TIMEOUT_MS in verify.ts
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.JWKSURL, nil)
 	if err != nil {
@@ -253,7 +377,7 @@ func (v *Verifier) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("jwks: status %d", res.StatusCode)
 	}
@@ -264,8 +388,14 @@ func (v *Verifier) refresh(ctx context.Context) error {
 		return err
 	}
 	keys := ParseJWKS(set.Keys)
+	if len(keys) == 0 {
+		// A set with no usable signing key would reject every session; keep the last good one, within
+		// MaxStaleness (lastGood is not advanced, so an empty set never extends the window).
+		return errors.New("jwks: no usable signing keys")
+	}
 	v.mu.Lock()
 	v.keys = keys
+	v.lastGood = v.now()
 	v.mu.Unlock()
 	return nil
 }
@@ -282,13 +412,31 @@ func ParseJWKS(keys []jwk) map[string]*ecdsa.PublicKey {
 		if err1 != nil || err2 != nil {
 			continue
 		}
-		pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(xb), Y: new(big.Int).SetBytes(yb)}
-		if !pub.Curve.IsOnCurve(pub.X, pub.Y) {
+		pub, err := p256PublicKey(xb, yb)
+		if err != nil {
 			continue
 		}
 		out[k.Kid] = pub
 	}
 	return out
+}
+
+// p256PublicKey builds a P-256 public key from a JWK's big-endian x and y coordinates, refusing a
+// point that is not on the curve. A coordinate is read as an integer: a shorter one is
+// left-padded, and leading zero bytes beyond 32 are dropped.
+func p256PublicKey(x, y []byte) (*ecdsa.PublicKey, error) {
+	const size = 32
+	point := make([]byte, 1, 1+2*size)
+	point[0] = 4 // SEC 1 uncompressed form: 0x04 || x || y
+	for _, c := range [][]byte{x, y} {
+		c = bytes.TrimLeft(c, "\x00")
+		if len(c) > size {
+			return nil, errors.New("jwk: coordinate longer than 32 bytes")
+		}
+		point = append(point, make([]byte, size-len(c))...)
+		point = append(point, c...)
+	}
+	return ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
 }
 
 // TokenFromCookieHeader extracts a cookie's value from a raw Cookie header, URL-decoding it as

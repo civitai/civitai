@@ -79,9 +79,15 @@ export const turfStickersForImagesSchema = z.object({
   perImage: z.number().int().min(1).max(TURF_FEED_STICKERS).default(TURF_FEED_STICKERS),
 });
 
+/**
+ * Images per `hatTurf.watch` call; clients chunk by it, so it must not exceed what the schema
+ * accepts.
+ */
+export const MAX_TURF_IMAGES_PER_MARK = 50;
+
 export const watchTurfImagesSchema = z.object({
   event: eventName,
-  imageIds: z.array(z.number().int().positive()).max(50),
+  imageIds: z.array(z.number().int().positive()).max(MAX_TURF_IMAGES_PER_MARK),
 });
 
 /** A sticker's hat art: the cosmetic's image, and where its visible pixels sit (fit canvas, bounds). */
