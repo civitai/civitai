@@ -85,7 +85,7 @@ export default function BlockMediaUploadModal({
         file,
         checked.contentType,
         () => epoch === epochRef.current,
-        scannedRows
+        undefined
       );
       if (!result || epoch !== epochRef.current) return;
       setStatus('ready');
