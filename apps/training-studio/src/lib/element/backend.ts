@@ -48,7 +48,8 @@ export interface StudioElementHost {
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available, moderator message, blocked models). Omit (or
-   *  resolve null) and the element shows no status banner, no unavailable cards, and leaves Start enabled. */
+   *  resolve null) and the element shows no status banner and blocks only the models the Studio itself
+   *  can't train (Flux.2). */
   getTrainingStatus?(): Promise<{
     available: boolean;
     message?: string | null;
