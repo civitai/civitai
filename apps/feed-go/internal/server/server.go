@@ -49,7 +49,7 @@ const (
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -95,6 +95,9 @@ type Server struct {
 	Infinite *feed.InfiniteDeps
 	// Models serves the `model.getAll` shadow; nil = every such sample falls back.
 	Models *modelfeed.Deps
+	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go); nil =
+	// every such sample falls back.
+	V1Models *V1ModelsDeps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
@@ -120,6 +123,8 @@ type Server struct {
 	computeV1Fn       func(context.Context, *http.Request) (*computed, error)
 	computeInfiniteFn func(context.Context, *http.Request) (*computed, error)
 	computeModelsFn   func(context.Context, *http.Request) (*computed, error)
+	// computeV1ModelsFn replaces both REST model computes (tests only).
+	computeV1ModelsFn func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -176,6 +181,9 @@ type computed struct {
 	// served_empty and result match_empty, so the per-served-call CPU and the match rate cover only
 	// answers that did the work.
 	trivial bool
+	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
+	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
+	cached bool
 }
 
 // compute answers a request, or returns a fallback/other error.
@@ -796,6 +804,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			computeFn = s.computeModelsFn
 		}
 	}
+	if b, c, cl, ok := s.v1ModelsRoute(endpoint); ok {
+		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	}
 	r, err := build(ctx, req)
 	if err != nil {
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
@@ -828,8 +839,11 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	// Released once the comparison and its classification (the last readers of payload) are done.
 	defer c.release()
 	served := "served"
-	if c.trivial {
+	switch {
+	case c.trivial:
 		served = "served_empty"
+	case c.cached:
+		served = "served_cached"
 	}
 	s.endPhase(phase, endpoint, "compute", served)
 	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", served).Inc()
@@ -845,6 +859,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	if c.trivial && result == "match" {
 		// A trivial answer that differs is still counted as the diff it is (fields, membership, …).
 		result = "match_empty"
+	}
+	if c.cached && result == "match" {
+		result = "match_cached"
 	}
 	s.endPhase(phase, endpoint, "compare", "ok")
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
