@@ -15,7 +15,6 @@
   import type { PlayerBadge } from './player-badge';
   import type { PlayerStatus } from './server/player-status';
 
-  type Streak = { streak: number; shields: number; maxShields: number };
   type LadderRow = { rank: string; fromLevel: number; accuracyBar: number; minDaysPlayed?: number };
   let {
     player,
@@ -25,7 +24,6 @@
     isPlayer = false,
     feedbackOpen = false,
     status,
-    streak,
     recapUnseen = false,
     goldPerBuzz,
     ladder,
@@ -40,7 +38,6 @@
     isPlayer?: boolean;
     feedbackOpen?: boolean;
     status?: PlayerStatus;
-    streak?: Streak;
     /** Today's recap has not been seen: the recap button wears a dot. */
     recapUnseen?: boolean;
     goldPerBuzz: number;
@@ -112,7 +109,7 @@
   <PrimaryNav />
 
   {#if status}
-    <HeaderStats {status} {streak} {goldPerBuzz} {shopOpen} {ladder} />
+    <HeaderStats {status} {goldPerBuzz} {shopOpen} {ladder} />
   {/if}
 
   {#if player}
