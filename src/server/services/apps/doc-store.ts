@@ -3056,6 +3056,9 @@ function buildDocStore(deps: DocStoreDeps) {
    *   `reason: 'source_changed'`, and a key the preview did not plan to write (its copy changed:
    *   another author's copy deleted, the caller's own changed) with `reason: 'target_changed'`, so
    *   nothing unchecked is ever written.
+   * - Content levels on (`ctx.levels`): every copy it creates or updates is marked pending
+   *   (`markRatingPending`), exactly as a shared put is, so it is hidden from other viewers until
+   *   it is rated again; an unchanged copy keeps its rating.
    * - `prune`: the caller's own visible copies in `to` whose key has no private document in
    *   `from` are deleted, at most `limit` per call — including copies the caller published from
    *   ANOTHER private collection, which have no document in `from`.
@@ -3163,6 +3166,7 @@ function buildDocStore(deps: DocStoreDeps) {
               const size = Number(ins.rows[0].size_bytes);
               bytes += size;
               docs += 1;
+              await markRatingPending(c, ctx, to, key);
               await syncIndex(c, ctx, to, key, indexRows);
               result.created.push(key);
               written.push(key);
@@ -3195,6 +3199,7 @@ function buildDocStore(deps: DocStoreDeps) {
               viewer,
             ]);
             bytes += Number(res.rows[0].size_bytes) - Number(copy!.size_bytes);
+            await markRatingPending(c, ctx, to, key);
             await syncIndex(c, ctx, to, key, indexRows);
             result.updated.push(key);
             written.push(key);
