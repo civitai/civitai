@@ -1,6 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import plimit from 'p-limit';
-import { placeEvidenceHold } from '@civitai/db-queries/evidence-hold';
+import {
+  GENERATOR_EVIDENCE_HOLD_REASON,
+  placeEvidenceHold,
+} from '@civitai/db-queries/evidence-hold';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { createCsamReport } from '~/server/services/csam.service';
@@ -44,7 +47,7 @@ import {
   isGeneratorEvidenceDetails,
 } from '~/server/services/generator-evidence/evidence-meta';
 
-export const GENERATOR_EVIDENCE_HOLD_REASON = 'generator evidence preserved for a CSAM report';
+export { GENERATOR_EVIDENCE_HOLD_REASON };
 
 type TriggerRow = {
   prompt?: unknown;

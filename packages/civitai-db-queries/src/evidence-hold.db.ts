@@ -32,9 +32,16 @@ export async function countEvidenceHoldsEnding(
   return { owners: Number(owners), earliest };
 }
 
+/**
+ * The manual hold generator evidence places for a CSAM report still being prepared. Until the report
+ * is sent it is the only thing holding the owner, so it is never released from the moderator page.
+ */
+export const GENERATOR_EVIDENCE_HOLD_REASON = 'generator evidence preserved for a CSAM report';
+
 export type EvidenceHoldEntry = {
   id: number;
   role: string;
+  reason: string;
   csamReportId: number | null;
   releaseAt: Date | null;
   extendedUntil: Date | null;
@@ -76,6 +83,7 @@ export async function listEvidenceHeldOwners(
       'id',
       'userId',
       'role',
+      'reason',
       'csamReportId',
       utc('releaseAt').as('releaseAt'),
       utc('extendedUntil').as('extendedUntil'),
@@ -126,6 +134,8 @@ export async function placeEvidenceHold(
     .where('role', '=', input.role)
     .where('reason', '=', input.reason)
     .where('releasedAt', 'is', null)
+    // Still in force, by the same test as "EvidenceHeldUser": a row past its dates holds nothing.
+    .where(sql<boolean>`("releaseAt" IS NULL OR "releaseAt" > now() OR "extendedUntil" > now())`)
     .executeTakeFirst();
   if (open) return { id: open.id, created: false };
 
@@ -144,9 +154,9 @@ export async function placeEvidenceHold(
 }
 
 /**
- * Releases one open manual hold. False when there is no such hold: unknown, already released, or a
- * report hold, whose preservation period is not a moderator's to end (a release purges what the
- * hold kept).
+ * Releases one open manual hold. False when there is no such hold: unknown, already released, a
+ * report hold, or the generator-evidence hold. Those preserve for a CSAM report and are not a
+ * moderator's to end, and a release purges what the hold kept.
  */
 export async function releaseEvidenceHold(
   db: Kysely<DB>,
@@ -161,6 +171,7 @@ export async function releaseEvidenceHold(
     })
     .where('id', '=', input.id)
     .where('role', '=', 'manual')
+    .where('reason', '!=', GENERATOR_EVIDENCE_HOLD_REASON)
     .where('releasedAt', 'is', null)
     .executeTakeFirst();
   return Number(result.numUpdatedRows) > 0;

@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 import type { PGlite } from '@electric-sql/pglite';
 import { Kysely, sql } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { placeEvidenceHold, releaseEvidenceHold } from '@civitai/db-queries/evidence-hold';
+import {
+  GENERATOR_EVIDENCE_HOLD_REASON,
+  placeEvidenceHold,
+  releaseEvidenceHold,
+} from '@civitai/db-queries/evidence-hold';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -75,6 +79,25 @@ describe('placeEvidenceHold', () => {
     expect(await heldUntil(1)).toEqual({ heldUntil: null });
   });
 
+  it('a hold that ran out by its date is not reused: placing again holds the owner anew', async () => {
+    const LAPSED = 8;
+    await pg.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (${LAPSED}, 'lapsed');
+      INSERT INTO "EvidenceHold" ("userId", "role", "reason", "releaseAt")
+        VALUES (${LAPSED}, 'manual', 'DMCA put-back', now() - interval '1 day');
+    `);
+    expect(await heldUntil(LAPSED)).toBeUndefined();
+
+    const placed = await placeEvidenceHold(db, {
+      userId: LAPSED,
+      role: 'manual',
+      reason: 'DMCA put-back',
+      createdById: MOD,
+    });
+    expect(placed.created).toBe(true);
+    expect(await heldUntil(LAPSED)).toEqual({ heldUntil: null });
+  });
+
   it('a different reason is a separate hold', async () => {
     const other = await placeEvidenceHold(db, {
       userId: 1,
@@ -137,6 +160,26 @@ describe('releaseEvidenceHold', () => {
     expect(row.releasedAt).toBeNull();
     expect(await heldUntil(REPORTED)).toBeDefined();
     expect(await keptImages(REPORTED)).toBe(1);
+  });
+
+  it('refuses the generator-evidence hold: it stays open and nothing it kept is purged', async () => {
+    const PENDING = 9;
+    await pg.exec(`INSERT INTO "User" ("id", "username") VALUES (${PENDING}, 'pending');`);
+    const { id } = await placeEvidenceHold(db, {
+      userId: PENDING,
+      role: 'manual',
+      reason: GENERATOR_EVIDENCE_HOLD_REASON,
+      createdById: MOD,
+    });
+    await pg.exec(
+      `INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (990000013, ${PENDING});`
+    );
+
+    expect(await releaseEvidenceHold(db, { id, releasedById: MOD, releaseReason: 'early' })).toBe(
+      false
+    );
+    expect(await heldUntil(PENDING)).toEqual({ heldUntil: null });
+    expect(await keptImages(PENDING)).toBe(1);
   });
 
   it('releasing a manual hold does purge what it kept (the control for the case above)', async () => {

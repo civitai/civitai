@@ -49,7 +49,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 const placeSchema = z.object({
   userId: int4Id,
   reason: z.string().trim().min(1, 'Give a reason.').max(500),
-  // A date only: the hold ends at the start of that day, UTC.
   releaseAt: z
     .union([z.literal(''), z.string().date('Use a date like 2026-12-31.')])
     .optional()
@@ -91,7 +90,7 @@ export const actions: Actions = {
     if (!released)
       return fail(409, {
         scope: 'release',
-        error: 'Only an open manual hold can be released here.',
+        error: 'Only an open manual hold, not one kept for a CSAM report, can be released here.',
       });
     await recordModActivity({
       userId: locals.user.id,

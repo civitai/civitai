@@ -12,6 +12,7 @@
   } from '@civitai/ui/components/ui/table/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { GENERATOR_EVIDENCE_HOLD_REASON } from '@civitai/db-queries/evidence-hold';
   import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { csamReportUrl } from '$lib/entity-url';
   import { dateTime, LINK_CLASS, plural } from '$lib/format';
@@ -148,6 +149,7 @@
                   {@const end = rowEnd(hold)}
                   <li class="flex flex-wrap items-center gap-2">
                     <Badge variant="secondary">{hold.role}</Badge>
+                    <span class="text-dark-2">{hold.reason}</span>
                     {#if hold.csamReportId}
                       <code class="text-dark-2">report #{hold.csamReportId}</code>
                     {/if}
@@ -167,7 +169,7 @@
                         {hold.extensionReference ?? '—'}
                       </span>
                     {/if}
-                    {#if hold.role === 'manual'}
+                    {#if hold.role === 'manual' && hold.reason !== GENERATOR_EVIDENCE_HOLD_REASON}
                     <form method="POST" action="?/release" use:enhance class="flex items-center gap-1">
                       <input type="hidden" name="holdId" value={hold.id} />
                       <Input
