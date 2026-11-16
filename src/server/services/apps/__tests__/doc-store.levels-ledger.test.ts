@@ -84,7 +84,7 @@ describe('content-level seam ledger', () => {
   it('list, the one statement built at run time, applies the predicate when levels are on', () => {
     const list = functionBody(source, 'list');
     expect(list).toMatch(/docColumns\(viewerParam/);
-    expect(list).toMatch(/if \(ctx\.levels\) \{\s*conds\.push\(sharedDocLevelVisible\(/);
+    expect(list).toMatch(/if \(ctx\.levels\) \{\s*conds\.push\(\s*sharedDocLevelVisible\(/);
   });
 
   it('every docColumns call is a ledgered statement or list', () => {
