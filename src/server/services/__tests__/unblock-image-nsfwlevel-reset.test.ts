@@ -292,6 +292,27 @@ describe('handleUnblockImages and a CSAM block', () => {
     expect(bound).toEqual([[2, 'CSAM']]);
     expect(result.map((image) => image.id)).toEqual([2]);
   });
+
+  it('leaves alone an image the replica still shows unblocked but the primary has CSAM-blocked', async () => {
+    const passthrough = dbWrite.$queryRaw.getMockImplementation()!;
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      (strings as unknown as string[]).join('?').includes('SELECT id FROM "Image"')
+        ? Promise.resolve([{ id: 2 }])
+        : passthrough(strings, ...values)) as never);
+    try {
+      const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
+
+      expect(result).toEqual([]);
+      const drops = dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
+        (strings as TemplateStringsArray)
+          .join('?')
+          .includes('DELETE FROM "ImageDeferredBlockEffect"')
+      );
+      expect(drops).toEqual([]);
+    } finally {
+      dbWrite.$queryRaw.mockImplementation(passthrough as never);
+    }
+  });
 });
 
 // Second door onto the same bug: a moderator approving an image appeal DIRECTLY via

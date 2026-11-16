@@ -1234,8 +1234,23 @@ export async function handleUnblockImages({
       needsReview: true,
     },
   });
-  // A CSAM block is lifted only through the moderator CSAM review; the UPDATE re-checks it per row.
-  const images = found.filter((image) => image.blockedFor !== BlockedReason.CSAM);
+  // A CSAM block is lifted only through the moderator CSAM review. Re-read on the primary, since the
+  // replica can lag a block: the follow-ups below act on every image left here. The UPDATE also
+  // re-checks it per row.
+  const csamIds = found.length
+    ? new Set(
+        (
+          await dbWrite.$queryRaw<{ id: number }[]>`
+            SELECT id FROM "Image"
+            WHERE id IN (${Prisma.join(found.map((image) => image.id))})
+              AND "blockedFor" = ${BlockedReason.CSAM}
+          `
+        ).map((row) => row.id)
+      )
+    : new Set<number>();
+  const images = found.filter(
+    (image) => image.blockedFor !== BlockedReason.CSAM && !csamIds.has(image.id)
+  );
   await Limiter().process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const grouped = images.reduce<Record<string, number[]>>((acc, image) => {
