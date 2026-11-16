@@ -13,7 +13,7 @@ where it loads on demand:
 
 ## How to work with us
 - Plans are markdown documents in `docs/`. Our inline comments are marked `@dev:`; leave yours as `@ai:`.
-  A plan without a current `**Status:**` line is historical: don't follow it as instructions.
+  A plan or proposal without a current `**Status:**` line is historical; guides (`docs/dev/`, `docs/packages/`) are not plans.
 - **Never open an issue or ticket without a closing condition** — what ends it and who or what checks it.
   Read `docs/dev/filing-follow-ups.md` before filing anything.
 - Read a file before editing it; plan the change, then make one complete edit. Act after reading 3–5

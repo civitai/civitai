@@ -64,9 +64,11 @@ The repo's `pnpm-workspace.yaml` already globs `apps/*`, so a new folder is pick
   (`createCacheRedis`, keys in `REDIS_KEYS`, always with a TTL). The sys client (`createSysRedis`,
   `REDIS_SYS_KEYS`) is durable state, not a cache; `@civitai/auth`'s revocation check reads it. Build a
   cache client in the shim when the app caches anything, rather than putting the cache on the sys client.
-- **Never port main-app logic into an app.** Extract it into the owning `@civitai/*` package and import it
-  from both sides (for example `packages/civitai-shared/src/feedback.constants.ts`). A "Ported from" or
-  "Mirrors" comment is a defect marker, not a pattern to follow.
+- **Never copy main-app logic that stays live in the main app.** Extract it into the owning `@civitai/*`
+  package and import it from both sides (for example `packages/civitai-shared/src/feedback.constants.ts`).
+  A "Ported from" or "Mirrors" comment on such a copy is a defect marker, not a pattern to follow. A
+  migration that moves a page out of the main app and deletes the original follows the
+  `moderator-page-migration` skill instead.
 
 ## 3. The transpile requirement (every package)
 
