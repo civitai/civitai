@@ -69,8 +69,7 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 	return c
 }
 
-// primaryMaxConns bounds the primary pool: only the frame and event-decoration miss lookups (one
-// query each per page, plus the frames' withheld check) use it, and only with write-back on.
+// primaryMaxConns bounds the primary pool, used only by the write-back miss lookups (DESIGN.md §3.1).
 const primaryMaxConns = 4
 
 func run(log *slog.Logger) error {
@@ -129,8 +128,10 @@ func run(log *slog.Logger) error {
 		primary = primaryPool
 	}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss)
-	log.Info("cache misses", "compute", sources.Compute != nil, "writeback", cfg.CacheWriteBack,
-		"frameNegative", cfg.FrameCacheNegative)
+	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
+	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
+	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
+		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative)
 	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
@@ -221,14 +222,16 @@ func run(log *slog.Logger) error {
 		},
 	}
 	srv := &server.Server{
-		Resolver:       resolver,
-		Deps:           deps,
-		Models:         models,
-		Hosts:          cfg.Hosts,
-		RegionRules:    cfg.RegionRules,
-		Metrics:        metrics,
-		Log:            log,
-		ShadowQueue:    make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		Resolver:    resolver,
+		Deps:        deps,
+		Models:      models,
+		Hosts:       cfg.Hosts,
+		RegionRules: cfg.RegionRules,
+		Metrics:     metrics,
+		Log:         log,
+		ShadowQueue: make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		// The Go-first probes get as many slots as the comparisons, in their own queue.
+		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
 		Infinite:       infinite,

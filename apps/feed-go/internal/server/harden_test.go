@@ -582,9 +582,6 @@ func testCounterValue(t *testing.T, c prometheus.Counter) float64 {
 	return v
 }
 
-// The endpoint label is `feed_endpoint` on every per-endpoint family. `endpoint` is a reserved scrape
-// target label: the scraper's own value overwrites it, so a query on endpoint="as-posts" would match
-// nothing. Each family is touched once so Gather shows its label names.
 // The cache-miss counter is seeded for every cache and result, and ObserveCacheMiss adds ids.
 func TestCacheMissCounter(t *testing.T) {
 	reg := prometheus.NewRegistry()
@@ -622,6 +619,9 @@ func TestCacheMissCounter(t *testing.T) {
 	}
 }
 
+// The endpoint label is `feed_endpoint` on every per-endpoint family. `endpoint` is a reserved scrape
+// target label: the scraper's own value overwrites it, so a query on endpoint="as-posts" would match
+// nothing. Each family is touched once so Gather shows its label names.
 func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	if EndpointLabel != "feed_endpoint" {
 		t.Fatalf("EndpointLabel = %q, want feed_endpoint", EndpointLabel)
@@ -637,6 +637,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	m.ShadowPhaseCPU.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSolo.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSoloWall.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
+	m.GoFirstDBReads.WithLabelValues(EndpointAsPosts, "basic-users").Inc()
+	m.GoFirstCheckLag.WithLabelValues(EndpointAsPosts).Observe(1)
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
@@ -665,8 +667,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 10 {
-		t.Fatalf("checked %d per-endpoint families, want 10 (a family was renamed or lost)", checked)
+	if checked != 17 {
+		t.Fatalf("checked %d per-endpoint families, want 17 (a family was renamed or lost)", checked)
 	}
 }
 

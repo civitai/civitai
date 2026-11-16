@@ -1356,6 +1356,18 @@ func goldenCheckBound(cursor string, bound []json.RawMessage, args []any) error 
 // fixture's caches and Postgres.
 func goldenComputeModels(t *testing.T, fx *goldenFixture) (*computed, error) {
 	t.Helper()
+	env := goldenSetupModels(t, fx)
+	ctx := context.Background()
+	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env.server.computeModelGetAll(ctx, r)
+}
+
+// goldenSetupModels is goldenSetup with the model.getAll deps over the fixture's model tables.
+func goldenSetupModels(t *testing.T, fx *goldenFixture) *goldenEnv {
+	t.Helper()
 	env := goldenSetup(t, fx)
 	db := newGoldenModelPG(t, fx)
 	events := map[string]bool{}
@@ -1376,12 +1388,7 @@ func goldenComputeModels(t *testing.T, fx *goldenFixture) (*computed, error) {
 		},
 		Now: env.now,
 	}
-	ctx := context.Background()
-	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return env.server.computeModelGetAll(ctx, r)
+	return env
 }
 
 func goldenRunModels(t *testing.T, fx *goldenFixture) {
