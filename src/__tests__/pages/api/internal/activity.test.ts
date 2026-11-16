@@ -37,14 +37,17 @@ function makeRes() {
   };
 }
 
-async function post(body: unknown) {
+async function post(
+  body: unknown,
+  socket: { remoteAddress?: string } = { remoteAddress: '192.0.2.10' }
+) {
   const res = makeRes();
   const req = {
     method: 'POST',
     body,
     headers: {},
     query: {},
-    socket: { remoteAddress: '192.0.2.10' },
+    socket,
   } as unknown as NextApiRequest;
   await handler(req, res as unknown as NextApiResponse);
   return res;
@@ -104,6 +107,18 @@ describe('/api/internal/activity', () => {
     expect(mocks.activity).not.toHaveBeenCalled();
   });
 
+  // Each name below is within the length bounds, so only the charset rule can refuse it.
+  it.each([
+    ['a space', 'remix image'],
+    ['a newline', 'a\nb'],
+    ['a non-ASCII character', '\u00e9'],
+  ])('rejects an entry containing %s with 400 and writes nothing', async (_label, name) => {
+    const res = await post({ activities: ['remix:image', name] });
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mocks.activity).not.toHaveBeenCalled();
+  });
+
   it('rejects a body with no activities array with 400', async () => {
     const res = await post({});
 
@@ -123,6 +138,14 @@ describe('/api/internal/activity', () => {
     await post({ activities: ['remix:image'] });
 
     expect(mocks.checkActivityRateLimit).toHaveBeenCalledWith('192.0.2.10');
+  });
+
+  it('skips the rate limit and writes the batch when the caller address does not resolve', async () => {
+    const res = await post({ activities: ['remix:image', 'copy:prompt'] }, {});
+
+    expect(mocks.checkActivityRateLimit).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(mocks.activity.mock.calls).toEqual([['remix:image'], ['copy:prompt']]);
   });
 
   it('answers 429 with Retry-After and writes nothing when the caller is over the limit', async () => {

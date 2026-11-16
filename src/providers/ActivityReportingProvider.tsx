@@ -29,7 +29,7 @@ export async function sendActivities() {
       });
     }
   } catch {
-    // Best-effort analytics: a failed send drops its chunk. The finally below keeps the loop alive.
+    // Best-effort analytics: a failed send drops its chunk.
   } finally {
     setTimeout(sendActivities, SEND_INTERVAL);
   }

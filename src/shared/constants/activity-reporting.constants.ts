@@ -19,7 +19,6 @@ export const ACTIVITY_BATCH_MAX = 200;
 
 /**
  * Longest accepted activity name. The names are developer-written `data-activity` slugs
- * (`remix:image-card-home`, `follow-recommendation:details`, `tool-click:<id>`), the longest today
- * under 30 characters.
+ * (`remix:image-card-home`, `follow-recommendation:details`, `tool-click:<id>`).
  */
 export const ACTIVITY_NAME_MAX_LENGTH = 100;
