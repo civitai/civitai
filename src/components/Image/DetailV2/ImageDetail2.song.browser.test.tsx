@@ -51,11 +51,16 @@ const state = vi.hoisted(() => ({
   images: null as unknown[] | null,
   index: 0,
   highlight: undefined as number | undefined,
+  lyrics: [] as { t: number | null; text: string }[],
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: (await import('../../../../test/trpcProxyStub')).makeTrpcProxy(),
+  trpc: (await import('../../../../test/trpcProxyStub')).makeTrpcProxy({
+    'image.getSongLyrics': {
+      useQuery: () => ({ data: state.lyrics, isLoading: false, isError: false }),
+    },
+  }),
 }));
 vi.mock('~/components/Image/Detail/ImageDetailProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageDetailProviderModule>()),
@@ -311,6 +316,7 @@ beforeEach(async () => {
   state.images = null;
   state.index = 0;
   state.highlight = undefined;
+  state.lyrics = [];
   localStorage.removeItem('image-detail-open');
 });
 
@@ -397,4 +403,47 @@ describe('a link to one of the song’s comments', () => {
     await expect.element(page.getByTestId('song-backdrop')).toBeInTheDocument();
     expect(page.getByTestId('image-detail-sheet').element().getBoundingClientRect().width).toBe(0);
   });
+});
+
+describe('the song stage beside the open sidebar', () => {
+  const LYRICS = [
+    'Neon rain on the arcade glass, every coin a little wish',
+    'We were kings of the high score table until the morning came',
+    'Midnight arcade, midnight arcade, keep the lights on for me',
+  ].map((text, i) => ({ t: i * 10_000, text }));
+
+  // The window sizes the user reported at and the narrowest desktop one, each with and without lyrics.
+  for (const [width, height] of [
+    [1860, 1080],
+    [1280, 900],
+  ])
+    for (const withLyrics of [false, true])
+      test(`fits left of the sidebar at ${width}px ${withLyrics ? 'with lyrics' : 'without lyrics'}`, async () => {
+        await page.viewport(width, height);
+        state.realCarousel = true;
+        state.lyrics = withLyrics ? LYRICS : [];
+        // Among the creator's other songs, as the detail view usually opens it.
+        state.images = [1, 2, 3].map((id) => ({ ...song({}), id }));
+        state.image = state.images[1];
+        state.index = 1;
+        await renderDetail({ width, height });
+        const stage = page.getByTestId('song-detail-stage').nth(1);
+        await expect.element(stage).toBeInTheDocument();
+        await expect
+          .element(withLyrics ? stage.getByTestId('song-lyrics') : stage.getByText('No lyrics on this one.'))
+          .toBeVisible();
+        const sheet = page.getByTestId('image-detail-sheet').element().getBoundingClientRect();
+        expect(sheet.width).toBe(450);
+        expect(sheet.right).toBeLessThanOrEqual(width);
+        // The stage is a carousel slide, so measure within it: no wider than the room left of the
+        // sidebar, and nothing in it past its right edge.
+        const box = stage.element().getBoundingClientRect();
+        const contentRight = Math.max(
+          ...[...stage.element().querySelectorAll('*')].map((el) => el.getBoundingClientRect().right)
+        );
+        expect({ stage: box.width, overflow: Math.max(0, contentRight - box.right) }).toEqual({
+          stage: sheet.left,
+          overflow: 0,
+        });
+      });
 });
