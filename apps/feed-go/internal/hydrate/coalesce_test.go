@@ -191,3 +191,43 @@ func TestPageConcurrentMissesOneQuery(t *testing.T) {
 		t.Fatalf("UserCosmetic queries %v, listing queries %v: want one each for %d requests", q, l, n)
 	}
 }
+
+// A full map of live entries is swept at most once per second, however many answers arrive: each
+// sweep scans every entry under the lock and frees nothing. New ids are not kept meanwhile; once the
+// entries expire, the next sweep frees them and inserts resume.
+func TestRecentSweepRateLimited(t *testing.T) {
+	now := pageNow
+	c := &MissCompute{Now: func() time.Time { return now }}
+	ids := make([]int, recentMax)
+	for i := range ids {
+		ids[i] = i + 10
+	}
+	c.remember(MissImageFrames, ids, nil) // fits exactly: no sweep
+	if c.sweeps != 0 {
+		t.Fatalf("%d sweeps filling the map, want 0", c.sweeps)
+	}
+	for i := 0; i < 100; i++ {
+		now = pageNow.Add(time.Duration(i) * 9 * time.Millisecond) // 100 calls within 0.9 s
+		c.remember(MissImageFrames, []int{1_000_000 + i}, nil)
+	}
+	if c.sweeps != 1 {
+		t.Fatalf("%d sweeps for 100 answers within a second of a full live map, want 1", c.sweeps)
+	}
+	if n := len(c.recent); n != recentMax {
+		t.Fatalf("%d entries, want %d (no new id kept while full)", n, recentMax)
+	}
+	if todo := c.fromRecent(MissImageFrames, []int{1_000_000}, map[int]jspack.Obj{}); len(todo) != 1 {
+		t.Fatal("an id was kept over the bound")
+	}
+
+	// Past the TTL every entry has expired: the next answer sweeps (a second later than the last) and
+	// is kept.
+	now = pageNow.Add(recentTTL)
+	c.remember(MissImageFrames, []int{1}, nil)
+	if c.sweeps != 2 {
+		t.Fatalf("%d sweeps, want 2", c.sweeps)
+	}
+	if todo := c.fromRecent(MissImageFrames, []int{1}, map[int]jspack.Obj{}); len(todo) != 0 || len(c.recent) != 1 {
+		t.Fatalf("after expiry: todo %v, %d entries; want 1 kept alone", todo, len(c.recent))
+	}
+}

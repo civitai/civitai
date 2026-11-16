@@ -59,6 +59,10 @@ type MissCompute struct {
 	flight   singleflight.Group
 	recentMu sync.Mutex
 	recent   map[recentKey]recentEntry
+	// lastSweep is when remember last scanned recent for expired entries; sweeps counts the scans
+	// (tests read it).
+	lastSweep time.Time
+	sweeps    int
 	// beforeFlight, when set (tests), runs just before a lookup joins or starts its flight.
 	beforeFlight func()
 	// Observe counts computed miss ids: cache is a MissXxx label, result "computed" or "error".
@@ -151,8 +155,14 @@ func (c *MissCompute) fromRecent(cache string, ids []int, out map[int]jspack.Obj
 	return todo
 }
 
-// remember keeps the answers for ids. At recentMax the expired entries are dropped first; an answer
-// that still does not fit is not kept.
+// recentSweepEvery is the least time between two scans of recent for expired entries.
+const recentSweepEvery = time.Second
+
+// remember keeps the answers for ids. Near recentMax the expired entries are dropped first, by a
+// scan of the whole map that runs at most once per recentSweepEvery: a map full of live entries is
+// not rescanned on every call (each scan holds recentMu and would free nothing). An answer that does
+// not fit is not kept, so while the map stays full new ids are skipped until a later sweep frees
+// room; an id already held is refreshed.
 func (c *MissCompute) remember(cache string, ids []int, records map[int]jspack.Obj) {
 	now := c.now()
 	until := now.Add(recentTTL)
@@ -161,7 +171,9 @@ func (c *MissCompute) remember(cache string, ids []int, records map[int]jspack.O
 	if c.recent == nil {
 		c.recent = map[recentKey]recentEntry{}
 	}
-	if len(c.recent)+len(ids) > recentMax {
+	if len(c.recent)+len(ids) > recentMax && (c.lastSweep.IsZero() || now.Sub(c.lastSweep) >= recentSweepEvery) {
+		c.lastSweep = now
+		c.sweeps++
 		for k, e := range c.recent {
 			if !now.Before(e.until) {
 				delete(c.recent, k)
