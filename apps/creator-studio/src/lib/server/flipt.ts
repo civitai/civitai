@@ -14,7 +14,6 @@ export function getFlipt(): FliptFeatureFlags {
   if (!g.flipt) {
     g.flipt = createFliptClient({
       onInitError: (error) => {
-        // logToAxiom never rejects, so telemetry cannot fail the caller.
         getLogger().logToAxiom({ name: 'init-flipt-error', error: safeError(error) });
       },
     });

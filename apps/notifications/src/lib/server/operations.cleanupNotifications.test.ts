@@ -10,7 +10,7 @@ const { captured, batches, fakePool, calls, logged, failures } = vi.hoisted(() =
   // Ordered log of every cache/lag call, so "flagged before busted" is assertable and not assumed.
   const calls: string[] = [];
   // Errors to throw from the Nth query. Without these the DB cannot fail in this suite at all, and
-  // anything done to its error path is unobservable. (The logger needs none: logToAxiom never rejects.)
+  // anything done to its error path is unobservable.
   const failures: Array<Error | null> = [];
   const fakePool = {
     query: async (sql: string, params?: unknown[]) => {

@@ -211,8 +211,8 @@ describe('/api/upload/abort — error classification', () => {
   });
 
   /**
-   * 🔴 THE RESPONSE MUST NOT WAIT ON TELEMETRY. Mirrors the block in
-   * ./upload-complete-endpoint.test.ts.
+   * 🔴 THE RESPONSE MUST NOT WAIT ON TELEMETRY: a slow or failing log must not turn a stored
+   * object into a 500.
    */
   describe('telemetry runs after the response', () => {
     /**

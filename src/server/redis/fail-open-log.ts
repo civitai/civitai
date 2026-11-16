@@ -69,11 +69,6 @@ export function logSysRedisFailOpen(
   err: unknown,
   extra?: Record<string, unknown>
 ): void {
-  // No `.catch` needed: logToAxiom never rejects. It contains a degraded
-  // Axiom ingest itself (packages/civitai-axiom/src/client.ts), which is what
-  // matters when this very logger fires most: a multi-service incident
-  // (sysRedis + Axiom both down).
-  //
   // Spread safeError(err) and extra FIRST: safeError returns
   // { name: e.name, ... } where e.name is "Error" / "TypeError" / etc.
   // Spreading it after the literal `name: 'sysredis-fail-open'` would

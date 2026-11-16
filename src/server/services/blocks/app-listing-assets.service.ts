@@ -740,10 +740,6 @@ async function assertStoredObjectUnchanged(
     kind,
     imageId: image.id,
   });
-  // Nothing awaits the call above, and nothing needs to: `logToAxiom` never rejects
-  // (it contains a degraded Axiom ingest itself; pinned in
-  // packages/civitai-axiom/src/__tests__/logToAxiom.test.ts), so the attach it is
-  // merely OBSERVING cannot be taken down by the observation.
 
   if (verdict.status !== 'mismatch') return;
 

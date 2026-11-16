@@ -49,10 +49,6 @@ import {
 } from '~/server/services/blocks/post-app-chip.logic';
 import type { SessionUser } from '~/types/session';
 
-/**
- * Fire-and-forget: `logToAxiom` never rejects, so this fail-open path cannot be
- * turned into an unhandled rejection by its own logging.
- */
 function noteDegradedChipRead(err: unknown, surface: AppChipSurface, read?: 'item'): void {
   logToAxiom({
     name: 'post-app-chip-read-degraded',

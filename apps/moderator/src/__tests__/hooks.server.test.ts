@@ -252,8 +252,6 @@ describe('locals.tokenClient stays exactly "webhook"', () => {
 });
 
 describe('attribution never breaks a request', () => {
-  // A rejecting logger is not a case to test here: logToAxiom never rejects (pinned in
-  // packages/civitai-axiom/src/__tests__/logToAxiom.test.ts).
   it('survives a logger that throws SYNCHRONOUSLY', async () => {
     // A throw on the way IN never produces a promise at all; without the hook's guard it
     // propagates out of the hook and the request 500s.

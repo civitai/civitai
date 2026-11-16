@@ -64,7 +64,6 @@ vi.mock('./clients/db', () => ({
   }),
 }));
 
-// logToAxiom resolves, like the real one (which never rejects).
 vi.mock('./clients/axiom', () => ({ logToAxiom: vi.fn(async () => {}) }));
 
 import type { CreateNotificationPendingRow } from '@civitai/notifications';
