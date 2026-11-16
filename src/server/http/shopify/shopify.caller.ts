@@ -4,7 +4,8 @@ import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const API_VERSION = '2025-01';
 
-const log = (data: MixedObject) => logToAxiom({ name: 'shopify-merch', type: 'error', ...data });
+const log = (data: MixedObject) =>
+  logToAxiom({ name: 'shopify-merch', type: 'error', ...data });
 
 // The merch store is a Shopify dev-dashboard custom app using the
 // client_credentials grant: we mint a short-lived (~24h) admin token from a

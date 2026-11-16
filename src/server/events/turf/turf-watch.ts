@@ -107,7 +107,8 @@ export async function pushTurfCounts(
       );
       failed += results.filter((r) => r.status === 'rejected').length;
     }
-    if (failed) void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed });
+    if (failed)
+      void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed });
     return watched.length - failed;
   } catch (error) {
     void logToAxiom({ type: 'error', name: 'event-turf-watch', fn: 'push', event, error });

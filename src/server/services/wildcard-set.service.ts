@@ -495,9 +495,7 @@ export async function loadWildcardSetFromModelVersion({
       return { wildcardSetId: result.wildcardSetId, invalidated: true, reason: result.reason };
     case 'unsupported_format':
       throw throwBadRequestError(
-        `This wildcard model uses a file format we don't yet support (${result.fileNames.join(
-          ', '
-        )}). The site will pick it up automatically once support lands.`
+        `This wildcard model uses a file format we don't yet support (${result.fileNames.join(', ')}). The site will pick it up automatically once support lands.`
       );
     case 'failed':
       throw throwBadRequestError(`Couldn't load wildcard set: ${result.error}`);

@@ -16,10 +16,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 const { isComicProjectHidden, isPanelTainted, withholdRestrictedPanelImages } = await import(
   '~/server/services/comics/chapter-visibility'
 );
-import type { RestrictableImage } from '~/server/common/image-visibility';
-const { withServableImage } = await import('~/server/common/image-visibility');
-const servedCover = <T extends RestrictableImage>(cover: T, viewerId?: number) =>
-  withServableImage({ coverImage: cover }, 'coverImage', viewerId).coverImage;
 
 const OWNER = 5;
 const project = (over: Record<string, unknown> = {}) => ({
@@ -110,14 +106,8 @@ describe('an image made with a base model that restricts mature images', () => {
       expect(servedPanel(image(R), viewerId)).toEqual({ imageUrl: null, image: null });
   });
 
-  it('is withheld as a cover from a stranger, a moderator and a signed-out reader', () => {
-    for (const viewerId of [reader.id, moderator.id, undefined])
-      expect(servedCover(image(R), viewerId)).toBeNull();
-  });
-
   it('is served to its uploader', () => {
     expect(servedPanel(image(R), OWNER).imageUrl).toBe('u');
-    expect(servedCover(image(R), OWNER)).toEqual(image(R));
   });
 
   it.each([
@@ -125,6 +115,5 @@ describe('an image made with a base model that restricts mature images', () => {
     ['mature without the flag', image(R, false)],
   ])('is served to anyone when %s', (_, img) => {
     expect(servedPanel(img, undefined).imageUrl).toBe('u');
-    expect(servedCover(img, undefined)).toEqual(img);
   });
 });

@@ -79,7 +79,10 @@ const expired = (token: VerifiedToken, now: number) =>
 export async function authenticate(
   authorization: string | undefined,
   verify: VerifyToken | undefined,
-  { now = Date.now, regionRestricted }: { now?: () => number; regionRestricted: () => boolean }
+  {
+    now = Date.now,
+    regionRestricted,
+  }: { now?: () => number; regionRestricted: () => boolean }
 ): Promise<Principal> {
   if (authorization === undefined || authorization === '') return ANONYMOUS_PRINCIPAL;
   const token = BEARER_RE.exec(authorization)?.[1];

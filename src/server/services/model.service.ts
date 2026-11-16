@@ -7886,7 +7886,8 @@ export const privateModelFromTraining = async ({
             : 'revert left the model Private: held scan verdict not applied',
           modelId: id,
           error: revertError.message,
-        }).then(() => false)
+        })
+          .then(() => false)
     );
     // The model stayed Private, so its versions stay with it; the caller sees the flow's own error.
     if (!reverted) throw throwDbError(error);

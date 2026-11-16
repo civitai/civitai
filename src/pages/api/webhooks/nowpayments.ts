@@ -97,10 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // NOWPayments' own record of it. partially_paid is credited like finished; failed records the
     // status and credits nothing.
     // A credited deposit has nothing left to learn; a replay must not spend a lookup.
-    if (
-      ACTIONABLE_STATUSES.includes(paymentStatus) &&
-      !(await isDepositCredited(event.payment_id))
-    ) {
+    if (ACTIONABLE_STATUSES.includes(paymentStatus) && !(await isDepositCredited(event.payment_id))) {
       const { payment, status: lookupStatus } = await client
         .lookupPayment(event.payment_id)
         .catch((e) => {

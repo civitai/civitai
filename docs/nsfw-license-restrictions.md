@@ -62,7 +62,8 @@ anyone but its uploader and moderators, and entries and judging carry on; while 
 running and has passed its own review, its page asks its owner and moderators to change the cover.
 
 The Knights rating games (New Order and Knights of New Order v2) apply no restriction: their
-players rate these images too.
+players rate these images too. The research rater's image feed does exclude them; its sanity-set editor
+shows them, labelled.
 
 Moderators see one in these places:
 - opened by its id: `imageVisibilityConditions` applies no conditions for moderators, so its page (with

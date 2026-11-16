@@ -15,7 +15,8 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { computeMerchBuzz } from '~/server/utils/merch-buzz';
 
-const log = (data: MixedObject) => logToAxiom({ name: 'shopify-merch', type: 'error', ...data });
+const log = (data: MixedObject) =>
+  logToAxiom({ name: 'shopify-merch', type: 'error', ...data });
 
 // Subset of the Shopify `orders/paid` payload we depend on. Shopify sends prices
 // as decimal strings and customer/discounts may be absent on some orders.

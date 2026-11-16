@@ -1611,7 +1611,6 @@ export const getCrucibleDetail = async ({
     stored.needsReview == null &&
     !stored.tosViolation &&
     isRestrictedImage(stored);
-  // A moderator sees a restricted cover and hero.
   const { image, heroImage } = isModerator
     ? crucible
     : withServableImage(withServableImage(crucible, 'image', userId), 'heroImage', userId);

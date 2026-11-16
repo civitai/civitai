@@ -36,11 +36,7 @@ async function flush() {
   await __flushPendingEmitsForTest();
 }
 
-const ENV_KEYS = [
-  'TRPC_SLOW_LOG_ENABLED',
-  'TRPC_SLOW_LOG_MS',
-  'TRPC_SLOW_LOG_MAX_PER_SEC',
-] as const;
+const ENV_KEYS = ['TRPC_SLOW_LOG_ENABLED', 'TRPC_SLOW_LOG_MS', 'TRPC_SLOW_LOG_MAX_PER_SEC'] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {

@@ -289,7 +289,8 @@ export async function validateBuzzPurchaseAttribution<
   // surface on that (model, slot), so a wrong slot fails to resolve.
   // -----------------------------------------------------------------
   const clientModelId = base[ATTRIBUTION_METADATA_KEYS.modelId];
-  const modelIdNum = clientModelId != null && clientModelId !== '' ? Number(clientModelId) : NaN;
+  const modelIdNum =
+    clientModelId != null && clientModelId !== '' ? Number(clientModelId) : NaN;
   const clientSlotId = base[ATTRIBUTION_METADATA_KEYS.slotId];
   const slotId = typeof clientSlotId === 'string' && clientSlotId ? clientSlotId : undefined;
 

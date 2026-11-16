@@ -68,9 +68,7 @@ export async function findOfficialDedupePairs(since: Date, limit: number): Promi
     WHERE hm."userId" <> ${OFFICIAL_USER_ID}
       AND hm.status = 'Published'
       AND hv.status = 'Published'
-      AND h.type IN (${Prisma.join([
-        ...LINKABLE_HOST_FILE_TYPES,
-      ])}) -- only types processDedupePairs can rehome; excludes primary weights
+      AND h.type IN (${Prisma.join([...LINKABLE_HOST_FILE_TYPES])}) -- only types processDedupePairs can rehome; excludes primary weights
       AND h."modelVersionId" <> c.canonical_version_id
       AND NOT EXISTS (
         SELECT 1 FROM "RecommendedResource" rr
@@ -162,11 +160,7 @@ export const dedupeOfficialUploadsJob = createJob(
       // backlog (persistently-failing pairs) will be retried on the next hourly run.
       if (i === MAX_ITERATIONS - 1) {
         logToAxiom(
-          {
-            type: 'warning',
-            name: 'dedupe-official-uploads',
-            message: 'hit MAX_ITERATIONS safety guard; backlog may be incomplete',
-          },
+          { type: 'warning', name: 'dedupe-official-uploads', message: 'hit MAX_ITERATIONS safety guard; backlog may be incomplete' },
           'webhooks'
         );
       }

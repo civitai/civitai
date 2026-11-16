@@ -10,7 +10,10 @@ import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { applyShellEdgeHeaders } from '~/server/shell/shell-response';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
 import type { BotCacheRoutePattern } from '~/server/bot-cache/bot-cache';
-import { applyBotCachePrivateHeaders, botCacheResponseRefusal } from '~/server/bot-cache/bot-cache';
+import {
+  applyBotCachePrivateHeaders,
+  botCacheResponseRefusal,
+} from '~/server/bot-cache/bot-cache';
 import { captureBotCacheRender } from '~/server/bot-cache/bot-cache-origin';
 
 export default class _Document extends Document {

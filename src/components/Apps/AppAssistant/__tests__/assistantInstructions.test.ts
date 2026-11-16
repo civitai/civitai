@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { assistantRules, assistantSystemPrompt, checkKindOf } from '@civitai/app-assistant';
+import {
+  assistantRules,
+  assistantSystemPrompt,
+  checkKindOf,
+} from '@civitai/app-assistant';
 import {
   APP_ASSISTANT_RULES,
   APP_ASSISTANT_SUBAGENT_RULES,

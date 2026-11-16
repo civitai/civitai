@@ -122,7 +122,8 @@ export const cosmeticPerceptualHashSweepJob = createJob(
   async () => {
     try {
       const result = await sweepCosmeticPerceptualHashes();
-      if (result.scanned > 0) logToAxiom({ type: 'cosmetic-phash-sweep', ...result }, 'webhooks');
+      if (result.scanned > 0)
+        logToAxiom({ type: 'cosmetic-phash-sweep', ...result }, 'webhooks');
       return result;
     } catch (error) {
       logToAxiom(

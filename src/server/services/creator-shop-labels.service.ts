@@ -381,7 +381,8 @@ export async function recordShopTakedownLabel(
     .catch(() => {
       failed = true;
     });
-  if (failed) logToAxiom({ type: 'error', name: 'shop-label-record-failed', itemId: listingId });
+  if (failed)
+    logToAxiom({ type: 'error', name: 'shop-label-record-failed', itemId: listingId });
 }
 
 /** Takes a deleted listing's subjects out of training: judgements stay, content goes. */

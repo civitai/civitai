@@ -72,14 +72,7 @@ export const reconcileNowpaymentsJob = createJob(
     return {
       dateFrom,
       dateTo,
-      ...(results ?? {
-        totalPayments: 0,
-        completedPayments: 0,
-        alreadyProcessed: 0,
-        newlyProcessed: 0,
-        failed: 0,
-        skipped: 0,
-      }),
+      ...(results ?? { totalPayments: 0, completedPayments: 0, alreadyProcessed: 0, newlyProcessed: 0, failed: 0, skipped: 0 }),
       retryResults,
     };
   },

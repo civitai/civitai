@@ -188,7 +188,6 @@ export function isPublicCollectionImage(
 
 /**
  * Of `imageIds`, the ones restricted by their base model (`imageRestrictedSql`).
- * `getFallbackCoverImages` applies the same condition in its own WHERE.
  */
 export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Set<number>> {
   if (imageIds.length === 0) return new Set();

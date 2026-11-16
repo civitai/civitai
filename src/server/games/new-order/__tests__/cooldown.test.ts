@@ -90,12 +90,7 @@ vi.mock('~/server/common/enums', () => ({
   NewOrderImageRatingStatus: {},
 }));
 vi.mock('~/shared/utils/prisma/enums', () => ({
-  NewOrderRankType: {
-    Acolyte: 'Acolyte',
-    Knight: 'Knight',
-    Templar: 'Templar',
-    Paladin: 'Paladin',
-  },
+  NewOrderRankType: { Acolyte: 'Acolyte', Knight: 'Knight', Templar: 'Templar', Paladin: 'Paladin' },
 }));
 vi.mock('dayjs', () => ({ default: () => ({}) }));
 
@@ -154,10 +149,13 @@ describe('checkVotingRateLimit cooldown behavior', () => {
     const result = await checkVotingRateLimit(42);
 
     expect(result.allowed).toBe(false);
-    expect(mockRedis.eval).toHaveBeenCalledWith(expect.stringContaining('PTTL'), {
-      keys: ['new-order:rate-limit:cooldown:42'],
-      arguments: [(10 * 60 * 1000).toString()],
-    });
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('PTTL'),
+      {
+        keys: ['new-order:rate-limit:cooldown:42'],
+        arguments: [(10 * 60 * 1000).toString()],
+      }
+    );
     expect(mockRedis.zAdd).not.toHaveBeenCalled();
   });
 
@@ -171,10 +169,13 @@ describe('checkVotingRateLimit cooldown behavior', () => {
     const result = await checkVotingRateLimit(42);
 
     expect(result.allowed).toBe(false);
-    expect(mockRedis.eval).toHaveBeenCalledWith(expect.stringContaining('PTTL'), {
-      keys: ['new-order:rate-limit:cooldown:42'],
-      arguments: [(60 * 60 * 1000).toString()],
-    });
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('PTTL'),
+      {
+        keys: ['new-order:rate-limit:cooldown:42'],
+        arguments: [(60 * 60 * 1000).toString()],
+      }
+    );
   });
 
   it('sets a 24-hour cooldown when the day window trips', async () => {
@@ -187,10 +188,13 @@ describe('checkVotingRateLimit cooldown behavior', () => {
     const result = await checkVotingRateLimit(42);
 
     expect(result.allowed).toBe(false);
-    expect(mockRedis.eval).toHaveBeenCalledWith(expect.stringContaining('PTTL'), {
-      keys: ['new-order:rate-limit:cooldown:42'],
-      arguments: [(24 * 60 * 60 * 1000).toString()],
-    });
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('PTTL'),
+      {
+        keys: ['new-order:rate-limit:cooldown:42'],
+        arguments: [(24 * 60 * 60 * 1000).toString()],
+      }
+    );
   });
 
   it('does not shrink an active longer cooldown (max-merge via Lua)', async () => {

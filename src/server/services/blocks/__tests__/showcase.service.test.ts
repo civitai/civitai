@@ -382,11 +382,13 @@ describe('getModelShowcaseImages', () => {
       // `undefined` must still fail closed to SFW: had the router passed the
       // 'blue'-defaulted ctx.domain, this viewer would now see R/X/XXX.
       const constants = await import('~/shared/constants/browsingLevel.constants');
-      const spy = vi.spyOn(constants, 'domainBrowsingCeiling').mockImplementation((color) => {
-        if (color === 'blue' || color === 'red') return constants.allBrowsingLevelsFlag;
-        if (color == null) return constants.sfwBrowsingLevelsFlag; // fail closed
-        return constants.sfwBrowsingLevelsFlag;
-      });
+      const spy = vi
+        .spyOn(constants, 'domainBrowsingCeiling')
+        .mockImplementation((color) => {
+          if (color === 'blue' || color === 'red') return constants.allBrowsingLevelsFlag;
+          if (color == null) return constants.sfwBrowsingLevelsFlag; // fail closed
+          return constants.sfwBrowsingLevelsFlag;
+        });
       try {
         mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
         // Unresolved host → raw color undefined → passed through as undefined.
