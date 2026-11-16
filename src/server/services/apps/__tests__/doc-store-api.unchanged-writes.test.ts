@@ -346,6 +346,13 @@ async function lastSeq(app: AppRow): Promise<number> {
   return Number(rows[0]?.s ?? 0);
 }
 
+/** The INSERT/UPDATE/DELETE statements the store issued since statement `from`. */
+const writesIn = (from: number) =>
+  harness.statements
+    .slice(from)
+    .map((st) => st.sql)
+    .filter((sql) => /^\s*(?:INSERT|UPDATE|DELETE|WITH)\b/i.test(sql));
+
 const sharedBudget = (app: AppRow, uid = V1) =>
   lua.hash(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-shared-write:v1:${app.id}:${uid}`);
 
@@ -384,6 +391,8 @@ beforeEach(() => {
 
 afterEach(() => {
   expect(lua.errors).toEqual([]);
+  // Every store statement ran in a transaction bound to its own app and namespace.
+  expect(harness.violations).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -400,13 +409,22 @@ describe('flag on: a shared put that changes nothing', () => {
   it('spends no shared-write token, runs no scan, writes nothing, and answers as the write did', async () => {
     const A = freshApp();
     const t = await mint(A, V1);
+    const atFirst = harness.statements.length;
     const first = await expectOk(put(t, 'k1', { char: 'A', n: 1 }));
+    // Positive control for the statement check below: a write that lands issues writes.
+    expect(writesIn(atFirst).length).toBeGreaterThan(0);
     expect(sharedBudget(A)).toEqual(SHARED_AFTER_ONE_WRITE);
     expect(h.scans).toBe(1);
     const before = await row(A, 'k1');
     const seqBefore = await lastSeq(A);
 
+    const atAgain = harness.statements.length;
     const again = await expectOk(put(t, 'k1', { char: 'A', n: 1 }));
+    // Not one write statement reached the store, and the comparison read the row under lock.
+    expect(writesIn(atAgain)).toEqual([]);
+    expect(
+      harness.statements.slice(atAgain).filter((st) => /\bFOR UPDATE\b/.test(st.sql))
+    ).toHaveLength(1);
     // The same success shape, and the same document: no version bump.
     expect(again.body).toEqual(first.body);
     expect((again.body as { version: number }).version).toBe(1);
