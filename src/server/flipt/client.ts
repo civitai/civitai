@@ -419,8 +419,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // visible, at the version any `ifVersion` names), the route answers with the stored document
   // and spends no shared-write budget token, runs no moderation scan and writes nothing (no
   // version bump, so its content-level rating stands). While on, every shared PUT also spends one
-  // per-viewer `write` token first, so identical PUTs stay bounded.
-  // EVALUATED PER APP like the publish flag above (entityId = the app block id, NO context).
+  // per-viewer `write` token first, changed or not, so identical PUTs stay bounded.
+  // EVALUATED PER APP like the publish flag above: entityId = the REQUESTING app's block id (the
+  // block token's `appBlockId`, also through an import or a review preview), NO context.
   // DEFAULT-OFF — absent or Flipt unreachable, every shared write spends and scans as before. See
   // `putIfUnchanged` in `doc-store.ts`.
   APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE = 'app-blocks-storage-unchanged-writes-free',

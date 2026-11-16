@@ -355,6 +355,18 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
 }
 
 /** The `app_block_id` label of the request's verified block claims (`other` without any). */
+/**
+ * Whether `app-blocks-storage-unchanged-writes-free` is on for the REQUESTING app: evaluated, like
+ * the publish flag (`isPublishRouteServed`), for the block token's app block id — not the
+ * resolved store context's app, which is the SOURCE app through an import. The free-write counter
+ * is labelled with the same app (`requestAppLabel`). No claims, no flag.
+ */
+async function isUnchangedWriteFree(req: NextApiRequest): Promise<boolean> {
+  const appBlockId = (req as BlockScopedNextApiRequest).blockClaims?.appBlockId;
+  if (!appBlockId) return false;
+  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE, appBlockId);
+}
+
 function requestAppLabel(req: NextApiRequest): string {
   const claims = (req as BlockScopedNextApiRequest).blockClaims;
   return claims ? blockClaimsAppLabel(claims) : 'other';
@@ -1086,6 +1098,9 @@ async function run(
         getManyMax: DOC_STORE_BOUNDS.getManyMax,
         rate: {
           readsPerMinute: DOC_STORE_READ_RATE_LIMIT_MAX,
+          // The per-viewer `write` bucket: private writes, every DELETE, each publish and
+          // unpublish call, and — only while `app-blocks-storage-unchanged-writes-free` is on for
+          // the app — every shared PUT, changed or not (the field keeps its name).
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
           marksAndCountersPerMinute: DOC_STORE_TALLY_RATE_LIMIT_MAX,
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
@@ -1191,11 +1206,7 @@ async function run(
       // moderation scan, nothing written — counted per app. Anything else (a change, a stale
       // `ifVersion`, another author's or a hidden document) takes the ordinary write below. A
       // create always writes a new key, so it is never unchanged.
-      if (
-        putIn &&
-        route.op === 'put' &&
-        (await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE, ctx.appId))
-      ) {
+      if (putIn && route.op === 'put' && (await isUnchangedWriteFree(req))) {
         await charge('write', access, req);
         const stored = await store.putIfUnchanged(ctx, coll, route.key, putIn.data, {
           ifVersion: putIn.ifVersion,
