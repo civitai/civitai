@@ -134,6 +134,19 @@ describe("no new TTL'd sysRedis write (ratchet)", () => {
     );
     expect(count('void (sysRedis as any).pExpireAt(k, t);')).toBe(1);
     expect(count("await sysRedis.setNxKeepTtlWithEx(k, '1', 60);")).toBe(1);
+    for (const method of [
+      'pExpire',
+      'expireAt',
+      'setEx',
+      'pSetEx',
+      'getEx',
+      'hExpire',
+      'hpExpire',
+      'hExpireAt',
+      'hpExpireAt',
+      'hSetMultiWithExpire',
+    ])
+      expect(count(`await sysRedis.${method}(k, 60);`), method).toBe(1);
     // Not TTL'd, or not the sys client.
     expect(count('await sysRedis.set(k, v); await sysRedis.set(k, v, { NX: true });')).toBe(0);
     expect(count('await redis.set(k, v, { EX: 60 }); await redis.expire(k, 1);')).toBe(0);

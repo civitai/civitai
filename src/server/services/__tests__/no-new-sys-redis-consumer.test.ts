@@ -238,6 +238,10 @@ describe('no new sysRedis consumer (ratchet)', () => {
   });
 
   it('the baseline matches the code (lower it when a file stops using sysRedis)', () => {
-    expect(shrunk, MESSAGE_SHRUNK).toEqual([]);
+    const files = Object.keys(current)
+      .sort()
+      .map((f) => `  '${f}',`)
+      .join('\n');
+    expect(shrunk, `${MESSAGE_SHRUNK}\nCurrent files:\n${files}`).toEqual([]);
   });
 });
