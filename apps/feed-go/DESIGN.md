@@ -364,6 +364,21 @@ it is never less correct than not routing it — only its share of fallbacks cha
   the `deadline` fallback — proxied when serving, compare result `deadline` in shadow (its own result,
   so the share the budget excludes from the match rate stays visible). A client that leaves
   mid-compute is the `canceled` fallback, not a deadline, and is not proxied (nobody would read it).
+- **Concurrency cap (bulkhead).** At most `FEED_GO_MAX_IN_FLIGHT` public requests compute at once
+  per pod (default 20, `config.DefaultMaxInFlight`). It mirrors the Node app's `heavy-image` bulkhead
+  (`heavyProcedure`, `src/server/utils/request-bulkhead.ts`), which caps this same procedure at
+  `HEAVY_REQUEST_CONCURRENCY` (default 20) per pod: a non-blocking acquire, no queue, the excess
+  fast-failed (429 on tRPC, 503 with `Retry-After: 2` on REST) and counted. Same limit, same
+  parsing (zero, negative or junk is the default; there is no unlimited setting), same no-queue
+  acquire. Node's default is a safety valve sized not to shed at normal peak; with the same number a
+  pod serving from Go computes no more of these at once than a Node pod admits. What differs is the
+  answer past it: rather than refuse, this service does not compute and proxies the request to the
+  Node app — fallback reason `bulkhead` in `feed_go_fallback_total` — so routing to Go is never worse
+  than not routing (the Node pod then applies its own bulkhead). The slot covers the computation
+  only, not a fallback proxied after it, and is released on every exit (answer, fallback, error,
+  panic, deadline, client gone). `feed_go_serve_in_flight` is the slots held now. Only the public
+  route takes a slot; the origin hand-off computes nothing and takes none, and shadow samples and
+  probes keep their own bounds (`FEED_GO_SHADOW_WORKERS`, the probe queue).
 - **Panics.** A panic in a computation, its errgroup workers included (`internal/safe`), is the
   `panic` fallback and `feed_go_panics_total{where="serve"}`; one anywhere in a shadow sample
   (compute or compare) is `feed_go_panics_total{where="shadow"}`, logged with its stack, and the
@@ -909,7 +924,9 @@ Honest estimate, in order:
    2026-11-15, §3.1). Left: tag ids and the metric-hash ClickHouse populate.
 4. **Flags** — a Flipt evaluation client so the env mirrors go away (a few days).
 5. **Serving** — the client transport flag PR, a small cohort, then ramp while watching error rate,
-   latency and the Node-side CPU drop. A week of ramp.
+   latency and the Node-side CPU drop. A week of ramp. The per-pod concurrency cap is in place
+   (§6.1, `FEED_GO_MAX_IN_FLIGHT`); during the ramp, read its `bulkhead` fallback rate against
+   `feed_go_serve_in_flight` and size the cap and `FEED_GO_DB_MAX_CONNS` together.
 
 So roughly three to five weeks of focused work from merge to serving a meaningful share — most of it
 in step 2, which only production traffic can size. The CPU-per-call answer itself arrives earlier:

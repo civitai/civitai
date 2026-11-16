@@ -73,6 +73,11 @@ type Config struct {
 	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
 	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
 	RequestBudget time.Duration
+	// MaxInFlight is FEED_GO_MAX_IN_FLIGHT (default DefaultMaxInFlight): the public requests one pod
+	// computes at once. Past it a request is not computed but proxied to the Node app (fallback reason
+	// `bulkhead`). Zero, negative or junk is the default, as HEAVY_REQUEST_CONCURRENCY parses: there is
+	// no unlimited setting.
+	MaxInFlight int
 	// CompletionConcurrency is FEED_GO_COMPLETION_CONCURRENCY: the lazy-post-images completion
 	// fetches one request runs at once. The default is sized for shadow load; serving may want more.
 	CompletionConcurrency int
@@ -101,6 +106,14 @@ type Config struct {
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
 	AllowedOriginHosts map[string]bool
 }
+
+// DefaultMaxInFlight is FEED_GO_MAX_IN_FLIGHT's default: the per-pod cap the Node app puts on the
+// same procedure, its `heavy-image` bulkhead (HEAVY_REQUEST_CONCURRENCY, default 20, in
+// src/server/utils/request-bulkhead.ts). Node sizes that default as a safety valve, high enough not to
+// shed at normal peak, so it only trips on a pile-up; the same number here means a pod serving from Go
+// computes no more of these at once than a Node pod would, and a request past it is proxied to Node
+// rather than refused, so the cap can only hand work back, never fail it.
+const DefaultMaxInFlight = 20
 
 // Load reads the environment.
 func Load() (*Config, error) {
@@ -153,6 +166,7 @@ func Load() (*Config, error) {
 	}
 	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
 	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
+	c.MaxInFlight = positiveIntEnv("FEED_GO_MAX_IN_FLIGHT", DefaultMaxInFlight)
 	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
 	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond
 	c.JWKSMaxStaleness = time.Duration(positiveIntEnv("FEED_GO_JWKS_MAX_STALENESS_MS", 3*int(c.JWKSRefresh/time.Millisecond))) * time.Millisecond

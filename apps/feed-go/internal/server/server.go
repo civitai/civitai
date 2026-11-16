@@ -96,6 +96,14 @@ type Server struct {
 	Models *modelfeed.Deps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
+	// MaxInFlight caps the public requests this pod computes at once (FEED_GO_MAX_IN_FLIGHT; 0 =
+	// config.DefaultMaxInFlight, never unlimited): the Node app's `heavy-image` bulkhead. A request
+	// past it is not computed: it is the `bulkhead` fallback, proxied to the Node app. Shadow samples
+	// and probes are bounded by their own queues and never take a serve slot.
+	MaxInFlight int
+
+	// inFlight counts the public requests holding a serve slot (feed_go_serve_in_flight).
+	inFlight atomic.Int64
 
 	// The shadow goroutines' lifetime: bg is cancelled by Close, which then waits on shadows.
 	bgOnce   sync.Once
@@ -402,6 +410,53 @@ func AcceptableOrigin(r *http.Request, allowed map[string]bool) bool {
 	return host != "" && allowed[host]
 }
 
+// errBulkhead is the `bulkhead` fallback: one value, so a pod shedding under load allocates nothing
+// to say so.
+var errBulkhead = fallback.New("bulkhead")
+
+func (s *Server) maxInFlight() int64 {
+	if s.MaxInFlight > 0 {
+		return int64(s.MaxInFlight)
+	}
+	return config.DefaultMaxInFlight
+}
+
+// acquireServe takes a serve slot, or reports false at once when MaxInFlight are already held: never
+// a wait, as the Node bulkhead (acquireBulkheadSlot) never queues. No allocation either way.
+func (s *Server) acquireServe() bool {
+	limit := s.maxInFlight()
+	for {
+		n := s.inFlight.Load()
+		if n >= limit {
+			return false
+		}
+		if s.inFlight.CompareAndSwap(n, n+1) {
+			s.Metrics.ServeInFlight.Inc()
+			return true
+		}
+	}
+}
+
+func (s *Server) releaseServe() {
+	s.inFlight.Add(-1)
+	s.Metrics.ServeInFlight.Dec()
+}
+
+// InFlight is the number of public requests computing now.
+func (s *Server) InFlight() int64 { return s.inFlight.Load() }
+
+// computeServe is computeWithin for a public request, inside a serve slot. A full pod is the
+// `bulkhead` fallback without computing anything. The slot is held for the computation only, never
+// for the proxied fallback that may follow, and is released however the computation ends (answer,
+// fallback, error, panic, deadline, client gone) by the deferred release.
+func (s *Server) computeServe(r *http.Request, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
+	if !s.acquireServe() {
+		return nil, errBulkhead
+	}
+	defer s.releaseServe()
+	return s.computeWithin(r.Context(), r, "serve", fn)
+}
+
 func (s *Server) budget() time.Duration {
 	if s.RequestBudget > 0 {
 		return s.RequestBudget
@@ -496,7 +551,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.computeFn != nil {
 			fn = s.computeFn
 		}
-		c, err = s.computeWithin(r.Context(), r, "serve", fn)
+		c, err = s.computeServe(r, fn)
 	} else {
 		// The app's answer differs by environment and credential (non-production and bearer callers
 		// are accepted, a cookie caller in production is refused): never decided here.

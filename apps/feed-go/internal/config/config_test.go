@@ -230,3 +230,24 @@ func TestLoadCacheMissSettings(t *testing.T) {
 		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q", c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
 	}
 }
+
+// FEED_GO_MAX_IN_FLIGHT parses as Node's HEAVY_REQUEST_CONCURRENCY does: a positive integer is the
+// cap, and anything else (unset, zero, negative, junk) is the default 20, never an unlimited pod.
+func TestLoadMaxInFlight(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	if DefaultMaxInFlight != 20 {
+		t.Fatalf("DefaultMaxInFlight = %d, want 20 (Node's HEAVY_REQUEST_CONCURRENCY default)", DefaultMaxInFlight)
+	}
+	for in, want := range map[string]int{"": 20, "0": 20, "-3": 20, "junk": 20, "1": 1, "7": 7, "64": 64} {
+		t.Setenv("FEED_GO_MAX_IN_FLIGHT", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.MaxInFlight != want {
+			t.Errorf("FEED_GO_MAX_IN_FLIGHT=%q -> %d, want %d", in, c.MaxInFlight, want)
+		}
+	}
+}
