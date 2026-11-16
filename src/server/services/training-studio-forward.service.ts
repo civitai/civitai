@@ -1,5 +1,6 @@
 import { allCookieNames, parseCookieHeader, SESSION_COOKIE_BASE } from '@civitai/auth';
 import { env } from '~/env/client';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 /**
  * The Training Studio server routes the embedded Studio reaches through this app, and the methods
@@ -76,7 +77,7 @@ export async function forwardToStudio({
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
       redirect: 'manual',
-      signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
+      signal: fetchTimeoutSignal(FORWARD_TIMEOUT_MS),
     });
   } catch {
     return UNCONFIRMED;
