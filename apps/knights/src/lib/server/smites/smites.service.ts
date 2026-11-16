@@ -48,6 +48,19 @@ export async function issueSmite(
   return activeSmiteCount(trx, playerId);
 }
 
+/** Clears every active smite at once, recording why. */
+export async function cleanseSmites(
+  trx: Executor,
+  { playerId, reason, now }: { playerId: number; reason: string; now: Date }
+): Promise<void> {
+  await trx
+    .updateTable('NewOrderSmite')
+    .set({ cleansedAt: utc(now), cleansedReason: reason })
+    .where('targetPlayerId', '=', playerId)
+    .where('cleansedAt', 'is', null)
+    .execute();
+}
+
 /** One correct, graded vote works every active smite down by one, as the original game does; a smite at 0 is cleansed. */
 export async function workOffSmites(trx: Executor, playerId: number, now: Date): Promise<void> {
   await trx

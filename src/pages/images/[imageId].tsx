@@ -1,9 +1,10 @@
 import { Page } from '~/components/AppLayout/Page';
 import { ClientOnlySectionsProvider } from '~/components/ClientOnlySection/ClientOnlySection';
 import { ImageDetailPage } from '~/components/Image/Detail/ImageDetailPage';
-import { resolveImageDetailPageData } from '~/server/page-data/image-detail';
+import { imageDetailId, resolveImageDetailPageData } from '~/server/page-data/image-detail';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ssrClientOnlySectionsOn } from '~/server/utils/ssr-client-only-sections';
+import { resolveSsrPrefetchCohort } from '~/server/utils/ssr-skip-prefetch';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -12,13 +13,25 @@ export const getServerSideProps = createServerSideProps({
   // The page data carries no page props, so a shell boot never defers a section (it renders on
   // the client anyway).
   resolver: async (args) => {
-    const result = await resolveImageDetailPageData(args);
+    // `ssrSignedInSkipPrefetchImages`: the trial arm, once the id is known to be a page (a
+    // non-numeric id is a 404 in every arm). `skip` keeps `image.get` (the main image, its NotFound
+    // and the `<head>`), the contest details (the rating the page gates on) and the hidden
+    // preferences (NotFound for a creator the viewer blocked), and leaves the generation data to
+    // the client; the content renders as a loading shell until the client has mounted.
+    // Decided before `image.get` answers, so a missing image (a 200 with the client NotFound) is
+    // still counted: waiting for it would serialize the full arm's prefetches, which start together.
+    const deferredSsr =
+      imageDetailId(args.ctx.params) !== null &&
+      resolveSsrPrefetchCohort({ ...args, route: '/images/[imageId]' }) === 'skip';
+    const result = await resolveImageDetailPageData({ ...args, deferred: deferredSsr });
     if ('notFound' in result) return result;
     return {
       ...result,
       props: {
         ...(result.props as Record<string, unknown>),
         ssrClientOnlySections: ssrClientOnlySectionsOn(),
+        // Only on `skip`, so every other arm's props are exactly what they were.
+        ...(deferredSsr ? { deferredSsr } : {}),
       },
     };
   },
@@ -26,10 +39,16 @@ export const getServerSideProps = createServerSideProps({
   shell: 'images',
 });
 
-function ImageDetailRoutePage({ ssrClientOnlySections }: { ssrClientOnlySections?: boolean }) {
+function ImageDetailRoutePage({
+  ssrClientOnlySections,
+  deferredSsr,
+}: {
+  ssrClientOnlySections?: boolean;
+  deferredSsr?: boolean;
+}) {
   return (
     <ClientOnlySectionsProvider enabled={ssrClientOnlySections}>
-      <ImageDetailPage />
+      <ImageDetailPage deferredSsr={deferredSsr} />
     </ClientOnlySectionsProvider>
   );
 }

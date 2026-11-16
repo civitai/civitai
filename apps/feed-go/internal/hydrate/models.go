@@ -61,11 +61,15 @@ type PrivacyDefaults struct{ Buzz, Downloads, Generations bool }
 // (users, profile pictures, user cosmetics, model data, model tags, model frames, decorations, the
 // metric-privacy defaults), then one for the records the first stage names (cosmetics for the user
 // cosmetics and the frames, basic tags for the model tags). The replica reads for misses run after,
-// concurrently. Misses that Node fills from the primary or by a lag-aware read fall back (model data,
-// model tags, user cosmetics, frames, decorations); the others are read from the replica as the
-// image feed's are (basic users, profile pictures, cosmetics) or as Node's origin does (tags by id,
-// the privacy defaults).
+// concurrently. With s.Compute the frame misses are computed (fillModelFrames, the image frames'
+// lookup over the models); the other misses that Node fills from the primary or by a lag-aware read
+// fall back (model data, model tags, user cosmetics, decorations); the rest are read from the replica
+// as the image feed's are (basic users, profile pictures, cosmetics) or as Node's origin does (tags
+// by id, the privacy defaults). Under a Go-first probe (WithPresence) each call counts as a page.
 func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPage, error) {
+	if p := presenceOf(ctx); p != nil {
+		p.notePage()
+	}
 	owners, models := Unique(req.OwnerIDs), Unique(req.ModelIDs)
 	out := &ModelPage{}
 	stage1 := NewBatch()
@@ -122,9 +126,12 @@ func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, user
 	if err != nil {
 		return nil, nil, err
 	}
-	frameEntries := frames.Entries()
+	frameEntries, frameWritable := frames.read()
+	if err := s.fillModelFrames(ctx, models, frameEntries, frameWritable); err != nil {
+		return nil, nil, err
+	}
 	if miss := Missing(models, frameEntries); len(miss) > 0 {
-		// The frame lookup reads the primary.
+		// No miss computation (FEED_GO_COMPUTE_MISSES off): the frame lookup reads the primary.
 		return nil, nil, fallback.Newf("model-frame-miss", "%d ids", len(miss))
 	}
 	var frameCIDs []int
@@ -335,8 +342,8 @@ func (s *Sources) privacyDefaultsFrom(ctx context.Context, owners []int, got map
 // VersionImages is getImagesForModelVersionCache: each version's cached showcase images
 // (imagesForModelVersionsCache, stale entries served), each image's `tags` replaced by the image-tag
 // cache's ids (the appendFn: `tags ?? []`). A version whose entry is a notFound marker has no
-// images (absent from the answer). A version-images miss falls back (its lookup is lag-aware), and so
-// does an image-tags miss, as on the image feed.
+// images (absent from the answer). A version-images miss falls back (its lookup is lag-aware); an
+// image-tags miss is computed as on the image feed (fillTagIDs), and falls back without s.Compute.
 func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int][]map[string]any, error) {
 	ids := Unique(versionIDs)
 	out := map[int][]map[string]any{}
@@ -372,9 +379,13 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		return out, nil
 	}
 	tb := NewBatch()
-	tagRead := s.Packed.Queue(tb, KeyTagIDs, imageIDs, 0)
+	tagRead := s.Packed.Queue(tb, KeyTagIDs, imageIDs, tagIDsTTL)
 	tb.Exec(ctx)
-	tagIDs, err := tagIDsFrom(imageIDs, tagRead.Entries())
+	tagGot, tagWritable := tagRead.read()
+	if err := s.fillTagIDs(ctx, imageIDs, tagGot, tagWritable); err != nil {
+		return nil, err
+	}
+	tagIDs, err := tagIDsFrom(imageIDs, tagGot)
 	if err != nil {
 		return nil, err
 	}
