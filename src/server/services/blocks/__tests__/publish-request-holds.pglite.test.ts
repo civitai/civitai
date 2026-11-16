@@ -281,14 +281,15 @@ describe('approve', () => {
 describe('with the table absent', () => {
   it('approve fails closed and the queue count fails open', async () => {
     const bare = new PGlite();
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       const r = asRaw(bare);
       await expect(checkHoldsBeforeApprove(r, { slug: 'app-a' })).rejects.toThrow(
         /approve is refused/
       );
-      vi.spyOn(console, 'error').mockImplementation(() => undefined);
       expect((await getOpenHoldCountsBySlug(r, ['app-a'])).size).toBe(0);
     } finally {
+      quiet.mockRestore();
       await bare.close();
     }
   });

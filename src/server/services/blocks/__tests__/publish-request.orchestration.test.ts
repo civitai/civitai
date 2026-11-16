@@ -11,6 +11,8 @@ import type * as AppListingRating from '~/server/services/blocks/app-listing-rat
 import type * as ForgejoService from '~/server/services/blocks/forgejo.service';
 import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 import type * as PublishRequestFinalise from '~/server/services/blocks/publish-request-finalise.service';
+import type * as AppBlockNotify from '~/server/services/blocks/app-block-notify';
+import type * as LiveUnpublish from '~/server/services/blocks/live-unpublish.service';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -272,6 +274,16 @@ vi.mock('~/server/services/blocks/publish-request-finalise.service', async (impo
   const fn = vi.fn(actual.finaliseOnsiteApprove);
   finaliseSpy.fn = fn;
   return { ...actual, finaliseOnsiteApprove: fn };
+});
+
+vi.mock('~/server/services/blocks/live-unpublish.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LiveUnpublish>()),
+  takeDownLiveApp: vi.fn(async () => ({})),
+}));
+// Calls through; the late-hold approve test proves the developer is not told.
+vi.mock('~/server/services/blocks/app-block-notify', async (importOriginal) => {
+  const actual = await importOriginal<typeof AppBlockNotify>();
+  return { ...actual, notifyAppBlockSubmitter: vi.fn(actual.notifyAppBlockSubmitter) };
 });
 
 vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
@@ -2055,6 +2067,37 @@ describe('approveRequest', () => {
     await expect(
       approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
     ).resolves.toMatchObject({ isFirstVersion: false, appBlockId: 'apb_legacy' });
+  });
+
+  it('🔴 a hold placed after the claim expired leaves the held version unbuilt and unannounced', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    const finalise = vi.mocked(
+      (await import('~/server/services/blocks/publish-request-finalise.service'))
+        .finaliseOnsiteApprove
+    );
+    const notify = vi.mocked(
+      (await import('~/server/services/blocks/app-block-notify')).notifyAppBlockSubmitter
+    );
+    const takeDown = vi.mocked(
+      (await import('~/server/services/blocks/live-unpublish.service')).takeDownLiveApp
+    );
+    takeDown.mockClear();
+    finalise.mockClear();
+    notify.mockClear();
+    mockTriggerBuild.mockClear();
+    finalise.mockImplementationOnce(async () => ({ lateHoldIds: [7] }));
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    const result = await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    expect(finalise).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalled();
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+    expect(result.lateHoldIds).toEqual([7]);
+    // The previous version stops serving on the subdomain too.
+    expect(takeDown).toHaveBeenCalledWith('hello');
   });
 
   it('first-version happy path wires the 4 external systems in order', async () => {

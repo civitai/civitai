@@ -137,10 +137,20 @@ export function ReviewActionBar({
   const holdBlocked = !holdOverrideSatisfied(openHolds.length, holdOverrideReason);
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({
-        message: `Approved ${request.slug} v${request.version}. Build started.`,
-      });
+    onSuccess: async (result) => {
+      if (result?.lateHoldIds?.length) {
+        showErrorNotification({
+          title: 'App suspended: a review hold was placed during the approve',
+          error: new Error(
+            `${request.slug} v${request.version} was not built and stays suspended until the hold is cleared and the app is restored.` +
+              (result.liveNote ? ` ${result.liveNote}` : '')
+          ),
+        });
+      } else {
+        showSuccessNotification({
+          message: `Approved ${request.slug} v${request.version}. Build started.`,
+        });
+      }
       onStatusChange?.('approved');
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listApprovedRequests.invalidate();

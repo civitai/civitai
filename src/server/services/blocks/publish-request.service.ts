@@ -3251,6 +3251,11 @@ export type ApproveRequestResult = {
   appBlockId: string;
   forgejoCommitSha: string;
   isFirstVersion: boolean;
+  /** Holds placed after the approve claim expired. When set, the block was re-suspended and
+   * nothing after the final writes ran: no build, no deploy, no approval notice. */
+  lateHoldIds?: number[];
+  /** Set when the live takedown for a late hold did not remove the app (the readiness app). */
+  liveNote?: string;
 };
 
 /**
@@ -4526,7 +4531,7 @@ async function approveRequestUnderClaim(
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   const { finaliseOnsiteApprove } = await import('./publish-request-finalise.service');
-  await dbWrite.$transaction((tx) =>
+  const { lateHoldIds } = await dbWrite.$transaction((tx) =>
     finaliseOnsiteApprove(tx, {
       holdDecision,
       reviewerUserId: params.reviewerUserId,
@@ -4537,6 +4542,20 @@ async function approveRequestUnderClaim(
       screenshots: storedScreenshots as object,
     })
   );
+  // A held version must not build, deploy or be announced; a moderator clears the hold first.
+  // The suspended block stops only the on-site runtime, so the live pointer comes down too.
+  if (lateHoldIds.length) {
+    const { takeDownLiveApp } = await import('./live-unpublish.service');
+    const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    return {
+      publishRequestId: request.id,
+      appBlockId,
+      forgejoCommitSha,
+      isFirstVersion,
+      lateHoldIds,
+      liveNote,
+    };
+  }
 
   // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
   // already names another commit, `approved-<request id>`; see decideVersionTag). Runs after the

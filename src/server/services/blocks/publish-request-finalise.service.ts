@@ -39,11 +39,7 @@ export async function finaliseOnsiteApprove(
     where: { id: input.appBlockId },
     data: {
       currentVersionSha: input.forgejoCommitSha,
-      // F-E E5 — persist the validated, uploaded screenshot records. Replaces
-      // the prior set on a re-approve (the storeScreenshots keys are stable per
-      // appBlockId+index, so the objects are overwritten in place). An empty
-      // gallery is stored as [] so a re-submit that REMOVES all screenshots
-      // clears the old set rather than leaving stale entries.
+      // Replaces the prior set; [] clears it when a re-submit removes every screenshot.
       screenshots: input.screenshots,
       ...(late.length ? { status: 'suspended' } : {}),
     },
