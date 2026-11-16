@@ -32,8 +32,7 @@ const (
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
-var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
-	MissModelDecorations}
+var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -828,7 +827,7 @@ func (s *Sources) lookupImageEvents(ctx context.Context, ids []int) (map[int]jsp
 // lookupModelEvents is eventDecorationEntityCaches.Model's lookupFn: lookupImageEvents over the
 // models, `equippedToType` 'Model' (Node: `entity as CosmeticEntity`).
 func (s *Sources) lookupModelEvents(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	return s.lookupEntityEvents(ctx, sqlModelEvents, "Model", ids)
+	return s.lookupEntityEvents(ctx, sqlModelEvents, "Image", ids)
 }
 
 func (s *Sources) lookupEntityEvents(ctx context.Context, sql, entity string, ids []int) (map[int]jspack.Obj, error) {
