@@ -42,7 +42,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
-import { capNestedImages, requestDomainBrowsingLevelCap } from '~/server/utils/browsing-level';
+import { capNestedImages } from '~/server/utils/browsing-level';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -367,7 +367,6 @@ export const upsertBountyHandler = async ({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator ?? false,
-      editorCap: requestDomainBrowsingLevelCap(ctx),
     });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id as number}`);
 

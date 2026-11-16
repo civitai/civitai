@@ -204,16 +204,34 @@ describe('updateBountyById — lock enforcement', () => {
 });
 
 describe('upsertBounty — images the edit form was not shown', () => {
-  it('passes the editor’s cap through to the image links', async () => {
-    await upsertBounty({
+  const upsert = (input: Record<string, unknown>) =>
+    upsertBounty({
       isModerator: false,
       ...baseUpdate,
       startsAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      images: [{ url: '00000000-0000-4000-8000-000000000000' }],
-      editorCap: 3,
+      ...input,
     } as never);
-    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({ editorCap: 3 });
+
+  it('passes the ids the form was shown through to the image links', async () => {
+    await upsert({
+      images: [{ id: 1, url: '00000000-0000-4000-8000-000000000000' }],
+      shownImageIds: [1, 2],
+    });
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({
+      shownImageIds: [1, 2],
+    });
+  });
+
+  // Every image hidden by the domain's cap: the form shows none and must still save a name edit.
+  it('saves an edit whose form was shown no image', async () => {
+    await upsert({ name: 'Renamed', images: [], shownImageIds: [] });
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({ images: [] });
+  });
+
+  it('still refuses a new bounty with no image', async () => {
+    await expect(upsert({ id: undefined, images: [] })).rejects.toThrow();
+    expect(mockDbWrite.bounty.create).not.toHaveBeenCalled();
   });
 });
 

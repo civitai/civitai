@@ -631,13 +631,11 @@ export const updateBountyById = async ({
   isModerator,
   addLockedProperties,
   blurbUses,
-  editorCap,
+  shownImageIds,
   ...data
 }: UpdateBountyInput & {
   userId: number;
   isModerator?: boolean;
-  /** The browsing-level cap the edit form's read was held to; see `updateEntityImages`. */
-  editorCap?: number;
   /** Locks added by the server itself (the profanity filter), not by the caller. */
   addLockedProperties?: string[];
   /**
@@ -781,7 +779,7 @@ export const updateBountyById = async ({
           entityType: 'Bounty',
           userId,
           keysCheckedFor,
-          editorCap,
+          shownImageIds,
         });
       }
 
@@ -827,14 +825,8 @@ export const upsertBounty = async ({
   userId,
   isModerator,
   buzzType,
-  editorCap,
   ...data
-}: UpsertBountyInput & {
-  userId: number;
-  isModerator: boolean;
-  /** The browsing-level cap the edit form's read was held to; see `updateEntityImages`. */
-  editorCap?: number;
-}) => {
+}: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
   await throwOnBlockedUserContent(
     [data.name, data.description, ...(await newTagNames(data.tags?.map((tag) => tag.name)))],
     { isModerator, surface: 'bounty' }
@@ -908,7 +900,6 @@ export const upsertBounty = async ({
       isModerator,
       addLockedProperties,
       blurbUses: expansion.evaluated ? expansion.uses : undefined,
-      editorCap,
     });
     if (updated) {
       await queueBountySearchIndexUpdate(updated.id);

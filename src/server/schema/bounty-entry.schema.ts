@@ -25,18 +25,20 @@ export const upsertBountyEntryInputSchema = z.object({
   bountyId: z.number(),
   files: z.array(bountyEntryFileSchema).min(1),
   ownRights: z.boolean().optional(),
+  // At least one is checked on save: an edit may show none when the domain's cap hides them all.
   images: z
     .array(
       imageReferenceInputSchema.extend({
         meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
       })
     )
-    .min(1, 'At least one example image must be uploaded')
     .max(
       constants.bounties.maxEntryImagesForEdit,
       `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
     ),
   description: getSanitizedStringSchema().nullish(),
+  // The linked images the edit form was shown; only these can be removed. See `updateEntityImages`.
+  shownImageIds: z.number().array().optional(),
 });
 
 // Headless/agent (MCP) friendly bounty-entry submission. The full `upsert`

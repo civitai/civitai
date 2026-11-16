@@ -12,7 +12,6 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { NsfwLevel } from '~/server/common/enums';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 import { upsertCreatorAnnouncementSchema } from '~/server/schema/announcement.schema';
@@ -44,7 +43,6 @@ import {
   type AssertPostOwnedBy,
 } from '~/server/services/image.service';
 import { CLIENT_IMAGE_COLUMNS, pickClientImageColumns } from '~/server/utils/image-columns';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const URL_KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 const OWNER = 7;
@@ -464,41 +462,70 @@ describe('entity image writers', () => {
   });
 
   describe('links the edit form was not shown', () => {
-    const linked = [
-      { imageId: 1, image: { nsfwLevel: NsfwLevel.PG } },
-      { imageId: 2, image: { nsfwLevel: NsfwLevel.PG } },
-      { imageId: 3, image: { nsfwLevel: NsfwLevel.X } },
-      { imageId: 4, image: { nsfwLevel: 0 } },
-      { imageId: 5, image: { nsfwLevel: NsfwLevel.PG | NsfwLevel.X } },
-    ];
-    const keptIds = () =>
-      dbMock.dbWrite.imageConnection.deleteMany.mock.calls[0][0].where.imageId.notIn;
-    const saveKeepingOnly = (editorCap?: number) =>
+    let linked: number[];
+    // Applies each deleteMany to `linked`, so a test reads which links survive the save.
+    beforeEach(() => {
+      dbMock.dbWrite.imageConnection.findMany.mockImplementation(
+        async () => linked.map((imageId) => ({ imageId })) as never
+      );
+      dbMock.dbWrite.imageConnection.deleteMany.mockImplementation((async ({
+        where,
+      }: {
+        where: { imageId: { in: number[] } };
+      }) => {
+        linked = linked.filter((id) => !where.imageId.in.includes(id));
+        return { count: 0 };
+      }) as never);
+    });
+    afterEach(() => {
+      dbMock.dbWrite.imageConnection.findMany.mockReset();
+      dbMock.dbWrite.imageConnection.deleteMany.mockReset();
+    });
+    const save = (keep: number[], shownImageIds?: number[]) =>
       updateEntityImages({
-        images: [{ id: 1, url: URL_KEY, type: 'image' }],
+        images: keep.map((id) => ({ id, url: URL_KEY, type: 'image' })),
         userId: OWNER,
         entityType: 'Bounty',
         entityId: 1,
-        editorCap,
+        shownImageIds,
       });
-    beforeEach(() => {
-      dbMock.dbWrite.imageConnection.findMany.mockResolvedValue(linked as never);
-    });
-    afterEach(() => dbMock.dbWrite.imageConnection.findMany.mockReset());
 
-    it('keeps the images above, mixed past, or unrated under the editor’s cap', async () => {
-      await saveKeepingOnly(sfwBrowsingLevelsFlag);
-      expect([...keptIds()].sort()).toEqual([1, 3, 4, 5]);
+    it('removes only the shown images left out, keeping the ones it was not shown', async () => {
+      linked = [1, 2, 3];
+      await save([1], [1, 2]);
+      expect(linked).toEqual([1, 3]);
     });
 
-    it('still removes a dropped image the editor was shown', async () => {
-      await saveKeepingOnly(sfwBrowsingLevelsFlag);
-      expect(keptIds()).not.toContain(2);
+    // Unrated (hidden) when the form loaded, then rated inside the cap before the save.
+    it('keeps an image rated inside the cap between the form load and the save', async () => {
+      linked = [1, 7];
+      await save([1], [1]);
+      expect(linked).toContain(7);
     });
 
-    it('with no cap, keeps only the images in the list', async () => {
-      await saveKeepingOnly(undefined);
-      expect(keptIds()).toEqual([1]);
+    it('ignores a shown id that is not linked to this entity', async () => {
+      linked = [1, 2];
+      await save([1], [1, 999]);
+      expect(dbMock.dbWrite.imageConnection.deleteMany).not.toHaveBeenCalled();
+      expect(linked).toEqual([1, 2]);
+    });
+
+    it('removes no link when the form did not say what it was shown', async () => {
+      linked = [1, 2];
+      await save([1], undefined);
+      expect(linked).toEqual([1, 2]);
+    });
+
+    it('saves a form that was shown no image while hidden ones stay linked', async () => {
+      linked = [3];
+      await expect(save([], [])).resolves.toBeDefined();
+      expect(linked).toEqual([3]);
+    });
+
+    it('refuses a save that would leave no image, before removing any', async () => {
+      linked = [2];
+      await expect(save([], [2])).rejects.toThrow('At least one example image');
+      expect(linked).toEqual([2]);
     });
   });
 });

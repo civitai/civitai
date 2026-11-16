@@ -140,12 +140,11 @@ export const upsertBountyEntry = async ({
   images,
   description,
   userId,
-  editorCap,
-}: UpsertBountyEntryInput & {
-  userId: number;
-  /** The browsing-level cap the edit form's read was held to; see `updateEntityImages`. */
-  editorCap?: number;
-}) => {
+  shownImageIds,
+}: UpsertBountyEntryInput & { userId: number }) => {
+  // An update checks this after the save, counting links its form was not shown.
+  if (!id && images?.length === 0)
+    throw throwBadRequestError('At least one example image must be uploaded');
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
 
   let imagesToIngest: IngestImageInput[] = [];
@@ -178,7 +177,7 @@ export const upsertBountyEntry = async ({
           tx,
           userId,
           keysCheckedFor,
-          editorCap,
+          shownImageIds,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });

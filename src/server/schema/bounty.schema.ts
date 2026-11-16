@@ -54,6 +54,12 @@ export const bountyDetailsSchema = z.object({
 });
 
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
+const bountyImagesSchema = z.array(
+  imageReferenceInputSchema.extend({
+    meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
+  })
+);
+
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
   description: getSanitizedStringSchema({ allowBlurbs: true }).refine(
@@ -88,13 +94,7 @@ export const createBountyInputSchema = z.object({
   poi: z.boolean().optional(),
   ownRights: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
-  images: z
-    .array(
-      imageReferenceInputSchema.extend({
-        meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
-      })
-    )
-    .min(1, 'At least one example image must be uploaded'),
+  images: bountyImagesSchema.min(1, 'At least one example image must be uploaded'),
   buzzType: z.enum(['green', 'yellow']).default('yellow'),
   // Minted by the client once per new bounty and resent on its retries, with the time it was
   // minted (epoch ms): the creation charge's ledger prefix derives from both, so a retry after an
@@ -117,11 +117,15 @@ export const updateBountyInputSchema = createBountyInputSchema
     poi: true,
     nsfw: true,
     ownRights: true,
-    images: true,
     entryLimit: true,
   })
   .extend({
     id: z.number(),
+    // An edit may show no image when every one is hidden by the domain's cap; the save checks
+    // that one stays linked.
+    images: bountyImagesSchema,
+    // The linked images the edit form was shown; only these can be removed. See `updateEntityImages`.
+    shownImageIds: z.number().array().optional(),
     startsAt: z.coerce.date(),
     expiresAt: stringToDate(
       z
@@ -137,6 +141,9 @@ export const updateBountyInputSchema = createBountyInputSchema
 export type UpsertBountyInput = z.infer<typeof upsertBountyInputSchema>;
 export const upsertBountyInputSchema = createBountyInputSchema.extend({
   id: z.number().optional(),
+  images: bountyImagesSchema,
+  // The linked images the edit form was shown; only these can be removed. See `updateEntityImages`.
+  shownImageIds: z.number().array().optional(),
   startsAt: z.string(),
   expiresAt: z.string(),
   lockedProperties: z.string().array().optional(),

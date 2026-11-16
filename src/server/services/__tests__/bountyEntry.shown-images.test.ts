@@ -34,19 +34,26 @@ describe('upsertBountyEntry — images the edit form was not shown', () => {
     dbMock.dbWrite.bountyEntry.update.mockResolvedValue({ id: 3, userId: 5 } as never);
   });
 
-  it('passes the editor’s cap through to the image links', async () => {
+  it('passes the ids the form was shown through to the image links', async () => {
     await upsertBountyEntry({
       id: 3,
       bountyId: 9,
       userId: 5,
       files: [],
       images: [{ url: '00000000-0000-4000-8000-000000000000' }],
-      editorCap: 3,
+      shownImageIds: [1, 2],
     } as never);
     expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({
       entityId: 3,
       entityType: 'BountyEntry',
-      editorCap: 3,
+      shownImageIds: [1, 2],
     });
+  });
+
+  it('refuses a new entry with no image', async () => {
+    await expect(
+      upsertBountyEntry({ bountyId: 9, userId: 5, files: [], images: [] } as never)
+    ).rejects.toThrow('At least one example image');
+    expect(dbMock.dbWrite.bountyEntry.create).not.toHaveBeenCalled();
   });
 });

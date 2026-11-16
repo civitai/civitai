@@ -179,7 +179,6 @@ import type {
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
-import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
   entryDraftImageWhere,
@@ -5843,7 +5842,7 @@ export const updateEntityImages = async ({
   images,
   userId,
   keysCheckedFor,
-  editorCap,
+  shownImageIds,
 }: {
   tx?: Prisma.TransactionClient;
   entityId: number;
@@ -5853,34 +5852,26 @@ export const updateEntityImages = async ({
   /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
   keysCheckedFor?: string[];
   /**
-   * The browsing-level cap the edit form's read was held to. Linked images outside it were never
-   * shown to the editor, so leaving them out of `images` does not remove them.
+   * The linked images the edit form was shown. Only these can be removed by leaving them out of
+   * `images`: a capped read hides some links, and ratings can change between the read and the
+   * save. Without it, no link is removed.
    */
-  editorCap?: number;
+  shownImageIds?: number[];
 }) => {
   const dbClient = tx ?? dbWrite;
   const connections = await dbClient.imageConnection.findMany({
-    select: { imageId: true, image: { select: { nsfwLevel: true } } },
+    select: { imageId: true },
     where: {
       entityId,
       entityType,
     },
   });
-  const unshownIds =
-    editorCap === undefined
-      ? []
-      : connections
-          .filter((c) => !isRatingWithinCap(c.image.nsfwLevel, editorCap))
-          .map((c) => c.imageId);
 
-  // Delete any images that are no longer in the list.
-  await dbClient.imageConnection.deleteMany({
-    where: {
-      entityId,
-      entityType,
-      imageId: { notIn: [...images.map((i) => i.id).filter(isDefined), ...unshownIds] },
-    },
-  });
+  const keptIds = new Set(images.map((i) => i.id).filter(isDefined));
+  const shown = new Set(shownImageIds);
+  const removedIds = connections
+    .map((c) => c.imageId)
+    .filter((id) => shown.has(id) && !keptIds.has(id));
 
   const newImages = images.filter((x) => !x.id);
   const newLinkedImages = images.filter(
@@ -5892,6 +5883,16 @@ export const updateEntityImages = async ({
     const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } });
     if (owned !== new Set(linkIds).size) throw throwAuthorizationError();
   }
+
+  // Counted before any write: links the form was not shown count too.
+  const linkedAfter =
+    connections.length - removedIds.length + new Set(linkIds).size + newImages.length;
+  if (linkedAfter === 0) throw throwBadRequestError('At least one example image must be uploaded');
+
+  if (removedIds.length > 0)
+    await dbClient.imageConnection.deleteMany({
+      where: { entityId, entityType, imageId: { in: removedIds } },
+    });
 
   const links = [...linkIds];
   let imageRecords: {
