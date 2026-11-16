@@ -97,15 +97,11 @@ export type AxiomDeps = {
 /**
  * How long a dual-write may stay pending before its outcome is reported as `'timeout'`.
  *
- * It does NOT bound the caller any more: `logToAxiom` never waits for the dual-write (see the
+ * It does NOT bound the caller: `logToAxiom` never waits for the dual-write (see the
  * `ingestEvents` call below). Nor does it cancel the request: the SDK (`@axiomhq/axiom-node`)
  * drives axios with its own hardcoded `timeout: 30000`, not reachable through
  * `new Client({token, orgId})`, so 30 s is how long a request against a black-holed endpoint
  * really lives, and how long it holds one of the AXIOM_MAX_INGESTS_IN_FLIGHT slots.
- *
- * History: on 2026-08-23 Axiom's ingest host became unreachable for 44 minutes and every awaited
- * `logToAxiom` on the upload completion paths stalled 30 s and then threw, turning uploads that
- * had ALREADY SUCCEEDED into 500s. See the containment note at the `ingestEvents` call below.
  */
 const AXIOM_INGEST_TIMEOUT_MS = 2_000;
 
@@ -423,24 +419,9 @@ export function createAxiomLogger(
       }
 
       /**
-       * 🔴 CONTAINED AND BOUNDED — the same contract the injected sink above already has,
-       * and for the same reason stated there: a telemetry sink must never be able to fail
-       * the code path it is observing. Until 2026-08-23 this one line was the sole
-       * uncontained sink in this function, and the exception proved expensive.
-       *
-       * WHAT IT COST. Axiom's ingest host went unreachable 01:08–01:52Z on 2026-08-23.
-       * `logToAxiom` is awaited on hot paths (this file's own header says so), so the
-       * rejection propagated into the callers:
-       *   - `/api/upload/complete` — the multipart completion had ALREADY SUCCEEDED; the
-       *     throw happened on the log line after it, so a stored object was reported to the
-       *     browser as a 500. ~5,300 failed requests, 350 distinct users, 44 minutes.
-       *   - the same handlers' CATCH blocks awaited this before classifying the error, so
-       *     the 409/422/503 taxonomy was structurally unreachable and every fault — 1,009
-       *     of them a terminal `NoSuchUpload` — went out as a retryable 500. Clients
-       *     retried; the retries re-failed. (The handlers have since been reordered too;
-       *     this containment is the half that does not depend on remembering to.)
-       *   - the background `jobs` pods call it WITHOUT awaiting, so there the rejection was
-       *     an `unhandledRejection` and Node exited. All three pods died at 01:06:45Z.
+       * 🔴 CONTAINED AND BOUNDED — the same contract the injected sink above already has:
+       * `logToAxiom` must never reject. Callers neither await nor catch it, so an uncontained
+       * throw here would reach them, as an `unhandledRejection` that exits Node by default.
        *
        * WHY IT IS NOT AWAITED. The first containment raced the ingest against a 2 s budget and
        * awaited the race, which bounded the caller at 2 s per logged event: still seconds of
@@ -454,7 +435,7 @@ export function createAxiomLogger(
        * THE PAIRING converts a rejection into the value `'error'` so the outcome chain records
        * it. Because nothing awaits the dual-write, every promise in that chain must end in a
        * handler, or a rejection becomes an `unhandledRejection` and, in the background `jobs`
-       * pods, exits Node (see above). The paired form is what ends it: both racers then only ever
+       * pods, exits Node. The paired form is what ends it: both racers then only ever
        * resolve. The rejection handler on the race's `.then` is unreachable today and is kept only
        * as a belt. Pinned by the NO UNHANDLED REJECTION test.
        */

@@ -1,32 +1,8 @@
 #!/usr/bin/env node
-// Codemod: strip the dead `.catch(...)` (and a pointless statement-level `await`) from
-// `logToAxiom(...)` calls.
-//
-// WHY: see src/server/services/__tests__/no-logtoaxiom-catch.test.ts, the ratchet that keeps it gone.
-//
-// WHAT IT CHANGES — an AST transform over the TypeScript compiler's syntax tree, never a regex:
-//   1. `X.catch(h)` where X (parentheses skipped) is DIRECTLY a call to `logToAxiom(...)` or
-//      `<anything>.logToAxiom(...)`, and `h` only swallows: no argument, `undefined`/`null`/
-//      `void 0`/a literal, `noop`, or a function whose body is empty, comment-only, or one of
-//      those values. The `.catch(h)` is removed; the call is kept byte for byte.
-//   2. `await logToAxiom(...);` as a whole expression statement (its value is discarded) in a
-//      non-test file: the `await` is removed. Its value is discarded either way and the call
-//      never rejects, so the only thing the await bought was a microtask yield (and, with the
-//      AXIOM_AWAIT_UPLOADS=true off-switch, a bounded wait for the Axiom outcome).
-// WHAT IT LEAVES (and reports with --report):
-//   - a `.catch` on any other promise (`foo().then(...).catch`, `Promise.all([...]).catch`);
-//   - a handler that does anything else (logs, rethrows, calls a function): listed as `kept`;
-//   - a strip whose deleted text holds a comment OUTSIDE the handler (between the call's `)` and
-//     `.catch`, say), which may be about more than the swallow: listed as `kept`. A comment
-//     inside a swallowing handler only explains the swallow and is removed with it;
-//   - an `await` whose value is used (`const x = await logToAxiom(...)`, `return await ...`),
-//     or any `await` in a test file (a test may await to sequence its assertions);
-//   - any file under an EXCLUDED path (see FROZEN below).
-//
-// USAGE (from the repo root, with the workspace's node_modules installed):
-//   node scripts/codemod-logtoaxiom-no-catch.mjs --report     # dry run, JSON site list on stdout
-//   node scripts/codemod-logtoaxiom-no-catch.mjs --write      # rewrite files in place
-// Optional trailing path arguments restrict the run to those files.
+// Codemod: remove a swallowing `.catch(...)` and a statement-level `await` from `logToAxiom(...)`
+// calls. Why both are dead code: src/server/services/__tests__/no-logtoaxiom-catch.test.ts.
+// A site whose deleted text holds a comment OUTSIDE the handler is kept, and listed as `kept`.
+// Usage: node scripts/codemod-logtoaxiom-no-catch.mjs --report|--write [files...]
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';

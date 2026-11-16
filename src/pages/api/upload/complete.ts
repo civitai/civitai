@@ -163,17 +163,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     const enforcing = env.UPLOAD_COMPLETE_VERIFY_ENFORCE === true;
 
     /**
-     * 🔴 DECIDE AND SEND THE RESPONSE BEFORE ANY TELEMETRY. The logging below used to
-     * run FIRST, which put three awaited `logToAxiom` calls between a completed upload
-     * and the client's answer.
-     *
-     * On 2026-08-23 Axiom's ingest host went unreachable for 44 minutes. `logToAxiom`
-     * awaited it uncontained, so the first of those calls threw AFTER
-     * `completeMultipartUpload` had already stored the object — and the browser was told
-     * 500. ~5,300 requests, 350 users, every one of them an upload that had in fact
-     * succeeded. `@civitai/axiom` now contains and time-boxes that write, so it can no
-     * longer throw; this ordering is the half that does not depend on it staying that
-     * way, and it also keeps the telemetry budget off the client's latency.
+     * 🔴 DECIDE AND SEND THE RESPONSE BEFORE ANY TELEMETRY. A slow or failing log must not
+     * turn a stored object into a 500, or add its latency to the client's answer.
      *
      * The response is a pure function of `verdict` + `enforcing`, so hoisting it changes
      * no status, no header and no body — only when they are written.
@@ -309,21 +300,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     console.error('Upload complete error:', error.message, error.stack);
 
     /**
-     * 🔴 CLASSIFY AND RESPOND BEFORE LOGGING — the `await logToAxiom` below used to sit
-     * HERE, above the classifier, and that ordering is what made this entire taxonomy
-     * unreachable during the 2026-08-23 Axiom outage.
-     *
-     * The mechanism, because it is not obvious from either line on its own: when the
-     * telemetry await throws, nothing after it runs, so `classifyS3MultipartError` was
-     * never called and no branch below could execute. Every fault — including 1,009
-     * terminal `NoSuchUpload`s that belong at 409 — left the handler as an unhandled
-     * rejection, i.e. a 500. 500 is retryable to both clients, so they retried, and each
-     * retry hit an already-consumed session and re-failed. Spanmetrics for the whole
-     * 44-minute episode recorded ZERO 409/422/503 on this route: not a rare path, a
-     * structurally dead one.
-     *
-     * A response written from the error classification must therefore never be sequenced
-     * behind a side-channel that can fail or stall. The logging moved to the `finally`.
+     * 🔴 CLASSIFY AND RESPOND BEFORE LOGGING. Telemetry must never gate the response: the
+     * classifier and the branch it picks run first, and the logging lives in the `finally`.
      */
     const errorClass = classifyS3MultipartError(e);
     try {
@@ -368,7 +346,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       }
     } finally {
       // `finally`, not a trailing statement: the event must be recorded whichever branch
-      // ran, and — unlike before — it can no longer decide which branch runs. Contained
+      // ran, and it runs after the response, so it cannot decide which branch runs. Contained
       // for the same reason as the success path above: nothing about the client's
       // outcome may depend on telemetry.
       try {

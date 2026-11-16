@@ -4,24 +4,13 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
- * `logToAxiom` NEVER REJECTS, so nothing should `.catch` or `await` it.
+ * `logToAxiom` never rejects (pinned by `packages/civitai-axiom/src/__tests__/logToAxiom.test.ts`),
+ * so a `.catch` or `await` on it is dead code.
  *
- * `packages/civitai-axiom/src/client.ts` writes the stderr line synchronously, contains the Axiom
- * dual-write and does not wait for it (pinned by `packages/civitai-axiom/src/__tests__/logToAxiom.test.ts`).
- * A `.catch(() => {})` on the call is unreachable, and an `await` buys nothing but a yield. Each
- * copy teaches the next author that a blanket promise-swallow is the house style, and that idiom
- * spreads to promises where it hides real failures.
+ * 🔴 A RATCHET: the ledgers below may only shrink. A new site fails the test, and so does a
+ * removed one until its entry is deleted.
  *
- * What counts, from the parse (so a comment or a string never does), in every non-test source file
- * under `src/`, `apps/` and `packages/`:
- *   - `.catch(...)` whose receiver is directly a `logToAxiom(...)` or `<x>.logToAxiom(...)` call,
- *     whatever the handler;
- *   - `await` on such a call, directly or through such a `.catch`.
- * Not seen: a call through a renamed alias, or one that is first stored in a variable.
- *
- * 🔴 A RATCHET, NOT A RULE: the sites below are pinned by file and count, and the test fails when
- * the set GROWS (a new `.catch`/`await`: just call `logToAxiom(...)`) or SHRINKS (a site was
- * removed: delete its entry, so the ledger cannot keep a slot open for a new one).
+ * Not seen: a call through a renamed alias, or one first stored in a variable.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
