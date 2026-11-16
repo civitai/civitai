@@ -168,15 +168,17 @@ BEGIN
     AND post_text_retention_skip(OLD."postId", OLD."userId") IS NULL
   THEN
     UPDATE "TextScanHold" h
-    -- Only the decision's own keys stay: the scan's reason, `previous` and any scan key may carry
-    -- the text.
+    -- Only the decision's own keys stay: the scan's reason, the moderator's note, `previous` and any
+    -- scan key may carry the text. `decisionNotePurged` records that a note existed.
     SET "text" = '',
         "reason" = '',
+        "decisionNote" = NULL,
         "meta" = jsonb_strip_nulls(jsonb_build_object(
           'decision', h."meta" -> 'decision',
           'reportChoice', h."meta" -> 'reportChoice',
           'kind', h."meta" -> 'kind',
           'priorHoldId', h."meta" -> 'priorHoldId',
+          'decisionNotePurged', CASE WHEN coalesce(h."decisionNote", '') <> '' THEN true END,
           'retentionPurgedAt', now()
         ))
     WHERE h."entityType" = 'PostText' AND h."entityId" = OLD."id" AND h.label = 'csam'

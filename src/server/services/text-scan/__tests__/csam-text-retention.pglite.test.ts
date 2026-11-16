@@ -28,7 +28,7 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "TextScanHold" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
   "label" TEXT NOT NULL, "status" TEXT NOT NULL, "text" TEXT NOT NULL DEFAULT 'held words',
-  "reason" TEXT NOT NULL DEFAULT 'quotes the held words',
+  "reason" TEXT NOT NULL DEFAULT 'quotes the held words', "decisionNote" TEXT,
   "textHash" TEXT NOT NULL DEFAULT 'h',
   "meta" JSONB, "decidedAt" TIMESTAMP(3),
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
@@ -294,16 +294,20 @@ describe('the delete trigger on a confirmed "none" text', () => {
 
   it("leaves no copy of the text anywhere on a redetected hold's row", async () => {
     const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
-    await pg.query(`UPDATE "TextScanHold" SET meta = meta || $2::jsonb WHERE id = $1`, [
-      holdId,
-      JSON.stringify({
-        kind: 'redetected',
-        priorHoldId: 3,
-        textUpdatedAt: '2025-01-01T00:00:00Z',
-        context: 'held words in a scan key',
-        previous: [{ text: 'earlier held words', textHash: 'h0', reason: 'r' }],
-      }),
-    ]);
+    await pg.query(
+      `UPDATE "TextScanHold" SET meta = meta || $2::jsonb, "decisionNote" = 'note: held words'
+       WHERE id = $1`,
+      [
+        holdId,
+        JSON.stringify({
+          kind: 'redetected',
+          priorHoldId: 3,
+          textUpdatedAt: '2025-01-01T00:00:00Z',
+          context: 'held words in a scan key',
+          previous: [{ text: 'earlier held words', textHash: 'h0', reason: 'r' }],
+        }),
+      ]
+    );
 
     await deleteText(textId);
 
@@ -317,6 +321,7 @@ describe('the delete trigger on a confirmed "none" text', () => {
       reportChoice: 'none',
       kind: 'redetected',
       priorHoldId: 3,
+      decisionNotePurged: true,
       retentionPurgedAt: expect.any(String),
     });
   });
