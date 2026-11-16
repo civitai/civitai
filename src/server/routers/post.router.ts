@@ -51,8 +51,18 @@ import {
   updatePostCollectionTagIdInput,
   updatePostImageSchema,
   validateBatchScheduleSchema,
+  setSongGenreSchema,
+  addSongTagSchema,
+  removeSongTagSchema,
 } from './../schema/post.schema';
-import { addPostImage, getPostEditDetail, getPostImageIds } from './../services/post.service';
+import {
+  addPostImage,
+  addSongTag,
+  getPostEditDetail,
+  getPostImageIds,
+  removeSongTag,
+  setSongGenre,
+} from './../services/post.service';
 import { getImageMoveTargets, moveImagesToPost } from './../services/post-image-move.service';
 import {
   getPlannerPostDetail,
@@ -177,6 +187,22 @@ export const postRouter = router({
     .input(updatePostImageSchema)
     .use(isImageOwnerOrModerator)
     .mutation(updatePostImageHandler),
+  // A song's genre and tags; the service checks the song and the caller again.
+  setSongGenre: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(setSongGenreSchema)
+    .use(isImageOwnerOrModerator)
+    .mutation(({ ctx, input }) => setSongGenre({ ...input, user: ctx.user })),
+  addSongTag: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(addSongTagSchema)
+    .use(isImageOwnerOrModerator)
+    .mutation(({ ctx, input }) => addSongTag({ ...input, user: ctx.user })),
+  removeSongTag: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(removeSongTagSchema)
+    .use(isImageOwnerOrModerator)
+    .mutation(({ ctx, input }) => removeSongTag({ ...input, user: ctx.user })),
   addResourceToImage: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(addResourceToPostImageInput)
