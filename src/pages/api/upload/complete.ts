@@ -237,9 +237,9 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
      * 🔴 CONTAINED, because this telemetry now runs INSIDE the S3 try/catch but AFTER the
      * response. Without this guard a logging failure unwinds into the `catch (e)` below,
      * where it is classified as an S3 fault, logged as `s3-upload-complete-error`, and
-     * answered with a SECOND response — on a request that already succeeded. A test
-     * (`telemetry failure cannot change the client response`) caught exactly that while
-     * this fix was being written.
+     * answered with a SECOND response — on a request that already succeeded. `logToAxiom`
+     * itself never rejects any more (pinned in packages/civitai-axiom), so the call is not
+     * awaited and this `try` now guards only a synchronous throw.
      *
      * Swallowing is right here and is not silent: `@civitai/axiom` reports its own ingest
      * failures (`axiom-ingest-failed`), and the stderr/Loki line has already been written

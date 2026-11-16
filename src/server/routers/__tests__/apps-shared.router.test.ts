@@ -948,23 +948,6 @@ describe('FIX 1 abuse observability (alert emits)', () => {
     expect(report).toBeTruthy();
   });
 
-  it('report emit is FIRE-AND-FORGET: op still succeeds if the alert throws', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockResolvedValue({ rows: [{ x: 1 }], rowCount: 1 });
-    mockLogToAxiom.mockRejectedValueOnce(new Error('axiom down'));
-    const out = await caller().report({ blockToken: 't', key: 'req-9' });
-    expect(out).toEqual({ ok: true }); // the throwing emit did not fail the report
-  });
-
-  it('block-audit emit is FIRE-AND-FORGET: op still FAILS correctly if the alert throws', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockLogToAxiom.mockRejectedValueOnce(new Error('axiom down'));
-    // minor content → BAD_REQUEST regardless of the emit throwing
-    await expect(
-      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-  });
-
   it('a report on a missing row NEVER emits (NOT_FOUND before the alert)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 }); // row does not exist

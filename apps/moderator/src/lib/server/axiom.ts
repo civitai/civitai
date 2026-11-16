@@ -21,7 +21,8 @@ export function logToAxiom(data: Record<string, unknown>, datastream = 'civitai-
   return logger.logToAxiom({ app: 'moderator', ...data }, datastream);
 }
 
-// Fire-and-forget, and swallows its own failure — logging must never be the thing that breaks a request.
+// Fire-and-forget. `logToAxiom` never rejects (@civitai/axiom contains the Axiom write), so logging is
+// never the thing that breaks a request.
 //
 // `extra` spreads BEFORE safeError so a caller's marker survives and name/message/stack land last. The
 // serialized line MUST keep the literal `unhandled server error` substring: the datapacket-talos Loki

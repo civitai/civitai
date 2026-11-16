@@ -8,9 +8,8 @@ import { logToAxiom } from '~/server/logging/client';
  * Always `type: 'error'` (the field the log pipeline reads as the level); callers decide what
  * counts as degraded.
  *
- * The `.catch(() => null)` is load-bearing: nothing awaits this, so a rejected log call would
- * become an unhandled rejection in the caller it only observes. The `try` covers a logger that
- * throws synchronously, for the same reason.
+ * `logToAxiom` never rejects, so the returned promise needs no `.catch`. The `try` covers a logger
+ * that throws synchronously, so the recording cannot break the caller it only observes.
  */
 export function noteDegradedRead(name: string, err: unknown): void {
   try {

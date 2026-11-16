@@ -64,7 +64,7 @@ vi.mock('./clients/db', () => ({
   }),
 }));
 
-// logToAxiom must return a thenable (create.ts calls `.catch(...)` on it). vi.fn(async ...) does.
+// logToAxiom resolves, like the real one (which never rejects).
 vi.mock('./clients/axiom', () => ({ logToAxiom: vi.fn(async () => {}) }));
 
 import type { CreateNotificationPendingRow } from '@civitai/notifications';

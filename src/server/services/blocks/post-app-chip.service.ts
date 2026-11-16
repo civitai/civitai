@@ -50,9 +50,8 @@ import {
 import type { SessionUser } from '~/types/session';
 
 /**
- * `logToAxiom` returns a promise that can reject, so the `.catch` is required —
- * an unhandled rejection from a fail-open path would defeat the point of failing
- * open.
+ * Fire-and-forget: `logToAxiom` never rejects, so this fail-open path cannot be
+ * turned into an unhandled rejection by its own logging.
  */
 function noteDegradedChipRead(err: unknown, surface: AppChipSurface, read?: 'item'): void {
   logToAxiom({

@@ -1049,21 +1049,6 @@ describe('textOutput — the trigger log', () => {
     });
     expect(mockLogToAxiom).not.toHaveBeenCalled();
   });
-
-  it('a logging failure does not turn a decided verdict into a throw', async () => {
-    mockLogToAxiom.mockRejectedValue(new Error('axiom down'));
-    scannerReturns(scanOutput(['Young']));
-    await expect(
-      screenGeneratedText({
-        texts: [GENERATED_TEXT],
-        userId: 42,
-        isGreen: false,
-        appId: 'app-1',
-        stepId: 'fixture-chat',
-        model: CHAT_TYPE,
-      })
-    ).resolves.toMatchObject({ released: false });
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

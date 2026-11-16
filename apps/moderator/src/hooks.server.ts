@@ -129,8 +129,8 @@ export const CREDENTIAL_ATTRIBUTION_EVENT = 'webhook credential presented';
  * credential is still presented but BY WHOM — a count with no way to reach the caller cannot be acted
  * on.
  *
- * Fire-and-forget, and swallows its own failure both ways a promise-returning call can fail —
- * attribution must never be the thing that breaks a request. Same contract as `logAxiomError`.
+ * Fire-and-forget: `logToAxiom` never rejects, and the `try` covers a synchronous throw, so
+ * attribution is never the thing that breaks a request. Same contract as `logAxiomError`.
  */
 function logCredentialAttribution(
   event: Parameters<Handle>[0]['event'],

@@ -740,14 +740,10 @@ async function assertStoredObjectUnchanged(
     kind,
     imageId: image.id,
   });
-  // 🔴 That `.catch(() => null)` is LOAD-BEARING, not tidiness. Nothing awaits the
-  // call above, so a rejecting sink — `logToAxiom` awaits an ingest that rejects
-  // when Axiom itself is degraded — has nowhere to go but `unhandledRejection`, and
-  // the attach it is merely OBSERVING would be taken down by the observation. Same
-  // reasoning as `~/server/redis/fail-open-log`, `~/server/meilisearch/client` and
-  // `~/server/signals/wrapper`. Pinned by
-  // `./__tests__/listing-asset-integrity-logging.test.ts`, which needs a file of its
-  // own to be falsifiable at all — a `vi.fn()` sink marks the rejection handled.
+  // Nothing awaits the call above, and nothing needs to: `logToAxiom` never rejects
+  // (it contains a degraded Axiom ingest itself; pinned in
+  // packages/civitai-axiom/src/__tests__/logToAxiom.test.ts), so the attach it is
+  // merely OBSERVING cannot be taken down by the observation.
 
   if (verdict.status !== 'mismatch') return;
 
