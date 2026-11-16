@@ -12,4 +12,4 @@ Your request should include:
 3. a brief statement that you believe in good faith it was published without your consent, with any information that helps us confirm that; and
 4. how we can contact you.
 
-Submit it by email to [digital-likeness@civitai.com](mailto:digital-likeness@civitai.com). If you're signed in, you can also use the Report option on any image.
+Submit it by email to [digital-likeness@civitai.com](mailto:digital-likeness@civitai.com).
