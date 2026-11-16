@@ -268,6 +268,8 @@ async function strikeAuthor(hold: HeldRow, { actor, holdId }: DecideArgs) {
 const subjectTypeOf = (entityType: string) =>
   `${entityType.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()}_text`;
 
+const BATCH_NONE_NEEDS_OWN_DECISION =
+  'A storyline text needs its own report choice, so it stays held for its own decision.';
 const REPORT_NEEDS_CATEGORY = 'Filing a report needs a reportable category, not "none".';
 
 /**
@@ -303,6 +305,10 @@ export async function decideCsamHold(args: DecideArgs) {
   if (!hold || hold.status !== 'Pending')
     throw throwConflictError('Hold already decided or missing.');
   if (hold.textHash !== textHash) throw throwConflictError(STALE_HOLD_MESSAGE);
+  // "none" starts a deletion clock on a held PostText, so a moderator chooses it for each one: a batch
+  // leaves the text held and pending for its own decision.
+  if (batched && reportChoice === 'none' && hold.entityType === 'PostText')
+    throw throwBadRequestError(BATCH_NONE_NEEDS_OWN_DECISION);
 
   if (plan.remove && !isRemovable(hold.entityType))
     throw throwBadRequestError(

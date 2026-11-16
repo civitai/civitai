@@ -184,6 +184,7 @@ describe('the csam hold decision record, against the real label store', () => {
         meta: null,
       });
       dbMock.dbWrite.$executeRaw.mockClear();
+      dbMock.dbWrite.textScanHold.updateMany.mockClear();
     });
 
     /** The text's held state is recomputed from its holds in the decision's transaction. */
@@ -212,6 +213,25 @@ describe('the csam hold decision record, against the real label store', () => {
       expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[syncAt]).toBeGreaterThan(
         holdWrite
       );
+    });
+
+    it.each([
+      ['refuses a batched "none" and leaves the text pending, with no clock', 'none', false],
+      ['decides a batched reportable choice', 'imagery', true],
+    ] as const)('%s', async (_, reportChoice, decided) => {
+      const run = decideCsamHold({
+        holdId: 12,
+        textHash: 'h',
+        decision: 'remove',
+        reportChoice,
+        actor: { id: 7 },
+        tracker: tracker as never,
+        batched: true,
+      });
+      if (decided) await run;
+      else await expect(run).rejects.toThrow(/its own report choice/);
+      expect(syncs()).toEqual(decided ? [31] : []);
+      expect(dbMock.dbWrite.textScanHold.updateMany).toHaveBeenCalledTimes(decided ? 1 : 0);
     });
 
     it('stays held when removed, its content kept', async () => {
