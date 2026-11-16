@@ -80,6 +80,8 @@ const routers = {
     import('./semantic-model3d-search.router').then((m) => m.semanticModel3DSearchRouter),
   semanticStorylineSearch: () =>
     import('./semantic-storyline-search.router').then((m) => m.semanticStorylineSearchRouter),
+  semanticCrucibleSearch: () =>
+    import('./semantic-crucible-search.router').then((m) => m.semanticCrucibleSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),
