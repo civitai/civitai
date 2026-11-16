@@ -17,8 +17,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 
 import {
   audienceDocLevel,
-  lookupDocLevelGate,
-  SERVER_LOOKUP_DOC_LEVEL,
+  domainDocLevel,
+  isSharedDocLevelsOn,
   viewerDocLevel,
   withDocLevelGate,
 } from '~/server/services/apps/doc-levels';
@@ -61,8 +61,20 @@ describe('viewerDocLevel — a block token reader’s level', () => {
   });
 });
 
-it('the server lookup reads at every browsable level, Blocked excluded', () => {
-  expect(SERVER_LOOKUP_DOC_LEVEL).toBe(31);
+describe('domainDocLevel — the cap on an author’s own rated documents', () => {
+  it.each([
+    // The domain ceiling alone: the viewer's own setting is not read.
+    [{ maxBrowsingLevel: 31, viewerBrowsingLevel: 1 }, 31],
+    [{ maxBrowsingLevel: 3, viewerBrowsingLevel: 31 }, 3],
+    [{ maxBrowsingLevel: 28 }, 28],
+    // Blocked is never a selectable level.
+    [{ maxBrowsingLevel: 63 }, 31],
+    // Fails closed to PG.
+    [{ viewerBrowsingLevel: 31 }, 1],
+    [{ maxBrowsingLevel: 32 }, 1],
+  ])('%j → %i', (claims, level) => {
+    expect(domainDocLevel(claims)).toBe(level);
+  });
 });
 
 describe('the flag decides whether the gate is applied, per app', () => {
@@ -72,7 +84,7 @@ describe('the flag decides whether the gate is applied, per app', () => {
   it('off: the access is returned unchanged (the same object)', async () => {
     const a = access('ab_OFFAPP');
     expect(await withDocLevelGate(a, { maxBrowsingLevel: 31, viewerBrowsingLevel: 7 })).toBe(a);
-    expect(await lookupDocLevelGate('ab_OFFAPP')).toBeUndefined();
+    expect(await isSharedDocLevelsOn('ab_OFFAPP')).toBe(false);
   });
 
   it('on: the context carries the viewer’s level; evaluated per app with no context', async () => {
@@ -85,9 +97,9 @@ describe('the flag decides whether the gate is applied, per app', () => {
       appId: 'ab_ONAPP',
       ns: 'prod',
       viewerUid: 9,
-      levels: { viewerLevel: 6 },
+      levels: { viewerLevel: 6, domainLevel: 31 },
     });
-    expect(await lookupDocLevelGate('ab_ONAPP')).toEqual({ viewerLevel: 31 });
+    expect(await isSharedDocLevelsOn('ab_ONAPP')).toBe(true);
     expect(flags.calls).toEqual([
       [FLAG, 'ab_ONAPP', undefined],
       [FLAG, 'ab_ONAPP', undefined],

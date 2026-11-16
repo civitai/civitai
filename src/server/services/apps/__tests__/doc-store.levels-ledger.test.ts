@@ -73,9 +73,12 @@ describe('content-level seam ledger', () => {
     expect(consts.get(`${name}_LEVELS`)).toContain(PREDICATE);
   });
 
-  it('the server key lookup has a twin that applies the predicate', () => {
+  it('the server key lookup has a twin that returns the rating and stays level-blind', () => {
+    // Its callers decide on the rating themselves: App Store publishing refuses an unrated item
+    // and copies the level onto the card; spend attribution ignores levels.
     expect(consts.get('SQL_LOOKUP_SHARED_KEY')).not.toContain(PREDICATE);
-    expect(consts.get('SQL_LOOKUP_SHARED_KEY_LEVELS')).toContain(PREDICATE);
+    expect(consts.get('SQL_LOOKUP_SHARED_KEY_LEVELS')).not.toContain(PREDICATE);
+    expect(consts.get('SQL_LOOKUP_SHARED_KEY_LEVELS')).toContain('RATING_COLUMNS');
   });
 
   it('list, the one statement built at run time, applies the predicate when levels are on', () => {

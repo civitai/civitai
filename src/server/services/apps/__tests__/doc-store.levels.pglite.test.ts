@@ -29,10 +29,22 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const AUTHOR = 5101;
 const OTHER = 5202;
 
-const gated = (c: DocStoreContext, viewerLevel: number): DocStoreContext => ({
+/**
+ * `viewerLevel` is the reader's own browsing level (token ceiling ∩ their setting); `domainLevel`
+ * the token's domain ceiling alone, which caps an author's own RATED documents. Defaults to the
+ * viewer level where a case does not care.
+ */
+const gated = (
+  c: DocStoreContext,
+  viewerLevel: number,
+  domainLevel: number = viewerLevel
+): DocStoreContext => ({
   ...c,
-  levels: { viewerLevel },
+  levels: { viewerLevel, domainLevel },
 });
+// Domain ceilings: a red-capable host admits every browsable level; the SFW host PG and PG-13.
+const RED = 31;
+const COM = 3;
 
 /** Set a document's rating columns directly (superuser): the rater (build 3) does not exist yet. */
 async function rate(
@@ -215,14 +227,63 @@ describe('levels ON', () => {
     });
   });
 
-  it('🔴 a Blocked (32) document is hidden from every viewer level, and shown to its author', async () => {
+  it('🔴 a Blocked (32) document is hidden from every viewer level, its author included', async () => {
     const app = freshApp('LVLBLOCK');
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'bl', { t: 'x' });
     await rate(h, app, BOARD, 'bl', { level: 32, status: 'rated' });
     expect(await readsOf(store, gated(ctx(app, NS_PROD, OTHER), 31), BOARD, 'bl')).toEqual(unseen);
-    expect(await readsOf(store, gated(ctx(app, NS_PROD, AUTHOR), 1), BOARD, 'bl')).toEqual(
-      seen('bl')
+    expect(await readsOf(store, gated(ctx(app, NS_PROD, AUTHOR), 31, RED), BOARD, 'bl')).toEqual(
+      unseen
     );
+  });
+
+  describe('🔴 an author’s own documents: unrated ones always, rated ones within the DOMAIN ceiling', () => {
+    it('their rated R (4) document shows on a red token and not on a com token', async () => {
+      const app = freshApp('LVLOWNR');
+      await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'own-r', { t: 'r' });
+      await rate(h, app, BOARD, 'own-r', { level: 4, status: 'rated' });
+      // Their own setting is PG only: the domain, not their setting, decides their own document.
+      expect(
+        await readsOf(store, gated(ctx(app, NS_PROD, AUTHOR), 1, RED), BOARD, 'own-r')
+      ).toEqual(seen('own-r'));
+      expect(
+        await readsOf(store, gated(ctx(app, NS_PROD, AUTHOR), 1, COM), BOARD, 'own-r')
+      ).toEqual(unseen);
+    });
+
+    it('an author whose own level excludes R still sees their rated R document on red', async () => {
+      const app = freshApp('LVLOWNPG');
+      await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'own-r2', { t: 'r' });
+      await rate(h, app, BOARD, 'own-r2', { level: 4, status: 'rated' });
+      expect(
+        await readsOf(store, gated(ctx(app, NS_PROD, AUTHOR), 3, RED), BOARD, 'own-r2')
+      ).toEqual(seen('own-r2'));
+      // ...and another viewer at that same level does not.
+      expect(
+        await readsOf(store, gated(ctx(app, NS_PROD, OTHER), 3, RED), BOARD, 'own-r2')
+      ).toEqual(unseen);
+    });
+
+    it('an override caps the author too: overridden up to X (8) is hidden from them on com', async () => {
+      const app = freshApp('LVLOWNOVR');
+      await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'own-o', { t: 'o' });
+      await rate(h, app, BOARD, 'own-o', { level: 2, status: 'overridden', override: 8 });
+      expect(
+        await readsOf(store, gated(ctx(app, NS_PROD, AUTHOR), 31, COM), BOARD, 'own-o')
+      ).toEqual(unseen);
+      expect(
+        await readsOf(store, gated(ctx(app, NS_PROD, AUTHOR), 1, RED), BOARD, 'own-o')
+      ).toEqual(seen('own-o'));
+    });
+
+    it('their pending and unrated documents show at any domain', async () => {
+      const app = freshApp('LVLOWNPEND');
+      await store.put(gated(ctx(app, NS_PROD, AUTHOR), 1, 1), BOARD, 'own-p', { t: 'p' });
+      await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'own-n', { t: 'n' });
+      const author = gated(ctx(app, NS_PROD, AUTHOR), 1, 1);
+      expect(await readsOf(store, author, BOARD, 'own-p')).toEqual(seen('own-p'));
+      expect(await readsOf(store, author, BOARD, 'own-n')).toEqual(seen('own-n'));
+    });
   });
 
   it('a counter document (no data to rate) stays visible to everyone', async () => {
@@ -259,24 +320,34 @@ describe('levels ON', () => {
     ]);
   });
 
-  it('🔴 server key lookup: unrated, pending and Blocked items read as hidden; a rated one resolves', async () => {
+  it('🔴 server key lookup: level-blind `hidden`, and the rating for the card path to decide on', async () => {
     const app = freshApp('LVLLOOKUP');
-    for (const k of ['k-rated', 'k-pend', 'k-null', 'k-block']) {
+    for (const k of ['k-rated', 'k-pend', 'k-null', 'k-over']) {
       await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, k, { k });
     }
     await rate(h, app, BOARD, 'k-rated', { level: 8, status: 'rated' });
     await rate(h, app, BOARD, 'k-pend', { status: 'pending' });
-    await rate(h, app, BOARD, 'k-block', { level: 32, status: 'rated' });
-    const levels = { viewerLevel: 31 };
-    const hiddenOf = async (key: string, opts?: { levels: { viewerLevel: number } }) =>
-      (await lookup.findSharedByKey(app, [BOARD.name], key, opts))[0]?.hidden;
-    expect(await hiddenOf('k-rated', { levels })).toBe(false);
-    expect(await hiddenOf('k-pend', { levels })).toBe(true);
-    expect(await hiddenOf('k-null', { levels })).toBe(true);
-    expect(await hiddenOf('k-block', { levels })).toBe(true);
-    // Off, only a moderator hide hides.
-    expect(await hiddenOf('k-pend')).toBe(false);
-    expect((await lookup.findSharedByKey(app, [BOARD.name], 'k-rated', { levels }))[0]).toEqual({
+    await rate(h, app, BOARD, 'k-over', { level: 2, status: 'overridden', override: 16 });
+    const found = async (key: string) =>
+      (await lookup.findSharedByKey(app, [BOARD.name], key, { rating: true }))[0];
+    expect(await found('k-rated')).toEqual({
+      collection: BOARD.name,
+      authorUid: AUTHOR,
+      hidden: false,
+      rating: { level: 8, status: 'rated' },
+    });
+    expect(await found('k-pend')).toMatchObject({
+      hidden: false,
+      rating: { level: null, status: 'pending' },
+    });
+    expect(await found('k-null')).toMatchObject({
+      hidden: false,
+      rating: { level: null, status: null },
+    });
+    // The override first.
+    expect(await found('k-over')).toMatchObject({ rating: { level: 16, status: 'overridden' } });
+    // Off: exactly what it was.
+    expect((await lookup.findSharedByKey(app, [BOARD.name], 'k-pend'))[0]).toEqual({
       collection: BOARD.name,
       authorUid: AUTHOR,
       hidden: false,

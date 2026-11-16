@@ -511,35 +511,39 @@ describe('content levels on (app-blocks-shared-doc-levels): the card path and at
       title: key,
     });
 
-  it('🔴 a pending item reads as not found to the card path, and attributes nobody', async () => {
+  it('🔴 the card path reads a pending item with its rating; spend attribution stays level-blind', async () => {
     const app = freshApp();
     await write(app, 'pending-item');
     expect(await subListing(app, 'pending-item')).toEqual({
       authorUserId: DOC_AUTHOR,
-      hidden: true,
+      hidden: false,
+      rating: { level: null, status: 'pending' },
     });
-    expect(await attribution(app, 'pending-item')).toBeNull();
+    expect(await attribution(app, 'pending-item')).toBe(DOC_AUTHOR);
   });
 
-  it('🔴 a rated item resolves to its author on both paths', async () => {
+  it('🔴 a rated item carries its effective level to the card path', async () => {
     const app = freshApp();
     await write(app, 'rated-item');
     await rate(app, 'rated-item', 4, 'rated');
     expect(await subListing(app, 'rated-item')).toEqual({
       authorUserId: DOC_AUTHOR,
       hidden: false,
+      rating: { level: 4, status: 'rated' },
     });
     expect(await attribution(app, 'rated-item')).toBe(DOC_AUTHOR);
   });
 
-  it('a Blocked item reads as not found', async () => {
+  it('a Blocked item carries its level; attribution still names its author', async () => {
     const app = freshApp();
     await write(app, 'blocked-item');
     await rate(app, 'blocked-item', 32, 'rated');
     expect(await subListing(app, 'blocked-item')).toEqual({
       authorUserId: DOC_AUTHOR,
-      hidden: true,
+      hidden: false,
+      rating: { level: 32, status: 'rated' },
     });
+    expect(await attribution(app, 'blocked-item')).toBe(DOC_AUTHOR);
   });
 
   it('INVARIANT GUARD: flag off, the same pending item resolves as before', async () => {

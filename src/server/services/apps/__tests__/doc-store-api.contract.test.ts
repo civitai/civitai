@@ -3943,6 +3943,26 @@ describe('content levels (app-blocks-shared-doc-levels): read gate and read-only
     expect(shown.body).toMatchObject({ level: 2, ratingStatus: 'rated' });
   });
 
+  it('🔴 flag on: an author’s own rated document is capped by the token’s domain, not their setting', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const author = (maxBrowsingLevel: number, viewerBrowsingLevel: number) =>
+      mint({ app: A, uid: VIEWER_IDS.v1, scopes, maxBrowsingLevel, viewerBrowsingLevel });
+    await call({
+      token: await author(31, 1),
+      method: 'PUT',
+      path: '/posts/mine-r',
+      body: { data: { t: 1 } },
+    });
+    await rate(A.id, 'mine-r', 4, 'rated'); // R
+    const read = async (max: number, own: number) =>
+      (await call({ token: await author(max, own), method: 'GET', path: '/posts/mine-r' })).status;
+    // Red domain, own setting PG only: shown.
+    expect(await read(31, 1)).toBe(200);
+    // SFW domain, own setting everything: hidden.
+    expect(await read(3, 31)).toBe(404);
+  });
+
   it('🔴 flag on: an app cannot write level or ratingStatus', async () => {
     h.docLevels = true;
     const { A } = freshApps();
