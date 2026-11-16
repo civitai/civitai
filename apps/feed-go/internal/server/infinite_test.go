@@ -142,9 +142,6 @@ func TestInfiniteRouteIsInternalOnly(t *testing.T) {
 func TestEveryEndpointIsSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	NewMetrics(reg)
-	if len(Endpoints) != 3 || Endpoints[2] != "infinite" {
-		t.Fatalf("Endpoints = %v", Endpoints)
-	}
 	for _, e := range Endpoints {
 		if v, found := metricValue(t, reg, "feed_go_shadow_dropped_total", map[string]string{"feed_endpoint": e}); !found || v != 0 {
 			t.Errorf("dropped{%s} = %v found=%v, want a 0 series", e, v, found)

@@ -315,11 +315,11 @@ func TestShadowComputeRunsUnderTheBudget(t *testing.T) {
 	}
 }
 
-// The deadline result is exported at 0 for both endpoints before any sample.
+// The deadline result is exported at 0 for every endpoint before any sample.
 func TestShadowDeadlineResultIsSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	NewMetrics(reg)
-	for _, e := range []string{"as-posts", "v1-images"} {
+	for _, e := range []string{"as-posts", "v1-images", "infinite", "model-getall"} {
 		v, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": "deadline"})
 		if !found || v != 0 {
 			t.Fatalf("feed_go_shadow_compare_total{feed_endpoint=%q,result=\"deadline\"} = %v (found %v), want a seeded 0", e, v, found)
@@ -637,6 +637,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	m.ShadowPhaseCPU.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSolo.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSoloWall.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
+	m.GoFirstDBReads.WithLabelValues(EndpointAsPosts, "basic-users").Inc()
+	m.GoFirstCheckLag.WithLabelValues(EndpointAsPosts).Observe(1)
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
@@ -665,8 +667,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 10 {
-		t.Fatalf("checked %d per-endpoint families, want 10 (a family was renamed or lost)", checked)
+	if checked != 17 {
+		t.Fatalf("checked %d per-endpoint families, want 17 (a family was renamed or lost)", checked)
 	}
 }
 

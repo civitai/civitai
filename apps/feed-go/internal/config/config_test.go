@@ -90,6 +90,40 @@ func TestLoadFeedServiceMirrors(t *testing.T) {
 	}
 }
 
+// model.getAll's flag mirrors: unset, each is its flag's production value (on); each one is read from
+// its own variable, so turning one off moves that one alone.
+func TestLoadModelGetAllMirrors(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	vars := []string{"FEED_GO_BASE_MODEL_FEED_METRICS", "FEED_GO_MODEL_IMAGES_SLIM", "FEED_GO_GENERATION_COVERAGE_NEXT", "FEED_GO_GENERATION_LOADING_OPEN_TO_ALL"}
+	read := func(c *Config) [4]bool {
+		return [4]bool{c.BaseModelFeedMetrics, c.ModelImagesSlim, c.CoverageNext, c.LoadingOpenToAll}
+	}
+	for _, v := range vars {
+		t.Setenv(v, "")
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(c); got != [4]bool{true, true, true, true} {
+		t.Fatalf("defaults %v, want all on", got)
+	}
+	for i, v := range vars {
+		t.Setenv(v, "false")
+		if c, err = Load(); err != nil {
+			t.Fatal(err)
+		}
+		want := [4]bool{true, true, true, true}
+		want[i] = false
+		if got := read(c); got != want {
+			t.Fatalf("%s=false: %v, want %v", v, got, want)
+		}
+		t.Setenv(v, "")
+	}
+}
+
 func TestLoadPprofDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)

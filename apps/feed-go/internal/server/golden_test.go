@@ -34,6 +34,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
@@ -44,7 +45,8 @@ const (
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 23
 	goldenMinV1       = 22
-	goldenMinInfinite = 20
+	goldenMinInfinite = 21
+	goldenMinModels   = 19
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -87,6 +89,11 @@ type goldenFixture struct {
 		CreatorPromotions string   `json:"creatorPromotions"`
 		DecorationEvents  []string `json:"decorationEvents"`
 		ImageLocation     string   `json:"imageLocation"`
+		// model.getAll's flag mirrors (model-getall/ fixtures).
+		BaseModelMetrics bool `json:"baseModelMetrics"`
+		ModelImagesSlim  bool `json:"modelImagesSlim"`
+		CoverageNext     bool `json:"coverageNext"`
+		LoadingOpenToAll bool `json:"loadingOpenToAll"`
 		// FrameCacheNegative is the frame-cache-negative flag the fixture's Node run had.
 		FrameCacheNegative bool `json:"frameCacheNegative"`
 	} `json:"config"`
@@ -267,6 +274,33 @@ type goldenDB struct {
 		Image     *string    `json:"image"`
 		DeletedAt goldenTime `json:"deletedAt"`
 	} `json:"users"`
+
+	// model-getall/ fixtures: the page query's answer per call, in order, with the cursor Node sent
+	// for it; the paid-access gates, cover lookups, tags by name and creators by name Node read.
+	ModelPages []struct {
+		Cursor *string `json:"cursor"`
+		// Bound is what Node's parseCursor binds for Cursor: a {"$date"} instant or an integer per token.
+		Bound []json.RawMessage `json:"bound"`
+		Rows  []goldenModelRow  `json:"rows"`
+	} `json:"modelPages"`
+	PaidAccess []struct {
+		ModelID  int        `json:"modelId"`
+		Deadline goldenTime `json:"deadline"`
+	} `json:"paidAccess"`
+	CoverImages []struct {
+		ID             int `json:"id"`
+		UserID         int `json:"userId"`
+		ModelVersionID int `json:"modelVersionId"`
+		ModelID        int `json:"modelId"`
+	} `json:"coverImages"`
+	Tags []struct {
+		Name string `json:"name"`
+		ID   int    `json:"id"`
+	} `json:"tags"`
+	Creators []struct {
+		Username string `json:"username"`
+		ID       int    `json:"id"`
+	} `json:"creators"`
 	// UserCosmetics are UserCosmetic rows, `data` as Postgres prints the jsonb (null when NULL).
 	UserCosmetics []struct {
 		UserID         int     `json:"userId"`
@@ -292,6 +326,43 @@ type goldenDB struct {
 		Meta            string  `json:"meta"`
 		RejectionReason *string `json:"rejectionReason"`
 	} `json:"cosmeticShopItems"`
+}
+
+// goldenModelRow is one row of model.getAll's page query (getModelsRaw's SELECT).
+type goldenModelRow struct {
+	ID              int             `json:"id"`
+	Name            string          `json:"name"`
+	SfwName         *string         `json:"sfwName"`
+	CoverImageID    *int            `json:"coverImageId"`
+	SfwCoverImageID *int            `json:"sfwCoverImageId"`
+	Type            string          `json:"type"`
+	Minor           bool            `json:"minor"`
+	SfwOnly         bool            `json:"sfwOnly"`
+	Poi             bool            `json:"poi"`
+	Nsfw            bool            `json:"nsfw"`
+	NsfwLevel       int             `json:"nsfwLevel"`
+	Status          string          `json:"status"`
+	CreatedAt       goldenTime      `json:"createdAt"`
+	LastVersionAt   goldenTime      `json:"lastVersionAt"`
+	PublishedAt     goldenTime      `json:"publishedAt"`
+	Locked          bool            `json:"locked"`
+	Meta            json.RawMessage `json:"meta"`
+	Mode            *string         `json:"mode"`
+	Availability    string          `json:"availability"`
+	Rank            json.RawMessage `json:"rank"`
+	UserID          int             `json:"userId"`
+	CursorID        string          `json:"cursorId"`
+}
+
+var goldenModelColumns = []string{"id", "name", "sfwName", "coverImageId", "sfwCoverImageId", "type", "minor", "sfwOnly",
+	"poi", "nsfw", "nsfwLevel", "status", "createdAt", "lastVersionAt", "publishedAt", "locked", "meta", "mode",
+	"availability", "rank", "userId", "cursorId"}
+
+func (g goldenModelRow) row() []any {
+	return []any{g.ID, g.Name, goldenPtr(g.SfwName), goldenPtr(g.CoverImageID), goldenPtr(g.SfwCoverImageID), g.Type,
+		g.Minor, g.SfwOnly, g.Poi, g.Nsfw, g.NsfwLevel, g.Status, goldenTimeVal(g.CreatedAt), goldenTimeVal(g.LastVersionAt),
+		goldenTimeVal(g.PublishedAt), g.Locked, goldenJSONVal(g.Meta), goldenPtr(g.Mode), g.Availability, string(g.Rank),
+		g.UserID, g.CursorID}
 }
 
 // goldenCosmeticEvent reports whether the cosmetic's data has a string `event` (the frame and event
@@ -812,7 +883,9 @@ type goldenEnv struct {
 	server  *Server
 	feed    *goldenFeed
 	headers map[string]string
-	cache   *testkit.Redis
+	// The stores the server reads, for a fixture that wires more of them (model.getAll).
+	cache, sys *testkit.Redis
+	now        func() time.Time
 }
 
 func goldenRedis(t *testing.T, entries map[string]goldenRedisEntry) *testkit.Redis {
@@ -919,7 +992,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 	if fx.Request.Session != nil {
 		headers["cookie"] = goldenCookieName + "=" + goldenToken(t, priv, fx.Request.Session.UserID, now)
 	}
-	return &goldenEnv{server: s, feed: fake, headers: headers, cache: cache}
+	return &goldenEnv{server: s, feed: fake, headers: headers, cache: cache, sys: sys, now: nowFn}
 }
 
 // --- loading and running --------------------------------------------------------------------------
@@ -1156,6 +1229,196 @@ func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	env.feed.check(t, true)
 }
 
+// --- model.getAll --------------------------------------------------------------------------------
+
+// goldenModelPG is a model-getall fixture's Postgres: the page query answered page by page from the
+// fixture (each page asserted to carry the cursor Node sent for it), and the lookups Node made.
+type goldenModelPG struct {
+	*testkit.DB
+	mu    sync.Mutex
+	pages int
+}
+
+func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
+	db := &fx.DB
+	g := &goldenModelPG{}
+	g.DB = &testkit.DB{Routes: []testkit.Route{
+		{Match: `"cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if g.pages >= len(db.ModelPages) {
+				return nil, fmt.Errorf("golden: page query %d, the fixture lists %d", g.pages+1, len(db.ModelPages))
+			}
+			page := db.ModelPages[g.pages]
+			g.pages++
+			if page.Cursor == nil {
+				if strings.Contains(sql, "UNION ALL") || strings.Contains(sql, ") OR (") {
+					return nil, fmt.Errorf("golden: page %d has no cursor in Node, feed-go sent one", g.pages)
+				}
+			} else if err := goldenCheckBound(*page.Cursor, page.Bound, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
+			rows := make([][]any, len(page.Rows))
+			for i, r := range page.Rows {
+				rows[i] = r.row()
+			}
+			return testkit.NewRows(goldenModelColumns, rows...), nil
+		}},
+		{Match: `GROUP BY mv."modelId"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, p := range db.PaidAccess {
+				if goldenHas(goldenInts(args[0]), p.ModelID) {
+					rows = append(rows, []any{p.ModelID, goldenTimeVal(p.Deadline)})
+				}
+			}
+			return testkit.NewRows([]string{"modelId", "deadline"}, rows...), nil
+		}},
+		{Match: `FROM "Image" i`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, c := range db.CoverImages {
+				if goldenHas(goldenInts(args[0]), c.ID) {
+					rows = append(rows, []any{c.ID, c.UserID, c.ModelVersionID, c.ModelID})
+				}
+			}
+			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, rows...), nil
+		}},
+		// Tag.name and User.username are citext.
+		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
+			for _, tag := range db.Tags {
+				if strings.EqualFold(tag.Name, fmt.Sprint(args[0])) {
+					return testkit.NewRows([]string{"id"}, []any{tag.ID}), nil
+				}
+			}
+			return testkit.NewRows([]string{"id"}), nil
+		}},
+		{Match: `SELECT id FROM "User" WHERE username = $1`, Rows: func(args []any) (*testkit.Rows, error) {
+			for _, c := range db.Creators {
+				if strings.EqualFold(c.Username, fmt.Sprint(args[0])) {
+					return testkit.NewRows([]string{"id"}, []any{c.ID}), nil
+				}
+			}
+			return testkit.NewRows([]string{"id"}), nil
+		}},
+		// The metric-privacy defaults of an owner Node did not read (feed-go reads every row's owner,
+		// Node only the shown models'): no row, nothing hidden.
+		{Match: `settings->'hideModelBuzz'`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"id", "hideModelBuzz", "hideModelDownloads", "hideModelGenerations"}), nil
+		}},
+	}}
+	t.Cleanup(func() {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if !t.Failed() && fx.Expect.Fallback == "" && g.pages != len(db.ModelPages) {
+			t.Errorf("feed-go asked for %d page(s); Node asked for %d", g.pages, len(db.ModelPages))
+		}
+	})
+	return g
+}
+
+// goldenCheckBound checks that every value Node's parseCursor bound for a cursor — the instant a
+// timestamp token reads as, or the integer — is among the page query's arguments. It compares
+// values, not cursor text: a token both sides receive but read as different instants (".25" as
+// 250 ms or as 25 ms) is a mismatch here.
+func goldenCheckBound(cursor string, bound []json.RawMessage, args []any) error {
+	if n := len(strings.Split(cursor, "|")); len(bound) != n {
+		return fmt.Errorf("the fixture records %d bound value(s) for cursor %q, which has %d token(s)", len(bound), cursor, n)
+	}
+	have := map[string]bool{}
+	for _, a := range args {
+		if tm, ok := a.(time.Time); ok {
+			have["date:"+tm.UTC().Format("2006-01-02T15:04:05.000Z")] = true
+		} else {
+			have[fmt.Sprint(a)] = true
+		}
+	}
+	for i, raw := range bound {
+		var date struct {
+			Date *string `json:"$date"`
+		}
+		var key string
+		if json.Unmarshal(raw, &date) == nil && date.Date != nil {
+			key = "date:" + *date.Date
+		} else {
+			var n int64
+			if err := json.Unmarshal(raw, &n); err != nil {
+				return fmt.Errorf("bound value %d of cursor %q: %s is neither an instant nor an integer", i, cursor, raw)
+			}
+			key = strconv.FormatInt(n, 10)
+		}
+		if !have[key] {
+			return fmt.Errorf("node binds %s for token %d of cursor %q; feed-go's arguments are %v", key, i, cursor, args)
+		}
+	}
+	return nil
+}
+
+// goldenComputeModels answers a model-getall fixture's request through computeModelGetAll over the
+// fixture's caches and Postgres.
+func goldenComputeModels(t *testing.T, fx *goldenFixture) (*computed, error) {
+	t.Helper()
+	env := goldenSetupModels(t, fx)
+	ctx := context.Background()
+	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: fx.Request.Input, Headers: env.headers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return env.server.computeModelGetAll(ctx, r)
+}
+
+// goldenSetupModels is goldenSetup with the model.getAll deps over the fixture's model tables.
+func goldenSetupModels(t *testing.T, fx *goldenFixture) *goldenEnv {
+	t.Helper()
+	env := goldenSetup(t, fx)
+	db := newGoldenModelPG(t, fx)
+	events := map[string]bool{}
+	for _, e := range fx.Config.DecorationEvents {
+		events[e] = true
+	}
+	packed := &hydrate.PackedReader{Redis: env.cache, Now: env.now}
+	env.server.Models = &modelfeed.Deps{
+		DB:      db,
+		Sources: &hydrate.Sources{Packed: packed, Cache: env.cache, Replica: db},
+		Gallery: &feed.GalleryStore{Cache: env.cache, DB: db},
+		Addons:  (&feed.AddonSource{Sys: env.sys}).Addons,
+		Blocked: &feed.BlockedTags{Cache: env.cache},
+		Config: modelfeed.Config{
+			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
+			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,
+			VisibleDecorationEvents: events,
+		},
+		Now: env.now,
+	}
+	return env
+}
+
+func goldenRunModels(t *testing.T, fx *goldenFixture) {
+	c, err := goldenComputeModels(t, fx)
+	if want := fx.Expect.Fallback; want != "" {
+		if err == nil {
+			t.Fatalf("served; want fallback %q", want)
+		}
+		if got := fallback.Reason(err); got != want {
+			t.Fatalf("fallback reason %q (%v), want %q", got, err, want)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("computeModelGetAll: %v (fallback reason %q)", err, fallback.Reason(err))
+	}
+	rep, err := shadow.Compare(c.payload, fx.Expect.Envelope)
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	goldenReport(t, rep, c.payload)
+}
+
+func TestGoldenModelGetAll(t *testing.T) {
+	for _, path := range goldenFiles(t, "model-getall", goldenMinModels) {
+		fx := goldenLoad(t, path)
+		t.Run(fx.Name, func(t *testing.T) { goldenRunModels(t, fx) })
+	}
+}
+
 func TestGoldenAsPosts(t *testing.T) {
 	for _, path := range goldenFiles(t, "as-posts", goldenMinAsPosts) {
 		fx := goldenLoad(t, path)
@@ -1177,9 +1440,15 @@ func TestGoldenV1Images(t *testing.T) {
 	}
 }
 
-// goldenSetPath replaces the value at a dotted path (array indices as numbers) in a JSON document.
-func goldenSetPath(t *testing.T, doc json.RawMessage, path string, val any) json.RawMessage {
+// goldenMutantID is the id the harness-can-fail subtests write into an expected answer; no
+// fixture holds it, so the compare has to see the difference.
+const goldenMutantID = 999999
+
+// goldenSetPath replaces the value at a dotted path (array indices as numbers) in a JSON document
+// with goldenMutantID.
+func goldenSetPath(t *testing.T, doc json.RawMessage, path string) json.RawMessage {
 	t.Helper()
+	val := goldenMutantID
 	var root any
 	if err := json.Unmarshal(doc, &root); err != nil {
 		t.Fatal(err)
@@ -1232,7 +1501,7 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("compute: %v", err)
 		}
-		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.images.0.id", 999999)
+		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.images.0.id")
 		for name, payload := range map[string][]byte{"feed-go": c.payload, "fixture": fx.Expect.Envelope} {
 			rep, err := shadow.Compare(payload, mutated)
 			if err != nil {
@@ -1255,7 +1524,7 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("computeV1: %v", err)
 		}
-		mutated := goldenSetPath(t, fx.Expect.Body, "items.0.id", 999999)
+		mutated := goldenSetPath(t, fx.Expect.Body, "items.0.id")
 		for name, payload := range map[string][]byte{"feed-go": c.payload, "fixture": fx.Expect.Body} {
 			rep, err := shadow.CompareJSON(payload, mutated)
 			if err != nil {
@@ -1313,7 +1582,7 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("computeInfinite: %v", err)
 		}
-		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.id", 999999)
+		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.id")
 		for name, payload := range map[string][]byte{"feed-go": c.payload, "fixture": fx.Expect.Envelope} {
 			rep, err := shadow.Compare(payload, mutated)
 			if err != nil {
@@ -1325,6 +1594,36 @@ func TestGoldenHarnessCanFail(t *testing.T) {
 			if got := shadow.ClassifyFlat(rep, payload, mutated); got != "membership" {
 				t.Errorf("%s: a changed image id classifies %q, want membership", name, got)
 			}
+		}
+	})
+	t.Run("model-getall", func(t *testing.T) {
+		fx := goldenLoad(t, filepath.Join(goldenDir, "model-getall", "highest-rated-signed-out.json"))
+		mutated := goldenSetPath(t, fx.Expect.Envelope, "json.items.0.images.0.id")
+		fx.Expect.Envelope = mutated
+		// The harness must report the mismatch: run the comparison as goldenRunModels does.
+		c, err := goldenComputeModels(t, fx)
+		if err != nil {
+			t.Fatalf("computeModelGetAll: %v", err)
+		}
+		rep, err := shadow.Compare(c.payload, mutated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.Match {
+			t.Error("feed-go: a changed image id still matches")
+		}
+	})
+	t.Run("model-getall-bound-cursor", func(t *testing.T) {
+		// The page query must be checked by the VALUE bound, not the cursor text: record the instant
+		// Node would bind for a misread fraction and the fake Postgres has to refuse feed-go's.
+		fx := goldenLoad(t, filepath.Join(goldenDir, "model-getall", "newest-timestamp-cursor.json"))
+		if len(fx.DB.ModelPages) == 0 || len(fx.DB.ModelPages[0].Bound) != 2 {
+			t.Fatalf("fixture pages %+v: want one page with a 2-token bound cursor", fx.DB.ModelPages)
+		}
+		fx.DB.ModelPages[0].Bound[0] = json.RawMessage(`{"$date":"2026-06-11T10:00:00.012Z"}`)
+		_, err := goldenComputeModels(t, fx)
+		if err == nil || !strings.Contains(err.Error(), "node binds date:2026-06-11T10:00:00.012Z for token 0") {
+			t.Fatalf("a changed bound instant: %v, want the bound-value mismatch", err)
 		}
 	})
 	t.Run("unexpected-feed-query", func(t *testing.T) {

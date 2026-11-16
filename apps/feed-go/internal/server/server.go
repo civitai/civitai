@@ -1,5 +1,5 @@
 // Package server is the HTTP surface: the public tRPC path for the one procedure, and the internal
-// shadow-compare endpoints (that procedure, `image.getInfinite`, and the public REST
+// shadow-compare endpoints (that procedure, `image.getInfinite`, `model.getAll`, and the public REST
 // `GET /api/v1/images`).
 package server
 
@@ -22,6 +22,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -34,16 +35,20 @@ const Procedure = "image.getImagesAsPostsInfinite"
 // ProcedureInfinite is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
 const ProcedureInfinite = "image.getInfinite"
 
+// ProcedureModelGetAll is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
+const ProcedureModelGetAll = "model.getAll"
+
 // Endpoint labels: every feed_go_* series carries `feed_endpoint`, one of these, so CPU per call and
 // parity read per endpoint (DESIGN.md §10).
 const (
-	EndpointAsPosts  = "as-posts"  // tRPC image.getImagesAsPostsInfinite
-	EndpointV1Images = "v1-images" // REST GET /api/v1/images
-	EndpointInfinite = "infinite"  // tRPC image.getInfinite (shadow only)
+	EndpointAsPosts     = "as-posts"     // tRPC image.getImagesAsPostsInfinite
+	EndpointV1Images    = "v1-images"    // REST GET /api/v1/images
+	EndpointInfinite    = "infinite"     // tRPC image.getInfinite (shadow only)
+	EndpointModelGetAll = "model-getall" // tRPC model.getAll (shadow only)
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -72,18 +77,23 @@ type Server struct {
 	Log      *slog.Logger
 	// ShadowQueue bounds concurrent shadow comparisons; a full queue drops (never blocks Node).
 	ShadowQueue chan struct{}
+	// ProbeQueue bounds concurrent Go-first probes (probe.go); a full queue drops the probe. Its own
+	// queue, so a probe never takes a comparison's slot; the solo-phase CPU method sees both.
+	ProbeQueue chan struct{}
 	// AllowedOrigins is the app's origin allow-list (config.AllowedOriginHosts). A public request whose
 	// Origin (else Referer) host is not on it is handed to Fallback: the app's isAcceptableOrigin then
 	// answers it (401 in production), and this service never serves one the app would refuse.
 	AllowedOrigins map[string]bool
 
-	// shadowStarts counts shadow samples admitted to the queue; a phase whose start and end readings
-	// differ overlapped another sample (phase CPU is then not attributed).
+	// shadowStarts counts shadow samples and probes admitted to their queues; a phase whose start and
+	// end readings differ overlapped another sample (phase CPU is then not attributed).
 	shadowStarts atomic.Uint64
 	// V1 serves the REST `/api/v1/images` shadow; nil = every such sample falls back.
 	V1 *feed.V1Deps
 	// Infinite serves the `image.getInfinite` shadow; nil = every such sample falls back.
 	Infinite *feed.InfiniteDeps
+	// Models serves the `model.getAll` shadow; nil = every such sample falls back.
+	Models *modelfeed.Deps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 
@@ -100,6 +110,7 @@ type Server struct {
 	computeFn         func(context.Context, *http.Request) (*computed, error)
 	computeV1Fn       func(context.Context, *http.Request) (*computed, error)
 	computeInfiniteFn func(context.Context, *http.Request) (*computed, error)
+	computeModelsFn   func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -111,11 +122,11 @@ type phaseClock struct {
 	solo   bool
 }
 
-// startPhase begins a shadow phase. The caller holds a queue slot, so a queue length of 1 means this
-// is the only sample in flight.
+// startPhase begins a shadow phase. The caller holds a queue slot, so a queue length of 1 (and no
+// probe running) means this is the only sample in flight.
 func (s *Server) startPhase() phaseClock {
 	p := phaseClock{starts: s.shadowStarts.Load()}
-	p.solo = len(s.ShadowQueue) == 1
+	p.solo = s.aloneInFlight()
 	p.cpu, p.cpuOK = processCPU()
 	p.wall = time.Now()
 	return p
@@ -131,12 +142,17 @@ func (s *Server) endPhase(p phaseClock, endpoint, phase, outcome string) {
 		return
 	}
 	cpu, ok := processCPU()
-	if !ok || s.shadowStarts.Load() != p.starts || len(s.ShadowQueue) != 1 {
+	if !ok || s.shadowStarts.Load() != p.starts || !s.aloneInFlight() {
 		return
 	}
 	s.Metrics.ShadowPhaseCPU.WithLabelValues(endpoint, phase, outcome).Add((cpu - p.cpu).Seconds())
 	s.Metrics.ShadowPhaseSolo.WithLabelValues(endpoint, phase, outcome).Inc()
 	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(endpoint, phase, outcome).Add(wall)
+}
+
+// aloneInFlight: the caller's shadow sample is the only sample or probe holding a queue slot.
+func (s *Server) aloneInFlight() bool {
+	return len(s.ShadowQueue) == 1 && len(s.ProbeQueue) == 0
 }
 
 // computed is one answer. payload may be a pooled buffer's bytes (buf): whoever ends up holding the
@@ -155,23 +171,47 @@ type computed struct {
 
 // compute answers a request, or returns a fallback/other error.
 func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error) {
+	req, signedOut, err := s.prepare(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	res, err := feed.Serve(ctx, s.Deps, req)
+	if err != nil {
+		return nil, err
+	}
+	buf, err := superjson.SerializeBuffer(res.Value())
+	if err != nil {
+		return nil, err
+	}
+	out := &computed{payload: buf.Bytes(), buf: buf}
+	if signedOut {
+		// createContext: cacheable only without a session user (a banned user still has one).
+		out.ttl = &trpc.SignedOutTTL
+	}
+	return out, nil
+}
+
+// prepare is compute up to the handler call: the request's input, viewer and domain cap as
+// feed.Serve takes them, and whether there is no session user at all. The Go-first probe runs the
+// same steps (probe.go).
+func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bool, error) {
 	if r.Method != http.MethodGet {
-		return nil, fallback.New("method")
+		return feed.Request{}, false, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return nil, fallback.Newf("input-envelope", "%v", err)
+		return feed.Request{}, false, fallback.Newf("input-envelope", "%v", err)
 	}
 	in, err := feed.Parse(raw)
 	if err != nil {
-		return nil, err
+		return feed.Request{}, false, err
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
-		return nil, fallback.New("verified-bot")
+		return feed.Request{}, false, fallback.New("verified-bot")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return nil, err
+		return feed.Request{}, false, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
@@ -183,20 +223,7 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 	}
-	res, err := feed.Serve(ctx, s.Deps, req)
-	if err != nil {
-		return nil, err
-	}
-	buf, err := superjson.SerializeBuffer(res.Value())
-	if err != nil {
-		return nil, err
-	}
-	out := &computed{payload: buf.Bytes(), buf: buf}
-	if user == nil {
-		// createContext: cacheable only without a session user (a banned user still has one).
-		out.ttl = &trpc.SignedOutTTL
-	}
-	return out, nil
+	return req, user == nil, nil
 }
 
 // computeInfinite answers an `image.getInfinite` request (getInfiniteImagesHandler), or returns a
@@ -204,35 +231,9 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 // procedure (the same middleware runs on both). The answer is never edge-cacheable: Node does not
 // cache this procedure (its event decorations are the viewer's own), and it is only shadowed here.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
-	if s.Infinite == nil {
-		return nil, fallback.New("infinite-unconfigured")
-	}
-	if r.Method != http.MethodGet {
-		return nil, fallback.New("method")
-	}
-	raw, err := trpc.ParseInput(r)
-	if err != nil {
-		return nil, fallback.Newf("input-envelope", "%v", err)
-	}
-	in, err := feed.ParseInfinite(raw)
+	req, err := s.prepareInfinite(ctx, r)
 	if err != nil {
 		return nil, err
-	}
-	if r.Header.Get(verifiedBotHeader) != "" {
-		return nil, fallback.New("verified-bot")
-	}
-	user, err := s.Resolver.Resolve(ctx, r)
-	if err != nil {
-		return nil, err
-	}
-	authorized := user != nil && !user.Banned
-	isModerator := authorized && user.IsModerator
-	color := s.Hosts.ColorOf(r.Host)
-	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
-	req := feed.InfiniteRequest{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
-	if authorized {
-		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
-		req.ViewerUsername = user.Username
 	}
 	ans, err := feed.ServeInfinite(ctx, s.Infinite, req)
 	if err != nil {
@@ -243,6 +244,96 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 		return nil, err
 	}
 	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}, nil
+}
+
+// prepareInfinite is computeInfinite up to the handler call; the Go-first probe runs the same steps.
+func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, error) {
+	if s.Infinite == nil {
+		return feed.InfiniteRequest{}, fallback.New("infinite-unconfigured")
+	}
+	if r.Method != http.MethodGet {
+		return feed.InfiniteRequest{}, fallback.New("method")
+	}
+	raw, err := trpc.ParseInput(r)
+	if err != nil {
+		return feed.InfiniteRequest{}, fallback.Newf("input-envelope", "%v", err)
+	}
+	in, err := feed.ParseInfinite(raw)
+	if err != nil {
+		return feed.InfiniteRequest{}, err
+	}
+	if r.Header.Get(verifiedBotHeader) != "" {
+		return feed.InfiniteRequest{}, fallback.New("verified-bot")
+	}
+	user, err := s.Resolver.Resolve(ctx, r)
+	if err != nil {
+		return feed.InfiniteRequest{}, err
+	}
+	authorized := user != nil && !user.Banned
+	isModerator := authorized && user.IsModerator
+	color := s.Hosts.ColorOf(r.Host)
+	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	req := feed.InfiniteRequest{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
+	if authorized {
+		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
+		req.ViewerUsername = user.Username
+	}
+	return req, nil
+}
+
+// computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
+// fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
+// procedure (the same middleware runs on both). It is only shadowed here, so no cache header is
+// computed (Node's: `public, s-maxage=60` signed out, none for a session).
+func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*computed, error) {
+	req, err := s.prepareModelGetAll(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	ans, err := modelfeed.Serve(ctx, s.Models, req)
+	if err != nil {
+		return nil, err
+	}
+	buf, err := superjson.SerializeBuffer(ans.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}, nil
+}
+
+// prepareModelGetAll is computeModelGetAll up to the handler call; the Go-first probe runs the same
+// steps.
+func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (modelfeed.Request, error) {
+	if s.Models == nil {
+		return modelfeed.Request{}, fallback.New("model-getall-unconfigured")
+	}
+	if r.Method != http.MethodGet {
+		return modelfeed.Request{}, fallback.New("method")
+	}
+	raw, err := trpc.ParseInput(r)
+	if err != nil {
+		return modelfeed.Request{}, fallback.Newf("input-envelope", "%v", err)
+	}
+	in, err := modelfeed.Parse(raw)
+	if err != nil {
+		return modelfeed.Request{}, err
+	}
+	if r.Header.Get(verifiedBotHeader) != "" {
+		return modelfeed.Request{}, fallback.New("verified-bot")
+	}
+	user, err := s.Resolver.Resolve(ctx, r)
+	if err != nil {
+		return modelfeed.Request{}, err
+	}
+	authorized := user != nil && !user.Banned
+	isModerator := authorized && user.IsModerator
+	color := s.Hosts.ColorOf(r.Host)
+	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	req := modelfeed.Request{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
+	if authorized {
+		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
+	}
+	return req, nil
 }
 
 // computeV1 answers a REST `/api/v1/images` request (handleImagesRequest), or returns a fallback/other
@@ -357,28 +448,38 @@ func (s *Server) panicked(where string, value any, stack []byte) {
 // `canceled` fallback; a panic anywhere in the computation, its errgroup workers included, is counted
 // under where and is the `panic` fallback.
 func (s *Server) computeWithin(parent context.Context, r *http.Request, where string, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
-	budget := s.budget()
-	ctx, cancel := context.WithTimeout(parent, budget)
-	defer cancel()
-	c, err := safe.Call(func() (*computed, error) { return fn(ctx, r) })
-	var pe *safe.PanicError
-	if errors.As(err, &pe) {
-		s.panicked(where, pe.Value, pe.Stack)
-		return nil, fallback.New("panic")
-	}
-	if errors.Is(parent.Err(), context.Canceled) {
-		c.release()
-		return nil, fallback.New("canceled")
-	}
-	if ctx.Err() != nil {
-		c.release()
-		return nil, fallback.Newf("deadline", "budget %v", budget)
-	}
+	var c *computed
+	err := s.within(parent, where, func(ctx context.Context) (err error) {
+		c, err = fn(ctx, r)
+		return err
+	})
 	if err != nil {
 		c.release()
 		return nil, err
 	}
 	return c, nil
+}
+
+// within is computeWithin for any computation (the Go-first probe's too): fn under the request
+// budget, its panic, cancellation and deadline turned into the same fallbacks. An error from within
+// means whatever fn produced must be discarded.
+func (s *Server) within(parent context.Context, where string, fn func(context.Context) error) error {
+	budget := s.budget()
+	ctx, cancel := context.WithTimeout(parent, budget)
+	defer cancel()
+	_, err := safe.Call(func() (struct{}, error) { return struct{}{}, fn(ctx) })
+	var pe *safe.PanicError
+	if errors.As(err, &pe) {
+		s.panicked(where, pe.Value, pe.Stack)
+		return fallback.New("panic")
+	}
+	if errors.Is(parent.Err(), context.Canceled) {
+		return fallback.New("canceled")
+	}
+	if ctx.Err() != nil {
+		return fallback.Newf("deadline", "budget %v", budget)
+	}
+	return err
 }
 
 // ServeHTTP is the public route.
@@ -453,6 +554,11 @@ func (s *Server) ShadowHandler(w http.ResponseWriter, r *http.Request) {
 // ShadowInfiniteHandler is the internal compare endpoint for the tRPC procedure `image.getInfinite`.
 func (s *Server) ShadowInfiniteHandler(w http.ResponseWriter, r *http.Request) {
 	s.shadowHandler(w, r, EndpointInfinite) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
+}
+
+// ShadowModelGetAllHandler is the internal compare endpoint for the tRPC procedure `model.getAll`.
+func (s *Server) ShadowModelGetAllHandler(w http.ResponseWriter, r *http.Request) {
+	s.shadowHandler(w, r, EndpointModelGetAll) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
 }
 
 // ShadowV1Handler is the internal compare endpoint for REST `GET /api/v1/images`.
@@ -540,6 +646,11 @@ func SyntheticInfiniteRequest(ctx context.Context, req ShadowRequest) (*http.Req
 	return syntheticTRPCRequest(ctx, req, ProcedureInfinite)
 }
 
+// SyntheticModelGetAllRequest rebuilds the `model.getAll` request a model-getall sample describes.
+func SyntheticModelGetAllRequest(ctx context.Context, req ShadowRequest) (*http.Request, error) {
+	return syntheticTRPCRequest(ctx, req, ProcedureModelGetAll)
+}
+
 func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure string) (*http.Request, error) {
 	u := &url.URL{Path: "/api/trpc/" + procedure, RawQuery: url.Values{"input": {req.Input}}.Encode()}
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -596,6 +707,13 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		classify = shadow.ClassifyFlat
 		if s.computeInfiniteFn != nil {
 			computeFn = s.computeInfiniteFn
+		}
+	case EndpointModelGetAll:
+		// The superjson envelope, as for the gallery; classified by model id (a flat page).
+		build, computeFn = SyntheticModelGetAllRequest, s.computeModelGetAll
+		classify = shadow.ClassifyFlat
+		if s.computeModelsFn != nil {
+			computeFn = s.computeModelsFn
 		}
 	}
 	r, err := build(ctx, req)

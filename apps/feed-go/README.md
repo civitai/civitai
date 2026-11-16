@@ -1,7 +1,8 @@
 # feed-go (apps/feed-go)
 
 A Go port of the tRPC procedure `image.getImagesAsPostsInfinite` (the model / Model3D gallery feed)
-and, in shadow only, of the tRPC procedure `image.getInfinite` (the flat image feed) and the public
+and, in shadow only, of the tRPC procedures `image.getInfinite` (the flat image feed) and `model.getAll`
+(the model browse feed) and the public
 REST endpoint `GET /api/v1/images`, built to measure CPU per
 request against the Node path on the same traffic. It answers the request shapes it has ported and
 proxies everything else to the Node app unchanged. **Read
@@ -21,6 +22,7 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 | | `POST /internal/shadow/image.getImagesAsPostsInfinite` | shadow comparison (DESIGN.md §7) |
 | | `POST /internal/shadow/api/v1/images` | shadow comparison of the REST endpoint (DESIGN.md §13); never served publicly |
 | | `POST /internal/shadow/image.getInfinite` | shadow comparison of `image.getInfinite` (DESIGN.md §14); never served publicly |
+| | `POST /internal/shadow/model.getAll` | shadow comparison of `model.getAll` (DESIGN.md §15); never served publicly |
 | | `GET /debug/pprof/…` | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2) |
 
 ## Run locally
@@ -53,8 +55,11 @@ falls back (`index-feed-unconfigured`). The REST endpoint's shadow also needs
 `NEXT_PUBLIC_IMAGE_LOCATION` (the same edge URL prefix the Node app publishes); it builds
 `metadata.nextPage` as the production Node app does (`https://<host>`).
 
-Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `infinite`), so parity
-and CPU per call read per endpoint (DESIGN.md §10, §13, §14). The Node sampler for `image.getInfinite`
-is its own Flipt flag, `feed-go-shadow-infinite` (default off), sharing `FEED_GO_SHADOW_URL` and the
-rate and in-flight knobs with the other routes. The `feed_endpoint` label is not called `endpoint`
-because that is a reserved scrape target label: the scraper's own `endpoint` would overwrite it.
+Every `feed_go_*` series carries `feed_endpoint` (`as-posts` | `v1-images` | `infinite` |
+`model-getall`), so parity and CPU per call read per endpoint (DESIGN.md §10, §13, §14, §15). The Node
+samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
+`feed-go-shadow-infinite` and `feed-go-shadow-model-getall` (both default off), sharing
+`FEED_GO_SHADOW_URL` and the rate and in-flight knobs with the other routes; `model.getAll`'s own flags
+are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
+label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
+`endpoint` would overwrite it.
