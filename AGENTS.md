@@ -4,6 +4,20 @@ Read `CLAUDE.md` first; it is binding for all agents, including its security sec
 public). The block below is written by `next dev` and only covers the Next.js version; keep this header
 above it, since `next dev` rewrites only the text between its markers.
 
+## Endpoints ported to Go
+
+- `ports/manifest.json` lists every endpoint ported from Node to a Go service (`apps/feed-go`,
+  `apps/beacon-go`) and its lifecycle stage. `ports/README.md` explains the stages and fields.
+- Before changing Node code, run `node scripts/ports/touched.mjs <files>` (or `--base origin/main`)
+  to see which ports it touches. A `@ported-to-go` comment above a symbol marks a port's entry.
+- For each port it touches, read the port's manifest entry and change its Go handler (`goHandler`)
+  in the same PR, so Node and Go still answer the same.
+- Never hand-edit `nodeDeps`, `goDeps` or a `@ported-to-go` block. Edit the other manifest fields,
+  run `node scripts/ports/generate.mjs`, and commit what it writes; CI (`ports.yml`) fails when they
+  are stale.
+- The manifest is the intended stage, not live routing. For what is routed right now, use the HQ
+  routing-state tool `ports_state` (being added).
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

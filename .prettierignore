@@ -48,3 +48,7 @@ apps/training-studio/src/lib/data/tag-categories.json
 # generators own the format; both files are compared structurally, never byte for byte.
 packages/civitai-flipt/parity/expected.json
 packages/civitai-flipt/parity/latest-divergences.json
+
+# Written by `node scripts/ports/generate.mjs`, which owns its format; CI regenerates it and fails on
+# any difference, so a Prettier reformat (it collapses short arrays) would turn that check red.
+ports/manifest.json

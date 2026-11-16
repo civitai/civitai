@@ -1,0 +1,132 @@
+name: Node→Go ports
+
+# ports/manifest.json is the one list of endpoints ported from the Node app to a Go service
+# (ports/README.md). This workflow keeps it true and says which ports a PR touches. It runs no
+# test suite but its own generator tests, so it stays cheap.
+#
+# Job `manifest` (PRs and pushes to main):
+#   - the generator's tests (scripts/__tests__/ports-*.test.ts), counted, since vitest given a
+#     file it does not match runs the rest and still exits 0;
+#   - `node scripts/ports/generate.mjs --check`: validates the manifest against
+#     ports/manifest.schema.json and the lifecycle checks beside it, regenerates nodeDeps / goDeps,
+#     and fails if either, or any `@ported-to-go` marker in src/, differs from the commit (missing,
+#     stale, on the wrong symbol, or on something that is not a port).
+#
+# Job `touched` (PRs only): the ports this PR's changed files touch, from
+# `node scripts/ports/touched.mjs --base <merge base>`. Report-only. It never fails on a touched
+# port; it publishes the list for a later job to act on (the parity suite trigger is not wired
+# yet). Job outputs, all JSON-safe strings:
+#   ids      JSON array of port ids, e.g. ["image.getInfinite","GET /api/v1/images"]
+#   count    number of ports touched
+#   touched  the whole result: { ports: [{ id, service, status, manifest, node, go }], ids,
+#            changedFiles }, where node / go are the changed files that made the port touched
+# A downstream job reads them as `needs.touched.outputs.ids` (fromJSON for a matrix).
+#
+# Its own workflow because it needs Node and Go together; lint.yml has no Go and the Go
+# workflows are filtered to their own app. The path filter is everything a port can depend on:
+# nodeDeps reach src/ and packages/ (and the event-engine-common pin), goDeps the two Go apps.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths: &ports-inputs
+      - '.github/workflows/ports.yml'
+      - 'ports/**'
+      - 'scripts/ports/**'
+      - 'scripts/__tests__/ports-*.test.ts'
+      - 'src/**'
+      - 'packages/**'
+      - 'apps/feed-go/**'
+      - 'apps/beacon-go/**'
+      - 'event-engine-common'
+      - 'tsconfig.json'
+      - '.gitmodules'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  push:
+    branches: [main]
+    paths: *ports-inputs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ports-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  manifest:
+    name: Ports manifest, generated deps and markers
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # One toolchain for both modules: their go.mod files name the same Go version.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          cache-dependency-path: |
+            apps/feed-go/go.sum
+            apps/beacon-go/go.sum
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generator tests
+        env:
+          PORTS_REQUIRE_GO: '1'
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files 'scripts/__tests__/ports-*.test.ts')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No scripts/__tests__/ports-*.test.ts files found; this step would have checked nothing."
+            exit 1
+          fi
+          pnpm exec vitest run --project 'unit*' --reporter=default --reporter=json \
+            --outputFile=ports-test-report.json "${files[@]}"
+          ran=$(node -e 'console.log(require("./ports-test-report.json").testResults.length)')
+          if [ "$ran" -ne "${#files[@]}" ]; then
+            echo "::error::vitest ran $ran of ${#files[@]} ports test files; each one must run."
+            exit 1
+          fi
+
+      - name: Manifest is valid and generated output is committed
+        run: node scripts/ports/generate.mjs --check
+
+  touched:
+    name: Ports this PR touches
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    outputs:
+      ids: ${{ steps.touched.outputs.ids }}
+      count: ${{ steps.touched.outputs.count }}
+      touched: ${{ steps.touched.outputs.touched }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # touched.mjs reads only JSON and git, so it needs no install.
+      - name: Map changed files to ports
+        id: touched
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch -q origin "$BASE_REF"
+          node scripts/ports/touched.mjs --base FETCH_HEAD
