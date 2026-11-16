@@ -364,6 +364,36 @@ it is never less correct than not routing it — only its share of fallbacks cha
   the `deadline` fallback — proxied when serving, compare result `deadline` in shadow (its own result,
   so the share the budget excludes from the match rate stays visible). A client that leaves
   mid-compute is the `canceled` fallback, not a deadline, and is not proxied (nobody would read it).
+- **Concurrency cap (bulkhead).** At most `FEED_GO_MAX_IN_FLIGHT` public requests compute at once
+  per pod. It mirrors the Node app's `heavy-image` bulkhead (`acquireBulkheadSlot`,
+  `src/server/utils/request-bulkhead.ts`): one per-pod counter shared by `image.getInfinite` and
+  `image.getImagesAsPostsInfinite` (`heavyProcedure`), `GET /api/v1/images`, `/api/v1/blocks/images`
+  and `/api/v1/posts/[id]`, capped at `HEAVY_REQUEST_CONCURRENCY` (default 20); a non-blocking
+  acquire, no queue, the excess fast-failed (429 on tRPC, 503 with `Retry-After: 2` on REST) and
+  counted. The acquire here is the same: non-blocking, no queue. Two things differ:
+  - **The default.** Node's 20 is sized for one JS thread, where in-flight requests interleave on a
+    single core; that does not carry over to Go. What bounds a Go compute is the replica pool, so
+    unset (or zero, negative, junk) the cap is the pool's connection ceiling (`FEED_GO_DB_MAX_CONNS`,
+    a `pool_max_conns` in the URL, or `dbpool.DefaultMaxConns` = 8; `server.ResolveMaxInFlight`).
+    Every admitted compute can then hold a connection, so a full pod sheds at once rather than
+    admitting computes that wait in the pool until the budget makes them `deadline` fallbacks. The
+    pool is shared with shadow samples and probes, so under shadow load the cap is an upper bound,
+    not a guarantee of a free connection. An explicit value wins; one above the ceiling is logged as
+    a warning at startup (not refused). The startup log carries both values. There is no unlimited
+    setting.
+  - **The answer past it.** Rather than refuse, this service does not compute and proxies the request
+    to the Node app — fallback reason `bulkhead` in `feed_go_fallback_total` — so routing to Go is
+    never worse than not routing (the Node pod then applies its own bulkhead).
+
+  The slot covers the computation only, not a fallback proxied after it, and is released by a defer
+  when the computation returns, however it ends (answer, fallback, error, panic). A deadline or a
+  client leaving releases it only as soon as the computation honours its context: one stuck in a call
+  that ignores the context keeps its slot until it returns, visible as `feed_go_serve_in_flight`
+  staying high. `feed_go_serve_in_flight` is the slots held now. Only the public route takes a slot;
+  the origin hand-off computes nothing and takes none, and shadow samples and probes keep their own
+  bounds (`FEED_GO_SHADOW_WORKERS`, the probe queue). **Any endpoint served here in future must take
+  its slot from this same counter**, as Node's routes share one key, so a pod's cap covers all of
+  them together.
 - **Panics.** A panic in a computation, its errgroup workers included (`internal/safe`), is the
   `panic` fallback and `feed_go_panics_total{where="serve"}`; one anywhere in a shadow sample
   (compute or compare) is `feed_go_panics_total{where="shadow"}`, logged with its stack, and the
@@ -909,7 +939,10 @@ Honest estimate, in order:
    2026-11-15, §3.1). Left: tag ids and the metric-hash ClickHouse populate.
 4. **Flags** — a Flipt evaluation client so the env mirrors go away (a few days).
 5. **Serving** — the client transport flag PR, a small cohort, then ramp while watching error rate,
-   latency and the Node-side CPU drop. A week of ramp.
+   latency and the Node-side CPU drop. A week of ramp. The per-pod concurrency cap is in place
+   (§6.1, `FEED_GO_MAX_IN_FLIGHT`, by default the replica pool's ceiling); during the ramp, read its
+   `bulkhead` fallback rate against `feed_go_serve_in_flight`, and raise `FEED_GO_DB_MAX_CONNS` (the
+   cap follows it) rather than the cap alone.
 
 So roughly three to five weeks of focused work from merge to serving a meaningful share — most of it
 in step 2, which only production traffic can size. The CPU-per-call answer itself arrives earlier:

@@ -58,6 +58,9 @@ type Metrics struct {
 	// response with http.ErrAbortHandler and is not counted. Not per endpoint: only the as-posts
 	// procedure is served, and so proxied.
 	FallbackProxyErrors *prometheus.CounterVec
+	// ServeInFlight is the public requests computing now, each holding a serve slot (at most
+	// Server.MaxInFlight; one past it is the `bulkhead` fallback). Per endpoint; only as-posts is served.
+	ServeInFlight prometheus.Gauge
 	// CacheMisses counts the per-entity cache misses hydration computed (cache, result: computed |
 	// error), per missed id. Not per endpoint: hydration is shared by both.
 	CacheMisses *prometheus.CounterVec
@@ -170,6 +173,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Fallback requests the proxy answered 502 because the Node app failed before a response started, by reason (upstream: unreachable or connection broken; canceled: the client left first). A failure mid-body aborts the response (http.ErrAbortHandler) and is not counted.",
 		}, []string{"reason"}),
 	}
+	serveInFlight := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "feed_go_serve_in_flight",
+		Help: "Public requests computing now, each holding a serve slot; at FEED_GO_MAX_IN_FLIGHT the next one is not computed but proxied to the Node app (feed_go_fallback_total{reason=\"bulkhead\"}).",
+	}, []string{EndpointLabel})
+	m.ServeInFlight = serveInFlight.WithLabelValues(EndpointAsPosts)
+	// A pod that never shed reads 0 rather than an absent series.
+	m.Fallbacks.WithLabelValues(EndpointAsPosts, "serve", "bulkhead")
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
 	// rather than an absent series.
 	for _, e := range Endpoints {
@@ -204,6 +214,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
-		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses)
+		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, serveInFlight)
 	return m
 }

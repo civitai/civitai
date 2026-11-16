@@ -236,6 +236,8 @@ func run(log *slog.Logger) error {
 		V1:             v1,
 		Infinite:       infinite,
 		RequestBudget:  cfg.RequestBudget,
+		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
+		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
 	}
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)
