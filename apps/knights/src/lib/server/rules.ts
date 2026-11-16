@@ -41,8 +41,8 @@ export function rulesFacts() {
       window: APPRENTICE.window,
       checkpointEvery: APPRENTICE.checkpointEvery,
       levelGold: PROGRESSION.acolyteLevelGold,
-      smiteWrong: APPRENTICE.smiteWrong,
-      smiteWindow: APPRENTICE.smiteWindow,
+      heartWrong: APPRENTICE.smiteWrong,
+      heartWindow: APPRENTICE.smiteWindow,
     },
     ranks: rankTable().map((r) => ({
       rank: r.rank,

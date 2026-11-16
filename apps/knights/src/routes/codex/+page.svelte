@@ -142,8 +142,8 @@
             {facts.apprenticeship.levelGold} gold, once, even if you later restart your career.
           </li>
           <li>
-            Wrong answers cost hearts: when {facts.apprenticeship.smiteWrong} of your last
-            {facts.apprenticeship.smiteWindow} answers are wrong you lose one. Reaching a new level gives them
+            Wrong answers cost hearts: when {facts.apprenticeship.heartWrong} of your last
+            {facts.apprenticeship.heartWindow} answers are wrong you lose one. Reaching a new level gives them
             all back; lose all {facts.hearts.max} and your career restarts.
           </li>
         </ul>
