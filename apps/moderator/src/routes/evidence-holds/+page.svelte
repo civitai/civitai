@@ -31,6 +31,12 @@
   const daysLeft = (end: Date) =>
     Math.max(0, Math.ceil((end.getTime() - data.asOf) / DAY_MS));
 
+  // Mirrors what releaseEvidenceHold accepts, so no row offers a release the server refuses.
+  const releasable = (hold: { role: string; reason: string; extendedUntil: Date | null }) =>
+    hold.role === 'manual' &&
+    hold.reason !== GENERATOR_EVIDENCE_HOLD_REASON &&
+    (!hold.extendedUntil || hold.extendedUntil.getTime() <= data.asOf);
+
   const rowEnd = (hold: { releaseAt: Date | null; extendedUntil: Date | null }) => {
     if (!hold.releaseAt) return null;
     return hold.extendedUntil && hold.extendedUntil > hold.releaseAt
@@ -169,7 +175,7 @@
                         {hold.extensionReference ?? '—'}
                       </span>
                     {/if}
-                    {#if hold.role === 'manual' && hold.reason !== GENERATOR_EVIDENCE_HOLD_REASON}
+                    {#if releasable(hold)}
                     <form method="POST" action="?/release" use:enhance class="flex items-center gap-1">
                       <input type="hidden" name="holdId" value={hold.id} />
                       <Input

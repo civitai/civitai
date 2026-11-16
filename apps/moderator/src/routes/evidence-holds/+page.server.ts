@@ -99,7 +99,8 @@ export const actions: Actions = {
     if (!released)
       return fail(409, {
         scope: 'release',
-        error: 'Only an open manual hold, not one kept for a CSAM report, can be released here.',
+        error:
+          'Only an open manual hold, not one kept for a CSAM report or under an extension, can be released here.',
       });
     await recordModActivity({
       userId: locals.user.id,

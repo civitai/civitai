@@ -164,7 +164,7 @@ export async function placeEvidenceHold(
 
 /**
  * Releases one open manual hold. False when there is no such hold: unknown, already released, a
- * report hold, or the generator-evidence hold. Those preserve for a CSAM report and are not a
+ * report hold, the generator-evidence hold, or a hold under an extension still in force. Those preserve for a CSAM report and are not a
  * moderator's to end, and a release purges what the hold kept.
  */
 export async function releaseEvidenceHold(
@@ -182,6 +182,8 @@ export async function releaseEvidenceHold(
     .where('role', '=', 'manual')
     .where('reason', '!=', GENERATOR_EVIDENCE_HOLD_REASON)
     .where('releasedAt', 'is', null)
+    // An extension is an outside request to keep the evidence; it is not a moderator's to cut short.
+    .where(sql<boolean>`("extendedUntil" IS NULL OR "extendedUntil" <= now())`)
     .executeTakeFirst();
   return Number(result.numUpdatedRows) > 0;
 }

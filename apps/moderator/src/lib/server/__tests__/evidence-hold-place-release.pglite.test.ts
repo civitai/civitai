@@ -24,6 +24,13 @@ const HOLD_MIGRATION = readFileSync(
 );
 
 const MOD = 99;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Midnight UTC, `days` from today: far enough out never to lapse while the suite runs. */
+const daysOut = (days: number) => {
+  const d = new Date(Date.now() + days * DAY_MS);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+};
 const hostTz = process.env.TZ;
 
 let pg: PGlite;
@@ -118,20 +125,50 @@ describe('placeEvidenceHold', () => {
   it('a dated request is met by a hold lasting at least as long, and not by a shorter one', async () => {
     const SHORT = 11;
     await pg.exec(`INSERT INTO "User" ("id", "username") VALUES (${SHORT}, 'short');`);
-    const place = (iso: string) =>
+    const place = (releaseAt: Date) =>
       placeEvidenceHold(db, {
         userId: SHORT,
         role: 'manual',
         reason: 'dated twice',
         createdById: MOD,
-        releaseAt: new Date(iso),
+        releaseAt,
       });
-    const first = await place('2031-01-01T00:00:00Z');
-    const earlier = await place('2030-06-01T00:00:00Z');
-    const later = await place('2032-01-01T00:00:00Z');
+    const first = await place(daysOut(800));
+    const earlier = await place(daysOut(400));
+    const laterEnd = daysOut(1200);
+    const later = await place(laterEnd);
     expect(earlier).toEqual({ id: first.id, created: false });
     expect(later.created).toBe(true);
-    expect((await heldUntil(SHORT))?.heldUntil?.toISOString()).toBe('2032-01-01T00:00:00.000Z');
+    expect((await heldUntil(SHORT))?.heldUntil?.toISOString()).toBe(laterEnd.toISOString());
+  });
+
+  it('a hold past its date but extended is in force until the extension ends', async () => {
+    const EXTENDED = 12;
+    const extendedTo = daysOut(600);
+    await pg.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (${EXTENDED}, 'extended');
+      INSERT INTO "EvidenceHold"
+        ("userId", "role", "reason", "releaseAt", "extendedUntil", "extensionRequestedBy", "extensionReference")
+        VALUES (${EXTENDED}, 'manual', 'extended', now() - interval '1 day',
+          '${extendedTo.toISOString().slice(0, 10)}', 'requester', 'ref-2');
+    `);
+    const id = (
+      await db
+        .selectFrom('EvidenceHold')
+        .select('id')
+        .where('userId', '=', EXTENDED)
+        .executeTakeFirstOrThrow()
+    ).id;
+    const place = (releaseAt: Date | null) =>
+      placeEvidenceHold(db, {
+        userId: EXTENDED,
+        role: 'manual',
+        reason: 'extended',
+        createdById: MOD,
+        releaseAt,
+      });
+    expect(await place(daysOut(300))).toEqual({ id, created: false });
+    expect((await place(daysOut(900))).created).toBe(true);
   });
 
   it('a different reason is a separate hold', async () => {
@@ -145,7 +182,7 @@ describe('placeEvidenceHold', () => {
   });
 
   it('stores the end date as UTC even from a session off UTC, and the view ends the hold there', async () => {
-    const end = new Date('2030-01-15T00:00:00Z');
+    const end = daysOut(500);
     await pg.exec(`SET TIME ZONE 'America/Chicago';`);
     await placeEvidenceHold(db, {
       userId: 2,
@@ -216,6 +253,28 @@ describe('releaseEvidenceHold', () => {
     );
     expect(await heldUntil(PENDING)).toEqual({ heldUntil: null });
     expect(await keptImages(PENDING)).toBe(1);
+  });
+
+  it('refuses a manual hold while an outside extension is in force, and purges nothing', async () => {
+    const KEPT_FOR = 13;
+    await pg.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (${KEPT_FOR}, 'kept for');
+      INSERT INTO "EvidenceHold"
+        ("userId", "role", "reason", "releaseAt", "extendedUntil", "extensionRequestedBy", "extensionReference")
+        VALUES (${KEPT_FOR}, 'manual', 'asked to keep', now() + interval '1 day',
+          now() + interval '90 days', 'requester', 'ref-3');
+      INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (990000014, ${KEPT_FOR});
+    `);
+    const { id } = await db
+      .selectFrom('EvidenceHold')
+      .select('id')
+      .where('userId', '=', KEPT_FOR)
+      .executeTakeFirstOrThrow();
+    expect(await releaseEvidenceHold(db, { id, releasedById: MOD, releaseReason: 'early' })).toBe(
+      false
+    );
+    expect(await heldUntil(KEPT_FOR)).toBeDefined();
+    expect(await keptImages(KEPT_FOR)).toBe(1);
   });
 
   it('releasing a manual hold does purge what it kept (the control for the case above)', async () => {
