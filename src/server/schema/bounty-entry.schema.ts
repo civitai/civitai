@@ -25,7 +25,6 @@ export const upsertBountyEntryInputSchema = z.object({
   bountyId: z.number(),
   files: z.array(bountyEntryFileSchema).min(1),
   ownRights: z.boolean().optional(),
-  // At least one is checked on save: an edit may show none when the domain's cap hides them all.
   images: bountyImagesSchema.max(
     constants.bounties.maxEntryImagesForEdit,
     `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`

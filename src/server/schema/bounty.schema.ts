@@ -8,7 +8,7 @@ import {
 import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
-import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
+import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
@@ -54,11 +54,8 @@ export const bountyDetailsSchema = z.object({
 });
 
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
-export const bountyImagesSchema = z.array(
-  imageReferenceInputSchema.extend({
-    meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
-  })
-);
+// May be empty when the domain's cap hides every image; updateEntityImages enforces one stays linked.
+export const bountyImagesSchema = z.array(comfylessImageSchema);
 /** The linked images an edit form was shown; only these can be removed. See `updateEntityImages`. */
 export const shownImageIdsSchema = z.number().array().optional();
 
@@ -123,8 +120,6 @@ export const updateBountyInputSchema = createBountyInputSchema
   })
   .extend({
     id: z.number(),
-    // An edit may show no image when every one is hidden by the domain's cap; the save checks
-    // that one stays linked.
     images: bountyImagesSchema,
     shownImageIds: shownImageIdsSchema,
     startsAt: z.coerce.date(),

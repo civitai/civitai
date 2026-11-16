@@ -89,7 +89,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/collection.schema.ts': { imageInputSchema: 2, imageReferenceInputSchema: 2 },
   // Bounty and entry images (bounty-entry.schema reuses `bountyImagesSchema`): an `id` keeps or
   // links an existing image; updateEntityImages checks links.
-  'src/server/schema/bounty.schema.ts': { imageReferenceInputSchema: 2 },
+  'src/server/schema/bounty.schema.ts': { comfylessImageSchema: 2 },
   // Moderator-only routes.
   'src/server/schema/cosmetic-shop.schema.ts': { comfylessImageSchema: 2 },
   'src/server/schema/purchasable-reward.schema.ts': { comfylessImageSchema: 2 },
