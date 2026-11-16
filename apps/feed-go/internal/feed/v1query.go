@@ -9,6 +9,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/inputschema"
 )
 
 // QueryParam is one key of Next's `req.query`: its values in order (a repeated key collects them).
@@ -50,12 +51,20 @@ type V1Input struct {
 // batch may name.
 const imageIDsBatchMax = 100
 
-// The schema keys. Any other key is ignored by the schema but kept in nextPage.
-var v1SchemaKeys = map[string]bool{
-	"limit": true, "page": true, "postId": true, "modelId": true, "modelVersionId": true, "imageId": true,
-	"ids": true, "username": true, "userId": true, "period": true, "sort": true, "nsfw": true,
-	"browsingLevel": true, "tags": true, "cursor": true, "type": true, "baseModels": true, "withMeta": true,
-	"requiringMeta": true, "flatMeta": true, "withTags": true,
+// v1Schema is imagesEndpointSchema's keys and defaults (schemas.json, generated from the zod schema).
+// A key outside it falls back (`input-unknown-key`): the schema strips it (and nextPage keeps it), but
+// a key the app added after this build was generated is one it reads, so it is never treated as
+// absent here. `token` is the exception: the API key, which Resolve then hands to the app.
+var v1Schema = inputschema.Get(inputschema.ImagesEndpoint)
+
+var v1TransportKeys = map[string]bool{"token": true}
+
+// v1ParsedKeys are the schema keys ParseV1 reads: every one (TestInputKeyLedger), so a key added to
+// the schema must be ported or made a fallback.
+var v1ParsedKeys = []string{
+	"limit", "page", "postId", "modelId", "modelVersionId", "imageId", "ids", "username", "userId",
+	"period", "sort", "nsfw", "browsingLevel", "tags", "cursor", "type", "baseModels", "withMeta",
+	"requiringMeta", "flatMeta", "withTags",
 }
 
 var (
@@ -192,9 +201,16 @@ func ParseV1(raw string) (*V1Input, error) {
 	if err != nil {
 		return nil, err
 	}
+	keys := make([]string, 0, len(params))
+	for _, p := range params {
+		keys = append(keys, p.Key)
+	}
+	if k, ok := v1Schema.Unknown(keys, v1TransportKeys); ok {
+		return nil, fallback.Newf("input-unknown-key", "%s", k)
+	}
 	vals := map[string]string{}
 	for _, p := range params {
-		if !v1SchemaKeys[p.Key] {
+		if !v1Schema.Has(p.Key) {
 			continue
 		}
 		if len(p.Values) > 1 {
@@ -215,7 +231,12 @@ func ParseV1(raw string) (*V1Input, error) {
 		return nil, fallback.New("v1-base-models")
 	}
 
-	in := &V1Input{Limit: 100, Period: "AllTime", Sort: SortMostReactions, Query: params}
+	// The limit's default is not in the projection (numericString's preprocess hides it); it is the
+	// same constants.galleryFilterDefaults.limit as getInfiniteImagesSchema's.
+	in := &V1Input{
+		Limit: imagesSchema.DefaultInt("limit"), Period: v1Schema.DefaultString("period"),
+		Sort: v1Schema.DefaultString("sort"), Query: params,
+	}
 	num := func(k string, dst *int) error {
 		v, ok := vals[k]
 		if !ok {

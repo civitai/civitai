@@ -130,10 +130,13 @@ func TestParseSearchIsReqQuery(t *testing.T) {
 }
 
 func TestNextPageURL(t *testing.T) {
-	in, err := ParseV1("limit=50&page=2&modelVersionId=9&utm=x")
+	in, err := ParseV1("limit=50&page=2&modelVersionId=9")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A key outside the schema falls back in ParseV1 (input-unknown-key), but nextPage's own rule is
+	// to keep every key of req.query in order, so it is exercised with one added after parsing.
+	in.Query = append(in.Query, QueryParam{Key: "utm", Values: []string{"x"}})
 	got, err := nextPageURL(in, "Civitai.Example:443", "/api/v1/images", true, true, "feed:1:2")
 	if err != nil {
 		t.Fatal(err)

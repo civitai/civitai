@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/inputschema"
 )
 
 // Sort values (ModelSort in src/server/common/enums.ts).
@@ -87,11 +88,36 @@ type Input struct {
 	ExcludedUserIDs       []int
 }
 
+// modelsSchema is model.getAll's input (getAllModelsSchema plus the router's `page`): its keys and
+// defaults (schemas.json, generated from the zod schema). A key outside it falls back
+// (`input-unknown-key`): a key the app added after this build was generated is one it reads, so it is
+// never treated as absent here. trpcTransportKeys are the exception.
+var modelsSchema = inputschema.Get(inputschema.AllModels)
+
+// trpcTransportKeys are keys the site's tRPC client adds to every input and zod strips: `authed`
+// (authedCacheBypassLink, signed in) and `direction` (an infinite query's paging direction).
+var trpcTransportKeys = map[string]bool{"authed": true, "direction": true}
+
+// parsedKeys are the schema keys Parse reads; ignoredKeys the ones getModelsRaw never reads
+// (favorites, rating, excludedModelIds, excludedImageIds, collectionItemStatus, and collectionTagId
+// without a collection), as zod's strip and the destructuring leave them. With unsupportedKeys they
+// are every key of the schema (TestInputKeyLedger), so a key added to it must be classified.
+var (
+	parsedKeys = []string{
+		"limit", "cursor", "sort", "period", "periodMode", "browsingLevel", "tagname", "tag", "username",
+		"user", "types", "baseModels", "checkpointType", "allowCommercialUse", "allowDerivatives",
+		"allowDifferentLicense", "allowNoCredit", "earlyAccess", "paidAccess", "hidePaid", "onSale",
+		"fromPlatform", "archived", "fileFormats", "disablePoi", "disableMinor", "excludedTagIds",
+		"excludedUserIds",
+	}
+	ignoredKeys = []string{
+		"favorites", "rating", "excludedModelIds", "excludedImageIds", "collectionItemStatus", "collectionTagId",
+	}
+)
+
 // unsupportedKeys are input keys that change the answer in ways not ported. Present with a truthy
 // value (isEmpty: not null, false, 0, "" or []), they make the request fall back with reason
-// `input-<key>`; `ids` falls back whenever it is present (Parse). Keys getModelsRaw never reads (favorites, rating, excludedModelIds,
-// excludedImageIds, collectionItemStatus, collectionTagId without a collection) are ignored, as zod's
-// strip and the destructuring leave them.
+// `input-<key>`; `ids` falls back whenever it is present (Parse).
 var unsupportedKeys = []string{
 	// Meilisearch (`query`), collections, the viewer's engagements and follows, the new-creators board,
 	// id lists, moderator filters, drafts and pending images, the coverage filter, the featured list,
@@ -105,6 +131,13 @@ var unsupportedKeys = []string{
 // subset is a fallback, and so is a value the schema itself rejects (Node answers it with its own
 // BAD_REQUEST, which the sampler never mirrors).
 func Parse(m map[string]any) (*Input, error) {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	if k, ok := modelsSchema.Unknown(keys, trpcTransportKeys); ok {
+		return nil, fallback.Newf("input-unknown-key", "%s", k)
+	}
 	// `ids` changes the answer whenever it is present at all: commaDelimitedNumberArray turns [] into
 	// [], "" into [0] and null into [], and getModelsRaw's hidePrivateModels is `!ids && …`, so even
 	// an empty list shows private models (and "" filters to model 0). None of that is ported.
@@ -116,7 +149,11 @@ func Parse(m map[string]any) (*Input, error) {
 			return nil, fallback.New("input-" + k)
 		}
 	}
-	in := &Input{Limit: 100, Sort: SortHighestRated, Period: "AllTime", PeriodMode: "published"}
+	// The limit is the handler's (`limit = 100`): the schema's is optional, with no default.
+	in := &Input{
+		Limit: 100, Sort: modelsSchema.DefaultString("sort"), Period: modelsSchema.DefaultString("period"),
+		PeriodMode: modelsSchema.DefaultString("periodMode"),
+	}
 	var err error
 	if v, ok := m["limit"]; ok && v != nil {
 		if in.Limit, err = intIn(v, 0, 100); err != nil {
