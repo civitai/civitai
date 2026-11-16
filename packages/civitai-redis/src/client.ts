@@ -2225,7 +2225,10 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
   return { redis: getCacheClient(), sysRedis: getSysClient() };
 }
 
-// Source of Truth data
+// DURABLE STATE ONLY: revocations, idempotency markers, spend reservations, ledgers, job and game state.
+// Caches, read-through results and rate-limit windows belong in REDIS_KEYS (the cache client), with a TTL.
+// A new entry here needs explicit sign-off and an entry in __tests__/sys-key-ledger.test.ts; new durable
+// data otherwise goes in Postgres. A placement next to an existing key here is not a justification.
 export const REDIS_SYS_KEYS = {
   FLIPT: {
     // `system:flipt:snapshot:<FLIPT_ENVIRONMENT>` — the last Flipt evaluation snapshot a process
@@ -2339,8 +2342,8 @@ export const REDIS_SYS_KEYS = {
      * 409 while the first attempt is still in flight. DISTINCT from TIP_CAP (the
      * daily-aggregate cap): this dedupes a SINGLE logical tip across retries;
      * TIP_CAP bounds the day's total. Short TTL (covers realistic retry windows);
-     * a genuinely-new tip uses a fresh client key. On `sysRedis`, like the sibling
-     * BLOCKS caps/limiters; fail-CLOSED on a redis error at claim time (money path).
+     * a genuinely-new tip uses a fresh client key. Fail-CLOSED on a redis error at
+     * claim time (money path).
      */
     TIP_IDEM: 'system:blocks:tip-idem',
     /**
@@ -2358,8 +2361,8 @@ export const REDIS_SYS_KEYS = {
      * counter) and from TIP_IDEM (the tip endpoint's dedupe): this dedupes ONE
      * logical generation across retries. Per-(user, app, key) so a key can never
      * collide across apps or users. Short TTL (covers realistic retry windows); a
-     * genuinely-new generation uses a fresh client key. On `sysRedis`, like the
-     * sibling BLOCKS caps; fail-CLOSED on a redis error at claim time (money path).
+     * genuinely-new generation uses a fresh client key. Fail-CLOSED on a redis error
+     * at claim time (money path).
      */
     GEN_IDEM: 'system:blocks:gen-idem',
     /**
@@ -2400,7 +2403,7 @@ export const REDIS_SYS_KEYS = {
      */
     APP_SPEND_CAP: 'system:blocks:app-spend-cap',
     // Per-API-key (fallback per-IP) rate-limit counter for the token-authed bundle-submit
-    // endpoint (`/api/v1/blocks/submit-version`). On sysRedis like the retool limiter + BUZZ_CAP.
+    // endpoint (`/api/v1/blocks/submit-version`).
     SUBMIT_RATE_LIMIT: 'system:blocks:submit-rate-limit',
     // Per-slug counter for git pushes recorded for review, and per-user for the web manifest
     // editor's commits. Same `SET NX EX` + `INCR` shape as SUBMIT_RATE_LIMIT, on sysRedis.
@@ -2505,8 +2508,7 @@ export const REDIS_SYS_KEYS = {
      * spend counter). Sub-keyed as `${DEV_TUNNEL}:cred:<fp>` /
      * `${DEV_TUNNEL}:session:<id>` / `${DEV_TUNNEL}:host:<host>` /
      * `${DEV_TUNNEL}:user:<uid>:<blockId>` / `${DEV_TUNNEL}:spend:<id>`. All
-     * carry a hard-TTL EX so they self-expire (dev-tunnel.service.ts). On
-     * `sysRedis`, like the sibling BLOCKS caps/limiters.
+     * carry a hard-TTL EX so they self-expire (dev-tunnel.service.ts).
      */
     DEV_TUNNEL: 'system:blocks:dev-tunnel',
     /**
@@ -2536,8 +2538,7 @@ export const REDIS_SYS_KEYS = {
      * `{ buzzCapKey, appSpendKey|null, ceiling }`, hard-TTL EX ~25h so it
      * self-expires with the reservation window. Written at submit (after
      * reserving the ceiling), consumed once via GET+DEL at the FIRST terminal
-     * observation (idempotent settle). On `sysRedis`, like the sibling BLOCKS
-     * caps/limiters. DEV/live-harness tokens still get a per-user daily
+     * observation (idempotent settle). DEV/live-harness tokens still get a per-user daily
      * reservation + settle; the per-app reservation (and its settle key) is
      * absent for them (synthetic appBlockId), matching the txt2img caps.
      */
@@ -2626,8 +2627,6 @@ export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
     COUNT: 'download:count',
-    /** Per user and file: requests in the last day, so repeats of one file count only past a cap. */
-    REPEATS: 'download:repeats',
     /** `<prefix>:<provider>:<hour>`: a provider's downloads this hour. See provider-download.limiter.ts. */
     PROVIDER: 'download:provider',
   },
@@ -2737,7 +2736,10 @@ export const REDIS_SYS_KEYS = {
       the reversal is unrecoverable.
      */
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
-    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days).
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days). Written to
+    // the cluster now (REDIS_KEYS.SYSTEM.UPLOAD_KEY_OWNER); read here only as the fallback for
+    // records written before the move. Remove with that fallback, after
+    // UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL in src/server/services/image-url-ownership.ts.
     UPLOAD_KEY_OWNER: 'system:upload-key-owner',
     // `<prefix>:<YYYY-MM-DD>:<caller>:<host bucket>` = a HyperLogLog of the users who sent a
     // generation input url on that external host bucket that UTC day (TTL 2 days).
@@ -3097,7 +3099,9 @@ export const REDIS_SYS_KEYS = {
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
-    // Per judge: `winner>loser` for each vote, so pairs implied by their own votes can be skipped.
+    // Per judge: `winner>loser` for each vote, from before the set moved to the cache cluster
+    // (REDIS_KEYS.CRUCIBLE.VOTE_OUTCOMES). Read only, never written.
+    // 🔴 Delete with the fallback read after VOTE_OUTCOMES_SYS_FALLBACK_UNTIL (crucible.service.ts).
     VOTE_OUTCOMES: 'crucible:vote-outcomes',
     // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
     ANCHOR_VOTES: 'crucible:anchor-votes',
@@ -3183,6 +3187,14 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   DOWNLOAD: {
     COUNT: 'download:count',
+    /*
+      Use: requests for one file by one user in the last day, so repeats of a file (a resumed
+      download) count toward the download limit only past a cap. A lost entry costs at most one
+      extra counted download. See src/server/utils/download-repeats.ts.
+      Structure: integer, key = `${REPEATS}:${userKey}:${fileId}`, SET NX EX 24h + INCR in one
+      single-key MULTI.
+     */
+    REPEATS: 'download:repeats',
   },
   USER: {
     BASE: 'user',
@@ -3232,6 +3244,10 @@ const REDIS_KEYS_UNPREFIXED = {
     PUSH_QUOTA: 'system:push-quota',
     CATEGORIES: 'system:categories',
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days). A cache: the
+    // cache cluster can evict a record before its TTL under memory pressure, so 30 days is a
+    // maximum. A miss falls back to the upload request log, then the caller's own Image rows.
+    UPLOAD_KEY_OWNER: 'system:upload-key-owner',
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
@@ -3550,6 +3566,12 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+    /*
+      Use: a judge's own votes, so pairs those votes already decide by transitivity are not served.
+      Structure: set of `winner>loser`, key = `crucible:vote-outcomes:${crucibleId}:${userId}`,
+      TTL 30d. A cache: a lost or missing set only serves a pair the judge could have skipped.
+     */
+    VOTE_OUTCOMES: 'crucible:vote-outcomes',
   },
   BOT_CACHE: {
     /*

@@ -359,9 +359,9 @@ describe('resolveCoverImageId with its production deps', () => {
     const MODERATOR = 9;
     beforeEach(() => {
       dbWriteMock.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
-      redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+      redisMock.redis.mGet.mockResolvedValue([String(OTHER)] as never);
     });
-    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+    afterEach(() => redisMock.redis.mGet.mockReset());
 
     it('is refused before a row is created', async () => {
       await expect(resolveCoverImageId({ coverImage, userId: 7 })).rejects.toMatchObject({
@@ -379,7 +379,7 @@ describe('resolveCoverImageId with its production deps', () => {
     });
 
     it('is accepted when that user uploaded it for the owner', async () => {
-      redisMock.sysRedis.mGet.mockResolvedValue([String(MODERATOR)] as never);
+      redisMock.redis.mGet.mockResolvedValue([String(MODERATOR)] as never);
 
       await expect(
         resolveCoverImageId({ coverImage, userId: 7, uploaderId: MODERATOR })

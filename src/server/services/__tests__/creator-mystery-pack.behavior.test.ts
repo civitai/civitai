@@ -117,7 +117,7 @@ const submitInput = (overrides: Partial<Parameters<typeof packs.submitMysteryPac
 // Shop artwork is a bare upload key; this one's issue record names the creator.
 const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
 beforeEach(() => {
-  redisMock.sysRedis.mGet.mockResolvedValue([String(CREATOR)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(CREATOR)] as never);
 });
 
 const submit = (overrides: Partial<Parameters<typeof packs.submitMysteryPack>[0]> = {}) =>
@@ -1036,7 +1036,7 @@ describe('submitMysteryPack box image key', () => {
   });
 
   it('refuses a key issued to another user before charging', async () => {
-    redisMock.sysRedis.mGet.mockResolvedValueOnce([String(OTHER)] as never);
+    redisMock.redis.mGet.mockResolvedValueOnce([String(OTHER)] as never);
 
     await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(
       COVER_IMAGE_UNAVAILABLE_MESSAGE
@@ -1055,7 +1055,7 @@ describe('submitMysteryPack box image key', () => {
   });
 
   it('accepts a fresh key once, and refuses it for a second box', async () => {
-    redisMock.sysRedis.mGet.mockResolvedValueOnce([String(CREATOR)] as never);
+    redisMock.redis.mGet.mockResolvedValueOnce([String(CREATOR)] as never);
     await submit({ imageUrl: KEY, rightsAffirmed: true });
 
     await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(
