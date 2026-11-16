@@ -27,7 +27,9 @@
 --                 AND NOT EXISTS (SELECT 1 FROM pg_roles g WHERE g.oid <> r.oid AND pg_has_role(r.oid, g.oid, 'MEMBER')
 --                   AND has_any_column_privilege(g.oid, to_regclass(t), 'SELECT'))
 --             END
---             AND COALESCE(NOT has_table_privilege(r.oid, to_regclass(t), 'INSERT, UPDATE, DELETE, TRUNCATE'), false))
+--             AND NOT EXISTS (SELECT 1 FROM pg_roles g WHERE (g.oid = r.oid OR pg_has_role(r.oid, g.oid, 'MEMBER'))
+--               AND (COALESCE(has_any_column_privilege(g.oid, to_regclass(t), 'INSERT, UPDATE, REFERENCES'), true)
+--                 OR COALESCE(has_table_privilege(g.oid, to_regclass(t), 'DELETE, TRUNCATE, TRIGGER'), true))))
 --             FROM pg_roles r, unnest(ARRAY['process_definition', 'process_definition_version', 'case_record',
 --               'case_target', 'case_event', 'case_notice', 'case_party']) t
 --            WHERE r.rolname = 'internal_tools_ro') AS ro_ok,
@@ -38,12 +40,11 @@
 --   WHERE n.nspname = 'public' AND c.relname IN ('process_definition', 'process_definition_version',
 --     'case_record', 'case_target', 'case_event', 'case_notice', 'case_party');
 -- Before the apply it prints 0 | 0 | 0 | f | 0. `ro_ok` is t only when the read-only role can read the
--- two definition tables, can't read any of the other five (not directly, through PUBLIC, or through a
--- role it can SET ROLE to), and can't write any of the seven. Null means the role doesn't exist yet.
+-- two definition tables, can't read any of the other five, and can't write any of the seven: not
+-- directly, through PUBLIC, or through a role it can SET ROLE to. Null means the role doesn't exist yet.
 -- f after a re-run means a grant this file can't revoke (a role membership, PUBLIC from another owner,
 -- or pg_read_all_data): find it with `\dp case_record` and `\du internal_tools_ro`, and ask an infra
--- owner to remove it. The moderator app runs the same check (`cases/pii-lockdown.ts`) and refuses to
--- show case data while it is f.
+-- owner to remove it. `src/lib/server/cases/pii-lockdown.ts` is the same check for the app to run.
 --
 -- Idempotent: safe to re-run.
 
@@ -210,25 +211,50 @@ CREATE UNIQUE INDEX IF NOT EXISTS case_party_user_key ON case_party (case_id, ro
   WHERE user_id IS NOT NULL;
 
 -- Dropped and added on every run, so a changed value set reaches every environment on its next re-run.
-ALTER TABLE case_record DROP CONSTRAINT IF EXISTS case_record_source_check;
-ALTER TABLE case_record ADD CONSTRAINT case_record_source_check
-  CHECK (source IN ('form', 'email', 'report', 'import'));
-ALTER TABLE case_target DROP CONSTRAINT IF EXISTS case_target_state_check;
-ALTER TABLE case_target ADD CONSTRAINT case_target_state_check
-  CHECK (state IN ('Pending', 'Removed', 'Held', 'Kept', 'Restored'));
-ALTER TABLE case_notice DROP CONSTRAINT IF EXISTS case_notice_status_check;
-ALTER TABLE case_notice ADD CONSTRAINT case_notice_status_check
-  CHECK (status IN ('pending', 'sending', 'sent', 'failed'));
-ALTER TABLE case_party DROP CONSTRAINT IF EXISTS case_party_role_check;
-ALTER TABLE case_party ADD CONSTRAINT case_party_role_check
-  CHECK (role IN ('claimant', 'uploader', 'agent-for-uploader'));
+-- 🔴 Each pair is one DO block, which is atomic: psql -f commits statement by statement, so a bare DROP
+-- followed by an ADD that fails (rows that break the new rule) would leave the table with no constraint.
+DO $$
+BEGIN
+  ALTER TABLE case_record DROP CONSTRAINT IF EXISTS case_record_source_check;
+  ALTER TABLE case_record ADD CONSTRAINT case_record_source_check
+    CHECK (source IN ('form', 'email', 'report', 'import'));
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE case_target DROP CONSTRAINT IF EXISTS case_target_state_check;
+  ALTER TABLE case_target ADD CONSTRAINT case_target_state_check
+    CHECK (state IN ('Pending', 'Removed', 'Held', 'Kept', 'Restored'));
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE case_notice DROP CONSTRAINT IF EXISTS case_notice_status_check;
+  ALTER TABLE case_notice ADD CONSTRAINT case_notice_status_check
+    CHECK (status IN ('pending', 'sending', 'sent', 'failed'));
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE case_party DROP CONSTRAINT IF EXISTS case_party_role_check;
+  ALTER TABLE case_party ADD CONSTRAINT case_party_role_check
+    CHECK (role IN ('claimant', 'uploader', 'agent-for-uploader'));
+END $$;
+
 -- An attempt is always of one target's removal, so the attempt key below can't be dodged with a NULL.
-ALTER TABLE case_event DROP CONSTRAINT IF EXISTS case_event_attempt_target_check;
-ALTER TABLE case_event ADD CONSTRAINT case_event_attempt_target_check
-  CHECK (attempt IS NULL OR case_target_id IS NOT NULL);
-ALTER TABLE process_definition DROP CONSTRAINT IF EXISTS process_definition_current_version_fkey;
-ALTER TABLE process_definition ADD CONSTRAINT process_definition_current_version_fkey
-  FOREIGN KEY (current_version_id) REFERENCES process_definition_version (id);
+DO $$
+BEGIN
+  ALTER TABLE case_event DROP CONSTRAINT IF EXISTS case_event_attempt_target_check;
+  ALTER TABLE case_event ADD CONSTRAINT case_event_attempt_target_check
+    CHECK (attempt IS NULL OR case_target_id IS NOT NULL);
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE process_definition DROP CONSTRAINT IF EXISTS process_definition_current_version_fkey;
+  ALTER TABLE process_definition ADD CONSTRAINT process_definition_current_version_fkey
+    FOREIGN KEY (current_version_id) REFERENCES process_definition_version (id);
+END $$;
 
 REVOKE ALL ON process_definition, process_definition_version, case_record, case_target, case_event,
   case_notice, case_party FROM PUBLIC;

@@ -214,6 +214,37 @@ describe('cases/schema.sql', () => {
     expect(await lockdown()).toBe('ok');
   });
 
+  it('reports a column-level write grant as open', async () => {
+    await db.exec(`CREATE ROLE internal_tools_ro`);
+    await db.exec(DDL);
+    await db.exec(`GRANT UPDATE (state) ON case_record TO internal_tools_ro`);
+    expect(await lockdown()).toBe('open');
+    expect((await headerReadBack())[3]).toBe(false);
+  });
+
+  it('keeps the old CHECK when re-adding it fails, because each pair runs as one statement', async () => {
+    await db.exec(DDL);
+    await seedCase(); // source 'import'
+    // The source block exactly as written, with 'import' narrowed out: psql runs it as one statement.
+    const block = RAW.match(
+      /DO \$\$\nBEGIN\n  ALTER TABLE case_record DROP CONSTRAINT IF EXISTS case_record_source_check;[\s\S]*?END \$\$;/
+    )![0];
+    await expect(db.exec(block.replace("'report', 'import'", "'report'"))).rejects.toThrow();
+    const { rows } = await db.query(
+      `SELECT 1 FROM pg_constraint WHERE conname = 'case_record_source_check'`
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('reports a write the role can reach through SET ROLE as open', async () => {
+    await db.exec(`CREATE ROLE internal_tools_ro`);
+    await db.exec(DDL);
+    await db.exec(`CREATE ROLE writers; GRANT UPDATE ON case_event TO writers`);
+    await db.exec(`GRANT writers TO internal_tools_ro WITH INHERIT FALSE`);
+    expect(await lockdown()).toBe('open');
+    expect((await headerReadBack())[3]).toBe(false);
+  });
+
   it('reports no-role when the read-only role does not exist', async () => {
     await db.exec(DDL);
     expect(await lockdown()).toBe('no-role');
