@@ -510,9 +510,26 @@ describe('entity image writers', () => {
       expect(linked).toEqual([1, 2]);
     });
 
-    it('removes no link when the form did not say what it was shown', async () => {
+    it('refuses an edit that drops a linked image without saying what it was shown', async () => {
       linked = [1, 2];
-      await save([1], undefined);
+      await expect(save([1], undefined)).rejects.toThrow('Reload the page and save again');
+      expect(linked).toEqual([1, 2]);
+    });
+
+    it('lets an edit that only adds images through without the list', async () => {
+      linked = [1, 2];
+      await expect(
+        updateEntityImages({
+          images: [
+            { id: 1, url: URL_KEY, type: 'image' },
+            { id: 2, url: URL_KEY, type: 'image' },
+            { url: URL_KEY, type: 'image' },
+          ],
+          userId: OWNER,
+          entityType: 'Bounty',
+          entityId: 1,
+        })
+      ).resolves.toBeDefined();
       expect(linked).toEqual([1, 2]);
     });
 

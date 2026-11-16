@@ -5855,7 +5855,8 @@ export const updateEntityImages = async ({
   /**
    * The linked images the edit form was shown. Only these can be removed by leaving them out of
    * `images`: a capped read hides some links, and ratings can change between the read and the
-   * save. Without it, no link is removed; `'all'` replaces the set, for a caller that read none.
+   * save. Without it, an edit that leaves out any linked image (hidden ones included) is refused
+   * and nothing is removed; `'all'` replaces the set, for a caller that read none.
    */
   shownImageIds?: number[] | 'all';
   /** The most images the entity may have linked after the save, hidden ones included. */
@@ -5871,6 +5872,10 @@ export const updateEntityImages = async ({
   });
 
   const keptIds = new Set(images.map((i) => i.id).filter(isDefined));
+  if (shownImageIds === undefined && connections.some((c) => !keptIds.has(c.imageId)))
+    throw throwBadRequestError(
+      'Reload the page and save again: this editor did not say which images it showed'
+    );
   const shown = new Set(
     shownImageIds === 'all' ? connections.map((c) => c.imageId) : shownImageIds
   );

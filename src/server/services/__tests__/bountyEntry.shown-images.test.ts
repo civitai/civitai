@@ -48,6 +48,7 @@ describe('upsertBountyEntry — images the edit form was not shown', () => {
       entityId: 3,
       entityType: 'BountyEntry',
       shownImageIds: [1, 2],
+      maxLinked: constants.bounties.maxEntryImagesForEdit,
     });
   });
 
