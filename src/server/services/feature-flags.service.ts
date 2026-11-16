@@ -486,6 +486,9 @@ const featureFlags = createFeatureFlags({
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
+  // Search v3 for articles: the header bar filters the articles feed (?query=) through the search
+  // service. Dark: Flipt is its only switch.
+  articleFeedSearch: { availability: [], fliptKey: 'search-v3-articles' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
   // Semantic search on the challenges feed. Dark: Flipt is its only switch.

@@ -24,10 +24,14 @@ const (
 	MissUserCosmetics    = "user-cosmetics"    // userCosmeticCache
 	MissImageFrames      = "image-frames"      // cosmeticEntityCaches.Image
 	MissEventDecorations = "event-decorations" // eventDecorationEntityCaches.Image
+	MissTagIDs           = "tag-ids"           // tagIdsForImagesCache
+	MissModelFrames      = "model-frames"      // cosmeticEntityCaches.Model (model.getAll)
 )
 
-// MissCaches lists every MissXxx label, for seeding the counter.
-var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta}
+// MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
+// (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
+// this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
+var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -43,7 +47,9 @@ type MissCompute struct {
 	// Node lookup writes it: same key, same msgpackr bytes, same expiry. Only for a miss Node would
 	// write too (no key, or an undecodable value; never inside a bust's debounce window or after a
 	// failed read), and as SET NX: a key another writer filled since the read is never overwritten.
-	// The frame and event-decoration lookups then read Primary, as Node's do (entityDB).
+	// The frame (image and model) and event-decoration lookups then read Primary, as Node's do
+	// (entityDB); the user-cosmetics and tag-ids lookups read the replica either way, as Node's fetch
+	// does (dbRead).
 	WriteBack bool
 	// Primary is the primary database (DATABASE_URL, Node's dbWrite), required with WriteBack: the
 	// frame and event-decoration lookups write what they read, so they must not read a lagging replica
@@ -51,8 +57,15 @@ type MissCompute struct {
 	Primary Querier
 	// FrameNegative mirrors the `frame-cache-negative` flag (FEED_GO_FRAME_CACHE_NEGATIVE): whether the
 	// frame cache's notFound markers are live. Off, a marker is read as a miss and none is written,
-	// as Node does while the flag is off.
+	// as Node does while the flag is off. It is one flag for every entity's frame cache, so it
+	// governs the model frames too.
 	FrameNegative bool
+	// TagGate is getImageTagGateIds (src/server/redis/image-tag-gate-ids.ts): every tag id a browsing
+	// rule can hide content by (the blocked browsing tags and every addon's excludedTagIds, live and
+	// default). The tag-ids lookup asks for it only when a row needs it (a Rekognition tag on an image
+	// WD14 also tagged); an error, or no TagGate, then fails that lookup (tag-ids-miss-failed) where
+	// Node, which rebuilds the blocked list from the database on a cache miss, would have had one.
+	TagGate func(context.Context) (map[int]bool, error)
 
 	// flight coalesces concurrent lookups of one cache and id set; recent keeps answers for a few
 	// seconds with write-back off (lookupShared).
@@ -140,7 +153,9 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 
 // memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every
 // cache but the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
-// must not leave the old prompt served from a process's copy).
+// must not leave the old prompt served from a process's copy). The tag ids and the model frames are
+// kept: neither depends on the viewer, Node keeps tag ids in a per-pod L1 far longer than recentTTL,
+// and a model frame is the same frame lookup the image frames keep.
 func (c *MissCompute) memoized(cache string) bool {
 	return !c.WriteBack && cache != MissImageMeta
 }
@@ -211,10 +226,10 @@ func (c *MissCompute) observe(cache, result string, n int) {
 	}
 }
 
-// entityDB is the database the frame and event-decoration lookups read. Node reads the primary
-// (dbWrite, src/server/redis/caches.ts) and caches what it reads for a day. With WriteBack on this
-// service writes what it reads too, so it reads the primary as well; with it off nothing it reads is
-// cached, and the replica's lag only affects this one answer.
+// entityDB is the database the frame (image and model) and event-decoration lookups read. Node reads
+// the primary (dbWrite, src/server/redis/caches.ts) and caches what it reads for a day. With
+// WriteBack on this service writes what it reads too, so it reads the primary as well; with it off
+// nothing it reads is cached, and the replica's lag only affects this one answer.
 func (s *Sources) entityDB() (Querier, error) {
 	if !s.Compute.WriteBack {
 		return s.Replica, nil
@@ -231,36 +246,80 @@ type lookupSpec struct {
 	reason string // the cache's miss fallback reason; a failed computation is `<reason>-failed`
 	key    string
 	idKey  string
-	// ttl is a value's EX: `ttl`, as staleWhileRevalidate is off on all three caches.
+	// ttl is a value's EX: resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl)
+	// (packages/civitai-redis/src/cached-array.ts): `ttl` where staleWhileRevalidate is off,
+	// `ttl + (staleWhileRevalidateTtl ?? ttl)` where it is on.
 	ttl time.Duration
-	// notFoundTTL is a notFound marker's EX (`notFoundTtl ?? ttl`).
+	// notFoundTTL is a notFound marker's EX (`notFoundTtl ?? EX`).
 	notFoundTTL time.Duration
 }
+
+// tagIDsTTL is tagIdsForImagesCache's ttl: an entry whose cachedAt is older is stale, and Node's
+// fetch revalidates it (staleWhileRevalidate is on) — a bust (invalidate) backdates cachedAt so it
+// is. The tag-ids reads mark entries past it Stale (fillTagIDs).
+const tagIDsTTL = 8 * time.Hour
+
+// tagIDsEX is tagIdsForImagesCache's EX: the 8h ttl plus the 1h staleWhileRevalidateTtl, so 9h; no
+// notFoundTtl, so its markers get the same.
+const tagIDsEX = tagIDsTTL + time.Hour
 
 var (
 	// userCosmeticCache: ttl a day, cacheNotFound (default) on, no notFoundTtl.
 	userCosmeticsSpec = lookupSpec{cache: MissUserCosmetics, reason: "user-cosmetics-miss", key: KeyUserCosmetics, idKey: "userId", ttl: ttlDay, notFoundTTL: ttlDay}
 	// cosmeticEntityCaches.Image: ttl a day, notFoundTtl an hour, cacheNotFound the flag.
 	frameSpec = lookupSpec{cache: MissImageFrames, reason: "image-frame-miss", key: KeyImageFrames, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
+	// cosmeticEntityCaches.Model: the same createCachedObject options as the Image one.
+	modelFrameSpec = lookupSpec{cache: MissModelFrames, reason: "model-frame-miss", key: KeyModelFrames, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
 	// eventDecorationEntityCaches.Image: ttl a day, notFoundTtl an hour, cacheNotFound on.
 	eventSpec = lookupSpec{cache: MissEventDecorations, reason: "event-decoration-miss", key: KeyImageEvents, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
+	// tagIdsForImagesCache: see tagIDsEX; cacheNotFound (default) on.
+	tagIDsSpec = lookupSpec{cache: MissTagIDs, reason: "tag-ids-miss", key: KeyTagIDs, idKey: "imageId", ttl: tagIDsEX, notFoundTTL: tagIDsEX}
 )
 
-// packedWrite is one cache write: SET key val EX ttl NX.
+// missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
+// the fallbacks those misses raise without a computation (Sources.MissReason).
+var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, tagIDsSpec}
+
+// specReason is the fallback reason of the named cache's lookup spec ("" for none).
+func specReason(cache string) string {
+	for _, sp := range missSpecs {
+		if sp.cache == cache {
+			return sp.reason
+		}
+	}
+	return ""
+}
+
+// packedWrite is one cache write: SET key val EX ttl NX, or without NX when overwrite (a stale
+// entry revalidated under its lock, as Node's refill overwrites it).
 type packedWrite struct {
-	key string
-	val []byte
-	ttl time.Duration
+	key       string
+	val       []byte
+	ttl       time.Duration
+	overwrite bool
 }
 
 // fill answers the ids of ids that got does not, with lookup (the Node lookupFn, batched: one call
 // for every miss), adding each answer to got as the entry Node would have cached: the record, or a
 // notFound marker for an id the lookup found nothing for. writable says which misses Node would
-// write back (PackedRead.read); writeNotFound whether the cache writes markers.
+// write back (PackedRead.read); writeNotFound whether the cache writes markers; replace which
+// misses are stale entries being revalidated (revalidateStaleTagIDs): their value is written without NX,
+// as Node's refill overwrites the stale entry, while their marker keeps NX (Node's marker write is
+// always NX, so it never replaces the stale value).
 func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[int]Entry, writable map[int]bool, writeNotFound bool,
-	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) error {
+	replace map[int]bool, lookup func(context.Context, []int) (map[int]jspack.Obj, error)) error {
 	miss := Missing(ids, got)
 	if len(miss) == 0 {
+		return nil
+	}
+	if p := presenceOf(ctx); p != nil {
+		// A Go-first probe running a serving path (model.getAll): the miss is one Go answers, so it is
+		// recorded, with its one lookup query, and answered as "no entry" without being looked up;
+		// the probe never queries for a miss and never writes.
+		p.recordComputed(spec.cache, len(miss))
+		for _, id := range miss {
+			got[id] = Entry{NotFound: true}
+		}
 		return nil
 	}
 	c := s.Compute
@@ -283,8 +342,8 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 			return fmt.Errorf("%s: a computed entry for %d does not decode", spec.cache, id)
 		}
 		got[id] = e
-		if c.WriteBack && writable[id] && (found || writeNotFound) {
-			writes = append(writes, packedWrite{key: s.Packed.key(spec.key, id), val: b, ttl: ttl})
+		if c.WriteBack && (writable[id] || replace[id]) && (found || writeNotFound) {
+			writes = append(writes, packedWrite{key: s.Packed.key(spec.key, id), val: b, ttl: ttl, overwrite: found && replace[id]})
 		}
 	}
 	c.observe(spec.cache, "computed", len(miss))
@@ -298,7 +357,7 @@ func (s *Sources) fillUserCosmetics(ctx context.Context, users []int, got map[in
 	if s.Compute == nil {
 		return nil
 	}
-	return s.fill(ctx, userCosmeticsSpec, users, got, writable, true, s.lookupUserCosmetics)
+	return s.fill(ctx, userCosmeticsSpec, users, got, writable, true, nil, s.lookupUserCosmetics)
 }
 
 // fillFrames computes the frame misses of got (cosmeticEntityCaches.Image.fetch's lookup). While
@@ -306,6 +365,17 @@ func (s *Sources) fillUserCosmetics(ctx context.Context, users []int, got map[in
 // ignores markers then, and none is written; an id whose marker was read is never written (it is
 // not writable: the marker holds the key, and a write is SET NX).
 func (s *Sources) fillFrames(ctx context.Context, images []int, got map[int]Entry, writable map[int]bool) error {
+	return s.fillEntityFrames(ctx, frameSpec, s.lookupImageFrames, images, got, writable)
+}
+
+// fillModelFrames is fillFrames for the models' frames (cosmeticEntityCaches.Model.fetch's lookup,
+// model.getAll): the same lookup over `equippedToType = 'Model'`, the same frame-cache-negative rule.
+func (s *Sources) fillModelFrames(ctx context.Context, models []int, got map[int]Entry, writable map[int]bool) error {
+	return s.fillEntityFrames(ctx, modelFrameSpec, s.lookupModelFrames, models, got, writable)
+}
+
+func (s *Sources) fillEntityFrames(ctx context.Context, spec lookupSpec, lookup func(context.Context, []int) (map[int]jspack.Obj, error),
+	ids []int, got map[int]Entry, writable map[int]bool) error {
 	if s.Compute == nil {
 		return nil
 	}
@@ -316,7 +386,95 @@ func (s *Sources) fillFrames(ctx context.Context, images []int, got map[int]Entr
 			}
 		}
 	}
-	return s.fill(ctx, frameSpec, images, got, writable, s.Compute.FrameNegative, s.lookupImageFrames)
+	return s.fill(ctx, spec, ids, got, writable, s.Compute.FrameNegative, nil, lookup)
+}
+
+// fillTagIDs computes the tag-ids misses of got (tagIdsForImagesCache.fetch's lookup), got read with
+// tagIDsTTL; a no-op without s.Compute (a miss then falls back in tagIDsFrom, a stale entry is
+// served). A stale entry is revalidated as Node's fetch revalidates it (revalidateStaleTagIDs).
+func (s *Sources) fillTagIDs(ctx context.Context, images []int, got map[int]Entry, writable map[int]bool) error {
+	if s.Compute == nil {
+		return nil
+	}
+	replace, locks := s.revalidateStaleTagIDs(ctx, got)
+	if err := s.fill(ctx, tagIDsSpec, images, got, writable, true, replace, s.lookupTagIDs); err != nil {
+		return err
+	}
+	s.releaseLocks(ctx, locks)
+	return nil
+}
+
+// tagIDsLockKey is fetch's revalidation lock for one tag-ids entry,
+// `${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`: both halves namespace-prefixed (applyCacheKeyPrefix
+// prefixes every leaf of the key table).
+func (s *Sources) tagIDsLockKey(id int) string {
+	return s.Packed.Prefix + "cache-lock:" + s.Packed.key(KeyTagIDs, id)
+}
+
+// cacheLockTTL is the revalidation lock's EX (setNxKeepTtlWithEx(…, '1', 10)).
+const cacheLockTTL = 10 * time.Second
+
+// revalidateStaleTagIDs is fetch's stale-while-revalidate step over the tag-ids answer got (Stale
+// entries, read with tagIDsTTL), removing from got the stale ids to look up again:
+//
+//   - write-back on, as Node: each stale id takes the revalidation lock Node's fetch takes (SET NX EX
+//     10); an id whose lock is held elsewhere, or whose lock write failed, keeps its stale entry
+//     (served, as Node serves it), and one whose lock is taken is looked up and its value written
+//     over the stale one (replace). The locks taken are returned for releaseLocks;
+//   - write-back off: every stale id is looked up (nothing is written, so no lock guards a write),
+//     so a busted entry is never served past its backdated stamp;
+//   - under a Go-first probe (WithPresence): every stale id is a miss (recorded by fill), no lock.
+func (s *Sources) revalidateStaleTagIDs(ctx context.Context, got map[int]Entry) (map[int]bool, []string) {
+	stale := make([]int, 0, len(got))
+	for id, e := range got {
+		if e.Stale {
+			stale = append(stale, id)
+		}
+	}
+	if len(stale) == 0 {
+		return nil, nil
+	}
+	if presenceOf(ctx) != nil || !s.Compute.WriteBack || s.Packed.Redis == nil {
+		for _, id := range stale {
+			delete(got, id)
+		}
+		return nil, nil
+	}
+	slices.Sort(stale)
+	cmds := make([]*redis.BoolCmd, len(stale))
+	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, id := range stale {
+			cmds[i] = p.SetNX(ctx, s.tagIDsLockKey(id), "1", cacheLockTTL)
+		}
+		return nil
+	})
+	replace := map[int]bool{}
+	var locks []string
+	for i, id := range stale {
+		if ok, err := cmds[i].Result(); err != nil || !ok {
+			continue // held by another revalidation, or the lock write failed: serve the stale entry
+		}
+		delete(got, id)
+		replace[id] = true
+		locks = append(locks, s.tagIDsLockKey(id))
+	}
+	return replace, locks
+}
+
+// releaseLocks deletes the revalidation locks taken, best effort, after the writes (Node deletes
+// them after its write; a failed delete leaves the lock to its 10 s expiry). A failed lookup leaves
+// them to expire, as Node's does.
+func (s *Sources) releaseLocks(ctx context.Context, locks []string) {
+	if len(locks) == 0 {
+		return
+	}
+	// One DEL per key: the locks of different ids live in different cluster slots.
+	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for _, k := range locks {
+			p.Del(ctx, k)
+		}
+		return nil
+	})
 }
 
 // fillEvents computes the event-decoration misses of got (eventDecorationEntityCaches.Image.fetch's
@@ -325,7 +483,7 @@ func (s *Sources) fillEvents(ctx context.Context, images []int, got map[int]Entr
 	if s.Compute == nil {
 		return nil
 	}
-	return s.fill(ctx, eventSpec, images, got, writable, true, s.lookupImageEvents)
+	return s.fill(ctx, eventSpec, images, got, writable, true, nil, s.lookupImageEvents)
 }
 
 // writePacked sends writes in one pipeline, best effort: Node swallows a failed cache write too (the
@@ -336,6 +494,10 @@ func (s *Sources) writePacked(ctx context.Context, writes []packedWrite) {
 	}
 	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for _, w := range writes {
+			if w.overwrite {
+				p.Set(ctx, w.key, w.val, w.ttl)
+				continue
+			}
 			p.SetNX(ctx, w.key, w.val, w.ttl)
 		}
 		return nil
@@ -409,24 +571,43 @@ func (s *Sources) lookupUserCosmetics(ctx context.Context, ids []int) (map[int]j
 	return out, nil
 }
 
-// sqlImageFrames is cosmeticEntityCaches.Image's lookupFn query, on entityDB (Node: the primary).
-const sqlImageFrames = `SELECT uc."cosmeticId", uc."equippedToId", uc."data"::text AS "userData", c."createdById"
+// sqlImageFrames and sqlModelFrames are cosmeticEntityCaches.Image's and .Model's lookupFn query
+// (one query, `equippedToType` the entity), on entityDB (Node: the primary).
+const (
+	sqlImageFrames = `SELECT uc."cosmeticId", uc."equippedToId", uc."data"::text AS "userData", c."createdById"
 		FROM "UserCosmetic" uc
 		JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
 		WHERE uc."equippedToId" = ANY($1::int[])
 		  AND uc."equippedToType" = 'Image'::"CosmeticEntity"
 		  AND jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`
+	sqlModelFrames = `SELECT uc."cosmeticId", uc."equippedToId", uc."data"::text AS "userData", c."createdById"
+		FROM "UserCosmetic" uc
+		JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+		WHERE uc."equippedToId" = ANY($1::int[])
+		  AND uc."equippedToType" = 'Model'::"CosmeticEntity"
+		  AND jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`
+)
 
 // lookupImageFrames is cosmeticEntityCaches.Image's lookupFn: per image, the raw frame row
 // `{cosmeticId, equippedToId, userData}` (the last row per image, as Object.fromEntries keeps it),
 // without frames whose creator cosmetic is withheld. The cosmetic join is the cache's appendFn,
 // which runs on every read (joinFrames).
 func (s *Sources) lookupImageFrames(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
+	return s.lookupEntityFrames(ctx, sqlImageFrames, ids)
+}
+
+// lookupModelFrames is cosmeticEntityCaches.Model's lookupFn: lookupImageFrames over the models (the
+// join is modelCosmetics').
+func (s *Sources) lookupModelFrames(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
+	return s.lookupEntityFrames(ctx, sqlModelFrames, ids)
+}
+
+func (s *Sources) lookupEntityFrames(ctx context.Context, sql string, ids []int) (map[int]jspack.Obj, error) {
 	db, err := s.entityDB()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, sqlImageFrames, ids)
+	rows, err := db.Query(ctx, sql, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -462,6 +643,145 @@ func (s *Sources) lookupImageFrames(ctx context.Context, ids []int) (map[int]jsp
 			continue
 		}
 		out[f.imageID] = jspack.O("cosmeticId", f.cosmeticID, "equippedToId", f.imageID, "userData", f.userData)
+	}
+	return out, nil
+}
+
+// sqlImageTagRows is getImageTagRows (src/server/redis/image-tag-rows.ts), tagIdsForImagesCache's
+// lookupFn query, on the replica (the fetch's lookupFn(ids) reads dbRead), its enum column as text.
+const sqlImageTagRows = `SELECT "imageId", "source"::text AS "source", "tagId" FROM "TagsOnImageDetails" WHERE "imageId" = ANY($1::int[]) AND "disabled" = false`
+
+// alwaysIncludeTags is `[...styleTags, ...subjectTags]` (src/libs/tags.ts).
+var alwaysIncludeTags = map[string]bool{"anime": true, "cartoon": true, "comics": true, "manga": true,
+	"man": true, "woman": true, "men": true, "women": true}
+
+// lookupTagIDs is tagIdsForImagesCache's lookupFn: per image with at least one enabled tag row,
+// `{imageId, tags}` with the tag ids in row order, each kept when tagCache knows the tag, and a
+// Rekognition label on an image WD14 also tagged kept only when it is a Moderation tag, nameless,
+// one of alwaysIncludeTags, or a tag a browsing rule can hide content by (TagGate). An image whose
+// tags are all dropped is `{imageId, tags: []}`; one with no row is absent.
+func (s *Sources) lookupTagIDs(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
+	rows, err := s.Replica.Query(ctx, sqlImageTagRows, ids)
+	if err != nil {
+		return nil, err
+	}
+	maps, err := rowsToMaps(rows)
+	if err != nil {
+		return nil, err
+	}
+	type tagRow struct {
+		imageID, tagID int
+		source         string
+	}
+	list := make([]tagRow, 0, len(maps))
+	tagIDs := make([]int, 0, len(maps))
+	hasWD := map[int]bool{}
+	for _, m := range maps {
+		iid, ok := Int(m["imageId"])
+		tid, ok2 := Int(m["tagId"])
+		if !ok || !ok2 {
+			return nil, fmt.Errorf("tag ids: row %v", m)
+		}
+		source, _ := m["source"].(string)
+		list = append(list, tagRow{iid, tid, source})
+		tagIDs = append(tagIDs, tid)
+		if source == "WD14" {
+			hasWD[iid] = true
+		}
+	}
+	tags, err := s.tagRecords(ctx, Unique(tagIDs))
+	if err != nil {
+		return nil, err
+	}
+	var gate map[int]bool
+	gateRead := false
+	order := []int{}
+	perImage := map[int][]any{}
+	for _, r := range list {
+		if _, seen := perImage[r.imageID]; !seen {
+			order = append(order, r.imageID)
+			perImage[r.imageID] = []any{}
+		}
+		tag, ok := tags[r.tagID]
+		if !ok {
+			continue
+		}
+		if r.source == "Rekognition" && hasWD[r.imageID] && tag.typ != "Moderation" && tag.name != "" && !alwaysIncludeTags[tag.name] {
+			if !gateRead {
+				if gate, err = s.Compute.tagGate(ctx); err != nil {
+					return nil, err
+				}
+				gateRead = true
+			}
+			if !gate[r.tagID] {
+				continue
+			}
+		}
+		perImage[r.imageID] = append(perImage[r.imageID], r.tagID)
+	}
+	out := make(map[int]jspack.Obj, len(order))
+	for _, id := range order {
+		out[id] = jspack.O("imageId", id, "tags", perImage[id])
+	}
+	return out, nil
+}
+
+// tagGate is TagGate's answer; no TagGate is an error (the lookup cannot decide the row).
+func (c *MissCompute) tagGate(ctx context.Context) (map[int]bool, error) {
+	if c.TagGate == nil {
+		return nil, errors.New("tag ids: no browsing tag gate configured")
+	}
+	gate, err := c.TagGate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("tag ids: browsing tag gate: %w", err)
+	}
+	return gate, nil
+}
+
+// tagRecord is the part of a tagCache record the tag-ids lookup reads.
+type tagRecord struct{ name, typ string }
+
+// sqlTagRecords is tagCache's lookupFn (the tag findMany by id) on the replica, the columns the
+// tag-ids lookup reads, its enum column as text.
+const sqlTagRecords = `SELECT id, name::text AS name, type::text AS type FROM "Tag" WHERE id = ANY($1::int[])`
+
+// tagRecords is tagCache.fetch(ids) as the tag-ids lookup reads it: each tag's name and type, from
+// the basic-tags cache (stale entries served; a notFound marker absent), the other ids from the
+// replica. Nothing is written back (the shared tag cache is never written by this service).
+func (s *Sources) tagRecords(ctx context.Context, ids []int) (map[int]tagRecord, error) {
+	out := map[int]tagRecord{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	b := NewBatch()
+	read := s.Packed.Queue(b, KeyBasicTags, ids, ttlDay)
+	b.Exec(ctx)
+	got := read.Entries()
+	for id, e := range got {
+		if e.NotFound {
+			continue
+		}
+		name, _ := e.Value["name"].(string)
+		typ, _ := e.Value["type"].(string)
+		out[id] = tagRecord{name, typ}
+	}
+	miss := Missing(ids, got)
+	if len(miss) == 0 {
+		return out, nil
+	}
+	rows, err := s.Replica.Query(ctx, sqlTagRecords, miss)
+	if err != nil {
+		return nil, err
+	}
+	maps, err := rowsToMaps(rows)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range maps {
+		id, _ := Int(m["id"])
+		name, _ := m["name"].(string)
+		typ, _ := m["type"].(string)
+		out[id] = tagRecord{name, typ}
 	}
 	return out, nil
 }

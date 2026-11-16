@@ -613,6 +613,7 @@ func TestCacheMissCounter(t *testing.T) {
 		"user-cosmetics/computed": 0, "user-cosmetics/error": 0, "image-frames/computed": 5, "image-frames/error": 0,
 		"event-decorations/computed": 0, "event-decorations/error": 0,
 		"image-meta/computed": 0, "image-meta/error": 0,
+		"tag-ids/computed": 0, "tag-ids/error": 0, "model-frames/computed": 0, "model-frames/error": 0,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("series %v, want %v", got, want)

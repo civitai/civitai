@@ -104,6 +104,7 @@ import {
   checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
   checkBlockGenerationSourceUserRateLimit,
+  checkBlockUploadedGenerationSourceUserRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { withInFlightLimit } from '~/server/utils/in-flight-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -2301,6 +2302,65 @@ const GENERATION_SOURCE_IN_FLIGHT = {
   acquireTimeoutMs: 500,
   errorMessage: 'A generation source is already being saved — wait for it to finish.',
 };
+
+/**
+ * `blocks.persistUploadedGenerationSource`'s concurrency cap: the same size and TTL as
+ * {@link GENERATION_SOURCE_IN_FLIGHT}, in a pool of its own, so an app saving its outputs and a
+ * viewer picking sources cannot hold each other's slots.
+ */
+const UPLOADED_GENERATION_SOURCE_IN_FLIGHT = {
+  ...GENERATION_SOURCE_IN_FLIGHT,
+  bucket: 'block-uploaded-generation-source',
+};
+
+/**
+ * One generation-source save's bounds, keyed on the token subject: at most `inFlight` calls in
+ * flight (checked first, so a call it refuses spends nothing), then `charge` (an hourly bucket
+ * with no exemption), then `run`.
+ */
+async function withSourceSaveBounds<T>(
+  inFlight: typeof GENERATION_SOURCE_IN_FLIGHT,
+  userId: number,
+  charge: () => Promise<{ allowed: boolean }>,
+  run: () => Promise<T>
+): Promise<T> {
+  return withInFlightLimit({ ...inFlight, userId }, async () => {
+    const rate = await charge();
+    if (!rate.allowed) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Too many generation sources saved — slow down.',
+      });
+    }
+    return run();
+  });
+}
+
+/** `persistGenerationSource`'s bounds: its in-flight pool and its hourly bucket. */
+async function withGenerationSourceBounds<T>(userId: number, run: () => Promise<T>): Promise<T> {
+  return withSourceSaveBounds(
+    GENERATION_SOURCE_IN_FLIGHT,
+    userId,
+    () => checkBlockGenerationSourceUserRateLimit(userId),
+    run
+  );
+}
+
+/**
+ * `persistUploadedGenerationSource`'s bounds: a pool and an hourly bucket of its own, the same
+ * sizes as `persistGenerationSource`'s and separate from them.
+ */
+async function withUploadedGenerationSourceBounds<T>(
+  userId: number,
+  run: () => Promise<T>
+): Promise<T> {
+  return withSourceSaveBounds(
+    UPLOADED_GENERATION_SOURCE_IN_FLIGHT,
+    userId,
+    () => checkBlockUploadedGenerationSourceUserRateLimit(userId),
+    run
+  );
+}
 
 export const blocksRouter = router({
   /**
@@ -6316,14 +6376,7 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
-      return withInFlightLimit({ ...GENERATION_SOURCE_IN_FLIGHT, userId }, async () => {
-        const rate = await checkBlockGenerationSourceUserRateLimit(userId);
-        if (!rate.allowed) {
-          throw new TRPCError({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'Too many generation sources saved — slow down.',
-          });
-        }
+      return withGenerationSourceBounds(userId, async () => {
         const { persistBlockGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
         );
@@ -6338,6 +6391,68 @@ export const blocksRouter = router({
           getWorkflow: async (workflowId) =>
             getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
         });
+      });
+    }),
+
+  /**
+   * A generation source the viewer PICKED (`OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`,
+   * or a single `OPEN_MEDIA_UPLOAD` image), already uploaded by the host as a consumer blob, kept
+   * as a PRIVATE, scanned row and returned as `persistGenerationSource` returns one. The host calls
+   * it only while `app-block-source-scanned-rows` is on (`blockImageUpload.
+   * generationSourceUsesScannedRows`): the gate then refuses the blob, and accepts this row once it
+   * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
+   *
+   * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
+   * runtime flag. Then `app-block-source-scanned-rows` must be on (FORBIDDEN otherwise), read as
+   * the generation gate reads it. Identity comes from the token, never the body; the url is the only thing the
+   * caller supplies, and the service accepts only a consumer blob on a trusted orchestrator host.
+   *
+   * BOUNDS: the per-user 60/h `rateLimit` (keyed on this path), then
+   * `withUploadedGenerationSourceBounds`: an in-flight pool and an hourly bucket of its own, the
+   * same sizes as `persistGenerationSource`'s and not shared with it.
+   */
+  persistUploadedGenerationSource: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many generation sources saved — slow down.',
+      })
+    )
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        url: z.string().min(1).max(2048),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'saving a generation source requires an authenticated viewer',
+        });
+      }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
+      await assertAppBlocksEnabledForTokenUser(userId);
+      // Only while the gate refuses blobs: the same flag, read the same way (global, no entity).
+      const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
+      if (!(await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS))) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'picked generation sources are not enabled',
+        });
+      }
+      return withUploadedGenerationSourceBounds(userId, async () => {
+        const { persistUploadedGenerationSource } = await import(
+          '~/server/services/blocks/block-generation-source.service'
+        );
+        return persistUploadedGenerationSource({ userId, appId: claims.appId, url: input.url });
       });
     }),
 
