@@ -275,7 +275,7 @@ var (
 	// eventDecorationEntityCaches.Image: ttl a day, notFoundTtl an hour, cacheNotFound on.
 	eventSpec = lookupSpec{cache: MissEventDecorations, reason: "event-decoration-miss", key: KeyImageEvents, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
 	// eventDecorationEntityCaches.Model: the same createCachedObject options as the Image one.
-	modelEventSpec = lookupSpec{cache: MissModelDecorations, reason: "model-decoration-miss", key: KeyModelEvents, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: ttlDay}
+	modelEventSpec = lookupSpec{cache: MissModelDecorations, reason: "model-decoration-miss", key: KeyModelEvents, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
 	// tagIdsForImagesCache: see tagIDsEX; cacheNotFound (default) on.
 	tagIDsSpec = lookupSpec{cache: MissTagIDs, reason: "tag-ids-miss", key: KeyTagIDs, idKey: "imageId", ttl: tagIDsEX, notFoundTTL: tagIDsEX}
 )
