@@ -32,6 +32,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType, MediaType } from '~/shared/utils/prisma/enums';
+import { readSongGenre, SONG_GENRE_REQUIRED_PUBLISH_REASON } from '~/shared/constants/song-genres';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -114,8 +115,17 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     (image) => hasImageLicenseViolation(image).violation
   );
 
+  const songsMissingGenre = addedImages.some(
+    (image) => image.type === MediaType.audio && !readSongGenre(image.metadata)
+  );
+
   const canPublish =
-    hasImages && !isReordering && isAiVerified && !hasNsfwLicenseViolations && features.canWrite;
+    hasImages &&
+    !isReordering &&
+    isAiVerified &&
+    !hasNsfwLicenseViolations &&
+    !songsMissingGenre &&
+    features.canWrite;
 
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
   // Post was previously public, then unpublished via the parent
@@ -435,7 +445,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         <Tooltip
           disabled={canPublish}
           label={
-            !isAiVerified
+            songsMissingGenre
+              ? SONG_GENRE_REQUIRED_PUBLISH_REASON
+              : !isAiVerified
               ? 'We could not verify some of your NSFW images were AI generated. Please add proper metadata before publishing this post.'
               : hasNsfwLicenseViolations
               ? getLicenseViolationDetails(addedImages)

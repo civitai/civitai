@@ -5,6 +5,7 @@ import { useRef, useState } from 'react';
 import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { POST_TITLE_MAX_LENGTH } from '~/server/common/constants';
 import { audioMetadataSchema } from '~/server/schema/media.schema';
+import { SongGenreTags } from '~/components/Post/EditV2/PostImageCards/SongGenreTags';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { formatPlaybackTime } from '~/utils/audio-player';
 import { useDebouncer } from '~/utils/debouncer';
@@ -49,6 +50,7 @@ export function SongDetails({ image }: { image: PostEditImageDetail }) {
           {detail && <span className={clsx('text-xs', songDimmed)}>{detail}</span>}
         </div>
       </div>
+      <SongGenreTags image={image} />
       {!!lyrics?.length && <SongLyrics lines={lyrics} />}
     </div>
   );
