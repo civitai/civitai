@@ -12,8 +12,8 @@ import {
  * RATCHET: the set of production files under `src/` that name `sysRedis` or `REDIS_SYS_KEYS`.
  *
  * sysRedis is the small durable store: state that cannot be rebuilt (sessions, ledgers, locks a
- * restart must not drop). Cache-shaped data belongs on the cluster client with `REDIS_KEYS`. This freezes the set of files that reach for sysRedis: a new
- * file fails, and a file that stops using it must leave the baseline in the same commit.
+ * restart must not drop). Cache-shaped data belongs on the cluster client with `REDIS_KEYS`.
+ * This freezes the set of files that name it.
  *
  * Counted per FILE (any identifier named `sysRedis` or `REDIS_SYS_KEYS`, imports included), not
  * per reference, so adding a call inside a file already on the list does not trip it.

@@ -3,8 +3,7 @@ import path from 'path';
 import ts from 'typescript';
 
 /**
- * Shared machinery for the per-file COUNT ratchets (`no-new-sys-redis-consumer`,
- * `no-ttl-sys-redis-write`, `no-raw-abort-timeout`, `no-unmarked-primary-read`).
+ * Shared machinery for the source ratchets in this directory.
  *
  * A ratchet grandfathers the sites that exist today in a committed baseline and fails in BOTH
  * directions:
