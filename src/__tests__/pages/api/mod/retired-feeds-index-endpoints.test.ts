@@ -2,10 +2,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as RetiredIndexes from '~/server/search-index/retired-indexes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The mod and admin endpoints that read or write the feeds index (`metrics_images_v1`). Retired, the
-// index is a frozen snapshot on a server that may already be shut down: an endpoint that selects
-// from it acts on stale moderation state, and one that writes to it first can throw before its
-// database write.
+// The mod endpoint that used to select from the feeds index (`metrics_images_v1`). Retired, the
+// index is gone with its Meilisearch instance, so the endpoint must work from Postgres alone. The
+// endpoints whose whole job was reading or backfilling that index were deleted with it.
 
 const m = vi.hoisted(() => ({
   retired: { metrics: true },
@@ -13,7 +12,6 @@ const m = vi.hoisted(() => ({
   queueImageSearchIndexUpdate: vi.fn(),
   trackModActivity: vi.fn(),
   updateDocs: vi.fn(),
-  metricsIndex: vi.fn(),
   imagesSearch: vi.fn(),
   dataProcessor: vi.fn(),
 }));
@@ -42,14 +40,11 @@ vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlags: () 
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-helpers', () => ({ dataProcessor: m.dataProcessor }));
 vi.mock('~/server/meilisearch/client', () => ({
-  metricsSearchClient: { index: m.metricsIndex },
   searchClient: { index: () => ({ search: m.imagesSearch }) },
   updateDocs: m.updateDocs,
 }));
 
 import unblockImages from '~/pages/api/mod/unblock-images';
-import imageMetricsUpdate from '~/pages/api/mod/search/image-metrics-update';
-import backfillStuckPublishedImages from '~/pages/api/admin/temp/backfill-stuck-published-images';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // `~/server/db/client` and `~/server/logging/client` are the global canonical mocks (setup.ts).
@@ -110,23 +105,5 @@ describe('/api/mod/unblock-images', () => {
       expect.objectContaining({ ids: [11] })
     );
     expect(body).toMatchObject({ updated: 1 });
-  });
-});
-
-describe('/api/mod/search/image-metrics-update', () => {
-  it('refuses with 410 while the feeds index is retired', async () => {
-    const { status } = await call(imageMetricsUpdate, { update: 'addFields' });
-    expect(status).toBe(410);
-    expect(m.dataProcessor).not.toHaveBeenCalled();
-    expect(m.updateDocs).not.toHaveBeenCalled();
-  });
-});
-
-describe('/api/admin/temp/backfill-stuck-published-images', () => {
-  it('refuses with 410 while the feeds index is retired, without opening the index', async () => {
-    const { status } = await call(backfillStuckPublishedImages);
-    expect(status).toBe(410);
-    expect(m.metricsIndex).not.toHaveBeenCalled();
-    expect(m.dataProcessor).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 
 // Which image reads the shared query cache keeps, and that a signed-in collection read is keyed per
 // viewer. Mock recipe follows collection-review-image-read.test.ts.
@@ -12,10 +11,6 @@ const { cached } = vi.hoisted(() => ({
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
   return { ...actual, registerCounter: () => ({ inc: vi.fn() }) };
-});
-vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof MeilisearchClient>();
-  return { ...actual, metricsSearchClient: {}, getMetricsSearchClient: () => ({}) };
 });
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {

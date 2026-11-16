@@ -37,7 +37,7 @@ describe('isClientAbortError', () => {
   // ---- must NOT over-classify (these stay 5xx/408, never 499) ----
 
   it('DRIFT GUARD: does NOT classify our local Meili-deadline abort as a client abort', () => {
-    // The local fetchDocumentsAbortable timer aborts with FETCH_DOCUMENTS_TIMEOUT_MESSAGE;
+    // A local Meili fetch deadline aborts with FETCH_DOCUMENTS_TIMEOUT_MESSAGE;
     // if it surfaces as an AbortError-with-cause, the exclusion must still hold. This
     // case fails if the duplicated literal in errorHandling.ts ever drifts from the
     // exported constant — the whole reason the literal exists (circular-import avoidance).

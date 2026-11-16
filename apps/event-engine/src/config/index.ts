@@ -139,8 +139,6 @@ export const config = {
     nodeEnv: process.env.NODE_ENV ?? 'development',
     logLevel: process.env.LOG_LEVEL ?? 'info',
     batchInsertIntervalMs: parseInt(process.env.BATCH_INSERT_INTERVAL ?? '30') * 1000,
-    indexUpdateIntervalMs: parseInt(process.env.INDEX_UPDATE_INTERVAL ?? '300') * 1000,
-    indexUpdateEnabled: process.env.INDEX_UPDATE_ENABLED !== 'false',
     workerPoolSize: parseInt(process.env.WORKER_POOL_SIZE ?? '10'),
     healthCheckPort: parseInt(process.env.HEALTH_CHECK_PORT ?? '3000'),
     // Outbox reconciliation poller. Drains rows a live CDC event never

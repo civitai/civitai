@@ -19,9 +19,8 @@ for (const p of [resolve(__dirname, '.env'), resolve(projectRoot, '.env')]) {
   } catch {}
 }
 
-const useFeed = process.argv.includes('--feed');
-const host = useFeed ? process.env.METRICS_SEARCH_HOST : process.env.SEARCH_HOST;
-const apiKey = useFeed ? process.env.METRICS_SEARCH_API_KEY : process.env.SEARCH_API_KEY;
+const host = process.env.SEARCH_HOST;
+const apiKey = process.env.SEARCH_API_KEY;
 
 async function req(path) {
   const res = await fetch(`${host}${path}`, { headers: { 'Authorization': `Bearer ${apiKey}` } });
