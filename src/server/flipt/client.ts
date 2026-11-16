@@ -3,6 +3,8 @@ import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
 export enum FLIPT_FEATURE_FLAGS {
+  // TEMPORARY negative control for no-dual-registered-feature-flag. Reverted in the next commit.
+  RATCHET_NEGATIVE_CONTROL = 'api-key-buzz-limit',
   // Mirrors the `knightsApp` fliptKey (KNIGHTS_APP_FLIPT_FLAG) and the Knights app's own access flag.
   // Read here with no user for the server-side cutover from the old in-app game.
   KNIGHTS_APP = 'knights-of-new-order-app',
