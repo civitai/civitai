@@ -110,6 +110,8 @@ export type CasesTables = {
     target_key: number;
     notice_id: string;
     recipient_role: string;
+    /** Personal data: where the message goes, as resolved when the row was made. */
+    recipient_address: string;
     address_hash: string;
     status: Generated<CaseNoticeStatus>;
     message_id: string | null;
@@ -218,6 +220,7 @@ export const CASES_COLUMNS = {
     'target_key',
     'notice_id',
     'recipient_role',
+    'recipient_address',
     'address_hash',
     'status',
     'message_id',

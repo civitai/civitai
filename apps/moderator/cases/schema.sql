@@ -13,7 +13,7 @@
 -- data and nothing on the four that hold it (case_record, case_party, case_notice, case_event). Created
 -- after this file? Re-run the whole file.
 --
--- Read back after applying (one row). Expected: 7 | 7 | 2 | t | 83
+-- Read back after applying (one row). Expected: 7 | 7 | 2 | t | 84
 --   SELECT count(*) FILTER (WHERE c.relkind = 'r') AS tables,
 --          count(*) FILTER (WHERE c.relkind = 'r' AND pg_get_userbyid(c.relowner) = 'internal_tools') AS owned,
 --          (SELECT count(*) FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
@@ -156,6 +156,9 @@ CREATE TABLE IF NOT EXISTS case_notice (
   target_key       integer     NOT NULL,
   notice_id        text        NOT NULL,
   recipient_role   text        NOT NULL,
+  -- The address it goes to, as resolved when the row was made, so the record shows where it went.
+  -- Personal data: this table is one of the four the read-only role cannot read.
+  recipient_address text       NOT NULL,
   address_hash     text        NOT NULL,
   status           text        NOT NULL DEFAULT 'pending',
   message_id       text,

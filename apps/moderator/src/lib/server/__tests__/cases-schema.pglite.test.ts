@@ -40,9 +40,9 @@ async function seedCase(publicRef = 'TD-26-AAAAAA') {
 
 const insertNotice = (caseId: string, targetKey = 0) =>
   db.query(
-    `INSERT INTO case_notice (case_id, target_key, notice_id, recipient_role, address_hash,
-       subject_snapshot, body_snapshot)
-     VALUES ($1, $2, 'T4', 'uploader', 'h', 's', 'b')`,
+    `INSERT INTO case_notice (case_id, target_key, notice_id, recipient_role, recipient_address,
+       address_hash, subject_snapshot, body_snapshot)
+     VALUES ($1, $2, 'T4', 'uploader', 'a@example.test', 'h', 's', 'b')`,
     [caseId, targetKey]
   );
 
@@ -176,6 +176,6 @@ describe('cases/schema.sql', () => {
     expect(await readBack()).toEqual([0, 0, 0, false, 0]);
     await db.exec(DDL);
     // PGlite connects as postgres, so the owner column reads 0 here and 7 under internal_tools.
-    expect(await readBack()).toEqual([7, 0, 2, true, 83]);
+    expect(await readBack()).toEqual([7, 0, 2, true, 84]);
   });
 });
