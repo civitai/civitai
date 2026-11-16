@@ -34,6 +34,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
+  // eslint-disable-next-line local-rules/no-hand-enumerated-trpc-mock -- same literal as PageBlockHostNavigate / InitContractV2: the inert proxy fails every test here (PageBlockHost reads hook shapes at render)
   trpc: {
     collection: {
       follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
