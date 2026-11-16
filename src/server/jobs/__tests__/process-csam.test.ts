@@ -439,6 +439,15 @@ describe('archive-csam-reports and the separate archiver', () => {
     }
   });
 
+  it('ON: also skips a report whose queue row is failing or overdue: the archiver owns it while its row exists', async () => {
+    sw.archiveQueueStates.mockImplementation(
+      async (_db: unknown, ids: number[]) =>
+        new Map(ids.map((id) => [id, id === 8801 ? 'failing' : 'overdue']))
+    );
+    await archiveJob!.run({}).result;
+    expect(archived()).toEqual([8803]);
+  });
+
   it('OFF: archives only the report with no user', async () => {
     sw.flag = false;
     await archiveJob!.run({}).result;
