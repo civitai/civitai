@@ -599,9 +599,8 @@ export function runFromPrice(prices: Record<string, number>, run: Run): number |
 }
 
 /** Sum the "from" floor across a selection's runs; null if any run is unpriced (callers show "—").
- *  The pre-Review estimate on Select AND Data: the "from" quote is a whatif with no `steps`, so the
- *  orchestrator already priced each card at its own default budget — which is exactly what the
- *  Review step seeds (`defaultStepsForRun`). COARSE: Review replaces this with real per-config
+ *  The pre-Review estimate on Select AND Data: the "from" quote is a whatif at the steps the Review
+ *  step seeds (`versionStepDefault`, as `defaultStepsForRun`). COARSE: Review replaces this with real per-config
  *  whatif quotes (`quoteRun`); sample images are not billed separately (the quote covers them);
  *  no custom-model surcharge (whatif-verified). */
 export function selectionFromTotal(prices: Record<string, number>, runs: Run[]): number | null {
