@@ -7,6 +7,12 @@ const mocks = vi.hoisted(() => ({
   createNotification: vi.fn(async () => undefined),
   refreshCosmetics: vi.fn<(ids: number[]) => Promise<void>>(async () => undefined),
   purgeCache: vi.fn<(input: { tags?: string[] }) => Promise<void>>(async () => undefined),
+  // Off for every non-moderator: moderators are in the Creator Journey audience without asking.
+  isFlipt: vi.fn(async () => false),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: mocks.isFlipt,
 }));
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -25,6 +31,7 @@ vi.mock('~/server/cloudflare/client', async (importOriginal) => ({
 }));
 
 import type * as Cloudflare from '~/server/cloudflare/client';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as Caches from '~/server/redis/caches';
 import type * as NotificationService from '~/server/services/notification.service';
 import { applyUserScoreUpdates, persistScoreBatch } from '~/server/jobs/update-user-score';
@@ -75,6 +82,7 @@ const BANNED = 12;
 const SYSTEM = -1;
 const LATE = 13;
 const NO_PRIOR_TOTAL = 14;
+const OUTSIDE_AUDIENCE = 15;
 
 async function addUser(id: number, total: number | null, flag: 'deleted' | 'banned' | null = null) {
   await q(`INSERT INTO "User" (id, meta, "deletedAt", "bannedAt") VALUES ($1, $2, $3, $4)`, [
@@ -631,12 +639,30 @@ describe('nightly grant before a definition launches', () => {
     };
     await persistScoreBatch(ctx, [[String(ELIGIBLE), { models: 600 }]], { now: BEFORE_LAUNCH });
 
+    expect(ctx.tierGrantErrors).toEqual([]);
     expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'score:spark', seen: true }]);
     const [row] = await q<{ achievedAt: Date; seenAt: Date | null }>(
       `SELECT "achievedAt", "seenAt" FROM "UserCreatorMilestone" WHERE "userId" = $1`,
       [ELIGIBLE]
     );
     expect(achievedAtIsObserved(row)).toBe(true);
+    expect(notifiedKeys()).toEqual([]);
+  });
+
+  it('leaves a crossing unseen and unannounced for a user outside the audience', async () => {
+    await addUser(OUTSIDE_AUDIENCE, 400);
+    const ctx = {
+      pg,
+      jobContext: { on: vi.fn(), checkIfCanceled: vi.fn() } as never,
+      tierUnlocks: [],
+      tierGrantErrors: [] as unknown[],
+    };
+    await persistScoreBatch(ctx, [[String(OUTSIDE_AUDIENCE), { models: 600 }]], {
+      now: BEFORE_LAUNCH,
+      grantsRequireFlag: false,
+    });
+    expect(ctx.tierGrantErrors).toEqual([]);
+    expect(await held(OUTSIDE_AUDIENCE)).toEqual([{ milestoneKey: 'score:spark', seen: false }]);
     expect(notifiedKeys()).toEqual([]);
   });
 
