@@ -188,3 +188,14 @@ median duration of the window's completed push runs:
 | Lint | 1,549 | 1,185 (76%) | 364 → 873 | 241h → 248h |
 | App suites | 1,502 | 999 (67%) | 503 → 978 | 191h → 205h |
 | Moderator boot | 1,106 | 365 (33%) | 741 → 1,013 | 51h → 47h |
+
+**App suites on push to `main`: queued, then filtered** (`paths:` on `push:` in apps.yml). After
+the switch to queueing (2026-11-14 04:03 UTC) the push job's cost doubled, and not because the job
+got slower. The App suites push runs, 2026-11-07..11-14 04:03 (785 runs) against 11-14 04:03..11-16
+02:48 (215 runs), job times from every 4th run: finished runs went from 36 to 73 a day (the rest
+cancelled; after the switch, only pending runs that cost nothing), and the median FINISHED job took
+12.1 then 12.5 minutes. The p50 over all jobs moved 7.1 → 12.5 minutes only because the earlier
+sample held cancelled jobs (median 3.2 minutes). Push now shares the PR filter. Of the pushes to
+`main` in those two windows, 41% and 52% matched it. Replaying each window's push times through
+the same queue at 12.5 minutes a run: ~71 → ~40 runs a day (~888 → ~497 job-minutes) and ~76 → ~46
+(~943 → ~578).
