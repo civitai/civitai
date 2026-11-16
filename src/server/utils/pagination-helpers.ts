@@ -24,16 +24,9 @@ const NUMERIC_CURSOR_TOKEN = /^-?\d+$/;
 const CURSOR_TIMESTAMP_FRACTION = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\.(\d+)/;
 
 /**
- * Rewrites a cursor timestamp's fractional seconds to exactly three digits (milliseconds).
- *
- * Postgres drops trailing zeros when it renders a timestamp, so `CONCAT(timestamp, '|', id)`
- * emits 250 ms as `10:00:00.25` and 200 ms as `10:00:00.2`. dayjs reads the digits after the
- * point as a whole number of milliseconds when the token has no zone suffix, so `.25` became
- * 25 ms and `.2` became 2 ms, and the next page started from the wrong place: rows skipped on a
- * descending sort, repeated on an ascending one.
- *
- * Right-padding with zeros reads the digits as a fraction of a second. Digits past the third are
- * dropped (`.123456` is 123 ms), which is what dayjs did already; a JS Date holds no finer value.
+ * Pads the fraction to 3 digits. Postgres drops trailing zeros (`.25` for 250 ms) and dayjs reads
+ * a zoneless short fraction as whole milliseconds (25 ms). Digits past the third are truncated; a
+ * Date holds no finer value.
  */
 function normalizeCursorTimestamp(value: string) {
   return value.replace(
@@ -225,10 +218,9 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     // and `'--5'` as valid dates and still binds a Date to an `int` column. A
     // structural fix requires the date branch to demand a date SHAPE and route
     // everything else numeric; that needs the formats a real
-    // `CONCAT(timestamp, '|', id)` actually emits. One property of that format is
-    // now pinned against a real Postgres (the fraction loses its trailing zeros,
-    // see `normalizeCursorTimestamp` and `get-models-raw.cursor-fraction.pglite.test.ts`),
-    // but the full shape is not — guessing it would turn a 500 into broken pagination.
+    // `CONCAT(timestamp, '|', id)` actually emits (the fraction loses trailing zeros;
+    // see `normalizeCursorTimestamp`), which has not been fully observed against a
+    // database — guessing the rest would turn a 500 into broken pagination.
     if (value.includes('-') && !NUMERIC_CURSOR_TOKEN.test(value)) {
       const parsed = dayjs.utc(normalizeCursorTimestamp(value));
       if (!parsed.isValid())
