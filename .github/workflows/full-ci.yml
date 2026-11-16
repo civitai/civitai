@@ -28,7 +28,8 @@ name: Full CI on label
 # ── WHAT THE DISPATCHED RUNS TEST ─────────────────────────────────────────────────────────────
 #
 # A dispatch runs on the BRANCH HEAD, not on the PR's merge commit with its base, so this first
-# full run tests the branch as pushed.
+# full run tests the branch as pushed, except the suites it skips because the PR run on that
+# commit passed them (see below): their verdict is the PR run's, on the merge commit.
 #
 # 🔴 ITS RESULTS ARE NOT IN THE PR'S CHECKS LIST. Measured: the dispatched runs' check-runs sit on
 # the head commit (the commit's check-runs API, the Actions tab), but `gh pr checks` and the PR's
@@ -61,6 +62,10 @@ name: Full CI on label
 # after ~90 s, a docs-only PR the Lint `paths:` filter skips) it dispatches as before.
 # On a skip, apps.yml and moderator-boot.yml are not dispatched either: their PR runs follow
 # their `paths:` filters, exactly as on every later push with the label on.
+#
+# When it does dispatch Lint on a PR that is not a draft, the PR run on that commit has run (or
+# is running) `Typecheck test files`, `Package unit tests` and the component shards. So the dispatch passes `skip_passed` and skips
+# the suites that run passed (lint.yml, the `passed` job); the unit shards always run.
 
 on:
   pull_request:
@@ -131,7 +136,11 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
+          # skip_passed: the dispatch skips the suites the PR run on this commit already passed
+          # (lint.yml, the `passed` job). A branch cut before that input existed answers 422
+          # (unexpected input), so dispatch it without.
+          gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \
+            || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
           gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
           # moderator-boot.yml arrived in #7673: a branch cut before it has no such workflow, and the
           # dispatch answers 422. That must not fail the job after lint and apps were dispatched.
