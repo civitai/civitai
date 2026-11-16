@@ -167,7 +167,7 @@ export async function syncSubListingRatingFromDoc(args: {
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
       appBlockId: args.appBlockId,
-    }).catch(() => null);
+    });
   }
 }
 
