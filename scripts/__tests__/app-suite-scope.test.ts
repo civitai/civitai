@@ -227,3 +227,5 @@ describe('app-suite-scope on this repository', () => {
     ).toBe(true);
   });
 });
+
+// probe: test-only diff, do not merge
