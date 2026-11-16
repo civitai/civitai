@@ -91,7 +91,7 @@ describe('POST /api/v1/blocks/workflow-media — a refusal names its app', () =>
     );
   }
 
-  // RED before this change: the route answered 429 and moved no series that names the app.
+  // Pins: the route's own catalog limiter records its refusal under the token's app.
   it('a catalog refusal is one {app, rest, catalog} increment, and a 429', async () => {
     checkBlockCatalogRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 3 });
     const before = await refusals('apb_media_fixture');

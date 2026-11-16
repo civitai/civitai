@@ -303,7 +303,7 @@ describe('persistGenerationSource refusals are counted per app', () => {
     );
   }
 
-  // RED before: withInFlightLimit threw TOO_MANY_REQUESTS and nothing was counted.
+  // Pins: a full pool is recorded through withInFlightLimit's onFull, before the hourly bucket.
   it('a FULL in-flight pool is one {apb_alpha, bridge, in-flight}, and spends no bucket', async () => {
     pool.full = true;
     const before = await refusals('in-flight');

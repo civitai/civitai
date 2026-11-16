@@ -278,8 +278,8 @@ describe('the buzz reads on the middleware', () => {
     ]);
   });
 
-  // Red before the middleware recorded: these three charged `catalog` through buzzReadOptions and
-  // shed a refusal with no signal at all.
+  // Pins: the middleware records the refusal for every procedure on buzzReadOptions, not only
+  // the one that passes its own check.
   it.each(READS.filter(([proc]) => proc !== 'getMyBuzzBalance'))(
     '%s counts a refusal as itself on the catalog bucket',
     async (proc, extra) => {
@@ -321,7 +321,6 @@ describe('blocks.getMyViewer on the middleware', () => {
     await expect(
       blocksRouter.createCaller(ctx() as never).getMyViewer({ blockToken: await mint() })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    // Counted since every bridge limiter records (it was the one catalog read that did not).
     expect(h.recordRefusal.mock.calls.map((c) => c.slice(0, 2))).toEqual([
       ['getMyViewer', 'catalog'],
     ]);

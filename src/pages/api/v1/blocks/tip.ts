@@ -176,11 +176,7 @@ export const baseHandler = withAxiom(async function handler(
       // TRANSIENT: a rate-limited attempt moved no money — a retry once the window
       // clears must be allowed to execute, so this is NOT cached under the idem key.
       res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-      return {
-        status: 429,
-        body: { error: 'Too many tips — please retry shortly.' },
-        transient: true,
-      };
+      return { status: 429, body: { error: 'Too many tips — please retry shortly.' }, transient: true };
     }
 
     const subjectUser = await hydrateBlockSubject(subjectId);
@@ -214,11 +210,7 @@ export const baseHandler = withAxiom(async function handler(
     } catch {
       // TRANSIENT: the limiter is unavailable — a retry once redis recovers must be
       // allowed to execute, so this 503 is NOT cached under the idem key.
-      return {
-        status: 503,
-        body: { error: 'Tip limiter unavailable; please retry' },
-        transient: true,
-      };
+      return { status: 503, body: { error: 'Tip limiter unavailable; please retry' }, transient: true };
     }
 
     // Build a minimal ProtectedContext for the controller (it reads ctx.user +

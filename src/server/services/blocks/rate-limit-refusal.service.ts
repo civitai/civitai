@@ -4,7 +4,7 @@
 // can be answered without the app's author reporting it.
 //
 // The set of call sites is pinned by
-// `src/server/services/__tests__/app-block-rate-limit-refusal.ledger.test.ts`: a limiter call in
+// `src/server/services/__tests__/no-unrecorded-block-rate-limit-refusal.test.ts`: a limiter call in
 // App Blocks server code whose refusal does not reach this module fails that test.
 //
 // LOG VOLUME. A block in a hot loop can be refused hundreds of times a second, so the log line is
@@ -14,6 +14,7 @@
 // `LOG_THROTTLE_MAX_KEYS` keys the map is cleared (the cost is one extra line per key, never an
 // unbounded map).
 import { logToAxiom } from '~/server/logging/client';
+import { subjectUserIdOrNull } from '~/server/services/block-token-subject';
 import {
   blockClaimsAppLabel,
   incAppBlockRateLimitRefusal,
@@ -76,7 +77,8 @@ export function recordAppBlockRateLimitRefusal(refusal: AppBlockRateLimitRefusal
     }`;
     const slot = takeLogSlot(key, Date.now());
     if (!slot.log) return;
-    const pending = logToAxiom(
+    // `logToAxiom` never rejects (`no-logtoaxiom-catch`), so it is neither awaited nor caught.
+    logToAxiom(
       {
         name: 'app-blocks-rate-limit-refusal',
         type: 'info',
@@ -91,8 +93,7 @@ export function recordAppBlockRateLimitRefusal(refusal: AppBlockRateLimitRefusal
         suppressed: slot.suppressed,
       },
       'app-blocks'
-    ) as unknown;
-    if (pending instanceof Promise) pending.catch(() => undefined);
+    );
   } catch {
     /* instrument-only */
   }
@@ -101,16 +102,9 @@ export function recordAppBlockRateLimitRefusal(refusal: AppBlockRateLimitRefusal
 /** The claims every bridge and REST limiter site holds. */
 type RefusalClaims = { dev?: boolean; appBlockId: string; sub: string };
 
-/**
- * The viewer id of a VERIFIED `sub` claim (`user:<n>`), for the log line only; null for `anon`
- * or anything else. Local rather than `parseSubjectUserId` so this module does not pull the REST
- * middleware into every limiter's import graph, and never throws.
- */
+/** The viewer id of a verified `sub` claim, for the log line only (`subjectUserIdOrNull`). */
 export function blockSubjectUserId(sub: string): number | null {
-  const m = /^user:([1-9][0-9]{0,15})$/.exec(sub);
-  if (!m) return null;
-  const n = Number(m[1]);
-  return Number.isSafeInteger(n) ? n : null;
+  return subjectUserIdOrNull(sub);
 }
 
 /**

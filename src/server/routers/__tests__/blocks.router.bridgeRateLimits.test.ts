@@ -703,9 +703,9 @@ describe('civitai_app_block_rate_limit_refusals_total — every bridge refusal n
     );
   }
 
-  // [procedure, the limiter that refuses, bucket, the call]. queryAppWorkflows and the catalog
-  // reads were SILENT before this counter (RED at base: no series moves); poll/cancel/estimate/
-  // submit/balance recorded on the procedure-only counter and now also name the app.
+  // [procedure, the limiter that refuses, bucket, the call]. Pins: one refusal per procedure,
+  // on its own bucket, under the token's app, whichever way the procedure answers (throw or a
+  // throttled snapshot).
   const CASES: Array<
     [string, { mockResolvedValue(v: unknown): unknown }, string, () => Promise<unknown>]
   > = [

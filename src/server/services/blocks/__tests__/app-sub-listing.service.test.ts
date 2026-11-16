@@ -1287,7 +1287,7 @@ describe('per-app refusal attribution (civitai_app_block_rate_limit_refusals_tot
     );
   }
 
-  // RED before this change: both refused 429 rate_limited and moved no per-app series.
+  // Pins: both store-item writes record their limiter refusal under the calling app.
   it('an upsert refusal is one {apb_1, sub_listings, sub-listing-write}', async () => {
     mockRateLimit.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 77 });
     const before = await refusals();
@@ -1306,7 +1306,7 @@ describe('per-app refusal attribution (civitai_app_block_rate_limit_refusals_tot
     expect((await refusals()) - before).toBe(1);
   });
 
-  // RED before: a dev token's refusal was counted against the real app id.
+  // Pins: the same dev bucketing as every other surface.
   it('a DEV token refusal is counted as app_block_id="dev", not against the real app', async () => {
     async function count(app: string): Promise<number> {
       const { default: promClient } = await import('prom-client');
