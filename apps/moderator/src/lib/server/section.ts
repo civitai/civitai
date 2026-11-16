@@ -11,13 +11,13 @@ export async function section<T>(
   try {
     return { status: 'ok', ...(await read()) };
   } catch (e) {
-    console.error(`[tickets] ${scope} ${label} failed`, e);
+    console.error(`[${scope}] ${label} failed`, e);
     return { status: 'unavailable' };
   }
 }
 
 /** The first `limit` rows mapped; a read that asked for `limit + 1` tells a cut from a total. */
-export const capped = <T, R>(rows: T[], limit: number, map: (row: T) => R) => ({
+export const capped = <T, R>(rows: T[], limit: number, map: (row: T, index: number) => R) => ({
   rows: rows.slice(0, limit).map(map),
   truncated: rows.length > limit,
 });

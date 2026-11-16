@@ -5,7 +5,7 @@
   import { page } from '$app/state';
   import AppHeader from '$lib/AppHeader.svelte';
   import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
-  import { headerDaily, type Watch } from '$lib/chrome';
+  import { headerDaily, pendingVotes, type Watch } from '$lib/chrome';
   import type { PlayerStatus } from '$lib/server/player-status';
   import type { WhatsNew } from '$lib/whats-new';
   import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
@@ -26,7 +26,7 @@
     headerDaily(
       page.data.daily as (Streak & Watch) | null | undefined,
       data.headerStats?.daily ?? undefined,
-      inFlight.count
+      pendingVotes(inFlight, page.data.daily as object | null | undefined)
     )
   );
   // /play keeps its own live status for the header while it is open, so the layout's copy is as old as the visit. Leaving

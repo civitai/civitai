@@ -101,6 +101,8 @@ import {
 } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { buildImageMediaSchema } from '~/components/Image/DetailV2/image-media-schema';
 import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-gate';
@@ -154,16 +156,16 @@ const sharedIconProps: IconProps = {
   color: 'white',
 };
 
-export function ImageDetail2() {
+export function ImageDetail2({ deferredSsr }: { deferredSsr?: boolean } = {}) {
   const { images } = useImageDetailContext();
   return (
     <HatTurfDetailProvider images={images}>
-      <ImageDetail2Content />
+      <ImageDetail2Content deferredSsr={deferredSsr} />
     </HatTurfDetailProvider>
   );
 }
 
-function ImageDetail2Content() {
+function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const {
@@ -263,6 +265,7 @@ function ImageDetail2Content() {
     { id: image?.id as number },
     { enabled: !!image?.id }
   );
+  const deferredShell = useSsrDeferredShell(deferredSsr);
 
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
@@ -429,27 +432,43 @@ function ImageDetail2Content() {
 
   const mediaSchema = buildImageMediaSchema({ image, title, baseUrl: env.NEXT_PUBLIC_BASE_URL });
 
+  // One `<Gated>` (rating gate and `<head>`) for the full page and for the shell.
+  const gatedProps = {
+    contentNsfwLevel: imageDetailGateLevel(image, forcedBrowsingLevel),
+    bypassRating: isOwner || !!currentUser?.isModerator,
+    meta: {
+      title,
+      images: image,
+      ogEndpoint: `/api/og?type=image&id=${image.id}`,
+      canonical: `/images/${image.id}`,
+      schema: mediaSchema,
+      breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+        { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
+        { name: title },
+      ]),
+      // Deindexed on every domain, videos included. The only per-page text is the prompt, which
+      // stays out of search snippets, and indexed safe videos earned effectively no search
+      // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
+      // article pages that embed the media — don't re-enable this without new evidence.
+      deIndex: true,
+    },
+  };
+
+  // `ssrSignedInSkipPrefetchImages`: getServerSideProps prefetched the image, its contest details
+  // and the hidden preferences (so a deleted, hidden or blocked image is already NotFound above),
+  // so the server renders the gate and `<head>` with a loader in place of the content. The
+  // hydrating render matches it; the content then renders as it does after a client-side
+  // navigation, with the generation data loading in place.
+  if (deferredShell) {
+    return (
+      <Gated {...gatedProps}>
+        <PageLoader />
+      </Gated>
+    );
+  }
+
   return (
-    <Gated
-      contentNsfwLevel={imageDetailGateLevel(image, forcedBrowsingLevel)}
-      bypassRating={isOwner || !!currentUser?.isModerator}
-      meta={{
-        title,
-        images: image,
-        ogEndpoint: `/api/og?type=image&id=${image.id}`,
-        canonical: `/images/${image.id}`,
-        schema: mediaSchema,
-        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
-          { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
-          { name: title },
-        ]),
-        // Deindexed on every domain, videos included. The only per-page text is the prompt, which
-        // stays out of search snippets, and indexed safe videos earned effectively no search
-        // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
-        // article pages that embed the media — don't re-enable this without new evidence.
-        deIndex: true,
-      }}
-    >
+    <Gated {...gatedProps}>
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <HatTurfDetailReset imageId={image.id} />
       <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>

@@ -16,10 +16,11 @@ This document covers what the service does, what it reuses, how it identifies th
 reaches it, how parity is proven before it serves anyone, and how the CPU comparison is made. The
 last sections list what is **not** at parity and what a deployment needs.
 
-Three more ports run in **shadow only** (nothing routes public traffic to them): the public REST
-endpoint `GET /api/v1/images` (§13), and the tRPC procedures `image.getInfinite`, the flat image feed
-(§14), and `model.getAll`, the model browse feed (§15). They share the hydration readers, the caches
-(and, except `model.getAll`, the feed-service client), the shadow queue and the metric families, told
+Five more ports run in **shadow only** (nothing routes public traffic to them): the public REST
+endpoint `GET /api/v1/images` (§13), the tRPC procedures `image.getInfinite`, the flat image feed
+(§14), and `model.getAll`, the model browse feed (§15), and the REST model endpoints
+`GET /api/v1/models` and `GET /api/v1/models/[id]` (§16). They share the hydration readers, the caches
+(and the images ports the feed-service client), the shadow queue and the metric families, told
 apart by a `feed_endpoint` label (not `endpoint`: that is a reserved scrape target label, which would
 overwrite ours).
 
@@ -395,6 +396,36 @@ it is never less correct than not routing it — only its share of fallbacks cha
   the `deadline` fallback — proxied when serving, compare result `deadline` in shadow (its own result,
   so the share the budget excludes from the match rate stays visible). A client that leaves
   mid-compute is the `canceled` fallback, not a deadline, and is not proxied (nobody would read it).
+- **Concurrency cap (bulkhead).** At most `FEED_GO_MAX_IN_FLIGHT` public requests compute at once
+  per pod. It mirrors the Node app's `heavy-image` bulkhead (`acquireBulkheadSlot`,
+  `src/server/utils/request-bulkhead.ts`): one per-pod counter shared by `image.getInfinite` and
+  `image.getImagesAsPostsInfinite` (`heavyProcedure`), `GET /api/v1/images`, `/api/v1/blocks/images`
+  and `/api/v1/posts/[id]`, capped at `HEAVY_REQUEST_CONCURRENCY` (default 20); a non-blocking
+  acquire, no queue, the excess fast-failed (429 on tRPC, 503 with `Retry-After: 2` on REST) and
+  counted. The acquire here is the same: non-blocking, no queue. Two things differ:
+  - **The default.** Node's 20 is sized for one JS thread, where in-flight requests interleave on a
+    single core; that does not carry over to Go. What bounds a Go compute is the replica pool, so
+    unset (or zero, negative, junk) the cap is the pool's connection ceiling (`FEED_GO_DB_MAX_CONNS`,
+    a `pool_max_conns` in the URL, or `dbpool.DefaultMaxConns` = 8; `server.ResolveMaxInFlight`).
+    Every admitted compute can then hold a connection, so a full pod sheds at once rather than
+    admitting computes that wait in the pool until the budget makes them `deadline` fallbacks. The
+    pool is shared with shadow samples and probes, so under shadow load the cap is an upper bound,
+    not a guarantee of a free connection. An explicit value wins; one above the ceiling is logged as
+    a warning at startup (not refused). The startup log carries both values. There is no unlimited
+    setting.
+  - **The answer past it.** Rather than refuse, this service does not compute and proxies the request
+    to the Node app — fallback reason `bulkhead` in `feed_go_fallback_total` — so routing to Go is
+    never worse than not routing (the Node pod then applies its own bulkhead).
+
+  The slot covers the computation only, not a fallback proxied after it, and is released by a defer
+  when the computation returns, however it ends (answer, fallback, error, panic). A deadline or a
+  client leaving releases it only as soon as the computation honours its context: one stuck in a call
+  that ignores the context keeps its slot until it returns, visible as `feed_go_serve_in_flight`
+  staying high. `feed_go_serve_in_flight` is the slots held now. Only the public route takes a slot;
+  the origin hand-off computes nothing and takes none, and shadow samples and probes keep their own
+  bounds (`FEED_GO_SHADOW_WORKERS`, the probe queue). **Any endpoint served here in future must take
+  its slot from this same counter**, as Node's routes share one key, so a pod's cap covers all of
+  them together.
 - **Panics.** A panic in a computation, its errgroup workers included (`internal/safe`), is the
   `panic` fallback and `feed_go_panics_total{where="serve"}`; one anywhere in a shadow sample
   (compute or compare) is `feed_go_panics_total{where="shadow"}`, logged with its stack, and the
@@ -460,8 +491,8 @@ path as serving, and compares decoded values:
   opaque JSON (`metadata`, cosmetic `data`) so label cardinality is bounded by the schema:
   `feed_go_shadow_field_diffs_total{feed_endpoint="as-posts",category="items.*.images.*.stats.likeCountAllTime",kind="value"}`;
 - every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
-  `infinite` for §14, `model-getall` for §15): four values, so the label at most quadruples a family's
-  cardinality;
+  `infinite` for §14, `model-getall` for §15, `v1-models` / `v1-models-id` for §16): six values, so the
+  label at most multiplies a family's cardinality by six;
 - differing paths (never values) are logged for a sample, so a category can be traced to a field.
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
@@ -940,7 +971,10 @@ Honest estimate, in order:
    2026-11-15, §3.1). Left: tag ids and the metric-hash ClickHouse populate.
 4. **Flags** — a Flipt evaluation client so the env mirrors go away (a few days).
 5. **Serving** — the client transport flag PR, a small cohort, then ramp while watching error rate,
-   latency and the Node-side CPU drop. A week of ramp.
+   latency and the Node-side CPU drop. A week of ramp. The per-pod concurrency cap is in place
+   (§6.1, `FEED_GO_MAX_IN_FLIGHT`, by default the replica pool's ceiling); during the ramp, read its
+   `bulkhead` fallback rate against `feed_go_serve_in_flight`, and raise `FEED_GO_DB_MAX_CONNS` (the
+   cap follows it) rather than the cap alone.
 
 So roughly three to five weeks of focused work from merge to serving a meaningful share — most of it
 in step 2, which only production traffic can size. The CPU-per-call answer itself arrives earlier:
@@ -1392,3 +1426,132 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,
   generated by `scripts/feed-go-basemodels.ts` from the Node functions and held to them by
   `scripts/__tests__/feed-go-basemodels.test.ts`: a constants change that is not regenerated fails CI.
+
+## 16. `GET /api/v1/models` and `GET /api/v1/models/[id]` (REST, shadow only)
+
+The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`) → `runModelSearch`
+(`src/server/services/model-search.service.ts`), and `src/pages/api/v1/models/[id].ts` (a
+`PublicEndpoint` behind `withBlockScope`) → `buildPublicModelResponse`. Both build on
+`getModelsWithVersions` over `getModelsRaw` (`src/server/services/model.service.ts`). Ported in
+`internal/v1models`; compared at `POST /internal/shadow/api/v1/models` and
+`POST /internal/shadow/api/v1/models/id`. Nothing serves them publicly.
+
+### 16.1 What the Node path does
+
+1. **Query.** The list parses `modelsEndpointSchema` off `req.query` (`limit` 0–100, default 100;
+   `page`; `cursor`; `query`; `types`; `sort`, default Highest Rated; `period`, default AllTime;
+   `periodMode`; `baseModels`; `username` through `postgresSlugify`; `nsfw`, `primaryFileOnly` and the
+   other `booleanString()`s; `ids`; …). A signed-out caller naming `favorites` or `hidden` is a 401;
+   `page * limit > 1000` without a cursor a 429; `query` with `page` a 400. `[id]` parses only the path
+   id (`z.coerce.number().int().gt(0).lte(INT4_MAX)`).
+2. **Viewer and level.** The list reads a session or an API key; `[id]` reads neither (a block JWT
+   only skips the origin cache). The level is `nsfw ? all : PG` on the list, all on `[id]`, PG/PG-13
+   in a restricted region on both. No domain cap.
+3. **Text search.** A `query` asks Meilisearch for the page's ids (`resolveModelSearchIds`).
+4. **The model statement.** `getModelsRaw` resolves the browsing-settings addons at the level
+   (`enforceBlockedBrowsingTagsForModels`; `[id]` keeps only `disablePoi`), then one statement on the
+   replica: `ModelMetric` × `Model` (or one of the three `ModelBaseModelMetric` forms when
+   `baseModels` is set and `base-model-feed-metrics` is on), the filters, the sort's ORDER BY and the
+   keyset cursor (`getCursorClauses`: a UNION ALL of the equality and the tuple branch for a
+   DESC-headed sort, else the OR-chain), `LIMIT take + 1`. The lookahead row's `cursorId` is
+   `nextCursor`.
+5. **Per model.** Creators (`userBasicCache`, profile pictures), the model data cache (versions,
+   their tags from `modelTagCache` → `tagCache`), live paid-access gates; the versions filtered
+   (Published, mature versions on a mature-restricted base model, Public only without `ids` or
+   `username`, the requested base models), the .com face at an SFW-only level, the addon tags.
+6. **Per version.** Paid access (the paid-access cache), showcase images (the images-for-version
+   cache, held to a minor/SFW-only model's gallery level, then the showcase filter: the addons' POI,
+   minor and tag exclusions), files (the files-for-version cache) plus a linked VAE's primary files
+   (replica), model and version metrics and version meta (replica), and the creator's metric
+   privacy (cache, then replica) gated on a valid Creator Program membership (cache).
+7. **Shaping.** The list (`runModelSearch`) and `[id]` (`buildPublicModelResponse`) differ: `[id]`
+   applies `removeEmpty` to each version and file metadata, pins each owned file's download URL with
+   `fileId`, drops image `id`s and uses `getBaseUrl()` for download URLs; the list keeps nulls and
+   empty arrays, uses the request origin, and passes every image through on `nsfw=true`. Both pick the
+   primary file by the default preferences (a version without one is dropped), name each file
+   (`resolveModelFileName`), build edge URLs, and leave Training Data files to
+   `trainingDataListing`.
+8. **Body.** `res.json`: the list `{ items, metadata: { nextCursor, nextPage, currentPage?, pageSize? } }`
+   (`nextPage` is the request's query with `cursor` set, on `https://<host>` in production — `page`
+   never advances); `[id]` the model object, from the origin response cache
+   (`packed:caches:public-model-response:v2:<id>:<level>`, 180 s) when fresh.
+
+### 16.2 What is ported, and what falls back
+
+| Area | Ported | Falls back (reason) |
+|---|---|---|
+| Query | every key above except those on the right; unknown keys ignored and kept for `nextPage` | `query` (`v1-models-query`: Meilisearch), every other schema key (`v1-models-<key>`: `tag`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
+| Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
+| Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
+| Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads); a tag-name miss with `FEED_GO_COMPUTE_MISSES` (tagCache's lookup, §16.7) | a model-data, model-tags, images, files or membership miss (`v1-models-*-miss`), a tag-name miss with `FEED_GO_COMPUTE_MISSES` off, a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
+| Shaping | both shapers, the file naming over ASCII model names | a Public Training Data file (`v1-models-training-data`), a name the scheme strips non-ASCII text from (`v1-models-filename`) |
+| Config | | no `NEXT_PUBLIC_IMAGE_LOCATION` or (`[id]`) `NEXTAUTH_URL` (`v1-models-unconfigured-urls`) |
+
+### 16.3 Flags and settings
+
+| Flag / setting | Node effect | Here |
+|---|---|---|
+| `generation-coverage-next` | which coverage column `supportsGeneration` reads | `FEED_GO_GENERATION_COVERAGE_NEXT`, the mirror model.getAll reads (§15.3; default on, its production value) |
+| `base-model-feed-metrics` | the base-model statement forms | `FEED_GO_BASE_MODEL_FEED_METRICS`, likewise shared with §15.3 (default on) |
+| `IS_DATAPACKET` | the `[id]` origin cache (180 s) | `FEED_GO_MODEL_RESPONSE_CACHE` (default on): read, never written |
+| `kysely-hot-reads-11`, `model-version-images-skip-tags` | the same rows by another route; an entry-level field no consumer reads | nothing to do |
+| `NEXTAUTH_URL`, `NEXT_PUBLIC_IMAGE_LOCATION` | download and edge URL prefixes | the same variables |
+
+### 16.4 The Node sampler (flag `feed-go-shadow-v1-models`, default OFF)
+
+One flag for both routes, sampled through the REST sampler of §13.4 (`beginFeedGoShadowV1Models`,
+`captureFeedGoShadowRest`), with its own per-second bucket per route and the shared rate and
+in-flight cap. A request with an API credential is counted (`skipped_credential`) and never sent.
+The list route does not sample a text `query` or a signed-in caller: feed-go answers every one of
+them with a fallback (`v1-models-query`, `v1-models-session`). Both routes finish every sampled
+request in a `finally`, so one that answers other than 200 is counted `skipped_status`.
+Outcomes are `civitai_app_feed_go_shadow_samples_total{feed_endpoint="v1-models"|"v1-models-id"}`.
+
+### 16.5 Comparison and measurement
+
+`shadow.CompareJSON` as in §13.5. The list classifies by `items[].id` (models); `[id]` has one model,
+so a difference is `fields`, and a not-found answer against Node's 200 is `membership`.
+
+The `[id]` origin cache: on a miss Node builds the body and awaits its write before answering, and
+the sample is posted only after the answer, so reading the cache here would mostly find the entry
+Node wrote for the sampled request and compare Node's answer with itself. An entry younger than
+`v1models.NodeBuiltWindow` (15 s) is therefore ignored and the body built: Node's side was a build
+(of this request, or of one at most 15 s earlier), so the comparison measures the port, and it is
+counted as a build (`served` / `match`). The window covers the longest sample timeout
+(`FEED_GO_SHADOW_TIMEOUT_MS`, at most 10 s) plus the compare queue. An older entry is one Node also
+served from the cache: it is read, compute outcome `served_cached` and result `match_cached`, kept
+apart from `served`/`match` like a trivial answer (§13.6) since it costs a cache read on both sides. Read
+the go/no-go per endpoint with §13.6's queries and `feed_endpoint="v1-models"` or `"v1-models-id"`.
+
+### 16.6 Parity evidence
+
+The golden fixtures (`testdata/golden/v1-models`, written by `gen-v1-models.mjs`) hold a request and
+the world it reads. `src/server/__tests__/feed-go-v1-models.golden.test.ts` runs the REAL route
+handlers over each world (only I/O mocked: the model statement, the caches' fetch, the small replica
+reads) and requires the fixture's `expect.body` to be the exact bytes `res.json` writes and
+`expect.sql` the statement it builds; `internal/v1models/golden_test.go` requires the same bytes and
+the same statement (text and bound values) from Go.
+
+### 16.7 Known divergences
+
+- `superjson.Plain` escapes U+2028/U+2029 where `JSON.stringify` writes them raw (same decoded
+  value; the comparator decodes);
+- a cursor timestamp's fraction is padded to three digits before it is read, as parseCursor's
+  `normalizeCursorTimestamp` does (`.25` is 250 ms); a date-like token outside that
+  `YYYY-MM-DD HH:mm:ss.f` shape keeps dayjs's own reading of the fraction as a millisecond count;
+- the caches are read, never refilled or revalidated, and the answer serves what Node's cache held
+  milliseconds earlier (`stats.*` and `nextCursor` noise on busy lists). A stale entry Node would
+  revalidate falls back. Per cache, a miss:
+  - tag names (`basic-tags`): with `FEED_GO_COMPUTE_MISSES` (§3.1) named by tagCache's own lookup on
+    the replica (`SELECT id, name FROM "Tag"`), nothing written back; off, it falls back;
+  - model data (`data-for-model-2`): falls back. Its lookup is lag-aware (it may read the primary
+    after a recent version change) and assembles versions, hashes and tags from several tables; no
+    Go port exists (model.getAll falls back on it too);
+  - model tags (`model-tags`): falls back. Its lookup reads `TagsOnModels` with no ORDER BY, so the
+    tag order Node writes is the replica's row order, which a second read cannot be held to;
+  - version images (`images-for-model-version-2`): falls back. Its lookup is lag-aware and filters
+    on columns filled asynchronously after upload (model.getAll falls back on it too);
+  - version files (`files-for-model-version-2`): falls back. Its lookup joins files, hashes and
+    metadata (`fetchModelFilesForCache`); no Go port exists;
+  - creator membership (`creator-membership-valid`): falls back. Its origin parses subscription
+    products with the app's tier key (as model.getAll's does).
