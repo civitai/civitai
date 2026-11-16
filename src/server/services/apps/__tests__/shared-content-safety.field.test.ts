@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BlockedContentHit } from '~/server/services/blocklist.service';
 
 /**
  * Which field the title/body belt (`assertSharedTextSafe`) refuses a write for: `title`, `body`,
@@ -36,7 +37,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // The pattern list: any value carrying PATTERN_TERM, reported by index as the real one does.
   blocklist.findBlockedUserContent.mockImplementation(async (values: unknown) =>
-    (values as Array<string | null | undefined>).flatMap((v, index) =>
+    (values as Array<string | null | undefined>).flatMap((v, index): BlockedContentHit[] =>
       v?.includes(PATTERN_TERM)
         ? [{ kind: 'pattern', index, matched: PATTERN_TERM, patternId: 0, listId: null }]
         : v?.includes(LINK_TERM)

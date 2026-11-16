@@ -133,7 +133,7 @@ vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) 
     if (leaves.some((l) => l.raw.includes('contract-scanner-down'))) {
       throw new Error('scanner outage');
     }
-    const hits = leaves.flatMap((leaf) => {
+    const hits = leaves.flatMap((leaf): SharedTextScan['hits'] => {
       const category = leaf.raw.includes('https://contract-blocked.example')
         ? ('link' as const)
         : leaf.raw.includes('contract-blocked-term')
