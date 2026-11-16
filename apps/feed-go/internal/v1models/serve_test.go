@@ -171,7 +171,7 @@ func (w *testWorld) deps(t *testing.T) *Deps {
 			var vals [][]any
 			for _, id := range args[0].([]int) {
 				if name, ok := w.tagRows[id]; ok {
-					vals = append(vals, []any{int32(id), name})
+					vals = append(vals, []any{int64(id), name})
 				}
 			}
 			return rows([]string{"id", "name"}, vals...), nil
