@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,10 +23,20 @@ type modelFixture struct {
 	queries []string
 	tags    map[int]bool  // the Tag table's ids
 	users   map[int][]any // the privacy-defaults query's rows
+	// frames are the model frame lookup's rows by model id: [cosmeticId, equippedToId, userData,
+	// createdById]; frameSQL the last frame query's text; failFrames makes that query fail.
+	frames     map[int][][]any
+	frameSQL   string
+	failFrames bool
+	// tagRows are the tag-ids lookup's rows by image id: [imageId, source, tagId]; tagRecords the Tag
+	// rows it reads: [id, name, type].
+	tagRows    map[int][][]any
+	tagRecords map[int][]any
 }
 
 func newModelFixture() *modelFixture {
-	return &modelFixture{entries: map[string][]byte{}, tags: map[int]bool{}, users: map[int][]any{}}
+	return &modelFixture{entries: map[string][]byte{}, tags: map[int]bool{}, users: map[int][]any{},
+		frames: map[int][][]any{}, tagRows: map[int][][]any{}, tagRecords: map[int][]any{}}
 }
 
 func (f *modelFixture) put(t *testing.T, key string, id int, v any) {
@@ -84,6 +95,38 @@ func (f *modelFixture) sources() *Sources {
 		{Match: `JOIN "Image" i ON i.id = u."profilePictureId"`, Rows: func(_ []any) (*testkit.Rows, error) {
 			f.record("pictures")
 			return testkit.NewRows(profilePictureColumns), nil
+		}},
+		{Match: `IS DISTINCT FROM 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			f.record("frames")
+			f.mu.Lock()
+			f.frameSQL = sql
+			f.mu.Unlock()
+			if f.failFrames {
+				return nil, errMissDB
+			}
+			out := testkit.NewRows([]string{"cosmeticId", "equippedToId", "userData", "createdById"})
+			for _, id := range args[0].([]int) {
+				out.Data = append(out.Data, f.frames[id]...)
+			}
+			return out, nil
+		}},
+		{Match: `FROM "TagsOnImageDetails"`, Rows: func(args []any) (*testkit.Rows, error) {
+			f.record("tagrows")
+			out := testkit.NewRows([]string{"imageId", "source", "tagId"})
+			for _, id := range args[0].([]int) {
+				out.Data = append(out.Data, f.tagRows[id]...)
+			}
+			return out, nil
+		}},
+		{Match: `FROM "Tag" WHERE id = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			f.record("tagrecords")
+			out := testkit.NewRows([]string{"id", "name", "type"})
+			for _, id := range args[0].([]int) {
+				if row, ok := f.tagRecords[id]; ok {
+					out.Data = append(out.Data, row)
+				}
+			}
+			return out, nil
 		}},
 	}}
 	return &Sources{
@@ -325,5 +368,185 @@ func TestModelPageFrameShape(t *testing.T) {
 	}
 	if string(b) != `{"equippedToId":5002,"userData":null,"id":302,"data":{"url":"f"}}` {
 		t.Fatalf("%s", b)
+	}
+}
+
+// msgpackr 1.11.5's bytes (misses_test.go) for the values cosmeticEntityCaches.Model's fetch writes:
+const (
+	// {cosmeticId:303, equippedToId:5001, userData:JSON.parse('{"lights": 2}'), cachedAt:now}
+	wantModelFrame5001 = "de0004aa636f736d657469634964cd012fac6571756970706564546f4964cd1389a87573657244617461de0001a66c696768747302a86361636865644174d6ff6a2fe940"
+	// {equippedToId:5002, notFound:true, cachedAt:now}
+	wantModelFrame5002Marker = "de0003ac6571756970706564546f4964cd138aa86e6f74466f756e64c3a86361636865644174d6ff6a2fe940"
+)
+
+// computedModelSources is f.sources() with a miss computation (write-back on: the frame lookup reads
+// Primary, here the same fake).
+func computedModelSources(f *modelFixture, c *MissCompute) (*Sources, *testkit.Redis) {
+	s := f.sources()
+	if c.Now == nil {
+		c.Now = func() time.Time { return pageNow }
+	}
+	if c.WriteBack && c.Primary == nil {
+		c.Primary = s.Replica
+	}
+	s.Compute = c
+	r, _ := s.Cache.(*testkit.Redis)
+	return s, r
+}
+
+// A model frame miss is the frame lookup over the models (equippedToType 'Model'), joined as a hit
+// is (lights merged); a model with no row gets an hour's marker with frame-cache-negative on. Written
+// back only with WriteBack.
+func TestModelPageComputesFrameMiss(t *testing.T) {
+	for _, writeBack := range []bool{false, true} {
+		t.Run(strconv.FormatBool(writeBack), func(t *testing.T) {
+			f := fullModelFixture(t)
+			f.del(KeyModelFrames, 5001)
+			f.del(KeyModelFrames, 5002)
+			f.frames[5001] = [][]any{{int64(303), int64(5001), `{"lights": 2}`, nil}}
+			f.put(t, KeyCosmetics, 303, map[string]any{"id": 303, "name": "Frame3", "type": "ContentDecoration", "data": map[string]any{"url": "f3"}, "source": "Purchase"})
+			obs := &observed{}
+			s, r := computedModelSources(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			p, err := s.ModelPage(context.Background(), modelPageRequest())
+			if err != nil {
+				t.Fatalf("ModelPage: %v (%q)", err, fallback.Reason(err))
+			}
+			b, err := superjson.Plain(p.Frames[5001])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := `{"equippedToId":5001,"id":303,"data":{"url":"f3","lights":2}}`; string(b) != want {
+				t.Fatalf("frame 5001:\n got %s\nwant %s", b, want)
+			}
+			if _, ok := p.Frames[5002]; ok || len(p.Frames) != 1 {
+				t.Fatalf("frames %v, want 5001 only (5002 has no row)", p.Frames)
+			}
+			if !strings.Contains(f.frameSQL, `uc."equippedToType" = 'Model'::"CosmeticEntity"`) {
+				t.Fatalf("the frame lookup is not the Model entity's:\n%s", f.frameSQL)
+			}
+			if o := obs.get(); o["model-frames/computed"] != 2 {
+				t.Fatalf("observed %v, want 2 computed model-frames ids", o)
+			}
+			if !writeBack {
+				wantAbsent(t, r, pageNS+missKey(KeyModelFrames, 5001), pageNS+missKey(KeyModelFrames, 5002))
+				return
+			}
+			wantPacked(t, r, missKey(KeyModelFrames, 5001), wantModelFrame5001, 24*time.Hour)
+			wantPacked(t, r, missKey(KeyModelFrames, 5002), wantModelFrame5002Marker, time.Hour)
+		})
+	}
+}
+
+// frame-cache-negative off: a model frame notFound marker is a miss, looked up, and no marker is
+// written; on, it is an answer and nothing is looked up.
+func TestModelFrameMarkersFollowFrameNegative(t *testing.T) {
+	for _, negative := range []bool{false, true} {
+		f := fullModelFixture(t) // 5001's frame is a notFound marker
+		f.frames[5001] = [][]any{{int64(302), int64(5001), nil, nil}}
+		s, _ := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: negative})
+		p, err := s.ModelPage(context.Background(), modelPageRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, has := p.Frames[5001]
+		if has == negative {
+			t.Errorf("negative %v: frame 5001 shown %v", negative, has)
+		}
+		frameQueries := 0
+		for _, q := range f.queries {
+			if q == "frames" {
+				frameQueries++
+			}
+		}
+		if want := map[bool]int{false: 1, true: 0}[negative]; frameQueries != want {
+			t.Errorf("negative %v: %d frame queries, want %d", negative, frameQueries, want)
+		}
+	}
+}
+
+// A failed model frame lookup is model-frame-miss-failed; without a computation the miss is
+// model-frame-miss (TestModelPageFallbacks).
+func TestModelFrameLookupFailureFallsBack(t *testing.T) {
+	f := fullModelFixture(t)
+	f.del(KeyModelFrames, 5001)
+	f.failFrames = true
+	obs := &observed{}
+	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+	_, err := s.ModelPage(context.Background(), modelPageRequest())
+	if got := fallback.Reason(err); got != "model-frame-miss-failed" {
+		t.Fatalf("err %v (%q), want model-frame-miss-failed", err, got)
+	}
+	if o := obs.get(); o["model-frames/error"] != 1 {
+		t.Fatalf("observed %v, want 1 model-frames error", o)
+	}
+	wantAbsent(t, r, pageNS+missKey(KeyModelFrames, 5001))
+}
+
+// Under a Go-first probe (WithPresence) a computed miss is recorded, with its one lookup query, and
+// answered as no entry: nothing is queried or written, and the page is counted. A miss Go falls back
+// on still falls back.
+func TestModelPageUnderPresence(t *testing.T) {
+	f := fullModelFixture(t)
+	f.del(KeyModelFrames, 5001)
+	f.del(KeyModelFrames, 5002)
+	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	rec := &PresenceProbe{Now: func() time.Time { return pageNow }}
+	p, err := s.ModelPage(WithPresence(context.Background(), rec), modelPageRequest())
+	if err != nil {
+		t.Fatalf("ModelPage: %v", err)
+	}
+	if len(p.Frames) != 0 {
+		t.Fatalf("frames %v, want none (answered as no entry)", p.Frames)
+	}
+	for _, q := range f.queries {
+		if q == "frames" {
+			t.Fatal("the probe looked a frame miss up")
+		}
+	}
+	wantAbsent(t, r, pageNS+missKey(KeyModelFrames, 5001), pageNS+missKey(KeyModelFrames, 5002))
+	if got, want := rec.Misses(), map[string]int{MissModelFrames: 2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("misses %v, want %v", got, want)
+	}
+	if got, want := rec.DBReads(), map[string]int{MissModelFrames: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("db reads %v, want %v", got, want)
+	}
+	if first, pages := rec.FirstCheck(); pages != 1 || !first.Equal(pageNow) {
+		t.Fatalf("pages %d first %v, want 1 page at %v", pages, first, pageNow)
+	}
+	// The same page without the computation falls back under the probe as when serving.
+	f.del(KeyModelFrames, 5001)
+	plain := f.sources()
+	if _, err := plain.ModelPage(WithPresence(context.Background(), &PresenceProbe{}), modelPageRequest()); fallback.Reason(err) != "model-frame-miss" {
+		t.Fatalf("no computation under the probe: %v, want model-frame-miss", err)
+	}
+}
+
+// The version images' tag-ids miss is computed as the image feed's (fillTagIDs).
+func TestVersionImagesComputesTagIDsMiss(t *testing.T) {
+	f := newModelFixture()
+	f.put(t, KeyVersionImages, 6001, map[string]any{"modelVersionId": 6001, "images": []any{
+		map[string]any{"id": 8001, "nsfwLevel": 1},
+		map[string]any{"id": 8002, "nsfwLevel": 2},
+	}})
+	f.put(t, KeyTagIDs, 8001, map[string]any{"tags": []any{1, 2}})
+	f.tagRows[8002] = [][]any{{int64(8002), "User", int64(31)}, {int64(8002), "User", int64(32)}}
+	f.tagRecords[31] = []any{int64(31), "thirty-one", "Label"} // 32 is in no table: dropped
+	s, _ := computedModelSources(f, &MissCompute{FrameNegative: true})
+	got, err := s.VersionImages(context.Background(), []int{6001})
+	if err != nil {
+		t.Fatalf("VersionImages: %v (%q)", err, fallback.Reason(err))
+	}
+	if !reflect.DeepEqual(got[6001][1]["tags"], []any{int64(31)}) || !reflect.DeepEqual(got[6001][0]["tags"], []any{int64(1), int64(2)}) {
+		t.Fatalf("tags %v %v, want [31] computed and [1 2] cached", got[6001][1]["tags"], got[6001][0]["tags"])
+	}
+	if !reflect.DeepEqual(f.queries, []string{"tagrows", "tagrecords"}) {
+		t.Fatalf("replica reads %v, want the tag rows and the tag records", f.queries)
+	}
+}
+
+// The model frame query is the image frame query with the Model entity, nothing else changed.
+func TestModelFrameSQLIsTheImageOnesForModels(t *testing.T) {
+	if got := strings.Replace(sqlModelFrames, `'Model'::"CosmeticEntity"`, `'Image'::"CosmeticEntity"`, 1); got != sqlImageFrames || sqlModelFrames == sqlImageFrames {
+		t.Fatalf("sqlModelFrames:\n%s\nis not sqlImageFrames over 'Model':\n%s", sqlModelFrames, sqlImageFrames)
 	}
 }

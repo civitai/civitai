@@ -9,6 +9,7 @@ import {
   readBackUploadedImage,
   uploadGenerationSourceImage,
 } from './generationSourceImageUpload';
+import { toGenerationSource, type ScannedRowsPath } from './generationSourceScannedRows';
 import {
   MEDIA_UPLOAD_FAILED_ERROR,
   MEDIA_UPLOAD_NO_VIDEO_TRACK_ERROR,
@@ -89,18 +90,25 @@ export async function probeMedia(
 /**
  * Validate in the browser, then upload as a private consumer blob. `contentType` is the sniffed
  * one. `null` when `isCurrent` turned false during an image upload (its read-back is skipped).
+ * An IMAGE is a generation source like the picker's, so with `scannedRows` it is answered as
+ * `toGenerationSource` decides: the blob, or (scanned rows on) the server's private scanned copy.
  */
 export async function uploadGenerationMedia(
   kind: MediaUploadKind,
   file: Blob,
   contentType: string,
-  isCurrent: () => boolean = () => true
+  isCurrent: () => boolean = () => true,
+  scannedRows?: ScannedRowsPath | null
 ): Promise<BlockMediaUploadInfo | null> {
   if (kind === 'image') {
     const image = await uploadGenerationSourceImage(file, isCurrent);
     if (!image) return null;
     const { url, width, height, sizeBytes } = image;
-    return { url, kind, mimeType: 'image/jpeg', sizeBytes, width, height };
+    return toGenerationSource(
+      { url, kind, mimeType: 'image/jpeg', sizeBytes, width, height },
+      scannedRows,
+      isCurrent
+    );
   }
   const probed = await probeMedia(kind, file);
   const body = file.type === contentType ? file : new Blob([file], { type: contentType });

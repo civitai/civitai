@@ -646,6 +646,23 @@ export async function checkBlockGenerationSourceUserRateLimit(
   );
 }
 
+// UPLOADED-GENERATION-SOURCE bucket (blocks.persistUploadedGenerationSource): a picked
+// generation source copied into a private scanned row. Its own window, the same size as the
+// generation-source bucket above and keyed the same way (token subject, no exemption), so an app
+// saving its outputs and a viewer picking sources cannot use up each other's allowance.
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file.
+
+/** Records ONE uploaded-source call against `userId`'s window. Own `:uploaded-gen-source-user:` key. */
+export async function checkBlockUploadedGenerationSourceUserRateLimit(
+  userId: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:uploaded-gen-source-user:${userId}`,
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_MAX,
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
 // ESTIMATE-CELLS bucket (blocks.estimateWorkflowBatch). A batch estimate charges
 // the catalog bucket ONCE, like a single estimate — that is the point of it: a
 // 16-cell grid no longer spends 16 of an allowance that a page app shares between
