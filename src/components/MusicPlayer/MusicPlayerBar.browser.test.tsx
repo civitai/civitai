@@ -318,6 +318,28 @@ describe('the global player bar', () => {
       expect(signal.aborted).toBe(true);
     });
 
+    test('starts again when the bar mounts again over a song already listened to', async () => {
+      const first = await renderWithProviders(<MusicPlayerBar />);
+      listen(1.2);
+      await expect.poll(() => songRequests(fetch)).toHaveLength(1);
+      await first.unmount();
+      await renderWithProviders(<MusicPlayerBar />);
+      await expect.poll(() => songRequests(fetch)).toHaveLength(2);
+    });
+
+    // After a page load the last song comes back paused where it was, with nothing played yet in
+    // this page: it was listened to before, so its waveform is drawn, not a flat line (S18).
+    test('starts for a song restored after a page load, while it is still paused', async () => {
+      act(() => player().close());
+      act(() =>
+        player().restore({ track: { ...song, url: songUrl }, positionSec: 84 })
+      );
+      expect(player().playing).toBe(false);
+      expect(player().playback?.listenedSec).toBe(0);
+      await renderWithProviders(<MusicPlayerBar />);
+      await expect.poll(() => songRequests(fetch)).toHaveLength(1);
+    });
+
     test('never starts on the phone bar', async () => {
       await page.viewport(390, 800);
       await renderWithProviders(<MusicPlayerBar />);

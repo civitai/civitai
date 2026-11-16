@@ -402,8 +402,12 @@ function Timeline({
     )
   );
   const { url } = useEdgeUrl(track.url, { type: 'audio' });
+  // A song started part-way in (restored after a page load, or started from a comment's or a
+  // lyric's time) was chosen, not skipped through: draw it at once, even while paused.
   const listened = useMusicPlayerStore(
-    (s) => (s.playback?.listenedSec ?? 0) >= WAVEFORM_AFTER_LISTENED_SEC
+    (s) =>
+      (s.playback?.listenedSec ?? 0) >= WAVEFORM_AFTER_LISTENED_SEC ||
+      (s.playback?.startAtSec ?? 0) > 0
   );
   const peaks = useAudioPeaks(url, WAVEFORM_PEAKS, sliderRef, { enabled: listened });
   const bars = useMemo(() => (peaks ? resamplePeaks(peaks, barCount) : null), [peaks, barCount]);
