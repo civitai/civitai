@@ -157,6 +157,7 @@ describe('the full-ci label', () => {
         'typecheck',
         'typecheck-tests',
         'unit',
+        'unit-verify',
       ],
     ],
     ['apps.yml', ['apps']],

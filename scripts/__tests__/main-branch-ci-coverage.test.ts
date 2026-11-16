@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
+import { dispatchArgs } from '../ci/unit-batched.mjs';
+
 // Guards that a COMMIT ON `main` gets a CI verdict.
 //
 // THE REGRESSION THIS EXISTS FOR, stated so it is not re-derived from scratch.
@@ -28,6 +30,10 @@ import { describe, expect, it } from 'vitest';
 // push to `main` reaches a typecheck and the unit suite at all. Moving those
 // tiers into a different workflow, renaming the jobs, or splitting the file
 // keeps this green; losing main coverage does not, however it is lost.
+//
+// The unit suite is verified in batches, not per push (lint.yml header). The guard below asserts
+// that path (a schedule within MAX_BATCH_HOURS, a dispatch that runs the suite, a job that posts
+// commit statuses) instead of a push-reachable job.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
@@ -153,7 +159,6 @@ describe('CI coverage for commits on main', () => {
   // run is the backstop for a filter entry that is missing.
   it.each([
     ['the whole-repo typecheck', 'pnpm run typecheck'],
-    ['the unit suite', 'test:unit:run'],
     // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
     // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
     ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
@@ -170,6 +175,98 @@ describe('CI coverage for commits on main', () => {
           .join(', ') || '(none)'
       }`
     ).not.toHaveLength(0);
+  });
+
+  // The unit suite's verdict for `main`, batched (see the header). Each link of the chain is
+  // asserted, because each one failing alone leaves `main` with no unit verdict and no red.
+  describe('the unit suite, verified in batches on main', () => {
+    // The contract: a commit on `main` gets a unit verdict within this many hours plus a run.
+    // A tighter cron passes; a wider one is a contract change and must change this number.
+    const MAX_BATCH_HOURS = 2;
+    // Hours between firings of a cron that fires at a fixed minute every N hours, else null.
+    const everyHours = (cron: string): number | null => {
+      const m = /^\d{1,2} (\*|\*\/(\d{1,2})) \* \* \*$/.exec(cron.trim());
+      if (!m) return null;
+      return m[1] === '*' ? 1 : Number(m[2]);
+    };
+    const withinContract = (cron: string) => {
+      const n = everyHours(cron);
+      return n !== null && n <= MAX_BATCH_HOURS;
+    };
+
+    it.each([
+      ['41 * * * *', 1],
+      ['41 */2 * * *', 2],
+      ['41 */3 * * *', 3],
+      ['41 3 * * *', null],
+      ['*/5 * * * *', null],
+    ])('reads the interval of %s as %s hours', (cron, want) => {
+      expect(everyHours(cron)).toBe(want);
+    });
+    const schedules = (doc: Workflow) =>
+      (
+        ((doc.on as Record<string, unknown> | undefined)?.schedule as Array<{ cron: string }>) ?? []
+      ).map((s) => s.cron);
+
+    it('a workflow fires at least every MAX_BATCH_HOURS and runs the gate that dispatches the suite', () => {
+      const hit = workflows
+        .filter((w) => schedules(w.doc).some(withinContract))
+        .filter((w) =>
+          Object.values(w.doc.jobs ?? {}).some((j) =>
+            runScripts(j).includes('unit-batched.mjs gate')
+          )
+        )
+        .map((w) => w.file);
+      expect(
+        hit,
+        `no workflow scheduled at least every ${MAX_BATCH_HOURS} h runs \`scripts/ci/unit-batched.mjs gate\``
+      ).not.toHaveLength(0);
+      // The gate dispatches lint.yml with `only: unit`, the dispatch the next test checks runs it.
+      expect(dispatchArgs('main', 'owner/repo')).toEqual([
+        'workflow',
+        'run',
+        'lint.yml',
+        '--repo',
+        'owner/repo',
+        '--ref',
+        'main',
+        '-f',
+        'only=unit',
+      ]);
+    });
+
+    it('lint.yml runs test:unit:run on a dispatch with only: unit', () => {
+      const lint = workflows.find((w) => w.file === 'lint.yml')?.doc;
+      expect((lint?.on as Record<string, unknown>)?.workflow_dispatch).toBeDefined();
+      const runners = Object.values(lint?.jobs ?? {}).filter(
+        (j) =>
+          runScripts(j).includes('test:unit:run') &&
+          !(j.if ?? '').includes("github.event_name == 'pull_request'") &&
+          (j.if ?? '').includes("inputs.only == 'unit'")
+      );
+      expect(runners).not.toHaveLength(0);
+    });
+
+    it('a job after that dispatch posts the verdict as a commit status', () => {
+      const lint = workflows.find((w) => w.file === 'lint.yml')?.doc;
+      const posters = Object.values(lint?.jobs ?? {}).filter(
+        (j) =>
+          runScripts(j).includes('unit-batched.mjs verify') &&
+          (j.permissions as Record<string, string> | undefined)?.statuses === 'write' &&
+          !unconditionallyTrue(j['continue-on-error'])
+      );
+      expect(posters).not.toHaveLength(0);
+      // And when that job crashes or is cancelled, it still leaves an `error` status on HEAD.
+      const crashSteps = posters.flatMap((j) =>
+        (j.steps ?? []).filter(
+          (s) =>
+            String(s.if ?? '').includes('failure()') &&
+            String(s.if ?? '').includes('cancelled()') &&
+            String(s.run ?? '').includes('state=error')
+        )
+      );
+      expect(crashSteps).not.toHaveLength(0);
+    });
   });
 
   // A backstop only works if it fires whatever the commit touched. The PR trigger's `paths:`
