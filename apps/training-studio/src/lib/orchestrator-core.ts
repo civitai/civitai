@@ -1,6 +1,6 @@
 import { buildKohyaInput, type KohyaRunParams } from './kohya-training';
 import { kohyaDefaults } from './data/kohya';
-import { MODEL_CARDS, versionStepDefault } from './data/trainingModels';
+import { isFlux2, MODEL_CARDS, versionStepDefault } from './data/trainingModels';
 // Client-safe orchestrator reads: everything here takes an already-built SDK client, so it runs
 // in the browser (the web-component build) as well as in the shell's server routes, which wrap
 // these with an env-configured client (lib/server/orchestrator.ts).
@@ -50,11 +50,7 @@ export function resolveCurrencies(
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 export const RETENTION_DAYS = 30;
 
-/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
- *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
-export function isFlux2(engine?: string): boolean {
-  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
-}
+export { isFlux2 };
 
 const isHtmlPage = (body: string) => /^\s*<(!doctype|html)/i.test(body);
 

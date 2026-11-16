@@ -792,6 +792,23 @@ describe('a model that is down', () => {
   });
 });
 
+describe('Flux.2, which the Studio cannot submit', () => {
+  const flux2 = cardByType('flux2')!;
+  const message = 'Flux.2 is temporarily unavailable for training. Use another base model for now.';
+
+  it('shows as unavailable and blocks a selection on it, with no moderator status at all', () => {
+    const none = new Set<string>();
+    for (const status of [null, parseServiceStatus(null)]) {
+      expect(cardUnavailability(flux2, none, status)).toEqual({
+        reason: 'Use another base model for now.',
+      });
+      expect(blockedSelectionMessage([newRun(flux2, none)], status)).toBe(message);
+    }
+    expect(cardUnavailability(cardByType('sdxl')!, none, null)).toBeNull();
+    expect(blockedSelectionMessage([newRun(cardByType('sdxl')!, none)], null)).toBeNull();
+  });
+});
+
 describe('a model that is down, in a shared ecosystem or a multi-version card', () => {
   const illustrious = cardByType('illustrious')!;
   const klein = cardByType('flux2klein')!;

@@ -1084,6 +1084,47 @@ describe('a model that is down', () => {
   });
 });
 
+describe('Flux.2 (imageResourceTraining takes only a zip URL, the Studio holds blobs)', () => {
+  const flux2 = cardByType('flux2')!.versions[0]!;
+  const flux2Run = (over: Partial<TrainingRunInput> = {}): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: flux2.ecosystem,
+    engine: flux2.engine,
+    model: flux2.air,
+    ...over,
+  });
+  const message = 'Flux.2 is temporarily unavailable for training. Use another base model for now.';
+
+  it.each([
+    ['its catalog base', flux2Run()],
+    [
+      'a base the catalog does not name',
+      flux2Run({ model: 'urn:air:flux2:checkpoint:civitai:9@9' }),
+    ],
+  ])('refuses %s before any orchestrator call or trigger word check', async (_label, run) => {
+    vi.clearAllMocks();
+    const check = vi.fn(async () => undefined);
+    for (const status of [undefined, parseServiceStatus(null)])
+      await expect(
+        submitTrainingBatch(client, [baseRun(), run], { checkText: check, status })
+      ).rejects.toThrow(message);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+    expect(getResource).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it('still sends an ai-toolkit run its dataset as a blob list', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ai' } });
+    await submitTraining(client, baseRun());
+    const step = submitWorkflow.mock.calls.at(-1)![0].body.steps[0];
+    expect(step.$type).toBe('training');
+    expect(step.input.trainingData).toEqual({
+      type: 'blobs',
+      items: [{ air: 'blob-1', caption: 'ohwx, 1girl' }],
+    });
+  });
+});
+
 describe('keep-training a custom-base run while a sibling model is down', () => {
   const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
   const source = {

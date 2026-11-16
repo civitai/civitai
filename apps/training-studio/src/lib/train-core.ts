@@ -60,8 +60,10 @@ import {
 } from '$lib/data/trainingModels';
 import {
   blockedRunMessage,
+  FLUX2_UNAVAILABLE_REASON,
   type RunModelRef,
   type TrainingServiceStatus,
+  UNAVAILABLE_LABEL,
 } from '$lib/service-status-core';
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
@@ -165,6 +167,7 @@ export interface SubmitOptions {
 }
 
 export const KOHYA_UNAVAILABLE = 'Kohya training is not available right now.';
+export const FLUX2_UNAVAILABLE = `Flux.2 is ${UNAVAILABLE_LABEL.toLowerCase()} for training. ${FLUX2_UNAVAILABLE_REASON}`;
 
 /** Why a run can't start right now — training is off, or its model is blocked — or null when it can. */
 export function unavailableRunMessage(
@@ -222,10 +225,10 @@ function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unk
   return out;
 }
 
-/** Build one run's training step. Both shapes carry the dataset as a blob list (the orchestrator accepts
- *  blobs for every engine; the SDK types imageResourceTraining's `trainingData` as a string, so that path
- *  is cast). The Flux.2 (imageResourceTraining) engine takes no hyperparameters — only the base model +
- *  data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
+/** Build one run's training step. The `training` shape carries the dataset as a blob list. The
+ *  `imageResourceTraining` shape is unreachable while Flux.2 is refused (`FLUX2_UNAVAILABLE`): the
+ *  orchestrator takes its `trainingData` only as one zip URL, never a blob list. That engine takes no
+ *  hyperparameters — only the base model + data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
  *  minimal SDK type doesn't declare — the same cast-past-the-type the whatif and the main app's builders use. */
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
   // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice. An
@@ -614,6 +617,8 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   }
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
+  // Also refuses a Flux.2 base no catalog card names, which the status check can't see.
+  if (isFlux2(run.engine)) throw new TrainingBatchValidationError(FLUX2_UNAVAILABLE);
 }
 
 // `control_1/pair_0001.png`, `main/pair_0001.jpg`: a folder AI-Toolkit reads, then a plain file name.
