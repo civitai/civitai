@@ -156,7 +156,7 @@ describe('CI coverage for commits on main', () => {
   //
   // The app suites and the app typecheck are here because pull requests reach them through a
   // `paths:` filter (apps.yml): a PR that touches nothing they read never runs them, so the push
-  // run is the backstop for a filter entry that is missing.
+  // runs are the backstop for a filter entry that is missing (see the next test).
   it.each([
     ['the whole-repo typecheck', 'pnpm run typecheck'],
     // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
@@ -269,28 +269,37 @@ describe('CI coverage for commits on main', () => {
     });
   });
 
-  // A backstop only works if it fires whatever the commit touched. The PR trigger's `paths:`
-  // list is the obvious thing to copy onto `push:`, and doing so would make a missing entry
-  // invisible on `main` too.
+  // A push to main may skip these only where a pull request skips them too: `push:` carries no
+  // filter, or exactly the PR trigger's `paths:` list (apps.yml shares it through a YAML anchor).
+  // A push run is never scoped, so the next push the list matches runs every app suite and goes
+  // red on a break a missing entry let through; the red lands on that later commit. A push
+  // filter NARROWER than the PR's, or one on a workflow whose PRs are unfiltered, would leave a
+  // change no run ever reaches, so either fails here.
   it.each([
     // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
     // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
     ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
     ['the app typecheck', 'scripts/ci/typecheck-apps.mjs'],
-  ])('runs %s on EVERY push to main, with no path filter', (_label, needle) => {
+  ])('runs %s on a push to main behind no filter but the PR one', (_label, needle) => {
     const hit = pushReachable()
       .filter((j) => j.script.includes(needle))
       .filter((j) => {
-        const push = (j.doc.on as Record<string, unknown> | undefined)?.push as
-          | Record<string, unknown>
-          | null
-          | undefined;
-        return !push || (!('paths' in push) && !('paths-ignore' in push));
+        const on = j.doc.on as Record<string, unknown> | undefined;
+        const push = on?.push as Record<string, unknown> | null | undefined;
+        const pr = on?.pull_request as Record<string, unknown> | null | undefined;
+        if (!push || 'paths-ignore' in push) return !push;
+        if (!('paths' in push)) return true;
+        return (
+          Array.isArray(push.paths) &&
+          !!pr &&
+          !('paths-ignore' in pr) &&
+          JSON.stringify(push.paths) === JSON.stringify(pr.paths)
+        );
       })
       .map((j) => j.where);
     expect(
       hit,
-      `\`${needle}\` runs on a push to main only behind a path filter. Remove the filter from push:`
+      `\`${needle}\` runs on a push to main only behind a filter the pull_request trigger does not share. Give push: the PR's exact paths list, or none.`
     ).not.toHaveLength(0);
   });
 

@@ -58,12 +58,20 @@ name: App suites
 # `types` deliberately omits `labeled`; full-ci.yml dispatches this workflow when the label is
 # added. That first, dispatched run is NOT path-filtered (`paths:` applies to pull_request
 # events only); later pushes are: a PR that touches nothing these suites read starts no PR run
-# here even with the label.
+# here, label or not.
 #
-# ── PUSH TO `main` IS UNFILTERED ─────────────────────────────────────────────────────────────
+# ── PUSH TO `main` USES THE SAME FILTER ────────────────────────────────────────────────────────
 #
-# Every commit on `main` gets a verdict whatever it touched. That is the backstop for a filter
-# entry that is missing: the break shows red on `main` right after the merge, instead of never.
+# `push:` reads the same list as `pull_request:` (the `app-inputs` YAML anchor), so a push to
+# `main` that touches nothing these suites read starts no run. Push used to be unfiltered, as the
+# backstop for a filter entry that is missing. That backstop still holds, later: a push run is
+# never scoped (every app suite runs, see below), so the next push that touches anything in the
+# list goes red on such a break, and scripts/ci/assert-apps-paths-filter.mjs names the missing
+# entry when its scan can see it. What is lost is attribution: the red lands on that later
+# commit, not on the one that caused it.
+#
+# Why: once push runs queued instead of cancelling (#8877), every push run that started reached
+# its end (a pending one is still replaced by a newer push) and this job's push cost doubled. docs/testing/reading-ci-results.md has the measurement.
 #
 # ── ON A PR, THE MODERATOR SUITE RUNS ONLY WHEN SOMETHING IT READS CHANGED ───────────────────
 #
@@ -78,7 +86,8 @@ on:
   pull_request:
     branches: [main, release]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
+    # `push:` below reuses this list (see the header).
+    paths: &app-inputs
       - 'apps/**'
       - 'packages/**'
       - 'package.json'
@@ -107,6 +116,7 @@ on:
       - 'containers/notification-db/docker-init/**'
   push:
     branches: [main]
+    paths: *app-inputs
   workflow_dispatch:
 
 permissions:
