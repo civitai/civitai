@@ -522,6 +522,15 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
   }
 }
 
+/** Best effort: the showcase write already committed, so its caller still succeeds. */
+async function dropCoversAfterWrite(modelId: number) {
+  try {
+    await dropInvalidCommunityCovers([modelId]);
+  } catch (error) {
+    logShowcaseError('version-showcase-cover-drop-failed', error, { modelId });
+  }
+}
+
 /** Refreshes every showcase holding these posts' images, and drops covers that no longer qualify. */
 export async function bustVersionShowcasesForPosts(postIds: number[]) {
   try {
@@ -745,7 +754,7 @@ export async function setVersionShowcase({
 
   await refreshVersionShowcases([modelVersionId]);
   // A community cover no longer featured anywhere stops being the cover.
-  await dropInvalidCommunityCovers([version.model.id]);
+  await dropCoversAfterWrite(version.model.id);
 
   const before = new Set(existing.map((row) => row.imageId));
   const added = eligible.filter((image) => allowed.has(image.id) && !before.has(image.id));
@@ -839,7 +848,7 @@ export async function removeMyImageFromVersionShowcase({
   if (!count) throw throwNotFoundError('This image isn’t featured in that showcase.');
   const version = await getVersionForWrite(modelVersionId);
   await refreshVersionShowcases([modelVersionId]);
-  await dropInvalidCommunityCovers([version.model.id]);
+  await dropCoversAfterWrite(version.model.id);
 }
 
 /**
@@ -859,7 +868,7 @@ export async function moderatorRemoveFromVersionShowcase({
   });
   const version = await getVersionForWrite(modelVersionId);
   await refreshVersionShowcases([modelVersionId]);
-  await dropInvalidCommunityCovers([version.model.id]);
+  await dropCoversAfterWrite(version.model.id);
 }
 
 export const versionShowcaseFeaturedKey = (modelVersionId: number, imageId: number) =>

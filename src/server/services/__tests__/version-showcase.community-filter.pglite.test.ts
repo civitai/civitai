@@ -1,3 +1,4 @@
+import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -334,9 +335,9 @@ describe('when a featured image stops qualifying', () => {
     const id = await featured();
     await db.query(`UPDATE "ModelVersionShowcaseItem" SET position = 0 WHERE "imageId" = $1`, [id]);
     const api = async () =>
-      (await withCuratedShowcases({ [VERSION]: { images: [] } }, 'red'))[VERSION].images.map(
-        (image) => image.id
-      );
+      (
+        await withCuratedShowcases({ [VERSION]: { images: [] as ImagesForModelVersions[] } }, 'red')
+      )[VERSION].images.map((image) => image.id);
     expect(await api()).toEqual([id]);
     await db.query(`DELETE FROM "Image" WHERE id = $1`, [id]);
     expect(await served()).toContain(id);
