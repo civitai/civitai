@@ -19,7 +19,6 @@ vi.mock('~/env/server', () => ({ env }));
 
 const nowPayments = (await import('~/server/http/nowpayments/nowpayments.caller')).default;
 const { TipaltiCaller } = await import('~/server/http/tipalti/tipalti.caller');
-const tipalti = Object.create(TipaltiCaller.prototype) as InstanceType<typeof TipaltiCaller>;
 const { CoinbaseCaller } = await import('~/server/http/coinbase/coinbase.caller');
 const { EmerchantPayCaller } = await import('~/server/http/emerchantpay/emerchantpay.caller');
 
@@ -47,14 +46,16 @@ describe('Tipalti validateWebhookEvent', () => {
     .digest('hex');
 
   it('accepts the right value and answers only whether it is valid', () => {
-    expect(tipalti.validateWebhookEvent(`t=${t},v=${signed}`, payload)).toEqual({ isValid: true });
+    expect(TipaltiCaller.validateWebhookEvent(`t=${t},v=${signed}`, payload)).toEqual({
+      isValid: true,
+    });
   });
 
   it('refuses a wrong or short value, and answers only whether it is valid', () => {
-    expect(tipalti.validateWebhookEvent(`t=${t},v=${'0'.repeat(64)}`, payload)).toEqual({
+    expect(TipaltiCaller.validateWebhookEvent(`t=${t},v=${'0'.repeat(64)}`, payload)).toEqual({
       isValid: false,
     });
-    expect(tipalti.validateWebhookEvent(`t=${t},v=abc`, payload)).toEqual({ isValid: false });
+    expect(TipaltiCaller.validateWebhookEvent(`t=${t},v=abc`, payload)).toEqual({ isValid: false });
   });
 });
 

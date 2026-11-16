@@ -41,7 +41,9 @@ import {
   getReviewsFilterInput,
   parseReviewsFilter,
   resolveReviewsVersion,
+  shouldShowRecommendedBy,
 } from '~/components/ResourceReview/model-reviews-url';
+import { RecommendedBy } from '~/components/ResourceReview/RecommendedBy';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
 import { ReviewCardWithImages } from '~/components/ResourceReview/ReviewCard/ReviewCardWithImages';
@@ -407,7 +409,7 @@ export default function ModelReviews() {
                 ))}
                 {resourceReviews && !resourceReviews.items.length && (
                   <Text c="dimmed" ta="center" py="xl">
-                    No reviews match this filter.
+                    {filter ? 'No reviews match this filter.' : 'No written reviews yet.'}
                   </Text>
                 )}
                 {resourceReviews &&
@@ -432,6 +434,14 @@ export default function ModelReviews() {
                 )}
               </Stack>
             )}
+            {modelVersionId &&
+              shouldShowRecommendedBy({
+                filter,
+                modelVersionId,
+                listLoaded: !!resourceReviews,
+                hasMoreWritten:
+                  !!resourceReviews && 'hasMore' in resourceReviews && !!resourceReviews.hasMore,
+              }) && <RecommendedBy modelId={modelId} modelVersionId={modelVersionId} />}
           </div>
         </div>
       </Container>

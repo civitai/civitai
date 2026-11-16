@@ -177,7 +177,9 @@ name: Lint
 # `labeled`. full-ci.yml listens for it and DISPATCHES this workflow (`only: all`)
 # and apps.yml on the PR branch, so the full suite starts at once (not when the PR's own run on
 # that commit already started the shards, e.g. a PR opened with the label); read its header
-# for why (a run started by any other label overlays the PR's real check results).
+# for why (a run started by any other label overlays the PR's real check results). That
+# dispatch sets `skip_passed`, so it skips the suites the PR run on the same commit passed (the
+# `passed` job).
 # scripts/__tests__/full-ci-label.test.ts pins this shape.
 on:
   pull_request:
@@ -227,6 +229,13 @@ on:
           - packages
           - geometry
           - component
+      # Set by full-ci.yml. See the `passed` job.
+      skip_passed:
+        description: >-
+          Skip the suites the pull_request Lint run on this commit already passed.
+          Geometry still runs.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -267,6 +276,56 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
+  # ── A full-ci DISPATCH SKIPS WHAT THE PR RUN ON THE SAME COMMIT ALREADY PASSED ──────────────
+  #
+  # full-ci.yml dispatches this workflow (`only: all`, `skip_passed: true`) when the label is
+  # added to a PR whose own Lint run did not start the unit shards. That PR run usually runs
+  # `Typecheck test files`, `Package unit tests` and the three component shards on the same head
+  # commit. This job reads that run's jobs
+  # (scripts/ci/lint-dispatch-passed.mjs) and sets an output per suite that PASSED there; those
+  # jobs skip here. It waits up to 10 minutes for PR jobs still running, since the label is
+  # usually added while they are. A failed, cancelled or unfinished PR job, a lookup error, or
+  # this job failing all mean the suite runs here.
+  #
+  # Same SHA, not the same tree: a PR run tests the PR's merge commit (head plus base), while
+  # this dispatch tests the branch head alone. So a skipped suite's verdict is the one on the
+  # merge commit; to see the head alone, dispatch without `skip_passed`.
+  #
+  # Geometry still runs when the component suite is skipped: on a PR it is report-only, so a
+  # green shard 1 there says nothing about it, and here it is a real verdict. The unit shards
+  # and `typecheck` never wait on this job.
+  #
+  # A hand dispatch may set `skip_passed` too, with any `only`; it narrows the same way.
+  #
+  # Every job that `needs` this one has `!cancelled()` in its `if`: on a PR or a push this job
+  # is skipped, and without a status function a job whose need was skipped is skipped too.
+  passed:
+    name: Suites the PR run passed (full-ci dispatch)
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_passed }}
+    permissions:
+      actions: read
+      contents: read
+    timeout-minutes: 15
+    outputs:
+      typecheck_tests: ${{ steps.find.outputs.typecheck_tests }}
+      packages: ${{ steps.find.outputs.packages }}
+      component: ${{ steps.find.outputs.component }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci/lint-dispatch-passed.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # `github.sha` is the commit this dispatch checks out, so it is the one to match.
+      - name: Read the pull_request Lint run on this commit
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: node scripts/ci/lint-dispatch-passed.mjs
+
   eslint:
     name: ESLint + Prettier (changed files)
     runs-on: ubuntu-latest
@@ -581,7 +640,8 @@ jobs:
     # unmeasured and every later PR inherits the red. On `main` it renders red and
     # blocks nothing. Push runs queue (see `concurrency`), so in a burst a commit whose
     # waiting run was replaced shows `cancelled`; the error shows on the next finished one.
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
+    needs: passed
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') && needs.passed.outputs.typecheck_tests != 'true' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -946,7 +1006,8 @@ jobs:
     runs-on: ubuntu-latest
     # Skips draft PRs unless they carry the `full-ci` label (see the header). The app typecheck that rode here moved to apps.yml with
     # the app suites, so this job is the package suites plus the install-time asserts below.
-    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'packages') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    needs: passed
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'packages') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && needs.passed.outputs.packages != 'true' }}
     # The `packages/*` suites — 616 tests when this job was added, which until then NO CI job ran.
     # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
     # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
@@ -1072,7 +1133,11 @@ jobs:
     # Pinned: Playwright 1.57 cannot install chromium deps on ubuntu-latest (26.04) yet.
     runs-on: ubuntu-24.04
     # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
-    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    # On a full-ci dispatch whose PR run passed the component suite (`passed`), only shard 1
+    # runs, with geometry alone, exactly as `only: geometry` does. On `only: component` that
+    # leaves nothing to run, so the job skips.
+    needs: passed
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (inputs.only != 'component' || needs.passed.outputs.component != 'true') }}
     # ── `component` SHARDED ACROSS 3 RUNNERS; GEOMETRY ON SHARD 1 ──
     #
     # Only the component tests step shards; setup (checkout, install, Chromium) is paid again by
@@ -1094,9 +1159,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `only: geometry` runs geometry alone, which lives on shard 1, so it needs only that.
+        # `only: geometry` runs geometry alone, which lives on shard 1, so it needs only that;
+        # so does a dispatch whose PR run passed the component suite (`passed`).
         # The `--shard=<n>/3` denominator stays 3 whatever the matrix holds.
-        shard: ${{ inputs.only == 'geometry' && fromJSON('[1]') || fromJSON('[1, 2, 3]') }}
+        shard: ${{ (inputs.only == 'geometry' || needs.passed.outputs.component == 'true') && fromJSON('[1]') || fromJSON('[1, 2, 3]') }}
     # The two browser-mode suites, in one job so ONE checkout, install and Chromium install
     # serves both: `component` (blocking) and `geometry` (report-only on PRs). Each was its own job until
     # the plan's org-wide concurrent-job limit became the bottleneck: this workflow saturates
@@ -1127,7 +1193,7 @@ jobs:
     # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
     # repeating the `only` expression. They render as the strings 'true' / 'false'.
     env:
-      SUITE_COMPONENT: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
+      SUITE_COMPONENT: ${{ needs.passed.outputs.component != 'true' && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') }}
       SUITE_GEOMETRY: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' }}
     steps:
       - uses: actions/checkout@v7
@@ -1422,12 +1488,13 @@ jobs:
   # that check by name keeps working. Red when any shard job did not succeed (geometry stays
   # report-only on PRs via its own `continue-on-error`) or when the merged reports fail the
   # full ledger. On an `only: geometry` dispatch this job is skipped — there are no component
-  # reports to grade — so geometry's verdict is only on the `(1/3)` shard job.
+  # reports to grade — so geometry's verdict is only on the `(1/3)` shard job. The same holds on
+  # a full-ci dispatch whose PR run passed the component suite (`passed`).
   component-ledger:
     name: Component + geometry tests
-    needs: component
+    needs: [passed, component]
     runs-on: ubuntu-latest
-    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    if: ${{ !cancelled() && (!inputs.only || inputs.only == 'all' || inputs.only == 'component') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && needs.passed.outputs.component != 'true' }}
     timeout-minutes: 10
     steps:
       # The ledger walks `src/` for `*.browser.test.tsx` and imports scripts/ci only, so no

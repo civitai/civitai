@@ -776,6 +776,23 @@ describe('/api/v1/images feed-path offset cursor', () => {
     }
   );
 
+  it.each(['1.5', '-1', '2147483648', '99999999999', 'abc'])(
+    'rejects browsingLevel=%s with a 400 before searching',
+    async (browsingLevel) => {
+      const res = await request({ browsingLevel });
+
+      expect(res._getStatusCode()).toBe(400);
+      expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['0', '1', '31'])('[invariant] accepts browsingLevel=%s', async (browsingLevel) => {
+    const res = await request({ browsingLevel });
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockGetImagesFromFeed).toHaveBeenCalledTimes(1);
+  });
+
   it('[invariant] leaves the legacy path (modelId without modelVersionId) to parseCursor', async () => {
     const res = await request({ cursor: '-5', modelId: '4201' });
 

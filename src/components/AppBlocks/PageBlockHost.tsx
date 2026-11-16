@@ -10,6 +10,7 @@ import { AppBlockChrome } from './IframeHost';
 import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
 import { AppBuzzCapNotice } from './AppBuzzCapNotice';
 import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
+import { useOutputUnlockBridge, type OutputUnlockBridgeResult } from './useOutputUnlockBridge';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   APP_STORAGE_BASE_SCOPE,
@@ -46,6 +47,7 @@ import {
   readyWaitPolicyFor,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
+  resolveGetWorkflowMediaRequest,
   resolveImageUploadRequest,
   resolveNavigateRequest,
   resolvePersistGenerationSourceRequest,
@@ -146,7 +148,11 @@ import {
   type MediaUploadBatchItemResult,
 } from './mediaUploadBatchLogic';
 import { MEDIA_UPLOAD_BATCH_CONCURRENCY } from '~/shared/constants/media-upload-batch.constants';
-import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
+import {
+  PAGE_HOST_CAPABILITIES,
+  projectBlockInitMaturity,
+  withSignedInFlag,
+} from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
 import {
   reportAppSubmitError,
@@ -1525,6 +1531,7 @@ export function PageBlockHost({
       ...projectBlockInitMaturity({ domain, maxBrowsingLevel, effectiveBrowsingLevel }),
       // Keyed on `surface`, never on `grantedScopes` — see BLOCK_HOST_LOCAL_PREVIEW_STORAGE.
       ...blockInitStorageMode(surface),
+      capabilities: PAGE_HOST_CAPABILITIES,
     }),
     [
       surface,
@@ -2477,6 +2484,11 @@ export function PageBlockHost({
     if (showBuzzCapNotice) buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
   }, [showBuzzCapNotice, buzzCapUtils]);
   const dailyLimitRaise = useDailyLimitRaiseBridge({ appBlockId, appName, disabled: reviewMode });
+  const outputUnlock = useOutputUnlockBridge({
+    appName,
+    disabled: reviewMode,
+    linkOut: slug ? { slug, subPath } : null,
+  });
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
@@ -2513,6 +2525,7 @@ export function PageBlockHost({
   // same bearer-token-in-URL reason as the other block-token bridges.
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
+  const getWorkflowMediaMutation = trpc.blocks.getWorkflowMedia.useMutation();
   // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
   // consent payload server-side, then the write. Both take the block token and
   // both require the viewer's signed-in session.
@@ -2631,6 +2644,41 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, dailyLimitRaise]);
+
+  // REQUEST_OUTPUT_UNLOCK → OUTPUT_UNLOCK_RESULT { result }. The app names one restricted output
+  // by workflow and position; the server decides what may be offered and the host's own dialog
+  // (`useOutputUnlockBridge`) draws it. The app's word never sets a price or a url.
+  useEffect(() => {
+    const off = onMessage<
+      { requestId?: unknown; workflowId?: unknown; position?: unknown } | undefined
+    >('REQUEST_OUTPUT_UNLOCK', (raw) => {
+      const requestId = raw?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      const reply = (result: OutputUnlockBridgeResult) =>
+        send('OUTPUT_UNLOCK_RESULT', { requestId, result });
+      const workflowId = raw?.workflowId;
+      const position = raw?.position;
+      if (
+        typeof workflowId !== 'string' ||
+        workflowId.length === 0 ||
+        typeof position !== 'number' ||
+        !Number.isInteger(position) ||
+        position < 0
+      ) {
+        reply({
+          outcome: 'unavailable',
+          message: 'workflowId and a non-negative integer position are required',
+        });
+        return;
+      }
+      if (!token) {
+        reply({ outcome: 'unavailable', message: 'The app session is not ready yet.' });
+        return;
+      }
+      void outputUnlock.onUnlockRequest({ blockToken: token, workflowId, position }, reply);
+    });
+    return off;
+  }, [onMessage, send, token, outputUnlock]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
@@ -2945,6 +2993,38 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, token, getImagesByIdsMutation, reportNoToken]);
+
+  // GET_WORKFLOW_MEDIA → blocks.getWorkflowMedia → WORKFLOW_MEDIA_RESULT. Stored media refs →
+  // viewer-bound media URLs; the server judges each for this token's viewer.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; refs?: unknown } | undefined>(
+      'GET_WORKFLOW_MEDIA',
+      async (raw) => {
+        const req = resolveGetWorkflowMediaRequest(raw);
+        if (!req) return;
+        const { requestId, refs } = req;
+        if (refs.length === 0) {
+          send('WORKFLOW_MEDIA_RESULT', { requestId, result: { media: [] } });
+          return;
+        }
+        if (!token) {
+          reportNoToken('GET_WORKFLOW_MEDIA');
+          send('WORKFLOW_MEDIA_RESULT', { requestId, error: 'no block token' });
+          return;
+        }
+        try {
+          const result = await getWorkflowMediaMutation.mutateAsync({ blockToken: token, refs });
+          send('WORKFLOW_MEDIA_RESULT', { requestId, result });
+        } catch (err) {
+          send('WORKFLOW_MEDIA_RESULT', {
+            requestId,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, getWorkflowMediaMutation, reportNoToken]);
 
   // GET_BUZZ_BALANCE → blocks.getMyBuzzBalance → BUZZ_BALANCE_RESULT. The block's
   // per-account (blue/green/yellow) balance read that backs the SDK

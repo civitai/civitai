@@ -1863,7 +1863,7 @@ describe("kind:'workflow' in a BATCH estimate", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("kind:'workflow' POLL / CANCEL", () => {
-  const blob = (url: string) => ({ id: url, url, available: true, type: 'image' });
+  const blob = (url: string) => ({ id: url, url, available: true, type: 'image', nsfwLevel: 'pg' });
   function terminalWorkflow(over: Record<string, unknown> = {}) {
     return {
       id: WORKFLOW_ID,
@@ -1909,7 +1909,13 @@ describe("kind:'workflow' POLL / CANCEL", () => {
     // The suppressed step's image is in neither place.
     expect(snapshot.imageUrls).toEqual(['https://img/gen.png']);
     expect(snapshot.steps).toEqual([
-      { name: 'gen', $type: 'imageGen', status: 'succeeded', imageUrls: ['https://img/gen.png'] },
+      {
+        name: 'gen',
+        $type: 'imageGen',
+        status: 'succeeded',
+        imageUrls: ['https://img/gen.png'],
+        outputs: [{ url: 'https://img/gen.png', nsfwLevel: 'pg' }],
+      },
       { name: '$1', $type: 'imageUpscaler', status: 'succeeded', output: { scale: 2 } },
       {
         name: '$2',

@@ -386,6 +386,18 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // The app asks the host to unlock ONE restricted workflow output (by workflow and position).
+  // The host's own dialog offers what the server allows; every outcome, a refusal included, is
+  // reported inside `result`, so only the shared dispatcher's NACK carries an `error`.
+  REQUEST_OUTPUT_UNLOCK: {
+    request: true,
+    reply: 'OUTPUT_UNLOCK_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // App generator SUBQUEUE bridges (tag-scoped) — the calling app's OWN slice of
   // the viewer's generation queue: read (image results) + cancel one, both scoped
   // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed
@@ -451,6 +463,18 @@ export const INVENTORY = {
     errorKeys: ['error'],
     IframeHost:
       'shared-grid gated read is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Stored workflow media refs → viewer-bound media URLs, judged per viewer
+  // server-side. Advertised as `workflowMedia:v1` in BLOCK_INIT by the page host
+  // only, so the SDK never sends it to a host that would leave it hanging.
+  GET_WORKFLOW_MEDIA: {
+    request: true,
+    reply: 'WORKFLOW_MEDIA_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'not advertised in the model slot; workflow media is a page-app surface today',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },

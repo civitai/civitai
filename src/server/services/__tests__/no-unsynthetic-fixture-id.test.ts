@@ -3,8 +3,8 @@ import { readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 
 /**
- * 🔴 Fails when a moderation, report, appeal, legal-hold or CSAM test or fixture holds an id-sized
- * number outside the synthetic range. Ids in these fixtures come from `SYNTHETIC_MIN`..`SYNTHETIC_MAX`,
+ * 🔴 Fails when a moderation, report, appeal, legal-hold or CSAM test or fixture, or any test or
+ * fixture that pairs a user id with a report id, holds an id-sized number outside the synthetic range. Ids in these fixtures come from `SYNTHETIC_MIN`..`SYNTHETIC_MAX`,
  * so a fixture never carries the id of a real account or record. Small ids (under 10 000), round
  * numbers (durations, sizes), values past int4 and UUID segments pass; a genuine non-id constant
  * goes in `BASELINE` with its file. Support-desk ids (`conversationId`, `group_id`, `ticketId`) are
@@ -81,6 +81,7 @@ const BASELINE: Record<string, string[]> = {
   'src/__tests__/pages/api/v1/model-versions/mini-moderation-block.test.ts': ['131072'],
   'src/components/Moderation/HuggingFaceImport/ImportQueueTable.browser.test.tsx': ['268435456'],
   'src/server/__tests__/game-frame-report.test.ts': ['12345'],
+  'src/server/jobs/__tests__/remove-blocked-images-hold-guard.behavior.test.ts': ['32767'],
   'src/server/schema/blocks/__tests__/offsite-moderation.schema.test.ts': ['23514'],
   'src/server/services/__tests__/csam-archive-stream-upload.test.ts': ['12345'],
   'src/server/services/__tests__/csam-original-image.test.ts': ['12345'],
@@ -91,14 +92,20 @@ const BASELINE: Record<string, string[]> = {
   'src/server/services/blocks/__tests__/offsite-moderation.service.mod-actions.test.ts': ['12345'],
 };
 
-function inScope(repoPath: string): boolean {
-  if (!/^apps\/moderator\/|csam|report|appeal|moderat|legal-hold|held-/i.test(repoPath))
-    return false;
+const isTestOrFixture = (repoPath: string) =>
+  /\.test\.[cm]?[jt]sx?$/.test(repoPath) ||
+  /\.fixture\.[a-z]+$/.test(repoPath) ||
+  /\/__tests__\/[^/]+\.[cm]?[jt]sx?$/.test(repoPath) ||
+  /\/_{0,2}fixtures?_{0,2}\//.test(repoPath);
+
+const MODERATION_PATH = /^apps\/moderator\/|csam|report|appeal|moderat|legal-hold|held-/i;
+const idKey = (name: string) => new RegExp(`${name}_?id['"\`]?\\s*[:=]`, 'i');
+const pairsUserAndReport = (source: string) =>
+  idKey('report').test(source) && idKey('user').test(source);
+
+function inScope(repoPath: string, source: string): boolean {
   return (
-    /\.test\.[cm]?[jt]sx?$/.test(repoPath) ||
-    /\.fixture\.[a-z]+$/.test(repoPath) ||
-    /\/__tests__\/[^/]+\.[cm]?[jt]sx?$/.test(repoPath) ||
-    /\/_{0,2}fixtures?_{0,2}\//.test(repoPath)
+    isTestOrFixture(repoPath) && (MODERATION_PATH.test(repoPath) || pairsUserAndReport(source))
   );
 }
 
@@ -138,7 +145,8 @@ function walk(dir: string, out: string[] = []): string[] {
 const toRepoPath = (file: string) => path.relative(REPO, file).split(path.sep).join('/');
 const files = ROOTS.flatMap((root) => walk(root))
   .map((full) => ({ full, repoPath: toRepoPath(full) }))
-  .filter(({ repoPath }) => inScope(repoPath));
+  .filter(({ repoPath }) => isTestOrFixture(repoPath) && repoPath !== toRepoPath(__filename))
+  .filter(({ full, repoPath }) => inScope(repoPath, readFileSync(full, 'utf8')));
 
 describe('🔴 moderation test fixtures use synthetic ids', () => {
   it('the scan reached the moderation tests', () => {
@@ -166,6 +174,15 @@ describe('🔴 moderation test fixtures use synthetic ids', () => {
     ['a support-desk ticket id', `answer_ticket_id: '210000000017',`],
   ])('flags %s', (_, source) => {
     expect(unsyntheticIds(source).length).toBeGreaterThan(0);
+  });
+
+  it('scopes any test that pairs a user id with a report id', () => {
+    const pair = `const report = { reportId: 990000001, userId: 990000002 };`;
+    expect(inScope('src/server/services/__tests__/messages.test.ts', pair)).toBe(true);
+    expect(inScope('src/server/services/__tests__/messages.test.ts', `{ userId: 990000002 }`)).toBe(
+      false
+    );
+    expect(inScope('src/server/services/messages.ts', pair)).toBe(false);
   });
 
   it.each([

@@ -245,6 +245,7 @@ const SESSION_BOUND = new Set([
   'blocks.persistAppUploadImage',
   'blocks.presignMediaUploadBatchItem',
   'blocks.previewPostFromApp',
+  'blocks.previewOutputUnlock',
   'blocks.previewQuoteGrant',
   'blocks.previewTrainingQuote',
   'blocks.persistGenerationSource',
@@ -252,6 +253,7 @@ const SESSION_BOUND = new Set([
   'blocks.recordMediaUploadBatchItem',
   'blocks.setReactionFromApp',
   'blocks.startMediaUploadBatch',
+  'blocks.unlockOutput',
 ]);
 
 async function mint(over: { scopes?: string[]; anon?: boolean } = {}) {
@@ -290,6 +292,7 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.estimateWorkflow': { body: WORKFLOW_BODY },
   'blocks.estimateWorkflowBatch': { bodies: [WORKFLOW_BODY] },
   'blocks.getImagesByIds': { imageIds: [1] },
+  'blocks.getWorkflowMedia': { refs: ['bm1.not-a-ref'] },
   'blocks.getMyBuzzAccounts': {},
   'blocks.getMyBuzzBalance': {},
   'blocks.getMyBuzzTransactions': {},
@@ -304,8 +307,10 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.recordMediaUploadBatchItem': { batchId: 1, blobKey: `${'a'.repeat(32)}.jpeg` },
   'blocks.startMediaUploadBatch': { items: [{ kind: 'image', sizeBytes: 1000 }] },
   'blocks.previewPostFromApp': POST_PAYLOAD,
+  'blocks.previewOutputUnlock': { workflowId: 'wf_1', position: 0 },
   'blocks.previewQuoteGrant': { kind: 'training', quoteId: QUOTE_ID },
   'blocks.previewTrainingQuote': { quoteId: QUOTE_ID },
+  'blocks.unlockOutput': { workflowId: 'wf_1', position: 0, expectedTotal: 0 },
   'blocks.publishGenerationOutputs': { workflowId: 'wf_1' },
   'blocks.persistGenerationSource': { workflowId: 'wf_1', imageIndex: 0 },
   'blocks.queryAppWorkflows': {},
@@ -901,6 +906,45 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
   },
+  'blocks.getWorkflowMedia': {
+    'valid token': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'workflow media read requires an authenticated viewer',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag off)": OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag on)": OK(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+  },
   'blocks.getMyBuzzAccounts': {
     'valid token': PASSED(
       ['checkBlockCatalogRateLimit("bki_char")'],
@@ -1415,6 +1459,86 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     'anonymous subject': E(
       'UNAUTHORIZED',
       'training requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
+  'blocks.previewOutputUnlock': {
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'unlocking an output requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Rate limit exceeded, please retry shortly.',
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
+  'blocks.unlockOutput': {
+    'valid token': PASSED(
+      ['checkBlockCatalogRateLimit("bki_char")'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'unlocking an output requires an authenticated viewer',
       [],
       ['bridge-auth:ok']
     ),

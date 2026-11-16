@@ -1,0 +1,37 @@
+{
+  "name": "big-numbers",
+  "endpoint": "pulse",
+  "request": {
+    "method": "POST",
+    "target": "/api/internal/pulse",
+    "headers": {
+      "host": "www.example.test",
+      "origin": "https://www.example.test",
+      "content-type": "application/json",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7"
+    },
+    "body": "{\"type\":\"ImageView\",\"entityType\":\"Image\",\"entityId\":9007199254740993,\"nsfwLevel\":1e-7,\"browsingLevel\":-0,\"details\":{\"f\":0.000001,\"g\":123456789012345680000,\"h\":1.5e300,\"i\":5e-324}}"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "views",
+        "body": "{\"userId\":0,\"ip\":\"203.0.113.7\",\"userAgent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"type\":\"ImageView\",\"entityType\":\"Image\",\"entityId\":9007199254740992,\"details\":{\"f\":0.000001,\"g\":123456789012345680000,\"h\":1.5e+300,\"i\":5e-324},\"nsfwLevel\":1e-7,\"browsingLevel\":0}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/pulse\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"origin\":\"https://www.example.test\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"{\\\"type\\\":\\\"ImageView\\\",\\\"entityType\\\":\\\"Image\\\",\\\"entityId\\\":9007199254740992,\\\"nsfwLevel\\\":1e-7,\\\"browsingLevel\\\":0,\\\"details\\\":{\\\"f\\\":0.000001,\\\"g\\\":123456789012345680000,\\\"h\\\":1.5e+300,\\\"i\\\":5e-324}}\",\"bodyIsString\":false,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\"},\"body\":\"\",\"writes\":[{\"table\":\"views\",\"body\":\"{\\\"userId\\\":0,\\\"ip\\\":\\\"203.0.113.7\\\",\\\"userAgent\\\":\\\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\\\",\\\"type\\\":\\\"ImageView\\\",\\\"entityType\\\":\\\"Image\\\",\\\"entityId\\\":9007199254740992,\\\"details\\\":{\\\"f\\\":0.000001,\\\"g\\\":123456789012345680000,\\\"h\\\":1.5e+300,\\\"i\\\":5e-324},\\\"nsfwLevel\\\":1e-7,\\\"browsingLevel\\\":0}\"}]}}"
+}

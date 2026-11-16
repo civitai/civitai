@@ -11,8 +11,8 @@ import (
 // frameCosmeticIDs is getCosmeticsForEntity({entity: 'Image'})'s first half over the frame cache's
 // answer got for (unique) ids: the cosmetic ids to join (unordered, possibly repeated). The cached value
 // is the raw lookup row `{cosmeticId, equippedToId, userData}`; the cache's appendFn joins it with the
-// cosmetic record on every read, and joinFrames repeats that join. A frame miss falls back: its lookup
-// reads the primary and filters withheld creator cosmetics.
+// cosmetic record on every read, and joinFrames repeats that join. An id got does not answer falls
+// back; with Sources.Compute, fillFrames has computed every miss into got before this runs.
 func frameCosmeticIDs(imageIDs []int, got map[int]Entry) ([]int, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("image-frame-miss", "%d ids", len(miss))
@@ -99,7 +99,7 @@ func truthyJS(v any) bool {
 // VisibleEventDecorations is decorationsForEvents over the event-decoration cache's answer: an entry
 // whose `data.event` is a string naming a visible event (isEventDecorationData), picked field by
 // field so the wearer's `userId` (and any stale extra field) is not sent. An id the cache did not
-// answer falls back.
+// answer falls back (with Sources.Compute, fillEvents has computed the misses into got first).
 func VisibleEventDecorations(imageIDs []int, got map[int]Entry, visibleEvents map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
 		return nil, fallback.Newf("event-decoration-miss", "%d ids", len(miss))

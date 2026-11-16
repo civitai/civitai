@@ -94,7 +94,8 @@ const imagesEndpointSchema = z.object({
         return value ? nsfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
       return nsfwLevelMapDeprecated[value] as number;
     }),
-  browsingLevel: z.coerce.number().optional(),
+  // A bit mask. A fraction or a value past int32 would otherwise fail inside the search, as a 503.
+  browsingLevel: z.coerce.number().int().min(0).max(2147483647).optional(),
   tags: commaDelimitedNumberArray().optional(),
   cursor: keysetCursorSchema.optional(),
   type: z.enum(MediaType).optional(),

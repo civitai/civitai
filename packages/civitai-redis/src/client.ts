@@ -2289,6 +2289,10 @@ export const REDIS_SYS_KEYS = {
     // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
     FEE_ALLOWANCE_BOOST: 'system:pricing:fee-allowance-boost',
   },
+  ARTICLE_VERDICT_RESUBMITS: {
+    // Forced resubmits per article text — `system:article-verdict-resubmits:${articleId}:${textHash}`.
+    ATTEMPTS: 'system:article-verdict-resubmits',
+  },
   COLLECTION_AI_REVIEW: {
     // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
     ATTEMPTS: 'system:collection-ai-review:attempts',
@@ -2598,6 +2602,9 @@ export const REDIS_SYS_KEYS = {
     // Per-user fixed-window rate limit on `blocks.getMyAppDailyLimit`, the host's read behind the
     // raise dialog: `system:blocks:daily-limit-read-rate:${userId}`.
     DAILY_LIMIT_READ_RATE: 'system:blocks:daily-limit-read-rate',
+    // One App Block output UNLOCK at a time per workflow (`block-output-unlock-lock.ts`):
+    // `system:blocks:output-unlock-lock:${workflowId}` = the holder's random token, SET NX EX.
+    OUTPUT_UNLOCK_LOCK: 'system:blocks:output-unlock-lock',
     /** App Blocks `kind:'training'` run generation per (viewer, app, body); see block-training-quote.service. */
     TRAINING_RUNS: 'system:blocks:training-runs',
     /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
@@ -2719,6 +2726,7 @@ export const REDIS_SYS_KEYS = {
       default applies.
      */
     DELETED_USER_IMAGE_PURGE_LIMIT: 'system:deleted-user-image-purge-limit',
+    KNIGHTS_V2_SOURCES: 'system:knights-v2-sources',
     /*
       Set of userIds whose grace-blocked images are waiting on the
       restore-user-images job. `restoreUser` adds an id once its restore
@@ -3094,6 +3102,8 @@ export const REDIS_SYS_KEYS = {
     // Per judge: pair key -> the entry Elo froze on that vote (it was at the judge's cap).
     ANCHOR_VOTES: 'crucible:anchor-votes',
     SERVED_PAIR: 'crucible:served-pair',
+    // Per judge: pair keys they chose never to be shown again.
+    DISMISSED_PAIRS: 'crucible:dismissed-pairs',
     JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
@@ -3247,6 +3257,10 @@ const REDIS_KEYS_UNPREFIXED = {
     PROVIDER_DOWNLOAD_TOKENS: 'packed:caches:provider-download-tokens',
     // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
     ACCOUNT_STANDING: 'packed:caches:account-standing',
+    // `<prefix>:<blobId>` — an App Block media blob's scan verdict. See blobRatings.ts `readBlobState`.
+    BLOCK_MEDIA_BLOB_STATE: 'packed:caches:block-media-blob-state',
+    // `<prefix>:<blobId>` — set after a failed, timed-out or pending verdict read (see `BLOB_STATE_BACKOFF_SECONDS`).
+    BLOCK_MEDIA_BLOB_STATE_BACKOFF: 'packed:caches:block-media-blob-state-backoff',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',

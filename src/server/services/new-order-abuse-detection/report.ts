@@ -63,6 +63,9 @@ export type AbuseSuspect = {
   /** 0..100. Share of this account's ratings that were the dominant value. */
   dominantPct: number;
   avgPerMinute: number;
+  /** Which game's votes this row came from; absent means v1. v2 rows are report-only: the scan
+   *  never smites them, and the contract has no source field, so the reason names the game. */
+  source?: 'v1' | 'v2';
 };
 
 type Finding = AbuseReportInput['findings'][number];
@@ -114,6 +117,7 @@ export function renderReason(suspect: AbuseSuspect, smited: boolean): string {
   const share = Math.floor(suspect.dominantPct);
   const pace = (Math.round(suspect.avgPerMinute * 10) / 10).toFixed(1);
   const parts = [
+    ...(suspect.source === 'v2' ? ['Knights v2.'] : []),
     `Account ${suspect.userId} cast ${suspect.totalRatings.toLocaleString()} ` +
       `${plural(suspect.totalRatings, 'rating')} in the last ${ABUSE_SCAN_WINDOW_HOURS}h using ` +
       `${suspect.uniqueRatings.toLocaleString()} distinct rating ` +
@@ -135,7 +139,13 @@ export function renderReason(suspect: AbuseSuspect, smited: boolean): string {
     // board say the same thing in the same place; a local literal here would let them drift apart
     // again with both suites green. It stays on the `false` branch only: this producer DOES act, and
     // putting "no action was taken" beside a live smite is the failure `toFinding` names below.
-    smited ? `Auto-smited by this scan.` : NO_ACTION_TAKEN,
+    // A v2 row is never actioned, so `smited` there means the SAME account was auto-smited by the
+    // v1 scan in this run: say so rather than "no action was taken" beside a live smite.
+    smited
+      ? suspect.source === 'v2'
+        ? `This account was auto-smited by the Knights v1 scan in this run.`
+        : `Auto-smited by this scan.`
+      : NO_ACTION_TAKEN,
   ];
   return truncateReason(parts.join(' '));
 }
@@ -217,17 +227,45 @@ export function toFinding(suspect: AbuseSuspect, smited: boolean): Finding {
     confidence: confidenceFor(suspect),
     reason: renderReason(suspect, smited),
   };
-  if (smited) return { ...base, actioned: true, action: SMITE_ACTION };
+  // v2 is report-only, so a v2 row is never actioned even when the same account was smited for v1.
+  if (smited && suspect.source !== 'v2') return { ...base, actioned: true, action: SMITE_ACTION };
   return { ...base, actioned: false };
 }
 
-export function renderSummary(suspects: AbuseSuspect[], smitedCount: number): string {
+/** How each source fared this run. `not-run` is v1 without a ClickHouse client. */
+export type SourceCoverage = {
+  v1: 'ok' | 'failed' | 'not-run';
+  v2: 'ok' | 'failed';
+};
+
+/** The board has no coverage field, so a source that did not contribute is said in the summary. */
+export function renderCoverageNote(coverage: SourceCoverage): string {
+  if (coverage.v1 === 'failed') return 'Knights v1 scan failed; only v2 votes were scanned.';
+  if (coverage.v1 === 'not-run')
+    return 'Knights v1 scan did not run (ClickHouse unavailable); only v2 votes were scanned.';
+  if (coverage.v2 === 'failed') return 'Knights v2 scan failed; only v1 votes were scanned.';
+  return '';
+}
+
+/**
+ * `smitedCount` is accounts, and the totals are accounts too: an account flagged in both games has
+ * two findings but is one account.
+ */
+export function renderSummary(
+  suspects: AbuseSuspect[],
+  smitedCount: number,
+  coverage?: SourceCoverage
+): string {
+  const note = coverage ? renderCoverageNote(coverage) : '';
+  const prefix = note ? `${note} ` : '';
   if (!suspects.length)
-    return `No accounts matched the rating-pattern scan over the last ${ABUSE_SCAN_WINDOW_HOURS}h.`;
+    return `${prefix}No accounts matched the rating-pattern scan over the last ${ABUSE_SCAN_WINDOW_HOURS}h.`;
+  const accounts = new Set(suspects.map((s) => s.userId)).size;
   const ratings = suspects.reduce((sum, s) => sum + s.totalRatings, 0);
-  const filed = suspects.length - smitedCount;
+  const filed = accounts - smitedCount;
   return (
-    `${suspects.length.toLocaleString()} ${plural(suspects.length, 'account')} matched the ` +
+    prefix +
+    `${accounts.toLocaleString()} ${plural(accounts, 'account')} matched the ` +
     `rating-pattern scan over the last ${ABUSE_SCAN_WINDOW_HOURS}h, between them ` +
     `${ratings.toLocaleString()} ${plural(ratings, 'rating')}. ` +
     // 🔴 THE VERB AGREES TOO. `1 were auto-smited` is what this sentence said on every run with a
@@ -248,6 +286,8 @@ export type BuildReportArgs = {
   startedAt: Date;
   /** The producer's clock when the scan (including any smiting) finished. */
   finishedAt: Date;
+  /** Which sources contributed. Omitted means both did. */
+  coverage?: SourceCoverage;
 };
 
 /**
@@ -272,17 +312,19 @@ export type BuildReportArgs = {
  */
 export function buildAbuseReport(args: BuildReportArgs): AbuseReportInput {
   const findings = args.suspects.map((s) => toFinding(s, args.smitedUserIds.has(s.userId)));
-  const smitedCount = findings.filter((f) => f.actioned).length;
+  // Accounts, not rows: only v1 rows are ever actioned, but count distinct accounts regardless.
+  const smitedCount = new Set(findings.filter((f) => f.actioned).map((f) => f.userId)).size;
+  const accounts = new Set(args.suspects.map((s) => s.userId)).size;
   const finishedAt = new Date(Math.max(args.finishedAt.getTime(), args.startedAt.getTime()));
   return {
     detector: NEW_ORDER_ABUSE_DETECTOR,
     startedAt: args.startedAt.toISOString(),
     finishedAt: finishedAt.toISOString(),
-    summary: renderSummary(args.suspects, smitedCount),
+    summary: renderSummary(args.suspects, smitedCount, args.coverage),
     counters: {
-      suspects: args.suspects.length,
+      suspects: accounts,
       auto_smited: smitedCount,
-      filed_for_review: args.suspects.length - smitedCount,
+      filed_for_review: accounts - smitedCount,
       lookback_hours: ABUSE_SCAN_WINDOW_HOURS,
     },
     findings,

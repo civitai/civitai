@@ -110,20 +110,22 @@ describe('createQueryRuleReader', () => {
       dto: { type: POI_TYPE, data: [POI] },
       source: 'db',
     });
+    // The clock is pinned for both reads, so the copy's age is exactly 6 minutes.
     const t0 = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(t0);
     await reader.read(POI_TYPE);
 
     h.readBlocklistWithSource.mockImplementation(async () => {
       throw new Error('db down');
     });
-    vi.spyOn(Date, 'now').mockReturnValue(t0 + 6 * 60_000);
+    now.mockReturnValue(t0 + 6 * 60_000);
     try {
       expect(await reader.read(POI_TYPE)).toEqual({ terms: [POI], source: 'stale' });
       const gauge = await promClient.register
         .getSingleMetric('semantic_search_query_rule_stale_seconds')
         ?.get();
       const age = gauge?.values.find((v) => v.labels.type === POI_TYPE)?.value ?? 0;
-      expect(age).toBeGreaterThanOrEqual(360);
+      expect(age).toBe(360);
     } finally {
       vi.mocked(Date.now).mockRestore();
     }

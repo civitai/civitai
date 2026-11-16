@@ -53,6 +53,8 @@ import {
   type SamplePrompt,
   blockedSelectionMessage,
   cardUnavailability,
+  repeatExt,
+  clampRepeats,
 } from './trainingFlow';
 
 const rows = (texts: string[]): SamplePrompt[] => texts.map((text, id) => ({ id, text }));
@@ -916,5 +918,79 @@ describe('Kohya engine selection and options', () => {
       shuffleTokens: false,
       keepTokens: 0,
     });
+  });
+});
+
+describe('per-image repeats on the submit', () => {
+  const build = (r: Run, images: Img[]) =>
+    buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [r] },
+      images,
+      'ohwx',
+      'test',
+      [{ run: r, params: defaultRunParams(r) }],
+      rows(['ohwx, a photo']),
+      ['blue'],
+      'tag'
+    )[0]!;
+
+  it('sends the repeat count and extension only for an image that repeats', () => {
+    const out = build(run('sdxl'), [
+      { ...image(1, ['ohwx']), name: 'a.JPG', repeats: 3 },
+      image(2, ['ohwx']),
+    ]);
+    expect(out.items).toEqual([
+      { air: 'blob-1', caption: 'ohwx', repeats: 3, ext: 'jpg' },
+      { air: 'blob-2', caption: 'ohwx' },
+    ]);
+    expect(out.meta.imageCount).toBe(4);
+  });
+
+  it('drops repeats for Flux.2, whose trainer is not known to honour staged paths', () => {
+    const out = build(run('flux2'), [{ ...image(1, ['ohwx']), repeats: 3 }]);
+    expect(out.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+    expect(out.meta.imageCount).toBe(1);
+  });
+
+  it('sends no repeats in a sweep where any run cannot take them', () => {
+    const sdxl = run('sdxl');
+    const flux2 = run('flux2');
+    const out = buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [sdxl, flux2] },
+      [{ ...image(1, ['ohwx']), repeats: 3 }],
+      'ohwx',
+      'test',
+      [
+        { run: sdxl, params: defaultRunParams(sdxl) },
+        { run: flux2, params: defaultRunParams(flux2) },
+      ],
+      rows(['ohwx, a photo']),
+      ['blue'],
+      'tag'
+    );
+    for (const payload of out) expect(payload.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
+  it('sends an image set back to 1 repeat as a plain item', () => {
+    const out = build(run('sdxl'), [{ ...image(1, ['ohwx']), repeats: 1 }]);
+    expect(out.items).toEqual([{ air: 'blob-1', caption: 'ohwx' }]);
+  });
+
+  it('clamps a typed repeat count to a whole number from 1 to 20', () => {
+    expect(clampRepeats(2.4)).toBe(2);
+    expect(clampRepeats(2.6)).toBe(3);
+    expect(clampRepeats(Number.NaN)).toBe(1);
+    expect(clampRepeats(0)).toBe(1);
+    expect(clampRepeats(-5)).toBe(1);
+    expect(clampRepeats(21)).toBe(20);
+    expect(clampRepeats(Number.POSITIVE_INFINITY)).toBe(1);
+  });
+
+  it("stages a copy under the file's own media extension, else its blob's, else the media default", () => {
+    expect(repeatExt({ name: 'clip.MP4', blobId: 'x', mediaType: 'video' })).toBe('mp4');
+    expect(
+      repeatExt({ name: 'image 3', blobId: 'urn:air:a:b:c:blob@K.webp', mediaType: 'image' })
+    ).toBe('webp');
+    expect(repeatExt({ name: 'image 3', blobId: 'K', mediaType: 'video' })).toBe('mp4');
   });
 });
