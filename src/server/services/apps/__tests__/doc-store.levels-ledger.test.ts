@@ -50,11 +50,12 @@ const EXEMPT: Record<string, string> = {
   SQL_STAMP_SEQ_MAJOR: "the write's response: the writer's own document",
   SQL_STAMP_SEQ_LEVELS: "the write's response, with its rating: the writer's own document",
   SQL_STAMP_SEQ_MAJOR_LEVELS: "the write's response, with its rating: the writer's own document",
-  SQL_READ_OWN_DOC: "an unchanged put's response: the writer's own document, read back untouched",
-  SQL_READ_OWN_DOC_LEVELS:
-    "an unchanged put's response, with its rating: the writer's own document, read back untouched",
-  SQL_LOCK_DOC_HASH:
-    "an unchanged put's check: the content hash of the document at the caller's key, locked, never a body",
+  SQL_UNCHANGED_PROBE:
+    "an unchanged put's read: returned only when the caller authored it (classifyPublish)",
+  SQL_UNCHANGED_PROBE_LEVELS:
+    "an unchanged put's read, with its rating: returned only when the caller authored it",
+  SQL_UNCHANGED_PROBE_TAIL:
+    "the unchanged put's probe columns (content hashes, index-row comparison), never a body",
   SQL_MIGRATE_LOCK_DOC: 'a schema migration rewriting the body server-side; returns nothing',
   SQL_MOD_GET: 'the moderator tooling: moderators see every document',
   SQL_PUBLISH_SOURCES:

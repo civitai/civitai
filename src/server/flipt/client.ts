@@ -414,10 +414,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // ids. DEFAULT-OFF — absent or Flipt unreachable, both paths answer as an unknown route. See
   // PUBLISH in `doc-store-api.ts`.
   APP_BLOCKS_STORAGE_PUBLISH = 'app-blocks-storage-publish',
-  // A shared document PUT that changes nothing is free: when the body's content hash equals the
-  // stored document's (the caller's own, visible, at the version any `ifVersion` names), the
-  // route answers with the stored document and spends no shared-write budget token, runs no
-  // moderation scan and writes nothing (no version bump, so its content-level rating stands).
+  // A shared document PUT that would change no stored row is free of the shared-write budget:
+  // when the body's content hash and index rows equal the stored document's (the caller's own,
+  // visible, at the version any `ifVersion` names), the route answers with the stored document
+  // and spends no shared-write budget token, runs no moderation scan and writes nothing (no
+  // version bump, so its content-level rating stands). While on, every shared PUT also spends one
+  // per-viewer `write` token first, so identical PUTs stay bounded.
   // EVALUATED PER APP like the publish flag above (entityId = the app block id, NO context).
   // DEFAULT-OFF — absent or Flipt unreachable, every shared write spends and scans as before. See
   // `putIfUnchanged` in `doc-store.ts`.

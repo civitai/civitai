@@ -691,27 +691,39 @@ const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_byte
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
   FOR UPDATE`;
 
-// `putIfUnchanged`'s lock read: what `classifyPublish` decides on (author, hidden, the stored
-// content hash) plus the hash of the body the caller would write. The SAME hash a publish compares
-// (`md5` of jsonb's canonical text form, see SQL_PUBLISH_TARGETS), taken of `$6::jsonb` exactly as
-// SQL_UPDATE_DOC would store it, so equal hashes mean the write would store what is there.
-// Returns hashes, never a body. $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data
-const SQL_LOCK_DOC_HASH = `SELECT d.version, d.author_uid, d.author_kind,
-    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash, md5($6::jsonb::text) AS written_hash
-  FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5
-  FOR UPDATE`;
-
-// `putIfUnchanged`'s response: the caller's own document, read back untouched — what a write
-// returns (SQL_STAMP_SEQ), without stamping anything. $1 app, $2 ns, $3 coll, $4 scope_uid,
-// $5 key, $6 viewer
-const SQL_READ_OWN_DOC = `SELECT ${docColumns('$6::int')}
+// `putIfUnchanged`'s one read: the stored shared document as a write returns it (SQL_STAMP_SEQ's
+// columns), plus what decides whether a put of `$6` would change any stored row:
+// - `hash` / `written_hash`: the SAME content hash a publish compares (`md5` of jsonb's canonical
+//   text, see SQL_PUBLISH_TARGETS), the second taken of `$6::jsonb` exactly as SQL_UPDATE_DOC
+//   would store it;
+// - `index_same`: the document's stored index rows are exactly the rows SQL_SYNC_INDEX would leave
+//   ($8-$11, the same arrays it takes), compared both ways with EXCEPT (NULLs compare equal there).
+// Unlocked: nothing is written on its answer, so the answer is simply as of this read.
+// $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 viewer, $8 names, $9 v_text,
+// $10 v_num, $11 v_type
+const SQL_UNCHANGED_PROBE_TAIL = `,
+    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash,
+    md5($6::jsonb::text) AS written_hash,
+    NOT EXISTS (
+      SELECT ix.name, ix.v_text, ix.v_num, ix.v_type FROM appdata.doc_index ix
+        WHERE ix.app_id = $1 AND ix.ns = $2 AND ix.coll = $3 AND ix.scope_uid = $4::int AND ix.key = $5
+      EXCEPT
+      SELECT * FROM unnest($8::text[], $9::text[], $10::float8[], $11::text[])
+    ) AND NOT EXISTS (
+      SELECT * FROM unnest($8::text[], $9::text[], $10::float8[], $11::text[])
+      EXCEPT
+      SELECT ix.name, ix.v_text, ix.v_num, ix.v_type FROM appdata.doc_index ix
+        WHERE ix.app_id = $1 AND ix.ns = $2 AND ix.coll = $3 AND ix.scope_uid = $4::int AND ix.key = $5
+    ) AS index_same
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5`;
-// The same, with its rating (levels on). The writer's own document: no gate.
-const SQL_READ_OWN_DOC_LEVELS = `SELECT ${docColumns('$6::int', true)}
-  FROM appdata.doc d
-  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.key = $5`;
+const SQL_UNCHANGED_PROBE = `SELECT ${docColumns('$7::int')}${SQL_UNCHANGED_PROBE_TAIL}`;
+// The same, with its rating (levels on). The writer's own document only: the caller answers with
+// it only when `classifyPublish` says the caller authored it, so no gate.
+const SQL_UNCHANGED_PROBE_LEVELS = `SELECT ${docColumns(
+  '$7::int',
+  true
+)}${SQL_UNCHANGED_PROBE_TAIL}`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key, $6 data, $7 writer uid
 const SQL_INSERT_DOC = `INSERT INTO appdata.doc AS d
@@ -2122,20 +2134,25 @@ function buildDocStore(deps: DocStoreDeps) {
   }
 
   /**
-   * A shared `put` that would change nothing, answered without writing: the stored document,
+   * A shared `put` that would change no stored row, answered without writing: the stored document,
    * untouched (no version, seq or `updated_at` bump, no index sync, no usage charge, no
    * `markRatingPending`, so a rating given for its version stands), when ALL of:
    * - a document is stored at `key` and `classifyPublish` calls it `unchanged` against `data` —
    *   the ONE rule a publish uses: the caller's own, not hidden, and the same content hash;
+   * - its stored index rows are exactly the rows `indexRowsFor` derives from `data` under the
+   *   collection's CURRENT declaration (an index declared or dropped since, or a value the
+   *   declaration now refuses, is a write that would change or refuse something);
    * - `opts.ifVersion`, when given, is its current version.
    * Otherwise `null`, having written nothing; the caller then makes the ordinary write, which
    * refuses (or writes) exactly as it always did. So a stale `ifVersion`, someone else's or a hidden
    * document, an absent key, a private collection and a body the store would refuse are all
    * `null`, never a refusal of their own.
    *
-   * The comparison runs on the row locked FOR UPDATE (SQL_LOCK_DOC_HASH, the lock `writeDoc`
-   * takes), so no concurrent write can change the document between the hash check and the answer:
-   * a write that lands before the lock is compared against, one queued behind it lands after.
+   * ONE unlocked read (SQL_UNCHANGED_PROBE), no lock: nothing is written on its answer, so a
+   * concurrent write is simply before or after it, and a body that differs from what the read saw
+   * always goes to the ordinary write. Not refreshed here: the schema-major stamp
+   * (`coll.schemaMajor`), which an ordinary write would re-stamp. Inert today: the stamp is read
+   * only by `applyMajorChain`, which has no caller outside this module.
    */
   async function putIfUnchanged(
     ctx: DocStoreContext,
@@ -2149,27 +2166,41 @@ function buildDocStore(deps: DocStoreDeps) {
     assertShareWritable(coll, policy);
     if (coll.config.visibility !== 'shared') return null;
     let json: string;
+    let indexRows: IndexRow[];
     try {
       assertKey(key);
       json = serializeData(data);
+      indexRows = indexRowsFor(coll, data);
     } catch {
       // `writeDoc` refuses it, after the caller's budget and scan, as it always has.
       return null;
     }
-    const base = [ctx.appId, ctx.ns, coll.name, 0, key];
-    return withTx(ctx, async (c) => {
-      const row = (await c.query(SQL_LOCK_DOC_HASH, [...base, json])).rows[0];
-      if (!row) return null;
-      if (classifyPublish(viewer, { hash: String(row.written_hash) }, row) !== 'unchanged') {
-        return null;
-      }
-      if (opts.ifVersion !== undefined && opts.ifVersion !== Number(row.version)) return null;
-      const res = await c.query(ctx.levels ? SQL_READ_OWN_DOC_LEVELS : SQL_READ_OWN_DOC, [
-        ...base,
-        ctx.viewerUid,
-      ]);
-      return toDocRecord(res.rows[0], ctx, coll);
-    });
+    const row = await withTx(
+      ctx,
+      async (c) =>
+        (
+          await c.query(ctx.levels ? SQL_UNCHANGED_PROBE_LEVELS : SQL_UNCHANGED_PROBE, [
+            ctx.appId,
+            ctx.ns,
+            coll.name,
+            0,
+            key,
+            json,
+            ctx.viewerUid,
+            indexRows.map((r) => r.name),
+            indexRows.map((r) => r.vText),
+            indexRows.map((r) => r.vNum),
+            indexRows.map((r) => r.type),
+          ])
+        ).rows[0]
+    );
+    if (!row) return null;
+    if (classifyPublish(viewer, { hash: String(row.written_hash) }, row) !== 'unchanged') {
+      return null;
+    }
+    if (row.index_same !== true) return null;
+    if (opts.ifVersion !== undefined && opts.ifVersion !== Number(row.version)) return null;
+    return toDocRecord(row, ctx, coll);
   }
 
   async function remove(
