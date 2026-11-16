@@ -228,11 +228,6 @@ describe('upsertBounty — images the edit form was not shown', () => {
     await upsert({ name: 'Renamed', images: [], shownImageIds: [] });
     expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({ images: [] });
   });
-
-  it('still refuses a new bounty with no image', async () => {
-    await expect(upsert({ id: undefined, images: [] })).rejects.toThrow();
-    expect(mockDbWrite.bounty.create).not.toHaveBeenCalled();
-  });
 });
 
 describe('upsertBounty — profanity filter vs stored locks', () => {
@@ -403,6 +398,11 @@ describe('upsertBounty — create path', () => {
 
   const chargedAccountTypes = () =>
     mockBuzzTransaction.mock.calls.at(-1)?.[0]?.fromAccountTypes ?? [];
+
+  it('refuses a new bounty with no image', async () => {
+    await expect(create({ images: [] })).rejects.toThrow(/At least one example image/);
+    expect(mockDbWrite.bounty.create).not.toHaveBeenCalled();
+  });
 
   it('checks the image upload keys before opening the transaction', async () => {
     await create();

@@ -142,7 +142,7 @@ export const upsertBountyEntry = async ({
   userId,
   shownImageIds,
 }: UpsertBountyEntryInput & { userId: number }) => {
-  // An update checks this after the save, counting links its form was not shown.
+  // Updates are checked in updateEntityImages, which counts links the form was not shown.
   if (!id && images?.length === 0)
     throw throwBadRequestError('At least one example image must be uploaded');
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });

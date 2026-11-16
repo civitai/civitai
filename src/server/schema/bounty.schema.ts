@@ -54,11 +54,13 @@ export const bountyDetailsSchema = z.object({
 });
 
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
-const bountyImagesSchema = z.array(
+export const bountyImagesSchema = z.array(
   imageReferenceInputSchema.extend({
     meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
   })
 );
+/** The linked images an edit form was shown; only these can be removed. See `updateEntityImages`. */
+export const shownImageIdsSchema = z.number().array().optional();
 
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
@@ -124,8 +126,7 @@ export const updateBountyInputSchema = createBountyInputSchema
     // An edit may show no image when every one is hidden by the domain's cap; the save checks
     // that one stays linked.
     images: bountyImagesSchema,
-    // The linked images the edit form was shown; only these can be removed. See `updateEntityImages`.
-    shownImageIds: z.number().array().optional(),
+    shownImageIds: shownImageIdsSchema,
     startsAt: z.coerce.date(),
     expiresAt: stringToDate(
       z
@@ -142,8 +143,7 @@ export type UpsertBountyInput = z.infer<typeof upsertBountyInputSchema>;
 export const upsertBountyInputSchema = createBountyInputSchema.extend({
   id: z.number().optional(),
   images: bountyImagesSchema,
-  // The linked images the edit form was shown; only these can be removed. See `updateEntityImages`.
-  shownImageIds: z.number().array().optional(),
+  shownImageIds: shownImageIdsSchema,
   startsAt: z.string(),
   expiresAt: z.string(),
   lockedProperties: z.string().array().optional(),

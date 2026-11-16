@@ -1,8 +1,8 @@
 import { Currency } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
-import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { baseFileSchema } from './file.schema';
+import { bountyImagesSchema, shownImageIdsSchema } from '~/server/schema/bounty.schema';
 import { constants } from '~/server/common/constants';
 
 export type BountyEntryFileMeta = z.infer<typeof bountyEntryFileMeta>;
@@ -26,19 +26,12 @@ export const upsertBountyEntryInputSchema = z.object({
   files: z.array(bountyEntryFileSchema).min(1),
   ownRights: z.boolean().optional(),
   // At least one is checked on save: an edit may show none when the domain's cap hides them all.
-  images: z
-    .array(
-      imageReferenceInputSchema.extend({
-        meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
-      })
-    )
-    .max(
-      constants.bounties.maxEntryImagesForEdit,
-      `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
-    ),
+  images: bountyImagesSchema.max(
+    constants.bounties.maxEntryImagesForEdit,
+    `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
+  ),
   description: getSanitizedStringSchema().nullish(),
-  // The linked images the edit form was shown; only these can be removed. See `updateEntityImages`.
-  shownImageIds: z.number().array().optional(),
+  shownImageIds: shownImageIdsSchema,
 });
 
 // Headless/agent (MCP) friendly bounty-entry submission. The full `upsert`
