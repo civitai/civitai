@@ -1,6 +1,10 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { recomputeArticleIngestion } from '~/server/services/article.service';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  articleTextVerdictMatch,
+  recomputeArticleIngestion,
+} from '~/server/services/article.service';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { isSharedArticle } from '~/server/services/article-share.helpers';
@@ -19,7 +23,7 @@ import {
   TEXT_SCAN_ENTITY_NOT_PUBLIC,
 } from '~/server/services/text-scan/route';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
-import { removeTags } from '~/utils/string-helpers';
+import { articleModerationText } from '~/server/services/article-ingestion.helpers';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
 
 // Article-side hooks for the EntityModeration pipeline. The webhook and the
@@ -34,9 +38,7 @@ export const articleModerationAdapter: ModerationAdapter = {
     // Must match the string the create/update/rescan paths submit, or the
     // `contentHash` dedup in createXGuardModerationRequest can never hit and the
     // retry cron re-audits content that was already scanned.
-    return new Map(
-      rows.map((r) => [r.id, [r.title, removeTags(r.content)].filter(Boolean).join(' ')])
-    );
+    return new Map(rows.map((r) => [r.id, articleModerationText(r.title, r.content)]));
   },
 
   submit: async ({ entityId, content }) => {
@@ -79,6 +81,25 @@ export const articleModerationAdapter: ModerationAdapter = {
     // lock a link being created takes, so none outlives the block. The row is read FOR UPDATE, so
     // this writes from the row as it is now, and a write to it that starts later waits for this one.
     if (blocked) {
+      // Unpublishes even when the verdict is for text the article no longer has, failing closed;
+      // the log counts how often that happens.
+      const [text, verdict] = await Promise.all([
+        dbWrite.article.findUnique({
+          where: { id: entityId },
+          select: { title: true, content: true },
+        }),
+        dbWrite.entityModeration.findUnique({
+          where: { entityType_entityId: { entityType: 'Article', entityId } },
+          select: { contentHash: true, result: true, updatedAt: true },
+        }),
+      ]);
+      if (text && verdict && articleTextVerdictMatch(verdict, text) === 'other')
+        logToAxiom({
+          type: 'warning',
+          name: 'article-blocked-verdict-text-mismatch',
+          articleId: entityId,
+        }).catch();
+
       const article = await dbWrite.$transaction(async (tx) => {
         await lockAccessTokens(tx, entityId);
         const [article] = await tx.$queryRaw<

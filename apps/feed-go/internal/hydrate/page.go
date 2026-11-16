@@ -18,6 +18,9 @@ type PageRequest struct {
 	// VisibleEvents is the decoration events every viewer sees; empty = no decoration read.
 	VisibleEvents map[string]bool
 	ViewerID      int // 0 = signed out: no reactions read
+	// NoProfilePictures: the include list has no 'profilePictures' (image.getInfinite adds only
+	// 'tagIds'), so the profile-picture cache is not read and every creator's is absent (Node: null).
+	NoProfilePictures bool
 }
 
 // Page is a page's hydration, each map as the lookup of the same name answers it.
@@ -46,9 +49,11 @@ type Page struct {
 //
 // Everything that is not a cache read is as in the per-lookup reads, which share these halves:
 // each lookup's misses, markers and staleness (decodeEntry), its fallback reasons, and its replica
-// queries, which run after the pipeline, concurrently, one per lookup that has misses. The reactions
-// query reads no cache and starts with stage 1. A lookup's error (the first, as with errgroup) is
-// the page's error.
+// queries, which run after the pipeline, concurrently, one per lookup that has misses. With
+// s.Compute, the misses of the caches Node fills on read (user cosmetics, frames, event decorations)
+// are computed the same way: one batched lookup per cache that has misses, after the pipeline,
+// concurrently (misses.go). The reactions query reads no cache and starts with
+// stage 1. A lookup's error (the first, as with errgroup) is the page's error.
 func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	users, images, videos := Unique(req.UserIDs), Unique(req.ImageIDs), Unique(req.VideoIDs)
 	out := &Page{}
@@ -58,7 +63,10 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	stage1 := NewBatch()
 	basic := s.Packed.Queue(stage1, KeyBasicUsers, users, ttlDay)
 	userCosmetics := s.Packed.Queue(stage1, KeyUserCosmetics, users, 0)
-	profilePics := s.Packed.Queue(stage1, KeyProfilePictures, users, 0)
+	var profilePics *PackedRead
+	if !req.NoProfilePictures {
+		profilePics = s.Packed.Queue(stage1, KeyProfilePictures, users, 0)
+	}
 	frames := s.Packed.Queue(stage1, KeyImageFrames, images, 0)
 	thumbs := s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)
 	tags := s.Packed.Queue(stage1, KeyTagIDs, images, 0)
@@ -73,6 +81,10 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 
 	g.Go(safe.Go(func() (err error) { out.Basic, err = s.basicUsersFrom(gctx, users, basic.Entries()); return }))
 	g.Go(safe.Go(func() (err error) {
+		if profilePics == nil {
+			out.ProfilePics = map[int]superjson.Object{}
+			return nil
+		}
 		out.ProfilePics, err = s.profilePicturesFrom(gctx, users, profilePics.Entries())
 		return
 	}))
@@ -91,7 +103,11 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 			out.Decorations = map[int]superjson.Object{}
 			return nil
 		}
-		out.Decorations, err = VisibleEventDecorations(images, events.Entries(), req.VisibleEvents)
+		got, writable := events.read()
+		if err := s.fillEvents(gctx, images, got, writable); err != nil {
+			return err
+		}
+		out.Decorations, err = VisibleEventDecorations(images, got, req.VisibleEvents)
 		return
 	}))
 	g.Go(safe.Go(func() error {
@@ -105,14 +121,25 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	return out, nil
 }
 
-// pageCosmetics is Page's stage 2: UserCosmetics and ImageFrames over their stage-1 answers, with one
-// Cosmetics read (one pipeline, then one replica query for its misses) for both joins.
+// pageCosmetics is Page's stage 2: UserCosmetics and ImageFrames over their stage-1 answers (their
+// misses computed first, with s.Compute), with one Cosmetics read (one pipeline, then one replica
+// query for its misses) for both joins.
 func (s *Sources) pageCosmetics(ctx context.Context, users, images []int, userCosmetics, frames *PackedRead) (map[int][]any, map[int]superjson.Object, error) {
-	perUser, userCIDs, err := userCosmeticsFrom(users, userCosmetics.Entries())
+	ucGot, ucWritable := userCosmetics.read()
+	frameEntries, frameWritable := frames.read()
+	if s.Compute != nil {
+		// The two lookups' misses, computed at once (each is one query, plus the withheld check).
+		g, gctx := errgroup.WithContext(ctx)
+		g.Go(safe.Go(func() error { return s.fillUserCosmetics(gctx, users, ucGot, ucWritable) }))
+		g.Go(safe.Go(func() error { return s.fillFrames(gctx, images, frameEntries, frameWritable) }))
+		if err := g.Wait(); err != nil {
+			return nil, nil, err
+		}
+	}
+	perUser, userCIDs, err := userCosmeticsFrom(users, ucGot)
 	if err != nil {
 		return nil, nil, err
 	}
-	frameEntries := frames.Entries()
 	frameCIDs, err := frameCosmeticIDs(images, frameEntries)
 	if err != nil {
 		return nil, nil, err

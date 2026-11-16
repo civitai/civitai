@@ -124,7 +124,7 @@ func ServeV1(ctx context.Context, d *V1Deps, req V1Request) (*V1Answer, error) {
 		if withheld {
 			return &V1Answer{Body: emptyGate(), Trivial: true}, nil
 		}
-		levels, err := heldLevels(ctx, d.Gallery, modelIDs)
+		levels, err := heldLevels(ctx, d.Gallery, modelIDs, "v1-held-level-unset")
 		if err != nil {
 			return nil, err
 		}
@@ -203,7 +203,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	if addonLevel == 0 {
 		addonLevel = browsing.PublicLevels
 	}
-	ownScoped := viewer.ID != 0 && in.UserID != 0 && viewer.ID == in.UserID
+	ownScoped := ownScope(viewer.ID, "", in.UserID, in.Username)
 	if resolved := browsing.ResolveAddons(d.Addons(ctx), addonLevel, viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
 		excluded = unionInts(nil, resolved.ExcludedTagIDs)
 	}
@@ -688,7 +688,7 @@ func SkipValue(metadata json.RawMessage) *float64 {
 // resolveImageModelIDs is resolveImageModelIds for a model, a version and a post: the named model, the
 // version's model and the post's version's model. ok is false when the named version or post cannot be
 // found (Node: null — withheld, and held at nothing).
-func resolveImageModelIDs(ctx context.Context, s V1Sources, modelID, versionID, postID int) ([]int, bool, error) {
+func resolveImageModelIDs(ctx context.Context, s modelResolver, modelID, versionID, postID int) ([]int, bool, error) {
 	var listed []int
 	if postID != 0 {
 		posts, err := s.PostVersions(ctx, []int{postID})
@@ -731,10 +731,16 @@ func resolveImageModelIDs(ctx context.Context, s V1Sources, modelID, versionID, 
 	return unionInts(nil, modelIDs), true, nil
 }
 
+// modelResolver is what resolveImageModelIDs reads: the post→version and version→model caches.
+type modelResolver interface {
+	PostVersions(ctx context.Context, postIDs []int) (map[int]int, error)
+	VersionModels(ctx context.Context, versionIDs []int) (map[int]int, error)
+}
+
 // heldLevels is getShowcaseHeldLevels for models whose flags the caller did not read: each held
-// model's gallery level. A held model whose settings carry no level falls back (Node's reading of an
-// undefined level differs between its callers).
-func heldLevels(ctx context.Context, g V1Gallery, modelIDs []int) (map[int]int, error) {
+// model's gallery level. A held model whose settings carry no level falls back with unsetReason
+// (Node's reading of an undefined level differs between its callers).
+func heldLevels(ctx context.Context, g V1Gallery, modelIDs []int, unsetReason string) (map[int]int, error) {
 	out := map[int]int{}
 	ids := hydrate.Unique(modelIDs)
 	if len(ids) == 0 {
@@ -750,7 +756,7 @@ func heldLevels(ctx context.Context, g V1Gallery, modelIDs []int) (map[int]int, 
 			continue
 		}
 		if s.Level == nil {
-			return nil, fallback.New("v1-held-level-unset")
+			return nil, fallback.New(unsetReason)
 		}
 		out[id] = *s.Level
 	}
@@ -792,7 +798,7 @@ func withoutHeldImages(ctx context.Context, d *V1Deps, items []v1Item) ([]v1Item
 			modelIDs = append(modelIDs, m)
 		}
 	}
-	levels, err := heldLevels(ctx, d.Gallery, modelIDs)
+	levels, err := heldLevels(ctx, d.Gallery, modelIDs, "v1-held-level-unset")
 	if err != nil {
 		return nil, err
 	}

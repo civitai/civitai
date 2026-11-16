@@ -26,6 +26,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
 	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
@@ -54,6 +55,23 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 	}
 	return redis.NewClient(opts), nil
 }
+
+// missCompute is how hydration answers the misses of the caches Node fills on read
+// (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back). primary is the
+// primary database, used (and opened) only with write-back on.
+func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int)) *hydrate.MissCompute {
+	if !cfg.ComputeMisses {
+		return nil
+	}
+	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe}
+	if cfg.CacheWriteBack {
+		c.Primary = primary
+	}
+	return c
+}
+
+// primaryMaxConns bounds the primary pool, used only by the write-back miss lookups (DESIGN.md §3.1).
+const primaryMaxConns = 4
 
 func run(log *slog.Logger) error {
 	cfg, err := config.Load()
@@ -97,6 +115,24 @@ func run(log *slog.Logger) error {
 
 	packed := &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: pool}
+	var primary hydrate.Querier
+	if cfg.ComputeMisses && cfg.CacheWriteBack {
+		primaryCfg, err := dbpool.Config(cfg.PrimaryDatabaseURL, dbpool.Settings{MaxConns: primaryMaxConns})
+		if err != nil {
+			return err
+		}
+		primaryPool, err := pgxpool.NewWithConfig(ctx, primaryCfg)
+		if err != nil {
+			return err
+		}
+		defer primaryPool.Close()
+		primary = primaryPool
+	}
+	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss)
+	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
+	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
+	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
+		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative)
 	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
@@ -162,9 +198,33 @@ func run(log *slog.Logger) error {
 		// The Node app this service shadows is the production build (isProd): nextPage on https://<host>.
 		NodeProduction: true,
 	}
+	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
+	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
+	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
+	infinite := &feed.InfiniteDeps{
+		Deps:    deps,
+		Sources: sources,
+		Blocked: blocked,
+	}
+	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
+	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
+	models := &modelfeed.Deps{
+		DB:      pool,
+		Sources: sources,
+		Gallery: deps.Gallery,
+		Addons:  deps.Addons.Addons,
+		Blocked: blocked,
+		Config: modelfeed.Config{
+			BaseModelMetrics:        cfg.BaseModelFeedMetrics,
+			ImagesSlim:              cfg.ModelImagesSlim,
+			CoverageNext:            cfg.CoverageNext,
+			LoadingOpenToAll:        cfg.LoadingOpenToAll,
+			VisibleDecorationEvents: cfg.DecorationEvents,
+		},
+	}
 	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
 	mc := config.LoadV1Models()
-	models := &server.V1ModelsDeps{
+	v1Models := &server.V1ModelsDeps{
 		Deps: &v1models.Deps{
 			DB:      pool,
 			Packed:  packed,
@@ -174,8 +234,8 @@ func run(log *slog.Logger) error {
 			Config: v1models.Config{
 				ImageLocation:        cfg.ImageLocation,
 				BaseURL:              mc.BaseURL,
-				CoverageNext:         mc.CoverageNext,
-				BaseModelFeedMetrics: mc.BaseModelFeedMetrics,
+				CoverageNext:         &cfg.CoverageNext,
+				BaseModelFeedMetrics: &cfg.BaseModelFeedMetrics,
 				ResponseCacheTTL:     mc.ResponseCacheTTL,
 				Production:           true,
 			},
@@ -183,16 +243,20 @@ func run(log *slog.Logger) error {
 		Users: sources,
 	}
 	srv := &server.Server{
-		Resolver:       resolver,
-		Deps:           deps,
-		Hosts:          cfg.Hosts,
-		RegionRules:    cfg.RegionRules,
-		Metrics:        metrics,
-		Log:            log,
-		ShadowQueue:    make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		Resolver:    resolver,
+		Deps:        deps,
+		Models:      models,
+		Hosts:       cfg.Hosts,
+		RegionRules: cfg.RegionRules,
+		Metrics:     metrics,
+		Log:         log,
+		ShadowQueue: make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		// The Go-first probes get as many slots as the comparisons, in their own queue.
+		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
-		V1Models:       models,
+		Infinite:       infinite,
+		V1Models:       v1Models,
 		RequestBudget:  cfg.RequestBudget,
 	}
 	if cfg.FallbackURL != "" {
@@ -200,7 +264,12 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		srv.Fallback = fallbackProxy(target)
+		srv.Fallback = fallbackProxy(target, fallbackIdleTimeout, func(reason string, err error) {
+			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
+			if reason == proxyErrorUpstream {
+				log.Warn("fallback proxy: the Node app did not answer", "err", err)
+			}
+		})
 	}
 
 	public := server.PublicMux(srv)

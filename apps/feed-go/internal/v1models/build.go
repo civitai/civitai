@@ -1,6 +1,6 @@
 // Package v1models ports the public REST model endpoints, `GET /api/v1/models` and
 // `GET /api/v1/models/[id]` (src/pages/api/v1/models), in SHADOW mode only: the answer Node would
-// give for the request shapes ported here, or a fallback. See apps/feed-go/DESIGN.md §14.
+// give for the request shapes ported here, or a fallback. See apps/feed-go/DESIGN.md §16.
 //
 // Both endpoints build their bodies from getModelsWithVersions (src/server/services/model.service.ts)
 // over getModelsRaw: one model statement on the replica, then the per-id caches the Node path reads

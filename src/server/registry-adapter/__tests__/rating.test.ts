@@ -39,8 +39,9 @@ import {
 } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
 // The site reads its region lists when its module loads, so they are set before any import: one
-// country restricted to SFW (`ZY`) and the site's default block list spelled out (`GB`). No other
-// case here sends a region header, so only the production-rule cases below see them.
+// country restricted to SFW (`ZY`) and the site's default block list spelled out (`GB`). Every
+// other case is sent from `DE` (`UNRESTRICTED_ORIGIN`), which neither list names, so only the
+// production-rule cases below see them.
 const regionEnvBefore = vi.hoisted(() => {
   const before = {
     REGION_RESTRICTION_CONFIG: process.env.REGION_RESTRICTION_CONFIG,
@@ -257,11 +258,27 @@ async function httpServer(a: Adapter, extra: Pick<ServeOptions, 'regionRestricte
 
 type Response = { status: number; text: string; wwwAuthenticate: string | null };
 
+/**
+ * The region every request here is sent from unless a case names its own: a country neither list
+ * names. A request with no region is held to SFW (`request-origin.ts`), so without it every
+ * signed-in case would read as SFW. A case sends no region by setting the header to `undefined`.
+ */
+const UNRESTRICTED_ORIGIN: Record<string, string | undefined> = { 'cf-ipcountry': 'DE' };
+const NO_REGION: Record<string, string | undefined> = { 'cf-ipcountry': undefined };
+
+/** `headers` over `UNRESTRICTED_ORIGIN`, without the ones a case set to `undefined`. */
+const withOrigin = (headers: Record<string, string | undefined>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries({ ...UNRESTRICTED_ORIGIN, ...headers }).filter(
+      (e): e is [string, string] => e[1] !== undefined
+    )
+  );
+
 /** One HTTP subscription: read until `done(text)` holds, the response ends, or 5s pass. */
 async function get(
   port: number,
   query: string,
-  headers: Record<string, string> = {},
+  headers: Record<string, string | undefined> = {},
   done: (text: string) => boolean = (t) => t.includes('event: live')
 ): Promise<Response> {
   const abort = new AbortController();
@@ -270,7 +287,10 @@ async function get(
   let status = 0;
   let wwwAuthenticate: string | null = null;
   try {
-    const res = await fetch(`http://127.0.0.1:${port}${query}`, { headers, signal: abort.signal });
+    const res = await fetch(`http://127.0.0.1:${port}${query}`, {
+      headers: withOrigin(headers),
+      signal: abort.signal,
+    });
     status = res.status;
     wwwAuthenticate = res.headers.get('www-authenticate');
     const reader = res.body!.getReader();
@@ -719,7 +739,9 @@ async function viaGrpc(
   schema: string,
   token: string | null,
   until: (events: StreamEvent[]) => boolean = (e) => e.some((x) => x.type === 'live'),
-  extra: Pick<ServeOptions, 'regionRestricted'> & { metadata?: Record<string, string> } = {}
+  extra: Pick<ServeOptions, 'regionRestricted'> & {
+    metadata?: Record<string, string | undefined>;
+  } = {}
 ): Promise<Outcome> {
   const server = createGrpcServer(a, {
     verifyToken,
@@ -731,7 +753,9 @@ async function viaGrpc(
   const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
   const metadata = new grpc.Metadata();
   if (token !== null) metadata.set('authorization', `Bearer ${token}`);
-  for (const [name, value] of Object.entries(extra.metadata ?? {})) metadata.set(name, value);
+  for (const [name, value] of Object.entries(withOrigin(extra.metadata ?? {}))) {
+    metadata.set(name, value);
+  }
   const subscribe = (client as unknown as SourceClient).Subscribe;
   return new Promise<Outcome>((resolve) => {
     const out: StreamEvent[] = [];
@@ -1367,5 +1391,50 @@ describe('🔴 the production region rule: restricted (ZY) and blocked (GB) regi
       metadata: { 'cf-ipcountry': 'DE' },
     });
     expect(shapes(res.events)).toEqual([`upsert ${DOC}`, 'live']);
+  });
+});
+
+/**
+ * A request with no region (no country header: one that reached the adapter through a proxy that
+ * does not forward the edge's headers) is held to SFW by the production rule, whatever the user's
+ * settings. Each server is built WITHOUT a rule; the DE positive controls above are the same token
+ * and app with a country, sent the x app.
+ */
+describe('🔴 the production region rule: a request with no region is held to SFW', () => {
+  it('the audience of an X user with no region is the SFW one', async () => {
+    const { regionRestricted } = await import('~/server/registry-adapter/request-origin');
+    const user = { showNsfw: true, browsingLevel: ALL_LEVELS };
+    const held = regionRestricted({ headers: {} });
+    expect(held).toBe(true);
+    expect(audienceForUser(user, { regionRestricted: held }).key).toBe('m');
+  });
+
+  it.each([
+    [NOTES, 'x', DOC],
+    [NOTES, 'r', DOC],
+    [APPS, 'x', `"urn":"${APP_URN}"`],
+    [RELEASES, 'r', RELEASE_URN],
+  ])(
+    'HTTP: %s, app rated %s, is sent nothing for an X token with no region',
+    async (schema, rating, named) => {
+      const port = await httpServer(source({ rating }).adapter);
+      const res = await get(port, q(schema), { ...bearer('x-token'), ...NO_REGION });
+      expect(res.status).toBe(200);
+      expect(events(res.text)).toEqual(['live']);
+      expect(res.text.includes(named)).toBe(false);
+    }
+  );
+
+  it('HTTP: a pg app still reaches the X token with no region', async () => {
+    const port = await httpServer(source({ rating: 'pg' }).adapter);
+    const res = await get(port, q(NOTES), { ...bearer('x-token'), ...NO_REGION });
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
+
+  it('gRPC: the X token with no region metadata is sent nothing of the x app', async () => {
+    const res = await viaGrpc(source({ rating: 'x' }).adapter, NOTES, 'x-token', undefined, {
+      metadata: NO_REGION,
+    });
+    expect(shapes(res.events)).toEqual(['live']);
   });
 });

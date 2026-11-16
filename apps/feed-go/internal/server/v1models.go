@@ -15,7 +15,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
-// The public REST model endpoints, shadowed (never served): DESIGN.md §14.
+// The public REST model endpoints, shadowed (never served): DESIGN.md §16.
 const (
 	EndpointV1Models   = "v1-models"    // REST GET /api/v1/models
 	EndpointV1ModelsID = "v1-models-id" // REST GET /api/v1/models/[id]

@@ -54,6 +54,9 @@ type Input struct {
 	HideChallenges  bool
 	ExcludedTagIDs  []int
 	ExcludedUserIDs []int
+	// IncludeProfilePictures is `include` holding 'profilePictures'. The gallery handler adds it
+	// anyway; image.getInfinite hydrates profile pictures only when the client asked.
+	IncludeProfilePictures bool
 }
 
 // unsupportedKeys are input keys that change the query in ways not ported yet. Present with a
@@ -76,7 +79,12 @@ var knownPeriods = map[string]bool{"AllTime": true, "Day": true, "Week": true, "
 // Parse validates the decoded input map. A shape outside the supported subset is a fallback; a value
 // the schema itself rejects is also a fallback (the Node app answers it with its own BAD_REQUEST).
 func Parse(m map[string]any) (*Input, error) {
-	for _, k := range unsupportedKeys {
+	return parseInput(m, unsupportedKeys)
+}
+
+// parseInput is Parse with the procedure's own list of keys that fall back when present.
+func parseInput(m map[string]any, unsupported []string) (*Input, error) {
+	for _, k := range unsupported {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.Newf("input-"+k, "%v", v)
 		}
@@ -168,8 +176,10 @@ func Parse(m map[string]any) (*Input, error) {
 				hasCosmetics = true
 			case "meta":
 				in.WithMeta = true
-			case "tagIds", "profilePictures":
-				// The handler adds both anyway.
+			case "profilePictures":
+				in.IncludeProfilePictures = true
+			case "tagIds":
+				// Both handlers add it.
 			default:
 				return nil, fallback.Newf("input-include", "%v", e)
 			}

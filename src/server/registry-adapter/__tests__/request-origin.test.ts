@@ -29,8 +29,8 @@ describe('🔴 regionRestricted is the site’s region-restriction rule', () => 
     ['a configured US state', true, { 'cf-ipcountry': 'US', 'cf-region-code': 'NY' }],
     ['another country', false, { 'cf-ipcountry': 'DE' }],
     ['another US state', false, { 'cf-ipcountry': 'US', 'cf-region-code': 'CA' }],
-    // As on the site: a request whose region cannot be told is not restricted.
-    ['no region headers', false, {}],
+    // Unlike the site: a request whose region cannot be told is held to SFW (fail closed).
+    ['no region headers', true, {}],
   ])('%s: restricted = %s', async (_name, restricted, headers) => {
     const { regionRestricted } = await load('ZZ:2026-01-01,US:NY:2026-01-01');
     expect(regionRestricted({ headers }, NOW)).toBe(restricted);
@@ -47,6 +47,46 @@ describe('🔴 regionRestricted is the site’s region-restriction rule', () => 
   it('with no configuration nothing is restricted (the site’s default list is empty)', async () => {
     const { regionRestricted } = await load(undefined);
     expect(regionRestricted({ headers: { 'cf-ipcountry': 'ZZ' } }, NOW)).toBe(false);
+  });
+});
+
+describe('🔴 a request whose country cannot be told is held to SFW (fail closed)', () => {
+  it.each([
+    ['no headers at all', {}],
+    ['an empty cf-ipcountry', { 'cf-ipcountry': '' }],
+    ['the edge’s XX, country unknown', { 'cf-ipcountry': 'XX' }],
+    ['the edge’s XX, lowercase', { 'cf-ipcountry': 'xx' }],
+    ['the edge’s T1, Tor', { 'cf-ipcountry': 'T1' }],
+    ['a repeated header joined into one value', { 'cf-ipcountry': 'DE, FR' }],
+    ['not a two-letter code', { 'cf-ipcountry': 'DEU' }],
+    ['a region code with no country', { 'cf-region-code': 'CA' }],
+    ['an x-isuk that is not set', { 'x-isuk': 'false' }],
+  ])('%s: held', async (_name, headers) => {
+    // No list names any of these, so only the no-country rule can hold them.
+    const { regionRestricted } = await load('ZZ:2026-01-01', 'ZX:2026-01-01');
+    expect(regionRestricted({ headers }, NOW)).toBe(true);
+  });
+
+  it.each([
+    ['US', { 'cf-ipcountry': 'US' }],
+    ['US with a state no list names', { 'cf-ipcountry': 'US', 'cf-region-code': 'CA' }],
+    ['DE', { 'cf-ipcountry': 'DE' }],
+    ['de, lowercase', { 'cf-ipcountry': 'de' }],
+  ])('positive control: a known country no list names (%s) is not held', async (_n, headers) => {
+    const { regionRestricted } = await load('ZZ:2026-01-01', 'ZX:2026-01-01');
+    expect(regionRestricted({ headers }, NOW)).toBe(false);
+  });
+
+  it('a restricted and a blocked country are still held', async () => {
+    const { regionRestricted } = await load('ZZ:2026-01-01', 'ZX:2026-01-01');
+    expect(regionRestricted({ headers: { 'cf-ipcountry': 'ZZ' } }, NOW)).toBe(true);
+    expect(regionRestricted({ headers: { 'cf-ipcountry': 'ZX' } }, NOW)).toBe(true);
+  });
+
+  it('with no restriction list, no region is still held', async () => {
+    const { regionRestricted } = await load(undefined);
+    expect(regionRestricted({ headers: {} }, NOW)).toBe(true);
+    expect(regionRestricted({ headers: { 'cf-ipcountry': 'DE' } }, NOW)).toBe(false);
   });
 });
 
@@ -91,7 +131,7 @@ describe('describeRegionConfig: the startup lines', () => {
       ],
       warn: [
         'REGION_RESTRICTION_CONFIG is empty or unset: no region is restricted to SFW ' +
-          '(blocked regions still are); set it as the site does',
+          '(blocked regions, and requests with no region, still are); set it as the site does',
       ],
     });
   });

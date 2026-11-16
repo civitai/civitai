@@ -86,6 +86,15 @@ describe('/api/v1/images shared cache by region', () => {
     expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 
+  // Outside a restricted region, which would replace the level with the SFW ones first.
+  it('[invariant] serves a held gallery nothing for a Blocked-only level, without searching', async () => {
+    mockHeldLevel.mockResolvedValue(1);
+    const { statusCode } = await call({ modelId: '1', browsingLevel: '32' }, false);
+
+    expect(statusCode).toBe(200);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['a model gallery at the default level', { modelId: '1' }],
     ['a model gallery at the SFW levels', { modelId: '1', browsingLevel: '3' }],

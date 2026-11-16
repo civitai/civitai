@@ -57,6 +57,14 @@ func TestMapQueries(t *testing.T) {
 			want: "levels=1%2C2&model3dIds=5&sort=oldest&limit=100",
 		},
 		{
+			// image.getInfinite's creator and tag scopes: `tags` right after `levels` (insertion order
+			// of the mapper), non-positive ids dropped, no dedupe; `userIds` after the version scope.
+			name: "creator and tag scope (image.getInfinite)",
+			q: Query{BrowsingLevel: 3, ExcludedTagIDs: []int{9901}, Tags: []int{77, -1, 77, 5}, UserID: 1001,
+				DisablePoi: true, ViewerID: 1001, Sort: "Newest", Limit: 50},
+			want: "levels=1%2C2&tags=77%2C77%2C5&excludedTags=9901&userIds=1001&excludePoi=1&viewerId=1001&sort=newest&limit=50",
+		},
+		{
 			name: "the Blocked bit is a feed level",
 			q:    Query{BrowsingLevel: 32 | 4, ModelVersionID: 2, Sort: "Oldest", Limit: 10, CursorText: "0"},
 			want: "levels=4%2C32&versionIds=2&sort=oldest&limit=10",
@@ -95,6 +103,10 @@ func TestMapRefusals(t *testing.T) {
 		{"model without a version", func(q *Query) { q.ModelVersionID = 0; q.ModelID = 7 }, "modelId", false},
 		{"no level", func(q *Query) { q.BrowsingLevel = 0 }, "browsingLevel:0", false},
 		{"too many excluded tags", func(q *Query) { q.ExcludedTagIDs = many }, "excludedTags>100", false},
+		{"only impossible tags", func(q *Query) { q.Tags = []int{0, -3} }, "tags:none", false},
+		{"too many tags", func(q *Query) { q.Tags = many }, "tags>100", false},
+		// Tags are checked before the excluded tags, as in the mapper.
+		{"tags before excluded tags", func(q *Query) { q.Tags = many; q.ExcludedTagIDs = many }, "tags>100", false},
 		{"generation", func(q *Query) { q.HasGeneration = true }, "input:generation", false},
 		{"remixOfId", func(q *Query) { q.HasRemixOfID = true }, "input:remixOfId", false},
 		{"requiringMeta", func(q *Query) { q.RequiringMeta = true }, "flag:requiringMeta", false},

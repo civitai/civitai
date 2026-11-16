@@ -48,6 +48,8 @@ export type FeedGoShadowOutcome = (typeof FEED_GO_SHADOW_OUTCOMES)[number];
 export const FEED_GO_SHADOW_ENDPOINTS = [
   'as-posts',
   'v1-images',
+  'infinite',
+  'model-getall',
   'v1-models',
   'v1-models-id',
 ] as const;
@@ -63,9 +65,10 @@ const feedGoShadowCounter = registerInstrumentationMetric(
       help:
         'Sampled requests mirrored to the feed-go shadow comparator, by outcome and endpoint ' +
         '(as-posts: image.getImagesAsPostsInfinite, flag feed-go-shadow; v1-images: GET ' +
-        '/api/v1/images, flag feed-go-shadow-v1-images; v1-models / v1-models-id: GET ' +
-        '/api/v1/models and /api/v1/models/[id], flag feed-go-shadow-v1-models). Only sampled ' +
-        'requests are counted ' +
+        '/api/v1/images, flag feed-go-shadow-v1-images; infinite: image.getInfinite, flag ' +
+        'feed-go-shadow-infinite; model-getall: model.getAll, flag feed-go-shadow-model-getall; ' +
+        'v1-models / v1-models-id: GET /api/v1/models and /api/v1/models/[id], flag ' +
+        'feed-go-shadow-v1-models). Only sampled requests are counted ' +
         '(FEED_GO_SHADOW_URL set, FEED_GO_SHADOW_SAMPLE_RATE > 0).',
       labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],
@@ -90,6 +93,65 @@ export function recordFeedGoShadowOutcome(
 ): void {
   try {
     feedGoShadowCounter.inc({ outcome, feed_endpoint: endpoint });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// feed-go Go-first probes (flag `feed-go-gofirst-probe`, see `~/server/trpc/feed-go-shadow.ts`)
+// ---------------------------------------------------------------------------
+//
+// One increment per PROBED request, by what became of the probe POST. feed-go's own
+// `feed_go_gofirst_total` counts what the probe found; this counts what reached it.
+
+export const FEED_GO_PROBE_OUTCOMES = [
+  // POSTed and feed-go answered 2xx.
+  'sent',
+  // POSTed and feed-go answered non-2xx.
+  'rejected',
+  // The POST timed out (FEED_GO_SHADOW_TIMEOUT_MS).
+  'timeout',
+  // The POST failed (connection refused, DNS, reset, ...).
+  'error',
+  // Probed, but FEED_GO_SHADOW_MAX_IN_FLIGHT posts were already in flight: not sent.
+  'dropped_overload',
+] as const;
+
+export type FeedGoProbeOutcome = (typeof FEED_GO_PROBE_OUTCOMES)[number];
+
+const PROBE_NAME = 'civitai_app_feed_go_gofirst_probe_total';
+
+const feedGoProbeCounter = registerInstrumentationMetric(
+  PROBE_NAME,
+  () =>
+    new client.Counter({
+      name: PROBE_NAME,
+      help:
+        'Go-first probes posted to feed-go at the start of a sampled request, by outcome and ' +
+        'endpoint (flag feed-go-gofirst-probe, FEED_GO_GOFIRST_PROBE_SAMPLE_RATE > 0).',
+      labelNames: ['outcome', 'feed_endpoint'],
+      registers: [instrumentationRegistry],
+    })
+);
+
+try {
+  for (const endpoint of ['as-posts', 'infinite', 'model-getall'] as const) {
+    for (const outcome of FEED_GO_PROBE_OUTCOMES) {
+      feedGoProbeCounter.inc({ outcome, feed_endpoint: endpoint }, 0);
+    }
+  }
+} catch {
+  /* never throw from telemetry */
+}
+
+/** Count one probe's outcome. Never throws. */
+export function recordFeedGoProbeOutcome(
+  outcome: FeedGoProbeOutcome,
+  endpoint: FeedGoShadowEndpoint = 'as-posts'
+): void {
+  try {
+    feedGoProbeCounter.inc({ outcome, feed_endpoint: endpoint });
   } catch {
     /* never throw from telemetry */
   }
@@ -127,7 +189,6 @@ const encodeBytesCounter = registerInstrumentationMetric(
     })
 );
 
-// Seed every endpoint at 0.
 try {
   for (const endpoint of FEED_GO_SHADOW_ENDPOINTS) {
     encodeSecondsCounter.inc({ feed_endpoint: endpoint }, 0);

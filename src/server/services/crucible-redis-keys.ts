@@ -6,6 +6,11 @@ export function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTe
   return `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
+/** Pair keys this judge chose never to be shown again in this crucible. */
+export function getDismissedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.DISMISSED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+}
+
 /** This judge's votes in this crucible as `winner>loser`, for the judge-side skip. */
 export function getVoteOutcomesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
   return `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;

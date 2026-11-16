@@ -17,7 +17,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
-func postModels(t *testing.T, handler http.HandlerFunc, path, input, node string) {
+func postV1Models(t *testing.T, handler http.HandlerFunc, path, input, node string) {
 	t.Helper()
 	b, err := json.Marshal(ShadowRequest{
 		Input: input, Path: path, Headers: map[string]string{"host": "civitai.example", "cf-ipcountry": "US"},
@@ -59,14 +59,14 @@ func TestV1ModelsShadowSamples(t *testing.T) {
 		}
 		return &computed{payload: []byte(`{"items":[{"id":1},{"id":2}],"metadata":{}}`)}, nil
 	}
-	postModels(t, s.ShadowV1ModelsIDHandler, "/api/v1/models/42", "", `{"name":"a","id":42}`)
+	postV1Models(t, s.ShadowV1ModelsIDHandler, "/api/v1/models/42", "", `{"name":"a","id":42}`)
 	waitFor(t, "the cached match", func() bool {
 		return resultCount(t, reg, EndpointV1ModelsID, "match_cached") == 1 && len(s.ShadowQueue) == 0
 	})
 	if n, _ := metricValue(t, reg, "feed_go_shadow_phase_seconds", map[string]string{"feed_endpoint": EndpointV1ModelsID, "phase": "compute", "outcome": "served_cached"}); n != 1 {
 		t.Fatalf("served_cached compute phases = %v, want 1", n)
 	}
-	postModels(t, s.ShadowV1ModelsHandler, "/api/v1/models", "limit=2", `{"items":[{"id":2},{"id":1}],"metadata":{}}`)
+	postV1Models(t, s.ShadowV1ModelsHandler, "/api/v1/models", "limit=2", `{"items":[{"id":2},{"id":1}],"metadata":{}}`)
 	waitFor(t, "the list order diff", func() bool { return resultCount(t, reg, EndpointV1Models, "order") == 1 && len(s.ShadowQueue) == 0 })
 	if len(seen) != 2 || seen[0].URL.Path != "/api/v1/models/42" || seen[1].URL.RawQuery != "limit=2" || seen[1].Host != "civitai.example" {
 		t.Fatalf("synthetic requests: %+v", seen)

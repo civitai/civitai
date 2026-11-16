@@ -7,15 +7,17 @@
 # measured value the "Coverage floors" step prints (it also says "floor can be raised to N") and set
 # the floor to N. Never lower a floor to get a red run green; a removed package goes off the list in
 # the same change that removes it. Packages without tests (fallback, testkit) are not listed.
-total 76
-cmd/feed-go 13
+total 77
+cmd/feed-go 23
 internal/auth 94
 internal/browsing 98
-internal/config 77
+internal/config 78
 internal/dbpool 95
 internal/feed 76
 internal/feedsvc 92
-internal/hydrate 82
+internal/hydrate 86
+internal/jspack 88
+internal/modelfeed 92
 internal/safe 100
 internal/server 93
 internal/shadow 95
