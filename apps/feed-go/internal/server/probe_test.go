@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -84,7 +85,7 @@ func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture, procedure s
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker}
 	err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: fx.Request.Input, Headers: env.headers}, rec)
-	result, missed := classifyProbe(err, rec.Misses(), checker.MissReason)
+	result, missed := classifyProbe(err, rec.Misses(), len(rec.Raced()) > 0, checker.MissReason)
 	return result, missed, err
 }
 
@@ -316,7 +317,7 @@ func TestClassifyProbe(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			result, missed := classifyProbe(c.err, c.misses, (&hydrate.Sources{}).MissReason)
+			result, missed := classifyProbe(c.err, c.misses, false, (&hydrate.Sources{}).MissReason)
 			if result != c.wantResult || !reflect.DeepEqual(missed, c.wantMissed) {
 				t.Fatalf("classifyProbe = %s %v, want %s %v", result, missed, c.wantResult, c.wantMissed)
 			}
@@ -328,16 +329,99 @@ func TestClassifyProbe(t *testing.T) {
 // miss still is not: the classification follows the deployment's Sources, not the static table.
 func TestClassifyProbeWithComputedMisses(t *testing.T) {
 	computed := (&hydrate.Sources{Compute: &hydrate.MissCompute{}}).MissReason
-	result, missed := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheImageFrames: 1}, computed)
+	result, missed := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheImageFrames: 1}, false, computed)
 	if result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{hydrate.CacheUserCosmetics, hydrate.CacheImageFrames}) {
 		t.Fatalf("computed misses: %s %v, want would_serve reporting both", result, missed)
 	}
-	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheTagIDs: 1}, computed); result != ProbeWouldMiss {
+	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheTagIDs: 1}, false, computed); result != ProbeWouldMiss {
 		t.Fatalf("a tag-ids miss with computed misses: %s, want would_miss", result)
 	}
 	// The same miss without a computation is would_miss (the arm can differ).
-	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3}, (&hydrate.Sources{}).MissReason); result != ProbeWouldMiss {
+	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3}, false, (&hydrate.Sources{}).MissReason); result != ProbeWouldMiss {
 		t.Fatalf("a user-cosmetics miss without a computation: %s, want would_miss", result)
+	}
+}
+
+// Raced turns would_serve into raced, and only that: a miss Go falls back on, a fallback or an error
+// keep their own result.
+func TestClassifyProbeRaced(t *testing.T) {
+	reason := (&hydrate.Sources{}).MissReason
+	for _, c := range []struct {
+		name   string
+		err    error
+		misses map[string]int
+		want   string
+	}{
+		{"every cache answered", nil, nil, ProbeRaced},
+		{"a miss Go answers itself", nil, map[string]int{hydrate.CacheBasicUsers: 1}, ProbeRaced},
+		{"a miss Go falls back on", nil, map[string]int{hydrate.CacheTagIDs: 1}, ProbeWouldMiss},
+		{"another fallback", fallback.New("input-sort"), nil, ProbeUnsupported},
+		{"a store error", errors.New("down"), nil, ProbeError},
+	} {
+		if got, _ := classifyProbe(c.err, c.misses, true, reason); got != c.want {
+			t.Errorf("%s, raced: %s, want %s", c.name, got, c.want)
+		}
+	}
+	if got, _ := classifyProbe(nil, nil, false, reason); got != ProbeWouldServe {
+		t.Errorf("not raced: %s, want would_serve", got)
+	}
+}
+
+func TestRacedSince(t *testing.T) {
+	if !racedSince(0).IsZero() {
+		t.Fatal("no start: want no race threshold")
+	}
+	got := racedSince(1_700_000_000_250.5)
+	want := time.UnixMicro(1_700_000_000_250_500).Add(-RaceSkewMargin)
+	if !got.Equal(want) {
+		t.Fatalf("racedSince = %v, want %v", got, want)
+	}
+}
+
+// The race end to end: a tag-ids entry Node filled after the request began (its cachedAt after
+// startedAt) is present, so the probe would read would_serve — but it is classified raced, and
+// counted on its cache. The same fixture with the entry stamped before the request is would_serve
+// (the control: the stamp alone decides).
+func TestProbeHandlerRaced(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		filledAt time.Duration // relative to the request's start
+		want     string
+	}{
+		{"filled after the request began", 20 * time.Millisecond, ProbeRaced},
+		{"filled inside the skew margin before it", -RaceSkewMargin / 2, ProbeRaced},
+		{"filled before the margin", -time.Hour, ProbeWouldServe},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, fx, reg := probeEnv(t)
+			start := time.Now().Add(-time.Second)
+			cache := goldenCache(t, env)
+			stamped := 0
+			for _, k := range cache.AllKeys() {
+				if !strings.HasPrefix(k, hydrate.KeyTagIDs+":") {
+					continue
+				}
+				b, err := msgpack.Marshal(map[string]any{"tags": []any{1}, "cachedAt": start.Add(tc.filledAt)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				cache.SetString(k, b)
+				stamped++
+			}
+			if stamped == 0 {
+				t.Fatal("the fixture has no tag-ids keys to stamp")
+			}
+			startedAt := float64(start.UnixNano()) / 1e6
+			w := httptest.NewRecorder()
+			env.server.ProbeHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, ProbePathPrefix+Procedure, probeBody(t, fx, env.headers, startedAt)))
+			waitFor(t, "the probe to finish", func() bool {
+				return goFirst(t, reg, "feed_go_gofirst_total", resultLabels(tc.want)) == 1 && len(env.server.ProbeQueue) == 0
+			})
+			racedTags := goFirst(t, reg, "feed_go_gofirst_raced_total", map[string]string{"feed_endpoint": EndpointAsPosts, "cache": hydrate.CacheTagIDs})
+			if wantRaced := map[bool]float64{true: 1, false: 0}[tc.want == ProbeRaced]; racedTags != wantRaced {
+				t.Errorf("raced{tag-ids} = %v, want %v", racedTags, wantRaced)
+			}
+		})
 	}
 }
 
@@ -345,15 +429,15 @@ func TestObserveLag(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 	at := time.UnixMilli(1_700_000_000_200)
-	observeLag(m.GoFirstReceiptLag, EndpointAsPosts, at, 1_700_000_000_000) // 200ms after
-	observeLag(m.GoFirstReceiptLag, EndpointAsPosts, at, 1_700_000_000_400) // a clock 150ms ahead: 0
-	observeLag(m.GoFirstReceiptLag, EndpointAsPosts, at, 0)                 // unknown start: nothing
+	observeLag(m.GoFirstCheckLag, EndpointAsPosts, at, 1_700_000_000_000) // 200ms after
+	observeLag(m.GoFirstCheckLag, EndpointAsPosts, at, 1_700_000_000_400) // a clock 150ms ahead: 0
+	observeLag(m.GoFirstCheckLag, EndpointAsPosts, at, 0)                 // unknown start: nothing
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, mf := range mfs {
-		if mf.GetName() != "feed_go_gofirst_receipt_lag_seconds" {
+		if mf.GetName() != "feed_go_gofirst_check_lag_seconds" {
 			continue
 		}
 		h := mf.GetMetric()[0].GetHistogram()
@@ -369,7 +453,7 @@ func TestObserveLag(t *testing.T) {
 		}
 		return
 	}
-	t.Fatal("no receipt-lag histogram")
+	t.Fatal("no check-lag histogram")
 }
 
 // probeEnv is a golden env for a served fixture, with the metrics and queues the handler needs.
@@ -407,7 +491,7 @@ func resultLabels(result string) map[string]string {
 }
 
 // The handler end to end through the internal mux: 202 at once, the probe runs in the background,
-// its result, its misses and both lag histograms recorded.
+// its result, its misses, the check-lag histogram and the pages it checked recorded.
 func TestProbeHandlerRecordsAResult(t *testing.T) {
 	env, fx, reg := probeEnv(t)
 	mux := InternalMux(env.server, http.NotFoundHandler(), false)
@@ -421,13 +505,14 @@ func TestProbeHandlerRecordsAResult(t *testing.T) {
 		return goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeWouldServe)) == 1 && len(env.server.ProbeQueue) == 0
 	})
 	ep := map[string]string{"feed_endpoint": EndpointAsPosts}
-	if n := goFirst(t, reg, "feed_go_gofirst_receipt_lag_seconds", ep); n != 1 {
-		t.Errorf("receipt lag observations %v, want 1", n)
+	// The cost gate's denominator: a served probe counts the pages it checked.
+	if n := goFirst(t, reg, "feed_go_gofirst_pages_total", ep); n < 1 {
+		t.Errorf("pages counted %v for a served probe, want >= 1", n)
 	}
 	if n := goFirst(t, reg, "feed_go_gofirst_check_lag_seconds", ep); n != 1 {
 		t.Errorf("check lag observations %v, want 1 (the page was checked)", n)
 	}
-	for _, r := range []string{ProbeWouldMiss, ProbeUnsupported, ProbeError} {
+	for _, r := range []string{ProbeWouldMiss, ProbeRaced, ProbeUnsupported, ProbeError} {
 		if n := goFirst(t, reg, "feed_go_gofirst_total", resultLabels(r)); n != 0 {
 			t.Errorf("%s = %v, want 0", r, n)
 		}
@@ -453,8 +538,12 @@ func TestProbeHandlerRecordsAResult(t *testing.T) {
 	if n := goFirst(t, reg, "feed_go_gofirst_miss_total", map[string]string{"feed_endpoint": EndpointAsPosts, "cache": hydrate.CacheTagIDs}); n != 1 {
 		t.Errorf("tag-ids misses %v, want 1 (one probe)", n)
 	}
-	if n := goFirst(t, reg, "feed_go_gofirst_receipt_lag_seconds", map[string]string{"feed_endpoint": EndpointAsPosts}); n != 0 {
-		t.Errorf("receipt lag observed %v times with no startedAt, want 0", n)
+	if n := goFirst(t, reg, "feed_go_gofirst_check_lag_seconds", map[string]string{"feed_endpoint": EndpointAsPosts}); n != 0 {
+		t.Errorf("check lag observed %v times with no startedAt, want 0", n)
+	}
+	// A would_miss probe is not served: no pages for the cost gate.
+	if n := goFirst(t, reg, "feed_go_gofirst_pages_total", map[string]string{"feed_endpoint": EndpointAsPosts}); n != 0 {
+		t.Errorf("pages counted %v for a would_miss probe, want 0", n)
 	}
 }
 

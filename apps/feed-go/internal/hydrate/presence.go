@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -85,7 +86,24 @@ func PageCacheNamed(name string) (PageCache, bool) {
 	return PageCache{}, false
 }
 
-// Presence is the cache half of Page for req without the hydration: which of the per-entity caches
+// PresenceResult is one Check: per cache, the ids missing, and the ids present but filled at or
+// after the race threshold (raced: most likely by the Node request the probe races, so a Go-first
+// serve would have found them missing). Caches with no such id are absent from each map.
+type PresenceResult struct {
+	Misses map[string]int
+	Raced  map[string]int
+}
+
+// Presence is Check without the race threshold: the misses only.
+func (s *Sources) Presence(ctx context.Context, req PageRequest) (map[string]int, error) {
+	r, err := s.Check(ctx, req, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	return r.Misses, nil
+}
+
+// Check is the cache half of Page for req without the hydration: which of the per-entity caches
 // Page would read for req do not answer an id, and how many ids each misses (caches that miss none
 // are absent). It sends the same reads Page sends, read-only: one pipeline of GETs for the packed
 // entries and EXISTS for the metric hashes (an absent hash is what HGETALL answers empty), then, as
@@ -94,8 +112,14 @@ func PageCacheNamed(name string) (PageCache, bool) {
 // present, a `{debounce: true}` marker or an undecodable value is a miss (decodeEntry). It never
 // queries the replica, never writes, and decodes no value beyond what finding the stage-2 ids needs.
 //
+// A present entry whose fill stamp (a packed entry's `cachedAt`, a metric hash's `_populatedAt`) is
+// at or after racedSince counts as raced as well (zero racedSince: no race check). An entry with no
+// stamp is never raced; a watcher-fed metric hash carries none.
+//
 // A read that failed (a shard down, the context ended) is an error: a miss it cannot tell from one.
-func (s *Sources) Presence(ctx context.Context, req PageRequest) (map[string]int, error) {
+// Serving fails open on most of these reads (a failed GET is a miss answered from the replica), so
+// the probe reports `error` where a serve might have answered.
+func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Time) (PresenceResult, error) {
 	users, images, videos := Unique(req.UserIDs), Unique(req.ImageIDs), Unique(req.VideoIDs)
 	profileUsers := users
 	if req.NoProfilePictures {
@@ -127,10 +151,21 @@ func (s *Sources) Presence(ctx context.Context, req PageRequest) (map[string]int
 	stage1.Exec(ctx)
 
 	out := map[string]int{}
+	raced := map[string]int{}
+	isRaced := func(e Entry) bool {
+		return !racedSince.IsZero() && !e.CachedAt.IsZero() && !e.CachedAt.Before(racedSince)
+	}
+	countRaced := func(name string, entries map[int]Entry) {
+		for _, e := range entries {
+			if isRaced(e) {
+				raced[name]++
+			}
+		}
+	}
 	got := map[string]map[int]Entry{}
 	for _, r := range reads {
 		if err := r.read.readErr(); err != nil {
-			return nil, fmt.Errorf("presence %s: %w", r.name, err)
+			return PresenceResult{}, fmt.Errorf("presence %s: %w", r.name, err)
 		}
 		entries := r.read.Entries()
 		if r.name == CacheImageFrames && s.Compute != nil && !s.Compute.FrameNegative {
@@ -146,14 +181,24 @@ func (s *Sources) Presence(ctx context.Context, req PageRequest) (map[string]int
 		if n := len(Missing(r.ids, entries)); n > 0 {
 			out[r.name] = n
 		}
+		countRaced(r.name, entries)
 	}
-	for _, cmd := range metrics {
-		n, err := cmd.Result()
+	for _, m := range metrics {
+		n, err := m.exists.Result()
 		if err != nil {
-			return nil, fmt.Errorf("presence %s: %w", CacheMetrics, err)
+			return PresenceResult{}, fmt.Errorf("presence %s: %w", CacheMetrics, err)
 		}
 		if n == 0 {
 			out[CacheMetrics]++
+			continue
+		}
+		// `_populatedAt` (epoch ms) is written by MetricService's populate, the miss fill.
+		if v, err := m.populatedAt.Result(); err == nil && !racedSince.IsZero() {
+			if ms, perr := strconv.ParseInt(v, 10, 64); perr == nil && !time.UnixMilli(ms).Before(racedSince) {
+				raced[CacheMetrics]++
+			}
+		} else if err != nil && !errors.Is(err, redis.Nil) {
+			return PresenceResult{}, fmt.Errorf("presence %s: %w", CacheMetrics, err)
 		}
 	}
 
@@ -162,24 +207,26 @@ func (s *Sources) Presence(ctx context.Context, req PageRequest) (map[string]int
 	uc, fr := got[CacheUserCosmetics], got[CacheImageFrames]
 	_, userCIDs, err := userCosmeticsFrom(keysOf(uc), uc)
 	if err != nil {
-		return nil, err
+		return PresenceResult{}, err
 	}
 	frameCIDs, err := frameCosmeticIDs(keysOf(fr), fr)
 	if err != nil {
-		return nil, err
+		return PresenceResult{}, err
 	}
 	if ids := Unique(append(userCIDs, frameCIDs...)); len(ids) > 0 {
 		stage2 := NewBatch()
 		read := s.Packed.Queue(stage2, KeyCosmetics, ids, ttlDay)
 		stage2.Exec(ctx)
 		if err := read.readErr(); err != nil {
-			return nil, fmt.Errorf("presence %s: %w", CacheCosmetics, err)
+			return PresenceResult{}, fmt.Errorf("presence %s: %w", CacheCosmetics, err)
 		}
-		if n := len(Missing(ids, read.Entries())); n > 0 {
+		entries := read.Entries()
+		if n := len(Missing(ids, entries)); n > 0 {
 			out[CacheCosmetics] = n
 		}
+		countRaced(CacheCosmetics, entries)
 	}
-	return out, nil
+	return PresenceResult{Misses: out, Raced: raced}, nil
 }
 
 // readErr is the first failed GET of the lookup other than an absent key, after Exec.
@@ -192,15 +239,25 @@ func (r *PackedRead) readErr() error {
 	return nil
 }
 
-// queueMetricsExists adds one EXISTS per metric hash of (unique) ids to b, on s.Cache.
-func (s *Sources) queueMetricsExists(b *Batch, ids []int) []*redis.IntCmd {
+// metricPresence is one metric hash's presence read: EXISTS, and its `_populatedAt` field.
+type metricPresence struct {
+	exists      *redis.IntCmd
+	populatedAt *redis.StringCmd
+}
+
+// queueMetricsExists adds, per metric hash of (unique) ids, an EXISTS and an HGET of `_populatedAt`
+// to b, on s.Cache.
+func (s *Sources) queueMetricsExists(b *Batch, ids []int) []metricPresence {
 	if len(ids) == 0 || s.Cache == nil {
 		return nil
 	}
-	cmds := make([]*redis.IntCmd, len(ids))
+	cmds := make([]metricPresence, len(ids))
 	b.add(s.Cache, func(ctx context.Context, p redis.Pipeliner) {
 		for i, id := range ids {
-			cmds[i] = p.Exists(ctx, metricHashKey(id))
+			cmds[i] = metricPresence{
+				exists:      p.Exists(ctx, metricHashKey(id)),
+				populatedAt: p.HGet(ctx, metricHashKey(id), "_populatedAt"),
+			}
 		}
 	})
 	return cmds
@@ -215,9 +272,9 @@ func keysOf(m map[int]Entry) []int {
 }
 
 // PresenceChecker is the cache-presence surface the probe needs (implemented by *Sources): the
-// misses, and which of them make the page fall back.
+// misses and raced entries, and which misses make the page fall back.
 type PresenceChecker interface {
-	Presence(ctx context.Context, req PageRequest) (map[string]int, error)
+	Check(ctx context.Context, req PageRequest, racedSince time.Time) (PresenceResult, error)
 	MissReason(name string) string
 }
 
@@ -231,11 +288,15 @@ type PresenceProbe struct {
 	Checker PresenceChecker
 	// Now is the clock FirstCheck reads (nil: time.Now).
 	Now func() time.Time
+	// RacedSince is the race threshold handed to every Check (zero: no race check).
+	RacedSince time.Time
 
-	mu     sync.Mutex
-	misses map[string]int
-	first  time.Time
-	pages  int
+	mu      sync.Mutex
+	misses  map[string]int
+	raced   map[string]int
+	dbReads map[string]int
+	first   time.Time
+	pages   int
 }
 
 // Page records req's cache presence and returns an empty hydration.
@@ -251,17 +312,25 @@ func (p *PresenceProbe) Page(ctx context.Context, req PageRequest) (*Page, error
 	}
 	p.pages++
 	p.mu.Unlock()
-	misses, err := p.Checker.Presence(ctx, req)
+	res, err := p.Checker.Check(ctx, req, p.RacedSince)
 	if err != nil {
 		return nil, err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.misses == nil {
-		p.misses = map[string]int{}
+		p.misses, p.raced, p.dbReads = map[string]int{}, map[string]int{}, map[string]int{}
 	}
-	for name, n := range misses {
+	for name, n := range res.Misses {
 		p.misses[name] += n
+		if n > 0 && p.Checker.MissReason(name) == "" {
+			// A miss Go answers itself: one database query for this cache on this page (the
+			// replica path's, or the miss computation's batched lookup).
+			p.dbReads[name]++
+		}
+	}
+	for name, n := range res.Raced {
+		p.raced[name] += n
 	}
 	return &Page{}, nil
 }
@@ -276,8 +345,28 @@ func (p *PresenceProbe) VisibleModel3DIDs(context.Context, []int, int, bool) (ma
 func (p *PresenceProbe) Misses() map[string]int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := make(map[string]int, len(p.misses))
-	for k, v := range p.misses {
+	return copyCounts(p.misses)
+}
+
+// Raced is the raced-entry count per cache over every Page call so far (a copy).
+func (p *PresenceProbe) Raced() map[string]int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return copyCounts(p.raced)
+}
+
+// DBReads is, per cache, the database queries a Go-first serve would have made for the misses Go
+// answers itself (one per page and cache with such misses; a lower bound: the user-cosmetics
+// computation can add up to two withheld-cosmetic queries).
+func (p *PresenceProbe) DBReads() map[string]int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return copyCounts(p.dbReads)
+}
+
+func copyCounts(m map[string]int) map[string]int {
+	out := make(map[string]int, len(m))
+	for k, v := range m {
 		out[k] = v
 	}
 	return out

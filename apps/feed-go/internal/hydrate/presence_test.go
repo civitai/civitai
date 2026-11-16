@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -277,6 +278,47 @@ func TestPresenceFrameMarkersFollowFrameNegative(t *testing.T) {
 	}
 }
 
+// Raced: a present entry filled at or after the threshold (a packed entry's cachedAt, a metric
+// hash's _populatedAt) is counted as raced as well as present; older, unstamped or with no threshold,
+// it is not. basePageFixture stamps basic user 1001 and cosmetic 501 at pageNow, user 1003, cosmetic
+// 503 and thumbnail 13 thirty days earlier, and metric hashes 12 and 14 in 2023.
+func TestCheckRaced(t *testing.T) {
+	ctx := context.Background()
+	f := basePageFixture(t)
+	f.hashes["metrics:Image:11"] = map[string]string{"Like": "3", "_populatedAt": strconv.FormatInt(pageNow.UnixMilli(), 10)}
+	s, _, _ := f.load()
+	got, err := s.Check(ctx, pageRequest(), pageNow.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{CacheBasicUsers: 1, CacheCosmetics: 1, CacheMetrics: 1}
+	if !reflect.DeepEqual(got.Raced, want) {
+		t.Fatalf("raced %v, want %v", got.Raced, want)
+	}
+	// Raced entries are still present: the misses are Presence's.
+	if want := map[string]int{CacheBasicUsers: 1, CacheProfilePictures: 1, CacheThumbnails: 1, CacheCosmetics: 3}; !reflect.DeepEqual(got.Misses, want) {
+		t.Fatalf("misses %v, want %v", got.Misses, want)
+	}
+	// A threshold after every stamp, and no threshold: nothing raced.
+	for _, since := range []time.Time{pageNow.Add(time.Second), {}} {
+		got, err := s.Check(ctx, pageRequest(), since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Raced) != 0 {
+			t.Fatalf("threshold %v: raced %v, want none", since, got.Raced)
+		}
+	}
+	// The boundary: a stamp exactly at the threshold is raced (cachedAt >= since).
+	got, err = s.Check(ctx, PageRequest{UserIDs: []int{1001}}, pageNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Raced[CacheBasicUsers] != 1 {
+		t.Fatalf("stamp == threshold: raced %v, want basic-users 1", got.Raced)
+	}
+}
+
 func TestMetricHashPrefix(t *testing.T) {
 	if got, want := metricHashKey(8001), metricHashPrefix+":8001"; got != want {
 		t.Fatalf("metricHashKey = %q, PageCaches says %q", got, want)
@@ -290,34 +332,51 @@ func TestMetricHashPrefix(t *testing.T) {
 	}
 }
 
-// fakeChecker answers each Presence call with the next of its answers.
+// fakeChecker answers each Check with the next of its answers (misses; raced, when given). Every
+// cache but tag ids is one Go answers itself.
 type fakeChecker struct {
 	mu      sync.Mutex
 	answers []map[string]int
+	raced   []map[string]int
 	err     error
 	reqs    []PageRequest
+	since   []time.Time
 }
 
-func (f *fakeChecker) MissReason(string) string { return "" }
+func (f *fakeChecker) MissReason(name string) string {
+	if name == CacheTagIDs {
+		return "tag-ids-miss"
+	}
+	return ""
+}
 
-func (f *fakeChecker) Presence(_ context.Context, req PageRequest) (map[string]int, error) {
+func (f *fakeChecker) Check(_ context.Context, req PageRequest, racedSince time.Time) (PresenceResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reqs = append(f.reqs, req)
+	f.since = append(f.since, racedSince)
 	if f.err != nil {
-		return nil, f.err
+		return PresenceResult{}, f.err
 	}
-	a := f.answers[0]
+	r := PresenceResult{Misses: f.answers[0]}
 	f.answers = f.answers[1:]
-	return a, nil
+	if len(f.raced) > 0 {
+		r.Raced = f.raced[0]
+		f.raced = f.raced[1:]
+	}
+	return r, nil
 }
 
 func TestPresenceProbe(t *testing.T) {
 	ctx := context.Background()
 	t0 := time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC)
 	clock := t0
-	fc := &fakeChecker{answers: []map[string]int{{CacheTagIDs: 2}, {}, {CacheTagIDs: 1, CacheMetrics: 3}}}
-	p := &PresenceProbe{Checker: fc, Now: func() time.Time { c := clock; clock = clock.Add(time.Second); return c }}
+	fc := &fakeChecker{
+		answers: []map[string]int{{CacheTagIDs: 2, CacheBasicUsers: 1}, {}, {CacheTagIDs: 1, CacheMetrics: 3, CacheBasicUsers: 4}},
+		raced:   []map[string]int{{CacheCosmetics: 1}, nil, {CacheCosmetics: 2, CacheBasicUsers: 1}},
+	}
+	since := t0.Add(-time.Minute)
+	p := &PresenceProbe{Checker: fc, RacedSince: since, Now: func() time.Time { c := clock; clock = clock.Add(time.Second); return c }}
 
 	if first, n := p.FirstCheck(); !first.IsZero() || n != 0 {
 		t.Fatalf("before any page: %v, %d", first, n)
@@ -332,8 +391,21 @@ func TestPresenceProbe(t *testing.T) {
 			t.Fatalf("page %d = %+v, want an empty hydration", i, page)
 		}
 	}
-	if got, want := p.Misses(), map[string]int{CacheTagIDs: 3, CacheMetrics: 3}; !reflect.DeepEqual(got, want) {
+	if got, want := p.Misses(), map[string]int{CacheTagIDs: 3, CacheMetrics: 3, CacheBasicUsers: 5}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("misses %v, want %v", got, want)
+	}
+	if got, want := p.Raced(), map[string]int{CacheCosmetics: 3, CacheBasicUsers: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("raced %v, want %v", got, want)
+	}
+	// One database read per page and cache Go answers itself (metrics and basic users here; tag ids
+	// fall back, so no read): basic users on pages 1 and 3, metrics on page 3.
+	if got, want := p.DBReads(), map[string]int{CacheBasicUsers: 2, CacheMetrics: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("db reads %v, want %v", got, want)
+	}
+	for i, got := range fc.since {
+		if !got.Equal(since) {
+			t.Fatalf("check %d got race threshold %v, want %v", i, got, since)
+		}
 	}
 	if first, n := p.FirstCheck(); !first.Equal(t0) || n != 3 {
 		t.Fatalf("first check %v after %d pages, want %v after 3", first, n, t0)
@@ -355,6 +427,11 @@ func TestPresenceProbe(t *testing.T) {
 	m[CacheTagIDs] = 99
 	if p.Misses()[CacheTagIDs] != 3 {
 		t.Fatal("Misses returned the probe's own map")
+	}
+	r := p.Raced()
+	r[CacheCosmetics] = 99
+	if p.Raced()[CacheCosmetics] != 3 {
+		t.Fatal("Raced returned the probe's own map")
 	}
 }
 

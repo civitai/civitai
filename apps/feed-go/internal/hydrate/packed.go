@@ -114,6 +114,9 @@ type Entry struct {
 	Value    map[string]any
 	NotFound bool
 	Stale    bool
+	// CachedAt is the entry's `cachedAt` stamp (zero when it has none): when the writer filled it.
+	// The Go-first probe reads it to tell an entry Node filled after the request began (raced).
+	CachedAt time.Time
 }
 
 // PackedReader reads `${key}:${id}` msgpack entries. Prefix is CACHE_KEY_NAMESPACE + ":" outside
@@ -196,6 +199,9 @@ func decodeBytes(b []byte, ttl time.Duration, now time.Time) (Entry, readState) 
 		return Entry{}, stateHeld
 	}
 	e := Entry{Value: m}
+	if at, ok := m["cachedAt"].(time.Time); ok {
+		e.CachedAt = at
+	}
 	if truthy(m["notFound"]) {
 		e.NotFound = true
 	} else if ttl > 0 {

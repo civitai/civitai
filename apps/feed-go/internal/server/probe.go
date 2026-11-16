@@ -40,7 +40,18 @@ const (
 	ProbeUnsupported = "unsupported"
 	// ProbeError: the probe failed (a store error, a panic, a malformed probe).
 	ProbeError = "error"
+	// ProbeRaced: every cache answered (or missed only where Go answers the miss itself), but some
+	// entry was filled at or after the request began (RaceSkewMargin before its start): most likely by
+	// the Node request this probe races, so a Go-first serve would have found it missing. Not
+	// would_serve; feed_go_gofirst_raced_total says which cache.
+	ProbeRaced = "raced"
 )
+
+// RaceSkewMargin widens the race threshold below the request's start: an entry filled from then on
+// counts as raced. It covers the clock difference between the Node pod that stamped `startedAt` and
+// the one that stamped the entry, and a fill by a concurrent request for the same ids just before
+// (which a Go-first serve could have missed too). Wider is more conservative (more raced).
+const RaceSkewMargin = 100 * time.Millisecond
 
 // Caches checked before hydration: the fallback reasons a request raises on a miss there, by the
 // cache label they are reported under. A miss on these is as much a Go-first miss as a page cache's.
@@ -159,7 +170,6 @@ func (s *Server) ProbeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
-	received := time.Now()
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -204,7 +214,6 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	observeLag(s.Metrics.GoFirstReceiptLag, spec.endpoint, received, req.StartedAt)
 	w.WriteHeader(http.StatusAccepted)
 	started = true
 	go func() { //nolint:contextcheck // runs after the 202 on the server's background context (Close cancels it): it must outlive the request
@@ -231,15 +240,28 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 		s.Log.Error("go-first probe", "endpoint", spec.endpoint, "err", errNoPresence)
 		return
 	}
-	rec := &hydrate.PresenceProbe{Checker: checker}
+	rec := &hydrate.PresenceProbe{Checker: checker, RacedSince: racedSince(req.StartedAt)}
 	err := s.within(ctx, "probe", func(ctx context.Context) error { return spec.run(s, ctx, req, rec) })
-	if first, pages := rec.FirstCheck(); pages > 0 {
+	first, pages := rec.FirstCheck()
+	if pages > 0 {
 		observeLag(s.Metrics.GoFirstCheckLag, spec.endpoint, first, req.StartedAt)
 	}
-	result, missed := classifyProbe(err, rec.Misses(), checker.MissReason)
+	raced := rec.Raced()
+	result, missed := classifyProbe(err, rec.Misses(), len(raced) > 0, checker.MissReason)
 	s.Metrics.GoFirst.WithLabelValues(spec.endpoint, result).Inc()
 	for _, c := range missed {
 		s.Metrics.GoFirstMiss.WithLabelValues(spec.endpoint, c).Inc()
+	}
+	for c := range raced {
+		s.Metrics.GoFirstRaced.WithLabelValues(spec.endpoint, c).Inc()
+	}
+	if result == ProbeWouldServe || result == ProbeRaced {
+		// The cost gate: database reads a Go-first serve of this request would have made, over its
+		// pages. Served probes only, so the ratio reads per served page.
+		for c, n := range rec.DBReads() {
+			s.Metrics.GoFirstDBReads.WithLabelValues(spec.endpoint, c).Add(float64(n))
+		}
+		s.Metrics.GoFirstPages.WithLabelValues(spec.endpoint).Add(float64(pages))
 	}
 	if reason := fallback.Reason(err); reason != "" {
 		s.Metrics.Fallbacks.WithLabelValues(spec.endpoint, "probe", reason).Inc()
@@ -252,9 +274,11 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 // and the caches it saw miss (each once, in probeCaches order). missReason is the deployment's
 // fallback reason for a miss on a page cache (hydrate.Sources.MissReason: "" where Go answers the
 // miss itself, from the replica or by computing it). A cache Go answers is listed when it missed, but
-// only a cache Go falls back on makes the result would_miss. The misses are listed whatever the
-// result: a fallback for another reason can come after a page was checked.
-func classifyProbe(err error, misses map[string]int, missReason func(string) string) (string, []string) {
+// only a cache Go falls back on makes the result would_miss. raced (an entry filled after the
+// request began) turns would_serve into raced; would_miss wins over it (a miss was seen anyway). The
+// misses are listed whatever the result: a fallback for another reason can come after a page was
+// checked.
+func classifyProbe(err error, misses map[string]int, raced bool, missReason func(string) string) (string, []string) {
 	reason := fallback.Reason(err)
 	pre := preHydrateMissReasons[reason]
 	var missed []string
@@ -275,6 +299,8 @@ func classifyProbe(err error, misses map[string]int, missReason func(string) str
 	switch {
 	case err == nil && wouldMiss, pre != "":
 		return ProbeWouldMiss, missed
+	case err == nil && raced:
+		return ProbeRaced, missed
 	case err == nil:
 		return ProbeWouldServe, missed
 	case reason == "panic":
@@ -284,6 +310,15 @@ func classifyProbe(err error, misses map[string]int, missReason func(string) str
 	default:
 		return ProbeError, missed
 	}
+}
+
+// racedSince is the race threshold for a request that started at startedAtMs (epoch ms):
+// RaceSkewMargin before it; zero (no race check) when the start is unknown.
+func racedSince(startedAtMs float64) time.Time {
+	if startedAtMs <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMicro(int64(startedAtMs * 1e3)).Add(-RaceSkewMargin)
 }
 
 // observeLag records at - startedAt (epoch ms) on h. A negative difference (the two pods' clocks
