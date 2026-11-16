@@ -27,6 +27,47 @@ export type BearerTokenOptions = {
 };
 
 /**
+ * The session user a bearer credential for `userId`, holding `tokenScope`, may act as, or null when
+ * the user may not use one: unknown or deleted, banned, a refused moderation account, or a system
+ * account with moderator access holding a write scope it has not been allowed. Every bearer path
+ * reads its user through this, so they refuse the same users.
+ */
+export async function getBearerTokenUser(
+  userId: number,
+  tokenScope: number
+): Promise<Session['user'] | null> {
+  const user = (await sessionClient.getSessionUserById(userId)) as Session['user'] | null;
+  if (!user) return null;
+
+  // Banned users get NO API/bearer access. Deleted users are already excluded by the hub producer (deletedAt
+  // is null), but a
+  // ban leaves the row intact (so the SESSION/cookie path can still render a "you're banned" page) — the
+  // bearer/API path must reject it CENTRALLY here, mirroring tRPC's isAuthed ban check, so a banned user's
+  // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
+  if (user.bannedAt) return null;
+  if (refuseModerationAccountSession(user, 'bearer-token')) return null;
+  // A system account with moderator access authenticates with read-only keys only, unless an admin
+  // has allowed it write keys. Both are read from the primary, not the session copy, so a grant
+  // counts as soon as it lands.
+  if (isSystemAccountMeta(user.meta) && (tokenScope & ~TokenScopePresets.ReadOnly) !== 0) {
+    const access = await dbWrite.user.findUnique({
+      where: { id: user.id },
+      select: { meta: true, isModerator: true, roles: { select: { role: true } } },
+    });
+    if (
+      !access ||
+      (!allowsModeratorWriteKeys(access.meta) &&
+        (await holdsModeratorAccess({
+          isModerator: access.isModerator,
+          roles: access.roles.map(({ role }) => role),
+        })))
+    )
+      return null;
+  }
+  return user;
+}
+
+/**
  * The session a bearer credential stands for, or null. A client-credentials token is
  * single-purpose: it resolves to no session unless the caller opts in.
  */
@@ -84,37 +125,8 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
       .catch(() => releaseLastUsedWrite(id));
   }
 
-  const user = (await sessionClient.getSessionUserById(apiKey.userId)) as Session['user'] | null;
+  const user = await getBearerTokenUser(apiKey.userId, apiKey.tokenScope ?? 0);
   if (!user) return null;
-
-  // Banned users get NO API/bearer access. Deleted users are already excluded by the hub producer (deletedAt
-  // is null), but a
-  // ban leaves the row intact (so the SESSION/cookie path can still render a "you're banned" page) — the
-  // bearer/API path must reject it CENTRALLY here, mirroring tRPC's isAuthed ban check, so a banned user's
-  // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
-  if (user.bannedAt) return null;
-  if (refuseModerationAccountSession(user, 'bearer-token')) return null;
-  // A system account with moderator access authenticates with read-only keys only, unless an admin
-  // has allowed it write keys. Both are read from the primary, not the session copy, so a grant
-  // counts as soon as it lands.
-  if (
-    isSystemAccountMeta(user.meta) &&
-    ((apiKey.tokenScope ?? 0) & ~TokenScopePresets.ReadOnly) !== 0
-  ) {
-    const access = await dbWrite.user.findUnique({
-      where: { id: user.id },
-      select: { meta: true, isModerator: true, roles: { select: { role: true } } },
-    });
-    if (
-      !access ||
-      (!allowsModeratorWriteKeys(access.meta) &&
-        (await holdsModeratorAccess({
-          isModerator: access.isModerator,
-          roles: access.roles.map(({ role }) => role),
-        })))
-    )
-      return null;
-  }
 
   // OAuth-issued tokens key their subject on clientId (stable across access-token
   // rotations) and read their limit from the user's OauthConsent. Other keys use

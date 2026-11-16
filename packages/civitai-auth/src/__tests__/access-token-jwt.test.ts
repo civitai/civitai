@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
 import { decodeJwt, decodeProtectedHeader } from 'jose';
 import { createSessionSigner, type AccessTokenJwtClaims, type SessionSigner } from '../sign';
@@ -128,6 +128,55 @@ describe('createAccessTokenJwtVerifier', () => {
     const [h, p, sig] = token.split('.');
     const flipped = `${h}.${p}.${sig.startsWith('A') ? 'B' : 'A'}${sig.slice(1)}`;
     expect(await verifierAt(NOW_S)(flipped, issuer)).toBeNull();
+  });
+});
+
+describe('createAccessTokenJwtVerifier with an audience and a JWKS', () => {
+  const JWKS_URI = 'https://auth.test/.well-known/jwks.json';
+  const liveClaims = (over: Partial<AccessTokenJwtClaims> = {}) => {
+    const now = Math.floor(Date.now() / 1000);
+    return claims({ iat: now, exp: now + 600, ...over });
+  };
+  const serve = (res: () => Response) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => res());
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('refuses a token for another audience, and accepts its own', async () => {
+    const verify = createAccessTokenJwtVerifier({ publicKeyPem, audience: resource });
+    expect(
+      await verify(await signer.mintAccessTokenJwt(liveClaims({ aud: 'https://x.test' })), issuer)
+    ).toBeNull();
+    expect(await verify(await signer.mintAccessTokenJwt(liveClaims()), issuer)).not.toBeNull();
+  });
+
+  it('verifies against the JWKS at jwksUri', async () => {
+    const jwks = await signer.publicJwks();
+    const fetchMock = serve(() => new Response(JSON.stringify(jwks), { status: 200 }));
+    const verify = createAccessTokenJwtVerifier({ jwksUri: JWKS_URI, audience: resource });
+    expect(await verify(await signer.mintAccessTokenJwt(liveClaims()), issuer)).toMatchObject({
+      sub: '42',
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toBe(JWKS_URI);
+  });
+
+  it('throws when the JWKS cannot be read, instead of refusing the token', async () => {
+    serve(() => new Response('down', { status: 503 }));
+    const verify = createAccessTokenJwtVerifier({ jwksUri: JWKS_URI, audience: resource });
+    await expect(verify(await signer.mintAccessTokenJwt(liveClaims()), issuer)).rejects.toThrow(
+      /200 OK/
+    );
+  });
+
+  it('applies clockToleranceS to exp', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = await signer.mintAccessTokenJwt(claims({ iat: now - 100, exp: now - 10 }));
+    expect(await createAccessTokenJwtVerifier({ publicKeyPem })(token, issuer)).toBeNull();
+    expect(
+      await createAccessTokenJwtVerifier({ publicKeyPem, clockToleranceS: 30 })(token, issuer)
+    ).not.toBeNull();
   });
 });
 
