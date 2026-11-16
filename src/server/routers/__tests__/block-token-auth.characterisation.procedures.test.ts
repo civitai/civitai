@@ -249,6 +249,7 @@ const SESSION_BOUND = new Set([
   'blocks.previewQuoteGrant',
   'blocks.previewTrainingQuote',
   'blocks.persistGenerationSource',
+  'blocks.persistUploadedGenerationSource',
   'blocks.publishGenerationOutputs',
   'blocks.recordMediaUploadBatchItem',
   'blocks.setReactionFromApp',
@@ -313,6 +314,9 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.unlockOutput': { workflowId: 'wf_1', position: 0, expectedTotal: 0 },
   'blocks.publishGenerationOutputs': { workflowId: 'wf_1' },
   'blocks.persistGenerationSource': { workflowId: 'wf_1', imageIndex: 0 },
+  // Not a consumer blob, so a call past every auth step and bound stops at the url check,
+  // before anything is fetched.
+  'blocks.persistUploadedGenerationSource': { url: 'https://example.com/not-a-blob.png' },
   'blocks.queryAppWorkflows': {},
   // No ticket, so a token that passes every auth step stops at the provenance guard.
   'blocks.setReactionFromApp': {
@@ -1621,6 +1625,57 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
     'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
+    'anonymous subject': E(
+      'UNAUTHORIZED',
+      'saving a generation source requires an authenticated viewer',
+      [],
+      ['bridge-auth:ok']
+    ),
+    'flag off': E(
+      'UNAUTHORIZED',
+      'Apps are not enabled',
+      [],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
+    ),
+    'rate limited': E(
+      'TOO_MANY_REQUESTS',
+      'Too many generation sources saved — slow down.',
+      ['checkBlockGenerationSourceUserRateLimit(42)'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    "session user is not the token subject (session user's run flag off)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+    "session user is not the token subject (session user's run flag on)": E(
+      'FORBIDDEN',
+      'this app session belongs to a different account; reload the page to continue',
+      [],
+      ['bridge-auth:ok']
+    ),
+  },
+  // The preamble WITHOUT a scope check (the picker never needed one), then the per-user
+  // generation-source bucket it shares with `persistGenerationSource` (the per-user `rateLimit`
+  // middleware does not run under test), then the url check refuses the fixture.
+  'blocks.persistUploadedGenerationSource': {
+    'valid token': E(
+      'BAD_REQUEST',
+      'that url is not an uploaded generation source',
+      ['checkBlockGenerationSourceUserRateLimit(42)'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
+    'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
+    revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
+    'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
+    // No scope is required, so a scopeless token gets as far as a valid one.
+    'missing scope': E(
+      'BAD_REQUEST',
+      'that url is not an uploaded generation source',
+      ['checkBlockGenerationSourceUserRateLimit(42)'],
+      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
+    ),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'saving a generation source requires an authenticated viewer',
