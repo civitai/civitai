@@ -31,7 +31,7 @@ const {
   mockGetEntryById: vi.fn(async () => ({ id: 3, user: { id: 5 } })),
   mockGetEntryFiles: vi.fn(async () => []),
   mockUpsertBounty: vi.fn(),
-  mockUpsertEntry: vi.fn(async () => ({ id: 3 })),
+  mockUpsertEntry: vi.fn(async (_input: Record<string, unknown>) => ({ id: 3 })),
   mockDeleteBounty: vi.fn(),
   mockBountyImages: vi.fn(async (): Promise<unknown[]> => []),
   mockImagesForBounties: vi.fn(async (): Promise<Record<number, unknown[]>> => ({})),
