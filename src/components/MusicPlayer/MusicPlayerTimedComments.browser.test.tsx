@@ -73,24 +73,34 @@ const renderBar = () =>
     </div>
   );
 const strip = () => document.querySelector('[data-testid="timed-comment-strip"]');
+// The name and the comment are separate parts of a label: read them as "name: comment".
 const labels = () =>
-  [...document.querySelectorAll('[data-testid="timed-comment-label"]')].map((l) => l.textContent);
+  [...document.querySelectorAll('[data-testid="timed-comment-label"]')].map((l) =>
+    [...l.lastElementChild!.children].map((part) => part.textContent).join(': ')
+  );
 const avatar = (id: number) =>
   document.querySelector(`[data-timed-comment="${id}"]`) as HTMLElement;
 const cluster = (firstId: number) =>
   document.querySelector(`[data-timed-cluster="${firstId}"]`) as HTMLElement;
 const label = () => document.querySelector('[data-testid="timed-comment-label"]') as HTMLElement;
 const bar = () => document.querySelector('[data-music-player-bar]')!.getBoundingClientRect();
-const openedDetail = (commentId: number) =>
+// Once: a click must not also reach a handler further up and open it twice.
+const openedDetail = (commentId: number) => {
+  expect(triggerRoutedDialog).toHaveBeenCalledTimes(1);
   expect(triggerRoutedDialog).toHaveBeenCalledWith({
     name: 'imageDetail',
     state: { imageId: SONG_ID, highlight: commentId },
   });
+  expect(seekMusicPlayer).not.toHaveBeenCalled();
+};
+const listOpen = () => document.querySelector('[role="dialog"][aria-label^="Comments around"]');
 const at = (currentTime: number) =>
   act(() => useMusicPlayheadStore.setState({ currentTime, duration: DURATION }));
 
 beforeEach(async () => {
   await page.viewport(1440, 800);
+  // The pointer off the bar: one left over a stack by the test before would open its list.
+  await userEvent.hover(page.elementLocator(document.body), { position: { x: 1, y: 1 } });
   vi.clearAllMocks();
   timedComments.reset();
   timedComments.served[SONG_ID] = [
@@ -127,16 +137,15 @@ describe('timed comments on the bar’s waveform', () => {
     await expect.poll(() => avatar(3)).toBeTruthy();
     expect(labels()).toEqual([]);
     await at(151);
-    await expect.poll(labels).toEqual(['jo  the outro']);
+    await expect.poll(labels).toEqual(['jo: the outro']);
     await at(154.5);
     await expect.poll(labels).toEqual([]);
   });
 
-  test('a click on an avatar seeks there and opens the song with that comment highlighted', async () => {
+  test('a click on an avatar opens the song with that comment highlighted, without seeking', async () => {
     await renderBar();
     await expect.poll(() => avatar(3)).toBeTruthy();
     await userEvent.click(avatar(3));
-    expect(seekMusicPlayer).toHaveBeenCalledWith(150);
     openedDetail(3);
   });
 
@@ -175,11 +184,26 @@ describe('the floating label', () => {
     await expect.poll(() => avatar(3)).toBeTruthy();
     await at(151);
     await expect.poll(label).toBeTruthy();
-    const box = label().getBoundingClientRect();
-    expect(box.bottom).toBeLessThanOrEqual(bar().top);
+    await expect.poll(() => label().getBoundingClientRect().bottom).toBeLessThanOrEqual(bar().top);
+    // The label's own avatar sits over the strip's.
+    const own = label().firstElementChild!.getBoundingClientRect();
     const anchor = avatar(3).getBoundingClientRect();
-    // The label's own 18px avatar (after 3px of padding) sits over the strip's.
-    expect(box.left + 12).toBeCloseTo(anchor.left + anchor.width / 2, 0);
+    expect(own.left + own.width / 2).toBeCloseTo(anchor.left + anchor.width / 2, 0);
+  });
+
+  test('shows the name and the comment apart, the comment dimmed', async () => {
+    timedComments.served[SONG_ID] = [timed(3, 150, 'koenb', 'A really long comment')];
+    await renderBar();
+    await expect.poll(() => avatar(3)).toBeTruthy();
+    await at(151);
+    await expect.poll(label).toBeTruthy();
+    const [name, text] = [...label().lastElementChild!.children] as HTMLElement[];
+    expect(name.textContent).toBe('koenb');
+    expect(text.textContent).toBe('A really long comment');
+    expect(text.getBoundingClientRect().left - name.getBoundingClientRect().right).toBeGreaterThanOrEqual(
+      6
+    );
+    expect(getComputedStyle(text).color).toBe('rgb(140, 143, 163)');
   });
 
   test('stays inside the window at the end of the song', async () => {
@@ -190,9 +214,10 @@ describe('the floating label', () => {
     await expect.poll(() => avatar(9)).toBeTruthy();
     await at(199.5);
     await expect.poll(label).toBeTruthy();
-    const box = label().getBoundingClientRect();
-    expect(box.right).toBeLessThanOrEqual(document.documentElement.clientWidth);
-    expect(box.bottom).toBeLessThanOrEqual(bar().top);
+    await expect.poll(() => label().getBoundingClientRect().bottom).toBeLessThanOrEqual(bar().top);
+    expect(label().getBoundingClientRect().right).toBeLessThanOrEqual(
+      document.documentElement.clientWidth
+    );
   });
 
   test('a click opens the song with that comment highlighted', async () => {
@@ -202,7 +227,6 @@ describe('the floating label', () => {
     await expect.poll(label).toBeTruthy();
     await userEvent.click(label());
     openedDetail(3);
-    expect(seekMusicPlayer).not.toHaveBeenCalled();
   });
 });
 
@@ -234,11 +258,67 @@ describe('a cluster of nearby comments', () => {
     const list = page.getByRole('dialog', { name: 'Comments around 0:50' });
     await expect.element(list).toBeInTheDocument();
     await expect.element(list.getByText('5 total')).toBeInTheDocument();
-    expect(list.element().getBoundingClientRect().bottom).toBeLessThanOrEqual(bar().top);
+    await expect
+      .poll(() => list.element().getBoundingClientRect().bottom)
+      .toBeLessThanOrEqual(bar().top);
     const row = list.getByRole('button', { name: /kai/ });
     await expect.element(row).toHaveTextContent('kai0:53who made the synth?');
     await userEvent.click(row);
     openedDetail(5);
+  });
+
+  test('a click on it opens the song at its first comment, without seeking', async () => {
+    await renderBar();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+    await userEvent.click(cluster(1));
+    openedDetail(1);
+  });
+
+  test('its list hides the floating label while it is open', async () => {
+    await renderBar();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+    await at(50.5);
+    await expect.poll(labels).toEqual(['mira: that bass drop']);
+    await userEvent.hover(cluster(1));
+    await expect.poll(listOpen).toBeTruthy();
+    expect(labels()).toEqual([]);
+  });
+
+  test('Escape closes its list and leaves focus on the stack', async () => {
+    await renderBar();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+    cluster(1).focus();
+    await expect.poll(listOpen).toBeTruthy();
+    await userEvent.keyboard('{Escape}');
+    await expect.poll(listOpen).toBeNull();
+    expect(document.activeElement).toBe(cluster(1));
+  });
+
+  test('by keyboard, ArrowDown moves into its list, which stays open while focus is inside', async () => {
+    await renderBar();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+    cluster(1).focus();
+    await userEvent.keyboard('{ArrowDown}');
+    await expect.poll(() => document.activeElement?.textContent).toBe('mira0:50that bass drop');
+    await userEvent.keyboard('{ArrowDown}');
+    await expect.poll(() => document.activeElement?.textContent).toBe('kat0:51here it comes');
+    // Past the close delay, still open.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(listOpen()).toBeTruthy();
+    await userEvent.keyboard('{Enter}');
+    openedDetail(2);
+    await userEvent.keyboard('{Escape}');
+    await expect.poll(listOpen).toBeNull();
+    expect(document.activeElement).toBe(cluster(1));
+  });
+
+  test('its list closes when focus leaves', async () => {
+    await renderBar();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+    cluster(1).focus();
+    await expect.poll(listOpen).toBeTruthy();
+    cluster(1).blur();
+    await expect.poll(listOpen).toBeNull();
   });
 
   test('focusing it lists its comments too', async () => {
@@ -254,10 +334,10 @@ describe('a cluster of nearby comments', () => {
     await renderBar();
     await expect.poll(() => cluster(1)).toBeTruthy();
     await at(50.5);
-    await expect.poll(labels).toEqual(['mira  that bass drop']);
+    await expect.poll(labels).toEqual(['mira: that bass drop']);
     await at(54.5);
-    await expect.poll(labels).toEqual(['kat  here it comes']);
+    await expect.poll(labels).toEqual(['kat: here it comes']);
     await at(58.5);
-    await expect.poll(labels).toEqual(['jun  on loop']);
+    await expect.poll(labels).toEqual(['jun: on loop']);
   });
 });

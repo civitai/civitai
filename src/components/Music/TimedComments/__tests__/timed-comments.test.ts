@@ -34,6 +34,14 @@ describe('clusterTimedComments', () => {
     expect(ids(clusterTimedComments(comments, 200, 1600, 24))).toEqual([[1], [2]]);
   });
 
+  test('chains: a comment joins when it overlaps the one before, not the cluster’s first', () => {
+    expect(ids(at([c(1, 10), c(2, 20), c(3, 30)]))).toEqual([[1, 2, 3]]);
+  });
+
+  test('avatars exactly one avatar apart do not overlap', () => {
+    expect(ids(at([c(1, 10), c(2, 22)]))).toEqual([[1], [2]]);
+  });
+
   test('without a width or a length every comment stands alone', () => {
     expect(ids(clusterTimedComments([c(1, 50), c(2, 51)], 200, 0, 24))).toEqual([[1], [2]]);
     expect(ids(clusterTimedComments([c(1, 50), c(2, 51)], 0, 400, 24))).toEqual([[1], [2]]);
@@ -51,6 +59,19 @@ describe('activeTimedComment', () => {
     expect(activeTimedComment(clusters, 50 + L)?.id).toBe(2);
     expect(activeTimedComment(clusters, 50 + 2 * L)?.id).toBe(3);
     expect(activeTimedComment(clusters, 50 + 3 * L)).toBeUndefined();
+  });
+
+  test('across clusters the latest one reached wins, even while a chain is still running', () => {
+    // 50–54 run their labels 50, 54, 58, 62 and 66–70; 67 starts the next cluster inside that.
+    const chained = clusterTimedComments(
+      [c(1, 50), c(2, 51), c(3, 52), c(4, 53), c(5, 54), c(6, 67)],
+      200,
+      400,
+      24
+    );
+    expect(ids(chained)).toEqual([[1, 2, 3, 4, 5], [6]]);
+    expect(activeTimedComment(chained, 66.5)?.id).toBe(5);
+    expect(activeTimedComment(chained, 68)?.id).toBe(6);
   });
 
   test('a lone comment shows from its time for the label time', () => {

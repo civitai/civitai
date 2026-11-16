@@ -18,18 +18,16 @@ export function clusterTimedComments<T extends Timed>(
 ): TimedCommentCluster<T>[] {
   const pxPerSec = duration > 0 ? widthPx / duration : 0;
   const clusters: TimedCommentCluster<T>[] = [];
-  let previous: T | undefined;
   for (const comment of comments) {
     const last = clusters[clusters.length - 1];
+    const previous = last?.comments[last.comments.length - 1];
     if (
-      last &&
       previous &&
       pxPerSec > 0 &&
       (comment.timestampSec - previous.timestampSec) * pxPerSec < avatarPx
     )
       last.comments.push(comment);
     else clusters.push({ timestampSec: comment.timestampSec, comments: [comment] });
-    previous = comment;
   }
   return clusters;
 }
