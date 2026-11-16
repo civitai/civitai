@@ -191,6 +191,7 @@ import {
 } from '~/server/services/tagsOnSong.service';
 import {
   readSongGenre,
+  SONG_GENRE_REQUIRED_MESSAGE,
   SONG_TAG_LIMIT,
   SONG_TAG_LIMIT_MESSAGE,
   SONG_TAG_NOT_REMOVABLE_MESSAGE,
@@ -1288,6 +1289,25 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
 export const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
+/**
+ * Refuses publishing or scheduling a post while any of its songs has no genre. A post already
+ * public is left alone: its publish write is a no-op, and songs posted before genres existed must
+ * not lock its other edits.
+ */
+async function assertSongsHaveGenres(postId: number) {
+  const songs = await dbWrite.image.findMany({
+    where: { postId, type: MediaType.audio },
+    select: { metadata: true },
+  });
+  if (!songs?.some((song) => !readSongGenre(song.metadata))) return;
+  const post = await dbWrite.post.findUnique({
+    where: { id: postId },
+    select: { publishedAt: true },
+  });
+  if (post?.publishedAt && post.publishedAt <= new Date()) return;
+  throw throwBadRequestError(SONG_GENRE_REQUIRED_MESSAGE);
+}
+
 export const updatePost = async ({
   id,
   user,
@@ -1310,6 +1330,7 @@ export const updatePost = async ({
   // Mirrors the pattern in updateModelVersion (model-version.service.ts).
   const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
+  if (publishedAt !== undefined) await assertSongsHaveGenres(id);
 
   // A post drafted from a storyline becomes its chapter as it is published. Checked before the
   // write, so a continuation price the contributor was not shown refuses the publish whole. With
