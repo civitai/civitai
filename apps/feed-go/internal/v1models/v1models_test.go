@@ -131,15 +131,25 @@ func TestCursorValues(t *testing.T) {
 	if err != nil || v[`mm."lastVersionAt"`] != time.Date(2026, 6, 2, 9, 0, 0, 968*int(time.Millisecond), time.UTC) || v[`mm."modelId"`] != 12 {
 		t.Errorf("4-digit fraction / parseInt prefix: %v %v", v, err)
 	}
-	// A 1- or 2-digit fraction is read differently by the deployed Node and main (#9075): it falls
-	// back. Without a fraction, the token is read as before.
-	for _, c := range []string{"2026-06-02 09:00:00.25|5300", "2026-06-02 09:00:00.5|5300", "2026-06-02T09:00:00.05|1"} {
-		if _, err := cursorValues(fields, c); reason(err) != "v1-models-short-fraction-cursor" {
-			t.Errorf("%q: %v, want v1-models-short-fraction-cursor", c, err)
+	// parseCursor pads a timestamp's fraction to three digits (Postgres drops trailing zeros): ".25"
+	// is 250 ms and ".5" 500 ms, not 25 and 5. A token without a fraction is read as before, and one
+	// outside the padded shape (a 1-digit month) keeps dayjs's own millisecond count.
+	ms := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }
+	for _, c := range []struct {
+		tok  string
+		want time.Time
+	}{
+		{"2026-06-02 09:00:00.25|5300", time.Date(2026, 6, 2, 9, 0, 0, int(ms(250)), time.UTC)},
+		{"2026-06-02 09:00:00.5|5300", time.Date(2026, 6, 2, 9, 0, 0, int(ms(500)), time.UTC)},
+		{"2026-06-02T09:00:00.05|1", time.Date(2026, 6, 2, 9, 0, 0, int(ms(50)), time.UTC)},
+		{"2026-06-02 09:00:00.1239|1", time.Date(2026, 6, 2, 9, 0, 0, int(ms(123)), time.UTC)},
+		{"2026-06-02 09:00:00|7", time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC)},
+		{"2026-6-02 09:00:00.25|7", time.Date(2026, 6, 2, 9, 0, 0, int(ms(25)), time.UTC)},
+	} {
+		v, err := cursorValues(fields, c.tok)
+		if err != nil || v[`mm."lastVersionAt"`] != c.want {
+			t.Errorf("%q: %v %v, want %v", c.tok, v[`mm."lastVersionAt"`], err, c.want)
 		}
-	}
-	if v, err := cursorValues(fields, "2026-06-02 09:00:00|7"); err != nil || v[`mm."lastVersionAt"`] != time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC) {
-		t.Errorf("no fraction: %v %v", v, err)
 	}
 	for _, c := range []string{"|5", "5", "1|2|3", "-5|1", "2026-06-02T09:00:00.000Z", "2026-06-02Z|1", "x-y|1", "0050-01-01|1", "1|2147483648"} {
 		if _, err := cursorValues(fields, c); reason(err) != "v1-models-cursor" {

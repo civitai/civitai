@@ -167,16 +167,9 @@ func cursorValues(fields []sortField, cursor string) (map[string]any, error) {
 	for i, f := range fields {
 		v := values[i]
 		if strings.Contains(v, "-") && !numericCursorToken.MatchString(v) {
-			t, ok := dayjsUTC(v)
+			t, ok := dayjsUTC(normalizeCursorTimestamp(v))
 			if !ok {
 				return nil, fallback.New("v1-models-cursor")
-			}
-			// A 1- or 2-digit fraction (Postgres drops trailing zeros: 250 ms renders as ".25") is
-			// read as fractional seconds on main (#9075) but as a millisecond count by the deployed
-			// Node, so neither reading matches both: it falls back, as model.getAll's does.
-			// TODO(short-fraction-cursor): remove once the Node cursor fix is deployed.
-			if m := dayjsParse.FindStringSubmatch(v); m != nil && m[7] != "" && len(m[7]) < 3 {
-				return nil, fallback.Newf("v1-models-short-fraction-cursor", "%q", v)
 			}
 			out[f.field] = t
 			continue
@@ -194,9 +187,24 @@ func cursorValues(fields []sortField, cursor string) (map[string]any, error) {
 	return out, nil
 }
 
+// cursorTimestampFraction is CURSOR_TIMESTAMP_FRACTION (src/server/utils/pagination-helpers.ts).
+var cursorTimestampFraction = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\.(\d+)`)
+
+// normalizeCursorTimestamp is parseCursor's normalizeCursorTimestamp: a `YYYY-MM-DD HH:mm:ss.f…`
+// token's fraction padded to three digits and cut to three (Postgres drops trailing zeros, so 250 ms
+// renders as ".25"). Any other token is returned unchanged.
+func normalizeCursorTimestamp(v string) string {
+	m := cursorTimestampFraction.FindStringSubmatchIndex(v)
+	if m == nil {
+		return v
+	}
+	frac := v[m[4]:m[5]] + "00"
+	return v[m[2]:m[3]] + "." + frac[:3] + v[m[1]:]
+}
+
 // dayjsUTC is dayjs.utc(value) for a string dayjs parses itself (REGEX_PARSE, no `Z` suffix): the
-// fields are read as UTC, the fraction by its first three digits as a millisecond count (a shorter
-// fraction never reaches it: cursorValues falls back), out-of-range fields roll over as Date.UTC rolls them. A string dayjs
+// fields are read as UTC, the fraction by its first three digits as a millisecond count (cursorValues
+// pads a timestamp's fraction first, as Node does), out-of-range fields roll over as Date.UTC rolls them. A string dayjs
 // hands to the Date constructor instead is not read here (ok false), nor is a year below 100 (Date.UTC
 // maps it to the 1900s).
 func dayjsUTC(v string) (time.Time, bool) {
