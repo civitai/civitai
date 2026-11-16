@@ -26,6 +26,7 @@ import {
 
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
+const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPostsInfinite';
 const INF_URL = 'http://feed-go.test:9090/internal/shadow/image.getInfinite';
 const MODELS_URL = 'http://feed-go.test:9090/internal/shadow/model.getAll';
 const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
@@ -40,6 +41,10 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     timeoutMs: 500,
     maxInFlight: 4,
     maxPerSecond: 1000,
+    probeUrl: PROBE_URL,
+    probeInfiniteUrl: undefined,
+    probeModelGetAllUrl: undefined,
+    probeRate: 0,
     ...overrides,
   };
 }
@@ -138,6 +143,10 @@ describe('readFeedGoShadowConfig', () => {
       timeoutMs: SHADOW_DEFAULT_TIMEOUT_MS,
       maxInFlight: SHADOW_DEFAULT_MAX_IN_FLIGHT,
       maxPerSecond: SHADOW_DEFAULT_MAX_PER_SECOND,
+      probeUrl: undefined,
+      probeInfiniteUrl: undefined,
+      probeModelGetAllUrl: undefined,
+      probeRate: 0,
     });
   });
 
@@ -148,6 +157,7 @@ describe('readFeedGoShadowConfig', () => {
       FEED_GO_SHADOW_TIMEOUT_MS: '750',
       FEED_GO_SHADOW_MAX_IN_FLIGHT: '3',
       FEED_GO_SHADOW_MAX_PER_SECOND: '2.5',
+      FEED_GO_GOFIRST_PROBE_SAMPLE_RATE: '0.5',
     });
     expect(c).toEqual({
       url: `http://feed-go.internal.test:9090${FEED_GO_SHADOW_PATH}`,
@@ -158,6 +168,10 @@ describe('readFeedGoShadowConfig', () => {
       timeoutMs: 750,
       maxInFlight: 3,
       maxPerSecond: 2.5,
+      probeUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getImagesAsPostsInfinite',
+      probeInfiniteUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getInfinite',
+      probeModelGetAllUrl: 'http://feed-go.internal.test:9090/internal/probe/model.getAll',
+      probeRate: 0.5,
     });
   });
 
@@ -171,6 +185,7 @@ describe('readFeedGoShadowConfig', () => {
     });
     expect(c.url).toBeUndefined();
     expect(c.v1ImagesUrl).toBeUndefined();
+    expect(c.probeUrl).toBeUndefined();
     expect(c.infiniteUrl).toBeUndefined();
     expect(c.modelGetAllUrl).toBeUndefined();
     expect(c.rate).toBe(1);
@@ -179,6 +194,7 @@ describe('readFeedGoShadowConfig', () => {
     expect(c.maxPerSecond).toBe(0.1);
     expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_URL: 'not a url' }).url).toBeUndefined();
     expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_SAMPLE_RATE: 'abc' }).rate).toBe(0);
+    expect(readFeedGoShadowConfig({ FEED_GO_GOFIRST_PROBE_SAMPLE_RATE: '3' }).probeRate).toBe(1);
   });
 });
 

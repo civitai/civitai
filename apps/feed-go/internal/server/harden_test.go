@@ -637,6 +637,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	m.ShadowPhaseCPU.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSolo.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSoloWall.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
+	m.GoFirstDBReads.WithLabelValues(EndpointAsPosts, "basic-users").Inc()
+	m.GoFirstCheckLag.WithLabelValues(EndpointAsPosts).Observe(1)
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
@@ -665,8 +667,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 10 {
-		t.Fatalf("checked %d per-endpoint families, want 10 (a family was renamed or lost)", checked)
+	if checked != 17 {
+		t.Fatalf("checked %d per-endpoint families, want 17 (a family was renamed or lost)", checked)
 	}
 }
 
