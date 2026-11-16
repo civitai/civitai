@@ -117,7 +117,6 @@ describe('who may call it', () => {
     const { status, body } = await call({
       ...REQUEST,
       noteAppend: 'tracked in HQ',
-      hqTaskUrl: HQ_URL,
     });
     expect(status).toBe(200);
     expect(body).toEqual({ id: 990000258, status: 'reviewed', changed: true });
@@ -127,7 +126,6 @@ describe('who may call it', () => {
       status: 'reviewed',
       expectedStatus: 'new',
       noteAppend: 'tracked in HQ',
-      hqTaskUrl: HQ_URL,
       userId: MOD,
     });
   });
@@ -169,9 +167,9 @@ describe('what it accepts', () => {
   it.each([
     ['a status outside the set', { status: 'closed' }],
     ['no expected status', { expectedStatus: undefined }],
+    // The HQ sync records `context.hq`; this door does not take a link at all, not even a valid one.
+    ['a valid HQ task link', { hqTaskUrl: HQ_URL }],
     ['a link to another host', { hqTaskUrl: 'https://example.com/t/abc' }],
-    ['an http link', { hqTaskUrl: 'http://hq.civitai.com/t/abc' }],
-    ['a link with a fragment', { hqTaskUrl: `${HQ_URL}#c1` }],
     ['a note over the cap', { noteAppend: 'x'.repeat(2001) }],
     ['a blank note', { noteAppend: ' ' }],
   ])('refuses %s with 400, before the write', async (_label, over) => {

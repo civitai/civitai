@@ -103,13 +103,11 @@ describe('resolveTaskTarget: the mapping table', () => {
     });
   });
 
-  it('stops following merges after three hops', async () => {
+  it('follows ONE merge only: a merged task merged into another merged task stays unresolved', async () => {
     const tasks = {
       a1: { ...wontfix, merged_into: 'a2' },
       a2: { ...wontfix, merged_into: 'a3' },
-      a3: { ...wontfix, merged_into: 'a4' },
-      a4: { ...wontfix, merged_into: 'a5' },
-      a5: complete,
+      a3: complete,
     };
     expect(await resolveTaskTarget('a1', read(tasks))).toEqual({ unresolved: 'merge_too_deep' });
   });
@@ -193,17 +191,63 @@ describe('runFeedbackHqSync: forward only', () => {
 });
 
 describe('runFeedbackHqSync: a status a human set', () => {
-  it('leaves a row a moderator reviewed at reviewed, whatever its task says', async () => {
-    const { d, calls, counted, reads } = deps({
+  it('never dismisses a row a moderator reviewed: a wontfix task leaves it at reviewed', async () => {
+    const { d, calls, counted } = deps({
       links: [{ feedbackId: 990000255, taskId: 't_no' }],
       rows: [{ id: 990000255, status: 'reviewed', handledById: HUMAN, hqTaskId: 't_no' }],
       tasks: { t_no: wontfix },
     });
     await runFeedbackHqSync(d);
     expect(calls).toEqual([]);
-    expect(reads).toEqual([]);
     expect(counted).toMatchObject({ human_set: 1 });
+    expect(counted.moved_dismissed ?? 0).toBe(0);
   });
+
+  it('never dismisses a row a moderator reviewed through a merge either', async () => {
+    const { d, calls } = deps({
+      links: [{ feedbackId: 990000259, taskId: 't_dup' }],
+      rows: [{ id: 990000259, status: 'reviewed', handledById: HUMAN, hqTaskId: 't_dup' }],
+      tasks: { t_dup: { ...wontfix, merged_into: 't_no' }, t_no: wontfix },
+    });
+    await runFeedbackHqSync(d);
+    expect(calls).toEqual([]);
+  });
+
+  it('advances a row a moderator reviewed to actioned when its task completes', async () => {
+    const { d, calls, counted } = deps({
+      links: [{ feedbackId: 990000262, taskId: 't_done' }],
+      rows: [{ id: 990000262, status: 'reviewed', handledById: HUMAN, hqTaskId: 't_done' }],
+      tasks: { t_done: complete },
+    });
+    await runFeedbackHqSync(d);
+    expect(calls).toEqual([{ id: 990000262, status: 'actioned', expectedStatus: 'reviewed' }]);
+    expect(counted).toMatchObject({ moved_actioned: 1 });
+    expect(counted.human_set ?? 0).toBe(0);
+  });
+
+  it('advances a row a moderator reviewed when the task it was merged into completes', async () => {
+    const { d, calls } = deps({
+      links: [{ feedbackId: 990000263, taskId: 't_dup' }],
+      rows: [{ id: 990000263, status: 'reviewed', handledById: HUMAN, hqTaskId: 't_dup' }],
+      tasks: { t_dup: { ...wontfix, merged_into: 't_done' }, t_done: complete },
+    });
+    await runFeedbackHqSync(d);
+    expect(calls).toEqual([{ id: 990000263, status: 'actioned', expectedStatus: 'reviewed' }]);
+  });
+
+  it.each(['actioned', 'dismissed'])(
+    'never touches a %s row a moderator set, even when its task disagrees',
+    async (status) => {
+      const { d, calls, reads } = deps({
+        links: [{ feedbackId: 990000264, taskId: 't_open' }],
+        rows: [{ id: 990000264, status, handledById: HUMAN, hqTaskId: 't_open' }],
+        tasks: { t_open: open },
+      });
+      await runFeedbackHqSync(d);
+      expect(calls).toEqual([]);
+      expect(reads).toEqual([]);
+    }
+  );
 
   it('still records the link on a human-set row that lacks one, without changing its status', async () => {
     const { d, calls } = deps({
