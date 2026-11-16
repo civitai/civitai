@@ -38,5 +38,25 @@ while the flag is off. It is rate limited like `image.getSongCovers`.
 Covers, the backdrop, the Up next panel and the More-from list read at the viewer's own browsing level
 (`ViewerBrowsingLevelScope`), not the detail page's, which is scoped to the song's own rating.
 
-Not yet built: play counts (waiting on `'Play'` events being readable), the Remixes half of the
-Remixes / More-from card (no read of a song's remixes exists yet), and timed comments.
+Not yet built: play counts (waiting on `'Play'` events being readable) and the Remixes half of the
+Remixes / More-from card (no read of a song's remixes exists yet).
+
+## Timed comments
+
+A top-level comment on a song can sit at a time in it. The time is stored in `CommentV3.metadata` as
+`{ "timestampSec": n }` (whole seconds), an object the server builds from the create input's
+`timestampSec`; no client-supplied `metadata` is read. Everything here needs the `music` flag.
+
+| Part | Behaviour |
+|------|-----------|
+| Writing (`commentv3.create`) | `timestampSec` is accepted only on a top-level comment on an image of type audio, from a writer with the flag on, between 0 and the song's stored `metadata.duration`. A reply, another image or surface, a time past the end, or a song with no stored length is refused with a bad request; with the flag off, unauthorized. Edits never touch the time. |
+| Composer chip | On a song's comment section, the top-level composer shows "at m:ss" with the playhead. It is on while the song is the player's current song and sends the playhead's whole second when the comment is posted; off, the comment has no time. While another song (or none) plays it is disabled: "Play the song to comment at a time". It never sends a time past the song's stored length, and a song without one shows no chip, so its comments always post. Replies show no chip. |
+| List chip | A timed comment shows its time; clicking it seeks the current song there and plays it, or, when another song is current, starts this one there with the creator's songs as Up next (as a lyric line does). |
+| Player bar (desktop) | The comments' avatars float over the top edge of the waveform at their times (`MusicPlayerTimedComments`), taking no height in the bar. Avatars that would overlap at the waveform's width merge into a stack of up to three with a "+N" count; hovering or focusing it lists them ("Comments around m:ss", N total). When the playhead reaches a comment, its text floats as one label above the bar at its avatar, held inside the window, for 4 s; a later one replaces it, and a reached stack shows its comments one after another. Hovering or focusing an avatar shows its label. Clicking (or Enter on) an avatar seeks there, and a stack seeks to its first comment; clicking the label or a listed comment opens the song's detail view with that comment highlighted (`?highlight=<commentId>`). ArrowDown or ArrowUp moves from an avatar into its label and from a stack into its list; Escape closes them. The detail view unfolds its sidebar and Discussion card for that comment. The phone bar shows none. |
+| Toggle | The bar's comment button hides the avatars; the waveform stays where it is, centred in the bar, and the comments are still read. The choice is kept per browser (`music-player:preferences` in local storage, through the player store) and defaults to on. |
+
+The bar reads `commentv3.getTimed` (`getTimedComments` in `commentv3/read.service.ts`): live top-level
+timed comments the viewer may see under the section's rules (ToS removals and excluded authors left out),
+hidden ones left out too, ordered by time, at most 200, each with its text as plain text cut to 140
+characters. Section items carry `timestampSec` (null on an untimed comment).
+

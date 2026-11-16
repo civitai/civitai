@@ -2678,6 +2678,10 @@ export type CommentV3 = {
   pinnedAt: Timestamp | null;
   reactionCount: Generated<number>;
   legacyV1Id: number | null;
+  /**
+   * Server-built only. A song's timed comment holds `{ timestampSec }`.
+   */
+  metadata: unknown | null;
 };
 export type CommentV3Reaction = {
   id: Generated<number>;

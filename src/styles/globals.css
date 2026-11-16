@@ -480,6 +480,13 @@ textarea {
     --safe-area-inset-bottom-modal: 0px;
   }
 
+  /* A full-screen modal inside `#main` (the image detail view) ends at `#main`'s bottom, so with the
+     music player's bar below it the bar is the bottom edge and pays the inset: the modal must not
+     pay it again. Portalled modals still reach the viewport's bottom and keep paying. */
+  #__next:has([data-music-player-bar]) #main .mantine-Modal-content[data-full-screen] {
+    --safe-area-inset-bottom-modal: 0px;
+  }
+
   /* A NON-fullScreen modal is already held off the edges by Mantine's own
      `--modal-y-offset: 5dvh` / `--modal-x-offset: 5vw`. That is not an
      inset-payback problem, it is a "is the existing offset big enough"

@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { MusicTrack } from '~/store/music-player.store';
-import { createMusicPlayerStore } from '~/store/music-player.store';
+import {
+  createMusicPlayerStore,
+  MUSIC_PLAYER_PREFERENCES_KEY,
+} from '~/store/music-player.store';
 
 const track = (id: number, durationSec = 200): MusicTrack => ({
   id,
@@ -518,5 +521,86 @@ describe('restoring the last song after a reload', () => {
     get().restore({ track: a, positionSec: 42 });
     get().playTrack(b);
     expect(get().playback?.startAtSec).toBe(0);
+  });
+});
+
+describe('timed comments on the waveform', () => {
+  // Where the choice lived before the player's preferences: read once, so nobody's choice resets.
+  const LEGACY_KEY = 'music-player:timed-comments';
+  const memory = (initial: Record<string, string> = {}) => {
+    const map = new Map<string, string>(Object.entries(initial));
+    const setItem = vi.fn((key: string, value: string) => void map.set(key, value));
+    return {
+      map,
+      setItem,
+      getItem: (key: string) => map.get(key) ?? null,
+      removeItem: (key: string) => void map.delete(key),
+    };
+  };
+
+  it('are shown until the listener turns them off, and the choice is kept for the next visit', () => {
+    const storage = memory();
+    const first = createMusicPlayerStore({ storage });
+    expect(first.getState().showTimedComments).toBe(true);
+    first.getState().toggleTimedComments();
+    expect(first.getState().showTimedComments).toBe(false);
+    expect(JSON.parse(storage.map.get(MUSIC_PLAYER_PREFERENCES_KEY)!).state).toEqual({
+      showTimedComments: false,
+    });
+
+    const next = createMusicPlayerStore({ storage });
+    expect(next.getState().showTimedComments).toBe(false);
+    next.getState().toggleTimedComments();
+    expect(createMusicPlayerStore({ storage }).getState().showTimedComments).toBe(true);
+  });
+
+  it('carry over a choice saved under the old key, once', () => {
+    const storage = memory({ [LEGACY_KEY]: 'off' });
+    expect(createMusicPlayerStore({ storage }).getState().showTimedComments).toBe(false);
+    expect(storage.map.has(LEGACY_KEY)).toBe(false);
+    expect(createMusicPlayerStore({ storage }).getState().showTimedComments).toBe(false);
+  });
+
+  it('are not written on every playback update, only when the choice changes', () => {
+    const storage = memory();
+    const store = createMusicPlayerStore({ storage });
+    store.getState().playTrack(a);
+    storage.setItem.mockClear();
+    store.getState().setVolume(0.5);
+    store.getState().pause();
+    store.getState().resume();
+    expect(storage.setItem).not.toHaveBeenCalled();
+    store.getState().toggleTimedComments();
+    expect(storage.setItem).toHaveBeenCalledTimes(1);
+  });
+
+  it('stay on when storage is blocked or holds something else', () => {
+    const blocked = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+      removeItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    const store = createMusicPlayerStore({ storage: blocked });
+    expect(store.getState().showTimedComments).toBe(true);
+    store.getState().toggleTimedComments();
+    expect(store.getState().showTimedComments).toBe(false);
+    expect(
+      createMusicPlayerStore({ storage: memory({ [MUSIC_PLAYER_PREFERENCES_KEY]: 'maybe' }) }).getState()
+        .showTimedComments
+    ).toBe(true);
+  });
+
+  it('survive closing the player', () => {
+    const store = createMusicPlayerStore({ storage: memory() });
+    store.getState().toggleTimedComments();
+    store.getState().playTrack(a);
+    store.getState().close();
+    expect(store.getState().showTimedComments).toBe(false);
   });
 });

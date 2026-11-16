@@ -1,6 +1,6 @@
 import { encode } from 'blurhash';
 import { describe, expect, it } from 'vitest';
-import { musicAccentFromHash } from '~/components/MusicPlayer/music-accent';
+import { musicAccentFromHash, readableAccent } from '~/components/MusicPlayer/music-accent';
 
 /** A blurhash of a flat image in one colour: its average is that colour. */
 function flatHash(r: number, g: number, b: number) {
@@ -106,4 +106,28 @@ describe('the artwork accent', () => {
       expect(musicAccentFromHash(hash)).toBeNull();
     }
   );
+});
+
+describe('readableAccent', () => {
+  const contrast = (a: string, b: string) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  // The Pencil accent, the Mantine primary, and the corners of the player's accent band.
+  const ACCENTS = ['#e64980', '#228be6', '#f59f00', '#2b8a3e', '#7048e8', '#0b7285'];
+  // The surfaces a time sits on: white and the dark list (#2C2E33), and the comment card in both.
+  const SURFACES = ['#ffffff', '#2c2e33', '#25262b', '#f8f9fa'];
+
+  it('reaches 4.5:1 on every surface, in the accent’s hue', () => {
+    for (const accent of ACCENTS)
+      for (const surface of SURFACES) {
+        const shown = readableAccent(accent, surface);
+        expect(contrast(shown, surface), `${accent} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        expect(Math.abs(hue(shown) - hue(accent)), `${accent} on ${surface}`).toBeLessThan(6);
+      }
+  });
+
+  it('leaves an accent that already reads alone', () => {
+    expect(readableAccent('#0b3d91', '#ffffff')).toBe('#0b3d91');
+  });
 });

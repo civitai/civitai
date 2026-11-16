@@ -29,6 +29,7 @@ beforeAll(async () => {
   await pg.exec(migration('20261210120000_comment_v3_mirror_changed_columns'));
   await pg.exec(migration('20270101120000_comment_v3_old_table_triggers_off'));
   await pg.exec(migration('20270102120000_comment_v3_teardown'));
+  await pg.exec(migration('20271114120000_comment_v3_metadata'));
   db = {
     query: async <R extends Record<string, unknown>>(sql: string, params?: unknown[]) =>
       (await pg.query<R>(sql, params)) as { rows: R[] },
@@ -61,6 +62,22 @@ describe('comment v3 writes', () => {
       path: `${root.id}.${reply.id}.${nested.id}`,
     });
     expect(await commentCount(1)).toBe(3);
+  });
+
+  it('stores the metadata it is given as JSON, and none when it has none', async () => {
+    const timed = await insertComment(db, {
+      userId: 1,
+      entityType: 'article',
+      entityId: 1,
+      content: 'at 0:42',
+      metadata: { timestampSec: 42 },
+    });
+    const plain = await post(1, 1);
+    const stored = async (id: number) =>
+      (await one<{ metadata: unknown }>(`SELECT metadata FROM "CommentV3" WHERE id = ${id}`))
+        ?.metadata;
+    expect(await stored(timed.id)).toEqual({ timestampSec: 42 });
+    expect(await stored(plain.id)).toBeNull();
   });
 
   it('refuses a reply to a comment on another article, to a deleted one, or on a missing article', async () => {

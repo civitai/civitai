@@ -94,3 +94,52 @@ export function withAlpha(hex: string, alpha: number) {
     .toString(16)
     .padStart(2, '0')}`;
 }
+
+const hexRgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+// WCAG AA for normal-size text.
+const AA_TEXT = 4.5;
+// Lightness is found by bisection, so aim a little past the bound to land on its right side.
+const AA_MARGIN = 0.005;
+
+/**
+ * `accent` as text on `background`, both `#rrggbb`: the accent when it already reaches 4.5:1 there,
+ * else the same hue and saturation made lighter (on a dark surface) or darker (on a light one)
+ * until it does.
+ */
+export function readableAccent(accent: string, background: string) {
+  const fg = luminance(hexRgb(accent));
+  const bg = luminance(hexRgb(background));
+  const darkSurface = bg < 0.18;
+  const target = darkSurface ? AA_TEXT * (bg + 0.05) - 0.05 : (bg + 0.05) / AA_TEXT - 0.05;
+  if (darkSurface ? fg >= target : fg <= target) return accent;
+  const hsl = withLuminance(
+    rgbToHsl(hexRgb(accent)),
+    darkSurface ? target + AA_MARGIN : Math.max(0, target - AA_MARGIN)
+  );
+  return toHex(hslToRgb(hsl));
+}
+
+/** `fg` laid at `alpha` over `bg`, both `#rrggbb`, as a solid `#rrggbb`. */
+export function blend(fg: string, bg: string, alpha: number) {
+  const [f, b] = [hexRgb(fg), hexRgb(bg)];
+  return toHex(f.map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha))));
+}
+
+/**
+ * CSS variables for text in the accent that reads in both schemes: the accent made readable on each
+ * scheme's `surface`, under a tint of the accent at `tint` alpha when the text sits on one. Pair
+ * with `ACCENT_TEXT`.
+ */
+export function accentTextVars(
+  accent: string,
+  surface: { light: string; dark: string },
+  tint = 0
+) {
+  return {
+    '--accent-text-light': readableAccent(accent, blend(accent, surface.light, tint)),
+    '--accent-text-dark': readableAccent(accent, blend(accent, surface.dark, tint)),
+  } as Record<string, string>;
+}
+
+/** Sets `--accent-text` to the scheme's colour from `accentTextVars`. */
+export const ACCENT_TEXT = '[--accent-text:var(--accent-text-light)] dark:[--accent-text:var(--accent-text-dark)]';

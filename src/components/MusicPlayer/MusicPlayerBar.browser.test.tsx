@@ -130,6 +130,38 @@ describe('the global player bar', () => {
       .toHaveAttribute('href', '/user/neonwave');
   });
 
+  test('shows no playing animation beside the song name', async () => {
+    await renderWithProviders(<MusicPlayerBar />);
+    const title = page.getByRole('link', { name: 'Midnight Arcade' }).last();
+    await expect.element(title).toBeInTheDocument();
+    expect(player().playing).toBe(true);
+    expect(title.element().parentElement!.querySelector('[aria-hidden]')).toBeNull();
+  });
+
+  for (const scheme of ['light', 'dark'])
+    test(`its times read at WCAG AA in ${scheme} mode`, async () => {
+      await renderWithProviders(<MusicPlayerBar />);
+      await expect.element(page.getByText('3:32')).toBeInTheDocument();
+      // After the render: the provider sets the scheme on mount.
+      document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+      try {
+        const rgb = (css: string) => css.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+        const lum = (c: number[]) =>
+          c
+            .map((v) => v / 255)
+            .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+            .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+        const surface = lum(rgb(getComputedStyle(bar()).backgroundColor));
+        for (const time of ['1:24', '3:32']) {
+          const text = lum(rgb(getComputedStyle(page.getByText(time).element()).color));
+          const ratio = (Math.max(text, surface) + 0.05) / (Math.min(text, surface) + 0.05);
+          expect(ratio, time).toBeGreaterThanOrEqual(4.5);
+        }
+      } finally {
+        document.documentElement.removeAttribute('data-mantine-color-scheme');
+      }
+    });
+
   test('is slim: 72px tall on desktop', async () => {
     await renderWithProviders(<MusicPlayerBar />);
     await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
@@ -308,6 +340,28 @@ describe('the global player bar', () => {
 
       act(() => player().playTrack({ ...song, id: 7, url: 'other-song' }));
       expect(signal.aborted).toBe(true);
+    });
+
+    test('starts again when the bar mounts again over a song already listened to', async () => {
+      const first = await renderWithProviders(<MusicPlayerBar />);
+      listen(1.2);
+      await expect.poll(() => songRequests(fetch)).toHaveLength(1);
+      await first.unmount();
+      await renderWithProviders(<MusicPlayerBar />);
+      await expect.poll(() => songRequests(fetch)).toHaveLength(2);
+    });
+
+    // After a page load the last song comes back paused where it was, with nothing played yet in
+    // this page: it was listened to before, so its waveform is drawn, not a flat line (S18).
+    test('starts for a song restored after a page load, while it is still paused', async () => {
+      act(() => player().close());
+      act(() =>
+        player().restore({ track: { ...song, url: songUrl }, positionSec: 84 })
+      );
+      expect(player().playing).toBe(false);
+      expect(player().playback?.listenedSec).toBe(0);
+      await renderWithProviders(<MusicPlayerBar />);
+      await expect.poll(() => songRequests(fetch)).toHaveLength(1);
     });
 
     test('never starts on the phone bar', async () => {

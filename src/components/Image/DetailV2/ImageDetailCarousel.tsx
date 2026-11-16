@@ -228,7 +228,9 @@ export function ImageDetailCarousel({
     <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
-        className="flex-1"
+        // min-w-0: otherwise the mounted slides' content widths add up to the carousel's minimum
+        // width (three song stages side by side) and push it past the stage area.
+        className="min-w-0 flex-1"
         onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
         startIndex={startIndexRef.current}
@@ -240,7 +242,8 @@ export function ImageDetailCarousel({
         <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
             {images.map((image, i) => (
-              <Embla.Slide key={image.id} index={i} className="flex-[0_0_100%]">
+              // min-w-0: a slide is the carousel's width, never its content's (a song stage's).
+              <Embla.Slide key={image.id} index={i} className="min-w-0 flex-[0_0_100%]">
                 {/* function child opts out of Embla's own in-view gating — adjacency
                     is the gate here, so a neighbor is painted before the drag reveals it.
                     Neighbors key off the settled index so a new full-size decode never

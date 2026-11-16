@@ -26,6 +26,7 @@ vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
 import { songCovers } from '~/components/MusicPlayer/__tests__/song-covers-trpc-stub';
 import { MusicPlayerBar } from '~/components/MusicPlayer/MusicPlayerBar';
 import { useMusicPlayerStore } from '~/store/music-player.store';
+import { formatPlaybackTime } from '~/utils/audio-player';
 
 const song = (id: number, title: string, durationSec = 200): MusicTrack => ({
   id,
@@ -169,6 +170,31 @@ describe('the Up next panel', () => {
       else document.documentElement.removeAttribute('data-mantine-color-scheme');
     }
   });
+
+  for (const scheme of ['light', 'dark'])
+    test(`a song's length reads at WCAG AA in ${scheme} mode`, async () => {
+      player().playTrack(nowPlaying, { list: { name: 'Feed', tracks: [nowPlaying, rain] } });
+      await openPanel();
+      const previous = document.documentElement.getAttribute('data-mantine-color-scheme');
+      document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+      try {
+        const rgb = (css: string) => css.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+        const lum = (c: number[]) =>
+          c
+            .map((v) => v / 255)
+            .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+            .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+        const surface = lum(rgb(getComputedStyle(panel().element()).backgroundColor));
+        const length = panel().getByText(formatPlaybackTime(rain.durationSec)).first().element();
+        const text = lum(rgb(getComputedStyle(length).color));
+        expect((Math.max(text, surface) + 0.05) / (Math.min(text, surface) + 0.05)).toBeGreaterThanOrEqual(
+          4.5
+        );
+      } finally {
+        if (previous) document.documentElement.setAttribute('data-mantine-color-scheme', previous);
+        else document.documentElement.removeAttribute('data-mantine-color-scheme');
+      }
+    });
 
   test('the drag handle says what it does in a tooltip over the panel', async () => {
     player().playTrack(nowPlaying, { list: { name: 'Post', tracks: [nowPlaying, palm, chrome] } });

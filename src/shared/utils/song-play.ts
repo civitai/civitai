@@ -1,3 +1,8 @@
+/** A song's stored `metadata.duration` as seconds, or null when it is missing or not a positive length. */
+export function storedSongDurationSec(duration: unknown): number | null {
+  return typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? duration : null;
+}
+
 /** "Play = 30 s listened or full track if shorter". */
 export const SONG_PLAY_MIN_LISTEN_SEC = 30;
 

@@ -12,6 +12,10 @@ export function PageModal({ children, ...props }: ModalProps) {
       {...props}
       styles={{
         inner: { position: 'absolute' },
+        // Full screen, Mantine makes the content 100dvh tall. Inside its target that runs past the
+        // target's bottom: under the music player's bar, the last row of the page column. The
+        // inner already spans the target, so the content takes its height instead.
+        ...(props.fullScreen && { content: { height: '100%' } }),
         body: { height: '100%', width: '100%', display: 'flex', flexDirection: 'column' },
       }}
       removeScrollProps={{ allowPinchZoom: true }}
