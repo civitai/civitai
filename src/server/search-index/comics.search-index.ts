@@ -1,7 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
+import {
+  createSearchIndexUpdateProcessor,
+  type SearchIndexContext,
+  type SearchIndexPullBatch,
+} from '~/server/search-index/base.search-index';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
 import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
@@ -272,6 +276,54 @@ type ProfileImage = Prisma.ImageGetPayload<{
   select: typeof profileImageSelect;
 }>;
 
+export const pullData = async (
+  { db, logger }: SearchIndexContext,
+  batch: SearchIndexPullBatch
+): Promise<PulledComics | null> => {
+  logger(
+    `PullData :: Pulling data for batch`,
+    batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
+  );
+  const data = await pullComics(
+    db,
+    [
+      batch.type === 'update' ? Prisma.sql`cp.id IN (${Prisma.join(batch.ids)})` : undefined,
+      batch.type === 'new'
+        ? Prisma.sql`cp.id >= ${batch.startId} AND cp.id <= ${batch.endId}`
+        : undefined,
+    ].filter(isDefined)
+  );
+  const matched = new Set(data?.comics.map((c) => c.id));
+  const disqualifiedIds = batch.type === 'update' ? batch.ids.filter((id) => !matched.has(id)) : [];
+  if (!data && !disqualifiedIds.length) return null;
+
+  logger(`PullData :: Pulled comics and profile pictures`);
+
+  return { comics: [], profilePictures: [], ...data, disqualifiedIds };
+};
+
+export const transformIndexData = async ({
+  disqualifiedIds,
+  ...data
+}: PulledComics): Promise<TransformedComics> => ({
+  records: await transformData(data),
+  disqualifiedIds,
+});
+
+export const pushData = async (
+  { indexName }: SearchIndexContext,
+  { records, disqualifiedIds }: TransformedComics
+) => {
+  await updateDocs({
+    indexName,
+    documents: records as any[],
+    batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+  });
+  // `updateDocs` upserts, so a comic that stopped qualifying keeps its document unless deleted here.
+  if (disqualifiedIds.length)
+    await onSearchIndexDocumentsCleanup({ indexName, ids: disqualifiedIds });
+};
+
 export const comicsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   outboxEntity: 'Comic',
@@ -299,34 +351,17 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch) => {
-    logger(
-      `PullData :: Pulling data for batch`,
-      batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
-    );
-    const data = await pullComics(
-      db,
-      [
-        batch.type === 'update' ? Prisma.sql`cp.id IN (${Prisma.join(batch.ids)})` : undefined,
-        batch.type === 'new'
-          ? Prisma.sql`cp.id >= ${batch.startId} AND cp.id <= ${batch.endId}`
-          : undefined,
-      ].filter(isDefined)
-    );
-    if (!data) return null;
-
-    logger(`PullData :: Pulled comics and profile pictures`);
-
-    return data;
-  },
-  transformData,
-  pushData: async ({ indexName }, records) => {
-    await updateDocs({
-      indexName,
-      documents: records as any[],
-      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-    });
-
-    return;
-  },
+  pullData,
+  transformData: transformIndexData,
+  pushData,
+  // A disqualified comic is handled: `pushData` deletes its document.
+  getHandledIds: ({ records, disqualifiedIds }: TransformedComics) => [
+    ...records.map((record) => record.id),
+    ...disqualifiedIds,
+  ],
 });
+
+type PulledComics = NonNullable<Awaited<ReturnType<typeof pullComics>>> & {
+  disqualifiedIds: number[];
+};
+type TransformedComics = { records: ComicSearchIndexRecord[]; disqualifiedIds: number[] };
