@@ -7,7 +7,7 @@
 // comment, whose thread must be read to learn which Image or Article it belongs to.
 //
 // Each action carries `time`, taken synchronously at the write site, so two quick opposite writes
-// (react then un-react) order by when they happened, not by which hook's query finished first.
+// (comment then delete) order by when they happened, not by which hook's query finished first.
 //
 // A removal is sent only when the actor's LAST qualifying row on the entity goes (their last
 // reaction, comment, approved sticker, recommended review), so `sourceId` is one per
