@@ -21,17 +21,17 @@ export const vectorSyncMetrics = {
    * A flush that throws records no counts, like its log line. Vectors it stored before failing
    * count as updated or unchanged on the retry, so `embedded` undercounts paid embeds by that much.
    */
-  /** 1 for a subscribed topic that did not exist at start; its events wait for a restart. */
-  missingTopics: new Gauge({
-    name: 'vector_sync_missing_topics',
-    help: 'Configured topics absent from Kafka when the consumer started (1) and so not subscribed',
-    labelNames: ['topic'],
-    registers: [register],
-  }),
   flushErrors: new Counter({
     name: 'vector_sync_flush_errors_total',
     help: 'Flushes that threw and were put back for the next tick',
     labelNames: ['domain'],
+    registers: [register],
+  }),
+  /** A topic created after start stays unsubscribed, and its events wait, until a restart. */
+  missingTopics: new Gauge({
+    name: 'vector_sync_missing_topics',
+    help: 'Configured topics absent from Kafka when the consumer started (1) and so not subscribed',
+    labelNames: ['topic'],
     registers: [register],
   }),
   embedSeconds: new Histogram({
