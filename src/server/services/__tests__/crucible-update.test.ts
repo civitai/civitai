@@ -129,6 +129,8 @@ beforeEach(() => {
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   modelVersionCount.mockImplementation(allPublished);
   modelVersionFindMany.mockResolvedValue([]);
+  // clearAllMocks keeps implementations, so a test's throwing $executeRaw would outlive it.
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
 });
 
 describe('updateCrucible — text scan', () => {
@@ -196,20 +198,22 @@ describe('updateCrucible — who may edit', () => {
 
 describe('updateCrucible — once running', () => {
   it('refuses anything but the presentation from the owner, naming what is locked', async () => {
-    await expect(edit({ entryFee: 200, nsfwLevel: 3 })).rejects.toThrow(/entryFee, nsfwLevel/);
+    await expect(edit({ entryFee: 200, nsfwLevel: 3 })).rejects.toThrow(
+      /entry fee, content levels/
+    );
     expect(update).not.toHaveBeenCalled();
   });
 
   it('refuses content-level changes from a moderator too', async () => {
-    await expect(edit({ nsfwLevel: 3 }, 1, true)).rejects.toThrow(/nsfwLevel/);
+    await expect(edit({ nsfwLevel: 3 }, 1, true)).rejects.toThrow(/content levels/);
     expect(update).not.toHaveBeenCalled();
   });
 
   it('counts a scheduled crucible whose start has passed as running, before the job flips it', async () => {
     findUnique.mockResolvedValue(upcoming({ startAt: new Date(Date.now() - 60_000) }));
 
-    await expect(edit({ nsfwLevel: 3 })).rejects.toThrow(/nsfwLevel/);
-    await expect(edit({ nsfwLevel: 3 }, 1, true)).rejects.toThrow(/nsfwLevel/);
+    await expect(edit({ nsfwLevel: 3 })).rejects.toThrow(/content levels/);
+    await expect(edit({ nsfwLevel: 3 }, 1, true)).rejects.toThrow(/content levels/);
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -217,6 +221,197 @@ describe('updateCrucible — once running', () => {
     await edit({ name: 'x', description: 'y' });
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateCrucible — a moderator fixing a running crucible', () => {
+  const MOD = 77;
+  const queryRaw = dbMock.dbWrite.$queryRaw;
+  const executeRaw = dbMock.dbWrite.$executeRaw;
+  /** The entry-cap check reads the row lock, then the live entries. */
+  const liveEntries = (total: number, perUser: number) =>
+    queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ total, perUser }]);
+  const sql = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?');
+  const modActivity = () =>
+    executeRaw.mock.calls.filter((call) => sql(call).includes('"ModActivity"'));
+
+  beforeEach(() => {
+    findUnique.mockResolvedValue(crucible({ maxTotalEntries: 10, entryLimit: 3 }));
+  });
+
+  it('raises the entry cap without moving Buzz', async () => {
+    await edit({ maxTotalEntries: 50 }, MOD, true);
+
+    expect(written()).toMatchObject({ maxTotalEntries: 50 });
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('checks a raise under the lock too, since the cap it read may be stale', async () => {
+    // Another edit already raised it to 50 and 20 entries came in; this read still shows 10.
+    liveEntries(20, 2);
+
+    await expect(edit({ maxTotalEntries: 12 }, MOD, true)).rejects.toThrow(
+      /can't go below the 20 entries already in/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('removes the entry cap', async () => {
+    await edit({ maxTotalEntries: null }, MOD, true);
+    expect(written()).toMatchObject({ maxTotalEntries: null });
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('records the edit as moderator activity', async () => {
+    await edit({ maxTotalEntries: 50 }, MOD, true);
+
+    expect(modActivity()).toHaveLength(1);
+    expect(modActivity()[0].slice(1)).toEqual([MOD, 'crucible', 'updateSettings', [1]]);
+  });
+
+  it('records no moderator activity for a presentation-only edit', async () => {
+    await edit({ name: 'New name' }, MOD, true);
+    expect(modActivity()).toHaveLength(0);
+  });
+
+  it('keeps the edit when the activity row fails to write', async () => {
+    executeRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      if (strings.join('?').includes('"ModActivity"')) throw new Error('db blip');
+      return 0;
+    });
+
+    await expect(edit({ maxTotalEntries: 50 }, MOD, true)).resolves.toBeDefined();
+    expect(written()).toMatchObject({ maxTotalEntries: 50 });
+  });
+
+  it('lowers the cap to exactly the live entries, reading and writing inside one transaction', async () => {
+    const tx = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ total: 6, perUser: 2 }]),
+      crucible: { update: vi.fn(async ({ data }: { data: object }) => ({ id: 1, ...data })) },
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce(async (run: (client: unknown) => unknown) =>
+      run(tx)
+    );
+
+    await edit({ maxTotalEntries: 6 }, MOD, true);
+
+    expect(sql(tx.$queryRaw.mock.calls[0])).toMatch(/FOR UPDATE/);
+    expect(tx.crucible.update.mock.calls[0][0].data).toMatchObject({ maxTotalEntries: 6 });
+    expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.crucible.update.mock.invocationCallOrder[0]
+    );
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('lowers entries per user to exactly what one entrant already has', async () => {
+    findUnique.mockResolvedValue(crucible({ maxTotalEntries: 10, entryLimit: 4 }));
+    liveEntries(5, 3);
+
+    await edit({ entryLimit: 3 }, MOD, true);
+
+    expect(written()).toMatchObject({ entryLimit: 3 });
+  });
+
+  it('refuses a cap below the entries already in, naming the count', async () => {
+    liveEntries(8, 3);
+
+    await expect(edit({ maxTotalEntries: 6 }, MOD, true)).rejects.toThrow(
+      /While it's running.*maximum total entries can't go below the 8 entries already in/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses entries per user below what one entrant already has', async () => {
+    liveEntries(5, 3);
+
+    await expect(edit({ entryLimit: 2 }, MOD, true)).rejects.toThrow(
+      /entries per user can't go below 3/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('moves the entry window', async () => {
+    await edit({ entryWarningPercent: 30, entryCutoffPercent: 10 }, MOD, true);
+    expect(written()).toMatchObject({ entryWarningPercent: 30, entryCutoffPercent: 10 });
+  });
+
+  it.each([
+    ['entry fee', { entryFee: 200 }],
+    ['seeded prize pool', { seededPrizePool: 5000 }],
+    ['prize places', { prizePositions: { '1': 100 } }],
+    ['free entries', { freeEntriesPerUser: 1 }],
+    ['duration', { duration: 72 }],
+    ['content type', { contentType: MediaType.video }],
+    ['content levels', { nsfwLevel: 3 }],
+  ])('refuses a change to the %s while it is running', async (label, input) => {
+    await expect(edit(input, MOD, true)).rejects.toThrow(
+      new RegExp(`While it's running, a crucible's ${label} can't change`)
+    );
+    expect(update).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('adds a required model to a list it already has', async () => {
+    findUnique.mockResolvedValue(crucible({ allowedResources: [5] }));
+
+    await edit({ allowedResources: [5, 6] }, MOD, true);
+
+    expect(written()).toMatchObject({ allowedResources: [5, 6] });
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['adds a first one', null, [6]],
+    ['swaps one out', [5], [6]],
+    ['clears them', [5], []],
+  ])('refuses required models when it %s', async (_, allowedResources, next) => {
+    findUnique.mockResolvedValue(crucible({ allowedResources }));
+
+    await expect(edit({ allowedResources: next }, MOD, true)).rejects.toThrow(
+      /required models can only be added/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('clears the base models but refuses a first one', async () => {
+    findUnique.mockResolvedValue(crucible({ allowedBaseModels: ['SDXL 1.0'] }));
+    await edit({ allowedBaseModels: [] }, MOD, true);
+    expect(written()).toMatchObject({ allowedBaseModels: [] });
+
+    update.mockClear();
+    findUnique.mockResolvedValue(crucible());
+    await expect(edit({ allowedBaseModels: ['SDXL 1.0'] }, MOD, true)).rejects.toThrow(
+      /base models can only be added/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('applies the moderator rules to a moderator editing their own crucible', async () => {
+    await edit({ maxTotalEntries: 50 }, OWNER, true);
+    expect(written()).toMatchObject({ maxTotalEntries: 50 });
+
+    await expect(edit({ entryFee: 200 }, OWNER, true)).rejects.toThrow(
+      /While it's running, a crucible's entry fee can't change/
+    );
+  });
+
+  it('still refuses the creator who is not a moderator', async () => {
+    await expect(edit({ maxTotalEntries: 50 })).rejects.toThrow(
+      /While it's running, only a crucible's name, description and images can change \(not maximum total entries\)/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses settings once it has ended', async () => {
+    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Completed }));
+
+    await expect(edit({ maxTotalEntries: 50 }, MOD, true)).rejects.toThrow(/has ended/);
+    expect(update).not.toHaveBeenCalled();
   });
 });
 
@@ -251,7 +446,7 @@ describe('updateCrucible — while upcoming', () => {
 
   it('locks the base models once the crucible has started', async () => {
     await expect(edit({ allowedBaseModels: ['SDXL 1.0'] })).rejects.toThrow(
-      /only its name, description and images can change/
+      /While it's running, only a crucible's name, description and images can change/
     );
     expect(update).not.toHaveBeenCalled();
   });
@@ -350,7 +545,7 @@ describe('updateCrucible — while upcoming', () => {
 
   it("keeps an upcoming crucible's settings with its owner, not a moderator", async () => {
     findUnique.mockResolvedValue(upcoming());
-    await expect(edit({ entryFee: 300 }, 1, true)).rejects.toThrow(/entryFee/);
+    await expect(edit({ entryFee: 300 }, 1, true)).rejects.toThrow(/entry fee/);
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
@@ -785,7 +980,7 @@ describe('updateCrucible — free entries', () => {
     findUnique.mockResolvedValue(crucible({ entryLimit: 3 }));
 
     await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
-      /only its name, description and images can change/
+      /While it's running, only a crucible's name, description and images can change/
     );
     expect(update).not.toHaveBeenCalled();
   });
@@ -834,7 +1029,7 @@ describe('updateCrucible — late entries', () => {
     findUnique.mockResolvedValue(crucible());
 
     await expect(edit({ entryCutoffPercent: 15 })).rejects.toThrow(
-      /only its name, description and images can change/
+      /While it's running, only a crucible's name, description and images can change/
     );
     expect(update).not.toHaveBeenCalled();
   });
