@@ -72,8 +72,7 @@ function main() {
     resourceUrl && issuer
       ? { resource: resourceUrl, issuers: [issuer.replace(/\/+$/, '')] }
       : undefined;
-  // The region lists in force, and that a request with no region is held to SFW, so a missing
-  // configuration shows in the log; never fatal.
+  // The region lists in force, so a missing configuration shows in the log; never fatal.
   const regions = describeRegionConfig();
   for (const line of regions.info) console.log('registry-adapter:', line);
   for (const line of regions.warn) console.warn('registry-adapter: WARNING:', line);
