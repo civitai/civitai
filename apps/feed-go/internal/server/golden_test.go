@@ -44,7 +44,7 @@ const (
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
 	goldenMinAsPosts  = 23
-	goldenMinV1       = 22
+	goldenMinV1       = 36
 	goldenMinInfinite = 21
 	goldenMinModels   = 19
 	goldenIssuer      = "https://auth.example.test"
@@ -181,6 +181,9 @@ type goldenImage struct {
 	} `json:"_resources"`
 	// Tags are the image's TagsOnImageDetails tag ids (infinite/ fixtures only: the tag scope).
 	Tags []int `json:"_tags"`
+	// Meta is the image's `meta` jsonb as Postgres prints it (v1-images/ fixtures only: the
+	// image-meta cache's lookup); null when NULL.
+	Meta *string `json:"_meta"`
 }
 
 // goldenImageColumns is the getAllImages SELECT list, in the order scanRows scans it.
@@ -421,6 +424,7 @@ var (
 	goldenReCursor    = regexp.MustCompile(`\(\((i\."id"|irr\."imageId"|i\."index") (<=|>=) \$(\d+)\)\)`)
 	goldenReTags      = regexp.MustCompile(`WHERE "tagId" = ANY\(\$(\d+)::int\[\]\) AND "disabled" = FALSE`)
 	goldenReLimit     = regexp.MustCompile(`LIMIT \$(\d+)\s*$`)
+	goldenReOffset    = regexp.MustCompile(`OFFSET (\d+)\s+LIMIT`)
 	goldenReMinorOwn  = regexp.MustCompile(`\(i\."minor" != TRUE OR i\."userId" = \$(\d+)\)`)
 	goldenReRRModel   = regexp.MustCompile(`rr\."modelId" = \$(\d+)`)
 	goldenReRRVersion = regexp.MustCompile(`rr\."modelVersionId" = \$(\d+)`)
@@ -481,7 +485,7 @@ func goldenHas(list []int, n int) bool {
 
 // goldenImageRows answers the getAllImages page query: the clauses the fixtures reach, evaluated
 // over the images table as Postgres would (ids, posts, version or model scope, level, creator,
-// excluded creators, types, the minor exclusion, published-before-now, order, cursor, limit).
+// excluded creators, types, the minor exclusion, published-before-now, order, cursor, offset, limit).
 func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, error) {
 	versionModel := map[int]int{}
 	for _, v := range fx.DB.ModelVersions {
@@ -594,6 +598,10 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 			}
 		}
 		kept = paged
+	}
+	if m := goldenReOffset.FindStringSubmatch(sql); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		kept = kept[min(n, len(kept)):]
 	}
 	if limit, ok := goldenArg(args, goldenReLimit, sql); ok && len(kept) > goldenInt(limit) {
 		kept = kept[:goldenInt(limit)]
@@ -732,6 +740,21 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 				}
 			}
 			return testkit.NewRows([]string{"id", "modelVersionId"}, rows...), nil
+		}},
+		{Match: `ELSE i.meta END)::text AS "meta" FROM "Image" i`, Rows: func(args []any) (*testkit.Rows, error) {
+			// imageMetaCache's lookup: the meta of each image found, NULL when it hides it.
+			var rows [][]any
+			for _, img := range db.Images {
+				if !goldenHas(goldenInts(args[0]), img.ID) {
+					continue
+				}
+				var meta any
+				if !img.HideMeta {
+					meta = goldenPtr(img.Meta)
+				}
+				rows = append(rows, []any{img.ID, meta})
+			}
+			return testkit.NewRows([]string{"id", "meta"}, rows...), nil
 		}},
 		{Match: `SELECT id FROM "User" WHERE username = $1`, Rows: func(args []any) (*testkit.Rows, error) {
 			for _, u := range db.Users {
