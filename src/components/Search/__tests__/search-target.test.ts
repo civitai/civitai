@@ -3,7 +3,8 @@ import {
   legacyImageSearchDestination,
   offersImageSearch,
   resolveSearchTarget,
-  searchesImagesFeedInPlace,
+  feedSearchPathname,
+  searchesFeedInPlace,
 } from '~/components/Search/search-target';
 
 describe('resolveSearchTarget', () => {
@@ -43,12 +44,21 @@ describe('the feed search flag on its own', () => {
   });
 
   it('searches the images feed in place with feedSearch alone, and only on /images', () => {
-    expect(searchesImagesFeedInPlace(feedOnly, 'images', '/images')).toBe(true);
-    expect(
-      searchesImagesFeedInPlace({ imageSearch: true, feedSearch: false }, 'images', '/images')
-    ).toBe(false);
-    expect(searchesImagesFeedInPlace(feedOnly, 'images', '/models')).toBe(false);
-    expect(searchesImagesFeedInPlace(feedOnly, 'models', '/images')).toBe(false);
+    expect(searchesFeedInPlace(feedOnly, 'images', '/images')).toBe(true);
+    expect(searchesFeedInPlace({ imageSearch: true, feedSearch: false }, 'images', '/images')).toBe(
+      false
+    );
+    expect(searchesFeedInPlace(feedOnly, 'images', '/models')).toBe(false);
+    expect(searchesFeedInPlace(feedOnly, 'models', '/images')).toBe(false);
+  });
+
+  it('searches the models feed in place under its own flag, and only on /models', () => {
+    const modelsOnly = { modelFeedSearch: true };
+    expect(searchesFeedInPlace(modelsOnly, 'models', '/models')).toBe(true);
+    expect(searchesFeedInPlace(feedOnly, 'models', '/models')).toBe(false);
+    expect(searchesFeedInPlace(modelsOnly, 'images', '/images')).toBe(false);
+    expect(feedSearchPathname(modelsOnly, 'models')).toBe('/models');
+    expect(feedSearchPathname(modelsOnly, 'articles')).toBeUndefined();
   });
 
   it('sends /search/images to the feed under feedSearch, even without imageSearch', () => {
