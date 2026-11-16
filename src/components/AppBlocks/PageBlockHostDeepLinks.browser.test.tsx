@@ -4,6 +4,7 @@ import Router from 'next/router';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -355,6 +356,7 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
         result: { url: `${ORIGIN}/apps/run/${SLUG}/c/42?take=3`, copied: true, method: 'clipboard' },
       });
     });
+    expectReplyKeys('SHARE_LINK', 'success', ['result'], posts.last('SHARE_LINK_RESULT')!.payload);
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${ORIGIN}/apps/run/${SLUG}/c/42?take=3`);
     posts.stop();
   });
@@ -391,6 +393,7 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
           error: 'invalid share link',
         });
       });
+      expectReplyKeys('SHARE_LINK', 'error', ['error'], posts.last('SHARE_LINK_RESULT')!.payload);
       expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
       posts.stop();
     }
