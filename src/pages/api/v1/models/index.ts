@@ -95,9 +95,11 @@ export default MixedAuthEndpoint(async function handler(
   // feed-go shadow (flag `feed-go-shadow-v1-models`, default off): decided after the cheap rejects.
   // A sampled 200 keeps a reference to the body it writes, and after it its query string, the
   // headers the answer depends on and that body are POSTed to feed-go's internal compare endpoint
-  // from `setImmediate`, never awaited. A sample holds nothing until `finish`, so one that ends in an
-  // error is simply dropped. Never throws. See `~/server/trpc/feed-go-shadow`.
-  const shadow = beginFeedGoShadowV1Models(req, 'list');
+  // from `setImmediate`, never awaited. A sample holds nothing until `finish`; one that ends in
+  // another status is counted `skipped_status`. Never throws. See `~/server/trpc/feed-go-shadow`.
+  // Not sampled: a text `query` (the Meilisearch path) and a signed-in caller, both of which feed-go
+  // always answers with a fallback (`v1-models-query`, `v1-models-session`).
+  const shadow = query || user ? undefined : beginFeedGoShadowV1Models(req, 'list');
 
   // The query cursor is an opaque numeric OFFSET, not a model id: Meili's order
   // (relevance, or the caller's sort) is not monotonic in id.
@@ -184,11 +186,11 @@ export default MixedAuthEndpoint(async function handler(
     }
 
     const body = { items, metadata: { ...metadata } };
-    if (!shadow) return res.status(200).json(body);
-    captureFeedGoShadowRest(shadow, body);
-    res.status(200).json(body);
-    return finishFeedGoShadow(shadow, res.statusCode);
+    if (shadow) captureFeedGoShadowRest(shadow, body);
+    return res.status(200).json(body);
   } catch (e) {
     return handleEndpointError(res, e);
+  } finally {
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
   }
 });
