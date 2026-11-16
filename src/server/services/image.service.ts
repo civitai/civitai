@@ -2529,7 +2529,15 @@ const getAllImagesUncaptured = async (
     if (!modelVersionId)
       throw throwBadRequestError('modelVersionId is required when using prioritizedUserIds');
 
-    if (showcaseIds) ids = showcaseIds;
+    if (showcaseIds) {
+      // A curated list can be empty (every image hidden or no longer eligible): serve nothing,
+      // never an unfiltered page.
+      if (!showcaseIds.length) {
+        noteEmptyIdsPage(input, 'prioritized');
+        return { items: [], nextCursor: undefined };
+      }
+      ids = showcaseIds;
+    }
   }
   if (prioritizeUser && useModelVersionCache && !showcaseIds && modelVersionId) {
     const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);

@@ -1,3 +1,4 @@
+import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -87,7 +88,7 @@ beforeEach(() => {
 });
 
 describe('withCuratedShowcases: the public API list', () => {
-  const owner = (id: number) => ({ id, nsfwLevel: 1 } as never);
+  const owner = (id: number) => ({ id, nsfwLevel: 1 } as unknown as ImagesForModelVersions);
 
   it('replaces a curated version’s list with its showcase, community images included', async () => {
     mocks.entry = {

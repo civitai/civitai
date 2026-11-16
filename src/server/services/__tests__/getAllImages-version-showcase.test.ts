@@ -8,23 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '../../flipt/client';
 
-// (Harness copied from getAllImages-prioritized-guards.test.ts.)
-// getAllImages contains input-validation guards for the `prioritizeUser`
-// (creator-first / model-showcase carousel) branch: it rejects `cursor` combined
-// with `prioritizedUserIds`, and requires `modelVersionId` when the model-version
-// cache path is taken. These are INVALID INPUT combinations (a client sending a
-// load-more `cursor` while also asking for `prioritizedUserIds`), so they must
-// surface as a tRPC BAD_REQUEST (400) — NOT a raw `Error` that the controller
-// catch (`throwDbError`) turns into an INTERNAL_SERVER_ERROR (500). See the
-// image.getInfinite raw-500 landmine (model-showcase carousel cursor +
-// prioritizedUserIds, ~27 500s/12h).
-//
-// The mock block mirrors the established image.service unit-test recipe
-// (image-metrics-timeout.test.ts): stub env + infra clients + the
-// event-engine-common submodule so importing image.service boots no real infra.
-// On top of that we stub `enforceBlockedBrowsingTags` (so the guard is reachable)
-// and force `isFlipt` true so the model-version-cache branch (which holds both
-// guards) is taken.
+// Mock harness mirrors getAllImages-prioritized-guards.test.ts.
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
@@ -108,6 +92,13 @@ describe('getAllImages: the carousel and a curated version showcase', () => {
     expect(sql).toContain('array_position(ARRAY[30,10,20]::int[], i."id")');
     // The owner-only filter of the live branch must not apply: community images are someone else's.
     expect(sql).not.toMatch(/i\."userId" IN \(/);
+  });
+
+  it('serves an empty page, not an unfiltered one, when the curated list is empty', async () => {
+    showcase.ids = [];
+    const result = await getAllImages(input);
+    expect(result.items).toEqual([]);
+    expect(showcase.queries).toEqual([]);
   });
 
   it('keeps the live owner-first carousel when the version has no curated list', async () => {

@@ -28,6 +28,7 @@ import {
   isShowcaseCoverImage,
 } from '~/server/services/version-showcase.service';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { siteForCoverId } from '~/shared/constants/version-showcase.constants';
 import {
   getShowcaseHeldLevels,
   withinHeldLevel as withinHeldLevelFilter,
@@ -300,7 +301,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
           {
             modelId: id,
             imageId: coverId,
-            site: coverId === model.sfwCoverImageId ? 'com' : 'red',
+            site: siteForCoverId(model, coverId),
           }
         )
       : undefined;

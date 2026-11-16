@@ -14,6 +14,12 @@ export const showcaseSiteForDomain = (domain: string | undefined): VersionShowca
 export const showcaseSiteForBrowsingLevel = (browsingLevel: number): VersionShowcaseSite =>
   (browsingLevel & ~sfwBrowsingLevelsFlag) === 0 ? 'com' : 'red';
 
+/** Which site's cover a cover id is: the .com one when it is the .com column's. */
+export const siteForCoverId = (
+  model: { sfwCoverImageId?: number | null },
+  coverId: number | null
+): VersionShowcaseSite => (coverId != null && coverId === model.sfwCoverImageId ? 'com' : 'red');
+
 /** The model column that is slot 1 (the cover) of a site's showcase. */
 export const coverColumnForSite = (site: VersionShowcaseSite) =>
   site === 'com' ? ('sfwCoverImageId' as const) : ('coverImageId' as const);

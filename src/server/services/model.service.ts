@@ -347,7 +347,10 @@ import {
   updateModelVersionNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
-import { showcaseSiteForBrowsingLevel } from '~/shared/constants/version-showcase.constants';
+import {
+  showcaseSiteForBrowsingLevel,
+  siteForCoverId,
+} from '~/shared/constants/version-showcase.constants';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
   queueComFaceRecheck,
@@ -525,10 +528,6 @@ export function feedVersionCanGenerate({
     flags: version.flags ?? 0,
   });
 }
-
-/** Which site's cover a picked cover id is: the .com one when it is the .com column's. */
-const coverSite = (model: { sfwCoverImageId?: number | null }, coverId: number | null) =>
-  coverId != null && coverId === model.sfwCoverImageId ? ('com' as const) : ('red' as const);
 
 export const getModelsRaw = async ({
   input,
@@ -2015,7 +2014,7 @@ export const getModelsWithImagesAndModelVersions = async ({
       ownerId: model.user.id,
       shownVersionId: model.modelVersions[0]?.id,
       coverId: pickCoverImageId(model, showSfwFace),
-      site: coverSite(model, pickCoverImageId(model, showSfwFace)),
+      site: siteForCoverId(model, pickCoverImageId(model, showSfwFace)),
     })),
     modelVersionImages,
     // Under a base-model filter the card shows that version, so a cover from another stays put.
