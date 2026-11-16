@@ -5,9 +5,14 @@ import type { DocStoreFeed } from '~/server/services/apps/doc-store';
 export function docStoreDocSource(feed: DocStoreFeed): SharedDocSource {
   return {
     head: (appId) => feed.feedHead(appId),
-    changes: (appId, coll, after, upTo, limit) => feed.feedChanges(appId, coll, after, upTo, limit),
-    documents: (appId, coll, afterKey, upTo, limit) =>
-      feed.feedDocuments(appId, coll, afterKey, upTo, limit),
+    changes: (appId, coll, after, upTo, limit, level) =>
+      level === undefined
+        ? feed.feedChanges(appId, coll, after, upTo, limit)
+        : feed.feedChanges(appId, coll, after, upTo, limit, { viewerLevel: level }),
+    documents: (appId, coll, afterKey, upTo, limit, level) =>
+      level === undefined
+        ? feed.feedDocuments(appId, coll, afterKey, upTo, limit)
+        : feed.feedDocuments(appId, coll, afterKey, upTo, limit, { viewerLevel: level }),
     witness: (appId, coll, key) => feed.feedWitness(appId, coll, key),
   };
 }

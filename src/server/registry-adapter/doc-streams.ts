@@ -29,7 +29,17 @@ import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.c
  */
 export function resolveFromCatalog(
   readApps: () => Promise<CatalogApp[]>,
-  features: Readonly<Record<AppStorageFeature, boolean>> = APP_STORAGE_ENABLED_FEATURES
+  features: Readonly<Record<AppStorageFeature, boolean>> = APP_STORAGE_ENABLED_FEATURES,
+  /**
+   * Content levels (`doc-levels.ts`). `docLevelsOn` says whether the flag is on for an app (off
+   * unless given). With `requireDocLevels` — the DEFAULT, so a caller that says nothing fails
+   * closed — an app whose flag is off publishes NOTHING: its documents are never exported
+   * ungated. Only a test reading the export ungated passes `requireDocLevels: false`.
+   */
+  levels: {
+    docLevelsOn?: (appBlockId: string) => Promise<boolean>;
+    requireDocLevels?: boolean;
+  } = {}
 ): ResolveStream {
   return async (schema) => {
     if (!features.registryExport) return null;
@@ -61,13 +71,17 @@ export function resolveFromCatalog(
       ref.slug,
       derivation
     ).filter((d) => familyUrns.has(d.urn));
+    const docLevels = levels.docLevelsOn ? await levels.docLevelsOn(app.block.id) : false;
+    if ((levels.requireDocLevels ?? true) && !docLevels) return null;
     return {
       appId: app.block.id,
       slug: ref.slug,
       collection: ref.collection,
-      // The rating the app entity publishes, which is every document's.
+      // The rating the app entity publishes; with content levels on, each document's own rating
+      // also applies (`docLevels`).
       contentRating: appContentRating(app),
       family,
+      ...(docLevels ? { docLevels: true } : {}),
     };
   };
 }
