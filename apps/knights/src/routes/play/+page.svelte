@@ -5,6 +5,7 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import BlockReasons from './BlockReasons.svelte';
   import ApprenticeMeter from './ApprenticeMeter.svelte';
+  import RailSheet from './RailSheet.svelte';
   import CheckpointRecap from './CheckpointRecap.svelte';
   import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
@@ -149,6 +150,8 @@
   onMount(() => {
     void tick().then(() => (soundMuted = sound.muted));
   });
+  let railSheetOpen = $state(false);
+
   function toggleSound() {
     soundMuted = !soundMuted;
     sound.setMuted(soundMuted);
@@ -563,6 +566,17 @@
   </button>
 {/snippet}
 
+{#snippet questionTools()}
+  <div class="qtools">
+    {#if !yesNo}
+      <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>
+        <Icon name="book-open" size={16} />Guide
+      </button>
+    {/if}
+    {@render soundToggle()}
+  </div>
+{/snippet}
+
 {#snippet levelToast(floating: boolean)}
   {#if levelNotice && levelToastShowing}
     <LevelToast
@@ -603,6 +617,7 @@
       streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
+      onmore={() => (railSheetOpen = true)}
     />
   {:else if data.mode === 'apprentice'}
     <ApprenticeMeter
@@ -643,10 +658,13 @@
   {#if data.mode === 'apprentice'}
     {#if data.apprentice.kind === 'question'}
       <div class="column">
-        <p class="question" title={data.apprentice.prompt}>
-          <span class="eyebrow">Question</span>
-          <span class="text">{data.apprentice.prompt}</span>
-        </p>
+        <div class="qrow">
+          <p class="question" title={data.apprentice.prompt}>
+            <span class="eyebrow">Question</span>
+            <span class="text">{data.apprentice.prompt}</span>
+          </p>
+          {@render questionTools()}
+        </div>
         <div class="stagewrap">
           {#key `${data.apprentice.item.kind}:${data.apprentice.item.referenceId}`}
             <ImageStage
@@ -669,9 +687,9 @@
             {/each}
           </form>
           {#if !yesNo}
-            <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
+            <button type="button" class="quiet guide rowtool" onclick={() => (guideReopened = true)}>Rating guide</button>
           {/if}
-          {@render soundToggle()}
+          <span class="rowtool">{@render soundToggle()}</span>
         </div>
         {#if formMessage}
           <p class="notice flat" role="alert">{formMessage}</p>
@@ -715,6 +733,7 @@
     </div>
   {:else if view}
     <div class="column">
+      <div class="qrow">
       <p class="question" title={view.question.prompt}>
         <span class="eyebrow">
           Question
@@ -729,6 +748,8 @@
         </span>
         <span class="text">{view.question.prompt}</span>
       </p>
+      {@render questionTools()}
+      </div>
       <span class="vh" role="status" aria-live="polite"
         >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
       >
@@ -758,14 +779,14 @@
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={view.item.id} />
-          <button type="submit" class="quiet" disabled={submitting}>
-            <Icon name="skip-forward" size={14} />Skip<span class="space">&nbsp;·&nbsp;Space</span>
+          <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
+            <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
         {#if !yesNo}
-          <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
+          <button type="button" class="quiet guide rowtool" onclick={() => (guideReopened = true)}>Rating guide</button>
         {/if}
-        {@render soundToggle()}
+        <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
         {/if}
@@ -785,6 +806,16 @@
   </div>
   {/if}
 </div>
+
+{#if railSheetOpen && data.mode === 'queue' && !data.apprenticeMeter}
+  <RailSheet
+    status={data.status}
+    daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily))}
+    rail={data.rail}
+    ladder={data.ladder}
+    onclose={() => (railSheetOpen = false)}
+  />
+{/if}
 
 {#if guideOpen}
   <GuideDialog
@@ -923,6 +954,23 @@
     text-align: center;
   }
 
+  /* Phones carry the guide and sound toggle beside the question, so the answers keep one row. */
+  .qrow {
+    display: flex;
+    flex: none;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .qrow .question {
+    flex: 1 1 0;
+  }
+  .qtools {
+    display: none;
+  }
+  .rowtool {
+    display: contents;
+  }
+
   /* The eyebrow (and category) sits on its own line so the question keeps the full width. */
   .question {
     display: flex;
@@ -999,10 +1047,10 @@
     flex: 1 1 0;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
     height: 40px;
-    padding: 0 10px;
+    padding: 0 8px;
     border: 1px solid var(--io-gold-muted);
     border-radius: 6px;
     background: var(--io-bg);
@@ -1071,6 +1119,10 @@
   }
   .pill :global(svg) {
     flex: none;
+  }
+  /* A label never wraps: at mid widths the key chip gives way first (see below). */
+  .level {
+    white-space: nowrap;
   }
   .key {
     display: grid;
@@ -1143,7 +1195,14 @@
     opacity: 0.4;
   }
 
-  /* Touch and narrow screens: no key chips, 44px targets, the two quiet links on their own row. */
+  /* Up to 80rem the six pills share the row with Skip, the guide, sound (and from 64rem the rail): the chips go so every
+     label fits. */
+  @media (max-width: 80rem) {
+    .controls:not(.yesno) .key {
+      display: none;
+    }
+  }
+  /* Touch and narrow screens: no key chips. */
   @media (max-width: 40rem), (hover: none) {
     .key {
       display: none;
@@ -1165,17 +1224,37 @@
     .text {
       font-size: 14px;
     }
+    .qtools {
+      display: flex;
+      flex: none;
+      align-items: center;
+      gap: 14px;
+      margin-top: -6px;
+    }
+    .qtools .quiet {
+      gap: 6px;
+      min-width: 0;
+      min-height: 36px;
+      font-size: 13px;
+    }
+    .qtools .quiet.sound {
+      justify-content: center;
+      min-width: 36px;
+    }
+    .controls .rowtool {
+      display: none;
+    }
     .controls {
-      flex-wrap: wrap;
-      gap: 0 16px;
+      gap: 6px;
     }
     .answers {
-      flex-basis: 100%;
+      gap: 6px;
     }
     .pill {
-      height: 44px;
-      padding: 0 4px;
-      font-size: 13px;
+      min-height: 0;
+      height: 40px;
+      padding: 0 2px;
+      font-size: 12px;
     }
     .pill.blocked .level {
       display: none;
@@ -1188,22 +1267,38 @@
     }
     .skip {
       display: block;
+      flex: none;
     }
     .quiet {
       display: flex;
       align-items: center;
-      min-width: 56px;
-      min-height: 44px;
     }
-    .quiet.guide,
-    .controls.yesno .quiet.sound {
-      margin-left: auto;
+    /* Skip ends the answer row as a quiet bordered button: an icon beside the ratings, labelled beside yes/no. */
+    .skip .quiet {
+      justify-content: center;
+      min-width: 44px;
+      min-height: 0;
+      height: 40px;
+      padding: 0 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .skiplabel {
+      display: none;
+    }
+    .controls.yesno .skiplabel {
+      display: inline;
     }
     .space {
       display: none;
     }
     .panel {
       padding: 0.5rem 1rem 1.5rem;
+    }
+  }
+  @media (max-width: 22rem) {
+    .pill {
+      font-size: 11px;
     }
   }
 </style>

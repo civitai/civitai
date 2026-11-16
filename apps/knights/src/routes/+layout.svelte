@@ -101,7 +101,7 @@
     overflow-y: auto;
   }
   /* Must match PrimaryNav's tab-bar breakpoint and height. */
-  @media (max-width: 75rem) {
+  @media (max-width: 63.9375rem) {
     .app {
       padding-bottom: calc(57px + env(safe-area-inset-bottom));
     }

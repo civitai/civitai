@@ -103,7 +103,7 @@
 <svelte:window {onkeydown} />
 
 <header>
-  <a class="brand" href="/home">
+  <a class="brand" href="/home" aria-label="Knights of New Order home">
     <Icon name="shield" size={24} />
     <span class="title">Knights of New Order</span>
     <span class="wordmark">Knights</span>
@@ -375,7 +375,7 @@
   }
 
   /* Beside the tabs and the stats there is room for the wordmark only until 90rem. */
-  @media (min-width: 75.0625rem) and (max-width: 89.9375rem) {
+  @media (min-width: 64rem) and (max-width: 89.9375rem) {
     .title {
       display: none;
     }
@@ -422,6 +422,15 @@
       position: fixed;
       top: 60px;
       right: 16px;
+    }
+  }
+  /* Narrow phones: the wordmark has no room beside gold, level, recap and the avatar; the shield stays as the Home link. */
+  @media (max-width: 27.5rem) {
+    .brand {
+      flex: none;
+    }
+    .wordmark {
+      display: none;
     }
   }
 </style>

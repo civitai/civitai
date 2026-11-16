@@ -12,7 +12,17 @@
     streak,
     hearts,
     maxHearts,
-  }: { value: number; max: number; done: boolean; streak: number; hearts: number; maxHearts: number } = $props();
+    onmore,
+  }: {
+    value: number;
+    max: number;
+    done: boolean;
+    streak: number;
+    hearts: number;
+    maxHearts: number;
+    /** Opens the rail's other panels; without it there is no More button. */
+    onmore?: () => void;
+  } = $props();
 
   // Mounted at every width (hidden by CSS beside the rail), so it is the one place the bell rings: once, for a Watch
   // completed while the page is open, never for the first read.
@@ -26,32 +36,70 @@
   });
 </script>
 
-<!-- Below 1200px there is no rail: the Watch, the streak and the hearts sit in one quiet row above the question. -->
+<!-- Below 1024px there is no rail: the Watch, the streak and the hearts sit in one quiet row above the question. -->
 <div class="meta">
-  {#if done}
-    <span class="watch done"><Icon name="circle-check" size={14} />Watch complete</span>
-  {:else}
-    <span class="watch" use:bump={value}>Watch <b>{value}/{max}</b></span>
-  {/if}
-  <span class="streak"><Icon name="flame" size={14} /><b>{streak}</b> {streak === 1 ? 'day' : 'days'}</span>
-  <HeartsRow {hearts} {maxHearts} />
+  <div class="bar">
+    <span class="cell">
+      {#if done}
+        <span class="watch done"><Icon name="circle-check" size={14} />Watch complete</span>
+      {:else}
+        <span class="watch" use:bump={value}>Watch <b>{value}/{max}</b></span>
+      {/if}
+    </span>
+    <span class="cell"><span class="streak"><Icon name="flame" size={14} /><b>{streak}</b> {streak === 1 ? 'day' : 'days'}</span></span>
+    <span class="cell"><HeartsRow {hearts} {maxHearts} /></span>
+    {#if onmore}
+      <button type="button" class="cell more" aria-label="More stats" aria-haspopup="dialog" onclick={onmore}>
+        <Icon name="chevron-down" size={16} />
+      </button>
+    {/if}
+  </div>
 </div>
 
 <style>
   .meta {
-    display: flex;
     flex: none;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
     box-sizing: border-box;
-    /* Same width as the question column, so the two left edges line up between 40rem and 75rem. */
+    /* Same width as the question column, so the two left edges line up between 40rem and 64rem. */
     width: 100%;
     max-width: 1056px;
     margin: 0 auto;
     padding: 8px 28px;
     color: var(--io-parchment-muted);
     font: 400 12px/1.2 var(--io-font-ui);
+  }
+  /* One grouped strip: three equal cells split by hairlines, so the figures read as a set. */
+  .bar {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .cell {
+    display: flex;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 7px 8px;
+  }
+  .cell + .cell {
+    border-left: 1px solid var(--border);
+  }
+  .more {
+    flex: none;
+    min-width: 44px;
+    min-height: 0;
+    padding: 0 12px;
+    border-width: 0 0 0 1px;
+    border-radius: 0 8px 8px 0;
+    background: none;
+    color: var(--io-gold);
+  }
+  .more:hover:not(:disabled) {
+    background: var(--io-bg);
+    color: var(--io-parchment);
   }
   b {
     color: var(--io-parchment);
@@ -96,7 +144,7 @@
   .streak :global(svg) {
     color: var(--io-crimson-text);
   }
-  @media (min-width: 75rem) {
+  @media (min-width: 64rem) {
     .meta {
       display: none;
     }
