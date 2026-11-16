@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { recordAppBlockRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
+import { blockClaimsAppLabel } from '~/server/metrics/app-block-runtime.metrics';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 
@@ -488,6 +490,8 @@ export type UpsertSubListingResult = {
 
 export async function upsertSubListing(args: {
   appBlockId: string;
+  /** The token is a dev token: its refusals are counted under app_block_id="dev". */
+  dev?: boolean;
   subjectUser: SessionUser | null;
   hasLinkedOAuth: boolean;
   body: unknown;
@@ -521,6 +525,15 @@ export async function upsertSubListing(args: {
 
   const rate = await checkSubListingWriteRateLimit(user.id, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: blockClaimsAppLabel({ dev: args.dev, appBlockId: args.appBlockId }),
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'upsertSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: user.id,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',
@@ -746,6 +759,8 @@ async function transitionActive(args: {
 
 export async function withdrawSubListing(args: {
   appBlockId: string;
+  /** The token is a dev token: its refusals are counted under app_block_id="dev". */
+  dev?: boolean;
   userId: number | null;
   body: unknown;
 }): Promise<{ ok: true; withdrawn: boolean }> {
@@ -758,6 +773,15 @@ export async function withdrawSubListing(args: {
   if (!parent) return { ok: true, withdrawn: false };
   const rate = await checkSubListingWriteRateLimit(args.userId, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: blockClaimsAppLabel({ dev: args.dev, appBlockId: args.appBlockId }),
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'withdrawSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: args.userId,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',

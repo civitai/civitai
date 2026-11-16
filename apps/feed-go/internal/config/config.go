@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 )
 
@@ -38,6 +39,7 @@ type Config struct {
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
 	Hosts            browsing.HostColors
 	RegionRules      []browsing.RegionRule
+	RegionBlockRules []browsing.RegionRule
 	CreatorPromotion string          // FEED_GO_CREATOR_PROMOTIONS: the `creator-promotions` flag's audience (feed.ParsePromotionAudience)
 	LazyPostImages   bool            // FEED_GO_LAZY_POST_IMAGES: mirrors `gallery-lazy-post-images`
 	ImageIndexFeed   bool            // FEED_GO_IMAGE_INDEX_FEED: mirrors `image-index-feed`
@@ -56,6 +58,10 @@ type Config struct {
 	// Pprof is FEED_GO_PPROF (default off): serve net/http/pprof under /debug/pprof/ on the internal
 	// listener only (never the public one).
 	Pprof bool
+
+	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
+	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
+	RevocationMarkerCache bool
 
 	// System redis through its Sentinels (internal/sysredis). Same names and precedence as the
 	// Node app: a non-empty REDIS_SYS_SENTINELS selects Sentinel mode, else REDIS_SYS_URL is used.
@@ -146,6 +152,7 @@ func Load() (*Config, error) {
 	}
 	ms := intEnv("REDIS_SYS_READ_TIMEOUT_MS", 1000)
 	c.SysReadTimeout = time.Duration(ms) * time.Millisecond
+	c.RevocationMarkerCache = envSwitchOn(os.Getenv("SESSION_REVOCATION_CACHE"))
 	c.Hosts = browsing.HostColors{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
@@ -177,6 +184,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	c.RegionRules = rules
+	if c.RegionBlockRules, err = RegionBlockRules(os.Getenv("REGION_BLOCK_CONFIG")); err != nil {
+		return nil, err
+	}
 	if c.DatabaseURL == "" {
 		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
 	}
@@ -259,14 +269,40 @@ func ParseRegionRules(s string) ([]browsing.RegionRule, error) {
 		if i < 0 {
 			return nil, fmt.Errorf("invalid region restriction config %q", part)
 		}
-		t, err := time.Parse("2006-01-02", part[i+1:])
+		rule, err := regionRule(part[:i], part[i+1:])
 		if err != nil {
 			return nil, fmt.Errorf("invalid region restriction date %q: %w", part, err)
 		}
-		// region-blocking.ts reads the date as its END of day, UTC (`${date}T23:59:59.999Z`): the
-		// restriction starts once that instant is reached, not at the start of the day.
-		eff := t.Add(24*time.Hour - time.Millisecond)
-		out = append(out, browsing.RegionRule{Region: strings.ToUpper(part[:i]), Effective: eff})
+		out = append(out, rule)
+	}
+	return out, nil
+}
+
+// regionRule is one `REGION` + `YYYY-MM-DD` entry. region-blocking.ts reads the date as its END of day,
+// UTC (`${date}T23:59:59.999Z`): the rule applies once that instant is reached, not at the start of
+// the day.
+func regionRule(region, date string) (browsing.RegionRule, error) {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return browsing.RegionRule{}, err
+	}
+	return browsing.RegionRule{Region: strings.ToUpper(region), Effective: t.Add(24*time.Hour - time.Millisecond)}, nil
+}
+
+// RegionBlockRules is REGION_BLOCK_CONFIG (region-blocking.ts): the variable when set (the same format
+// as REGION_RESTRICTION_CONFIG), else DEFAULT_REGION_BLOCK_CONFIG, which apipolicy.json carries from
+// the Node module so the list is never copied by hand.
+func RegionBlockRules(env string) ([]browsing.RegionRule, error) {
+	if env != "" {
+		return ParseRegionRules(env)
+	}
+	var out []browsing.RegionRule
+	for _, b := range apipolicy.RegionBlockDefault() {
+		rule, err := regionRule(b.Region, b.EffectiveDate)
+		if err != nil {
+			return nil, fmt.Errorf("apipolicy.json region block %q: %w", b.Region, err)
+		}
+		out = append(out, rule)
 	}
 	return out, nil
 }
@@ -287,6 +323,16 @@ func boolEnv(k string, def bool) bool {
 		return false
 	}
 	return def
+}
+
+// envSwitchOn is isEnvSwitchOn (packages/civitai-shared/src/env-switch.ts): a default-ON switch that only
+// `off`, `0` or `false` (any case, surrounding whitespace ignored) turns off, so a typo never disables it.
+func envSwitchOn(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "0", "false":
+		return false
+	}
+	return true
 }
 
 func intEnv(k string, def int) int {

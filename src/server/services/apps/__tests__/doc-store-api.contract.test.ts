@@ -195,6 +195,7 @@ import {
 } from '~/shared/constants/block-storage.constants';
 import { DOC_STORE_BOUNDS } from '~/server/services/apps/doc-store.types';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
+import promClient from 'prom-client';
 import {
   blockRequestResult,
   type AppBlockRequestResult,
@@ -4091,5 +4092,152 @@ describe('content levels (app-blocks-shared-doc-levels): read gate and read-only
       viewerBrowsingLevel: 31,
     });
     expect((await call({ token: v2, method: 'GET', path: '/posts/m1' })).status).toBe(404);
+  });
+});
+
+describe('per-app refusal attribution: which limit, for which app', () => {
+  type Series = { labels: Record<string, string>; value: number };
+  async function series(name: string): Promise<Series[]> {
+    const metric = promClient.register.getSingleMetric(name) as
+      | { get(): Promise<{ values: Series[] }> }
+      | undefined;
+    return metric ? (await metric.get()).values : [];
+  }
+  async function refusals(app: string, bucket: string): Promise<number> {
+    const values = await series('civitai_app_block_rate_limit_refusals_total');
+    return (
+      values.find(
+        (v) =>
+          v.labels.app_block_id === app &&
+          v.labels.surface === 'doc_store' &&
+          v.labels.bucket === bucket
+      )?.value ?? 0
+    );
+  }
+  async function conflicts(app: string): Promise<number> {
+    // Folded into the refusal counter: {surface="doc_store", bucket="version_conflict"}.
+    return refusals(app, 'version_conflict');
+  }
+  function refusalLogs() {
+    return loggingMock.logToAxiom.mock.calls
+      .map(([data]) => data as Record<string, unknown>)
+      .filter((d) => d.name === 'app-blocks-rate-limit-refusal');
+  }
+
+  // Every case mints fresh app ids (`freshApps`), so no case shares a log-throttle key with
+  // another and no reset is needed.
+  beforeEach(() => {
+    loggingMock.logToAxiom.mockClear();
+  });
+
+  it('a read refusal is counted under {app, doc_store, read}, and only for that app', async () => {
+    const { A, B } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const beforeA = await refusals(A.id, 'read');
+    const beforeB = await refusals(B.id, 'read');
+    for (let i = 0; i < DOC_STORE_READ_RATE_LIMIT_MAX; i++) {
+      await call({ token: v1, method: 'GET', path: '/posts/x' });
+    }
+    expect(await refusals(A.id, 'read')).toBe(beforeA);
+    expect((await call({ token: v1, method: 'GET', path: '/posts/x' })).status).toBe(429);
+    expect((await call({ token: v1, method: 'GET', path: '/posts/x' })).status).toBe(429);
+
+    expect((await refusals(A.id, 'read')) - beforeA).toBe(2);
+    expect((await refusals(B.id, 'read')) - beforeB).toBe(0);
+    // ONE log line for the two refusals (the throttle), naming app, bucket, viewer and status.
+    const logs = refusalLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      appBlockId: A.id,
+      surface: 'doc_store',
+      bucket: 'read',
+      endpoint: 'storage_read',
+      status: 429,
+      retryAfter: 60,
+      userId: VIEWER_IDS.v1,
+      suppressed: 0,
+    });
+  });
+
+  it('a private write refusal is {doc_store, write}; a shared-write burst refusal is {doc_store, shared-write}', async () => {
+    const { A } = freshApps();
+    h.store = createDocStore({ db: harness.db, limits: DEFAULT_DOC_STORE_LIMITS });
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    const before = {
+      write: await refusals(A.id, 'write'),
+      shared: await refusals(A.id, 'shared-write'),
+    };
+    for (let i = 0; i < 30; i++) {
+      await call({ token: v1, method: 'PUT', path: `/posts/s${i}`, body: { data: {} } });
+    }
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/posts/s30', body: { data: {} } })).status
+    ).toBe(429);
+    for (let i = 0; i < 120; i++) {
+      await call({ token: v2, method: 'PUT', path: '/prefs/same', body: { data: { i } } });
+    }
+    expect(
+      (await call({ token: v2, method: 'PUT', path: '/prefs/same', body: { data: {} } })).status
+    ).toBe(429);
+
+    expect((await refusals(A.id, 'shared-write')) - before.shared).toBe(1);
+    expect((await refusals(A.id, 'write')) - before.write).toBe(1);
+  });
+
+  it('a shared write refused by the rejection allowance is labelled with the bucket the app is told: shared-write', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/posts/owned', body: { data: {} } })).status
+    ).toBe(200);
+    // not_author lands after the reservation: each is charged to the rejection allowance (10).
+    for (let i = 0; i < 10; i++) {
+      await call({ token: v2, method: 'PUT', path: '/posts/owned', body: { data: {} } });
+    }
+    const before = await refusals(A.id, 'shared-write');
+    const refused = await call({
+      token: v2,
+      method: 'PUT',
+      path: '/posts/other',
+      body: { data: {} },
+    });
+    expect(refused.body).toMatchObject({
+      code: 'rate_limited',
+      details: { bucket: 'shared-write' },
+    });
+    expect((await refusals(A.id, 'shared-write')) - before).toBe(1);
+  });
+
+  it('a 409 version_conflict is one {app, doc_store, version_conflict} refusal, with its log line', async () => {
+    const { A, B } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const beforeA = await conflicts(A.id);
+    const beforeB = await conflicts(B.id);
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/prefs/v', body: { data: {} } })).status
+    ).toBe(200);
+    const stale = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/prefs/v',
+      body: { data: {}, ifVersion: 7 },
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.body).toMatchObject({ code: 'version_conflict' });
+
+    expect((await conflicts(A.id)) - beforeA).toBe(1);
+    expect((await conflicts(B.id)) - beforeB).toBe(0);
+    const logs = refusalLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      appBlockId: A.id,
+      surface: 'doc_store',
+      bucket: 'version_conflict',
+      endpoint: 'storage_write',
+      status: 409,
+      userId: VIEWER_IDS.v1,
+    });
   });
 });
