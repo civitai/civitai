@@ -10,10 +10,8 @@ import {
  * under the environment cache-key prefix. FAILS OPEN on a Redis error: abuse control, not an
  * authorization boundary.
  *
- * The provider sends at most one request per 10 s per tab (more only when a tab buffers over
- * `ACTIVITY_CLIENT_BATCH_SIZE` clicks in that window), about 6 a minute. 120 a minute leaves room
- * for many tabs, or many people sharing one address (offices, carrier NAT), while bounding one
- * address to 120 x `ACTIVITY_BATCH_MAX` rows a minute.
+ * 120 a minute is well above one tab's ~6 requests a minute, leaving room for many tabs or many
+ * people behind one address, while capping one address at 120 × `ACTIVITY_BATCH_MAX` rows a minute.
  */
 export const ACTIVITY_RATE_LIMIT_MAX = 120;
 export const ACTIVITY_RATE_LIMIT_WINDOW_SECONDS = 60;
