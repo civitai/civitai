@@ -12,7 +12,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
   feedGoV1ShapeClass,
-  FEED_GO_SHADOW_INFINITE_PATH,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
   pickSessionCookies,
@@ -273,11 +272,6 @@ describe('createFeedGoShadow — sampling decision', () => {
     // model.getAll with its own flag off (the gallery flag does not sample it).
     ['model.getAll, its flag off', {}, request({ query: { trpc: 'model.getAll', input: INPUT } })],
     [
-      'a prototype key as the procedure, the model flag on',
-      { models: true },
-      request({ query: { trpc: 'constructor', input: INPUT } }),
-    ],
-    [
       'model.getAll with no URL',
       { models: true, config: { modelGetAllUrl: undefined } },
       request({ query: { trpc: 'model.getAll', input: INPUT } }),
@@ -286,11 +280,6 @@ describe('createFeedGoShadow — sampling decision', () => {
       'an unmirrored procedure',
       { infinite: true },
       request({ query: { trpc: 'image.get', input: INPUT } }),
-    ],
-    [
-      'a prototype key as the procedure',
-      { infinite: true },
-      request({ query: { trpc: 'constructor', input: INPUT } }),
     ],
     [
       'image.getInfinite with no URL',
@@ -313,6 +302,26 @@ describe('createFeedGoShadow — sampling decision', () => {
     await h.flush();
     expect(h.fetchMock).not.toHaveBeenCalled();
     expect(h.outcomes).toEqual([]);
+  });
+
+  // A procedure name is attacker-chosen: a route must be an own key of the route table, never one
+  // inherited through a (polluted) prototype. The inherited route here is complete (URL, flag on),
+  // so only the own-key check stands between it and a sample.
+  it('does not sample a route inherited through the prototype', async () => {
+    const key = 'polluted.procedure';
+    Object.defineProperty(Object.prototype, key, {
+      value: { endpoint: 'infinite', url: INF_URL, enabled: () => true },
+      configurable: true,
+    });
+    try {
+      const h = harness({ infinite: true, models: true });
+      expect(serve(h, request({ query: { trpc: key, input: INPUT } }))).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual([]);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)[key];
+    }
   });
 
   it('samples a fraction: random below the rate is sampled, at the rate is not', () => {
@@ -756,7 +765,6 @@ describe('createFeedGoShadow — image.getInfinite', () => {
     expect(h.fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = h.fetchMock.mock.calls[0];
     expect(url).toBe(INF_URL);
-    expect(url.endsWith(FEED_GO_SHADOW_INFINITE_PATH)).toBe(true);
     expect(JSON.parse(init.body as string)).toEqual({
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },

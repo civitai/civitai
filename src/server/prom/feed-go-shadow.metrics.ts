@@ -127,7 +127,6 @@ const encodeBytesCounter = registerInstrumentationMetric(
     })
 );
 
-// Seed every endpoint at 0.
 try {
   for (const endpoint of FEED_GO_SHADOW_ENDPOINTS) {
     encodeSecondsCounter.inc({ feed_endpoint: endpoint }, 0);
