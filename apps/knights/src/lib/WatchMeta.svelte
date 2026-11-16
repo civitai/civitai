@@ -151,7 +151,7 @@
   }
   @media (max-width: 40rem) {
     .meta {
-      padding: 6px 16px 8px;
+      padding: 12px 16px 8px;
     }
   }
 </style>

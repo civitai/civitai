@@ -116,7 +116,7 @@
   }
   @media (max-width: 40rem) {
     .meter {
-      padding: 6px 16px 8px;
+      padding: 12px 16px 8px;
       font-size: 12px;
     }
     .long {

@@ -173,7 +173,9 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
+    box-sizing: border-box;
+    height: 36px;
+    padding: 0 12px;
     border: 1px solid var(--io-gold-muted);
     border-radius: 999px;
     background: var(--io-bg);
@@ -370,6 +372,12 @@
       overflow: hidden;
       font-size: 12px;
       text-overflow: ellipsis;
+    }
+  }
+  /* From 64rem to 75rem the header also carries the tabs; the rail beside the page already shows the streak. */
+  @media (min-width: 64rem) and (max-width: 74.9375rem) {
+    .chip.wide {
+      display: none;
     }
   }
 </style>

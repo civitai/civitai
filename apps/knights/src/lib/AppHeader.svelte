@@ -376,6 +376,9 @@
 
   /* Beside the tabs and the stats there is room for the wordmark only until 90rem. */
   @media (min-width: 64rem) and (max-width: 89.9375rem) {
+    .brand {
+      flex: none;
+    }
     .title {
       display: none;
     }
@@ -388,8 +391,8 @@
 
   @media (max-width: 40rem) {
     header {
-      height: 52px;
-      gap: 6px;
+      height: 56px;
+      gap: 8px;
       padding: 0 12px;
     }
     .brand {

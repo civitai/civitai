@@ -44,7 +44,7 @@
   const ring = $derived(strip.max > 0 ? strip.value / strip.max : 0);
 </script>
 
-<aside class="rail" class:sheet aria-label="Your day in the Order">
+<aside class="rail" class:sheet aria-label={sheet ? undefined : 'Your day in the Order'}>
   <section aria-labelledby={id('rail-watch')}>
     <h2 id={id('rail-watch')}>Today's Watch</h2>
     <div class="watch">

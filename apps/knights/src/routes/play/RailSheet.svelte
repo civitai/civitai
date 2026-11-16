@@ -12,6 +12,17 @@
     ladder,
     onclose,
   }: Omit<ComponentProps<typeof PlayRail>, 'sheet'> & { onclose: () => void } = $props();
+
+  // From 64rem the rail itself is on the page, so a sheet left open by a resize or rotation closes.
+  $effect(() => {
+    const desktop = window.matchMedia('(min-width: 64rem)');
+    const onchange = () => {
+      if (desktop.matches) onclose();
+    };
+    onchange();
+    desktop.addEventListener('change', onchange);
+    return () => desktop.removeEventListener('change', onchange);
+  });
 </script>
 
 <!-- Below 64rem there is no rail: the same panels open here, from the stats bar's More button. -->

@@ -687,7 +687,7 @@
             {/each}
           </form>
           {#if !yesNo}
-            <button type="button" class="quiet guide rowtool" onclick={() => (guideReopened = true)}>Rating guide</button>
+            <span class="rowtool"><button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button></span>
           {/if}
           <span class="rowtool">{@render soundToggle()}</span>
         </div>
@@ -784,7 +784,7 @@
           </button>
         </form>
         {#if !yesNo}
-          <button type="button" class="quiet guide rowtool" onclick={() => (guideReopened = true)}>Rating guide</button>
+          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button></span>
         {/if}
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
@@ -1224,12 +1224,20 @@
     .text {
       font-size: 14px;
     }
+    /* Pinned beside the eyebrow line only, so the question text keeps the full width below it. */
+    .qrow {
+      position: relative;
+    }
     .qtools {
+      position: absolute;
+      top: -10px;
+      right: 0;
       display: flex;
-      flex: none;
       align-items: center;
       gap: 14px;
-      margin-top: -6px;
+    }
+    .qrow .eyebrow {
+      padding-right: 8rem;
     }
     .qtools .quiet {
       gap: 6px;
