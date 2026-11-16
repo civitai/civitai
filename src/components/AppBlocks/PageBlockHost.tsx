@@ -4124,14 +4124,22 @@ export function PageBlockHost({
 
   // A generation source the viewer uploads (the `generationSource` picker, a single
   // OPEN_MEDIA_UPLOAD image) lands as a consumer blob. While `app-block-source-scanned-rows` is on
-  // the generation gate refuses that blob for an app, so the server copies it into a private
-  // scanned row and the app gets that instead (`toGenerationSource`). The token is read when the
-  // copy is made, as a batch reads it.
+  // for this app the generation gate refuses that blob, so the server copies it into a private
+  // scanned row and the app gets that instead (`toGenerationSource`). The flag is evaluated per
+  // app, for the app the block token names, so the path query sends the token too. The token is
+  // read when each call is made, as a batch reads it.
   const scannedSourcePath = useMemo<ScannedRowsPath>(
     () => ({
       usesScannedRows: async () =>
-        (await trpcUtils.client.blockImageUpload.generationSourceUsesScannedRows.query())
-          ?.scannedRows === true,
+        (
+          await callWithCurrentToken(
+            () => blockTokenRef.current,
+            (blockToken) =>
+              trpcUtils.client.blockImageUpload.generationSourceUsesScannedRows.query({
+                blockToken,
+              })
+          )
+        )?.scannedRows === true,
       persist: (url) =>
         callWithCurrentToken(
           () => blockTokenRef.current,
