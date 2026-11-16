@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 /** A blocked image or video for a moderator, from `src` (`retractedMediaUrl`), never the CDN. A file
- *  the route will not serve is described instead. */
+ *  the route will not serve is described instead, with the route's reason when it gives one. */
 export function RetractedMedia({
   src,
   type,
@@ -15,11 +15,21 @@ export function RetractedMedia({
   className?: string;
   controls?: boolean;
 }) {
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const onError = () => {
+    setFailed('Not viewable here');
+    fetch(`${src}?probe=1`)
+      .then(async (res) => {
+        if (res.status !== 403) return;
+        const { error } = (await res.json()) as { error?: unknown };
+        if (typeof error === 'string' && error) setFailed(error);
+      })
+      .catch(() => null);
+  };
   if (failed)
     return (
       <div className="text-dimmed flex size-full items-center justify-center p-4 text-center text-xs">
-        Not viewable here
+        {failed}
       </div>
     );
   if (type === 'video')
@@ -31,7 +41,7 @@ export function RetractedMedia({
         playsInline
         controls={controls}
         preload="metadata"
-        onError={() => setFailed(true)}
+        onError={onError}
       />
     );
   return (
@@ -42,7 +52,7 @@ export function RetractedMedia({
       loading="lazy"
       decoding="async"
       className={className}
-      onError={() => setFailed(true)}
+      onError={onError}
     />
   );
 }

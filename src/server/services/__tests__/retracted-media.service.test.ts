@@ -20,10 +20,12 @@ const patterns = vi.hoisted(() => ({
 vi.mock('~/server/services/blocked-for-patterns', () => ({
   blockedForPatterns: () => patterns.current,
 }));
-/** The scanner's ClickHouse verdicts: the ids it marks, or null when it cannot be read. */
-const scanner = vi.hoisted(() => ({ hits: new Set<number>() as Set<number> | null }));
-const readScannerHits = vi.hoisted(() => vi.fn(async () => scanner.hits));
-vi.mock('~/server/services/review-batch/review-batch.service', () => ({ readScannerHits }));
+/** The scanner's verdict for every image, or null when it cannot be read. */
+const scanner = vi.hoisted(() => ({
+  verdict: 'clear' as 'hit' | 'clear' | 'none' | null,
+}));
+const readScannerVerdict = vi.hoisted(() => vi.fn(async () => scanner.verdict));
+vi.mock('~/server/services/review-batch/review-batch.service', () => ({ readScannerVerdict }));
 
 type Row = {
   id: number;
@@ -130,7 +132,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   patterns.current = null;
-  scanner.hits = new Set();
+  scanner.verdict = 'clear';
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
@@ -146,7 +148,8 @@ const { getRetractedMedia } = await import('~/server/services/retracted-media.se
  *  (only a moderator cleared for CSAM review). */
 const tierOf = async (id: number) => {
   const cleared = await getRetractedMedia(id, { csamReview: true });
-  const anyMod = await getRetractedMedia(id, { csamReview: false });
+  const anyModAnswer = await getRetractedMedia(id, { csamReview: false });
+  const anyMod = typeof anyModAnswer === 'string' ? null : anyModAnswer;
   if (!cleared) {
     expect(anyMod).toBeNull();
     return 'none';
@@ -169,16 +172,19 @@ describe('getRetractedMedia', () => {
     });
   });
 
-  it('keeps an image the scanner marks, or has no verdict for, to cleared moderators', async () => {
-    scanner.hits = new Set([1]);
-    await expectTiers('suspect', [1]);
-    await expectTiers('plain', [2]);
-    expect(readScannerHits).toHaveBeenCalledWith([2]);
+  it('keeps an image the scanner marks, or cannot read, to cleared moderators', async () => {
+    for (const verdict of ['hit', null] as const) {
+      scanner.verdict = verdict;
+      await expectTiers('suspect', [1]);
+      expect(await getRetractedMedia(1, { csamReview: false })).toBeNull();
+    }
+    expect(readScannerVerdict).toHaveBeenCalledWith(1);
   });
 
-  it('refuses a plain image to an uncleared moderator when the scanner cannot be read', async () => {
-    scanner.hits = null;
-    await expectTiers('suspect', [1]);
+  it('answers an image with no scanner verdict as needing CSAM-queue access', async () => {
+    scanner.verdict = 'none';
+    expect(await getRetractedMedia(1, { csamReview: false })).toBe('needs-csam-queue');
+    expect(await getRetractedMedia(1, { csamReview: true })).toMatchObject({ url: 'key-1' });
   });
 
   it('survives a report with a malformed secondary user or image list', async () => {

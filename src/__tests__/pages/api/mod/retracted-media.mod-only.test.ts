@@ -16,7 +16,10 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionModule>()),
   getServerAuthSession: async () => session.value,
 }));
-vi.mock('~/server/services/retracted-media.service', () => ({ getRetractedMedia }));
+vi.mock('~/server/services/retracted-media.service', () => ({
+  getRetractedMedia,
+  NEEDS_CSAM_QUEUE: 'needs-csam-queue',
+}));
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlagsAsync: async () => ({ modRetractedMedia: true }),
 }));

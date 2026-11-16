@@ -8,7 +8,7 @@ import {
   parseReviewBatchRecord,
   reviewBatchHash,
   SCANNER_HITS_SQL,
-  scannerHeldIds,
+  scannerVerdict,
   type ImageSignalRow,
   type ReviewBatchRecord,
   type ReviewTier,
@@ -60,6 +60,11 @@ export async function mintingKeyLive(keyId: number): Promise<boolean> {
  * rows. A read that fails answers yes, so the general route answers moved and the held route serves.
  */
 export async function scannerHoldsImage(imageId: number): Promise<boolean> {
+  return (await readScannerVerdict(imageId)) !== 'clear';
+}
+
+/** One image's scanner verdict (`scannerVerdict`), or null when ClickHouse cannot answer. */
+export async function readScannerVerdict(imageId: number) {
   try {
     const result = await getClickhouse().query({
       query: SCANNER_HITS_SQL,
@@ -67,9 +72,9 @@ export async function scannerHoldsImage(imageId: number): Promise<boolean> {
       format: 'JSONEachRow',
       clickhouse_settings: { max_execution_time: 3 },
     });
-    return scannerHeldIds([imageId], await result.json()).has(imageId);
+    return scannerVerdict(imageId, await result.json());
   } catch {
-    return true;
+    return null;
   }
 }
 

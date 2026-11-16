@@ -12,6 +12,7 @@ import {
   reviewBatchLink,
   SCANNER_HITS_SQL,
   scannerHeldIds,
+  scannerVerdict,
   type ImageSignalRow,
   type ReviewBatchRecord,
   type ReviewTier,
@@ -52,15 +53,10 @@ export async function readImageSignals(ids: number[]): Promise<Map<number, Image
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-/**
- * The ids the scanner's ClickHouse rows mark CSAM or minor, or that have no rows yet; a completed,
- * unblocked scan stores its minor verdict nowhere else. Null when ClickHouse cannot answer in time:
- * the caller holds every image.
- */
-export async function readScannerHits(
-  ids: number[],
-  { absentHolds = true } = {}
-): Promise<Set<number> | null> {
+type ScannerRow = { contentHash: string; hit: number };
+
+/** The scanner's ClickHouse rows for `ids`; null when ClickHouse cannot answer in time. */
+async function readScannerRows(ids: number[]): Promise<ScannerRow[] | null> {
   if (!clickhouse) return null;
   const abort = AbortSignal.timeout((CLICKHOUSE_TIMEOUT_SECONDS + 1) * 1000);
   try {
@@ -71,11 +67,7 @@ export async function readScannerHits(
       abort_signal: abort,
       clickhouse_settings: { max_execution_time: CLICKHOUSE_TIMEOUT_SECONDS },
     });
-    return scannerHeldIds(
-      ids,
-      await result.json<{ contentHash: string; hit: number }>(),
-      absentHolds
-    );
+    return await result.json<ScannerRow>();
   } catch (e) {
     void logToAxiom({
       name: 'review-batch-scanner-read-failed',
@@ -84,6 +76,25 @@ export async function readScannerHits(
     });
     return null;
   }
+}
+
+/**
+ * The ids the scanner's ClickHouse rows mark CSAM or minor, or that have no rows yet; a completed,
+ * unblocked scan stores its minor verdict nowhere else. Null when ClickHouse cannot answer in time:
+ * the caller holds every image.
+ */
+export async function readScannerHits(
+  ids: number[],
+  { absentHolds = true } = {}
+): Promise<Set<number> | null> {
+  const rows = await readScannerRows(ids);
+  return rows ? scannerHeldIds(ids, rows, absentHolds) : null;
+}
+
+/** One image's scanner verdict (`scannerVerdict`), or null when ClickHouse cannot answer in time. */
+export async function readScannerVerdict(imageId: number) {
+  const rows = await readScannerRows([imageId]);
+  return rows ? scannerVerdict(imageId, rows) : null;
 }
 
 /** Whether the batch is declared suspect: by its minter, or by having no source card. */

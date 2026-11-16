@@ -52,7 +52,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   // the retracted-media route when it is blocked.
   const held = await getHeldMedia(imageId, dbWrite);
   const retracted = held ? null : await getRetractedMedia(imageId, { csamReview: true }, dbWrite);
-  const media = held ?? retracted;
+  const media = held ?? (typeof retracted === 'string' ? null : retracted);
   if (rendition === 'original' ? !media : !!held)
     return void res.status(409).json({ error: 'Not shown that way' });
   const servedActivity = held ? SERVED_ACTIVITY : RETRACTED_SERVED_ACTIVITY;

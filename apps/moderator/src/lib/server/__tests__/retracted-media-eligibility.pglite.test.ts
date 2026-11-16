@@ -27,10 +27,8 @@ vi.mock('../db', () => ({
 vi.mock('../blocked-for-patterns', () => ({ blockedForPatterns: () => null }));
 const insertModActivity = vi.hoisted(() => vi.fn(async (_row: Record<string, unknown>) => {}));
 vi.mock('../mod-activity', () => ({ insertModActivity }));
-const scanner = vi.hoisted(() => ({ holds: new Set<number>() }));
-vi.mock('../review-batch', () => ({
-  scannerHoldsImage: async (id: number) => scanner.holds.has(id),
-}));
+const scanner = vi.hoisted(() => ({ verdict: 'clear' as 'hit' | 'clear' | 'none' | null }));
+vi.mock('../review-batch', () => ({ readScannerVerdict: async () => scanner.verdict }));
 
 const { getRetractedMedia, recordRetractedView } = await import('../retracted-media');
 
@@ -76,16 +74,25 @@ afterAll(async () => {
 
 const tierOf = async (id: number) => {
   const cleared = await getRetractedMedia(id, { csamReview: true });
-  const anyMod = await getRetractedMedia(id, { csamReview: false });
+  const answer = await getRetractedMedia(id, { csamReview: false });
+  const anyMod = typeof answer === 'string' ? null : answer;
   if (!cleared) return anyMod ? 'BROKEN' : 'none';
   return anyMod ? 'plain' : 'suspect';
 };
 
 describe('retracted media eligibility', () => {
-  it('keeps an image the scanner holds to moderators cleared for CSAM review', async () => {
-    scanner.holds = new Set([1]);
-    expect(await tierOf(1)).toBe('suspect');
-    scanner.holds = new Set();
+  it('keeps an image the scanner marks, or cannot read, to moderators cleared for CSAM review', async () => {
+    for (const verdict of ['hit', null] as const) {
+      scanner.verdict = verdict;
+      expect(await tierOf(1)).toBe('suspect');
+    }
+    scanner.verdict = 'clear';
+  });
+
+  it('answers an image with no scanner verdict as needing CSAM-queue access', async () => {
+    scanner.verdict = 'none';
+    expect(await getRetractedMedia(1, { csamReview: false })).toBe('needs-csam-queue');
+    scanner.verdict = 'clear';
   });
 
   it('serves a blocked image with a known non-minor reason to any moderator', async () => {

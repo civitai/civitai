@@ -12,19 +12,32 @@
     class: className,
   }: { item: { id: number; url: string; type: MediaType }; class?: string } = $props();
 
-  let state = $state<'cdn' | 'retracted' | 'failed'>('cdn');
+  let mode = $state<'cdn' | 'retracted' | 'failed'>('cdn');
+  let reason = $state('Not viewable here');
+
+  // The route's reason, when it gives one a moderator can act on; nothing is served by a probe.
+  const onRetractedError = () => {
+    mode = 'failed';
+    fetch(`${retractedMediaUrl(item.id)}?probe=1`)
+      .then(async (res) => {
+        if (res.status !== 403) return;
+        const body = (await res.json()) as { message?: unknown };
+        if (typeof body.message === 'string' && body.message) reason = body.message;
+      })
+      .catch(() => null);
+  };
 </script>
 
-{#if state === 'failed'}
-  <div class="p-4 text-center text-xs text-dark-2">Not viewable here</div>
-{:else if state === 'retracted'}
+{#if mode === 'failed'}
+  <div class="p-4 text-center text-xs text-dark-2">{reason}</div>
+{:else if mode === 'retracted'}
   <img
     src={retractedMediaUrl(item.id)}
     alt=""
     loading="lazy"
     decoding="async"
     class={className}
-    onerror={() => (state = 'failed')}
+    onerror={onRetractedError}
   />
 {:else}
   <EdgeMedia
@@ -32,6 +45,6 @@
     type={item.type}
     width={450}
     class={className}
-    onerror={item.type === 'image' ? () => (state = 'retracted') : undefined}
+    onerror={item.type === 'image' ? () => (mode = 'retracted') : undefined}
   />
 {/if}

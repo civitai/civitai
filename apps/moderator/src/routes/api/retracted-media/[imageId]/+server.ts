@@ -4,7 +4,12 @@ import type { RequestHandler } from './$types';
 import { canAccess } from '$lib/server/access';
 import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import { streamStoredMedia } from '$lib/server/held-media-stream';
-import { getRetractedMedia, recordRetractedView } from '$lib/server/retracted-media';
+import {
+  getRetractedMedia,
+  NEEDS_CSAM_QUEUE,
+  recordRetractedView,
+  retractedMediaEnabled,
+} from '$lib/server/retracted-media';
 
 const MAX_INT = 2_147_483_647;
 
@@ -26,7 +31,8 @@ export const GET: RequestHandler = async (event) => {
   }
 };
 
-const serve: RequestHandler = async ({ params, locals, request }) => {
+const serve: RequestHandler = async ({ params, locals, request, url }) => {
+  if (!retractedMediaEnabled()) error(404, 'Not found.');
   if (!locals.user) error(403, 'Not signed in.');
   const imageId = Number(params.imageId);
   if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_INT) error(400, 'Bad image id.');
@@ -35,7 +41,11 @@ const serve: RequestHandler = async ({ params, locals, request }) => {
   const media = await getRetractedMedia(imageId, {
     csamReview: canAccess(locals.user, HELD_MEDIA_PAGE),
   });
+  if (media === NEEDS_CSAM_QUEUE) error(403, 'Needs CSAM-queue access.');
   if (!media) error(404, 'Not available here.');
+  // Eligibility alone, so a tile whose load failed can say why; nothing is served or audited.
+  if (url.searchParams.get('probe') === '1')
+    return new Response(null, { status: 204, headers: NO_STORE });
 
   return streamStoredMedia({
     media,

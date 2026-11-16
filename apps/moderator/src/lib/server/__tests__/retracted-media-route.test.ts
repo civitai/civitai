@@ -15,11 +15,17 @@ const getGetUrl = vi.hoisted(() =>
   vi.fn(async (input: { key?: string }) => ({ url: `https://store.test/signed/${input.key}` }))
 );
 const grants = vi.hoisted(() => ({ paths: new Set<string>() }));
+const enabled = vi.hoisted(() => ({ on: true }));
 
 vi.mock('$lib/server/access', () => ({
   canAccess: (_user: unknown, path: string) => grants.paths.has(path),
 }));
-vi.mock('$lib/server/retracted-media', () => ({ getRetractedMedia, recordRetractedView }));
+vi.mock('$lib/server/retracted-media', () => ({
+  getRetractedMedia,
+  recordRetractedView,
+  NEEDS_CSAM_QUEUE: 'needs-csam-queue',
+  retractedMediaEnabled: () => enabled.on,
+}));
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
 vi.mock('$lib/server/held-media', () => ({
   HELD_MEDIA_PAGE: '/images/csam',
@@ -35,8 +41,9 @@ async function call({
   user = { id: 42 } as { id: number } | null,
   imageId = '7',
   headers = {} as Record<string, string>,
+  query = '',
 } = {}): Promise<{ status: number; res?: Response }> {
-  const url = new URL(`http://mod.test/api/retracted-media/${imageId}`);
+  const url = new URL(`http://mod.test/api/retracted-media/${imageId}${query}`);
   try {
     const res = await GET({
       params: { imageId },
@@ -53,6 +60,7 @@ async function call({
 beforeEach(() => {
   vi.clearAllMocks();
   grants.paths = new Set();
+  enabled.on = true;
   getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null, tier: 'plain' });
   recordRetractedView.mockResolvedValue(undefined);
   fetchMock.mockImplementation(
@@ -79,6 +87,29 @@ describe('/api/retracted-media', () => {
       expect(status).toBeGreaterThanOrEqual(400);
       expect(res?.headers.get('cache-control')).toBe('private, no-store');
     }
+  });
+
+  it('answers 404, no-store, before anything else while switched off', async () => {
+    enabled.on = false;
+    const { status, res } = await call();
+    expect(status).toBe(404);
+    expect(res?.headers.get('cache-control')).toBe('private, no-store');
+    expect(getRetractedMedia).not.toHaveBeenCalled();
+  });
+
+  it('tells a moderator an image with no scanner verdict needs CSAM-queue access', async () => {
+    getRetractedMedia.mockResolvedValue('needs-csam-queue');
+    const { status, res } = await call();
+    expect(status).toBe(403);
+    expect(await res!.text()).toContain('Needs CSAM-queue access');
+    expect(getGetUrl).not.toHaveBeenCalled();
+  });
+
+  it('answers a probe with eligibility alone: no storage, no audit row', async () => {
+    const { status } = await call({ query: '?probe=1' });
+    expect(status).toBe(204);
+    expect(getGetUrl).not.toHaveBeenCalled();
+    expect(recordRetractedView).not.toHaveBeenCalled();
   });
 
   it('refuses a bad id', async () => {

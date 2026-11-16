@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { env } from '$env/dynamic/private';
 import { RETRACTED_SERVED_ACTIVITY } from '@civitai/shared/retracted-media';
 import {
   retractedImageWhereSql,
@@ -9,7 +10,10 @@ import {
 import { blockedForPatterns } from './blocked-for-patterns';
 import { dbWrite } from './db';
 import { insertModActivity } from './mod-activity';
-import { scannerHoldsImage } from './review-batch';
+import { readScannerVerdict } from './review-batch';
+
+/** No scanner verdict for the image: the route tells the moderator it needs CSAM-queue access. */
+export const NEEDS_CSAM_QUEUE = 'needs-csam-queue';
 
 export type RetractedMedia = {
   url: string;
@@ -27,7 +31,7 @@ export type RetractedMedia = {
 export async function getRetractedMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean }
-): Promise<RetractedMedia | null> {
+): Promise<RetractedMedia | typeof NEEDS_CSAM_QUEUE | null> {
   const row = await dbWrite
     .selectFrom('Image as i')
     .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor'])
@@ -40,7 +44,9 @@ export async function getRetractedMedia(
   if (!csamReview) {
     if (tier === 'suspect') return null;
     // Refused when the scanner marks it, has no verdict for it, or cannot be read.
-    if (await scannerHoldsImage(imageId)) return null;
+    const verdict = await readScannerVerdict(imageId);
+    if (verdict === 'none') return NEEDS_CSAM_QUEUE;
+    if (verdict !== 'clear') return null;
   }
   return { url: row.url, type: row.type, mimeType: row.mimeType, tier };
 }
@@ -55,3 +61,6 @@ export function recordRetractedView(moderatorId: number, imageId: number) {
     activity: RETRACTED_SERVED_ACTIVITY,
   });
 }
+
+/** `/api/retracted-media` answers 404 unless this is exactly 'true'. */
+export const retractedMediaEnabled = () => env.RETRACTED_MEDIA_ENABLED === 'true';
