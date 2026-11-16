@@ -9,26 +9,41 @@
 --
 --   psql "$MODERATOR_DATABASE_URL" -f apps/moderator/cases/schema.sql
 --
--- Read-only agent access: `internal_tools_ro`, if it exists, gets SELECT on the tables without personal
--- data and nothing on the four that hold it (case_record, case_party, case_notice, case_event). Created
--- after this file? Re-run the whole file.
+-- Access: the definition tables hold no personal data. The other five do, or point at people who are
+-- party to a claim: names, emails, phone numbers, postal addresses, organisations, the accounts a claim
+-- names, and the messages sent to them. `internal_tools_ro`, the read-only login agents use, gets SELECT
+-- on the two definition tables and nothing on the other five. PUBLIC gets nothing on any of them. Created
+-- the role after this file? Re-run the whole file.
 --
 -- Read back after applying (one row). Expected: 7 | 7 | 2 | t | 84
 --   SELECT count(*) FILTER (WHERE c.relkind = 'r') AS tables,
 --          count(*) FILTER (WHERE c.relkind = 'r' AND pg_get_userbyid(c.relowner) = 'internal_tools') AS owned,
 --          (SELECT count(*) FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
 --            WHERE i.indisunique AND ic.relname IN ('case_notice_idem_key', 'case_record_public_ref_key')) AS unique_keys,
---          (SELECT r.rolname <> 'internal_tools' AND bool_and(COALESCE(NOT has_any_column_privilege(r.oid, to_regclass(t), 'SELECT'), false))
---             FROM pg_roles r, unnest(ARRAY['case_record', 'case_party', 'case_notice', 'case_event']) t
---            WHERE r.rolname = 'internal_tools_ro' GROUP BY r.rolname) AS ro_locked,
+--          (SELECT bool_and(
+--             CASE WHEN t IN ('process_definition', 'process_definition_version')
+--               THEN COALESCE(has_table_privilege(r.oid, to_regclass(t), 'SELECT'), false)
+--               ELSE COALESCE(NOT has_any_column_privilege(r.oid, to_regclass(t), 'SELECT'), false)
+--                 AND NOT EXISTS (SELECT 1 FROM pg_roles g WHERE g.oid <> r.oid AND pg_has_role(r.oid, g.oid, 'MEMBER')
+--                   AND has_any_column_privilege(g.oid, to_regclass(t), 'SELECT'))
+--             END
+--             AND COALESCE(NOT has_table_privilege(r.oid, to_regclass(t), 'INSERT, UPDATE, DELETE, TRUNCATE'), false))
+--             FROM pg_roles r, unnest(ARRAY['process_definition', 'process_definition_version', 'case_record',
+--               'case_target', 'case_event', 'case_notice', 'case_party']) t
+--            WHERE r.rolname = 'internal_tools_ro') AS ro_ok,
 --          (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN
 --            ('process_definition', 'process_definition_version', 'case_record', 'case_target',
 --             'case_event', 'case_notice', 'case_party')) AS columns
 --   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 --   WHERE n.nspname = 'public' AND c.relname IN ('process_definition', 'process_definition_version',
 --     'case_record', 'case_target', 'case_event', 'case_notice', 'case_party');
--- Before the apply it prints 0 | 0 | 0 | f | 0 (a missing table counts as not locked down). A null
--- 4th column means `internal_tools_ro` does not exist yet.
+-- Before the apply it prints 0 | 0 | 0 | f | 0. `ro_ok` is t only when the read-only role can read the
+-- two definition tables, can't read any of the other five (not directly, through PUBLIC, or through a
+-- role it can SET ROLE to), and can't write any of the seven. Null means the role doesn't exist yet.
+-- f after a re-run means a grant this file can't revoke (a role membership, PUBLIC from another owner,
+-- or pg_read_all_data): find it with `\dp case_record` and `\du internal_tools_ro`, and ask an infra
+-- owner to remove it. The moderator app runs the same check (`cases/pii-lockdown.ts`) and refuses to
+-- show case data while it is f.
 --
 -- Idempotent: safe to re-run.
 
@@ -79,7 +94,8 @@ CREATE TABLE IF NOT EXISTS case_record (
   is_test               boolean     NOT NULL DEFAULT false,
   related_case_id       bigint      REFERENCES case_record (id),
   submitter_user_id     integer,
-  -- Personal data: name, email, phone, address, organisation, role.
+  -- Personal data: name, email, phone, postal address, organisation and role, as a DMCA notice
+  -- requires (512(c)(3)) and as a submitter gives them.
   submitter             jsonb       NOT NULL DEFAULT '{}',
   -- Each statement's text version, typed signature, time and IP hash.
   statements            jsonb       NOT NULL DEFAULT '[]',
@@ -153,12 +169,13 @@ CREATE TABLE IF NOT EXISTS case_notice (
   id               bigserial   PRIMARY KEY,
   case_id          bigint      NOT NULL REFERENCES case_record (id),
   -- The target's id, or 0 for a message about the whole case, so the key below holds without NULLs.
-  target_key       integer     NOT NULL,
+  target_key       bigint      NOT NULL,
   notice_id        text        NOT NULL,
   recipient_role   text        NOT NULL,
-  -- The address it goes to, as resolved when the row was made, so the record shows where it went.
-  -- Personal data: this table is one of the four the read-only role cannot read.
-  recipient_address text       NOT NULL,
+  -- The address it goes to, as resolved when the row was made: an imported message arrives with its
+  -- address, not an account. Personal data. Erasing a case after `retain_until` sets this and
+  -- `body_snapshot` (which quotes it) to NULL; `address_hash` and `message_id` stay as the record.
+  recipient_address text,
   address_hash     text        NOT NULL,
   status           text        NOT NULL DEFAULT 'pending',
   message_id       text,
@@ -168,7 +185,7 @@ CREATE TABLE IF NOT EXISTS case_notice (
   error            text,
   -- The exact text that was previewed, and is sent.
   subject_snapshot text        NOT NULL,
-  body_snapshot    text        NOT NULL,
+  body_snapshot    text,
   created_at       timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT case_notice_idem_key UNIQUE (case_id, target_key, notice_id, recipient_role)
 );
@@ -192,36 +209,41 @@ CREATE INDEX IF NOT EXISTS case_party_case_idx ON case_party (case_id);
 CREATE UNIQUE INDEX IF NOT EXISTS case_party_user_key ON case_party (case_id, role, user_id)
   WHERE user_id IS NOT NULL;
 
--- `ADD CONSTRAINT` has no `IF NOT EXISTS`, so each is guarded by name to keep the file re-runnable.
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'case_record_source_check') THEN
-    ALTER TABLE case_record ADD CONSTRAINT case_record_source_check
-      CHECK (source IN ('form', 'email', 'report', 'import'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'case_target_state_check') THEN
-    ALTER TABLE case_target ADD CONSTRAINT case_target_state_check
-      CHECK (state IN ('Pending', 'Removed', 'Held', 'Kept', 'Restored'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'case_notice_status_check') THEN
-    ALTER TABLE case_notice ADD CONSTRAINT case_notice_status_check
-      CHECK (status IN ('pending', 'sending', 'sent', 'failed'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'case_party_role_check') THEN
-    ALTER TABLE case_party ADD CONSTRAINT case_party_role_check
-      CHECK (role IN ('claimant', 'uploader', 'agent-for-uploader'));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'process_definition_current_version_fkey') THEN
-    ALTER TABLE process_definition ADD CONSTRAINT process_definition_current_version_fkey
-      FOREIGN KEY (current_version_id) REFERENCES process_definition_version (id);
-  END IF;
-END $$;
+-- Dropped and added on every run, so a changed value set reaches every environment on its next re-run.
+ALTER TABLE case_record DROP CONSTRAINT IF EXISTS case_record_source_check;
+ALTER TABLE case_record ADD CONSTRAINT case_record_source_check
+  CHECK (source IN ('form', 'email', 'report', 'import'));
+ALTER TABLE case_target DROP CONSTRAINT IF EXISTS case_target_state_check;
+ALTER TABLE case_target ADD CONSTRAINT case_target_state_check
+  CHECK (state IN ('Pending', 'Removed', 'Held', 'Kept', 'Restored'));
+ALTER TABLE case_notice DROP CONSTRAINT IF EXISTS case_notice_status_check;
+ALTER TABLE case_notice ADD CONSTRAINT case_notice_status_check
+  CHECK (status IN ('pending', 'sending', 'sent', 'failed'));
+ALTER TABLE case_party DROP CONSTRAINT IF EXISTS case_party_role_check;
+ALTER TABLE case_party ADD CONSTRAINT case_party_role_check
+  CHECK (role IN ('claimant', 'uploader', 'agent-for-uploader'));
+-- An attempt is always of one target's removal, so the attempt key below can't be dodged with a NULL.
+ALTER TABLE case_event DROP CONSTRAINT IF EXISTS case_event_attempt_target_check;
+ALTER TABLE case_event ADD CONSTRAINT case_event_attempt_target_check
+  CHECK (attempt IS NULL OR case_target_id IS NOT NULL);
+ALTER TABLE process_definition DROP CONSTRAINT IF EXISTS process_definition_current_version_fkey;
+ALTER TABLE process_definition ADD CONSTRAINT process_definition_current_version_fkey
+  FOREIGN KEY (current_version_id) REFERENCES process_definition_version (id);
+
+REVOKE ALL ON process_definition, process_definition_version, case_record, case_target, case_event,
+  case_notice, case_party FROM PUBLIC;
+REVOKE ALL ON SEQUENCE process_definition_id_seq, process_definition_version_id_seq, case_record_id_seq,
+  case_target_id_seq, case_event_id_seq, case_notice_id_seq, case_party_id_seq FROM PUBLIC;
 
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'internal_tools_ro') THEN
-    GRANT SELECT ON process_definition, process_definition_version, case_target TO internal_tools_ro;
-    REVOKE ALL ON case_record, case_party, case_notice, case_event FROM internal_tools_ro;
+    -- Everything first, so a write or a broad grant made earlier doesn't survive the re-run.
+    REVOKE ALL ON process_definition, process_definition_version, case_record, case_target, case_event,
+      case_notice, case_party FROM internal_tools_ro;
+    REVOKE ALL ON SEQUENCE process_definition_id_seq, process_definition_version_id_seq, case_record_id_seq,
+      case_target_id_seq, case_event_id_seq, case_notice_id_seq, case_party_id_seq FROM internal_tools_ro;
+    GRANT SELECT ON process_definition, process_definition_version TO internal_tools_ro;
   ELSE
     RAISE WARNING 'role internal_tools_ro does not exist: grants skipped; create it, then re-run this file';
   END IF;

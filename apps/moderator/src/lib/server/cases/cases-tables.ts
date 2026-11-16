@@ -12,7 +12,8 @@ import type { Generated, Timestamp } from '../moderator-db/types';
  * table and column here exists there and nothing there is missing here, and that the value sets below
  * match the CHECK constraints.
  *
- * `bigserial`/`bigint` columns come back from node-postgres as strings, so they are typed `string`.
+ * `bigserial`/`bigint` columns are typed `number`: the moderator database's client parses int8 as a
+ * number (`registerNumericTypeParsers` in `@civitai/db/kysely`). Ids stay far below 2^53.
  */
 
 export const CASE_SOURCES = ['form', 'email', 'report', 'import'] as const;
@@ -30,26 +31,26 @@ type JsonWithDefault = ColumnType<unknown, string | undefined, string>;
 
 export type CasesTables = {
   process_definition: {
-    id: Generated<string>;
+    id: Generated<number>;
     key: string;
-    current_version_id: string | null;
+    current_version_id: number | null;
     enabled: Generated<boolean>;
     created_at: Generated<Timestamp>;
   };
   process_definition_version: {
-    id: Generated<string>;
-    definition_id: string;
+    id: Generated<number>;
+    definition_id: number;
     definition: Json;
     created_by_id: number;
     created_at: Generated<Timestamp>;
     note: string | null;
   };
   case_record: {
-    id: Generated<string>;
+    id: Generated<number>;
     public_ref: string;
     process_key: string;
     /** NULL for imported cases, whose messages are verbatim rather than rendered from a definition. */
-    definition_version_id: string | null;
+    definition_version_id: number | null;
     state: string;
     source: CaseSource;
     received_at: Timestamp;
@@ -60,9 +61,9 @@ export type CasesTables = {
     restore_latest_at: Timestamp | null;
     minor_flag: Generated<boolean>;
     is_test: Generated<boolean>;
-    related_case_id: string | null;
+    related_case_id: number | null;
     submitter_user_id: number | null;
-    /** Personal data: `case_record` is one of the four tables the read-only role cannot read. */
+    /** Personal data: `case_record` is one of the five tables the read-only role cannot read. */
     submitter: JsonWithDefault;
     statements: JsonWithDefault;
     details: JsonWithDefault;
@@ -77,8 +78,8 @@ export type CasesTables = {
     updated_at: Generated<Timestamp>;
   };
   case_target: {
-    id: Generated<string>;
-    case_id: string;
+    id: Generated<number>;
+    case_id: number;
     url: string;
     entity_type: string | null;
     entity_id: number | null;
@@ -93,9 +94,9 @@ export type CasesTables = {
     acted_by_id: number | null;
   };
   case_event: {
-    id: Generated<string>;
-    case_id: string;
-    case_target_id: string | null;
+    id: Generated<number>;
+    case_id: number;
+    case_target_id: number | null;
     at: Generated<Timestamp>;
     actor_id: number | null;
     type: string;
@@ -104,14 +105,14 @@ export type CasesTables = {
     data: JsonWithDefault;
   };
   case_notice: {
-    id: Generated<string>;
-    case_id: string;
+    id: Generated<number>;
+    case_id: number;
     /** The target's id, or 0 for a message about the whole case. */
     target_key: number;
     notice_id: string;
     recipient_role: string;
-    /** Personal data: where the message goes, as resolved when the row was made. */
-    recipient_address: string;
+    /** Personal data: where the message goes, as resolved when the row was made. NULL once erased. */
+    recipient_address: string | null;
     address_hash: string;
     status: Generated<CaseNoticeStatus>;
     message_id: string | null;
@@ -120,12 +121,13 @@ export type CasesTables = {
     /** An error class or code, never a message: messages can carry addresses. */
     error: string | null;
     subject_snapshot: string;
-    body_snapshot: string;
+    /** NULL once erased: it quotes the recipient. */
+    body_snapshot: string | null;
     created_at: Generated<Timestamp>;
   };
   case_party: {
-    id: Generated<string>;
-    case_id: string;
+    id: Generated<number>;
+    case_id: number;
     role: CasePartyRole;
     user_id: number | null;
     address_hash: string | null;
@@ -134,8 +136,14 @@ export type CasesTables = {
   };
 };
 
-/** The tables holding personal data: no read-only role may SELECT from them. */
-export const CASE_PII_TABLES = ['case_record', 'case_party', 'case_notice', 'case_event'] as const;
+/** The tables that hold personal data or name the people a claim is about: no read-only role reads them. */
+export const CASE_CLOSED_TABLES = [
+  'case_record',
+  'case_target',
+  'case_party',
+  'case_notice',
+  'case_event',
+] as const;
 
 type ColumnList<T> = { readonly [K in keyof T]: readonly (keyof T[K] & string)[] };
 /** Fails to compile when a list below omits a column `CasesTables` declares. */
