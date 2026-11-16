@@ -48,6 +48,8 @@ Content that depicts, or is based on the likeness of real people - living or dec
 
 #### [Report real-person likeness](/content/likeness-claim-request)
 
+If an intimate image or video of you was posted without your consent, see **[Request removal of intimate images of you](/content/take-it-down)**.
+
 ### Q: Are there any restrictions on using AI to create child-like models?
 
 **A:** Models intended for the photo-realistic depiction of minors are prohibited. You can read more about our requirements for content depicting minors [here](/content/rules/minors)
