@@ -24,21 +24,20 @@ const (
 	MissUserCosmetics    = "user-cosmetics"    // userCosmeticCache
 	MissImageFrames      = "image-frames"      // cosmeticEntityCaches.Image
 	MissEventDecorations = "event-decorations" // eventDecorationEntityCaches.Image
-	// MissImageMeta (meta.go) is imageMetaCache, read by the public images endpoint's withMeta.
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter.
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta}
 
-// MissCompute is how hydration answers a miss on the per-entity caches Node fills on read (user
-// cosmetics, image frames, event decorations): with the Node lookup's own query,
-// batched once per page and cache, instead of falling back. A Sources without one falls back on
+// MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
+// Node lookup's own query, batched once per page and cache, instead of falling back. A Sources without one falls back on
 // those misses (FEED_GO_COMPUTE_MISSES=false).
 //
 // Each computed entry is built as the Node lookup builds it, packed exactly as Node's cache writer
 // packs `{...result, cachedAt}` (or the `{[idKey]: id, notFound: true, cachedAt}` marker), and read
 // back through the same decoder as a cache hit, so a computed miss and a later hit of what Node
-// wrote for it hydrate identically.
+// wrote for it hydrate identically. The image meta (meta.go) is the exception: its misses are
+// neither written back nor kept in process (memoized).
 type MissCompute struct {
 	// WriteBack (FEED_GO_CACHE_WRITEBACK, default off) writes each computed entry where, and as, the
 	// Node lookup writes it: same key, same msgpackr bytes, same expiry. Only for a miss Node would

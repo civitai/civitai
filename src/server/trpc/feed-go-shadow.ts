@@ -704,7 +704,6 @@ export function feedGoV1ShapeClass(
   try {
     if (statusCode !== 200 || !data) return 'non200';
     if (hasApiCredential(req)) return 'api_key';
-    // An `ids` batch and `withMeta` are ported (the legacy Postgres path, the meta cache).
     if (data.imageId !== undefined) return 'unported_imageId';
     if (data.tags !== undefined) return 'unported_tags';
     if (data.baseModels !== undefined) return 'unported_baseModels';
