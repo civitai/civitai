@@ -166,7 +166,7 @@ export async function searchSemanticCrucibles({
     returned: search.state.returned,
     hydrated,
     shown: page.items.length,
-  }).catch(() => undefined);
+  });
 
   if (search.state.refused) return none;
   return { ...page, correctedQuery: search.state.correctedQuery };
