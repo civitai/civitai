@@ -6,6 +6,11 @@ export function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTe
   return `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
+/** Pair keys this judge chose never to be shown again in this crucible. */
+export function getDismissedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.DISMISSED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+}
+
 /**
  * This judge's votes in this crucible as `winner>loser`, for the judge-side skip. A cache key, on
  * `redis` rather than `sysRedis`: losing it only serves pairs the judge could have skipped.

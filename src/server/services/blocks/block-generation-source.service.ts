@@ -5,6 +5,11 @@ import { dbWrite } from '~/server/db/client';
 import { civitaiHostedImageUrlSchema } from '~/server/schema/blocks/civitai-image-url';
 import { resolveOwnedWorkflowOutputs } from '~/server/services/blocks/block-post.service';
 import {
+  pendingOutputMessage,
+  restrictedOutputMessage,
+} from '~/server/services/blocks/block-output-restriction';
+import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
+import {
   BLOCK_GENERATION_SOURCE_APP_ID_META_KEY,
   BLOCK_GENERATION_SOURCE_REF_META_KEY,
   persistBlockGenerationSourceImage,
@@ -143,6 +148,11 @@ export async function persistBlockGenerationSource(input: {
   workflowId: string;
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
+  /**
+   * The token's output ceiling (`blockOutputCeilingFromClaims(claims)`): decides which
+   * output positions are restricted. `imageIndex` is a position in `AppWorkflow.outputs`.
+   */
+  ceiling: BlockOutputCeiling;
   /** The request budget; {@link GENERATION_SOURCE_DEADLINE_MS} unless a test shortens it. */
   budgetMs?: number;
 }): Promise<PersistedGenerationSource> {
@@ -165,6 +175,7 @@ async function persistWithin(input: {
   workflowId: string;
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
+  ceiling: BlockOutputCeiling;
   deadline: number;
   signal: AbortSignal;
 }): Promise<PersistedGenerationSource> {
@@ -177,6 +188,7 @@ async function persistWithin(input: {
     appBlockId: input.appBlockId,
     workflowId: input.workflowId,
     getWorkflow: input.getWorkflow,
+    ceiling: input.ceiling,
   });
   if (input.imageIndex >= slots.length) {
     throw new TRPCError({
@@ -185,6 +197,24 @@ async function persistWithin(input: {
     });
   }
   const output = slots[input.imageIndex];
+  // 🔴 Every refusal here runs BEFORE anything is fetched or looked up, so an output
+  // that is restricted, blocked or still being rated is never copied to storage.
+  if (output && 'pending' in output) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: pendingOutputMessage(input.imageIndex) });
+  }
+  if (output && 'blocked' in output) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: GENERATION_SOURCE_OUTPUT_UNAVAILABLE_MESSAGE,
+    });
+  }
+  // A restricted position is refused by name, never swapped for another output.
+  if (output && 'restricted' in output) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: restrictedOutputMessage(input.imageIndex),
+    });
+  }
   if (!output) {
     throw new TRPCError({
       code: 'BAD_REQUEST',

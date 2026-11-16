@@ -256,6 +256,7 @@ describe('blocks.queryAppWorkflows', () => {
           images: [{ url: 'https://cdn/i.png', width: 512, height: 512, nsfwLevel: 1 }],
           cost: 20,
           createdAt: '2026-07-15T00:00:00.000Z',
+          outputs: [{ url: 'https://cdn/i.png', nsfwLevel: 'pg' }],
         },
       ],
       cursor: 'cur_2',

@@ -117,6 +117,7 @@ import {
 } from '~/server/services/crucible-judge-closure';
 import {
   getAnchorVotesKey,
+  getDismissedPairsKey,
   getJudgesKey,
   getVoteOutcomesKey,
   getVotedPairsKey,
@@ -2794,21 +2795,25 @@ export const submitEntry = async ({
 };
 
 /**
- * `voted`: pairs this judge voted on. `decided`: voted plus pairs their votes settle, which are not
- * served again. Progress counts `voted` as judged; only serving and "pairs left" use `decided`.
+ * `voted`: pairs this judge voted on. `decided`: voted, pairs their votes settle and pairs they
+ * dismissed, none of which is served again. Progress counts `voted` as judged; only serving and
+ * "pairs left" use `decided`.
  */
 async function getJudgePairKeys(crucibleId: number, userId: number) {
   const outcomesKey = getVoteOutcomesKey(crucibleId, userId);
-  const [voted = [], outcomes] = await Promise.all([
+  const [voted = [], outcomes, dismissed = []] = await Promise.all([
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
     loadVoteOutcomes(outcomesKey).catch((error: unknown) => {
       // A cache: without it the judge is only served pairs they could have skipped.
       log(`Failed to read vote outcomes for crucible ${crucibleId}, user ${userId}: ${error}`);
       return undefined;
     }),
+    sysRedis.sMembers(getDismissedPairsKey(crucibleId, userId)),
   ]);
-  if (!outcomes) return { voted, decided: voted };
-  return { voted, decided: decidedPairKeys(voted, outcomes) };
+  const withDismissed = (decided: string[]) =>
+    dismissed.length ? [...new Set([...decided, ...dismissed])] : decided;
+  if (!outcomes) return { voted, decided: withDismissed(voted) };
+  return { voted, decided: withDismissed(decidedPairKeys(voted, outcomes)) };
 }
 
 /** The judge's outcomes, or undefined when there are none or more than the closure handles. */
@@ -2882,6 +2887,63 @@ async function reserveJudgeEntryVotes(
  */
 function createServedPairValue(pairKey: string, anchorEntryId: number | null): string {
   return anchorEntryId === null ? pairKey : `${pairKey}|anchor:${anchorEntryId}`;
+}
+
+/**
+ * Claims the served pair (KEYS[1]) and adds it to the dismissed set (KEYS[2]), only while the judge
+ * is still being served that pair (ARGV[1], with or without its anchor suffix). Returns 1 when
+ * dismissed. Claiming it means the dismissed pair can no longer be voted on.
+ */
+export const DISMISS_SERVED_PAIR_SCRIPT = `
+local served = redis.call('GET', KEYS[1])
+if not served then return 0 end
+if served ~= ARGV[1] and string.sub(served, 1, #ARGV[1] + 1) ~= ARGV[1] .. '|' then return 0 end
+redis.call('DEL', KEYS[1])
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+return 1`;
+
+/**
+ * "Don't show again": the judge never gets this pair served again in this crucible. Only the pair
+ * on their screen can be dismissed. It is not a vote, so ratings, vote counts and progress's
+ * judged count are untouched.
+ */
+export async function dismissJudgingPair({
+  crucibleId,
+  entryIds: [entryA, entryB],
+  userId,
+}: {
+  crucibleId: number;
+  entryIds: [number, number];
+  userId: number;
+}) {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: { status: true, endAt: true },
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  const now = Date.now();
+  if (
+    crucible.status !== CrucibleStatus.Active ||
+    (crucible.endAt && now > crucible.endAt.getTime())
+  )
+    throw throwBadRequestError('This crucible is not currently active for judging');
+
+  // TTL to endAt: dismissals only matter while judging is open.
+  const ttlSeconds = crucible.endAt
+    ? Math.max(1, Math.ceil((crucible.endAt.getTime() - now) / 1000))
+    : JUDGE_KEY_TTL_SECONDS;
+  const dismissed = Number(
+    await sysRedis.eval(DISMISS_SERVED_PAIR_SCRIPT, {
+      keys: [getServedPairKey(crucibleId, userId), getDismissedPairsKey(crucibleId, userId)],
+      arguments: [createPairKey(entryA, entryB), String(ttlSeconds)],
+    })
+  );
+  if (!dismissed)
+    throw throwBadRequestError(
+      'This pair is no longer available. Please wait for the next pair to load.'
+    );
+  return { dismissed: true };
 }
 
 /**
@@ -3295,7 +3357,8 @@ export type JudgingPairCount = {
 };
 
 /**
- * Pairs left for one judge across several crucibles: two Redis reads each, then one entries query.
+ * Pairs left for one judge across several crucibles: the judge's Redis pair state for each, then one
+ * entries query.
  * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
  * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
  * query off crucibles the judge never voted in, which the feed asks about most.
@@ -3324,7 +3387,7 @@ export async function countJudgingPairs({
       return { id, judgeEntryVotes, voted, decided };
     })
   );
-  const counted = judgedOnly ? judgeState.filter(({ voted }) => voted.length > 0) : judgeState;
+  const counted = judgedOnly ? judgeState.filter(({ decided }) => decided.length > 0) : judgeState;
   if (!counted.length) return counts;
 
   const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`

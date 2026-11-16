@@ -9,7 +9,7 @@ import {
 import { dbMock, loggingMock, redisMock } from '~/__tests__/mocks';
 import { DEL_IF_VALUE_SCRIPT } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
-import { submitVoteSchema } from '~/server/schema/crucible.schema';
+import { dismissJudgingPairSchema, submitVoteSchema } from '~/server/schema/crucible.schema';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as CrucibleEloService from '~/server/services/crucible-elo.service';
 
@@ -31,12 +31,21 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   },
 }));
 
-const { getJudgingPair, getJudgingProgress, RECORD_VOTED_PAIR_SCRIPT, submitVote } = await import(
-  '~/server/services/crucible.service'
-);
-const { getAnchorVotesKey, getJudgesKey, getVoteOutcomesKey, getVotedPairsKey } = await import(
-  '~/server/services/crucible-redis-keys'
-);
+const {
+  dismissJudgingPair,
+  DISMISS_SERVED_PAIR_SCRIPT,
+  getJudgingPair,
+  getJudgingProgress,
+  RECORD_VOTED_PAIR_SCRIPT,
+  submitVote,
+} = await import('~/server/services/crucible.service');
+const {
+  getAnchorVotesKey,
+  getDismissedPairsKey,
+  getJudgesKey,
+  getVoteOutcomesKey,
+  getVotedPairsKey,
+} = await import('~/server/services/crucible-redis-keys');
 const { MAX_CLOSURE_VOTES } = await import('~/server/services/crucible-judge-closure');
 
 const JUDGE = 42;
@@ -88,6 +97,17 @@ const useFakeRedis = () => {
           hashes.set(keys[1], hash);
           hash.set(args[0], Number(args[1]));
         }
+        return 1;
+      }
+      // The dismissal: claims the served pair (with or without its anchor) into the dismissed set.
+      if (script === DISMISS_SERVED_PAIR_SCRIPT) {
+        const served = strings.get(keys[0]);
+        if (served === undefined || (served !== args[0] && !served.startsWith(`${args[0]}|`)))
+          return 0;
+        strings.delete(keys[0]);
+        const set = sets.get(keys[1]) ?? new Set<string>();
+        sets.set(keys[1], set);
+        set.add(args[0]);
         return 1;
       }
       // The served-pair claim: deletes the key only while it still holds this pair.
@@ -764,6 +784,126 @@ describe('judge-side skip — pairs this judge’s own votes already decide', ()
     expect(processVote.mock.calls[0][4], 'Elo froze').toBe('loser');
     expect(await redisMock.sysRedis.hGetAll(getAnchorVotesKey(1, JUDGE))).toEqual({
       '10:20': '20',
+    });
+  });
+
+  describe("Don't show again", () => {
+    const dismiss = (a: number, b: number) =>
+      dismissJudgingPair({ crucibleId: 1, entryIds: [a, b], userId: JUDGE });
+
+    it('rejects a pair of one entry twice at the schema; two entries parse', () => {
+      expect(
+        dismissJudgingPairSchema.safeParse({ crucibleId: 1, entryIds: [10, 10] }).success
+      ).toBe(false);
+      expect(
+        dismissJudgingPairSchema.safeParse({ crucibleId: 1, entryIds: [10, 20] }).success
+      ).toBe(true);
+    });
+
+    it('never serves a dismissed pair again; without the dismissal it comes back', async () => {
+      withEntries(10, 20);
+      expect(await serve()).toEqual([10, 20]);
+      expect(await serve(), 'control: an undismissed pair is served again').toEqual([10, 20]);
+
+      await dismiss(20, 10);
+      expect(await serve(), 'served after dismissal').toBeNull();
+    });
+
+    it('keeps dismissed pairs out alongside the pairs the judge’s votes decide', async () => {
+      withEntries(10, 20, 30);
+      await judge(10, 20); // one outcome: the closure is computed, not skipped
+      const dismissServed = async () => {
+        const [a, b] = (await serve())!;
+        await dismiss(a, b);
+      };
+      await dismissServed();
+      await dismissServed();
+      expect(await serve(), 'served once both remaining pairs are dismissed').toBeNull();
+    });
+
+    it('refuses a vote on the pair once it is dismissed; without the dismissal the vote counts', async () => {
+      withEntries(10, 20);
+      await serve();
+      await vote(10, 20);
+      expect(processVote, 'control: the served pair takes a vote').toHaveBeenCalledTimes(1);
+
+      withEntries(10, 30);
+      await serve();
+      await dismiss(10, 30);
+      await expect(vote(10, 30)).rejects.toThrow('This pair is no longer available');
+      expect(processVote, 'votes counted after the dismissal').toHaveBeenCalledTimes(1);
+    });
+
+    it('dismisses only the pair on screen', async () => {
+      withEntries(10, 20);
+      await serve();
+      await expect(dismiss(10, 30)).rejects.toThrow('This pair is no longer available');
+      await vote(10, 20);
+      expect(processVote, 'the served pair is still votable').toHaveBeenCalledTimes(1);
+    });
+
+    it('takes the pair off what is left without counting it as judged', async () => {
+      withEntries(10, 20, 30);
+      const before = await getJudgingProgress({ crucibleId: 1, userId: JUDGE });
+      const [a, b] = (await serve())!;
+      await dismiss(a, b);
+      const after = await getJudgingProgress({ crucibleId: 1, userId: JUDGE });
+      expect(after.judgedPairs, 'judged').toBe(before.judgedPairs);
+      expect(after.remainingPairs, 'pairs left').toBe(before.remainingPairs - 1);
+      expect(await redisMock.sysRedis.sCard(getVotedPairsKey(1, JUDGE)), 'voted set').toBe(0);
+    });
+
+    it('still keeps a dismissed pair out past the closure cap', async () => {
+      withEntries(10, 20);
+      const outcomesKey = getVoteOutcomesKey(1, JUDGE);
+      for (let i = 0; i <= MAX_CLOSURE_VOTES; i++)
+        await redisMock.redis.sAdd(outcomesKey, `${1000 + i}>${2000 + i}`);
+      await serve();
+      await dismiss(10, 20);
+
+      redisMock.redis.sMembers.mockClear();
+      expect(await serve(), 'served after dismissal past the cap').toBeNull();
+      const outcomeReads = redisMock.redis.sMembers.mock.calls.filter(
+        ([key]) => key === outcomesKey
+      );
+      expect(outcomeReads, 'the cap path was taken: outcomes not loaded').toHaveLength(0);
+    });
+
+    describe('the dismissed set expires with the crucible', () => {
+      const dismissTtl = () =>
+        Number(
+          redisMock.sysRedis.eval.mock.calls.find(
+            ([script]) => script === DISMISS_SERVED_PAIR_SCRIPT
+          )?.[1]?.arguments?.[1]
+        );
+      const withEndAt = async (endAt: Date | null) => {
+        const crucible = await dbMock.dbRead.crucible.findUnique();
+        dbMock.dbRead.crucible.findUnique.mockResolvedValue({ ...crucible, endAt });
+      };
+
+      it('sets the TTL to the time left until the crucible ends', async () => {
+        await withEndAt(new Date(Date.now() + 2 * 60 * 60 * 1000));
+        withEntries(10, 20);
+        await serve();
+        await dismiss(10, 20);
+        expect(Math.abs(dismissTtl() - 2 * 60 * 60), 'seconds off two hours').toBeLessThan(5);
+      });
+
+      it('falls back to the judge-key TTL for a crucible with no end', async () => {
+        await withEndAt(null);
+        withEntries(10, 20);
+        await serve();
+        await dismiss(10, 20);
+        expect(dismissTtl()).toBe(30 * 24 * 60 * 60);
+      });
+
+      it('refuses a dismissal once the crucible has ended', async () => {
+        withEntries(10, 20);
+        await serve();
+        await withEndAt(new Date(Date.now() - 1000));
+        await expect(dismiss(10, 20)).rejects.toThrow('not currently active for judging');
+        expect(await redisMock.sysRedis.sCard(getDismissedPairsKey(1, JUDGE)), 'dismissed').toBe(0);
+      });
     });
   });
 });

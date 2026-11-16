@@ -44,6 +44,12 @@ type Config struct {
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// The flags model.getAll reads (DESIGN.md §15.3), each defaulting to its production value. Only
+	// that state is ported: any of them off makes every model.getAll sample the flag-off-state fallback.
+	BaseModelFeedMetrics bool // FEED_GO_BASE_MODEL_FEED_METRICS: mirrors `base-model-feed-metrics`
+	ModelImagesSlim      bool // FEED_GO_MODEL_IMAGES_SLIM: mirrors the getAllModelImagesSlim feature
+	CoverageNext         bool // FEED_GO_GENERATION_COVERAGE_NEXT: mirrors `generation-coverage-next`
+	LoadingOpenToAll     bool // FEED_GO_GENERATION_LOADING_OPEN_TO_ALL: mirrors `generation-loading-open-to-all`
 	// ImageLocation is NEXT_PUBLIC_IMAGE_LOCATION (same var as the Node app): the edge URL prefix the
 	// REST images endpoint publishes. Unset = that endpoint falls back.
 	ImageLocation string
@@ -77,6 +83,20 @@ type Config struct {
 	// good key set is kept while refreshes fail; past it sessions verify as signed out.
 	JWKSMaxStaleness time.Duration
 
+	// ComputeMisses is FEED_GO_COMPUTE_MISSES (default on): answer the misses of the per-entity caches
+	// Node fills on read (user cosmetics, image frames, event decorations) with the Node
+	// lookup's own query instead of falling back. Off restores the fallbacks.
+	ComputeMisses bool
+	// CacheWriteBack is FEED_GO_CACHE_WRITEBACK (default off): write each computed miss back to the
+	// cache cluster exactly as the Node lookup writes it. Off, this service never writes those keys.
+	CacheWriteBack bool
+	// FrameCacheNegative is FEED_GO_FRAME_CACHE_NEGATIVE: the `frame-cache-negative` flag's value
+	// (default off, as Node reads an unknown flag): whether the frame cache's notFound markers are live.
+	FrameCacheNegative bool
+	// PrimaryDatabaseURL is DATABASE_URL, the primary (Node's dbWrite), read only with CacheWriteBack:
+	// the frame and event-decoration miss lookups then read it as Node's do (DESIGN.md §3.1).
+	PrimaryDatabaseURL string
+
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
 	AllowedOriginHosts map[string]bool
@@ -104,8 +124,13 @@ func Load() (*Config, error) {
 		FeedServiceURL:   os.Getenv("FEED_SERVICE_URL"),
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
-		Pprof:            boolEnv("FEED_GO_PPROF", false),
-		ImageLocation:    os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
+
+		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
+		ModelImagesSlim:      boolEnv("FEED_GO_MODEL_IMAGES_SLIM", true),
+		CoverageNext:         boolEnv("FEED_GO_GENERATION_COVERAGE_NEXT", true),
+		LoadingOpenToAll:     boolEnv("FEED_GO_GENERATION_LOADING_OPEN_TO_ALL", true),
+		Pprof:                boolEnv("FEED_GO_PPROF", false),
+		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),
@@ -134,6 +159,12 @@ func Load() (*Config, error) {
 	if n := intEnv("CIVITAI_MODERATION_USER_ID", 0); n > 0 {
 		c.ModerationAccountID = n
 	}
+	c.ComputeMisses = boolEnv("FEED_GO_COMPUTE_MISSES", true)
+	c.CacheWriteBack = boolEnv("FEED_GO_CACHE_WRITEBACK", false)
+	c.FrameCacheNegative = boolEnv("FEED_GO_FRAME_CACHE_NEGATIVE", false)
+	if c.CacheWriteBack {
+		c.PrimaryDatabaseURL = os.Getenv("DATABASE_URL")
+	}
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	rules, err := ParseRegionRules(os.Getenv("REGION_RESTRICTION_CONFIG"))
 	if err != nil {
@@ -142,6 +173,9 @@ func Load() (*Config, error) {
 	c.RegionRules = rules
 	if c.DatabaseURL == "" {
 		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
+	}
+	if c.CacheWriteBack && c.PrimaryDatabaseURL == "" {
+		return nil, errors.New("FEED_GO_CACHE_WRITEBACK needs DATABASE_URL (the primary the frame and event lookups read)")
 	}
 	if c.RedisURL == "" || c.RedisSysURL == "" {
 		return nil, errors.New("REDIS_URL and REDIS_SYS_URL are both required")
