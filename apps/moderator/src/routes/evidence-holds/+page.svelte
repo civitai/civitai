@@ -82,7 +82,7 @@
         <Input name="reason" required maxlength={500} />
       </label>
       <label class="flex flex-col gap-1">
-        <span class="text-dark-2">Ends (optional)</span>
+        <span class="text-dark-2">Held through (optional)</span>
         <Input name="releaseAt" type="date" class="w-40" />
       </label>
       <Button type="submit" size="sm">Place hold</Button>

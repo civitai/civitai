@@ -118,7 +118,7 @@ describe('placing a hold', () => {
     expect(placeEvidenceHold).not.toHaveBeenCalled();
   });
 
-  it('places a manual hold as the signed-in moderator, ending at the start of the chosen UTC day, and audits it', async () => {
+  it('places a manual hold as the signed-in moderator, held through the chosen UTC day, and audits it', async () => {
     placeEvidenceHold.mockResolvedValue({ id: 41, created: true });
     const result = await post('place', {
       userId: '5',
@@ -130,7 +130,7 @@ describe('placing a hold', () => {
       userId: 5,
       role: 'manual',
       reason: 'DMCA put-back',
-      releaseAt: new Date('2099-01-15T00:00:00Z'),
+      releaseAt: new Date('2099-01-16T00:00:00Z'), // held through the chosen day
       createdById: MOD,
     });
     expect(result).toMatchObject({ holdId: 41, created: true });

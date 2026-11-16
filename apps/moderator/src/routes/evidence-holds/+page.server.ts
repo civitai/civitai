@@ -61,7 +61,8 @@ const placeSchema = z.object({
   releaseAt: z
     .union([z.literal(''), z.string().date('Use a date like 2026-12-31.')])
     .optional()
-    .transform((v) => (v ? new Date(`${v}T00:00:00Z`) : null))
+    // Held through the chosen day: the hold ends at the start of the next one, UTC. Erring late keeps evidence.
+    .transform((v) => (v ? new Date(Date.parse(`${v}T00:00:00Z`) + 24 * 60 * 60 * 1000) : null))
     .refine((d) => d === null || d.getTime() > Date.now(), 'The end date must be in the future.'),
 });
 
