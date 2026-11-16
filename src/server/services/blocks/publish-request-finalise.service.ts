@@ -37,12 +37,15 @@ export async function finaliseOnsiteApprove(
   });
   await tx.appBlock.update({
     where: { id: input.appBlockId },
-    data: {
-      currentVersionSha: input.forgejoCommitSha,
-      // Replaces the prior set; [] clears it when a re-submit removes every screenshot.
-      screenshots: input.screenshots,
-      ...(late.length ? { status: 'suspended' } : {}),
-    },
+    // A held version is never marked current: a restore points the app at the current sha's
+    // build, and a re-triggered build rebuilds only the current sha.
+    data: late.length
+      ? { status: 'suspended' }
+      : {
+          currentVersionSha: input.forgejoCommitSha,
+          // Replaces the prior set; [] clears it when a re-submit removes every screenshot.
+          screenshots: input.screenshots,
+        },
   });
   return { lateHoldIds: late };
 }

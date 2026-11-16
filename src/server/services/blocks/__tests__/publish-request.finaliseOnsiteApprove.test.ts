@@ -50,9 +50,10 @@ describe('finaliseOnsiteApprove', () => {
     await expect(finaliseOnsiteApprove(tx as never, input)).resolves.toEqual({
       lateHoldIds: [12],
     });
+    // The held sha is not marked current, so no restore or rebuild can serve it.
     expect(tx.appBlock.update).toHaveBeenCalledWith({
       where: { id: 'apb_1' },
-      data: expect.objectContaining({ currentVersionSha: SHA, status: 'suspended' }),
+      data: { status: 'suspended' },
     });
     expect(tx.appBlockPublishRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'approved' }) })
@@ -65,5 +66,6 @@ describe('finaliseOnsiteApprove', () => {
     await finaliseOnsiteApprove(tx as never, input);
     const [{ data }] = tx.appBlock.update.mock.calls[0] as unknown as [{ data: object }];
     expect(data).not.toHaveProperty('status');
+    expect(data).toMatchObject({ currentVersionSha: SHA });
   });
 });

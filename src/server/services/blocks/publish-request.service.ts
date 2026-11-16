@@ -4935,6 +4935,29 @@ export type RetriggerBuildResult = {
  * branch's "no timestamp → refuse". `approveRequest` always stamps `reviewedAt`,
  * so a real approved row always has an anchor.
  */
+/** A held version is approved but never built; re-triggering its build must not ship it. */
+async function assertNoOpenHoldForRetrigger(slug: string): Promise<void> {
+  const { dbWrite } = await import('~/server/db/client');
+  const { getOpenHoldsBySlug } = await import('./publish-request-holds.service');
+  let open: number;
+  try {
+    open = (await getOpenHoldsBySlug(dbWrite, [slug])).length;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[retriggerBuild] hold read failed; refusing to rebuild', err);
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      "Could not read this app's review holds, so its build cannot be re-triggered. Try again, or ask an engineer to check the review-holds tables."
+    );
+  }
+  if (open) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      'This app has an open review hold. A moderator must clear it on the review page before its build can run.'
+    );
+  }
+}
+
 function assertRetriggerableDeployState(
   deployState: string | null,
   deployUpdatedAt: Date | null,
@@ -5087,6 +5110,8 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
   }
 
   // (6) Deploy-state gate (see assertRetriggerableDeployState for the definition).
+  await assertNoOpenHoldForRetrigger(request.slug);
+
   assertRetriggerableDeployState(
     request.deployState,
     request.deployUpdatedAt,
