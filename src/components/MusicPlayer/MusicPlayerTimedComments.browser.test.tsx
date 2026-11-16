@@ -152,7 +152,8 @@ describe('timed comments on the bar’s waveform', () => {
   test('the toggle hides them without moving the waveform; it shows them again', async () => {
     await renderBar();
     await expect.poll(() => avatar(3)).toBeTruthy();
-    const waveformTop = () => document.querySelector('[role="slider"]')!.getBoundingClientRect().top;
+    const waveformTop = () =>
+      document.querySelector('[role="slider"]')!.getBoundingClientRect().top;
     const topBefore = waveformTop();
     const hide = page.getByRole('button', { name: 'Hide timed comments', exact: true });
     await expect.element(hide).toHaveAttribute('aria-pressed', 'true');
@@ -200,9 +201,9 @@ describe('the floating label', () => {
     const [name, text] = [...label().lastElementChild!.children] as HTMLElement[];
     expect(name.textContent).toBe('koenb');
     expect(text.textContent).toBe('A really long comment');
-    expect(text.getBoundingClientRect().left - name.getBoundingClientRect().right).toBeGreaterThanOrEqual(
-      6
-    );
+    expect(
+      text.getBoundingClientRect().left - name.getBoundingClientRect().right
+    ).toBeGreaterThanOrEqual(6);
     expect(getComputedStyle(text).color).toBe('rgb(140, 143, 163)');
   });
 
@@ -292,6 +293,23 @@ describe('a cluster of nearby comments', () => {
     await userEvent.keyboard('{Escape}');
     await expect.poll(listOpen).toBeNull();
     expect(document.activeElement).toBe(cluster(1));
+  });
+
+  test('Escape on the stack closes only its list, never reaching the page behind', async () => {
+    const pageEscape = vi.fn();
+    const onKey = (event: KeyboardEvent) => event.key === 'Escape' && pageEscape();
+    document.addEventListener('keydown', onKey);
+    try {
+      await renderBar();
+      await expect.poll(() => cluster(1)).toBeTruthy();
+      cluster(1).focus();
+      await expect.poll(listOpen).toBeTruthy();
+      await userEvent.keyboard('{Escape}');
+      await expect.poll(listOpen).toBeNull();
+      expect(pageEscape).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('keydown', onKey);
+    }
   });
 
   test('by keyboard, ArrowDown moves into its list, which stays open while focus is inside', async () => {

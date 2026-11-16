@@ -148,8 +148,10 @@ export function TimedCommentStrip({
           onBlur: list.leave,
         };
         const onListKey = (event: KeyboardEvent) => {
-          if (event.key === 'Escape') {
+          if (event.key === 'Escape' && isList) {
+            // Kept from the page's Escape (which closes the detail view): this Escape is the list's.
             event.preventDefault();
+            event.stopPropagation();
             closeList(first.id);
           }
         };
@@ -287,7 +289,10 @@ const StackButton = forwardRef<HTMLButtonElement, StackButtonProps>(function Sta
       data-timed-cluster={cluster.comments[0].id}
       // Its first avatar centred on the first comment's time, the rest stacked after it.
       // The Popover's target clone passes a className of its own.
-      className={clsx('absolute top-0 flex h-6 items-center rounded-full p-0.5 hover:z-10', className)}
+      className={clsx(
+        'absolute top-0 flex h-6 items-center rounded-full p-0.5 hover:z-10',
+        className
+      )}
       style={{ left: `calc(${left * 100}% - ${AVATAR_TARGET_PX / 2}px)` }}
     >
       {shown.map((comment, i) => (
@@ -407,7 +412,7 @@ function ClusterList({
         handlers.onKeyDown(event);
         moveFocus(event);
       }}
-      className="flex max-h-80 w-80 flex-col gap-3 overflow-y-auto rounded-[14px] border border-gray-3 bg-white p-3.5 shadow-[0_12px_32px_#00000099] dark:border-dark-3 dark:bg-dark-5"
+      className="flex max-h-[22rem] w-80 flex-col gap-3 overflow-y-auto rounded-[14px] border border-gray-3 bg-white p-3.5 shadow-[0_12px_32px_#00000099] dark:border-dark-3 dark:bg-dark-5"
     >
       <div className="flex items-center justify-between gap-3">
         <span className="text-base font-bold text-black dark:text-white">{title}</span>
