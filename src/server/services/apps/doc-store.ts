@@ -373,7 +373,8 @@ export function assertPublishPair(from: DocCollection, to: DocCollection): void 
 export function classifyPublish(
   viewer: number,
   source: { hash: string } | undefined,
-  copy: { author_kind: unknown; author_uid: unknown; hidden: unknown; hash: unknown } | undefined
+  /** The shared row: `author_kind`, `author_uid`, `hidden`, `hash` (`SQL_PUBLISH_TARGETS`). */
+  copy: Record<string, unknown> | undefined
 ): PublishAction {
   if (copy) {
     const mine = copy.author_kind === 'user' && Number(copy.author_uid) === viewer;
