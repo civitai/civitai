@@ -708,7 +708,7 @@ export async function resolveScanOutcome({
     toUpdate.nsfwLevel = NsfwLevel.Blocked;
   }
 
-  const scanLevel = toUpdate.nsfwLevel as number;
+  let scanLevel = toUpdate.nsfwLevel as number;
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
   // Re-checked per row, for a CSAM block that lands after the read above.
@@ -740,6 +740,18 @@ export async function resolveScanOutcome({
     axesSet,
     axesTarget
   );
+  // The side effects follow the row as written, not the read above: a Scanned outcome queues the
+  // image for Knights review and signals its owner, though the guard kept the row CSAM-blocked.
+  if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+    const [written] = await dbWrite.$queryRaw<{ blockedFor: string | null }[]>`
+      SELECT "blockedFor" FROM "Image" WHERE id = ${image.id}
+    `;
+    if (written?.blockedFor === BlockedReason.CSAM) {
+      toUpdate.ingestion = ImageIngestionStatus.Blocked;
+      toUpdate.blockedFor = BlockedReason.CSAM;
+      toUpdate.nsfwLevel = scanLevel = NsfwLevel.Blocked;
+    }
+  }
 
   // A collection judge's rating is a floor under an unlocked, unblocked level. Read from the row
   // after the write above, so a rating that landed after this scan loaded the image still holds; the

@@ -134,7 +134,8 @@ beforeEach(async () => {
         );
       return rows;
     }
-    if (text.includes('UPDATE "Image"')) return (await runOnPglite(strings, values)).rows;
+    if (text.includes('UPDATE "Image"') || text.includes('SELECT "blockedFor" FROM "Image"'))
+      return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
   holder.tagNsfwLevel = 1;
@@ -248,9 +249,11 @@ describe('a scan of a CSAM-blocked image', () => {
     );
     holder.csamLandsAfterRead = CSAM;
 
-    await scan(CSAM);
+    const outcome = await scan(CSAM);
 
     expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+    // A Scanned outcome would queue the image for Knights review and signal its owner.
+    expect(outcome).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM', nsfwLevel: 32 });
   });
 });
 
