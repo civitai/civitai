@@ -92,7 +92,7 @@ const ORCHESTRATOR_QUERY_TIMEOUT_MS = 20_000;
 // tighten later once the healthy-tail p99 is confirmed via the latency dashboard. A fired
 // AbortSignal.timeout() surfaces a `TimeoutError`, which the existing getWorkflow catch /
 // default branch classifies via isUpstreamNetworkError → retry-able 503 (no new handling).
-const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
+export const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
 
 // Per-attempt backstop for the whatIf cost-estimate SUBMIT only (not generate). whatIf
 // (orchestrator.whatIfFromGraph) is a side-effect-free estimate that, on img2img inputs,
@@ -870,6 +870,39 @@ export async function updateWorkflow({
   if (throwOnError && !response?.ok)
     throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
   return await getWorkflow({ token, path: { workflowId } });
+}
+
+/**
+ * The App Blocks output unlock's write: `allowMatureContent: true`, bounded by `signal`, with no
+ * read-back. Two failures are REPORTED rather than thrown, because the caller answers them
+ * differently from an error:
+ *   - `insufficient-funds`: the orchestrator's 403, it could not take the yellow charge;
+ *   - `no-response`: no HTTP response at all (the client resolves with `response: undefined` when
+ *     the fetch throws, our `signal` firing included). The write may still be in flight at the
+ *     orchestrator, so the caller must not treat it as failed.
+ * Every other failure throws as `throwOrchestratorFailure` maps it.
+ */
+export async function liftWorkflowMatureRestriction({
+  token,
+  workflowId,
+  signal,
+}: {
+  token: string;
+  workflowId: string;
+  signal?: AbortSignal;
+}): Promise<{ outcome: 'lifted' | 'insufficient-funds' | 'no-response' }> {
+  const client = createOrchestratorClient(token);
+  const { error, response } = await clientUpdateWorkflow({
+    client,
+    path: { workflowId },
+    body: { allowMatureContent: true },
+    ...(signal ? { signal } : {}),
+  });
+  if (!response) return { outcome: 'no-response' };
+  if (response.status === 403) return { outcome: 'insufficient-funds' };
+  if (!response.ok)
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
+  return { outcome: 'lifted' };
 }
 
 /**

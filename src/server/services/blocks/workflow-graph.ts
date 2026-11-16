@@ -467,10 +467,12 @@ export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
 }
 
 /**
- * Whether `object` also carries `key` under another casing. Which twin the
- * orchestrator binds is not something this repo can know, so the check refuses.
+ * True when `object` carries a key other than `key` that case-folds to it (`Engine`
+ * beside or instead of `engine`): the orchestrator may bind either, so a check that
+ * reads `key` alone can be walked by its twin. Exported so every reader of an
+ * app-supplied input key refuses the same way.
  */
-function hasRecasedTwin(object: Record<string, unknown>, key: string): boolean {
+export function hasRecasedTwin(object: Record<string, unknown>, key: string): boolean {
   return Object.keys(object).some((k) => k !== key && fold(k) === key);
 }
 

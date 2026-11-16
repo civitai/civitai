@@ -1,0 +1,41 @@
+# golangci-lint v2 configuration for apps/beacon-go, run by .github/workflows/beacon-go.yml (the
+# version is pinned there). Same linter set and settings as apps/feed-go/.golangci.yml. Any finding
+# fails the job. Suppress a false positive with a narrowly scoped `//nolint:<linter> // <reason>` on
+# the line, never by disabling a linter here.
+version: "2"
+
+run:
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - contextcheck
+    - errcheck
+    - errorlint
+    - gocritic
+    - gosec
+    - govet
+    - misspell
+    - noctx
+    - perfsprint
+    - prealloc
+    # v2 merges gosimple and stylecheck into staticcheck; its default check set applies.
+    - staticcheck
+    - unconvert
+    - unparam
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        # Struct field order follows the JS object it mirrors, which is what a reader cross-checks
+        # against the Node code (as in feed-go).
+        - fieldalignment
+        # An `err` redeclared in an inner scope is the idiomatic Go form (as in feed-go).
+        - shadow
+
+issues:
+  # Report everything: a capped report hides findings behind the first few.
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.508",
+  "version": "5.1.510",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -75,6 +75,10 @@
     "release:feed-go:patch": "node scripts/release-app.mjs apps/feed-go feed-go-v patch",
     "release:feed-go:minor": "node scripts/release-app.mjs apps/feed-go feed-go-v minor",
     "release:feed-go:major": "node scripts/release-app.mjs apps/feed-go feed-go-v major",
+    "release:beacon-go": "pnpm run release:beacon-go:patch",
+    "release:beacon-go:patch": "node scripts/release-app.mjs apps/beacon-go beacon-go-v patch",
+    "release:beacon-go:minor": "node scripts/release-app.mjs apps/beacon-go beacon-go-v minor",
+    "release:beacon-go:major": "node scripts/release-app.mjs apps/beacon-go beacon-go-v major",
     "release:registry-adapter": "pnpm run release:registry-adapter:patch",
     "release:registry-adapter:patch": "node scripts/release-app.mjs apps/registry-adapter registry-adapter-v patch",
     "release:registry-adapter:minor": "node scripts/release-app.mjs apps/registry-adapter registry-adapter-v minor",

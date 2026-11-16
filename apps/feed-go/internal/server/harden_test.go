@@ -315,11 +315,11 @@ func TestShadowComputeRunsUnderTheBudget(t *testing.T) {
 	}
 }
 
-// The deadline result is exported at 0 for both endpoints before any sample.
+// The deadline result is exported at 0 for every endpoint before any sample.
 func TestShadowDeadlineResultIsSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	NewMetrics(reg)
-	for _, e := range []string{"as-posts", "v1-images"} {
+	for _, e := range []string{"as-posts", "v1-images", "infinite", "model-getall"} {
 		v, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": "deadline"})
 		if !found || v != 0 {
 			t.Fatalf("feed_go_shadow_compare_total{feed_endpoint=%q,result=\"deadline\"} = %v (found %v), want a seeded 0", e, v, found)
@@ -582,6 +582,43 @@ func testCounterValue(t *testing.T, c prometheus.Counter) float64 {
 	return v
 }
 
+// The cache-miss counter is seeded for every cache and result, and ObserveCacheMiss adds ids.
+func TestCacheMissCounter(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	m.ObserveCacheMiss("image-frames", "computed", 3)
+	m.ObserveCacheMiss("image-frames", "computed", 2)
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, mf := range mfs {
+		if mf.GetName() != "feed_go_cache_miss_total" {
+			continue
+		}
+		for _, metric := range mf.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range metric.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			got[labels["cache"]+"/"+labels["result"]] = metric.GetCounter().GetValue()
+		}
+	}
+	want := map[string]float64{
+		"user-cosmetics/computed": 0, "user-cosmetics/error": 0, "image-frames/computed": 5, "image-frames/error": 0,
+		"event-decorations/computed": 0, "event-decorations/error": 0,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("series %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
 // The endpoint label is `feed_endpoint` on every per-endpoint family. `endpoint` is a reserved scrape
 // target label: the scraper's own value overwrites it, so a query on endpoint="as-posts" would match
 // nothing. Each family is touched once so Gather shows its label names.
@@ -600,11 +637,15 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	m.ShadowPhaseCPU.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSolo.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSoloWall.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
+	m.GoFirstDBReads.WithLabelValues(EndpointAsPosts, "basic-users").Inc()
+	m.GoFirstCheckLag.WithLabelValues(EndpointAsPosts).Observe(1)
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true}
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
+		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
+		"feed_go_cache_miss_total": true}
 	checked := 0
 	for _, mf := range mfs {
 		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {
@@ -626,7 +667,19 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 10 {
-		t.Fatalf("checked %d per-endpoint families, want 10 (a family was renamed or lost)", checked)
+	if checked != 17 {
+		t.Fatalf("checked %d per-endpoint families, want 17 (a family was renamed or lost)", checked)
+	}
+}
+
+// Both fallback proxy error reasons are exported from the start, reading 0.
+func TestFallbackProxyErrorsAreSeeded(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	NewMetrics(reg)
+	for _, reason := range []string{"upstream", "canceled"} {
+		v, found := metricValue(t, reg, "feed_go_fallback_proxy_errors_total", map[string]string{"reason": reason})
+		if !found || v != 0 {
+			t.Errorf("feed_go_fallback_proxy_errors_total{reason=%q} = %v (found %v), want an exported 0", reason, v, found)
+		}
 	}
 }

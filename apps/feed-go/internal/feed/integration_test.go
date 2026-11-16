@@ -244,6 +244,39 @@ func TestIntegrationImagesQueryFilters(t *testing.T) {
 	}
 }
 
+// image.getInfinite's scopes against the real schema: the tag subquery (an enabled tag only) and a
+// post's media in index order, paged on the nullable index (Postgres sorts NULL last ascending).
+func TestIntegrationInfiniteScopes(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedImages(t, pool)
+	mod := ImagesQuery{Limit: 20, IsModerator: true, BrowsingLevel: browsing.AllLevels, Sort: SortNewest}
+
+	tagged := mod
+	tagged.TagIDs = []int{2101801}
+	if got, want := integIDs(integRun(t, pool, tagged)), []int{2101003}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("tag scope = %v, want %v (2101005's tag is disabled)", got, want)
+	}
+	tagged.TagIDs = []int{2101899}
+	if got := integIDs(integRun(t, pool, tagged)); len(got) != 0 {
+		t.Fatalf("an unused tag = %v, want none", got)
+	}
+
+	post := mod
+	post.PostID, post.IndexOrder = 2101501, true
+	rows := integRun(t, pool, post)
+	if got, want := integIDs(rows), []int{2101001, 2101002, 2101003, 2101004, 2101005}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post in index order = %v, want %v", got, want)
+	}
+	if rows[0].CursorNull || rows[0].CursorID != 7 || !rows[1].CursorNull || rows[1].CursorID != 0 {
+		t.Fatalf("cursor columns = (%d, null %v), (%d, null %v); want the index 7, then NULL",
+			rows[0].CursorID, rows[0].CursorNull, rows[1].CursorID, rows[1].CursorNull)
+	}
+	post.Cursor = 7 // inclusive on the index
+	if got, want := integIDs(integRun(t, pool, post)), []int{2101001}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("post from index 7 = %v, want %v", got, want)
+	}
+}
+
 func TestIntegrationImagesQueryModelScopes(t *testing.T) {
 	pool := integtest.Postgres(t)
 	integSeedImages(t, pool)

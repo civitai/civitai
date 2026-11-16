@@ -1,5 +1,6 @@
 import { isDev } from '~/env/other';
-import { Tracker } from '~/server/clickhouse/client';
+import { beginBeaconGoShadow } from '~/server/beacon/beacon-go-shadow';
+import { Tracker, trackerSends } from '~/server/clickhouse/client';
 import { addViewSchema } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -26,6 +27,9 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 export default PublicEndpoint(
   async (req, res) => {
     if (isDev) return res.status(200).end();
+    // beacon-go shadow (flag `beacon-go-shadow`, default off): a sampled request's response and
+    // tracker row are mirrored to apps/beacon-go after the response. Never throws, never awaited.
+    const shadow = beginBeaconGoShadow(req, res, 'pulse', trackerSends);
 
     // Same-origin guard (mirrors /api/internal/ping). Origin preferred, referer
     // fallback for clients that suppress Origin.
@@ -59,10 +63,13 @@ export default PublicEndpoint(
     if (!result.success) return res.status(400).send('invalid input');
 
     const tracker = new Tracker(req, res);
+    shadow?.attach(tracker);
     // Fire-and-forget: view() resolves the session, builds the actor, and
     // dispatches the ClickHouse insert without awaiting the network round-trip
-    // (same as the tRPC resolver). We don't await it.
-    void tracker.view(result.data);
+    // (same as the tRPC resolver). We don't await it. A sampled request's
+    // mirror waits for it, after the response.
+    const viewed = tracker.view(result.data);
+    shadow?.waitFor(viewed);
 
     return res.status(200).end();
   },
