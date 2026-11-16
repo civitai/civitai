@@ -35,20 +35,19 @@ export async function countsTowardDownloadLimit(userKey: string, fileId: number)
         pipeline.incr(key);
         return pipeline.exec();
       },
-      { deadlineMs: REPEAT_COUNT_DEADLINE_MS, logExtra: { userKey, fileId } }
+      // userKey is the caller's IP for an anonymous download, so it stays out of the logs.
+      { deadlineMs: REPEAT_COUNT_DEADLINE_MS, logExtra: { fileId } }
     );
     const requests = Array.isArray(results) && results.length === 2 ? Number(results[1]) : NaN;
     if (!Number.isInteger(requests) || requests < 1)
       throw new Error('redis MULTI exec returned an unexpected repeat count');
     return requests === 1 || requests > FREE_FILE_REPEATS + 1;
   } catch (error) {
-    // The guard already reported this failure.
     if (error instanceof ClusterCacheUnavailableError) return true;
     logToAxiom({
       name: 'download-repeats',
       type: 'warning',
       message: 'repeat counter unavailable; counting',
-      userKey,
       fileId,
       error: error instanceof Error ? error.message : String(error),
     }).catch(() => undefined);
