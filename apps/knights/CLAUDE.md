@@ -68,7 +68,7 @@ SQL on PGlite.
 
 ## Banned and muted accounts
 
-`getStanding(db, userId)` (`lib/server/standing.ts`) reads the database, never the session. Banned, deleted or with no User row: the closed page (403) on every route except the job routes. Muted: may view and convert gold, but `vote`, `skip`, `apprentice` and `POST /career` (restart) answer 403. Detail: [`docs/features/knights-standing.md`](../../docs/features/knights-standing.md). The account menu carries "Back to Civitai" (`CIVITAI_APP_URL`) and "Sign out" (`/logout`, a GET).
+`getStanding(db, userId)` (`lib/server/standing.ts`) reads the database, never the session. Banned, deleted or with no User row: the closed page (403) on every route except the job routes. Muted: may view and convert gold, but `vote`, `skip`, `apprentice` and `POST /career` (restart) answer 403. Detail: [`docs/features/knights-standing.md`](../../docs/features/knights-standing.md). The account menu carries "Back to Civitai" (`CIVITAI_SITE_URL`, default civitai.red; `civitaiSiteUrl()` in `lib/server/site-url.ts` is the base for every link a player follows, while `CIVITAI_APP_URL` stays the server-to-server base) and "Sign out" (`/logout`, a GET).
 
 ## Joining
 
