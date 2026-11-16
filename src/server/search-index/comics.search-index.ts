@@ -12,6 +12,11 @@ import {
   type RawQueryClient,
 } from '~/server/services/profile-picture.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
+import { heldUserSql } from '@civitai/shared/held-media';
+import {
+  semanticCoverImageCleanText,
+  semanticImageHeldText,
+} from '~/server/services/semantic-held-content.sql';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -110,14 +115,22 @@ export const comicSearchEligibleWhere = [
   Prisma.sql`cp."status" = 'Active'::"ComicProjectStatus"`,
   Prisma.sql`cp."tosViolation" = FALSE`,
   Prisma.sql`cp."userId" != -1`,
+  Prisma.sql`cp."nsfwLevel" NOT IN (0, 32)`,
   Prisma.sql`EXISTS (
     SELECT 1 FROM "User" u
-    WHERE u.id = cp."userId" AND u."bannedAt" IS NULL
+    WHERE u.id = cp."userId" AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
   )`,
+  Prisma.raw(`NOT ${heldUserSql('cp."userId"')}`),
+  Prisma.raw(semanticCoverImageCleanText('cp."coverImageId"')),
+  Prisma.raw(`NOT EXISTS (
+    SELECT 1 FROM "ComicPanel" hp JOIN "Image" hi ON hi.id = hp."imageId"
+    WHERE hp."projectId" = cp.id AND ${semanticImageHeldText('hi')}
+  )`),
   Prisma.sql`EXISTS (
     SELECT 1 FROM "ComicChapter" cc
     WHERE cc."projectId" = cp.id
     AND cc."status" = 'Published'::"ComicChapterStatus"
+    AND cc."availability" = 'Public'::"Availability"
     AND EXISTS (
       SELECT 1 FROM "ComicPanel" cpn
       JOIN "Image" i ON i.id = cpn."imageId"
@@ -140,6 +153,10 @@ export const comicSearchEligibleWhere = [
         OR i."ingestion" != 'Scanned'::"ImageIngestionStatus"
         OR i."needsReview" IS NOT NULL
         OR i."tosViolation" = TRUE
+        OR i."blockedFor" IS NOT NULL
+        OR i.minor = TRUE
+        OR i.poi = TRUE
+        OR i."nsfwLevel" IN (0, 32)
       )
     )
   )`,
