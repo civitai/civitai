@@ -654,7 +654,7 @@ export const updateBountyById = async ({
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
-      // A text scan flagging this bounty mid-edit waits, so the edit keeps the flag and record it set.
+      // A text scan flagging this bounty mid-edit waits, so the edit sees the flag and record it set.
       await tx.$queryRaw`SELECT 1 FROM "Bounty" WHERE id = ${id} FOR UPDATE`;
       const existing = await tx.bounty.findUniqueOrThrow({
         where: { id },
@@ -733,7 +733,8 @@ export const updateBountyById = async ({
           details:
             (withStoredScanDetails(
               isModerator ? details : keepStoredProfanityData(details, existing.details),
-              existing.details
+              // A moderator unflagging the bounty overrules the scan, so its record goes too.
+              isModerator && data.nsfw === false ? null : existing.details
             ) as Prisma.JsonObject) ?? Prisma.JsonNull,
           tags: tags
             ? {

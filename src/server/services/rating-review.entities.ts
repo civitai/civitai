@@ -10,6 +10,7 @@ import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { ratedEntityContentNsfwLevelSql } from '~/server/services/text-scan/scan-floor';
+import { BOUNTY_SCAN_DETAILS_KEY } from '~/server/utils/bounty-details';
 import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -98,7 +99,7 @@ const ratedLevel = (mask: number) => getHighestBrowsingLevelBit(mask & allBrowsi
 type Db = typeof dbRead | typeof dbWrite;
 
 const setByTextScan = (details: unknown) =>
-  !!details && typeof details === 'object' && 'textScanNsfw' in details;
+  !!details && typeof details === 'object' && BOUNTY_SCAN_DETAILS_KEY in details;
 
 // The nsfw flag pins a bounty's stored level to every NSFW bit, which names no level. When the text
 // scan set the flag, its moderation row holds the level it rated; images can still rate the bounty

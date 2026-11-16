@@ -1,8 +1,12 @@
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 
-// Written only by the text scan when it flags a bounty (text-scan/actions/bounty-nsfw.ts). No client
-// sets or clears it, and only moderators are sent it.
-const SCAN_KEY = 'textScanNsfw';
+/**
+ * The details key the text scan writes when it flags a bounty (text-scan/actions/bounty-nsfw.ts). No
+ * client sets it, a moderator unflagging the bounty in its editor clears it, and only moderators are
+ * sent it.
+ */
+export const BOUNTY_SCAN_DETAILS_KEY = 'textScanNsfw';
+const SCAN_KEY = BOUNTY_SCAN_DETAILS_KEY;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
