@@ -255,7 +255,13 @@ describe('feedback-triage: what it never touches', () => {
     );
     const id = res.rows[0].id;
 
-    await run({ id, status: 'dismissed', expectedStatus: 'new', noteAppend: 'n', hqTaskUrl: HQ_URL });
+    await run({
+      id,
+      status: 'dismissed',
+      expectedStatus: 'new',
+      noteAppend: 'n',
+      hqTaskUrl: HQ_URL,
+    });
 
     const owner = await db.query<{ ownerStatus: string; ownerStatusById: number }>(
       'SELECT "ownerStatus", "ownerStatusById" FROM "Feedback" WHERE "id" = $1',

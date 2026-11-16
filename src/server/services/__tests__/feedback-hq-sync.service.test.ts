@@ -358,7 +358,10 @@ describe('createHqFeedbackReader', () => {
     const seen: { url: string; auth: string | null }[] = [];
     const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const u = new URL(String(input));
-      seen.push({ url: u.pathname + u.search, auth: new Headers(init?.headers).get('authorization') });
+      seen.push({
+        url: u.pathname + u.search,
+        auth: new Headers(init?.headers).get('authorization'),
+      });
       return u.searchParams.get('cursor')
         ? ok({ rows: [{ id: 'fb-3', feedback_id: 3, task: 't_c' }] })
         : ok({
@@ -384,7 +387,12 @@ describe('createHqFeedbackReader', () => {
     const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input)).pathname;
       if (path === '/api/v1/data/tasks/t_a')
-        return ok({ id: 't_a', status: 'wontfix', closed: '2026-11-12T19:08:53Z', merged_into: 't_b' });
+        return ok({
+          id: 't_a',
+          status: 'wontfix',
+          closed: '2026-11-12T19:08:53Z',
+          merged_into: 't_b',
+        });
       if (path === '/api/v1/data/tasks/t_missing') return new Response('{}', { status: 404 });
       return new Response('down', { status: 502 });
     });

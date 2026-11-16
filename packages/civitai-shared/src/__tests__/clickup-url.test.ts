@@ -222,7 +222,11 @@ describe('isClickupTaskUrl, HQ links', () => {
 describe('hqTaskFromUrl', () => {
   it.each([
     ['a plain id', 'https://hq.civitai.com/t/868kfwm3j', '868kfwm3j'],
-    ['an id with underscores, as HQ issues them now', 'https://hq.civitai.com/t/abc_def_9xyz', 'abc_def_9xyz'],
+    [
+      'an id with underscores, as HQ issues them now',
+      'https://hq.civitai.com/t/abc_def_9xyz',
+      'abc_def_9xyz',
+    ],
     ['an id with a hyphen', 'https://hq.civitai.com/t/abc-def', 'abc-def'],
   ])('reads %s', (_label, input, id) => {
     expect(hqTaskFromUrl(input)).toEqual({ id, url: input });

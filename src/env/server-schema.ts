@@ -1066,6 +1066,10 @@ export const serverSchema = z
     // token; if either is unset, reports are saved but not filed.
     HQ_INTAKE_URL: z.url({ protocol: /^https$/ }).optional(),
     HQ_INTAKE_TOKEN: z.string().optional(),
+    // HQ -> feedback triage status sync (the `feedback-hq-sync` job). An HQ token with the `read`
+    // scope; unset (or '') the job does nothing and says so once. Also behind the `feedback-hq-sync`
+    // Flipt flag, default off.
+    HQ_FEEDBACK_SYNC_TOKEN: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
