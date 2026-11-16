@@ -577,9 +577,10 @@ describe('BlockGenerationSourceUploadModal — a pick the photo picker made unre
 });
 
 /**
- * `app-block-source-scanned-rows` ON: the generation gate refuses the blob, so the modal has the
- * server copy it into a private scanned row (`blocks.persistUploadedGenerationSource`) and hands
- * back THAT. The upload itself is unchanged: the blob is uploaded and read back first.
+ * The modal's wiring to `toGenerationSource` (whose ON / OFF / query-fails / copy-fails matrix is
+ * unit-tested in `__tests__/generationSourceScannedRows.test.ts`): one flag-ON and one flag-OFF
+ * case, plus what only the modal does — show a refused copy's error, and resolve nothing when it
+ * is closed mid-copy.
  */
 describe('BlockGenerationSourceUploadModal — scanned rows', () => {
   const PERSISTED = {
@@ -637,19 +638,6 @@ describe('BlockGenerationSourceUploadModal — scanned rows', () => {
     expect(path.persist).not.toHaveBeenCalled();
   });
 
-  test('the path query FAILS: resolves the blob (the gate stays the authority)', async () => {
-    const path = scannedRows({
-      usesScannedRows: vi.fn(async () => Promise.reject(new Error('x'))),
-    });
-    const onResolved = vi.fn();
-    openModal(onResolved, path);
-    await userEvent.upload(await fileInputEl(), makeImageFile());
-
-    await vi.waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
-    expect(onResolved).toHaveBeenCalledWith({ url: BLOB_URL, width: 640, height: 480 });
-    expect(path.persist).not.toHaveBeenCalled();
-  });
-
   test('🔴 flag ON and the copy is REFUSED (a blocked scan): the error shows, nothing resolves', async () => {
     const path = scannedRows({
       persist: vi.fn(async () =>
@@ -662,16 +650,6 @@ describe('BlockGenerationSourceUploadModal — scanned rows', () => {
 
     await expect.element(page.getByText(/no longer available/i)).toBeInTheDocument();
     expect(onResolved).not.toHaveBeenCalled();
-  });
-
-  test('flag ON with the scan still pending: resolves with ready false, not an error', async () => {
-    const path = scannedRows({ persist: vi.fn(async () => ({ ...PERSISTED, ready: false })) });
-    const onResolved = vi.fn();
-    openModal(onResolved, path);
-    await userEvent.upload(await fileInputEl(), makeImageFile());
-
-    await vi.waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
-    expect(onResolved).toHaveBeenCalledWith({ ...PERSISTED, ready: false });
   });
 
   test('closing the modal while the copy is being made resolves nothing', async () => {

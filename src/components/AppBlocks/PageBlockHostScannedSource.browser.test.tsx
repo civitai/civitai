@@ -15,11 +15,10 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
  * blob, stubbed to an object URL so the host's read-back runs for real); what changes is the
  * answer:
  *
- * - flag ON  → the host asks `blocks.persistUploadedGenerationSource` to copy the blob into a
- *   private scanned row, with the CURRENT block token, and replies with that row's url, imageId
- *   and ready;
- * - flag OFF, or the path query failing → the blob, as before;
- * - flag ON and the copy refused → an error reply, never the blob.
+ * Wiring only: the decision itself (ON / OFF / query fails / copy fails) is unit-tested in
+ * `__tests__/generationSourceScannedRows.test.ts`. Each host site gets one flag-ON case (the copy
+ * is asked for with the CURRENT block token and its row is the reply) and, where the host builds
+ * the reply itself, one flag-OFF case and the refused-copy error reply.
  */
 
 const h = vi.hoisted(() => ({
@@ -212,15 +211,6 @@ describe('PageBlockHost — a single OPEN_MEDIA_UPLOAD image (bytes mode)', () =
     expect(reply.selected).not.toHaveProperty('imageId');
   });
 
-  test('the path query fails: replies with the blob', async () => {
-    h.query.mockRejectedValue(new Error('503'));
-    const replies = await mountReady();
-    postFromBlock('OPEN_MEDIA_UPLOAD', mediaReq('rq_fail'));
-    const reply = await oneReply(replies, 'MEDIA_UPLOAD_RESULT', 'rq_fail');
-    expect(h.persist).not.toHaveBeenCalled();
-    expect(reply.selected).toMatchObject({ url: uploadedUrls[0] });
-  });
-
   test('🔴 flag ON and the copy is refused: an error reply, never the blob', async () => {
     h.persist.mockRejectedValue(new Error('that url is not an uploaded generation source'));
     const replies = await mountReady();
@@ -256,5 +246,33 @@ describe('PageBlockHost — OPEN_IMAGE_UPLOAD { purpose: generationSource } (the
     const reply = await pick(replies, 'rq_pick_off');
     expect(h.persist).not.toHaveBeenCalled();
     expect(reply.selected).toEqual({ url: uploadedUrls[0], width: IMG_W, height: IMG_H });
+  });
+});
+
+describe('PageBlockHost — OPEN_MEDIA_UPLOAD picker mode (BlockMediaUploadModal)', () => {
+  test('🔴 flag ON: the picked image comes back as the scanned row, copied with the current token', async () => {
+    const replies = await mountReady();
+    postFromBlock('OPEN_MEDIA_UPLOAD', {
+      requestId: 'rq_media_pick',
+      kind: 'image',
+      purpose: 'generationSource',
+    });
+    const input = await vi.waitFor(() => {
+      if (!document.querySelector('[data-testid="block-media-upload-file-input"]')) {
+        throw new Error('media modal not open');
+      }
+      const el = document.querySelector<HTMLInputElement>('input[type="file"]:not([multiple])');
+      if (!el) throw new Error('media file input not found');
+      return el;
+    });
+    await userEvent.upload(input, new File([PNG.slice(0)], 'source.png', { type: 'image/png' }));
+    const reply = await oneReply(replies, 'MEDIA_UPLOAD_RESULT', 'rq_media_pick');
+    expect(h.persist.mock.calls).toEqual([[{ blockToken: 'tok_abc', url: uploadedUrls[0] }]]);
+    expect(reply.selected).toEqual({
+      kind: 'image',
+      mimeType: 'image/jpeg',
+      sizeBytes: expect.any(Number),
+      ...PERSISTED,
+    });
   });
 });
