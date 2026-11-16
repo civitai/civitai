@@ -53,6 +53,9 @@ import {
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import {
   AppealStatus,
   BuzzAccountType,
@@ -1161,20 +1164,59 @@ export async function createEntityAppeal({
 // URL fall back to a label-only reference.
 export function appealEntityLink(
   entityType: EntityType,
-  entityId: number
+  entityId: number,
+  color?: ColorDomain
 ): { url?: string; label: string } {
+  const base = getBaseUrl(color);
   switch (entityType) {
     case EntityType.Image:
-      return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
+      return { url: `${base}/images/${entityId}`, label: `Image #${entityId}` };
     case EntityType.Model:
-      return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
+      return { url: `${base}/models/${entityId}`, label: `Model #${entityId}` };
     case EntityType.Bounty:
-      return { url: `${getBaseUrl()}/bounties/${entityId}`, label: `Bounty #${entityId}` };
+      return { url: `${base}/bounties/${entityId}`, label: `Bounty #${entityId}` };
     case EntityType.Storyline:
-      return { url: `${getBaseUrl()}/storylines/${entityId}`, label: `Storyline #${entityId}` };
+      return { url: `${base}/storylines/${entityId}`, label: `Storyline #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
+}
+
+/**
+ * Resolves each appealed item's email-link domain: `.red` unless civitai.com serves its rating.
+ * `.red` serves every level, so a missing row or failed read must also land there, not on the request host.
+ */
+async function appealLinkColors(
+  appeals: { entityType: EntityType; entityId: number }[]
+): Promise<(appeal: { entityType: EntityType; entityId: number }) => ColorDomain | undefined> {
+  const rated = [EntityType.Image, EntityType.Model, EntityType.Bounty] as const;
+  const comServable = new Set<string>();
+  await Promise.all(
+    rated.map(async (entityType) => {
+      const ids = [
+        ...new Set(appeals.filter((a) => a.entityType === entityType).map((a) => a.entityId)),
+      ];
+      if (!ids.length) return;
+      const where = { id: { in: ids } };
+      const select = { id: true, nsfwLevel: true } as const;
+      const read: Promise<{ id: number; nsfwLevel: number; nsfw?: boolean }[]> =
+        entityType === EntityType.Image
+          ? dbRead.image.findMany({ where, select })
+          : entityType === EntityType.Model
+          ? dbRead.model.findMany({ where, select })
+          : // A creator's mature mark sends a bounty off .com whatever its images are rated.
+            dbRead.bounty.findMany({ where, select: { ...select, nsfw: true } });
+      const rows = await read.catch(() => []);
+      for (const row of rows)
+        if (!row.nsfw && isRatingWithinCap(row.nsfwLevel, sfwBrowsingLevelsFlag))
+          comServable.add(`${entityType}:${row.id}`);
+    })
+  );
+  return ({ entityType, entityId }) =>
+    !(rated as readonly EntityType[]).includes(entityType) ||
+    comServable.has(`${entityType}:${entityId}`)
+      ? undefined
+      : 'red';
 }
 
 type AppealFeeRef = {
@@ -1984,6 +2026,7 @@ export async function settleResolvedAppeals(
     appealsByUser.set(appeal.userId, list);
   }
 
+  const linkColor = appealsByUser.size ? await appealLinkColors(appeals) : () => undefined;
   for (const [recipientId, userAppeals] of appealsByUser) {
     const recipient = recipientMap.get(recipientId);
     if (!recipient?.email) continue;
@@ -2003,7 +2046,7 @@ export async function settleResolvedAppeals(
           ? 'appeal-approved'
           : 'appeal-rejected',
         intro: lockReview && lockReviewRulingMessage(approved, lockReview.unlocked),
-        items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId)),
+        items: userAppeals.map((a) => appealEntityLink(a.entityType, a.entityId, linkColor(a))),
       });
     } catch (error) {
       logToAxiom({
