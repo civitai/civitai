@@ -5,24 +5,16 @@ import { useRef, useState } from 'react';
 import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { POST_TITLE_MAX_LENGTH } from '~/server/common/constants';
 import { audioMetadataSchema } from '~/server/schema/media.schema';
+import { SongGenreTags } from '~/components/Post/EditV2/PostImageCards/SongGenreTags';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { formatPlaybackTime } from '~/utils/audio-player';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 import { trpc } from '~/utils/trpc';
+import { withMetadata } from '~/components/Post/EditV2/PostImageCards/song-metadata';
 
 export const songDimmed = 'text-gray-6 dark:text-dark-2';
-
-/** The stored metadata with `changes` applied; an undefined value removes its key. */
-export function withMetadata<T>(metadata: T, changes: Record<string, unknown>): T {
-  const next: Record<string, unknown> = { ...(metadata as Record<string, unknown> | null) };
-  for (const [key, value] of Object.entries(changes)) {
-    if (value === undefined) delete next[key];
-    else next[key] = value;
-  }
-  return next as T;
-}
 
 /** A song's title, where it was made, and its lyrics. */
 export function SongDetails({ image }: { image: PostEditImageDetail }) {
@@ -49,6 +41,7 @@ export function SongDetails({ image }: { image: PostEditImageDetail }) {
           {detail && <span className={clsx('text-xs', songDimmed)}>{detail}</span>}
         </div>
       </div>
+      <SongGenreTags image={image} />
       {!!lyrics?.length && <SongLyrics lines={lyrics} />}
     </div>
   );

@@ -1,6 +1,6 @@
 import { Switch } from '@mantine/core';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { withMetadata } from '~/components/Post/EditV2/PostImageCards/SongDetails';
+import { withMetadata } from '~/components/Post/EditV2/PostImageCards/song-metadata';
 import type { PostEditImageDetail } from '~/server/services/post.service';
 import { songAllowsRemix } from '~/shared/form-graph/generation/audio/song-metadata';
 import { showErrorNotification } from '~/utils/notifications';

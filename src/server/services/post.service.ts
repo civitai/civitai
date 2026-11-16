@@ -178,7 +178,30 @@ import type {
   ReorderPostImagesInput,
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
+  SetSongGenreInput,
+  AddSongTagInput,
+  RemoveSongTagInput,
+  SearchSongTagsInput,
 } from './../schema/post.schema';
+import {
+  attachSongTag,
+  detachSongTag,
+  findAttachableTag,
+  hasSongTagRow,
+  readSongTags,
+  searchSongTags,
+} from '~/server/services/tagsOnSong.service';
+import {
+  readSongGenre,
+  SONG_GENRE_REQUIRED_MESSAGE,
+  SONG_TAG_LIMIT,
+  SONG_TAG_LIMIT_MESSAGE,
+  SONG_TAG_NOT_REMOVABLE_MESSAGE,
+  SONG_TAG_UNAVAILABLE_MESSAGE,
+  songGenreTagName,
+  withoutGenreTag,
+} from '~/shared/constants/song-genres';
+import type { SongGenre } from '~/shared/constants/song-genres';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -1072,6 +1095,10 @@ async function combinePostEditImageData(
   const thumbnails = await thumbnailCache.fetch(imageIds);
   const lyrics = await getSongLyricLines(images, db);
   const covers = await getSongCovers(images, db);
+  const songTags = await readSongTags(
+    images.filter((x) => x.type === MediaType.audio).map((x) => x.id),
+    db
+  );
 
   return _images
     .map((image) => ({
@@ -1083,6 +1110,8 @@ async function combinePostEditImageData(
       thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
       lyrics: lyrics.get(image.id) ?? null,
       cover: covers.get(image.id) ?? null,
+      /** A song's own tags, its genre's tag left out. */
+      songTags: withoutGenreTag(songTags.get(image.id) ?? [], readSongGenre(image.metadata)),
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
@@ -1260,6 +1289,25 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
 export const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
+/**
+ * Refuses publishing or scheduling a post while any of its songs has no genre. A post already
+ * public is left alone: its publish write is a no-op, and songs posted before genres existed must
+ * not lock its other edits.
+ */
+async function assertSongsHaveGenres(postId: number) {
+  const songs = await dbWrite.image.findMany({
+    where: { postId, type: MediaType.audio },
+    select: { metadata: true },
+  });
+  if (!songs?.some((song) => !readSongGenre(song.metadata))) return;
+  const post = await dbWrite.post.findUnique({
+    where: { id: postId },
+    select: { publishedAt: true },
+  });
+  if (post?.publishedAt && post.publishedAt <= new Date()) return;
+  throw throwBadRequestError(SONG_GENRE_REQUIRED_MESSAGE);
+}
+
 export const updatePost = async ({
   id,
   user,
@@ -1282,6 +1330,7 @@ export const updatePost = async ({
   // Mirrors the pattern in updateModelVersion (model-version.service.ts).
   const publishedAt = data.publishedAt instanceof Date ? data.publishedAt : undefined;
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
+  if (publishedAt !== undefined) await assertSongsHaveGenres(id);
 
   // A post drafted from a storyline becomes its chapter as it is published. Checked before the
   // write, so a continuation price the contributor was not shown refuses the publish whole. With
@@ -2272,6 +2321,132 @@ export async function setSongCover({
   const saved = await dbWrite.image.findUnique({ where: { id: coverId }, select: songCoverSelect });
   if (!saved) throw throwDbError('Cover not found');
   return saved;
+}
+
+/**
+ * The genre, and whether its tag row is one `setSongGenre` attached: only that row is taken off when
+ * the genre changes, so a tag the owner added themselves outlives a genre of the same name.
+ */
+function writeSongGenre(imageId: number, genre: SongGenre, tagAdded: boolean) {
+  return dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = COALESCE("metadata", '{}'::jsonb) || jsonb_build_object('genre', ${genre}::text, 'genreTagAdded', ${tagAdded}::boolean)
+    WHERE id = ${imageId}
+  `;
+}
+
+/** The song, when the caller owns it or moderates; refuses anything else. */
+async function readEditableSong(id: number, user: SessionUser) {
+  assertCanStoreSongs(user);
+  const song = await dbWrite.image.findUnique({
+    where: { id },
+    select: { id: true, userId: true, postId: true, type: true, metadata: true },
+  });
+  if (!song || (song.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
+  if (song.type !== MediaType.audio)
+    throw throwBadRequestError('Only a song has a genre and tags.');
+  return song;
+}
+
+/** The song's own tags, its genre's tag left out (the genre select shows that one). */
+async function readOwnSongTags(songId: number, genre: SongGenre | undefined) {
+  return withoutGenreTag((await readSongTags([songId])).get(songId) ?? [], genre);
+}
+
+/** Suggestions for a song's tag field: only tags an owner may attach. */
+export async function suggestSongTags({
+  query,
+  user,
+}: SearchSongTagsInput & { user: SessionUser }) {
+  assertCanStoreSongs(user);
+  return searchSongTags(query);
+}
+
+async function afterSongTagsChanged(song: { id: number; postId: number | null }) {
+  await Promise.all([
+    imageMetadataCache.refresh(song.id),
+    song.postId ? preventReplicationLag('postImages', song.postId) : undefined,
+  ]);
+}
+
+/**
+ * Stores the genre on the song and mirrors it as the song's image tag, so it reaches the search
+ * documents like any tag. The image tag writers run outside any transaction (their own pool), so
+ * the steps are ordered to never leave the stored genre and its tag apart: the new tag first, then
+ * both metadata keys in one statement (the new tag taken back off if that fails), and the previous
+ * genre's tag last, only when this function attached it.
+ */
+export async function setSongGenre({ id, genre, user }: SetSongGenreInput & { user: SessionUser }) {
+  const song = await readEditableSong(id, user);
+  const previous = readSongGenre(song.metadata);
+  if (previous === genre) return { genre, tags: await readOwnSongTags(song.id, genre) };
+  const previousTagAdded =
+    (song.metadata as { genreTagAdded?: unknown } | null)?.genreTagAdded === true;
+
+  // The list is fixed, so a missing genre tag is created as a plain user tag (after the blocklist
+  // check); a same-named tag that is not a plain label is left off the song.
+  await findOrCreateTagsByName([songGenreTagName(genre)]);
+  const tag = await findAttachableTag(songGenreTagName(genre));
+  const attach = !!tag && !(await hasSongTagRow(song.id, tag.id));
+  if (tag && attach) await attachSongTag(song.id, tag.id);
+
+  try {
+    await writeSongGenre(song.id, genre, attach);
+  } catch (error) {
+    if (tag && attach) await detachSongTag(song.id, tag.id);
+    throw error;
+  }
+
+  if (previous && previousTagAdded) {
+    const previousTag = (await readSongTags([song.id]))
+      .get(song.id)
+      ?.find((t) => t.name === songGenreTagName(previous));
+    if (previousTag) await detachSongTag(song.id, previousTag.id);
+  }
+  await afterSongTagsChanged(song);
+
+  return { genre, tags: await readOwnSongTags(song.id, genre) };
+}
+
+/**
+ * Attaches a plain label to the song, creating a new name as a user tag. Insert only: a row the
+ * song already has for that tag (one a moderator disabled included) is never changed.
+ */
+export async function addSongTag({ id, name, user }: AddSongTagInput & { user: SessionUser }) {
+  const song = await readEditableSong(id, user);
+  const genre = readSongGenre(song.metadata);
+  if (genre && name === songGenreTagName(genre))
+    throw throwBadRequestError(SONG_TAG_UNAVAILABLE_MESSAGE);
+
+  const tags = await readOwnSongTags(song.id, genre);
+  if (tags.some((t) => t.name === name)) return { tags };
+  if (tags.length >= SONG_TAG_LIMIT) throw throwBadRequestError(SONG_TAG_LIMIT_MESSAGE);
+
+  await findOrCreateTagsByName([name]);
+  const tag = await findAttachableTag(name);
+  if (!tag || (await hasSongTagRow(song.id, tag.id)))
+    throw throwBadRequestError(SONG_TAG_UNAVAILABLE_MESSAGE);
+  await attachSongTag(song.id, tag.id);
+  await afterSongTagsChanged(song);
+
+  return { tags: await readOwnSongTags(song.id, genre) };
+}
+
+/** Removes a tag a person attached to the song; never a scanner's row or the genre's tag. */
+export async function removeSongTag({
+  id,
+  tagId,
+  user,
+}: RemoveSongTagInput & { user: SessionUser }) {
+  const song = await readEditableSong(id, user);
+  const genre = readSongGenre(song.metadata);
+  const tags = await readOwnSongTags(song.id, genre);
+  if (!tags.some((t) => t.id === tagId)) throw throwBadRequestError(SONG_TAG_NOT_REMOVABLE_MESSAGE);
+
+  await detachSongTag(song.id, tagId);
+  await afterSongTagsChanged(song);
+
+  return { tags: tags.filter((t) => t.id !== tagId) };
 }
 
 /** Looks up a version an uploader may credit to their images, or throws not found. */

@@ -556,6 +556,12 @@ type UpdateDecision =
    * string under a fixed key cannot add or replace any other key.
    */
   | 'raw-literal-key-text-value'
+  /**
+   * Raw SET merging one `jsonb_build_object` of literal, non-provenance keys whose values are each a
+   * `::text` or `::boolean` parameter: fixed keys with scalar values cannot add or replace any other
+   * key.
+   */
+  | 'raw-literal-keys-scalar-values'
   /** Raw SET from the moderation-rule result, which merges the stored row with rule keys. */
   | 'raw-mod-rule-metadata'
   /**
@@ -585,6 +591,11 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     sites: 2,
   },
   'src/server/services/post.service.ts#setSongCover': { decision: 'raw-server-keys', sites: 1 },
+  // The genre is a value from the fixed list, merged the same way as the title.
+  'src/server/services/post.service.ts#writeSongGenre': {
+    decision: 'raw-literal-keys-scalar-values',
+    sites: 1,
+  },
   'src/pages/api/webhooks/youtube-upload.ts#handler': {
     decision: 'raw-literal-key-text-value',
     sites: 1,
@@ -724,6 +735,25 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       ];
       if (serverOwned.includes(match[1]) || PROVENANCE_TOKEN.test(match[1]))
         return 'names a server-owned key';
+      return null;
+    }
+    case 'raw-literal-keys-scalar-values': {
+      const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
+      const args = /^COALESCE\("metadata", '\{\}'::jsonb\) \|\| jsonb_build_object\((.*)\)$/.exec(
+        expr
+      )?.[1];
+      if (!args) return 'metadata is no longer one jsonb_build_object merge';
+      const pairs = [...args.matchAll(/'(\w+)', \$\{[\w.]+\}::(text|boolean)(?:, |$)/g)];
+      if (!pairs.length || pairs.map((p) => p[0]).join('') !== args)
+        return 'metadata is no longer literal keys with text or boolean values';
+      const serverOwned: readonly string[] = [
+        ...BLOCK_PROVENANCE_METADATA_KEYS,
+        ...OTHER_SERVER_OWNED_IMAGE_METADATA_KEYS,
+      ];
+      const key = pairs
+        .map((p) => p[1])
+        .find((k) => serverOwned.includes(k) || PROVENANCE_TOKEN.test(k));
+      if (key) return `names a server-owned key (${key})`;
       return null;
     }
     case 'raw-mod-rule-metadata': {

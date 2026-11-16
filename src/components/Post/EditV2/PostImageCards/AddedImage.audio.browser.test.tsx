@@ -300,7 +300,13 @@ describe('a song in the post editor', () => {
     await expect
       .element(page.getByText("Locked · the generator's timestamps drive synced lyrics"))
       .toBeVisible();
-    expect(page.getByRole('textbox').all()).toHaveLength(1);
+    // The title, genre and tag fields are the card's only text inputs: no lyric line is editable.
+    expect(
+      page
+        .getByRole('textbox')
+        .all()
+        .map((box) => box.element().getAttribute('aria-label'))
+    ).toEqual(['Song title', 'Genre', 'Add a tag']);
   });
 
   test('a song without lyrics shows no lyrics block', async () => {
