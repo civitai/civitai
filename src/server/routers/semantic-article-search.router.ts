@@ -7,7 +7,8 @@ import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
 export const semanticArticleSearchRouter = router({
   search: publicProcedure
     .use(timeSemanticSearch('articles'))
-    .use(isFlagProtected('semanticArticleSearch'))
+    // The search page's flag, or the articles feed's (it answers its ?query= from here).
+    .use(isFlagProtected('semanticArticleSearch', 'articleFeedSearch'))
     // Signed-out visitors share an IP bucket, so theirs is lower.
     .use(
       rateLimit([

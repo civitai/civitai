@@ -99,6 +99,14 @@ Code: `src/components/Image/Infinite/` (`image-feed-search.ts`, `useImageFeedSea
 `ImageFeedSearchSummary.tsx`), `src/components/AutocompleteSearch/useFeedSearchSync.ts` and
 `src/components/Search/search-refusal.ts`.
 
+Other feeds search in place the same way, each behind its own flag (`FEED_SEARCH` in
+`src/components/Search/search-target.ts`): models (`modelFeedSearch`, see
+`semantic-model-search.md`) and articles (`articleFeedSearch`, Flipt `search-v3-articles`). Articles
+reuse `semanticArticleSearch.search`, which also takes the feed's tags, period (as a published-since
+bound), followed, bookmarks, hidden and collection; /search/articles redirects to /articles. Both
+share `FeedSearchSummary` and `SearchSortLock`, and read `?query=` only on their own page
+(`useFeedSearchText`), since other pages share the feed's filter params.
+
 ## Feedback and logging
 
 - Every first page is logged to ClickHouse through `Tracker.search`, with index `images_semantic`.
