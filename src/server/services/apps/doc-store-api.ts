@@ -105,6 +105,7 @@ import {
   scanSharedData,
   scheduleSharedDataShadow,
   sharedRefusalField,
+  type SharedDataModerationMode,
   type SharedDataSurface,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
@@ -838,15 +839,19 @@ const nothingAfterCommit: AfterCommit = () => undefined;
  *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category and
  *   the field it sits in (`sharedRefusalField`: a JSON path such as `data.actions[2].text`, or
  *   `key`), never the matched term or text, and raises the shared block alert.
+ *
+ * `resolvedMode`: the mode the caller already resolved for this app (a publish resolves it once
+ * for all its documents); omitted, it is resolved here.
  */
 async function moderate(
   access: StorageAccess,
   user: SessionUser,
   surface: SharedDataSurface,
   rowKey: string,
-  input: { data?: Record<string, unknown>; key?: string }
+  input: { data?: Record<string, unknown>; key?: string },
+  resolvedMode?: SharedDataModerationMode
 ): Promise<AfterCommit> {
-  const mode = await resolveSharedDataModerationMode(access.ctx.appId);
+  const mode = resolvedMode ?? (await resolveSharedDataModerationMode(access.ctx.appId));
   if (mode === 'off') return nothingAfterCommit;
   // Moderators are exempt from the pattern list here exactly as on the legacy surface.
   const scanOpts = { isModerator: user.isModerator };
@@ -1272,11 +1277,13 @@ async function runPublish(
   let landed = false;
   try {
     const afterCommit = new Map<string, AfterCommit>();
+    // One mode for the whole publish (two Flipt evaluations), not one per document.
+    const mode = toWrite.length > 0 ? await resolveSharedDataModerationMode(ctx.appId) : undefined;
     for (const doc of toWrite) {
       try {
         afterCommit.set(
           doc.key,
-          await moderate(access, user, 'update', doc.key, { data: doc.data, key: doc.key })
+          await moderate(access, user, 'update', doc.key, { data: doc.data, key: doc.key }, mode)
         );
       } catch (err) {
         throw withKey(err, doc.key);
