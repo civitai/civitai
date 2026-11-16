@@ -88,7 +88,7 @@ export async function isMyAppHidden(args: { userId: number; slug: string }): Pro
       name: 'my-apps-hidden-read-degraded',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => undefined);
+    });
     return false;
   }
 }
