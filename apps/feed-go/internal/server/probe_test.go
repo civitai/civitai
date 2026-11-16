@@ -259,6 +259,9 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 		for cache, keys := range byCache {
 			t.Run(fx.Name+"/"+cache, func(t *testing.T) {
 				cold := *fx
+				// Not a request Node answered: the fixture's expected answer (and the model harness's
+				// "every page Node read" check, which reads it) does not apply to the cold copy.
+				cold.Expect.Fallback = "test-cache-emptied"
 				cold.Redis = map[string]goldenRedisEntry{}
 				for k, v := range fx.Redis {
 					if !slices.Contains(keys, k) {
@@ -582,7 +585,7 @@ func TestProbeHandlerRejectsAndDrops(t *testing.T) {
 	if c := call(http.MethodGet, ProbePathPrefix+Procedure, nil); c != http.StatusMethodNotAllowed {
 		t.Errorf("GET: %d, want 405", c)
 	}
-	if c := call(http.MethodPost, ProbePathPrefix+"model.getAll", strings.NewReader("{}")); c != http.StatusNotFound {
+	if c := call(http.MethodPost, ProbePathPrefix+"nope.unregistered", strings.NewReader("{}")); c != http.StatusNotFound {
 		t.Errorf("an unregistered procedure: %d, want 404", c)
 	}
 	if c := call(http.MethodPost, ProbePathPrefix+Procedure, strings.NewReader("not json")); c != http.StatusBadRequest || len(s.ProbeQueue) != 0 {
