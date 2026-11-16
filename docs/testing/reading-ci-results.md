@@ -47,13 +47,12 @@ jobs skip too. (The Windows dev-env smoke never runs on PRs; it runs on pushes t
 dispatch: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>`.) That is the draft gate, not a broken run: the jobs start when the PR is
 marked ready (`gh pr ready <pr>`). To get a full verdict while it is still a draft, add the `full-ci`
 label (`gh pr edit <pr> --add-label full-ci`) — only when the change touches code the unit or
-component suites cover and the PR is near merge-ready, not on every PR (every push while it is on
-runs the four unit shards). Adding it dispatches Lint (`only: all`, every job but
+component suites cover and the PR is near merge-ready, not on every PR. Adding it dispatches Lint (`only: all`, every job but
 ESLint) and the app suites on the branch head straight away (`.github/workflows/full-ci.yml`;
 nothing is dispatched when the PR's own run on that commit already started the unit shards; so a
-PR opened WITH the label gets the app suites only if its paths reach them), and
-every later push runs every Lint job, the unit shards included, in the PR run (the app suites if the
-PR's paths reach them) until the label is removed. Same-repo PRs only; it does not lift the draft
+PR opened WITH the label gets the app suites only if its paths reach them). The label is one-shot:
+once that full run has started, full-ci.yml removes it, so later pushes run the normal PR suites;
+re-add it to ask again. Same-repo PRs only; it does not lift the draft
 gate on schema drift or tRPC parity. Or dispatch one on the branch, which
 runs against the branch head rather than the merge with `main` — only a suite the PR's own run on
 that commit did not run (with the label on, it ran every Lint suite a PR runs, unit shards included; read `gh pr checks <pr>`):

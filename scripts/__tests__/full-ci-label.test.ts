@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,6 +36,7 @@ const DISPATCH_IF =
 
 type Step = {
   name?: string;
+  if?: string;
   run?: string;
   uses?: string;
   with?: Record<string, string | boolean>;
@@ -290,6 +291,20 @@ describe('the full-ci label', () => {
     );
   });
 
+  // Removing the label (full-ci.yml, one-shot) fires `unlabeled`. Nothing may listen to it: a
+  // workflow on `unlabeled` would start a run whose skipped jobs overlay the PR's checks, or
+  // re-dispatch. Every workflow file, not just the three that read the label.
+  it('no workflow fires on unlabeled', () => {
+    const listeners = readdirSync(WORKFLOW_DIR)
+      .filter((f) => /\.ya?ml$/.test(f))
+      .filter((f) =>
+        ['pull_request', 'pull_request_target'].some((ev) =>
+          (load(f).on?.[ev]?.types ?? []).includes('unlabeled')
+        )
+      );
+    expect(listeners).toEqual([]);
+  });
+
   describe('full-ci.yml, the dispatcher', () => {
     const doc = load('full-ci.yml');
     const jobs = Object.values(doc.jobs ?? {});
@@ -304,7 +319,11 @@ describe('the full-ci label', () => {
       expect(jobs).toHaveLength(1);
       expect(jobs[0].name).toBe('Start full CI on label');
       expect(norm(jobs[0].if ?? '')).toBe(DISPATCH_IF);
-      expect(jobs[0].permissions).toEqual({ actions: 'write', contents: 'read' });
+      expect(jobs[0].permissions).toEqual({
+        actions: 'write',
+        contents: 'read',
+        'pull-requests': 'write',
+      });
     });
 
     // Script injection: the branch name is attacker-chosen text. It must reach the shell as an
@@ -345,6 +364,44 @@ describe('the full-ci label', () => {
       const checkout = steps.slice(0, idx).find((s) => s.uses?.startsWith('actions/checkout@'));
       expect(checkout?.with?.['sparse-checkout']).toBe('scripts/ci/full-ci-unit-shards.mjs');
       expect(checkout?.with?.['persist-credentials']).toBe(false);
+    });
+
+    // ONE-SHOT: the label buys one full run, then the job removes it, so later pushes run the
+    // normal PR suites. The removal must come after the dispatch decision and only when that
+    // step succeeded (it dispatched, or the PR's own run covers the shards), must not fail the
+    // job, and must tell the author how to ask again.
+    describe('removes the label once its full run has started', () => {
+      const DELETE = 'gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci"';
+      const steps = jobs[0]?.steps ?? [];
+      const removeIdx = steps.findIndex((s) => (s.run ?? '').includes(DELETE));
+      const remove = steps[removeIdx] ?? {};
+
+      it('is the last step, after the dispatch decision, gated only on its success', () => {
+        const dispatchIdx = steps.findIndex((s) => /gh workflow run lint\.yml/.test(s.run ?? ''));
+        expect(removeIdx, 'no step removes the label').toBeGreaterThan(-1);
+        expect(removeIdx, 'removal must come after the dispatch step').toBeGreaterThan(dispatchIdx);
+        expect(removeIdx, 'removal must be the last step').toBe(steps.length - 1);
+        // No `if`: the default `success()`, so a failed dispatch keeps the label on.
+        expect(remove.if, 'the removal step must not override success()').toBeUndefined();
+        expect(remove.env?.PR).toBe('${{ github.event.pull_request.number }}');
+      });
+
+      it('runs only in a job with the same-repo gate (forks never reach it)', () => {
+        const removers = Object.values(doc.jobs ?? {}).filter((j) =>
+          (j.steps ?? []).some((s) => (s.run ?? '').includes(DELETE))
+        );
+        expect(removers).toHaveLength(1);
+        expect(norm(removers[0].if ?? '')).toBe(DISPATCH_IF);
+      });
+
+      it('warns instead of failing when the removal fails, and says how to re-ask', () => {
+        const run = remove.run ?? '';
+        expect(run.trimStart().startsWith(`if ${DELETE}`), 'the DELETE must be an `if` test').toBe(
+          true
+        );
+        expect(run).toContain('::warning title=full-ci label not removed::');
+        expect(run).toMatch(/--add-label full-ci.*>> "\$GITHUB_STEP_SUMMARY"/);
+      });
     });
   });
 

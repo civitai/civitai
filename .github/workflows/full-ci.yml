@@ -4,11 +4,24 @@ name: Full CI on label
 #
 # lint.yml and apps.yml read the label themselves on every PR run (opened, synchronize,
 # reopened, ready_for_review): with it on, the four `Unit tests` shards run and the draft
-# ESLint-only gate is lifted, so every push after the label is added runs the full suite in the
-# PR run. What they cannot do without help is react to the label being ADDED, which is a
-# `labeled` event. This file does that, by dispatching them on the PR branch, along with
-# moderator-boot.yml, feed-go.yml, beacon-go.yml and registry-adapter-image.yml, which have the same
-# draft gate.
+# ESLint-only gate is lifted. What they cannot do without help is react to the label being
+# ADDED, which is a `labeled` event. This file does that, by dispatching them on the PR branch,
+# along with moderator-boot.yml, feed-go.yml, beacon-go.yml and registry-adapter-image.yml, which
+# have the same draft gate.
+#
+# ── ONE-SHOT: THE LABEL IS REMOVED ONCE IT HAS STARTED ONE FULL RUN ──────────────────────────
+#
+# After the full run is started (dispatched here, or already running in the PR's own Lint run),
+# the last step removes the label. So the label buys ONE full run on the current head; later
+# pushes go back to the normal PR run (no unit shards, ESLint only on a draft). To ask again,
+# re-add it. Before this, the label stayed on and every later push ran the four unit shards,
+# which is how most PR runs came to carry it.
+#
+# A run already started keeps its shards: a job's `if` reads the label set in its own event's
+# payload, fixed when that event fired. The removal fires `unlabeled`, which nothing listens
+# to (this file is `labeled` only; lint.yml and the other suites list their `types` without
+# it), and an event made with the job's GITHUB_TOKEN starts no workflow run anyway. If the
+# removal fails, the job stays green and its summary says so.
 #
 # ── WHY A DISPATCHER, AND NOT `labeled` IN lint.yml / apps.yml ────────────────────────────────
 #
@@ -35,7 +48,8 @@ name: Full CI on label
 # the head commit (the commit's check-runs API, the Actions tab), but `gh pr checks` and the PR's
 # status rollup list only pull_request-event runs, so they still show the draft run's skipped
 # `Unit tests` there. This job's summary links the two runs; open `Start full CI on label` to
-# reach them. Every LATER push runs the full suite in the PR run, which the checks list does show. Later PR runs (on push) test the merge commit as usual.
+# reach them. Later PR runs (on push) test the merge commit as usual, without the unit shards,
+# since the label is gone by then (see ONE-SHOT above).
 # The dispatched Lint run is `only: all`: every suite but ESLint, which is PR-only and already
 # ran on the PR. Its concurrency group is the dispatch one, so it does not cancel the PR's own
 # run in flight. The dispatched apps.yml run is not path-filtered (`paths:` applies to
@@ -61,7 +75,7 @@ name: Full CI on label
 # the summary links it. Otherwise (label added to an existing PR, the PR run not created yet
 # after ~90 s, a docs-only PR the Lint `paths:` filter skips) it dispatches as before.
 # On a skip, apps.yml and moderator-boot.yml are not dispatched either: their PR runs follow
-# their `paths:` filters, exactly as on every later push with the label on.
+# their `paths:` filters, exactly as on every later push.
 #
 # When it does dispatch Lint on a PR that is not a draft, the PR run on that commit has run (or
 # is running) `Typecheck test files`, `Package unit tests` and the component shards. So the dispatch passes `skip_passed` and skips
@@ -81,10 +95,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.label.name == 'full-ci' && github.event.pull_request.head.repo.full_name == github.repository
     # `actions: write` is what workflow_dispatch needs. A dispatch is the one event a
-    # GITHUB_TOKEN may start another workflow with.
+    # GITHUB_TOKEN may start another workflow with. `pull-requests: write` removes the label.
     permissions:
       actions: write
       contents: read
+      pull-requests: write
     timeout-minutes: 5
     steps:
       # Only the classifier the step below runs. No credentials are persisted: this job's token
@@ -132,7 +147,7 @@ jobs:
             {
               echo "### Full CI already running in the PR's own checks"
               echo "The pull_request Lint run on \`$HEAD_SHA\` runs every suite, unit shards included: $url"
-              echo "App suites and Moderator boot smoke follow their \`paths:\` filters, as on every push with the label on."
+              echo "App suites and Moderator boot smoke follow their \`paths:\` filters, as on every push."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -166,3 +181,19 @@ jobs:
             echo "$wf: ${url:-not found yet, see the Actions tab}"
             echo "- $wf: ${url:-not found yet, see the Actions tab}" >> "$GITHUB_STEP_SUMMARY"
           done
+
+      # One-shot (see the header). Runs only when the step above succeeded: it dispatched, or
+      # found the PR's own run covering the shards. Its failure never fails the job.
+      - name: Remove the full-ci label (one full run per label)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh api -X DELETE "repos/$REPO/issues/$PR/labels/full-ci" > /dev/null; then
+            echo "Removed the full-ci label: later pushes run the normal PR suites." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning title=full-ci label not removed::later pushes keep running the unit shards until it is removed"
+            echo "**Could not remove the full-ci label**; remove it by hand, or later pushes keep running the unit shards." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "To run the full suite again on a later commit, re-add the label: \`gh pr edit $PR --add-label full-ci\`" >> "$GITHUB_STEP_SUMMARY"

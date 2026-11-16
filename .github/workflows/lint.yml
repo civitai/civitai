@@ -164,13 +164,13 @@ name: Lint
 #
 # ── THE `full-ci` LABEL RUNS THE FULL SUITE ON A PR ─────────────────────────
 #
-# With the `full-ci` label on a PR (draft or not), every PR run here includes the
+# With the `full-ci` label on a PR (draft or not), a PR run here includes the
 # four `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
-# `github.event.pull_request.labels`, the PR's CURRENT label set, on every
-# opened/synchronize/reopened/ready_for_review run until the label is removed.
-# apps.yml honours the same label, behind its own `paths:` filter. Add it only when
-# the change touches code the unit or component suites cover and the PR is near
-# merge-ready, not on every PR: while it is on, every push runs the four shards.
+# `github.event.pull_request.labels`, the label set in that run's event payload.
+# apps.yml honours the same label, behind its own `paths:` filter. The label is
+# ONE-SHOT: full-ci.yml removes it once it has started one full run, so later pushes
+# run without the shards; re-add it to ask again. Add it only when the change touches
+# code the unit or component suites cover and the PR is near merge-ready.
 #   gh pr edit <n> --add-label full-ci
 #
 # ADDING the label does not fire this workflow: `types` deliberately omits
@@ -684,8 +684,8 @@ jobs:
     # ── NOT RUN ON PULL REQUESTS UNLESS ASKED, NOT RUN ON PUSH; VERIFIED IN BATCHES ON `main` ──
     #
     # The `if` below skips this job on `pull_request` unless the PR carries the
-    # `full-ci` label (draft or not; every push while the label is on runs it — see
-    # the header), and skips it on every push to `main`. It runs on `workflow_dispatch`,
+    # `full-ci` label (draft or not; full-ci.yml removes the label after one full run —
+    # see the header), and skips it on every push to `main`. It runs on `workflow_dispatch`,
     # where `only` still selects it — including the batch dispatch on `main` from
     # unit-batched.yml, after which `unit-verify` posts the verdict as a commit status
     # (on the first bad commit when red). See "THE UNIT SUITE IS THE EXCEPTION" in the header.
