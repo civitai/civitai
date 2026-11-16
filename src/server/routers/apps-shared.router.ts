@@ -78,6 +78,8 @@ import {
   scanCounterKey,
   scanSharedData,
   scheduleSharedDataShadow,
+  describeSharedRefusalField,
+  sharedRefusalField,
   type SharedDataModerationMode,
   type SharedDataSurface,
   type SharedTextHit,
@@ -2057,7 +2059,8 @@ async function enforceScan(
  * ENFORCE half of shared-text moderation for `data` leaves and counter keys: record the scan, then,
  * when `hit` is set, reject it with the SAME consequences a title/body hit has
  * (`fileSharedBlockConsequences`, attributed to the caller — the writer of the text) and a
- * BAD_REQUEST carrying only a generic message (never the matched term). An overflow (a blob too
+ * BAD_REQUEST carrying a generic message plus the field the hit sits in (`sharedRefusalField`,
+ * e.g. `(field: data.actions[2].text)`) — never the matched term or text. An overflow (a blob too
  * deep, too wide or too long to read in full) is rejected too: an unread leaf must not pass by being
  * past a cap. With `hit` null it only records.
  *
@@ -2094,12 +2097,16 @@ async function refuseSharedTextHit(
     field,
   });
 
-  const message =
+  const reason =
     hit.category === 'link'
       ? 'Content contains a blocked link'
       : hit.category === 'overflow'
       ? 'Data is too large or too deeply nested to review'
       : 'Content flagged for review';
+  const named = describeSharedRefusalField(
+    sharedRefusalField(scan, hit, ctx.surface === 'counter' ? 'key' : 'data')
+  );
+  const message = `${reason} (${named})`;
   throw tagSharedStorageOutcome(
     new TRPCError({ code: 'BAD_REQUEST', message }),
     'moderation_blocked'
