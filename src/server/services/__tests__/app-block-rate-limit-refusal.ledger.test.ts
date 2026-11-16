@@ -368,8 +368,7 @@ describe('every App Blocks limiter refusal is recorded per app', () => {
       }
       if (ts.isFunctionDeclaration(n) && n.name?.text === 'sendError') {
         walk(n, (m) => {
-          if (ts.isCallExpression(m) && calleeName(m) === 'recordRefusal')
-            sendErrorRecords = true;
+          if (ts.isCallExpression(m) && calleeName(m) === 'recordRefusal') sendErrorRecords = true;
         });
       }
     });
