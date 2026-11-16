@@ -364,7 +364,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // Release the heavy slot as soon as the handler resolves (synchronous
     // serialization — the actual pin cost — is done by now), not on socket close.
     releaseSlot?.();
-    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode, res.getHeaders());
     recordFeedGoV1Shape(feedGoV1ShapeClass(req, shape, res.statusCode));
   }
 }

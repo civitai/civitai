@@ -16,6 +16,7 @@ import {
   FEED_GO_SHADOW_PATH,
   pickSessionCookies,
   pickShadowHeaders,
+  pickShadowResponseHeaders,
   readFeedGoShadowConfig,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
   SHADOW_DEFAULT_MAX_PER_SECOND,
@@ -250,6 +251,65 @@ describe('pickSessionCookies / pickShadowHeaders', () => {
   });
 });
 
+describe('pickShadowResponseHeaders', () => {
+  it('keeps only the compared headers, lowercased, Set-Cookie as presence, each bounded', () => {
+    expect(
+      pickShadowResponseHeaders({
+        'Cache-Control': 'public, max-age=60, s-maxage=60, stale-while-revalidate=30',
+        vary: ['Accept-Encoding', 'Cookie'],
+        'cache-tag': 'images, user-1',
+        'set-cookie': ['session=secret-value; HttpOnly'],
+        'x-update-required': 'true',
+        'x-handled-by': 'pod-a',
+        'content-length': 123,
+        'x-ratelimit-remaining': '9',
+      })
+    ).toEqual({
+      'cache-control': 'public, max-age=60, s-maxage=60, stale-while-revalidate=30',
+      vary: 'Accept-Encoding, Cookie',
+      'cache-tag': 'images, user-1',
+      'set-cookie': 'present',
+      'x-update-required': 'true',
+    });
+    expect(pickShadowResponseHeaders({ 'cache-tag': 'x'.repeat(5000) })['cache-tag']).toHaveLength(
+      1024
+    );
+    expect(pickShadowResponseHeaders({})).toEqual({});
+  });
+});
+
+describe('createFeedGoShadow — response status and headers', () => {
+  it('posts the status and the compared response headers the route passes to finish', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    h.shadow.finish(sample, 200, {
+      'cache-control': 'max-age=0, private, no-cache',
+      'set-cookie': 'a=secret',
+      'x-handled-by': 'pod-a',
+    });
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.status).toBe(200);
+    expect(body.responseHeaders).toEqual({
+      'cache-control': 'max-age=0, private, no-cache',
+      'set-cookie': 'present',
+    });
+    // The cookie's value never leaves the process.
+    expect(h.fetchMock.mock.calls[0][1].body as string).not.toContain('secret');
+  });
+
+  it('omits responseHeaders when the route passes none', async () => {
+    const h = harness();
+    serve(h);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body.status).toBe(200);
+    expect(body).not.toHaveProperty('responseHeaders');
+  });
+});
+
 describe('createFeedGoShadow — sampling decision', () => {
   it('samples a GET of the procedure and POSTs input, headers and the written envelope', async () => {
     const h = harness();
@@ -272,6 +332,7 @@ describe('createFeedGoShadow — sampling decision', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      status: 200,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.shadow.inFlight()).toBe(0);
@@ -785,6 +846,7 @@ describe('createFeedGoShadow — image.getInfinite', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      status: 200,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['infinite']);
@@ -904,6 +966,7 @@ describe('createFeedGoShadow — model.getAll', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
+      status: 200,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['model-getall']);

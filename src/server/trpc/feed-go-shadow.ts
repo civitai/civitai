@@ -95,6 +95,48 @@ const COPIED_HEADERS = [
   'x-civitai-verified-bot',
 ] as const;
 
+/**
+ * The response headers mirrored with a sample, for feed-go's status + header comparison
+ * (shadow.ComparedHeaders in apps/feed-go): who may cache the answer and how (Cache-Control, Vary),
+ * its purge tags (Cache-Tag), whether a Set-Cookie survived (sent as the literal `present`, never
+ * its value) and the stale-client signal (x-update-required). Nothing else: the payload stays bounded.
+ */
+export const FEED_GO_COMPARED_RESPONSE_HEADERS = [
+  'cache-control',
+  'vary',
+  'cache-tag',
+  'set-cookie',
+  'x-update-required',
+] as const;
+
+/** Longest header value mirrored; a longer one is cut (a Cache-Tag list is the only one that grows). */
+const RESPONSE_HEADER_MAX_CHARS = 1024;
+
+/** A response's headers as `res.getHeaders()` returns them. */
+export type ShadowResponseHeaders = Record<string, string | string[] | number | undefined>;
+
+/**
+ * The FEED_GO_COMPARED_RESPONSE_HEADERS a response carries, lowercased, each a string (an array
+ * joined with `, `, cut at RESPONSE_HEADER_MAX_CHARS); Set-Cookie as `present`. Never throws.
+ */
+export function pickShadowResponseHeaders(headers: ShadowResponseHeaders): Record<string, string> {
+  const out: Record<string, string> = {};
+  try {
+    const lower: Record<string, ShadowResponseHeaders[string]> = {};
+    for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = v;
+    for (const name of FEED_GO_COMPARED_RESPONSE_HEADERS) {
+      const v = lower[name];
+      if (v === undefined) continue;
+      const value = Array.isArray(v) ? v.join(', ') : String(v);
+      if (value === '' && name !== 'set-cookie') continue;
+      out[name] = name === 'set-cookie' ? 'present' : value.slice(0, RESPONSE_HEADER_MAX_CHARS);
+    }
+  } catch {
+    /* observability only */
+  }
+  return out;
+}
+
 export type FeedGoShadowConfig = {
   /** Full compare endpoint URL, or undefined (disabled). */
   url: string | undefined;
@@ -246,6 +288,9 @@ export type FeedGoShadowSample = {
   /** Whether the Go-first probe was already started for this sample (at most once). */
   probed?: boolean;
   captured?: Captured;
+  /** Node's response status and compared headers, set in `finish`. */
+  status?: number;
+  responseHeaders?: Record<string, string>;
   done: boolean;
 };
 
@@ -533,10 +578,14 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const started = now();
       const captured = sample.captured!;
       const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
+      const response = {
+        status: sample.status,
+        ...(sample.responseHeaders ? { responseHeaders: sample.responseHeaders } : {}),
+      };
       body = JSON.stringify(
         endpoint === 'v1-images'
-          ? { input: sample.input, path: sample.path, headers: sample.headers, node }
-          : { input: sample.input, headers: sample.headers, node }
+          ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
+          : { input: sample.input, headers: sample.headers, node, ...response }
       );
       // Drop the reference to the captured page now that it is encoded: only `body` is needed
       // while the POST is in flight.
@@ -577,12 +626,19 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * After the handler: queue the POST if Node answered 200 and a body was captured. Synchronous,
-   * returns nothing to await, never throws.
+   * After the handler: queue the POST if Node answered 200 and a body was captured, with the status
+   * and the compared response headers (when the route passes them). Synchronous, returns nothing to
+   * await, never throws.
    */
-  function finish(sample: FeedGoShadowSample, statusCode: number): void {
+  function finish(
+    sample: FeedGoShadowSample,
+    statusCode: number,
+    responseHeaders?: ShadowResponseHeaders
+  ): void {
     try {
       if (sample.done) return;
+      sample.status = statusCode;
+      if (responseHeaders) sample.responseHeaders = pickShadowResponseHeaders(responseHeaders);
       if (statusCode !== 200) {
         record('skipped_status', sample.endpoint);
         release(sample);
@@ -738,6 +794,10 @@ export function captureFeedGoShadowResponse(data: unknown, written: unknown, dev
   getInstance().capture(data, written, devalue);
 }
 
-export function finishFeedGoShadow(sample: FeedGoShadowSample, statusCode: number): void {
-  (owners.get(sample) ?? getInstance()).finish(sample, statusCode);
+export function finishFeedGoShadow(
+  sample: FeedGoShadowSample,
+  statusCode: number,
+  responseHeaders?: ShadowResponseHeaders
+): void {
+  (owners.get(sample) ?? getInstance()).finish(sample, statusCode, responseHeaders);
 }

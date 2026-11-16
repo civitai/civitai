@@ -398,8 +398,16 @@ to the service's internal port with:
 { "input": "<the raw ?input value>",
   "headers": { "cookie": "…", "host": "…", "cf-ipcountry": "…", "cf-region-code": "…",
                "x-isuk": "…", "authorization": "<present?>", "x-civitai-verified-bot": "…" },
-  "node": { "json": …, "meta": … } }
+  "node": { "json": …, "meta": … },
+  "status": 200,
+  "responseHeaders": { "cache-control": "…", "vary": "…", "cache-tag": "…", "set-cookie": "present",
+                       "x-update-required": "…" } }
 ```
+
+`status` is Node's response status. `responseHeaders` holds only the compared headers Node's
+response carried (`FEED_GO_COMPARED_RESPONSE_HEADERS`): lowercased, each value cut at 1024
+characters, and Set-Cookie as the literal `present`, never its value. So the sample grows by a few
+hundred bytes at most.
 
 `node` is the superjson envelope Node already produced for the response (captured where the
 serializer runs, so the sample costs Node one JSON stringify of an object it already built, on the
@@ -431,7 +439,31 @@ path as serving, and compares decoded values:
 - every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
   `infinite` for §14, `model-getall` for §15): four values, so the label at most quadruples a family's
   cardinality;
-- differing paths (never values) are logged for a sample, so a category can be traced to a field.
+- differing paths (never values) are logged for a sample, so a category can be traced to a field;
+- numbers compare numerically, except that two integer literals compare **exactly** (int64, else as
+  big integers). As float64, an integer above 2^53 cannot be told from its neighbour, and the
+  relative tolerance would also equate large integers that differ by one;
+- **status and response headers** compare as their own result,
+  `feed_go_shadow_response_total{result="match|mismatch|uncompared"}`. They are kept apart from the
+  body's `feed_go_shadow_compare_total`, so the match-rate queries keep their meaning; the go/no-go
+  needs both. Each difference is counted in `feed_go_shadow_field_diffs_total` under category
+  `status` or `header:<name>`, with kind `value`, `missing-in-go` or `missing-in-node`. The Go side is
+  what the public route writes: an answer computed here is a 200, and its Cache-Control is
+  `trpc.ResultCacheControl`. Noise rules (`shadow.CompareResponse`):
+  - Cache-Control and Vary compare as sets of lowercased directives or names (`max-age=060` reads as
+    `max-age=60`); Cache-Tag as a set of tags; Set-Cookie by presence.
+  - An empty value is absent.
+  - A sample without the fields (a sampler that predates them) is `uncompared`.
+  - X-Handled-By (the pod), Content-Type/Length and Date (transport), and the rate-limit,
+    Retry-After and site-alerts headers (per caller or per moment) are never compared.
+  - On `v1-images` only the status is compared: the REST port writes no headers of its own yet.
+
+  Expected differences until ported: `header:x-update-required/missing-in-go` (Node tells an
+  outdated web bundle to reload; this service does not), and on `model-getall`
+  `header:cache-control/value` for signed-out samples (its compute records no edge TTL yet, §15).
+  Node posts only the samples it answered 200, and an answer computed here is a 200, so `status`
+  cannot differ today. It is compared so that a sampler that also posts its non-200 answers is read
+  correctly.
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
 a newly published image can differ without a bug. These show up as `stats.*` value diffs and rare

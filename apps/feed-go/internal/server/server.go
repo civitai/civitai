@@ -543,6 +543,11 @@ type ShadowRequest struct {
 	Headers map[string]string `json:"headers"`
 	// Node is Node's response: the superjson envelope (`{json, meta}`) for tRPC, the JSON body for REST.
 	Node json.RawMessage `json:"node"`
+	// Status is Node's response status (0 = a sampler that predates it: not compared).
+	Status int `json:"status,omitempty"`
+	// ResponseHeaders are Node's response headers of shadow.ComparedHeaders, lowercased, Set-Cookie as
+	// `present` (nil = a sampler that predates them: not compared).
+	ResponseHeaders map[string]string `json:"responseHeaders,omitempty"`
 }
 
 // maxShadowBody bounds a shadow request body (a response page can be large).
@@ -768,15 +773,37 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		// A trivial answer that differs is still counted as the diff it is (fields, membership, …).
 		result = "match_empty"
 	}
+	// The status and the compared headers, a separate result from the body's: the body's match rate
+	// keeps its meaning, and the response's is its own figure. An answer computed here is a 200.
+	nodeHeaders := req.ResponseHeaders
+	var goHeaders map[string]string
+	if endpoint == EndpointV1Images {
+		// The REST port writes no headers of its own yet: only the status is compared.
+		nodeHeaders = nil
+	} else {
+		goHeaders = trpc.ResultHeaders(c.ttl)
+	}
+	respDiffs := shadow.CompareResponse(http.StatusOK, goHeaders, req.Status, nodeHeaders)
+	switch {
+	case req.Status == 0 && req.ResponseHeaders == nil:
+		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "uncompared").Inc()
+	case len(respDiffs) > 0:
+		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "mismatch").Inc()
+	default:
+		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "match").Inc()
+	}
 	s.endPhase(phase, endpoint, "compare", "ok")
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
-	for _, d := range report.Diffs {
+	diffs := make([]shadow.Diff, 0, len(report.Diffs)+len(respDiffs))
+	diffs = append(diffs, report.Diffs...)
+	diffs = append(diffs, respDiffs...)
+	for _, d := range diffs {
 		s.Metrics.ShadowDiffs.WithLabelValues(endpoint, d.Category, d.Kind).Inc()
 	}
-	if result != "match" {
+	if result != "match" || len(respDiffs) > 0 {
 		// Paths only (no values): enough to find the field, and never user data in logs.
-		paths := make([]string, 0, len(report.Diffs))
-		for _, d := range report.Diffs {
+		paths := make([]string, 0, len(diffs))
+		for _, d := range diffs {
 			paths = append(paths, d.Kind+":"+d.Path)
 		}
 		s.Log.Info("shadow diff", "endpoint", endpoint, "result", result, "paths", paths, "truncated", report.Truncated)

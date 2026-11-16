@@ -23,6 +23,10 @@ type Metrics struct {
 	ShadowDiffs   *prometheus.CounterVec   // endpoint, category, kind
 	ShadowDropped *prometheus.CounterVec   // endpoint
 
+	// ShadowResponse counts the status + header comparison of each compared sample, beside the body's
+	// ShadowResults (endpoint, result: match|mismatch|uncompared).
+	ShadowResponse *prometheus.CounterVec
+
 	// Per-phase cost of a shadow sample (DESIGN.md §10). Phases: decode (read + parse the posted
 	// sample, Node's envelope included), compute (the answer serving would produce), compare
 	// (shadow.Compare + Classify). Labels: endpoint, phase, outcome.
@@ -95,6 +99,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_shadow_field_diffs_total",
 			Help: "Differing paths found by shadow comparisons, by path category and kind.",
 		}, []string{EndpointLabel, "category", "kind"}),
+		ShadowResponse: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_shadow_response_total",
+			Help: "Shadow comparisons of the response status and the compared headers (shadow.ComparedHeaders), by result: match, mismatch (the diffs are in feed_go_shadow_field_diffs_total as status / header:<name>), uncompared (the sample carried no status or headers). Separate from feed_go_shadow_compare_total, which is the body's.",
+		}, []string{EndpointLabel, "result"}),
 		ShadowDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_dropped_total",
 			Help: "Shadow requests dropped because the comparison queue was full.",
@@ -175,6 +183,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, e := range Endpoints {
 		m.ShadowDropped.WithLabelValues(e)
 		m.ShadowResults.WithLabelValues(e, "deadline")
+		for _, r := range []string{"match", "mismatch", "uncompared"} {
+			m.ShadowResponse.WithLabelValues(e, r)
+		}
 	}
 	for _, e := range ProbeEndpoints {
 		for _, r := range []string{ProbeWouldServe, ProbeWouldMiss, ProbeRaced, ProbeUnsupported, ProbeError} {
@@ -201,7 +212,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			m.CacheMisses.WithLabelValues(c, r)
 		}
 	}
-	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
+	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses)
