@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { childBrowsingTagIds } from '@civitai/shared';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -19,6 +20,8 @@ type Row = {
   blockedFor?: string | null;
   needsReview?: string | null;
   minor?: boolean;
+  acceptableMinor?: boolean;
+  pHash?: number;
   nsfwLevel?: number;
   userId?: number;
 };
@@ -45,6 +48,14 @@ const rows: Row[] = [
   { id: 22, blockedFor: 'AiNotVerified' },
   { id: 23 },
   { id: 24 },
+  { id: 25, acceptableMinor: true, nsfwLevel: 1 },
+  { id: 26 },
+  { id: 27, pHash: 777 },
+  { id: 28 },
+  { id: 29 },
+  { id: 30 },
+  { id: 31 },
+  { id: 32 },
 ];
 
 beforeAll(async () => {
@@ -54,16 +65,23 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, url text NOT NULL, type "MediaType" NOT NULL DEFAULT 'image',
       "mimeType" text, ingestion text NOT NULL, "needsReview" text, "blockedFor" text,
-      minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4, "userId" int NOT NULL
+      minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4, "userId" int NOT NULL,
+      "acceptableMinor" boolean NOT NULL DEFAULT false, "pHash" bigint
     );
+    CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
+    CREATE TABLE "BlockedImage" (hash bigint, reason text);
+    CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
+    CREATE TABLE "ScanLabelFlag" ("itemId" int, snapshot jsonb);
+    CREATE TABLE "ScanLabelVote" ("itemId" int, reason text);
     CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb, images jsonb);
     CREATE TABLE "EvidenceHeldUser" ("userId" int);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
   `);
   for (const r of rows)
     await pg.query(
-      `INSERT INTO "Image" (id, url, ingestion, "needsReview", "blockedFor", minor, "nsfwLevel", "userId")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO "Image" (id, url, ingestion, "needsReview", "blockedFor", minor, "nsfwLevel", "userId",
+         "acceptableMinor", "pHash")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         r.id,
         `key-${r.id}`,
@@ -73,10 +91,20 @@ beforeAll(async () => {
         r.minor ?? false,
         r.nsfwLevel ?? 4,
         r.userId ?? 500 + r.id,
+        r.acceptableMinor ?? false,
+        r.pHash ?? null,
       ]
     );
   await pg.exec(`
     INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (18);
+    INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES (26, ${childBrowsingTagIds[0]});
+    INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", disabled) VALUES (1, ${childBrowsingTagIds[0]}, true);
+    INSERT INTO "BlockedImage" (hash, reason) VALUES (777, 'CSAM');
+    INSERT INTO "ScanLabelItem" (id, "imageId", "voidReason") VALUES
+      (1, 28, 'csam-hold'), (2, 29, NULL), (3, 30, NULL), (4, 31, NULL), (5, 32, NULL), (6, 2, NULL);
+    INSERT INTO "ScanLabelFlag" ("itemId", snapshot) VALUES
+      (2, '{"csam": "true"}'), (3, '{"minorDetected": "true"}'), (6, '{"csam": "false"}');
+    INSERT INTO "ScanLabelVote" ("itemId", reason) VALUES (4, 'csam-realistic'), (5, 'minor-other'), (6, 'other');
     INSERT INTO "EvidenceHeldUser" ("userId") VALUES (519);
     INSERT INTO "CsamReport" ("userId", details, images) VALUES
       (520, '{}', '[]'),
@@ -134,14 +162,45 @@ describe('getRetractedMedia', () => {
     expect(await served(13)).toBe(false);
   });
 
-  it('serves a minor review flag only at PG or PG-13', async () => {
+  // Deliberate: any CSAM or minor signal keeps an image off this route, at every browsing level,
+  // PG included; such images are reviewed in the queues instead.
+  it('refuses a minor review flag at any level, PG included', async () => {
     expect(await served(14)).toBe(false);
-    expect(await served(15)).toBe(true);
+    expect(await served(15)).toBe(false);
   });
 
-  it('serves a minor-marked image only at PG or PG-13', async () => {
+  it('refuses a minor-marked image at any level, PG included', async () => {
     expect(await served(16)).toBe(false);
-    expect(await served(17)).toBe(true);
+    expect(await served(17)).toBe(false);
+  });
+
+  it('refuses an acceptable-minor image at PG', async () => {
+    expect(await served(25)).toBe(false);
+  });
+
+  it('refuses an image with a child tag, but not for a disabled one', async () => {
+    expect(await served(26)).toBe(false);
+    expect(await served(1)).toBe(true);
+  });
+
+  it('refuses an image whose hash is a CSAM block', async () => {
+    expect(await served(27)).toBe(false);
+  });
+
+  it('refuses an image whose label item is on a csam hold', async () => {
+    expect(await served(28)).toBe(false);
+  });
+
+  it('refuses an image a scan flagged for csam or a minor, but not a clean flag', async () => {
+    expect(await served(29)).toBe(false);
+    expect(await served(30)).toBe(false);
+    expect(await served(2)).toBe(true);
+  });
+
+  it('refuses an image a moderator voted csam or minor, but not another reason', async () => {
+    expect(await served(31)).toBe(false);
+    expect(await served(32)).toBe(false);
+    expect(await served(2)).toBe(true);
   });
 
   it('refuses an image under an evidence hold', async () => {
