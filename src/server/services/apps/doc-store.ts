@@ -493,9 +493,30 @@ function docColumns(viewerParam: string, rating = false): string {
   }`;
 }
 
-/** The rating a reader is shown: the effective level (override first) and the status. */
+/**
+ * A document's CURRENT level: the moderator's override when it was given for the document's
+ * current `version`, else the rated level when it was rated at that version, else NULL. A rating
+ * or override for an older version does not count: every rewrite of the body bumps `version` (a
+ * put, a schema migration), so a rating never outlives the content it rated, whoever rewrote it
+ * and whether or not levels were on at the time.
+ */
+const CURRENT_LEVEL = `CASE
+      WHEN d.override_level IS NOT NULL AND d.override_version = d.version THEN d.override_level
+      WHEN d.level IS NOT NULL AND d.rated_version = d.version THEN d.level
+    END`;
+/** Rated (or overridden) for the current version. Never NULL. */
+const RATED_NOW = `(COALESCE(d.rating_status IN ('rated', 'overridden'), false)
+    AND ${CURRENT_LEVEL} IS NOT NULL)`;
+
+/**
+ * The rating a reader is shown: the current level and the status. A rating for an older version
+ * reads as `pending` with no level; a document never rated reads as NULL.
+ */
 const RATING_COLUMNS = `,
-    COALESCE(d.override_level, d.level) AS rating_level, d.rating_status`;
+    CASE WHEN ${RATED_NOW} THEN ${CURRENT_LEVEL} END AS rating_level,
+    CASE WHEN ${RATED_NOW} THEN d.rating_status
+      WHEN d.rating_status IS NULL THEN NULL
+      ELSE 'pending' END AS rating_status`;
 
 /**
  * Transaction-local cap on waiting for ANY lock in a store transaction. The case
@@ -528,14 +549,15 @@ const VISIBLE = `d.hidden_at IS NULL`;
  * Visible when any of:
  * - the document is private (`scope_uid <> 0`): only its owner's key space ever reads it;
  * - it is a counter document: created empty by an increment, it holds no `data` to rate;
- * - the viewer is its user author and it is not rated yet (status NULL or `pending`): an author
- *   always sees what they wrote until it is rated;
- * - it has been rated (`rated` / `overridden`) and its effective level — the moderator's
- *   `override_level` when set, else the rated `level` — shares a bit with the CAP (the site's
- *   bitwise browsing-level test). The cap is the domain ceiling for the document's own author
+ * - the viewer is its user author and it is not rated for its current version (never rated,
+ *   `pending`, or rated for an older version): an author always sees what they wrote until it is
+ *   rated;
+ * - it is rated for its current version (`CURRENT_LEVEL`: the override given for this version,
+ *   else the rating given for it) and that level shares a bit with the CAP (the site's bitwise
+ *   browsing-level test). The cap is the domain ceiling for the document's own author
  *   (their own R document shows on a red-capable host, not on the SFW one, whatever their own
  *   setting), and the viewer's level for everyone else. A NULL level shares nothing.
- * So an unrated (NULL) or `pending` document is hidden from everyone but its author, and a
+ * So an unrated, `pending` or stale-rated document is hidden from everyone but its author, and a
  * `Blocked` (32) one from everyone, its author included, since no browsing level includes it.
  *
  * COALESCE(…, false): never NULL, so `NOT` of it (the feed's `hidden`) is never NULL either.
@@ -543,9 +565,9 @@ const VISIBLE = `d.hidden_at IS NULL`;
 export function sharedDocLevelVisible(viewer: string, level: string, domain: string): string {
   const isAuthor = `(d.author_kind = 'user' AND d.author_uid = ${viewer})`;
   return `COALESCE(d.scope_uid <> 0 OR d.author_kind = 'counter'
-    OR (${isAuthor} AND (d.rating_status IS NULL OR d.rating_status = 'pending'))
-    OR (d.rating_status IN ('rated', 'overridden')
-      AND (COALESCE(d.override_level, d.level)
+    OR (${isAuthor} AND NOT ${RATED_NOW})
+    OR (${RATED_NOW}
+      AND (${CURRENT_LEVEL}
         & CASE WHEN ${isAuthor} THEN ${domain} ELSE ${level} END) <> 0), false)`;
 }
 

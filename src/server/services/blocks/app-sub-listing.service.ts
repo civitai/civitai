@@ -43,6 +43,7 @@ import {
 import type { SessionUser } from '~/types/session';
 import { NsfwLevel } from '~/server/common/enums';
 import type { DocRating } from '~/server/services/apps/doc-store.types';
+import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
 import { contentRatingFromNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 import type {
   ListSubListingQueueInput,
@@ -110,7 +111,8 @@ function cardRatingFromItem(rating: DocRating, chosen: string | null): string | 
 
 /**
  * A re-rate or a moderator override of a published item: its card follows, live and staged
- * rating alike (`cardRatingFromItem`'s mapping). A Blocked item's card is hidden. For the rater
+ * rating alike, never below a stricter rating the card already carries. A Blocked item's card is
+ * hidden. For the rater
  * and the override (builds 3 and 5) to call; best-effort like `syncSubListingForSharedRow`.
  */
 export async function syncSubListingRatingFromDoc(args: {
@@ -139,11 +141,24 @@ export async function syncSubListingRatingFromDoc(args: {
       return;
     }
     const rating = contentRatingFromNsfwLevel(args.level);
-    await dbWrite.appSubListing.updateMany({ where, data: { contentRating: rating } });
-    await dbWrite.appSubListing.updateMany({
-      where: { ...where, pendingSubmittedAt: { not: null } },
-      data: { pendingContentRating: rating },
+    // Through `effectiveSubListingRating`, as publishing is: a card the author rated stricter
+    // than its item keeps that rating (picked `x`, re-rated `r`: stays `x`).
+    const rows = await dbWrite.appSubListing.findMany({
+      where,
+      select: { id: true, contentRating: true, pendingContentRating: true },
     });
+    for (const row of rows) {
+      await dbWrite.appSubListing.update({
+        where: { id: row.id },
+        data: {
+          contentRating: effectiveSubListingRating(rating, row.contentRating),
+          pendingContentRating:
+            row.pendingContentRating == null
+              ? null
+              : effectiveSubListingRating(rating, row.pendingContentRating),
+        },
+      });
+    }
     await bustCatalog();
   } catch (err) {
     if (isMissingTableError(err)) return;
@@ -1613,21 +1628,49 @@ export async function countSubListingQueue(): Promise<number> {
   }
 }
 
-async function isSharedItemLive(row: {
+/**
+ * Whether the card's item is still live in the app, and its rating while content levels are on
+ * (`undefined` otherwise, or for an off-site parent). A Blocked item is not live.
+ */
+async function sharedItemState(row: {
   parentListingId: string;
   itemKey: string;
   authorUserId: number;
-}): Promise<boolean> {
+}): Promise<{ live: boolean; rating?: DocRating }> {
   const parent = await dbRead.appListing.findUnique({
     where: { id: row.parentListingId },
     select: { kind: true, appBlockId: true },
   });
   // An off-site parent's items have no shared row: its platform withdraws them instead.
-  if (parent?.kind === 'offsite') return true;
-  if (!parent?.appBlockId) return false;
+  if (parent?.kind === 'offsite') return { live: true };
+  if (!parent?.appBlockId) return { live: false };
   const item = await readSharedItemForSubListing(parent.appBlockId, row.itemKey);
   // Same author as the card: a key the app reused for someone else's item is not this item.
-  return item != null && !item.hidden && item.authorUserId === row.authorUserId;
+  const live = item != null && !item.hidden && item.authorUserId === row.authorUserId;
+  if (!item || !live || !item.rating) return { live };
+  if (item.rating.level != null && item.rating.level & NsfwLevel.Blocked) return { live: false };
+  return { live, rating: item.rating };
+}
+
+/**
+ * Content levels: a card goes live (approve, approve-edit, restore) only for an item rated for
+ * its current version (`cardRatingFromItem` refuses anything else). Read only while the app's
+ * levels flag is on, so with it off a decision reads nothing it did not read before.
+ */
+async function assertCardItemRated(row: {
+  parentListingId: string;
+  itemKey: string;
+  authorUserId: number;
+}): Promise<void> {
+  const parent = await dbRead.appListing.findUnique({
+    where: { id: row.parentListingId },
+    select: { kind: true, appBlockId: true },
+  });
+  if (parent?.kind === 'offsite' || !parent?.appBlockId) return;
+  if (!(await isSharedDocLevelsOn(parent.appBlockId))) return;
+  const { live, rating } = await sharedItemState(row);
+  if (!live) throw new SubListingError(404, 'item_not_found', 'Item not found');
+  if (rating) cardRatingFromItem(rating, null);
 }
 
 /**
@@ -1666,6 +1709,7 @@ export async function moderateSubListing(args: {
     switch (action) {
       case 'approve':
         if (status !== 'pending') throw invalid();
+        await assertCardItemRated(row);
         await assertStillPublic(row.imageId, 'hide the item');
         data = { status: 'approved', approvedAt: now, statusReason: null, ...stamp };
         break;
@@ -1679,13 +1723,15 @@ export async function moderateSubListing(args: {
         if (status !== 'hidden') throw invalid();
         // The in-app moderation sync hides the item when its shared row is hidden or deleted;
         // don't restore a card for an item the app no longer shows.
-        if (!(await isSharedItemLive(row))) {
+        const item = await sharedItemState(row);
+        if (!item.live) {
           throw new SubListingError(
             409,
             'invalid_transition',
             'This item is hidden or removed in the app; it cannot be restored here'
           );
         }
+        if (item.rating) cardRatingFromItem(item.rating, null);
         // An item hidden before it was ever approved goes back to review, not into the store.
         data = row.approvedAt
           ? { status: 'approved', statusReason: null, ...stamp }
@@ -1695,6 +1741,7 @@ export async function moderateSubListing(args: {
         if (status !== 'approved' || !row.pendingSubmittedAt || row.pendingTitle == null) {
           throw invalid();
         }
+        await assertCardItemRated(row);
         await assertStillPublic(row.pendingImageId, 'reject the edit');
         data = {
           title: row.pendingTitle,
