@@ -2332,32 +2332,48 @@ const UPLOADED_GENERATION_SOURCE_IN_FLIGHT = {
 /**
  * One generation-source save's bounds, keyed on the token subject: at most `inFlight` calls in
  * flight (checked first, so a call it refuses spends nothing), then `charge` (an hourly bucket
- * with no exemption), then `run`.
+ * with no exemption), then `run`. A refusal by the pool is recorded here (bucket `in-flight`); a
+ * refusal by the bucket is recorded by `charge`, beside the limiter call it belongs to.
  */
 async function withSourceSaveBounds<T>(
   inFlight: typeof GENERATION_SOURCE_IN_FLIGHT,
-  userId: number,
+  who: { procedure: string; claims: BlockTokenClaims; userId: number },
   charge: () => Promise<{ allowed: boolean }>,
   run: () => Promise<T>
 ): Promise<T> {
-  return withInFlightLimit({ ...inFlight, userId }, async () => {
-    const rate = await charge();
-    if (!rate.allowed) {
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: 'Too many generation sources saved — slow down.',
-      });
-    }
-    return run();
-  });
+  return withInFlightLimit(
+    { ...inFlight, userId: who.userId },
+    async () => {
+      const rate = await charge();
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Too many generation sources saved — slow down.',
+        });
+      }
+      return run();
+    },
+    () => recordBridgeRateLimitRefusal(who.procedure, 'in-flight', who.claims)
+  );
 }
 
 /** `persistGenerationSource`'s bounds: its in-flight pool and its hourly bucket. */
-async function withGenerationSourceBounds<T>(userId: number, run: () => Promise<T>): Promise<T> {
+async function withGenerationSourceBounds<T>(
+  claims: BlockTokenClaims,
+  userId: number,
+  run: () => Promise<T>
+): Promise<T> {
+  const procedure = 'persistGenerationSource';
   return withSourceSaveBounds(
     GENERATION_SOURCE_IN_FLIGHT,
-    userId,
-    () => checkBlockGenerationSourceUserRateLimit(userId),
+    { procedure, claims, userId },
+    async () => {
+      const rate = await checkBlockGenerationSourceUserRateLimit(userId);
+      if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(procedure, 'gen-source-user', claims, rate.retryAfterSeconds);
+      }
+      return rate;
+    },
     run
   );
 }
@@ -2367,13 +2383,26 @@ async function withGenerationSourceBounds<T>(userId: number, run: () => Promise<
  * sizes as `persistGenerationSource`'s and separate from them.
  */
 async function withUploadedGenerationSourceBounds<T>(
+  claims: BlockTokenClaims,
   userId: number,
   run: () => Promise<T>
 ): Promise<T> {
+  const procedure = 'persistUploadedGenerationSource';
   return withSourceSaveBounds(
     UPLOADED_GENERATION_SOURCE_IN_FLIGHT,
-    userId,
-    () => checkBlockUploadedGenerationSourceUserRateLimit(userId),
+    { procedure, claims, userId },
+    async () => {
+      const rate = await checkBlockUploadedGenerationSourceUserRateLimit(userId);
+      if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(
+          procedure,
+          'uploaded-gen-source-user',
+          claims,
+          rate.retryAfterSeconds
+        );
+      }
+      return rate;
+    },
     run
   );
 }
@@ -6434,7 +6463,7 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
-      return withGenerationSourceBounds(userId, async () => {
+      return withGenerationSourceBounds(claims, userId, async () => {
         const { persistBlockGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
         );
@@ -6506,7 +6535,7 @@ export const blocksRouter = router({
           message: 'picked generation sources are not enabled',
         });
       }
-      return withUploadedGenerationSourceBounds(userId, async () => {
+      return withUploadedGenerationSourceBounds(claims, userId, async () => {
         const { persistUploadedGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
         );

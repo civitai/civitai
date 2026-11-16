@@ -2133,7 +2133,10 @@ export type AppBlockRateLimitBucket =
   | 'submit'
   | 'submit-user'
   | 'upload-app'
-  | 'gen-source-user';
+  | 'gen-source-user'
+  | 'uploaded-gen-source-user'
+  // `withInFlightLimit`'s per-user concurrency pool (the generation-source saves).
+  | 'in-flight';
 
 /**
  * Where an App Blocks limiter lives (`civitai_app_block_rate_limit_refusals_total{surface}`). Named
@@ -2167,7 +2170,10 @@ export const APP_BLOCK_RATE_LIMIT_BUCKETS = [
   'submit-user',
   'upload-app',
   'gen-source-user',
+  'uploaded-gen-source-user',
   'llm',
+  // in-flight-limit.ts — a per-user concurrency pool, not a rate window
+  'in-flight',
   // block-tip-rate-limit.ts / block-goods-rate-limit.ts — REST money routes and their reads
   'tip',
   'goods',
