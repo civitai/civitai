@@ -112,6 +112,7 @@ import { projectSafeGenerationResource } from '~/server/schema/blocks/generation
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
+import type { ScannedRowsPath } from './generationSourceScannedRows';
 import type { TrainingDataUpload } from './trainingDataUpload';
 import { trainingBlobKeyIdentity } from '~/server/schema/blocks/training-dataset.schema';
 import {
@@ -4121,6 +4122,26 @@ export function PageBlockHost({
     blockTokenRef.current = token;
   }, [token]);
 
+  // A generation source the viewer uploads (the `generationSource` picker, a single
+  // OPEN_MEDIA_UPLOAD image) lands as a consumer blob. While `app-block-source-scanned-rows` is on
+  // the generation gate refuses that blob for an app, so the server copies it into a private
+  // scanned row and the app gets that instead (`toGenerationSource`). The token is read when the
+  // copy is made, as a batch reads it.
+  const scannedSourcePath = useMemo<ScannedRowsPath>(
+    () => ({
+      usesScannedRows: async () =>
+        (await trpcUtils.client.blockImageUpload.generationSourceUsesScannedRows.query())
+          ?.scannedRows === true,
+      persist: (url) =>
+        callWithCurrentToken(
+          () => blockTokenRef.current,
+          (blockToken) =>
+            trpcUtils.client.blocks.persistUploadedGenerationSource.mutate({ blockToken, url })
+        ),
+    }),
+    [trpcUtils]
+  );
+
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
   // has no allow-downloads). THREE variants, each with its own security gate:
@@ -4674,6 +4695,7 @@ export function PageBlockHost({
           id: `block-generation-source-upload-${requestId}`,
           component: BlockGenerationSourceUploadModal,
           props: {
+            scannedRows: scannedSourcePath,
             onResolved: (result: BlockSourceImageInfo) => {
               resolvedSource = result;
             },
@@ -4763,7 +4785,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken, scannedSourcePath]);
 
   // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered: a
   // silent return strands the block until its picker timeout.
@@ -4851,7 +4873,13 @@ export function PageBlockHost({
             const run = await import('./mediaUploadRun');
             try {
               const blob = new Blob([bytes], { type: contentType });
-              const selected = await run.uploadGenerationMedia(kind, blob, contentType);
+              const selected = await run.uploadGenerationMedia(
+                kind,
+                blob,
+                contentType,
+                undefined,
+                scannedSourcePath
+              );
               send(
                 'MEDIA_UPLOAD_RESULT',
                 selected ? { requestId, selected } : { requestId, error: MEDIA_UPLOAD_FAILED_ERROR }
@@ -4874,6 +4902,7 @@ export function PageBlockHost({
         component: BlockMediaUploadModal,
         props: {
           kind,
+          scannedRows: scannedSourcePath,
           onResolved: (result: BlockMediaUploadInfo) => {
             uploaded = result;
           },
@@ -4889,7 +4918,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken, scannedSourcePath]);
 
   // OPEN_MEDIA_UPLOAD_BATCH → MEDIA_UPLOAD_BATCH_RESULT: many files the block holds, uploaded as
   // PRIVATE generation inputs behind ONE host-chrome confirm (`mediaUploadBatchLogic.ts`). Every

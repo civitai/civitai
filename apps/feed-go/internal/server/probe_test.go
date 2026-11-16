@@ -54,18 +54,21 @@ type goldenProbeCase struct {
 	request        func(context.Context, ShadowRequest) (*http.Request, error)
 	// required: the caches the emptied-cache comparison must reach as would_miss.
 	required []string
+	// computed: the caches Go computes whose emptied-cache comparison must reach would_serve with the
+	// cache reported (the miss computation, hydrate.MissCaches).
+	computed []string
 	// presence: the probe checks presence itself (a recorder); model.getAll runs its serving path
-	// and reports only the cache its fallback names, so a miss Go answers is not reported.
+	// and reports the cache its fallback names, and the misses Go computes (hydrate.WithPresence).
 	presence bool
 }
 
 var goldenProbeCases = []goldenProbeCase{
 	{"as-posts", Procedure, goldenMinAsPosts, goldenSetup, (*Server).compute, SyntheticRequest,
-		[]string{hydrate.CacheTagIDs, hydrate.CacheMetrics, CacheSessionUser, CacheGallerySettings}, true},
+		[]string{hydrate.CacheMetrics, CacheSessionUser, CacheGallerySettings}, []string{hydrate.CacheTagIDs, hydrate.CacheImageFrames}, true},
 	{"infinite", ProcedureInfinite, goldenMinInfinite, goldenSetup, (*Server).computeInfinite, SyntheticInfiniteRequest,
-		[]string{hydrate.CacheTagIDs, hydrate.CacheMetrics}, true},
+		[]string{hydrate.CacheMetrics}, []string{hydrate.CacheTagIDs}, true},
 	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
-		[]string{hydrate.CacheUserCosmetics, CacheModelData}, false},
+		[]string{hydrate.CacheUserCosmetics, CacheModelData}, []string{CacheModelFrames, hydrate.CacheTagIDs}, false},
 }
 
 // The registry holds exactly the procedures the golden cases cover (a new registration needs its
@@ -304,11 +307,16 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 	}
 	// Positive controls: every cache Go falls back on was compared at least once, and so was a cache
 	// Go fills itself (else the would_serve arm proves nothing). The golden server computes the
-	// user-cosmetic, frame and event-decoration misses (MissCompute), so those serve; tag ids and
-	// metric hashes still fall back. The infinite fixtures reach the per-image ones.
+	// user-cosmetic, frame (image and model), tag-ids and event-decoration misses (MissCompute), so
+	// those serve; metric hashes still fall back. The infinite fixtures reach the per-image ones.
 	for _, c := range gc.required {
 		if missCompared[c] == 0 {
 			t.Errorf("no golden request compared a %s miss (compared: %v)", c, missCompared)
+		}
+	}
+	for _, c := range gc.computed {
+		if serveCompared[c] == 0 {
+			t.Errorf("no golden request was served with its %s cold and reported it (the computed miss is unexercised): %v", c, serveCompared)
 		}
 	}
 	if gc.presence && serveCompared[hydrate.CacheBasicUsers] == 0 {
@@ -352,20 +360,27 @@ func TestClassifyProbe(t *testing.T) {
 	}
 }
 
-// With the misses computed (MissCompute), a user-cosmetics miss is served Go-first and a tag-ids
-// miss still is not: the classification follows the deployment's Sources, not the static table.
+// With the misses computed (MissCompute), user-cosmetics, tag-ids and model-frame misses are served
+// Go-first and a metric-hash miss still is not: the classification follows the deployment's Sources,
+// not the static table.
 func TestClassifyProbeWithComputedMisses(t *testing.T) {
 	computed := (&hydrate.Sources{Compute: &hydrate.MissCompute{}}).MissReason
-	result, missed := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheImageFrames: 1}, false, computed)
-	if result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{hydrate.CacheUserCosmetics, hydrate.CacheImageFrames}) {
-		t.Fatalf("computed misses: %s %v, want would_serve reporting both", result, missed)
+	plain := (&hydrate.Sources{}).MissReason
+	result, missed := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheImageFrames: 1, hydrate.CacheTagIDs: 2}, false, computed)
+	if result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{hydrate.CacheUserCosmetics, hydrate.CacheImageFrames, hydrate.CacheTagIDs}) {
+		t.Fatalf("computed misses: %s %v, want would_serve reporting all three", result, missed)
 	}
-	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheTagIDs: 1}, false, computed); result != ProbeWouldMiss {
-		t.Fatalf("a tag-ids miss with computed misses: %s, want would_miss", result)
+	if result, missed := classifyProbe(nil, map[string]int{CacheModelFrames: 1}, false, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheModelFrames}) {
+		t.Fatalf("a model-frames miss with computed misses: %s %v, want would_serve reporting it", result, missed)
 	}
-	// The same miss without a computation is would_miss (the arm can differ).
-	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3}, false, (&hydrate.Sources{}).MissReason); result != ProbeWouldMiss {
-		t.Fatalf("a user-cosmetics miss without a computation: %s, want would_miss", result)
+	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheTagIDs: 1, hydrate.CacheMetrics: 1}, false, computed); result != ProbeWouldMiss {
+		t.Fatalf("a metrics miss with computed misses: %s, want would_miss", result)
+	}
+	// The same misses without a computation are would_miss (the arm can differ).
+	for _, c := range []string{hydrate.CacheUserCosmetics, hydrate.CacheTagIDs, CacheModelFrames} {
+		if result, _ := classifyProbe(nil, map[string]int{c: 1}, false, plain); result != ProbeWouldMiss {
+			t.Fatalf("a %s miss without a computation: %s, want would_miss", c, result)
+		}
 	}
 }
 
@@ -548,8 +563,9 @@ func TestProbeHandlerRecordsAResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A cold tag-ids cache: would_miss, the miss counted on its cache, and the probe's reason-free
-	// end (no fallback was raised: the recorder never falls back).
+	// A cold tag-ids cache: Go computes those misses, so would_serve, the miss counted on its cache,
+	// its lookup counted as a database read on every page that missed, and nothing queried or
+	// written by the probe itself.
 	env, fx, reg = probeEnv(t)
 	cache := goldenCache(t, env)
 	for _, k := range cache.AllKeys() {
@@ -557,20 +573,118 @@ func TestProbeHandlerRecordsAResult(t *testing.T) {
 			cache.SetString(k, []byte{0xc1}) // undecodable: a miss, as an absent key
 		}
 	}
+	before := cacheState(cache)
+	w = httptest.NewRecorder()
+	env.server.ProbeHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, ProbePathPrefix+Procedure, probeBody(t, fx, env.headers, 0)))
+	waitFor(t, "the probe to finish", func() bool {
+		return goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeWouldServe)) == 1 && len(env.server.ProbeQueue) == 0
+	})
+	tagLabels := map[string]string{"feed_endpoint": EndpointAsPosts, "cache": hydrate.CacheTagIDs}
+	if n := goFirst(t, reg, "feed_go_gofirst_miss_total", tagLabels); n != 1 {
+		t.Errorf("tag-ids misses %v, want 1 (one probe)", n)
+	}
+	pages := goFirst(t, reg, "feed_go_gofirst_pages_total", ep)
+	reads := goFirst(t, reg, "feed_go_gofirst_db_reads_total", tagLabels)
+	if pages < 1 || reads < 1 || reads > pages {
+		t.Errorf("tag-ids db reads %v over %v pages, want at least one read and at most one per page", reads, pages)
+	}
+	if n := goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeWouldMiss)); n != 0 {
+		t.Errorf("would_miss = %v for a tag-ids miss Go computes, want 0", n)
+	}
+	if n := goFirst(t, reg, "feed_go_gofirst_check_lag_seconds", ep); n != 0 {
+		t.Errorf("check lag observed %v times with no startedAt, want 0", n)
+	}
+	if after := cacheState(cache); !reflect.DeepEqual(after, before) {
+		t.Error("the probe wrote to the cache")
+	}
+	if err := env.server.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same cold cache without the computation (FEED_GO_COMPUTE_MISSES off): would_miss, and a
+	// would_miss probe is not served, so no pages and no reads for the cost gate.
+	env, fx, reg = probeEnv(t)
+	env.server.Deps.Hydrator.(*hydrate.Sources).Compute = nil
+	cache = goldenCache(t, env)
+	for _, k := range cache.AllKeys() {
+		if strings.HasPrefix(k, hydrate.KeyTagIDs+":") {
+			cache.SetString(k, []byte{0xc1})
+		}
+	}
 	w = httptest.NewRecorder()
 	env.server.ProbeHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, ProbePathPrefix+Procedure, probeBody(t, fx, env.headers, 0)))
 	waitFor(t, "the probe to finish", func() bool {
 		return goFirst(t, reg, "feed_go_gofirst_total", resultLabels(ProbeWouldMiss)) == 1 && len(env.server.ProbeQueue) == 0
 	})
-	if n := goFirst(t, reg, "feed_go_gofirst_miss_total", map[string]string{"feed_endpoint": EndpointAsPosts, "cache": hydrate.CacheTagIDs}); n != 1 {
-		t.Errorf("tag-ids misses %v, want 1 (one probe)", n)
+	if n := goFirst(t, reg, "feed_go_gofirst_miss_total", tagLabels); n != 1 {
+		t.Errorf("no computation: tag-ids misses %v, want 1", n)
 	}
-	if n := goFirst(t, reg, "feed_go_gofirst_check_lag_seconds", map[string]string{"feed_endpoint": EndpointAsPosts}); n != 0 {
-		t.Errorf("check lag observed %v times with no startedAt, want 0", n)
-	}
-	// A would_miss probe is not served: no pages for the cost gate.
-	if n := goFirst(t, reg, "feed_go_gofirst_pages_total", map[string]string{"feed_endpoint": EndpointAsPosts}); n != 0 {
+	if n := goFirst(t, reg, "feed_go_gofirst_pages_total", ep); n != 0 {
 		t.Errorf("pages counted %v for a would_miss probe, want 0", n)
+	}
+	if n := goFirst(t, reg, "feed_go_gofirst_db_reads_total", tagLabels); n != 0 {
+		t.Errorf("db reads counted %v for a would_miss probe, want 0", n)
+	}
+}
+
+// model.getAll's probe with the model frames cold: Go computes them, so would_serve with the miss
+// reported, its lookup counted as one read on the page that missed and the page counted, and the
+// probe sent no frame query and wrote nothing (hydrate.WithPresence). Without the computation the
+// same probe is would_miss on model-frames.
+func TestProbeModelGetAllComputedFrameMiss(t *testing.T) {
+	fx := goldenLoad(t, filepath.Join(goldenDir, "model-getall", "highest-rated-signed-out.json"))
+	cold := *fx
+	cold.Expect.Fallback = "test-cache-emptied"
+	cold.Redis = map[string]goldenRedisEntry{}
+	frames := 0
+	for k, v := range fx.Redis {
+		if strings.HasPrefix(k, hydrate.KeyModelFrames+":") {
+			frames++
+			continue
+		}
+		cold.Redis[k] = v
+	}
+	if frames == 0 {
+		t.Fatal("the fixture has no model frame keys to empty")
+	}
+	for _, withCompute := range []bool{true, false} {
+		env := goldenSetupModels(t, &cold)
+		if !withCompute {
+			env.server.Models.Sources.(*hydrate.Sources).Compute = nil
+			env.server.Deps.Hydrator.(*hydrate.Sources).Compute = nil
+		}
+		before := cacheState(env.cache)
+		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
+		rec := &hydrate.PresenceProbe{Checker: checker}
+		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		result, missed := classifyProbe(err, rec.Misses(), false, checker.MissReason)
+		if !slices.Contains(missed, CacheModelFrames) {
+			t.Fatalf("compute %v: missed %v, want model-frames reported", withCompute, missed)
+		}
+		if !withCompute {
+			if result != ProbeWouldMiss || fallback.Reason(err) != "model-frame-miss" {
+				t.Fatalf("no computation: %s (%v), want would_miss on model-frame-miss", result, err)
+			}
+			continue
+		}
+		if result != ProbeWouldServe {
+			t.Fatalf("computed: %s missed %v (err %v), want would_serve", result, missed, err)
+		}
+		_, pages := rec.FirstCheck()
+		if reads := rec.DBReads()[CacheModelFrames]; pages < 1 || reads < 1 || reads > pages {
+			t.Fatalf("model-frames reads %d over %d pages, want at least one and at most one per page", reads, pages)
+		}
+		if rec.Misses()[CacheModelFrames] < 1 {
+			t.Fatalf("misses %v", rec.Misses())
+		}
+		for _, q := range env.server.Models.DB.(*goldenModelPG).Calls {
+			if strings.Contains(q, `IS DISTINCT FROM 'string'`) {
+				t.Fatal("the probe queried for a frame miss")
+			}
+		}
+		if after := cacheState(env.cache); !reflect.DeepEqual(after, before) {
+			t.Fatal("the probe wrote to the cache")
+		}
 	}
 }
 

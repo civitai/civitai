@@ -1,7 +1,9 @@
 <script lang="ts">
   import HeartsRow from './HeartsRow.svelte';
   import Icon from './Icon.svelte';
+  import { untrack } from 'svelte';
   import { bump } from './motion';
+  import { sound } from './sound';
 
   let {
     value,
@@ -11,6 +13,17 @@
     hearts,
     maxHearts,
   }: { value: number; max: number; done: boolean; streak: number; hearts: number; maxHearts: number } = $props();
+
+  // Mounted at every width (hidden by CSS beside the rail), so it is the one place the bell rings: once, for a Watch
+  // completed while the page is open, never for the first read.
+  let seen = untrack(() => value);
+  $effect(() => {
+    const now = value;
+    untrack(() => {
+      if (max > 0 && now >= max && seen < max) sound.play('bell');
+      seen = now;
+    });
+  });
 </script>
 
 <!-- Below 1200px there is no rail: the Watch, the streak and the hearts sit in one quiet row above the question. -->
@@ -31,7 +44,12 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 8px 28px 0;
+    box-sizing: border-box;
+    /* Same width as the question column, so the two left edges line up between 40rem and 75rem. */
+    width: 100%;
+    max-width: 1056px;
+    margin: 0 auto;
+    padding: 8px 28px;
     color: var(--io-parchment-muted);
     font: 400 12px/1.2 var(--io-font-ui);
   }
@@ -85,7 +103,7 @@
   }
   @media (max-width: 40rem) {
     .meta {
-      padding: 6px 16px 0;
+      padding: 6px 16px 8px;
     }
   }
 </style>

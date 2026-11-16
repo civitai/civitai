@@ -73,6 +73,11 @@ type Config struct {
 	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
 	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
 	RequestBudget time.Duration
+	// MaxInFlight is FEED_GO_MAX_IN_FLIGHT: the public requests one pod computes at once. Past it a
+	// request is not computed but proxied to the Node app (fallback reason `bulkhead`). 0 = not set
+	// explicitly (unset, zero, negative or junk): the cap is then the replica pool's connection ceiling
+	// (server.ResolveMaxInFlight). There is no unlimited setting.
+	MaxInFlight int
 	// CompletionConcurrency is FEED_GO_COMPLETION_CONCURRENCY: the lazy-post-images completion
 	// fetches one request runs at once. The default is sized for shadow load; serving may want more.
 	CompletionConcurrency int
@@ -153,6 +158,7 @@ func Load() (*Config, error) {
 	}
 	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
 	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
+	c.MaxInFlight = positiveIntEnv("FEED_GO_MAX_IN_FLIGHT", 0)
 	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
 	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond
 	c.JWKSMaxStaleness = time.Duration(positiveIntEnv("FEED_GO_JWKS_MAX_STALENESS_MS", 3*int(c.JWKSRefresh/time.Millisecond))) * time.Millisecond

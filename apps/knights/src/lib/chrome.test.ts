@@ -3,6 +3,8 @@ import {
   accuracyLine,
   belowBarCue,
   headerDaily,
+  landVote,
+  pendingVotes,
   withVotesSent,
   withArticle,
   heartsLeft,
@@ -206,6 +208,28 @@ describe('withArticle', () => {
     expect(withArticle('Inquisitor')).toBe('an Inquisitor');
     expect(withArticle('Knight')).toBe('a Knight');
     expect(withArticle('Templar')).toBe('a Templar');
+  });
+});
+
+describe('pendingVotes / landVote', () => {
+  it('never counts a vote twice while the refreshed daily that holds it replaces the old one', () => {
+    const before = { ...daily, votes: 9 };
+    const sent = { count: 1, landed: 0, landedOn: null as object | null };
+    expect(withVotesSent(before, pendingVotes(sent, before)).votes).toBe(10);
+    landVote(sent, before);
+    expect(withVotesSent(before, pendingVotes(sent, before)).votes).toBe(10);
+    const after = { ...daily, votes: 10, watchDone: true };
+    expect(withVotesSent(after, pendingVotes(sent, after)).votes).toBe(10);
+  });
+
+  it('keeps several landed votes counted until the daily changes', () => {
+    const before = { ...daily, votes: 3 };
+    const sent = { count: 2, landed: 0, landedOn: null as object | null };
+    landVote(sent, before);
+    landVote(sent, before);
+    expect(sent.count).toBe(0);
+    expect(pendingVotes(sent, before)).toBe(2);
+    expect(pendingVotes(sent, { ...daily, votes: 5 })).toBe(0);
   });
 });
 
