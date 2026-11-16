@@ -16,7 +16,7 @@
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
@@ -86,6 +86,8 @@
   onDestroy(() => {
     alive = false;
     inFlight.count = 0;
+    inFlight.landed = 0;
+    inFlight.landedOn = null;
   });
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
@@ -436,11 +438,12 @@
           refilling = false;
         }
       },
-      // The page's own data (status, rewards, level notices) is read again once the vote has landed.
+      // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
+      // against the data on screen until the refreshed data, which holds it, replaces it.
       onSettled: async () => {
+        if (counted && alive) landVote(inFlight, data.daily);
+        counted = false;
         await invalidate('app:play').catch(() => {});
-        // The page's data now holds the vote, so it stops being counted on top.
-        uncount();
       },
     });
   }
@@ -492,7 +495,7 @@
     void post(input.action, input.formData, key, isVote);
   };
 
-  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, inFlight.count)) : null);
+  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, pendingVotes(inFlight, data.daily))) : null);
   let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
@@ -597,7 +600,7 @@
       value={strip.value}
       max={strip.max}
       done={strip.done}
-      streak={withVotesSent(data.daily, inFlight.count).streak}
+      streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
     />
@@ -775,7 +778,7 @@
   {/if}
   </div>
   {#if data.mode === 'queue' && !data.apprenticeMeter}
-    <PlayRail status={data.status} daily={withVotesSent(data.daily, inFlight.count)} rail={data.rail} ladder={data.ladder} />
+    <PlayRail status={data.status} daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily))} rail={data.rail} ladder={data.ladder} />
   {/if}
   </div>
   {/if}
