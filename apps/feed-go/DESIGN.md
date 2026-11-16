@@ -244,7 +244,8 @@ pictures, thumbnails) are still never written.
 
 **Repeated misses** (`lookupShared`). Concurrent requests that miss the same ids of one cache share
 one lookup (singleflight per cache and id set). With write-back off, each lookup's answer (a record,
-or "no row") is also kept in process for 10 s (at most 50 000 ids), so the same miss within seconds
+or "no row") is also kept in process for 10 s (at most 50 000 ids; expired ones are swept at most
+once a second, and while it is full of live ones a new id is not kept), so the same miss within seconds
 sends no query: without a write, Node's next fill is the only thing that would otherwise end the
 repeats. With write-back on nothing is kept (the written entry answers repeats). The kept answer is a
 §9 divergence.
