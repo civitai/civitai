@@ -7,7 +7,7 @@ export const ARCHIVE_QUEUE_TYPE = 'CsamArchive';
 /**
  * A report's place in the archiver's queue:
  * - `failing`: its row records an error or more than one claim, so a run has failed or died on it.
- * - `overdue`: its row is older than the queue's overdue window.
+ * - `overdue`: its row is older than `overdueMinutes`, which the caller chooses.
  * - `queued`: waiting for the archiver's next poll.
  */
 export type ArchiveQueueState = 'queued' | 'failing' | 'overdue';
