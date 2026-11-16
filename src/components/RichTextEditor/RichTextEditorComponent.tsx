@@ -661,7 +661,7 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     toolbarOffset?: number;
     inputClasses?: string;
     /**
-     * One row on a phone: bold, italic and the link control only (an empty address in the link
+     * A short toolbar at every width, to fit one row on a phone: bold, italic and the link control only (an empty address in the link
      * popover removes the link), for a surface that offers little markup.
      */
     compactToolbar?: boolean;

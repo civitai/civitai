@@ -17,8 +17,12 @@ import { mergeEditorItems } from '~/components/Post/EditV2/post-edit-items';
 import { textIndexAfter } from '~/shared/utils/post-items';
 import { STORYLINE_TEXT_MAX_PER_POST } from '~/shared/utils/storyline';
 
-/** An "Add text" the author has opened: a card with no row until they type into it. */
-type TextDraft = { index: number; textId?: number };
+/**
+ * An "Add text" the author has opened, by the slot it sits in: a card with no row until they type
+ * into it. Once its row exists the card keeps rendering it (so typing is not interrupted, and no
+ * edit inside the autosave window is lost to a remount) and the store's copy is hidden.
+ */
+type TextDraft = { textId?: number };
 
 const NO_TEXTS: PostEditTextDetail[] = [];
 
@@ -28,14 +32,15 @@ export function PostImageCards() {
   // server keeps each text where it is.
   const textOn = !!useFeatureFlags().storylineText;
   const allTexts = textOn ? storeTexts : NO_TEXTS;
-  const [draft, setDraft] = useState<TextDraft | null>(null);
-  // Once a draft's first character creates its row, the draft keeps rendering that row so the
-  // editor is not remounted mid-typing.
-  const texts = allTexts.filter((t) => t.id !== draft?.textId);
+  const [drafts, setDrafts] = useState<Record<number, TextDraft>>({});
+  const draftTextIds = new Set(Object.values(drafts).flatMap((d) => (d.textId ? [d.textId] : [])));
+  const texts = allTexts.filter((t) => !draftTextIds.has(t.id));
+  const unsavedDrafts = Object.keys(drafts).length - draftTextIds.size;
   const { maxItems } = useMediaUploadSettingsContext();
   const { showPreview, toggleShowPreview } = usePostPreviewContext();
   const tab = showPreview ? 'preview' : 'edit';
-  const canAddText = useCanAddStorylineText() && allTexts.length < STORYLINE_TEXT_MAX_PER_POST;
+  const canAddText =
+    useCanAddStorylineText() && allTexts.length + unsavedDrafts < STORYLINE_TEXT_MAX_PER_POST;
 
   if (!images.length) return null;
 
@@ -43,21 +48,21 @@ export function PostImageCards() {
   const addSlots = canAddText && !showPreview;
   let imageNumber = 0;
   let textNumber = 0;
-  const slotAt = (index: number) =>
-    draft?.index === index ? (
-      <div data-text-id={draft.textId} className="flex flex-col gap-1">
+  const slotAt = (index: number) => {
+    const draft = drafts[index];
+    if (!draft) return <AddTextSlot onAdd={() => setDrafts((all) => ({ ...all, [index]: {} }))} />;
+    return (
+      <div key={`draft-${index}`} data-text-id={draft.textId}>
         <StorylineTextCard
-          key="draft"
           text={null}
           label={`Text ${++textNumber} / ${STORYLINE_TEXT_MAX_PER_POST}`}
           draftIndex={index}
-          onCreated={(created) => setDraft({ index, textId: created.id })}
-          onDismiss={() => setDraft(null)}
+          onCreated={(created) => setDrafts((all) => ({ ...all, [index]: { textId: created.id } }))}
+          onDismiss={() => setDrafts(({ [index]: _gone, ...rest }) => rest)}
         />
       </div>
-    ) : (
-      <AddTextSlot onAdd={() => setDraft({ index })} />
     );
+  };
 
   return (
     <>

@@ -1,7 +1,7 @@
 import { ActionIcon, Card, Loader, Text } from '@mantine/core';
 import { Tooltip } from '~/components/MantineOverlays';
 import { IconCheck, IconLock, IconTrash } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
@@ -48,6 +48,9 @@ export function StorylineTextCard({
   const [heldMessage, setHeldMessage] = useState<string | null>(null);
   const debounce = useDebouncer(AUTOSAVE_MS);
   usePendingSave(`storyline-text-${id ?? 'draft'}`, debounce);
+  // A save still inside its debounce window must not die with the card (a draft handing over to
+  // its row, a navigation): run it on the way out.
+  useEffect(() => debounce.flush, [debounce]);
 
   const onHeld = (error: { data?: { code?: string } | null; message: string }) => {
     if (error.data?.code !== 'FORBIDDEN') return false;
@@ -89,7 +92,7 @@ export function StorylineTextCard({
     setValue(html);
     latest.current = html;
     if (id === null) {
-      if (removeTags(html).trim().length > 0 && postId && add.isIdle)
+      if (removeTags(html).trim().length > 0 && postId && !add.isPending && !add.isSuccess)
         add.mutate({ postId, index: draftIndex });
       return;
     }
@@ -131,7 +134,7 @@ export function StorylineTextCard({
               <IconCheck size={14} aria-hidden /> Saved
             </Text>
           )}
-          {save.isError && (
+          {(save.isError || add.isError) && (
             <Text size="sm" c="red" role="status">
               Not saved
             </Text>

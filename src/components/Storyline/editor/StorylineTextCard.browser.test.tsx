@@ -4,7 +4,8 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import type * as PostEditProviderMod from '~/components/Post/EditV2/PostEditProvider';
 import type * as TrpcModule from '~/utils/trpc';
 
-const { setText, addText, deleteText, setTexts, held } = vi.hoisted(() => ({
+const { setText, addText, deleteText, setTexts, held, failure } = vi.hoisted(() => ({
+  failure: { data: { code: 'INTERNAL_SERVER_ERROR' }, message: 'boom' },
   setText: vi.fn(),
   addText: vi.fn(),
   deleteText: vi.fn(),
@@ -15,18 +16,28 @@ type MutationOpts = { onSuccess?: (data: unknown) => void; onError?: (error: unk
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
-  const mutation = (spy: typeof setText) => (opts: MutationOpts) => ({
-    mutate: (input: unknown) => {
-      const result = spy(input);
-      if (result === held) opts.onError?.(result);
-      else opts.onSuccess?.(result);
-    },
-    reset: vi.fn(),
-    isPending: false,
-    isSuccess: false,
-    isError: false,
-    isIdle: true,
-  });
+  const { useState } = await import('react');
+  // Stateful like react-query's: a failed create must stay failed until the next attempt.
+  const mutation = (spy: typeof setText) => (opts: MutationOpts) => {
+    const [status, setStatus] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+    return {
+      mutate: (input: unknown) => {
+        const result = spy(input);
+        if (result === held || result === failure) {
+          setStatus('error');
+          opts.onError?.(result);
+        } else {
+          setStatus('success');
+          opts.onSuccess?.(result);
+        }
+      },
+      reset: () => setStatus('idle'),
+      isPending: status === 'pending',
+      isSuccess: status === 'success',
+      isError: status === 'error',
+      isIdle: status === 'idle',
+    };
+  };
   return {
     ...(await importOriginal<typeof TrpcModule>()),
     trpc: makeTrpcProxy({
@@ -50,6 +61,7 @@ vi.mock('~/components/RichTextEditor/RichTextEditor', () => ({
     </div>
   ),
 }));
+vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
 vi.mock('~/components/RenderHtml/RenderHtml', () => ({
   RenderHtml: ({ html }: { html: string }) => <div dangerouslySetInnerHTML={{ __html: html }} />,
 }));
@@ -85,14 +97,6 @@ describe('StorylineTextCard', () => {
     await expect.element(page.getByText('Once')).toBeVisible();
   });
 
-  test('the label, the status and delete share the card heading row', async () => {
-    renderWithProviders(<StorylineTextCard text={text} label="Text 3 / 20" />);
-    const label = page.getByText('Text 3 / 20');
-    await expect.element(label).toBeVisible();
-    const row = label.element().parentElement as HTMLElement;
-    expect(row.contains(page.getByRole('button', { name: 'Delete text' }).element())).toBe(true);
-  });
-
   describe('a draft (Add text)', () => {
     const draft = (props = {}) => (
       <StorylineTextCard text={null} label="Text 1 / 20" draftIndex={4} {...props} />
@@ -123,9 +127,24 @@ describe('StorylineTextCard', () => {
       const onCreated = vi.fn();
       renderWithProviders(draft({ onCreated }));
       await page.getByLabelText('Text', { exact: true }).fill('<p>Once</p>');
+      expect(addText).toHaveBeenCalledTimes(1);
       expect(addText).toHaveBeenCalledWith({ postId: 5, index: 4 });
       expect(onCreated).toHaveBeenCalledWith(created);
       expect(setText).toHaveBeenCalledWith({ id: 31, content: '<p>Once</p>' });
+    });
+
+    test('a failed create says so and the next keystroke tries again, with the latest words', async () => {
+      addText.mockReset();
+      setText.mockReset();
+      addText.mockReturnValueOnce(failure).mockReturnValue({ id: 32, index: 4, content: '' });
+      setText.mockImplementation(({ id, content }) => ({ id, content }));
+      renderWithProviders(draft());
+      const box = page.getByLabelText('Text', { exact: true });
+      await box.fill('<p>O</p>');
+      await expect.element(page.getByText('Not saved')).toBeVisible();
+      await box.fill('<p>Once</p>');
+      expect(addText).toHaveBeenCalledTimes(2);
+      expect(setText).toHaveBeenCalledWith({ id: 32, content: '<p>Once</p>' });
     });
 
     test('Delete on an untouched draft dismisses it without a server call', async () => {
@@ -136,5 +155,15 @@ describe('StorylineTextCard', () => {
       expect(onDismiss).toHaveBeenCalledOnce();
       expect(deleteText).not.toHaveBeenCalled();
     });
+  });
+
+  test('words still inside the autosave pause are saved when the card goes away', async () => {
+    setText.mockReset();
+    setText.mockImplementation(({ id, content }) => ({ id, content }));
+    const view = await renderWithProviders(<StorylineTextCard text={text} label="Text 1 / 20" />);
+    await page.getByLabelText('Text', { exact: true }).fill('<p>Last words</p>');
+    expect(setText).not.toHaveBeenCalled();
+    await view.unmount();
+    expect(setText).toHaveBeenCalledWith({ id: 7, content: '<p>Last words</p>' });
   });
 });

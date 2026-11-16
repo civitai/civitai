@@ -40,11 +40,13 @@ export function useCarouselUrlSync({
   // swipe would be dragged back.
   useEffect(() => {
     const target = items[index];
-    if (!target || target.key === lastSettledKeyRef.current) return;
+    const hasTexts = items.some((item) => item.key.startsWith('txt:'));
+    if (!(storyline.active || hasTexts) || !target || target.key === lastSettledKeyRef.current)
+      return;
     lastSettledKeyRef.current = target.key;
     carouselNavigate(index);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change
-  }, [index]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change or mode entry
+  }, [index, storyline.active]);
 
   // Only for the slide the URL already names: any other moves the URL, and the effect above follows.
   const seekTo = useRef<(key: string) => void>();
