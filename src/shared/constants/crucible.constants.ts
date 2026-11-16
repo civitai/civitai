@@ -129,6 +129,15 @@ export const crucibleRankingsAreFinal = (status: CrucibleStatus) =>
 
 export { hasCrucibleStarted } from '@civitai/shared/crucible';
 
+/** Finalized, or past its end time even before the job finalizes it. */
+export const crucibleHasEnded = ({
+  status,
+  endAt,
+}: {
+  status: CrucibleStatus;
+  endAt: Date | string | null;
+}) => crucibleRankingsAreFinal(status) || (!!endAt && new Date(endAt) <= new Date());
+
 /**
  * Media types entries may be. Audio is excluded: judging is a side-by-side visual comparison.
  */

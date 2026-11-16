@@ -79,6 +79,7 @@ import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/
 import {
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
+  crucibleHasEnded,
   CRUCIBLE_ENTRY_CUTOFF_PERCENT,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
   CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
@@ -1130,10 +1131,7 @@ export const updateCrucible = async ({
   if (!isOwner && !isModerator)
     throw throwAuthorizationError('You can only edit your own crucible');
 
-  const hasEnded =
-    crucible.status === CrucibleStatus.Completed ||
-    crucible.status === CrucibleStatus.Cancelled ||
-    (!!crucible.endAt && crucible.endAt <= new Date());
+  const hasEnded = crucibleHasEnded(crucible);
   if (hasEnded && !isModerator)
     throw throwBadRequestError('This crucible has ended and can no longer be edited');
 

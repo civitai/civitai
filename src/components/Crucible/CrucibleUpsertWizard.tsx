@@ -99,6 +99,7 @@ import {
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
   getMaxCrucibleStartAt,
+  crucibleHasEnded,
   getPrizeDistributionTotal,
   hasCrucibleStarted,
   isCustomPrizeDistribution,
@@ -221,12 +222,8 @@ export function CrucibleUpsertWizard(props: Props) {
   const canEditAll = !crucible || (crucible.userId === currentUser?.id && !hasStarted);
   const rulesLocked = !canEditAll;
   const canEditContentLevels = canEditAll || (isModerator && !hasStarted);
-  const hasEnded =
-    !!crucible &&
-    (crucible.status === CrucibleStatus.Completed ||
-      crucible.status === CrucibleStatus.Cancelled ||
-      (!!crucible.endAt && new Date(crucible.endAt) <= new Date()));
-  // As the server: a moderator, their own crucible included, can fix a running one's entry rules.
+  const hasEnded = !!crucible && crucibleHasEnded(crucible);
+  // Keep in sync with isModeratorFixingRunning in updateCrucible.
   const canFixRunning = isModerator && hasStarted && !hasEnded;
   const editableFields = getCrucibleEditableFields({
     canEditAll,

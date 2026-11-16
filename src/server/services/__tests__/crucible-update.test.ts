@@ -129,6 +129,8 @@ beforeEach(() => {
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   modelVersionCount.mockImplementation(allPublished);
   modelVersionFindMany.mockResolvedValue([]);
+  // clearAllMocks keeps implementations, so a test's throwing $executeRaw would outlive it.
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
 });
 
 describe('updateCrucible — text scan', () => {
