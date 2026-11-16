@@ -22,11 +22,14 @@ import {
  * `no-ttl-sys-redis-write` ratchets the call shape that most clearly marks cache data.
  *
  * Exempt: `src/server/redis/client.ts`, the app shim that builds the client. Test files are not
- * scanned. The key set itself is pinned in `packages/civitai-redis` (sys-key ledger), not here.
+ * scanned.
  *
  * Known gaps: a client reached through a parameter or object property that never names
  * `sysRedis` in the file (e.g. `redis: PointsRedis` injected by a caller) is invisible here; the
- * caller that passes it in is on the list.
+ * caller that passes it in is on the list. The KEY SET is not checked here at all: a new
+ * `REDIS_SYS_KEYS` entry, defined in `packages/civitai-redis` and used from a file already on the
+ * list, passes. Pinning the key set is the job of a sys-key ledger in that package (#9060), which
+ * has not landed; until it does, nothing enforces sign-off for a new sys key.
  */
 
 const GLOBS = ['src/**/*.{ts,tsx}'];

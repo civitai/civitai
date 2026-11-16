@@ -321,7 +321,9 @@ export function fliptEnumKeys(text: string) {
 /**
  * Every `fliptKey:` value in feature-flags.service.ts, resolved to its string. A value may be a
  * literal, `FLIPT_FEATURE_FLAGS.X`, or an imported `export const X = '…'`. Anything else is
- * returned in `unresolved`, so a new shape turns the guard red instead of hiding a key.
+ * returned in `unresolved`, so a new value shape turns the guard red instead of hiding a key.
+ * Only `fliptKey: <value>` properties are read; `{ fliptKey }` shorthand and a quoted
+ * `'fliptKey':` name are not.
  */
 export function fliptKeysOfFeatureFlags(text: string, enumKeys: Map<string, string>) {
   const sf = parse(FEATURE_FLAGS_FILE, text);

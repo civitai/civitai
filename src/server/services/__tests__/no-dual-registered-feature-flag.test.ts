@@ -16,7 +16,12 @@ import {
  * side must leave the baseline in the same commit, so the list only shrinks.
  *
  * `fliptKey` values are resolved from a string literal, `FLIPT_FEATURE_FLAGS.X`, or an imported
- * `export const X = '…'`. Any other shape fails the guard rather than hiding a key.
+ * `export const X = '…'`. Any other value expression fails the guard rather than hiding a key.
+ * Only a `fliptKey: <value>` property is read: the shorthand `{ fliptKey }` and a quoted
+ * `'fliptKey':` name are skipped (neither appears today).
+ *
+ * Known gap: this catches a key registered in BOTH places only. A new flag registered solely as
+ * a `fliptKey` in feature-flags.service.ts, bypassing the enum, passes.
  */
 
 const BASELINE: string[] = [
