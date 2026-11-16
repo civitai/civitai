@@ -16,6 +16,11 @@ vi.mock('$lib/server/text-check', () => ({
   textCheckCookie: () => null,
   throwTextCheckHttpError: () => undefined,
 }));
+let kohyaAllowed = false;
+vi.mock('$lib/server/flipt', () => ({
+  isKohyaAllowed: async () => kohyaAllowed,
+  flagVariant: async () => null,
+}));
 vi.mock('$lib/server/train', async () => ({
   continueTraining: (...args: unknown[]) => continueTraining(...args),
   continueTrainingWhatIf: (...args: unknown[]) => continueTrainingWhatIf(...args),
@@ -60,6 +65,23 @@ describe('POST /api/continue-training', () => {
     await post({ ...body, matureAck: 'true' });
     await post(body);
     expect(continueTraining.mock.calls.map((c) => c[2].matureAck)).toEqual([true, false, false]);
+  });
+
+  it("passes the user's Kohya gate to the quote and the submit", async () => {
+    continueTrainingWhatIf.mockResolvedValue({ cost: 1400 });
+    continueTraining.mockResolvedValue('wf-2');
+    const url = new URL('http://x/api/continue-training?id=wf-1&fromEpoch=10&addEpochs=5');
+    for (const allowed of [true, false]) {
+      kohyaAllowed = allowed;
+      await GET({
+        locals: { user: { id: 1 } },
+        request: new Request('http://x'),
+        url,
+      } as unknown as Parameters<typeof GET>[0]);
+      await post(body);
+      expect(continueTrainingWhatIf.mock.calls.at(-1)![4]).toBe(allowed);
+      expect(continueTraining.mock.calls.at(-1)![5]).toBe(allowed);
+    }
   });
 
   it('answers 409 with the reason when the mature confirm is missing', async () => {
