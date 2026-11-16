@@ -27,7 +27,14 @@ import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const ROOTS = ['src', 'apps', 'packages'];
-const SKIP_DIRS = new Set(['node_modules', '__tests__', '__mocks__', 'dist', 'build', '.svelte-kit']);
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '__tests__',
+  '__mocks__',
+  'dist',
+  'build',
+  '.svelte-kit',
+]);
 
 type Counts = { catch: number; await: number };
 
@@ -59,7 +66,10 @@ const FROZEN_BASELINE: Record<string, Counts> = {
   },
   'src/server/services/orchestrator/training/training-canary.ts': { catch: 2, await: 0 },
   'src/server/services/orchestrator/training/training-state.ts': { catch: 3, await: 0 },
-  'src/server/services/orchestrator/training/training-trigger-word-check.ts': { catch: 3, await: 0 },
+  'src/server/services/orchestrator/training/training-trigger-word-check.ts': {
+    catch: 3,
+    await: 0,
+  },
   'src/server/services/orchestrator/training/training.orch.ts': { catch: 2, await: 0 },
 };
 
