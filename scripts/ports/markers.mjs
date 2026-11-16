@@ -1,9 +1,11 @@
 // The `@ported-to-go` JSDoc block written above each port's Node entry symbol.
 //
-// A marker is a whole-line JSDoc block whose first body line starts with `* @ported-to-go `. The
+// A marker is exactly the block `markerLines` writes, every line at the same indentation. The
 // generator never edits one in place: it strips every marker from a file and re-inserts the ones
 // the manifest asks for, so a rewrite is idempotent and a marker on the wrong symbol, or for a port
-// that is gone, disappears on the next run.
+// that is gone, disappears on the next run. Anything else that mentions the tag (a hand-written or
+// damaged block) is malformed: the generator reports it and leaves the file alone, since guessing
+// where a damaged block ends could delete code.
 import { createRequire } from 'node:module';
 
 import { findEntryNode } from './node-deps.mjs';
@@ -12,10 +14,11 @@ const require = createRequire(import.meta.url);
 const ts = require('typescript');
 
 export const TAG = '@ported-to-go';
-const OPEN = /^[ \t]*\/\*\*[ \t]*$/;
+const OPEN = /^([ \t]*)\/\*\*$/;
 const FIRST =
-  /^[ \t]*\* @ported-to-go (\S+) · status: (\S+) · see ports\/manifest\.json \(id: (.+)\)\.$/;
-const CLOSE = /^[ \t]*\*\/[ \t]*$/;
+  /^ \* @ported-to-go (\S+) · status: (\S+) · see ports\/manifest\.json \(id: (.+)\)\.$/;
+const UPDATE =
+  /^ \* Changing this behaviour\? Update (.+) in the same PR; CI lists every port a PR touches\.$/;
 
 /** The marker lines for a port, without indentation. */
 export function markerLines(port) {
@@ -30,9 +33,28 @@ export function markerLines(port) {
 }
 
 /**
+ * The marker block starting at `lines[i]`, as `{ id, length }`, or null when the lines there are
+ * not exactly a block `markerLines` would write (same indentation on every line).
+ */
+function blockAt(lines, i) {
+  const open = OPEN.exec(lines[i]);
+  if (!open) return null;
+  const indent = open[1];
+  const body = lines.slice(i, i + 5);
+  if (body.length < 5 || !body.every((l) => l.startsWith(indent))) return null;
+  const bare = body.map((l) => l.slice(indent.length));
+  const first = FIRST.exec(bare[1]);
+  const update = UPDATE.exec(bare[2]);
+  if (!first || !update) return null;
+  const [, service, status, id] = first;
+  const expected = markerLines({ service, status, id, goHandler: update[1].split(', ') });
+  return expected.every((l, k) => l === bare[k]) ? { id, length: expected.length } : null;
+}
+
+/**
  * Remove every marker block. Returns the text without them, the markers found
- * (`{ id, line, text }`, 1-based line) and the lines that mention the tag outside a well-formed
- * block (`malformed`), which the caller reports: a hand-written or damaged marker.
+ * (`{ id, line, text }`, 1-based line) and the lines that mention the tag outside an intact block
+ * (`malformed`). Callers must not write a file with a malformed line: see the header.
  */
 export function stripMarkers(text) {
   const lines = text.split('\n');
@@ -40,15 +62,11 @@ export function stripMarkers(text) {
   const found = [];
   const malformed = [];
   for (let i = 0; i < lines.length; i++) {
-    if (OPEN.test(lines[i]) && i + 1 < lines.length && FIRST.test(lines[i + 1])) {
-      let end = i + 2;
-      while (end < lines.length && !CLOSE.test(lines[end]) && !OPEN.test(lines[end])) end++;
-      if (end < lines.length && CLOSE.test(lines[end])) {
-        const id = FIRST.exec(lines[i + 1])[3];
-        found.push({ id, line: i + 1, text: lines.slice(i, end + 1).join('\n') });
-        i = end;
-        continue;
-      }
+    const block = blockAt(lines, i);
+    if (block) {
+      found.push({ id: block.id, line: i + 1, text: lines.slice(i, i + block.length).join('\n') });
+      i += block.length - 1;
+      continue;
     }
     if (lines[i].includes(TAG)) malformed.push(i + 1);
     kept.push(lines[i]);
@@ -58,10 +76,14 @@ export function stripMarkers(text) {
 
 /**
  * The file text with exactly `ports`' markers, each above its `nodeEntry.symbol`.
- * Throws when a symbol is missing or does not start its own line.
+ * Throws on a malformed marker, or when a symbol is missing or does not start its own line.
  */
 export function applyMarkers(text, fileName, ports) {
-  const { text: stripped } = stripMarkers(text);
+  const { text: stripped, malformed } = stripMarkers(text);
+  if (malformed.length)
+    throw new Error(
+      `${fileName}:${malformed.join(',')}: mentions ${TAG} outside an intact generated marker block`
+    );
   if (ports.length === 0) return stripped;
   const kind = fileName.endsWith('x') ? ts.ScriptKind.TSX : undefined;
   const sf = ts.createSourceFile(fileName, stripped, ts.ScriptTarget.Latest, true, kind);

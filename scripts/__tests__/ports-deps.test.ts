@@ -2,13 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { computeGoDeps } from '../ports/go-deps.mjs';
-import { computeNodeDeps } from '../ports/node-deps.mjs';
+import { computeNodeDeps, findEntryNode } from '../ports/node-deps.mjs';
 
-// The generated halves of ports/manifest.json (scripts/ports/{node,go}-deps.mjs), on fixtures whose
-// file names are all distinct, so a list holding the wrong file cannot pass.
+// A port's Node and Go dependencies (scripts/ports/{node,go}-deps.mjs), which CI computes from
+// source, on fixtures whose file names are all distinct, so a list holding the wrong file cannot
+// pass.
 
 // Not every test builds a fixture.
 let root = '';
@@ -17,12 +19,17 @@ afterEach(() => {
   root = '';
 });
 
+const put = (rel: string, text: string) => {
+  mkdirSync(dirname(join(root, rel)), { recursive: true });
+  writeFileSync(join(root, rel), text);
+};
+
+// A git repo with `files` tracked: imports resolve against `git ls-files`, not the disk.
 function fixture(files: Record<string, string>) {
   root = mkdtempSync(join(tmpdir(), 'ports-deps-'));
-  for (const [rel, text] of Object.entries(files)) {
-    mkdirSync(dirname(join(root, rel)), { recursive: true });
-    writeFileSync(join(root, rel), text);
-  }
+  for (const [rel, text] of Object.entries(files)) put(rel, text);
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['add', '.'], { cwd: root });
   return root;
 }
 
@@ -132,6 +139,72 @@ describe('computeNodeDeps', () => {
       computeNodeDeps(root, { file: 'src/router.ts', symbol: 'appRouter.ported' })
     ).toThrow("src/lazy-dep.ts: './no-such-file'");
   });
+
+  it('does not resolve an import to a file git does not track, even when it is on disk', () => {
+    fixture({
+      ...NODE_FILES,
+      'src/lazy-dep.ts': "import { y } from './untracked-only';\nexport const x = y;\n",
+    });
+    put('src/untracked-only.ts', 'export const y = 1;\n');
+    expect(() =>
+      computeNodeDeps(root, { file: 'src/router.ts', symbol: 'appRouter.ported' })
+    ).toThrow("src/lazy-dep.ts: './untracked-only'");
+  });
+
+  it('resolves to the tracked candidate when an untracked one would win on disk', () => {
+    fixture({
+      'src/entry.ts':
+        "import { v } from './two-kinds';\nexport default function h() { return v; }\n",
+      'src/two-kinds.tsx': 'export const v = 1;\n',
+    });
+    // `.ts` is probed before `.tsx`: on disk this stray file would be taken.
+    put('src/two-kinds.ts', 'export const v = 2;\n');
+    expect(computeNodeDeps(root, { file: 'src/entry.ts', symbol: 'default' })).toEqual([
+      'src/entry.ts',
+      'src/two-kinds.tsx',
+    ]);
+  });
+
+  // Also held before overloads were handled explicitly (the signature's own name led to the
+  // implementation); the findEntryNode case below pins the choice itself.
+  it('follows the implementation of an overloaded entry function', () => {
+    fixture({
+      'src/overloaded.ts': [
+        "import { implOnlyDep } from './impl-only-dep';",
+        'export function entry(a: string): string;',
+        'export function entry(a: number): number;',
+        'export function entry(a: unknown) {',
+        '  return implOnlyDep(a);',
+        '}',
+      ].join('\n'),
+      'src/impl-only-dep.ts': 'export const implOnlyDep = (a: unknown) => a;\n',
+    });
+    expect(computeNodeDeps(root, { file: 'src/overloaded.ts', symbol: 'entry' })).toEqual([
+      'src/impl-only-dep.ts',
+      'src/overloaded.ts',
+    ]);
+  });
+
+  it.each([
+    ['a named function', 'entry', 'export function entry'],
+    ['a default export', 'default', 'export default function entry'],
+  ])(
+    'locates %s overloads: marker on the first signature, code from the body',
+    (_n, symbol, decl) => {
+      const text = [
+        `${decl}(a: string): string;`,
+        `${decl}(a: number): number;`,
+        `${decl}(a: unknown) {`,
+        '  return a;',
+        '}',
+      ].join('\n');
+      const sf = ts.createSourceFile('src/o.ts', text, ts.ScriptTarget.Latest, true);
+      const found = findEntryNode(sf, symbol);
+      expect(found).not.toBeNull();
+      expect(found?.markerNode).toBe(sf.statements[0]);
+      expect(found?.bodyNode).toBe(sf.statements[2]);
+    }
+  );
 
   it('fails on a symbol the file does not define', () => {
     fixture(NODE_FILES);

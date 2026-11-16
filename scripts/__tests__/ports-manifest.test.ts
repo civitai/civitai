@@ -16,6 +16,7 @@ const base = (): Port => ({
   id: 'image.getInfinite',
   kind: 'trpc',
   service: 'feed-go',
+  metricEndpoint: 'infinite',
   status: 'shadow',
   routes: ['/api/trpc/image.getInfinite'],
   nodeEntry: { file: 'src/server/routers/image.router.ts', symbol: 'imageRouter.getInfinite' },
@@ -23,11 +24,23 @@ const base = (): Port => ({
   flags: { shadow: 'fx-shadow', transport: 'fx-transport', probe: null },
   holdout: null,
   soak: null,
-  nodeDeps: ['src/server/routers/image.router.ts'],
-  goDeps: ['apps/feed-go/internal/feed/infinite.go'],
+  nodeDeletion: null,
 });
 const errs = (port: Port) => schemaErrors({ ports: [port] }, schema);
 const signedOff = { startedAt: '2026-01-01', signedOffBy: 'a-reviewer', signedOffAt: '2026-01-20' };
+const deletionSignedOff = { signedOffBy: 'b-reviewer', signedOffAt: '2026-02-01' };
+const goOnly = (): Port => ({
+  ...base(),
+  status: 'go-only',
+  soak: signedOff,
+  nodeDeletion: deletionSignedOff,
+  nodeEntry: null,
+});
+const without = (port: Port, key: string): Port => {
+  const copy = { ...port };
+  delete copy[key];
+  return copy;
+};
 
 describe('manifest schema', () => {
   it('accepts a valid port at every stage', () => {
@@ -43,8 +56,34 @@ describe('manifest schema', () => {
     ).toEqual([]);
     expect(errs({ ...base(), status: 'node-fallback', soak: signedOff })).toEqual([]);
     expect(
-      errs({ ...base(), status: 'go-only', soak: signedOff, nodeEntry: null, nodeDeps: [] })
+      errs({
+        ...base(),
+        status: 'node-fallback',
+        soak: signedOff,
+        nodeDeletion: deletionSignedOff,
+      })
     ).toEqual([]);
+    expect(errs(goOnly())).toEqual([]);
+  });
+
+  // Pinned by message: each must be rejected for the Node-deletion rule, not for something else.
+  it('rejects go-only without its own Node-deletion sign-off, even with the soak signed off', () => {
+    expect(errs({ ...goOnly(), nodeDeletion: null })).toContain(
+      '/ports/0/nodeDeletion: must be object'
+    );
+    expect(errs(without(goOnly(), 'nodeDeletion'))).toEqual([
+      "/ports/0: must have required property 'nodeDeletion'",
+    ]);
+  });
+
+  it('rejects ramp without a shadow flag, for the shadow flag', () => {
+    expect(
+      errs({
+        ...base(),
+        status: 'ramp',
+        flags: { shadow: null, transport: 'fx-transport', probe: null },
+      })
+    ).toContain('/ports/0/flags/shadow: must be string');
   });
 
   it.each<[string, Port]>([
@@ -71,7 +110,28 @@ describe('manifest schema', () => {
       'node-fallback without a sign-off',
       { ...base(), status: 'node-fallback', soak: { ...signedOff, signedOffBy: null } },
     ],
-    ['go-only that still has a Node entry', { ...base(), status: 'go-only', soak: signedOff }],
+    [
+      'ramp without a shadow flag',
+      {
+        ...base(),
+        status: 'ramp',
+        flags: { shadow: null, transport: 'fx-transport', probe: null },
+      },
+    ],
+    ['go-only that still has a Node entry', { ...goOnly(), nodeEntry: base().nodeEntry }],
+    // The soak sign-off alone does not let the Node path go.
+    ['go-only without a Node-deletion sign-off', { ...goOnly(), nodeDeletion: null }],
+    ['go-only with no nodeDeletion field', without(goOnly(), 'nodeDeletion')],
+    [
+      'go-only whose Node-deletion sign-off names nobody',
+      { ...goOnly(), nodeDeletion: { signedOffBy: '', signedOffAt: '2026-02-01' } },
+    ],
+    ['a Node-deletion sign-off during shadow', { ...base(), nodeDeletion: deletionSignedOff }],
+    ['a port without metricEndpoint', without(base(), 'metricEndpoint')],
+    ['a metricEndpoint that is not a label value', { ...base(), metricEndpoint: 'Infinite Feed' }],
+    // Dependencies are computed in CI and never stored.
+    ['a port that stores nodeDeps', { ...base(), nodeDeps: ['src/a.ts'] }],
+    ['a port that stores goDeps', { ...base(), goDeps: ['apps/feed-go/a.go'] }],
     [
       'a Node entry outside src/',
       { ...base(), nodeEntry: { file: 'apps/x/route.ts', symbol: 'default' } },
@@ -79,7 +139,6 @@ describe('manifest schema', () => {
     ['a Go handler outside the Go services', { ...base(), goHandler: ['apps/other/main.go'] }],
     ['a tRPC id that is a REST route', { ...base(), id: 'GET /api/v1/images' }],
     ['a REST id without a method', { ...base(), kind: 'rest', id: '/api/v1/images' }],
-    ['a port without generated deps', (({ nodeDeps: _n, ...rest }) => rest)(base())],
     ['a holdout over 100%', { ...base(), status: 'soak', holdout: 101, soak: signedOff }],
   ])('rejects %s', (_name, port) => {
     expect(errs(port)).not.toEqual([]);
@@ -100,9 +159,27 @@ function fixture() {
   };
   put('src/server/routers/image.router.ts', '');
   put('apps/feed-go/internal/feed/infinite.go', 'package feed\n');
+  // The endpoint labels: two listed in Endpoints, one string constant that is not.
+  put(
+    'apps/feed-go/internal/server/labels.go',
+    [
+      'package server',
+      '',
+      'const (',
+      '\tEndpointInfinite = "infinite" // a comment',
+      '\tEndpointOther    = "fx-other"',
+      ')',
+      '',
+      'const EndpointUnlisted = "fx-unlisted"',
+      '',
+      'var Endpoints = []string{EndpointInfinite, EndpointOther}',
+      '',
+    ].join('\n')
+  );
   put('flags.ts', "export const A = 'fx-shadow';\nexport const B = 'fx-transport';\n");
 }
-const semantic = (...ports: Port[]) => semanticErrors(root, { ports }, ['flags.ts']);
+const NOW = Date.parse('2026-06-01T12:00:00Z');
+const semantic = (...ports: Port[]) => semanticErrors(root, { ports }, ['flags.ts'], NOW);
 
 describe('manifest checks beyond the schema', () => {
   it('accepts a valid port', () => {
@@ -112,7 +189,63 @@ describe('manifest checks beyond the schema', () => {
 
   it('rejects a duplicate id', () => {
     fixture();
-    expect(semantic(base(), base())).toEqual(['port image.getInfinite: duplicate id']);
+    expect(semantic(base(), base())).toEqual([
+      'port image.getInfinite: duplicate id',
+      "port image.getInfinite: metricEndpoint 'infinite' is also port image.getInfinite's",
+    ]);
+  });
+
+  it("rejects a metricEndpoint that is not one of the Go service's Endpoints labels", () => {
+    fixture();
+    expect(semantic({ ...base(), metricEndpoint: 'fx-other' })).toEqual([]);
+    // A string constant the Endpoints slice does not list is not a label.
+    expect(semantic({ ...base(), metricEndpoint: 'fx-unlisted' })).toEqual([
+      "port image.getInfinite: metricEndpoint 'fx-unlisted' is not one of feed-go's endpoint labels (infinite, fx-other)",
+    ]);
+  });
+
+  it('rejects two ports of a service on one metricEndpoint', () => {
+    fixture();
+    expect(semantic(base(), { ...base(), id: 'image.getOther' })).toEqual([
+      "port image.getOther: metricEndpoint 'infinite' is also port image.getInfinite's",
+    ]);
+  });
+
+  it('rejects a service without an Endpoints slice', () => {
+    fixture();
+    expect(
+      semantic({
+        ...base(),
+        service: 'beacon-go',
+        goHandler: ['apps/beacon-go/internal/server/server.go'],
+      })
+    ).toEqual([
+      'port image.getInfinite: goHandler apps/beacon-go/internal/server/server.go does not exist',
+      'port image.getInfinite: metricEndpoint: no `var Endpoints = []string{...}` in apps/beacon-go',
+    ]);
+  });
+
+  it('rejects a date in the future, with one day of slack', () => {
+    fixture();
+    const started = (startedAt: string) =>
+      semantic({
+        ...base(),
+        status: 'soak',
+        holdout: 5,
+        soak: { startedAt, signedOffBy: null, signedOffAt: null },
+      });
+    expect(started('2026-06-02')).toEqual([]);
+    expect(started('2026-06-03')).toEqual([
+      'port image.getInfinite: soak.startedAt 2026-06-03 is in the future or does not parse as a date',
+    ]);
+    expect(
+      semantic({
+        ...goOnly(),
+        nodeDeletion: { signedOffBy: 'b-reviewer', signedOffAt: '2027-01-01' },
+      })
+    ).toEqual([
+      'port image.getInfinite: nodeDeletion.signedOffAt 2027-01-01 is in the future or does not parse as a date',
+    ]);
   });
 
   it('rejects a flag no flag source declares', () => {

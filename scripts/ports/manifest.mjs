@@ -1,5 +1,5 @@
-// Reading, validating and writing ports/manifest.json.
-import { existsSync, readFileSync, statSync } from 'node:fs';
+// Reading and validating ports/manifest.json. The manifest is hand-written; nothing generates it.
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -7,25 +7,6 @@ const require = createRequire(import.meta.url);
 
 export const MANIFEST = 'ports/manifest.json';
 export const SCHEMA = 'ports/manifest.schema.json';
-
-// Hand-written fields first, generated ones last, so a reader meets what a human decided before
-// the long generated lists.
-export const PORT_KEYS = [
-  'id',
-  'kind',
-  'service',
-  'status',
-  'routes',
-  'nodeEntry',
-  'goHandler',
-  'goRoots',
-  'flags',
-  'holdout',
-  'soak',
-  'nodeDeps',
-  'goDeps',
-];
-export const GENERATED_KEYS = ['nodeDeps', 'goDeps'];
 
 // Where a flag key must be declared for the manifest to name it.
 export const FLAG_SOURCES = [
@@ -40,19 +21,6 @@ export const serviceDir = (service) => `apps/${service}`;
 
 export function readJson(root, rel) {
   return JSON.parse(readFileSync(path.join(root, rel), 'utf8'));
-}
-
-/** Port with keys in PORT_KEYS order; unknown keys are kept after them for the schema to reject. */
-export function canonicalPort(port) {
-  const out = {};
-  for (const k of PORT_KEYS) if (k in port) out[k] = port[k];
-  for (const k of Object.keys(port)) if (!(k in out)) out[k] = port[k];
-  return out;
-}
-
-export function serializeManifest(manifest) {
-  const { ports, ...top } = manifest;
-  return `${JSON.stringify({ ...top, ports: ports.map(canonicalPort) }, null, 2)}\n`;
 }
 
 /** JSON Schema errors as `path: message` strings. */
@@ -73,9 +41,74 @@ const isDir = (abs) => {
   }
 };
 
-/** The checks a JSON Schema cannot express. Assumes the manifest passed the schema. */
-export function semanticErrors(root, manifest, flagSources = FLAG_SOURCES) {
+/** Non-test .go files under `dirAbs`, recursively. */
+function goSources(dirAbs) {
+  if (!isDir(dirAbs)) return [];
+  return readdirSync(dirAbs, { recursive: true })
+    .map(String)
+    .filter(
+      (f) => f.endsWith('.go') && !f.endsWith('_test.go') && !f.split(path.sep).includes('vendor')
+    )
+    .map((f) => path.join(dirAbs, f));
+}
+
+/**
+ * A Go service's endpoint label values: the string constants its `Endpoints` slice
+ * (`var Endpoints = []string{...}`) names, resolved from the service's non-test source.
+ * Returns `{ values: Set, error }`; `error` is set when the slice or a constant in it is missing.
+ */
+export function goEndpointLabels(root, service) {
+  const consts = new Map();
+  let list = null;
+  for (const file of goSources(path.join(root, serviceDir(service)))) {
+    const text = readFileSync(file, 'utf8');
+    for (const m of text.matchAll(/^\s*(?:const\s+)?([A-Za-z_]\w*)\s*=\s*"([^"\\]*)"/gm)) {
+      if (!consts.has(m[1])) consts.set(m[1], new Set());
+      consts.get(m[1]).add(m[2]);
+    }
+    const l = /^var Endpoints = \[\]string\{([^}]*)\}/m.exec(text);
+    if (l) list = l[1];
+  }
+  if (list === null)
+    return {
+      values: new Set(),
+      error: `no \`var Endpoints = []string{...}\` in ${serviceDir(service)}`,
+    };
+  const values = new Set();
+  for (const ref of list
+    .split(',')
+    .map((r) => r.trim())
+    .filter(Boolean)) {
+    const found = consts.get(ref.split('.').pop());
+    if (!found || found.size !== 1)
+      return {
+        values,
+        error: `Endpoints entry ${ref} is not one string constant in ${serviceDir(service)}`,
+      };
+    values.add([...found][0]);
+  }
+  return { values, error: null };
+}
+
+/** The manifest's dates (`{ field, value }`), for the no-future-date check. */
+function datesOf(port) {
+  return [
+    ['soak.startedAt', port.soak?.startedAt],
+    ['soak.signedOffAt', port.soak?.signedOffAt],
+    ['nodeDeletion.signedOffAt', port.nodeDeletion?.signedOffAt],
+  ].filter(([, value]) => typeof value === 'string');
+}
+
+/**
+ * The checks a JSON Schema cannot express. Assumes the manifest passed the schema.
+ * `now` (ms) is injectable for tests. A date may be at most one day past today (UTC), so a date
+ * written in a timezone ahead of UTC is not rejected.
+ */
+export function semanticErrors(root, manifest, flagSources = FLAG_SOURCES, now = Date.now()) {
   const errors = [];
+  const latest = now + DAY_MS;
+  const labels = new Map();
+  const labelOwner = new Map();
   const seen = new Set();
   const flagText = flagSources
     .filter((f) => existsSync(path.join(root, f)))
@@ -102,6 +135,24 @@ export function semanticErrors(root, manifest, flagSources = FLAG_SOURCES) {
       if (!flagText.includes(`'${key}'`))
         errors.push(`${at}: flags.${kind} '${key}' is not declared in ${flagSources.join(' or ')}`);
     }
+    if (!labels.has(port.service)) labels.set(port.service, goEndpointLabels(root, port.service));
+    const { values, error } = labels.get(port.service);
+    if (error) errors.push(`${at}: metricEndpoint: ${error}`);
+    else if (!values.has(port.metricEndpoint))
+      errors.push(
+        `${at}: metricEndpoint '${port.metricEndpoint}' is not one of ${
+          port.service
+        }'s endpoint labels (${[...values].join(', ')})`
+      );
+    const labelKey = `${port.service} ${port.metricEndpoint}`;
+    if (labelOwner.has(labelKey))
+      errors.push(
+        `${at}: metricEndpoint '${port.metricEndpoint}' is also port ${labelOwner.get(labelKey)}'s`
+      );
+    else labelOwner.set(labelKey, port.id);
+    for (const [field, value] of datesOf(port))
+      if (!(Date.parse(value) <= latest))
+        errors.push(`${at}: ${field} ${value} is in the future or does not parse as a date`);
     const s = port.soak;
     if (s?.signedOffAt) {
       const days = (Date.parse(s.signedOffAt) - Date.parse(s.startedAt)) / DAY_MS;

@@ -1,6 +1,6 @@
-// The Go half of a port's generated dependencies: `go list -deps` from the port's Go roots,
-// restricted to the service's own module, as repo-relative files (non-test Go files and embedded
-// files), plus the handler files and the module's go.mod / go.sum.
+// The Go half of a port's dependencies (computed in CI by scripts/ports/touched.mjs, not stored):
+// `go list -deps` from the port's Go roots, restricted to the service's own module, as repo-relative
+// files (non-test Go files and embedded files), plus the handler files and the module's go.mod / go.sum.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';

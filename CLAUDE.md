@@ -31,7 +31,7 @@ where it loads on demand:
 - **Use X for Y** (`.claude/rules/server.md`) names the one helper per need (HTTP, rate limit, lock, cache, DB client, new query, feature flag, …); follow it over nearby code.
   Store choice: cache and rate-limit data go on `redis` with a TTL; `sysRedis` is durable state, not a cache, and takes no new key without sign-off; new durable data goes in Postgres.
 - Auth is `@civitai/auth` (hub-driven `civ-token`); NextAuth is fully removed — `src/providers/SessionProvider.tsx` and `src/types/session.ts` replace `next-auth/react`.
-- **Node→Go ports** (`ports/manifest.json`): before changing Node code run `node scripts/ports/touched.mjs <files>`; change each touched port's Go handler in the same PR (`AGENTS.md` → Endpoints ported to Go).
+- **Node→Go ports** (`ports/manifest.json`): before changing Node code run `node scripts/ports/touched.mjs <files>`; if the change alters what a touched endpoint returns, change its Go handler in the same PR (`AGENTS.md` → Endpoints ported to Go).
 
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,

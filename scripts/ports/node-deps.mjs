@@ -1,11 +1,14 @@
-// The Node half of a port's generated dependencies: the repo source files the endpoint's handler
-// transitively imports at runtime. Parse-only (ts.createSourceFile); nothing is type-checked.
+// The Node half of a port's dependencies: the repo source files the endpoint's handler transitively
+// imports at runtime, computed in CI by scripts/ports/touched.mjs (not stored). Parse-only
+// (ts.createSourceFile); nothing is type-checked. Imports resolve against the files git tracks, so
+// an untracked or ignored file on disk (a local build output, a stray copy) never enters the graph.
 //
 // The entry file is walked from the entry SYMBOL, not the whole file: a router module imports every
 // procedure's handler, so only the imports the symbol (and the top-level declarations it reaches)
 // names are followed out of it. Every file after that is followed whole. Type-only imports are
 // skipped: they cannot change what the endpoint does at runtime.
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
@@ -45,25 +48,27 @@ export function loadPathAliases(root) {
   }));
 }
 
-function isFile(abs) {
-  try {
-    return statSync(abs).isFile();
-  } catch {
-    return false;
-  }
+/** The repo-relative files git tracks under `root` (index, not disk). */
+export function trackedFiles(root) {
+  const out = execFileSync('git', ['ls-files', '-z'], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 256 << 20,
+  });
+  return new Set(out.split('\0').filter(Boolean));
 }
 
-function probe(root, relBase) {
+function probe(tracked, relBase) {
   for (const suffix of CANDIDATE_SUFFIXES) {
     const rel = toPosix(path.normalize(relBase + suffix));
-    if (isFile(path.join(root, rel))) return rel;
+    if (tracked.has(rel)) return rel;
   }
   // ESM-style `./x.js` written for a `./x.ts` source.
   const m = /^(.*)\.(m?js|cjs|jsx)$/.exec(relBase);
   if (m) {
     for (const ext of ['.ts', '.tsx', '.mts', '.cts']) {
       const rel = toPosix(path.normalize(m[1] + ext));
-      if (isFile(path.join(root, rel))) return rel;
+      if (tracked.has(rel)) return rel;
     }
   }
   return null;
@@ -77,20 +82,22 @@ export function loadSubmodules(root) {
 }
 
 /**
- * Resolve an import specifier written in `fromRel` (repo-relative).
+ * Resolve an import specifier written in `fromRel` (repo-relative), against `tracked` (the set of
+ * repo-relative files git tracks).
  * Returns `{ kind: 'file', path }`, `{ kind: 'submodule', path }` (the submodule's root: its
  * files are not this repo's, and a checkout may not have them, so its pin is the dependency),
  * `{ kind: 'external' }` (a package, not followed) or `{ kind: 'unresolved' }` (relative or
  * aliased, and no file matches: the graph would be wrong).
  */
-export function resolveSpecifier(root, fromRel, spec, aliases, submodules = []) {
+export function resolveSpecifier(tracked, fromRel, spec, aliases, submodules = []) {
+  const inSubmodule = (rel) => submodules.find((s) => rel === s || rel.startsWith(`${s}/`));
   if (spec.startsWith('.') || spec.startsWith('/')) {
     const relBase = spec.startsWith('/')
       ? spec.slice(1)
       : toPosix(path.join(path.dirname(fromRel), spec));
-    const sub = submodules.find((s) => relBase === s || relBase.startsWith(`${s}/`));
+    const sub = inSubmodule(toPosix(path.normalize(relBase)));
     if (sub) return { kind: 'submodule', path: sub };
-    const hit = probe(root, relBase);
+    const hit = probe(tracked, relBase);
     return hit ? { kind: 'file', path: hit } : { kind: 'unresolved' };
   }
   for (const { pattern, targets } of aliases) {
@@ -107,7 +114,10 @@ export function resolveSpecifier(root, fromRel, spec, aliases, submodules = []) 
       rest = spec.slice(pre.length, spec.length - post.length);
     }
     for (const t of targets) {
-      const hit = probe(root, t.replace('*', rest));
+      const target = toPosix(path.normalize(t.replace('*', rest)));
+      const sub = inSubmodule(target);
+      if (sub) return { kind: 'submodule', path: sub };
+      const hit = probe(tracked, target);
       if (hit) return { kind: 'file', path: hit };
     }
     return { kind: 'unresolved' };
@@ -245,6 +255,15 @@ function objectLiteralOf(expr) {
 }
 
 /**
+ * An overloaded function is several declarations (signatures, then the implementation, the one
+ * with a body). The marker goes above the first, where a reader meets the function; its code is
+ * the implementation's.
+ */
+function overloadGroup(decls) {
+  return { markerNode: decls[0], bodyNode: decls.find((d) => d.body) ?? decls[0] };
+}
+
+/**
  * Locate an entry symbol. `default` is the default export; `a.b.c` is property `b` (then `c`) of
  * the object literal top-level `a` is initialised with (directly, or as the first argument of a
  * call such as `router({...})`); a bare name is that top-level declaration.
@@ -252,22 +271,26 @@ function objectLiteralOf(expr) {
  */
 export function findEntryNode(sf, symbol) {
   if (symbol === 'default') {
+    const fns = [];
     for (const st of sf.statements) {
       if (ts.isExportAssignment(st) && !st.isExportEquals) return { markerNode: st, bodyNode: st };
       if (
         (ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) &&
         hasModifier(st, ts.SyntaxKind.ExportKeyword) &&
         hasModifier(st, ts.SyntaxKind.DefaultKeyword)
-      )
-        return { markerNode: st, bodyNode: st };
+      ) {
+        if (ts.isClassDeclaration(st)) return { markerNode: st, bodyNode: st };
+        fns.push(st);
+      }
     }
-    return null;
+    return fns.length ? overloadGroup(fns) : null;
   }
   const [head, ...rest] = symbol.split('.');
+  const fns = sf.statements.filter((st) => ts.isFunctionDeclaration(st) && st.name?.text === head);
+  if (fns.length) return rest.length ? null : overloadGroup(fns);
   let found = null;
   for (const st of sf.statements) {
-    if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name?.text === head)
-      found = { stmt: st, init: null };
+    if (ts.isClassDeclaration(st) && st.name?.text === head) found = { stmt: st, init: null };
     else if (ts.isVariableStatement(st))
       for (const d of st.declarationList.declarations)
         if (ts.isIdentifier(d.name) && d.name.text === head)
@@ -332,13 +355,18 @@ function runtimeImportsWithin(node) {
 
 /**
  * Repo-relative files the entry reaches at runtime, sorted, the entry file included.
- * Throws on a missing entry symbol or on a relative/aliased import that resolves to no file.
+ * Throws on a missing entry symbol or on a relative/aliased import that resolves to no tracked file.
+ * `aliases`, `submodules` and `tracked` default to what `root` holds; pass them to share the work
+ * across several entries in one tree.
  */
 export function computeNodeDeps(
   root,
   entry,
-  aliases = loadPathAliases(root),
-  submodules = loadSubmodules(root)
+  {
+    aliases = loadPathAliases(root),
+    submodules = loadSubmodules(root),
+    tracked = trackedFiles(root),
+  } = {}
 ) {
   const entrySf = parse(root, entry.file);
   const found = findEntryNode(entrySf, entry.symbol);
@@ -348,7 +376,7 @@ export function computeNodeDeps(
   const unresolved = [];
   const queue = [];
   const enqueue = (fromRel, spec) => {
-    const r = resolveSpecifier(root, fromRel, spec, aliases, submodules);
+    const r = resolveSpecifier(tracked, fromRel, spec, aliases, submodules);
     if (r.kind === 'unresolved') unresolved.push(`${fromRel}: '${spec}'`);
     if (r.kind === 'submodule') deps.add(r.path);
     if (r.kind !== 'file' || r.path.includes('node_modules/') || deps.has(r.path)) return;
