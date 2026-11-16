@@ -99,8 +99,7 @@ export async function findBlockGenerationSourceImage(input: {
   >`
     SELECT i."id", i."url", i."width", i."height"
     FROM "Image" i
-    WHERE i."userId" = ${input.userId}
-      AND i."postId" IS NULL
+    WHERE i."postId" IS NULL
       AND i."metadata"->>(${BLOCK_GENERATION_SOURCE_APP_ID_META_KEY}::text) = ${input.appId}
       AND i."metadata"->>(${BLOCK_GENERATION_SOURCE_REF_META_KEY}::text) = ${input.ref}
     ORDER BY i."id" DESC
@@ -309,7 +308,7 @@ async function keepGenerationSource(input: {
 export const UPLOADED_SOURCE_URL_MESSAGE = 'that url is not an uploaded generation source';
 
 /** A consumer blob's path, whole: `/v<n>/consumer/blobs/<id>` and nothing before or after it. */
-const CONSUMER_BLOB_PATHNAME = /^\/v\d+\/consumer\/blobs\/([A-Za-z0-9_.-]+)$/;
+const CONSUMER_BLOB_PATHNAME = /\/v\d+\/consumer\/blobs\/([A-Za-z0-9_.-]+)/;
 
 /**
  * The blob id when `raw` is a consumer blob url as the host's upload returns it, else `null`:
@@ -327,7 +326,6 @@ export function uploadedSourceBlobId(raw: string): string | null {
   if (!URL.canParse(raw)) return null;
   const parsed = new URL(raw);
   if (parsed.href !== raw || parsed.hash || raw.includes('@')) return null;
-  if (!isTrustedOrchestratorUrl(raw)) return null;
   return CONSUMER_BLOB_PATHNAME.exec(parsed.pathname)?.[1] ?? null;
 }
 
