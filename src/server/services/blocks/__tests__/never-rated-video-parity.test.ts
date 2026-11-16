@@ -26,7 +26,6 @@ const NEVER_RATED_ECOSYSTEM_TO_ENGINE: Readonly<Record<string, string>> = {
   Kling: 'kling',
   Veo3: 'veo3',
   Vidu: 'vidu',
-  FakeVideoEcosystem: 'fake-video',
 };
 
 type SiteWorkflowParams = Parameters<typeof isNeverRatedVideoStep>[1];
