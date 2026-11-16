@@ -107,6 +107,9 @@ const civitaiWorkspacePkgs = [
   'db-schema',
   'db',
   'redis',
+  // `@civitai/email` (packages/civitai-email) owns the SMTP transport behind
+  // src/server/email/client.ts. Not symlinked into root node_modules either.
+  'email',
   'clickhouse',
   'axiom',
   // `@civitai/flipt` (packages/civitai-flipt) backs src/server/flipt/client.ts, which the
