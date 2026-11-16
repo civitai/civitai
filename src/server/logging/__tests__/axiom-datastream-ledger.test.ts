@@ -84,8 +84,6 @@ const LOKI_ONLY: Record<string, string> = {
     'Knights of New Order queue-source enqueue failures; a non-fatal catch path. Confirmed absent (404, with the control) on 2026-10-28.',
   'moderator-app':
     'Moderator-app request failures; the caller rethrows, so the throw is the signal.',
-  settings:
-    'SSR settings-bootstrap deadline breaches. The reason this must stay visible is the whole point of the call site, and the log-store line is what makes it visible.',
 };
 
 /**
