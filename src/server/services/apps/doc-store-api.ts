@@ -1316,22 +1316,19 @@ async function runUnpublish(
   return result;
 }
 
-const SYNC_WITHDRAWN_BATCH = 5;
-
-/** The author removed published items: their App Store cards follow, as after a delete. */
+/**
+ * The author removed published items: their App Store cards follow, as after a delete. One at a
+ * time (at most 500, one indexed lookup each); `syncStoreItem` never throws (it logs its own
+ * failures).
+ */
 async function syncWithdrawn(
   ctx: StorageAccess['ctx'],
   keys: readonly string[],
   uid: number
 ): Promise<void> {
   if (ctx.ns !== PUBLISHED_NS) return;
-  // A few at a time; `syncStoreItem` never throws (it logs its own failures).
-  for (let i = 0; i < keys.length; i += SYNC_WITHDRAWN_BATCH) {
-    await Promise.all(
-      keys.slice(i, i + SYNC_WITHDRAWN_BATCH).map((itemKey) =>
-        syncStoreItem({ appBlockId: ctx.appId, itemKey, change: 'withdrawn', authorUserId: uid })
-      )
-    );
+  for (const itemKey of keys) {
+    await syncStoreItem({ appBlockId: ctx.appId, itemKey, change: 'withdrawn', authorUserId: uid });
   }
 }
 

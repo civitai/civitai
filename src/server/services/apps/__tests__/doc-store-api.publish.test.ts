@@ -958,7 +958,10 @@ describe('unpublish', () => {
     expect(publishBudget(A)).toEqual(published);
     expect(await lastSeq(A)).toBe(seq + 2);
     // The App Store card follows each removed item, as a single delete's does.
-    expect(cardSync.calls).toHaveLength(2);
+    const failedSyncs = loggingMock.logToAxiom.mock.calls.filter(
+      ([e]) => (e as { name?: string } | undefined)?.name === 'app-sub-listing-shared-sync-failed'
+    );
+    expect(failedSyncs).toEqual([]);
     expect(cardSync.calls.map((c) => (c as { itemKey: string }).itemKey).sort()).toEqual(['x1', 'x2']);
   });
 });
