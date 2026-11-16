@@ -156,6 +156,25 @@ describe('repeat requests for one file', () => {
 
     expect(mockIncrement).toHaveBeenCalledTimes(2);
   });
+
+  it('still count, after one second, when the repeat tracking does not answer', async () => {
+    vi.useFakeTimers();
+    try {
+      redisMock.redis.multi.mockImplementation((() => ({
+        ...fakeMulti(),
+        exec: () => new Promise(() => undefined),
+      })) as never);
+
+      const done = download();
+      await vi.advanceTimersByTimeAsync(999);
+      expect(mockIncrement).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mockIncrement).toHaveBeenCalledTimes(1);
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('where the repeat count is kept', () => {

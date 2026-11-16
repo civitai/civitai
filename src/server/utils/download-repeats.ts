@@ -1,6 +1,9 @@
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { withCommandDeadline } from '~/server/redis/command-deadline';
+import {
+  ClusterCacheUnavailableError,
+  clusterCacheGuard,
+} from '~/server/redis/cluster-cache-guard';
 
 /**
  * Repeat requests for one file a user gets free each day before they count again. A resume of a
@@ -24,15 +27,24 @@ const REPEAT_COUNT_DEADLINE_MS = 1_000;
 export async function countsTowardDownloadLimit(userKey: string, fileId: number) {
   const key = `${REDIS_KEYS.DOWNLOAD.REPEATS}:${userKey}:${fileId}` as const;
   try {
-    const pipeline = redis.multi();
-    pipeline.set(key, 0, { NX: true, EX: REPEAT_WINDOW_SECONDS });
-    pipeline.incr(key);
-    const results = await withCommandDeadline(pipeline.exec(), REPEAT_COUNT_DEADLINE_MS);
+    // Through the cluster cache guard: its deadline, breaker, fail-open counter and log.
+    const results = await clusterCacheGuard.call(
+      'countsTowardDownloadLimit',
+      () => {
+        const pipeline = redis.multi();
+        pipeline.set(key, 0, { NX: true, EX: REPEAT_WINDOW_SECONDS });
+        pipeline.incr(key);
+        return pipeline.exec();
+      },
+      { deadlineMs: REPEAT_COUNT_DEADLINE_MS, logExtra: { userKey, fileId } }
+    );
     const requests = Array.isArray(results) && results.length === 2 ? Number(results[1]) : NaN;
     if (!Number.isInteger(requests) || requests < 1)
       throw new Error('redis MULTI exec returned an unexpected repeat count');
     return requests === 1 || requests > FREE_FILE_REPEATS + 1;
   } catch (error) {
+    // The guard has already counted and logged its own failures.
+    if (error instanceof ClusterCacheUnavailableError) return true;
     logToAxiom({
       name: 'download-repeats',
       type: 'warning',
