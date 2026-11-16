@@ -140,6 +140,33 @@ func TestLoadPprofDefaultsOff(t *testing.T) {
 	}
 }
 
+// SESSION_REVOCATION_CACHE is a default-on switch (isEnvSwitchOn): only off/0/false, any case and
+// surrounding whitespace, turn it off; unset, empty and unknown values keep it on. The cases are the
+// package's own env-switch.test.ts.
+func TestLoadRevocationMarkerCacheSwitch(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	off := []string{"off", "OFF", "Off", "0", "false", "FALSE", "False", " off ", "\tfalse\n"}
+	on := []string{"", " ", "on", "true", "1", "no", "offf", "disabled", "00", "false!"}
+	for _, in := range append(off, on...) {
+		t.Setenv("SESSION_REVOCATION_CACHE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := true
+		for _, o := range off {
+			if in == o {
+				want = false
+			}
+		}
+		if c.RevocationMarkerCache != want {
+			t.Errorf("SESSION_REVOCATION_CACHE=%q -> %v, want %v", in, c.RevocationMarkerCache, want)
+		}
+	}
+}
+
 func TestLoadModerationAccountID(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
