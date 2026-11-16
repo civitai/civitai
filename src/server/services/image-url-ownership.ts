@@ -324,8 +324,8 @@ const sysOwnerKey = (key: string) =>
 const RECORD_ATTEMPTS = 3;
 const RECORD_RETRY_BASE_MS = 100;
 /**
- * Bounds each cluster read and write of an issue record, as the sys read deadline bounded them in
- * sysRedis: the cluster client's own command deadline is far longer than a request should wait.
+ * Bounds each issue-record read and write: the cluster client's own command deadline is far longer
+ * than a request should wait.
  */
 const RECORD_DEADLINE_MS = 1_000;
 
