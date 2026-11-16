@@ -1656,9 +1656,9 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok']
     ),
   },
-  // The preamble WITHOUT a scope check (the picker never needed one), then the per-user
-  // generation-source bucket it shares with `persistGenerationSource` (the per-user `rateLimit`
-  // middleware does not run under test), then the url check refuses the fixture.
+  // `persistGenerationSource`'s preamble, then the per-user generation-source bucket the two share
+  // (the per-user `rateLimit` middleware does not run under test), then the url check refuses
+  // the fixture.
   'blocks.persistUploadedGenerationSource': {
     'valid token': E(
       'BAD_REQUEST',
@@ -1669,13 +1669,7 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
     revoked: E('FORBIDDEN', 'block instance revoked', [], ['bridge-auth:threw']),
     'not approved': E('FORBIDDEN', 'app block is not approved', [], ['bridge-auth:threw']),
-    // No scope is required, so a scopeless token gets as far as a valid one.
-    'missing scope': E(
-      'BAD_REQUEST',
-      'that url is not an uploaded generation source',
-      ['checkBlockGenerationSourceUserRateLimit(42)'],
-      ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
-    ),
+    'missing scope': E('FORBIDDEN', 'block lacks ai:write:budgeted scope', [], ['bridge-auth:ok']),
     'anonymous subject': E(
       'UNAUTHORIZED',
       'saving a generation source requires an authenticated viewer',

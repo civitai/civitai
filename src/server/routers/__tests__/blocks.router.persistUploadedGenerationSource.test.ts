@@ -5,7 +5,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
  * `blocks.persistUploadedGenerationSource` — the server half of a picked generation source
  * (`useImageUpload({ purpose: 'generationSource' })` and a single `OPEN_MEDIA_UPLOAD` image) while
  * `app-block-source-scanned-rows` is on. These cases pin the procedure's own chain: the preamble
- * (viewer, session = subject, runtime flag; NO scope, as the picker never needed one), the identity
+ * (`ai:write:budgeted`, viewer, session = subject, runtime flag), the identity
  * it hands the service (from the TOKEN, never the body), the per-user 60/h `rateLimit` middleware,
  * and the bounds it SHARES with `blocks.persistGenerationSource`: the per-user generation-source
  * bucket and the 2-in-flight cap, driven through the real limiters on an in-memory store.
@@ -67,8 +67,7 @@ const BLOB_URL =
 function claims(over: Record<string, unknown> = {}) {
   return {
     sub: `user:${VIEWER_ID}`,
-    // NOT `ai:write:budgeted`: the picker asks for no scope, and this procedure requires none.
-    scopes: [],
+    scopes: ['ai:write:budgeted'],
     appId: 'appblk-alpha',
     appBlockId: 'apb_alpha',
     blockInstanceId: 'page_apb_alpha',
@@ -177,10 +176,21 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
     expect([arg.appId, arg.userId]).toEqual(['appblk-alpha', VIEWER_ID]);
   });
 
-  it('requires NO scope: a token with none is served, as the picker always was', async () => {
-    h.authorize.mockResolvedValue(claims({ scopes: [] }));
-    await expect(call()).resolves.toEqual(RESULT);
-  });
+  it.each([
+    ['no scopes', []],
+    ['only posts:write:self', ['posts:write:self']],
+  ])(
+    '🔴 refuses a token without ai:write:budgeted (%s) FORBIDDEN, and persists nothing',
+    async (_label, scopes) => {
+      h.authorize.mockResolvedValue(claims({ scopes }));
+      await expect(call()).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'block lacks ai:write:budgeted scope',
+      });
+      expect(h.persistUploaded).not.toHaveBeenCalled();
+      expect(h.persistOutput).not.toHaveBeenCalled();
+    }
+  );
 
   it('applies the per-user 60-per-hour rateLimit to THIS procedure', async () => {
     await call();
@@ -235,10 +245,6 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
 
 describe('blocks.persistUploadedGenerationSource — bounds shared with persistGenerationSource', () => {
   const moderator = (id = VIEWER_ID) => ctx({ id, isModerator: true });
-  // `persistGenerationSource` needs the scope; this procedure ignores it either way.
-  beforeEach(() => {
-    h.authorize.mockImplementation(async () => claims({ scopes: ['ai:write:budgeted'] }));
-  });
 
   it('🔴 one hourly bucket per user across BOTH procedures: the 61st save is refused', async () => {
     for (let i = 0; i < 30; i++) await expect(call({}, moderator())).resolves.toEqual(RESULT);
