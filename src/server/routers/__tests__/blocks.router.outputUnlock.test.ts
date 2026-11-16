@@ -6,17 +6,17 @@ import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
 import type * as OrchestrationNewModule from '~/server/services/orchestrator/orchestration-new.service';
 
 /**
- * The OUTPUT UNLOCK through `blocksRouter.unlockOutput` with the REAL reservation helpers over an
- * in-memory Redis, the REAL per-workflow lock and the REAL author-fee module behind spies. Only
- * the orchestrator, identity and site-guard edges are stubbed.
+ * The OUTPUT UNLOCK through `blocksRouter.unlockOutput` with the REAL reservation helpers and the
+ * REAL app spend cap over an in-memory Redis (so a reservation, if one were taken, would MOVE a
+ * counter), the REAL per-workflow lock and the REAL author-fee module behind spies. Only the
+ * orchestrator, identity and site-guard edges are stubbed.
  *
  * What only this seam can show:
- *   - 🔴 NO SECOND AUTHOR FEE (operator decision): unlocking a workflow whose ORIGINAL spend
- *     accrued an author fee charges only the orchestrator's yellow swap. The fee charge, the
- *     quote, the Buzz debit and the accrual write are all unreached.
- *   - the unlock price is counted against the viewer's own per-app daily limit (the consent
- *     counter), and refunded when the orchestrator refuses;
- *   - the lock is released on success and on failure.
+ *   - 🔴 NET ZERO (operator decision): an unlock adds nothing to the viewer's per-app daily limit,
+ *     the platform cap or the app's aggregate cap, and is not refused at or over the limit;
+ *   - 🔴 NO SECOND AUTHOR FEE (operator decision) on a fee-accrued workflow;
+ *   - the orchestrator's insufficient-Yellow refusal comes back as `refused`, with its message;
+ *   - not-released tells the viewer why; the lock is released either way.
  */
 
 const h = vi.hoisted(() => ({
@@ -30,8 +30,7 @@ const h = vi.hoisted(() => ({
   quoteAuthorFee: vi.fn(),
   createBuzzTransactionMany: vi.fn(),
   catalogRate: vi.fn(async () => ({ allowed: true })),
-  reserveAppSpend: vi.fn(),
-  refundAppSpend: vi.fn(async () => undefined),
+  lift: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
@@ -47,7 +46,10 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   getWorkflow: (...a: unknown[]) => h.getWorkflow(...a),
+  // Both spellings of the orchestrator write route to one spy, so the test reads the same
+  // against an implementation that calls either.
   updateWorkflow: (...a: unknown[]) => h.updateWorkflow(...a),
+  liftWorkflowMatureRestriction: (...a: unknown[]) => h.lift(...a),
   submitWorkflow: vi.fn(),
   cancelWorkflow: vi.fn(),
   queryWorkflows: vi.fn(),
@@ -75,12 +77,6 @@ vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzTransactions: vi.fn(),
   getDailyCompensationRewardByUser: vi.fn(),
 }));
-// The app's own aggregate cap: its reservation and refund are what these tests watch.
-vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
-  reserveAppSpend: (...a: unknown[]) => h.reserveAppSpend(...(a as [])),
-  refundAppSpend: (...a: unknown[]) => h.refundAppSpend(...(a as [])),
-  chargeAppSpendOverage: vi.fn(),
-}));
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimitModule>()),
   checkBlockCatalogRateLimit: (...a: unknown[]) => h.catalogRate(...(a as [])),
@@ -96,13 +92,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { appBlockTag } from '~/server/services/blocks/workflow.service';
+import { buzzCapRedisKey, consentBudgetRedisKey } from '~/server/services/blocks/block-buzz-cap';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 
-/** The submit paths' own refusal for an app at its aggregate daily cap. */
 /** Spelled out, not imported: a missing constant must not make the assertion vacuous. */
 const NOT_RELEASED_MESSAGE =
-  'The unlock went through, but this output is rated above your browsing level, so it stays hidden. Nothing was counted against your daily limit.';
-const APP_CAP_DAILY_MESSAGE =
-  'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later';
+  'The unlock went through, but this output is rated above your browsing level, so it stays hidden.';
+const INSUFFICIENT_FUNDS_MESSAGE = 'You do not have enough yellow Buzz to unlock this output.';
 
 // ── An in-memory sysRedis: get/set (NX)/del/incrBy/decrBy. ──────────────────
 const store = new Map<string, string>();
@@ -129,9 +125,6 @@ function installRedis() {
   r.ttl.mockImplementation(async () => 3600);
 }
 const keysWith = (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix));
-const counter = (prefix: string) =>
-  keysWith(prefix).reduce((s, k) => s + Number(store.get(k) ?? 0), 0);
-const CONSENT_PREFIX = 'system:blocks:consent-budget';
 const LOCK_PREFIX = 'system:blocks:output-unlock-lock';
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -141,7 +134,21 @@ const WF = `${VIEWER}-20261115120000000`;
 /** The orchestrator's yellow price: 157 Blue debited, 20 credited back. */
 const UNLOCK_PRICE = 137;
 const ALL = 1 | 2 | 4 | 8 | 16;
-const APP_DAILY_KEY = 'system:blocks:app-spend-daily:apb_test:2026-11-15';
+
+/**
+ * The three counters an unlock must NOT move, seeded at distinct non-zero values: the viewer's
+ * own daily limit for this app (the consent counter), the platform per-user cap, and the app's
+ * aggregate daily cap (the key `app-spend-cap.service` builds).
+ */
+const consentKey = () => consentBudgetRedisKey(VIEWER, 'apb_test');
+const platformKey = () => buzzCapRedisKey(VIEWER);
+const appCapKey = () =>
+  `${REDIS_SYS_KEYS.BLOCKS.APP_SPEND_CAP}:apb_test:${new Date().toISOString().slice(0, 10)}`;
+function seedCounters(consent: number) {
+  store.set(consentKey(), String(consent));
+  store.set(platformKey(), '250');
+  store.set(appCapKey(), '900');
+}
 
 function claims() {
   return {
@@ -236,7 +243,6 @@ beforeEach(() => {
   installRedis();
   unlocked = false;
   h.authorize.mockImplementation(async () => claims());
-  h.reserveAppSpend.mockImplementation(async () => ({ allowed: true, dailyKey: APP_DAILY_KEY }));
   // A WORKING fee path, so an implementation that charged one would get through and be seen
   // doing it, rather than dying on an undefined quote.
   h.quoteAuthorFee.mockImplementation(async () => ({ charge: true, feeBuzz: 8 }));
@@ -250,7 +256,12 @@ beforeEach(() => {
     if (args.allowMatureContent === true) unlocked = true;
     return workflow();
   });
-  // The viewer's own daily limit for this app, so the consent counter is reserved against.
+  h.lift.mockImplementation(async () => {
+    unlocked = true;
+    return { insufficientFunds: false };
+  });
+  seedCounters(400);
+  // The viewer's own daily limit for this app: 1000, so a reservation would have room to land.
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
     buzzBudgetPerDay: 1000,
     revokedAt: null,
@@ -267,6 +278,8 @@ beforeEach(() => {
   dbMock.dbWrite.blockAuthorFeeAccrual.create.mockClear();
 });
 
+const orchestratorWrites = () => h.lift.mock.calls.length + h.updateWorkflow.mock.calls.length;
+
 describe('blocks.unlockOutput — the seam', () => {
   it('🔴 an unlock of a fee-accrued workflow charges no author fee and writes no accrual row', async () => {
     const result = await unlock();
@@ -274,81 +287,70 @@ describe('blocks.unlockOutput — the seam', () => {
     expect(result.snapshot.outputs?.[1]).toEqual({ url: 'https://cdn/r1.png', nsfwLevel: 'r' });
     expect(result.charged).toEqual({ unlockBuzz: UNLOCK_PRICE });
     // The orchestrator's yellow swap is the only charge.
-    expect(h.updateWorkflow).toHaveBeenCalledTimes(1);
-    expect(h.updateWorkflow.mock.calls[0][0]).toMatchObject({
-      workflowId: WF,
-      allowMatureContent: true,
-      throwOnError: true,
-    });
+    expect(orchestratorWrites()).toBe(1);
     expectNoAuthorFee();
   });
 
-  it('counts the unlock price against the viewer daily limit for the app, and releases the lock', async () => {
-    await unlock();
-    // POSITIVE CONTROL for the refund case below: the counter really moves.
-    expect(counter(CONSENT_PREFIX)).toBe(UNLOCK_PRICE);
-    expect(keysWith(LOCK_PREFIX)).toEqual([]);
-  });
-
-  it('an orchestrator refusal refunds the daily limit, charges nothing and releases the lock', async () => {
-    h.updateWorkflow.mockImplementation(async () => {
-      throw new Error('orchestrator refused the unlock');
-    });
-    await expect(unlock()).rejects.toThrow('orchestrator refused the unlock');
-    expect(counter(CONSENT_PREFIX)).toBe(0);
-    expect(keysWith(LOCK_PREFIX)).toEqual([]);
-    expectNoAuthorFee();
-  });
-
-  it('a retry after the unlock reserves nothing and calls the orchestrator no more', async () => {
-    await unlock();
+  it('🔴 NET ZERO: a successful unlock leaves the daily limit, the platform cap and the app cap unchanged', async () => {
+    expect(store.get(consentKey())).toBe('400');
     const result = await unlock();
-    expect(result.outcome).toBe('not-restricted');
-    expect(h.updateWorkflow).toHaveBeenCalledTimes(1);
-    expect(counter(CONSENT_PREFIX)).toBe(UNLOCK_PRICE);
-    expectNoAuthorFee();
-  });
-});
-
-describe("blocks.unlockOutput — the app's own aggregate spend cap", () => {
-  it('counts the unlock against the app cap, with the unlock price', async () => {
-    await unlock();
-    expect(h.reserveAppSpend).toHaveBeenCalledTimes(1);
-    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', UNLOCK_PRICE);
-    expect(h.refundAppSpend).not.toHaveBeenCalled();
+    expect(result.outcome).toBe('unlocked');
+    expect(store.get(consentKey())).toBe('400');
+    expect(store.get(platformKey())).toBe('250');
+    expect(store.get(appCapKey())).toBe('900');
+    // Nothing else was written either, and the lock is gone.
+    expect([...store.keys()].sort()).toEqual([appCapKey(), consentKey(), platformKey()].sort());
   });
 
-  it('an exhausted app cap refuses the unlock with the cap error, before any orchestrator call', async () => {
-    h.reserveAppSpend.mockImplementation(async () => ({ allowed: false, reason: 'daily' }));
+  it('🔴 an unlock is not refused when the viewer is at, or over, their daily limit for the app', async () => {
+    for (const spent of [1000, 1500]) {
+      store.clear();
+      seedCounters(spent);
+      unlocked = false;
+      const result = await unlock();
+      expect(result.outcome, `spent ${spent} of 1000`).toBe('unlocked');
+      expect(store.get(consentKey())).toBe(String(spent));
+    }
+  });
+
+  it("the orchestrator's insufficient-Yellow refusal is 'refused', with its message, and counts nothing", async () => {
+    h.lift.mockImplementation(async () => ({ insufficientFunds: true }));
     const result = await unlock();
     expect(result.outcome).toBe('refused');
-    expect(result.message).toBe(APP_CAP_DAILY_MESSAGE);
-    expect(h.updateWorkflow).not.toHaveBeenCalled();
-    expect(h.assertUnlockReleasesOutput).toHaveBeenCalledTimes(1);
-    // The viewer's own reservation, taken first, is returned.
-    expect(counter(CONSENT_PREFIX)).toBe(0);
+    expect(result.message).toBe(INSUFFICIENT_FUNDS_MESSAGE);
+    expect(JSON.stringify(result)).not.toContain('r1.png');
+    expect(store.get(consentKey())).toBe('400');
     expect(keysWith(LOCK_PREFIX)).toEqual([]);
     expectNoAuthorFee();
   });
 
-  it('the app-cap reservation is refunded when the orchestrator refuses', async () => {
-    h.updateWorkflow.mockImplementation(async () => {
-      throw new Error('orchestrator refused the unlock');
+  it('any other orchestrator failure throws, counts nothing and releases the lock', async () => {
+    h.lift.mockImplementation(async () => {
+      throw new Error('orchestrator unavailable');
     });
-    await expect(unlock()).rejects.toThrow('orchestrator refused the unlock');
-    expect(h.refundAppSpend).toHaveBeenCalledWith(APP_DAILY_KEY, UNLOCK_PRICE);
-    expect(counter(CONSENT_PREFIX)).toBe(0);
+    await expect(unlock()).rejects.toThrow('orchestrator unavailable');
+    expect(store.get(consentKey())).toBe('400');
+    expect(keysWith(LOCK_PREFIX)).toEqual([]);
+    expectNoAuthorFee();
   });
 
-  it('🔴 not-released: the swap stands, the viewer is told why, and both reservations are refunded', async () => {
+  it('🔴 not-released: the swap stands, the viewer is told why, nothing is counted', async () => {
     // The orchestrator accepts the unlock, but its read-back still withholds the output.
-    h.updateWorkflow.mockImplementation(async () => workflow());
+    h.lift.mockImplementation(async () => ({ insufficientFunds: false }));
     const result = await unlock();
     expect(result.outcome).toBe('not-released');
     expect(result.message).toBe(NOT_RELEASED_MESSAGE);
     expect(JSON.stringify(result)).not.toContain('r1.png');
-    expect(h.refundAppSpend).toHaveBeenCalledWith(APP_DAILY_KEY, UNLOCK_PRICE);
-    expect(counter(CONSENT_PREFIX)).toBe(0);
+    expect(store.get(consentKey())).toBe('400');
+    expect(store.get(appCapKey())).toBe('900');
+    expectNoAuthorFee();
+  });
+
+  it('a retry after the unlock calls the orchestrator no more', async () => {
+    await unlock();
+    const result = await unlock();
+    expect(result.outcome).toBe('not-restricted');
+    expect(orchestratorWrites()).toBe(1);
     expectNoAuthorFee();
   });
 });

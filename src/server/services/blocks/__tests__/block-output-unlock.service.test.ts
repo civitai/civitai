@@ -7,7 +7,6 @@ import {
   OUTPUT_UNLOCK_LOCK_TTL_SECONDS,
   OUTPUT_UNLOCK_ORCHESTRATOR_TIMEOUT_MS,
   OUTPUT_UNLOCK_PRICE_CHANGED_MESSAGE,
-  OUTPUT_UNLOCK_READ_TIMEOUT_MS,
   OUTPUT_UNLOCK_SETTINGS_MESSAGE,
   planBlockOutputUnlock,
   previewBlockOutputUnlock,
@@ -17,6 +16,7 @@ import {
   type OutputUnlockDeps,
 } from '~/server/services/blocks/block-output-unlock.service';
 import { BLOCK_STEP_NAME, appBlockTag } from '~/server/services/blocks/workflow.service';
+import { ORCHESTRATOR_GET_TIMEOUT_MS } from '~/server/services/orchestrator/workflows';
 
 /**
  * The App Block OUTPUT UNLOCK (task e982 part C): the host's dialog unlocks one restricted output
@@ -98,14 +98,10 @@ const UNLOCKED = () =>
 
 type D = OutputUnlockDeps;
 type Wf = Awaited<ReturnType<D['readWorkflow']>>;
-type Fakes = { [K in keyof D]: Mock<D[K]> } & {
-  refund: Mock<(amount: number) => Promise<void>>;
-  release: Mock<() => Promise<void>>;
-};
+type Fakes = { [K in keyof D]: Mock<D[K]> } & { release: Mock<() => Promise<void>> };
 
 function fakes(reads: Array<() => Wf>, over: Partial<Fakes> = {}): Fakes {
   const queue = [...reads];
-  const refund = vi.fn<(amount: number) => Promise<void>>(async () => undefined);
   const release = vi.fn<() => Promise<void>>(async () => undefined);
   return {
     readWorkflow: vi.fn<D['readWorkflow']>(async () => {
@@ -114,10 +110,8 @@ function fakes(reads: Array<() => Wf>, over: Partial<Fakes> = {}): Fakes {
     }),
     assertUnlockAllowed: vi.fn<D['assertUnlockAllowed']>(() => undefined),
     assertUnlockReleasesOutput: vi.fn<D['assertUnlockReleasesOutput']>(async () => undefined),
-    reserveSpend: vi.fn<D['reserveSpend']>(async () => ({ refund })),
-    liftRestriction: vi.fn<D['liftRestriction']>(async () => undefined),
+    liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ insufficientFunds: false })),
     acquireLock: vi.fn<D['acquireLock']>(async () => release),
-    refund,
     release,
     ...over,
   };
@@ -141,8 +135,8 @@ async function rejection(p: Promise<unknown>): Promise<TRPCError> {
   return error as TRPCError;
 }
 
+/** Nothing reached the orchestrator write: the only place an unlock moves Buzz. */
 function expectNothingSpent(f: Fakes) {
-  expect(f.reserveSpend).not.toHaveBeenCalled();
   expect(f.liftRestriction).not.toHaveBeenCalled();
 }
 
@@ -214,7 +208,7 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
     expectNothingSpent(f);
   });
 
-  it('unlocks: reserves the price, lifts the restriction, returns the url, adds no author share', async () => {
+  it('unlocks: lifts the restriction and returns the url', async () => {
     const f = fakes([LOCKED, UNLOCKED]);
     const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
     expect(result.outcome).toBe('unlocked');
@@ -223,44 +217,27 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
       nsfwLevel: 'r',
     });
     expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE });
-    expect(f.reserveSpend).toHaveBeenCalledWith(UNLOCK_PRICE);
-    expect(f.refund).not.toHaveBeenCalled();
+    expect(f.liftRestriction).toHaveBeenCalledTimes(1);
     expect(f.release).toHaveBeenCalledTimes(1);
   });
 
-  it('counts against the daily limit BEFORE the orchestrator is asked', async () => {
-    const order: string[] = [];
-    const f = fakes([LOCKED, UNLOCKED]);
-    f.reserveSpend.mockImplementation(async () => {
-      order.push('reserve');
-      return { refund: f.refund };
-    });
-    f.liftRestriction.mockImplementation(async () => {
-      order.push('lift');
-    });
-    await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
-    expect(order).toStrictEqual(['reserve', 'lift']);
-  });
-
-  it('a daily-limit refusal returns refused and asks the orchestrator for nothing', async () => {
+  it("the orchestrator's insufficient-Yellow refusal is 'refused', with a message", async () => {
     const f = fakes([LOCKED], {
-      reserveSpend: vi.fn<D['reserveSpend']>(async () => ({
-        refused: 'app Buzz limit reached',
-        errorCode: 'daily-limit-exceeded',
-      })),
+      liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ insufficientFunds: true })),
     });
     const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
-    expect(result).toMatchObject({
+    expect(result).toStrictEqual({
       outcome: 'refused',
-      message: 'app Buzz limit reached',
-      errorCode: 'daily-limit-exceeded',
+      snapshot: expect.anything(),
       charged: { unlockBuzz: 0 },
+      message: 'You do not have enough yellow Buzz to unlock this output.',
     });
     expect(result.snapshot.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'pool' });
-    expect(f.liftRestriction).not.toHaveBeenCalled();
+    expect(f.readWorkflow).toHaveBeenCalledTimes(1);
+    expect(f.release).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a total above the one the viewer confirmed, before reserving', async () => {
+  it('refuses a total above the one the viewer confirmed, before the orchestrator write', async () => {
     const f = fakes([LOCKED]);
     const error = await rejection(unlockBlockOutput({ ...request(), expectedTotal: TOTAL - 1 }, f));
     expect(error.code).toBe('CONFLICT');
@@ -304,23 +281,24 @@ describe('idempotency', () => {
   });
 
   it('the lock outlives every bounded call made under it', () => {
-    // The plan read, the release check, the update's read-back and the re-classify: four reads.
+    // The plan read, the release check and the re-classify (three reads, bounded by the real
+    // `ORCHESTRATOR_GET_TIMEOUT_MS`, so a change there is seen here), plus the write.
+    expect(ORCHESTRATOR_GET_TIMEOUT_MS).toBeGreaterThan(0);
     expect(OUTPUT_UNLOCK_LOCK_TTL_SECONDS * 1000).toBeGreaterThan(
-      OUTPUT_UNLOCK_ORCHESTRATOR_TIMEOUT_MS + 4 * OUTPUT_UNLOCK_READ_TIMEOUT_MS
+      OUTPUT_UNLOCK_ORCHESTRATOR_TIMEOUT_MS + 3 * ORCHESTRATOR_GET_TIMEOUT_MS
     );
   });
 });
 
-describe('refund paths: the reservation is returned', () => {
-  it('the orchestrator refusing the unlock', async () => {
+describe('failure paths: the lock is released, nothing else is touched', () => {
+  it('the orchestrator failing the write', async () => {
     const f = fakes([LOCKED], {
       liftRestriction: vi.fn<D['liftRestriction']>(async () => {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'insufficient yellow Buzz' });
+        throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'orchestrator unavailable' });
       }),
     });
     const error = await rejection(unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f));
-    expect(error.message).toBe('insufficient yellow Buzz');
-    expect(f.refund).toHaveBeenCalledWith(TOTAL);
+    expect(error.message).toBe('orchestrator unavailable');
     // A failed unlock releases its lock.
     expect(f.release).toHaveBeenCalledTimes(1);
   });
@@ -337,7 +315,6 @@ describe('refund paths: the reservation is returned', () => {
     await expect(unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f)).rejects.toThrow(
       'orchestrator read timed out'
     );
-    expect(f.refund).toHaveBeenCalledWith(TOTAL);
     expect(f.release).toHaveBeenCalledTimes(1);
   });
 
@@ -353,11 +330,10 @@ describe('refund paths: the reservation is returned', () => {
     expect(result.outcome).toBe('not-released');
     // The viewer is told why the output is still withheld.
     expect(result.message).toBe(
-      'The unlock went through, but this output is rated above your browsing level, so it stays hidden. Nothing was counted against your daily limit.'
+      'The unlock went through, but this output is rated above your browsing level, so it stays hidden.'
     );
     expect(result.snapshot.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'ceiling' });
     expect(JSON.stringify(result)).not.toContain('r1.png');
-    expect(f.refund).toHaveBeenCalledWith(TOTAL);
     expect(result.charged).toStrictEqual({ unlockBuzz: 0 });
   });
 });

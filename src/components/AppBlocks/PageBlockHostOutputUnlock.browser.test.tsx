@@ -143,6 +143,7 @@ type UnlockDialog = {
     unlock: (expectedTotal: number) => Promise<Record<string, unknown>>;
     onResult: (r: unknown) => void;
     onLinkedOut: () => void;
+    linkOut?: { slug: string; subPath: string } | null;
   };
   options?: { onClose?: () => void };
 };
@@ -209,6 +210,9 @@ describe('PageBlockHost REQUEST_OUTPUT_UNLOCK', () => {
     const replies = await mount();
     postFromBlock('REQUEST_OUTPUT_UNLOCK', { requestId: 'rq_red', workflowId: WF, position: 0 });
     const dialog = await openDialog();
+    // The dialog links to the SAME app on red, from the host's own slug and route (never from
+    // the app); `outputUnlockRedHref` builds the URL from these.
+    expect(dialog.props.linkOut).toEqual({ slug: 'live-characters', subPath: '' });
     dialog.props.onLinkedOut();
     dialog.options?.onClose?.();
     expect((await resultFor(replies, 'rq_red')).result).toEqual({ outcome: 'linked-out' });
