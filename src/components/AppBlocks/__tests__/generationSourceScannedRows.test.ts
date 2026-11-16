@@ -47,7 +47,7 @@ describe('toGenerationSource', () => {
     const p = path({ usesScannedRows: vi.fn(async () => false) });
     const out = await toGenerationSource(BLOB, p);
     expect(out).toBe(BLOB);
-    expect(Object.keys(out).sort()).toEqual(['height', 'url', 'width']);
+    expect(Object.keys(out!).sort()).toEqual(['height', 'url', 'width']);
     expect(p.persist).not.toHaveBeenCalled();
   });
 

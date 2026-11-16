@@ -298,7 +298,10 @@ describe('blocks.persistUploadedGenerationSource — bounds of its own', () => {
 
   it('🔴 an upload persist is NOT refused while 2 output-source saves are in flight', async () => {
     const release = holdOpen();
-    const outputs = [callOutput(moderator()), callOutput(moderator())];
+    // One at a time, so each acquire sees the slots the earlier ones hold.
+    const outputs = [callOutput(moderator())];
+    await vi.waitFor(() => expect(h.persistOutput).toHaveBeenCalledTimes(1));
+    outputs.push(callOutput(moderator()));
     await vi.waitFor(() => expect(h.persistOutput).toHaveBeenCalledTimes(2));
     // Positive control: the output pool IS full.
     await expect(callOutput(moderator())).rejects.toMatchObject({
@@ -314,7 +317,9 @@ describe('blocks.persistUploadedGenerationSource — bounds of its own', () => {
 
   it('a third concurrent upload persist is refused while two uploads are in flight', async () => {
     const release = holdOpen();
-    const uploads = [call({}, moderator()), call({}, moderator())];
+    const uploads = [call({}, moderator())];
+    await vi.waitFor(() => expect(h.persistUploaded).toHaveBeenCalledTimes(1));
+    uploads.push(call({}, moderator()));
     await vi.waitFor(() => expect(h.persistUploaded).toHaveBeenCalledTimes(2));
     await expect(call({}, moderator())).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
