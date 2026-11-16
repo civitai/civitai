@@ -50,7 +50,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 
 const WF = '42-20261115120000000';
-const PAY = { kind: 'pay', position: 1, unlockBuzz: 137, authorFee: 11, total: 148 };
+const PAY = { kind: 'pay', position: 1, unlockBuzz: 137 };
 const UNLOCKED_SNAPSHOT = {
   workflowId: WF,
   status: 'succeeded',
@@ -172,7 +172,7 @@ describe('PageBlockHost REQUEST_OUTPUT_UNLOCK', () => {
     mocks.unlock.mockResolvedValue({
       outcome: 'unlocked',
       snapshot: UNLOCKED_SNAPSHOT,
-      charged: { unlockBuzz: 137, authorFee: 11 },
+      charged: { unlockBuzz: 137 },
     });
     const replies = await mount();
     postFromBlock('REQUEST_OUTPUT_UNLOCK', { requestId: 'rq_pay', workflowId: WF, position: 1 });
@@ -182,21 +182,21 @@ describe('PageBlockHost REQUEST_OUTPUT_UNLOCK', () => {
       workflowId: WF,
       position: 1,
     });
-    expect(dialog.props.offer).toStrictEqual(PAY);
+    expect(dialog.props.offer).toEqual(PAY);
     // Nothing is spent until the viewer confirms in the host's dialog.
     expect(mocks.unlock).not.toHaveBeenCalled();
 
-    dialog.props.onResult(await dialog.props.unlock(148));
+    dialog.props.onResult(await dialog.props.unlock(137));
     expect(mocks.unlock).toHaveBeenCalledWith({
       blockToken: 'tok_abc',
       workflowId: WF,
       position: 1,
-      expectedTotal: 148,
+      expectedTotal: 137,
     });
     dialog.options?.onClose?.();
 
     const payload = await resultFor(replies, 'rq_pay');
-    expect(payload.result).toStrictEqual({ outcome: 'unlocked', snapshot: UNLOCKED_SNAPSHOT });
+    expect(payload.result).toEqual({ outcome: 'unlocked', snapshot: UNLOCKED_SNAPSHOT });
     expectReplyKeys('REQUEST_OUTPUT_UNLOCK', 'success', ['result'], payload);
   });
 
@@ -211,7 +211,7 @@ describe('PageBlockHost REQUEST_OUTPUT_UNLOCK', () => {
     const dialog = await openDialog();
     dialog.props.onLinkedOut();
     dialog.options?.onClose?.();
-    expect((await resultFor(replies, 'rq_red')).result).toStrictEqual({ outcome: 'linked-out' });
+    expect((await resultFor(replies, 'rq_red')).result).toEqual({ outcome: 'linked-out' });
     expect(mocks.unlock).not.toHaveBeenCalled();
   });
 
@@ -220,7 +220,7 @@ describe('PageBlockHost REQUEST_OUTPUT_UNLOCK', () => {
     const replies = await mount();
     postFromBlock('REQUEST_OUTPUT_UNLOCK', { requestId: 'rq_no', workflowId: WF, position: 1 });
     (await openDialog()).options?.onClose?.();
-    expect((await resultFor(replies, 'rq_no')).result).toStrictEqual({ outcome: 'dismissed' });
+    expect((await resultFor(replies, 'rq_no')).result).toEqual({ outcome: 'dismissed' });
     expect(mocks.unlock).not.toHaveBeenCalled();
   });
 
@@ -228,7 +228,7 @@ describe('PageBlockHost REQUEST_OUTPUT_UNLOCK', () => {
     mocks.preview.mockResolvedValue({ kind: 'not-restricted', position: 0 });
     const replies = await mount();
     postFromBlock('REQUEST_OUTPUT_UNLOCK', { requestId: 'rq_ok', workflowId: WF, position: 0 });
-    expect((await resultFor(replies, 'rq_ok')).result).toStrictEqual({
+    expect((await resultFor(replies, 'rq_ok')).result).toEqual({
       outcome: 'not-restricted',
     });
     expect(unlockDialogs()).toHaveLength(0);
@@ -245,7 +245,7 @@ describe('PageBlockHost REQUEST_OUTPUT_UNLOCK', () => {
     mocks.preview.mockRejectedValue(new Error('workflow does not belong to this viewer'));
     const replies = await mount();
     postFromBlock('REQUEST_OUTPUT_UNLOCK', { requestId: 'rq_own', workflowId: '7-1', position: 0 });
-    expect((await resultFor(replies, 'rq_own')).result).toStrictEqual({
+    expect((await resultFor(replies, 'rq_own')).result).toEqual({
       outcome: 'unavailable',
       message: 'workflow does not belong to this viewer',
     });

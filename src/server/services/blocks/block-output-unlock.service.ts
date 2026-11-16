@@ -36,8 +36,11 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
  *
  * The money path ({@link unlockBlockOutput}) runs under a per-workflow lock, reserves the
  * viewer's daily Buzz limit BEFORE the orchestrator is asked, and re-classifies the workflow at
- * the token's ceiling afterwards: the author share is charged only when the output was actually
- * released, and every path that releases nothing refunds the reservation.
+ * the token's ceiling afterwards; every path that releases nothing refunds the reservation.
+ *
+ * NO AUTHOR SHARE ON AN UNLOCK (operator decision). The only charge is the orchestrator's yellow
+ * swap. A generation whose spend accrued an author fee already paid the author once; one whose
+ * spend took no fee has none to repeat. So nothing here reaches `chargeBlockAuthorFee`.
  */
 
 /** How long a single unlock may hold its workflow's lock. */
@@ -77,7 +80,7 @@ export const OUTPUT_UNLOCK_PRICE_CHANGED_MESSAGE =
 const ALL_RATINGS_CEILING: BlockOutputCeiling = { maxBrowsingLevel: allBrowsingLevelsFlag };
 
 export type OutputUnlockPlan =
-  /** Unlockable: `unlockBuzz` is the orchestrator's yellow charge, before any author share. */
+  /** Unlockable: `unlockBuzz` is the orchestrator's yellow charge, the whole price. */
   | { kind: 'pay'; position: number; unlockBuzz: number; snapshot: BlockWorkflowSnapshot }
   | { kind: 'link-out'; position: number; message: string }
   | { kind: 'unavailable'; position: number; message: string }
@@ -185,8 +188,6 @@ export type OutputUnlockReservation =
 export type OutputUnlockDeps = {
   /** The viewer's own orchestrator read of the workflow (their token, so another's 404s). */
   readWorkflow: () => Promise<Workflow>;
-  /** The author share the unlock adds, in Buzz (0 for none). See `block-output-unlock-fee`. */
-  quoteAuthorFee: () => Promise<number>;
   /** `assertUnlockAllowed`: the site-level refusal (green domain, mature content off). */
   assertUnlockAllowed: () => void;
   /** `assertUnlockReleasesOutput`: the orchestrator would release something for the charge. */
@@ -195,8 +196,6 @@ export type OutputUnlockDeps = {
   reserveSpend: (cost: number) => Promise<OutputUnlockReservation>;
   /** `updateWorkflow({ allowMatureContent: true })`, bounded. Throws on a refused update. */
   liftRestriction: () => Promise<void>;
-  /** Debit the author share (Yellow). Returns the Buzz actually charged; never throws. */
-  chargeAuthorFee: (reservedFeeBuzz: number) => Promise<number>;
   /** The per-workflow lock; `null` when another unlock holds it. */
   acquireLock: () => Promise<(() => Promise<void>) | null>;
 };
@@ -209,13 +208,7 @@ export type OutputUnlockRequest = {
 };
 
 export type OutputUnlockPreview =
-  | {
-      kind: 'pay';
-      position: number;
-      unlockBuzz: number;
-      authorFee: number;
-      total: number;
-    }
+  | { kind: 'pay'; position: number; unlockBuzz: number }
   | Exclude<OutputUnlockPlan, { kind: 'pay' } | { kind: 'not-restricted' }>
   | { kind: 'not-restricted'; position: number };
 
@@ -240,37 +233,30 @@ export async function previewBlockOutputUnlock(
   // The preview is a price, never a channel for output: no snapshot leaves it.
   if (plan.kind === 'not-restricted') return { kind: 'not-restricted', position: plan.position };
   if (plan.kind !== 'pay') return plan;
-  const authorFee = await deps.quoteAuthorFee();
-  return {
-    kind: 'pay',
-    position: plan.position,
-    unlockBuzz: plan.unlockBuzz,
-    authorFee,
-    total: plan.unlockBuzz + authorFee,
-  };
+  return { kind: 'pay', position: plan.position, unlockBuzz: plan.unlockBuzz };
 }
 
 export type OutputUnlockResult = {
   /**
    * `unlocked`: the output now carries a url. `not-restricted`: it already did (a retry after a
    * success lands here), nothing was charged. `not-released`: the orchestrator accepted the
-   * unlock but the output is still restricted at this token's ceiling; no author share was
-   * charged and the daily-limit reservation was refunded. `refused`: the viewer's daily limit
+   * unlock but the output is still restricted at this token's ceiling; the daily-limit
+   * reservation was refunded. `refused`: the viewer's daily limit
    * (or the platform cap) refused the spend before the orchestrator was asked; `message` says
    * which, and `errorCode` marks the per-app daily limit the host can offer to raise.
    */
   outcome: 'unlocked' | 'not-restricted' | 'not-released' | 'refused';
   snapshot: BlockWorkflowSnapshot;
-  charged: { unlockBuzz: number; authorFee: number };
+  charged: { unlockBuzz: number };
   message?: string;
   errorCode?: string;
 };
 
-const NOTHING_CHARGED = { unlockBuzz: 0, authorFee: 0 } as const;
+const NOTHING_CHARGED = { unlockBuzz: 0 } as const;
 
 /**
- * The confirmed unlock. `expectedTotal` is the total the viewer saw in the host's dialog; a
- * re-priced total above it is refused, never charged.
+ * The confirmed unlock. `expectedTotal` is the price the viewer saw in the host's dialog; a
+ * re-priced unlock above it is refused, never charged.
  */
 export async function unlockBlockOutput(
   request: OutputUnlockRequest & { expectedTotal: number },
@@ -294,8 +280,7 @@ export async function unlockBlockOutput(
       throw new TRPCError({ code: 'BAD_REQUEST', message: plan.message });
     }
 
-    const authorFee = await deps.quoteAuthorFee();
-    const total = plan.unlockBuzz + authorFee;
+    const total = plan.unlockBuzz;
     if (total > request.expectedTotal) {
       throw new TRPCError({ code: 'CONFLICT', message: OUTPUT_UNLOCK_PRICE_CHANGED_MESSAGE });
     }
@@ -331,13 +316,7 @@ export async function unlockBlockOutput(
       return { outcome: 'not-released', snapshot: after.snapshot, charged: NOTHING_CHARGED };
     }
 
-    const chargedFee = authorFee > 0 ? await deps.chargeAuthorFee(authorFee) : 0;
-    if (chargedFee < authorFee) await reservation.refund(authorFee - chargedFee);
-    return {
-      outcome: 'unlocked',
-      snapshot: after.snapshot,
-      charged: { unlockBuzz: plan.unlockBuzz, authorFee: chargedFee },
-    };
+    return { outcome: 'unlocked', snapshot: after.snapshot, charged: { unlockBuzz: total } };
   } finally {
     await release();
   }

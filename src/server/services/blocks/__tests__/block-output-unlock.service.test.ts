@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import {
@@ -23,8 +23,12 @@ import { BLOCK_STEP_NAME, appBlockTag } from '~/server/services/blocks/workflow.
  * in place. Every guard below is driven through the service with the outside world faked, so each
  * test names the dependency it expects called or NOT called.
  *
- * Fixture values are pairwise distinct: the unlock price (137) from the transactions, the author
- * fee (11), and their total (148), so an assertion on one cannot pass on another.
+ * The unlock price (137) is derived from the fixture's transactions (157 debited, 20 credited, a
+ * yellow debit ignored), so a mutant that read any one of them alone would move it.
+ *
+ * NO AUTHOR SHARE (operator decision): the deps have no fee capability at all, so the
+ * fee-accrued case is pinned where the real charge lives, the router seam test
+ * `blocks.router.outputUnlock.test.ts`.
  */
 
 const VIEWER = 42;
@@ -48,8 +52,7 @@ const SFW_DOMAIN: OutputUnlockClaims = { ...RED_MATURE, maxBrowsingLevel: SFW };
 const RED_VIEWER_SFW: OutputUnlockClaims = { ...RED_MATURE, viewerBrowsingLevel: SFW };
 
 const UNLOCK_PRICE = 137;
-const AUTHOR_FEE = 11;
-const TOTAL = UNLOCK_PRICE + AUTHOR_FEE;
+const TOTAL = UNLOCK_PRICE;
 
 function image(id: string, nsfwLevel: string | null) {
   return {
@@ -93,26 +96,27 @@ const LOCKED = () => workflow([image('pg0', 'pg'), image('r1', 'r')]);
 const UNLOCKED = () =>
   workflow([image('pg0', 'pg'), image('r1', 'r')], { allowMatureContent: true });
 
-type Fakes = {
-  [K in keyof OutputUnlockDeps]: ReturnType<typeof vi.fn>;
-} & { refund: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> };
+type D = OutputUnlockDeps;
+type Wf = Awaited<ReturnType<D['readWorkflow']>>;
+type Fakes = { [K in keyof D]: Mock<D[K]> } & {
+  refund: Mock<(amount: number) => Promise<void>>;
+  release: Mock<() => Promise<void>>;
+};
 
-function fakes(reads: Array<() => unknown>, over: Partial<Fakes> = {}): Fakes {
+function fakes(reads: Array<() => Wf>, over: Partial<Fakes> = {}): Fakes {
   const queue = [...reads];
-  const refund = vi.fn(async () => undefined);
-  const release = vi.fn(async () => undefined);
+  const refund = vi.fn<(amount: number) => Promise<void>>(async () => undefined);
+  const release = vi.fn<() => Promise<void>>(async () => undefined);
   return {
-    readWorkflow: vi.fn(async () => {
+    readWorkflow: vi.fn<D['readWorkflow']>(async () => {
       const next = queue.length > 1 ? queue.shift()! : queue[0];
       return next();
     }),
-    quoteAuthorFee: vi.fn(async () => AUTHOR_FEE),
-    assertUnlockAllowed: vi.fn(() => undefined),
-    assertUnlockReleasesOutput: vi.fn(async () => undefined),
-    reserveSpend: vi.fn(async () => ({ refund })),
-    liftRestriction: vi.fn(async () => undefined),
-    chargeAuthorFee: vi.fn(async (fee: number) => fee),
-    acquireLock: vi.fn(async () => release),
+    assertUnlockAllowed: vi.fn<D['assertUnlockAllowed']>(() => undefined),
+    assertUnlockReleasesOutput: vi.fn<D['assertUnlockReleasesOutput']>(async () => undefined),
+    reserveSpend: vi.fn<D['reserveSpend']>(async () => ({ refund })),
+    liftRestriction: vi.fn<D['liftRestriction']>(async () => undefined),
+    acquireLock: vi.fn<D['acquireLock']>(async () => release),
     refund,
     release,
     ...over,
@@ -140,7 +144,6 @@ async function rejection(p: Promise<unknown>): Promise<TRPCError> {
 function expectNothingSpent(f: Fakes) {
   expect(f.reserveSpend).not.toHaveBeenCalled();
   expect(f.liftRestriction).not.toHaveBeenCalled();
-  expect(f.chargeAuthorFee).not.toHaveBeenCalled();
 }
 
 beforeEach(() => {
@@ -201,19 +204,17 @@ describe('ownership', () => {
 });
 
 describe("the 'pool' restriction: pay and unlock in place", () => {
-  it('previews the itemised price: the yellow unlock plus the author share', async () => {
+  it("previews the price: the orchestrator's yellow unlock, nothing added", async () => {
     const f = fakes([LOCKED]);
     expect(await previewBlockOutputUnlock(request(), f)).toStrictEqual({
       kind: 'pay',
       position: 1,
       unlockBuzz: UNLOCK_PRICE,
-      authorFee: AUTHOR_FEE,
-      total: TOTAL,
     });
     expectNothingSpent(f);
   });
 
-  it('unlocks: reserves the total, lifts the restriction, charges the author share, returns the url', async () => {
+  it('unlocks: reserves the price, lifts the restriction, returns the url, adds no author share', async () => {
     const f = fakes([LOCKED, UNLOCKED]);
     const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
     expect(result.outcome).toBe('unlocked');
@@ -221,9 +222,8 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
       url: 'https://cdn/r1.png',
       nsfwLevel: 'r',
     });
-    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE, authorFee: AUTHOR_FEE });
-    expect(f.reserveSpend).toHaveBeenCalledWith(TOTAL);
-    expect(f.chargeAuthorFee).toHaveBeenCalledWith(AUTHOR_FEE);
+    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE });
+    expect(f.reserveSpend).toHaveBeenCalledWith(UNLOCK_PRICE);
     expect(f.refund).not.toHaveBeenCalled();
     expect(f.release).toHaveBeenCalledTimes(1);
   });
@@ -244,7 +244,7 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
 
   it('a daily-limit refusal returns refused and asks the orchestrator for nothing', async () => {
     const f = fakes([LOCKED], {
-      reserveSpend: vi.fn(async () => ({
+      reserveSpend: vi.fn<D['reserveSpend']>(async () => ({
         refused: 'app Buzz limit reached',
         errorCode: 'daily-limit-exceeded',
       })),
@@ -254,11 +254,10 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
       outcome: 'refused',
       message: 'app Buzz limit reached',
       errorCode: 'daily-limit-exceeded',
-      charged: { unlockBuzz: 0, authorFee: 0 },
+      charged: { unlockBuzz: 0 },
     });
     expect(result.snapshot.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'pool' });
     expect(f.liftRestriction).not.toHaveBeenCalled();
-    expect(f.chargeAuthorFee).not.toHaveBeenCalled();
   });
 
   it('refuses a total above the one the viewer confirmed, before reserving', async () => {
@@ -271,28 +270,13 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
 
   it("runs the site's own unlock guards before spending", async () => {
     const f = fakes([LOCKED], {
-      assertUnlockAllowed: vi.fn(() => {
+      assertUnlockAllowed: vi.fn<D['assertUnlockAllowed']>(() => {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'mature content off' });
       }),
     });
     const error = await rejection(unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f));
     expect(error.message).toBe('mature content off');
     expectNothingSpent(f);
-  });
-
-  it('an author share the charge could not take is refunded from the reservation', async () => {
-    const f = fakes([LOCKED, UNLOCKED], { chargeAuthorFee: vi.fn(async () => 0) });
-    const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
-    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE, authorFee: 0 });
-    expect(f.refund).toHaveBeenCalledWith(AUTHOR_FEE);
-  });
-
-  it('an app with no author share on the unlock charges none', async () => {
-    const f = fakes([LOCKED, UNLOCKED], { quoteAuthorFee: vi.fn(async () => 0) });
-    const result = await unlockBlockOutput({ ...request(), expectedTotal: UNLOCK_PRICE }, f);
-    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE, authorFee: 0 });
-    expect(f.reserveSpend).toHaveBeenCalledWith(UNLOCK_PRICE);
-    expect(f.chargeAuthorFee).not.toHaveBeenCalled();
   });
 });
 
@@ -305,13 +289,13 @@ describe('idempotency', () => {
       url: 'https://cdn/r1.png',
       nsfwLevel: 'r',
     });
-    expect(result.charged).toStrictEqual({ unlockBuzz: 0, authorFee: 0 });
+    expect(result.charged).toStrictEqual({ unlockBuzz: 0 });
     expectNothingSpent(f);
     expect(f.assertUnlockReleasesOutput).not.toHaveBeenCalled();
   });
 
   it('a concurrent second unlock of the same workflow is refused while the first holds the lock', async () => {
-    const f = fakes([LOCKED], { acquireLock: vi.fn(async () => null) });
+    const f = fakes([LOCKED], { acquireLock: vi.fn<D['acquireLock']>(async () => null) });
     const error = await rejection(unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f));
     expect(error.code).toBe('CONFLICT');
     expect(error.message).toBe(OUTPUT_UNLOCK_IN_PROGRESS_MESSAGE);
@@ -327,17 +311,16 @@ describe('idempotency', () => {
   });
 });
 
-describe('refund paths: the reservation is returned and no author share is charged', () => {
+describe('refund paths: the reservation is returned', () => {
   it('the orchestrator refusing the unlock', async () => {
     const f = fakes([LOCKED], {
-      liftRestriction: vi.fn(async () => {
+      liftRestriction: vi.fn<D['liftRestriction']>(async () => {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'insufficient yellow Buzz' });
       }),
     });
     const error = await rejection(unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f));
     expect(error.message).toBe('insufficient yellow Buzz');
     expect(f.refund).toHaveBeenCalledWith(TOTAL);
-    expect(f.chargeAuthorFee).not.toHaveBeenCalled();
     // A failed unlock releases its lock.
     expect(f.release).toHaveBeenCalledTimes(1);
   });
@@ -345,7 +328,7 @@ describe('refund paths: the reservation is returned and no author share is charg
   it('the re-read after the unlock failing', async () => {
     let reads = 0;
     const f = fakes([LOCKED], {
-      readWorkflow: vi.fn(async () => {
+      readWorkflow: vi.fn<D['readWorkflow']>(async () => {
         reads += 1;
         if (reads === 1) return LOCKED();
         throw new Error('orchestrator read timed out');
@@ -355,7 +338,6 @@ describe('refund paths: the reservation is returned and no author share is charg
       'orchestrator read timed out'
     );
     expect(f.refund).toHaveBeenCalledWith(TOTAL);
-    expect(f.chargeAuthorFee).not.toHaveBeenCalled();
     expect(f.release).toHaveBeenCalledTimes(1);
   });
 
@@ -372,8 +354,7 @@ describe('refund paths: the reservation is returned and no author share is charg
     expect(result.snapshot.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'ceiling' });
     expect(JSON.stringify(result)).not.toContain('r1.png');
     expect(f.refund).toHaveBeenCalledWith(TOTAL);
-    expect(f.chargeAuthorFee).not.toHaveBeenCalled();
-    expect(result.charged).toStrictEqual({ unlockBuzz: 0, authorFee: 0 });
+    expect(result.charged).toStrictEqual({ unlockBuzz: 0 });
   });
 });
 
@@ -448,8 +429,7 @@ describe("'ceiling' and 'unrated': never charged", () => {
     const f = fakes([sfwSiteRefused]);
     const preview = await previewBlockOutputUnlock(request(SFW_DOMAIN, 0), f);
     expect(preview.kind).toBe('link-out');
-    expect(preview).not.toHaveProperty('total');
-    expect(f.quoteAuthorFee).not.toHaveBeenCalled();
+    expect(preview).not.toHaveProperty('unlockBuzz');
   });
 });
 

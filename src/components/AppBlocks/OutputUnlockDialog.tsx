@@ -10,7 +10,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 
 /** What the server's `blocks.previewOutputUnlock` said the host may offer. */
 export type OutputUnlockOffer =
-  | { kind: 'pay'; position: number; unlockBuzz: number; authorFee: number; total: number }
+  | { kind: 'pay'; position: number; unlockBuzz: number }
   | { kind: 'link-out'; position: number; message: string }
   | { kind: 'unavailable'; position: number; message: string };
 
@@ -38,7 +38,8 @@ export type OutputUnlockDialogProps = {
  * disabled for the arm delay (and while another dialog is on top), so a click aimed at the app
  * cannot land on it; focus starts on "Not now".
  *
- * - `pay`: civitai.com's "Unlock with yellow Buzz", itemised (the unlock, the app's share).
+ * - `pay`: civitai.com's "Unlock with yellow Buzz", at the orchestrator's price. The app takes
+ *   no share of an unlock.
  * - `link-out`: the site this app runs on cannot show it; civitai.red can. No charge.
  * - `unavailable`: why it cannot be unlocked (e.g. the viewer's own mature content settings).
  */
@@ -59,7 +60,7 @@ export default function OutputUnlockDialog({
   const who = sanitizeAppChromeName(appName) ?? 'this app';
 
   return (
-    <Modal {...dialog} title="Unlock mature content">
+    <Modal {...dialog} title={`Unlock a result from ${who}`}>
       <Stack gap="sm" data-testid="block-output-unlock">
         {offer.kind === 'pay' && (
           <>
@@ -67,17 +68,9 @@ export default function OutputUnlockDialog({
               This result was generated with Buzz that cannot be used for mature content. Unlock it
               with yellow Buzz, and the Buzz you spent on it is refunded.
             </Text>
-            <Stack gap={2} data-testid="block-output-unlock-price">
-              <Text size="sm">Unlock: {numberWithCommas(offer.unlockBuzz)} yellow Buzz</Text>
-              {offer.authorFee > 0 && (
-                <Text size="sm">
-                  {who}&apos;s share: {numberWithCommas(offer.authorFee)} yellow Buzz
-                </Text>
-              )}
-              <Text size="sm" fw={700}>
-                Total: {numberWithCommas(offer.total)} yellow Buzz
-              </Text>
-            </Stack>
+            <Text size="sm" fw={700} data-testid="block-output-unlock-price">
+              Unlock: {numberWithCommas(offer.unlockBuzz)} yellow Buzz
+            </Text>
           </>
         )}
         {offer.kind !== 'pay' && <Text size="sm">{offer.message}</Text>}
@@ -115,7 +108,7 @@ export default function OutputUnlockDialog({
                 setError(null);
                 setPending(true);
                 try {
-                  const result = await unlock(offer.total);
+                  const result = await unlock(offer.unlockBuzz);
                   onResult(result);
                   if (result.outcome === 'refused' || result.outcome === 'not-released') {
                     setError(
@@ -133,7 +126,7 @@ export default function OutputUnlockDialog({
               }}
               data-testid="block-output-unlock-confirm"
             >
-              Unlock for {numberWithCommas(offer.total)}
+              Unlock for {numberWithCommas(offer.unlockBuzz)}
             </Button>
           )}
         </Group>

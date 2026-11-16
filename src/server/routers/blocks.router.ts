@@ -7212,7 +7212,7 @@ export const blocksRouter = router({
    *
    * `previewOutputUnlock` says what the host may offer for the output at `position`, judged
    * from the live workflow and the token (never from the block): `pay` (a `'pool'` restriction:
-   * the yellow unlock plus the author share, itemised), `link-out` (the domain keeps it out and
+   * the orchestrator's yellow unlock, with no author share), `link-out` (the domain keeps it out and
    * civitai.red would show it; never charged), `unavailable` (with the reason), or
    * `not-restricted`. It confers nothing. `unlockOutput` runs the unlock the viewer confirmed at
    * `expectedTotal`. Both are bound to a signed-in session whose user is the token subject. See
@@ -7226,8 +7226,8 @@ export const blocksRouter = router({
       const { deps, unlockService } = await outputUnlockDeps({
         ctx,
         ...auth,
+        showNsfw: !!ctx.user.showNsfw,
         workflowId: input.workflowId,
-        disclosure: true,
       });
       return unlockService.previewBlockOutputUnlock(
         {
@@ -7248,8 +7248,8 @@ export const blocksRouter = router({
       const { deps, unlockService } = await outputUnlockDeps({
         ctx,
         ...auth,
+        showNsfw: !!ctx.user.showNsfw,
         workflowId: input.workflowId,
-        disclosure: false,
       });
       return unlockService.unlockBlockOutput(
         {
@@ -14913,51 +14913,43 @@ async function authorizeOutputUnlockRequest(blockToken: string, sessionUserId: n
       message: 'Rate limit exceeded, please retry shortly.',
     });
   }
-  const user = await getBlockSessionUser(userId);
-  return { claims, userId, user };
+  return { claims, userId };
 }
 
 /**
  * The real-world side of `block-output-unlock.service`, bound to one verified viewer, app and
  * workflow. Every spend goes through the same reservation the submit paths use
  * (`reserveBlockBuzzSpendForClaims`: the platform cap and the viewer's per-app daily limit,
- * atomic INCRBY-then-compare, so two racing spends cannot both pass the limit).
+ * atomic INCRBY-then-compare, so two racing spends cannot both pass the limit). No author
+ * share: an unlock never reaches the author-fee charge (operator decision; the author is paid
+ * once per generation, on the original spend if at all).
  */
 async function outputUnlockDeps(opts: {
   ctx: Context;
   claims: BlockClaims;
   userId: number;
-  user: SessionUser;
+  /**
+   * The signed-in viewer's own mature-content setting, from the SESSION (already asserted to be
+   * the token subject). `getBlockSessionUser` does not select it, so it cannot come from there.
+   */
+  showNsfw: boolean;
   workflowId: string;
-  disclosure: boolean;
 }) {
-  const { ctx, claims, userId, user, workflowId, disclosure } = opts;
-  const [unlockService, unlockFee, { acquireOutputUnlockLock }, orchestration, workflows] =
-    await Promise.all([
-      import('~/server/services/blocks/block-output-unlock.service'),
-      import('~/server/services/blocks/block-output-unlock-fee.service'),
-      import('~/server/services/blocks/block-output-unlock-lock'),
-      import('~/server/services/orchestrator/orchestration-new.service'),
-      import('~/server/services/orchestrator/workflows'),
-    ]);
+  const { ctx, claims, userId, showNsfw, workflowId } = opts;
+  const [unlockService, { acquireOutputUnlockLock }, orchestration, workflows] = await Promise.all([
+    import('~/server/services/blocks/block-output-unlock.service'),
+    import('~/server/services/blocks/block-output-unlock-lock'),
+    import('~/server/services/orchestrator/orchestration-new.service'),
+    import('~/server/services/orchestrator/workflows'),
+  ]);
   let tokenPromise: Promise<string> | undefined;
   const token = () => (tokenPromise ??= getOrchestratorToken(userId, ctx));
-  let originalPromise: ReturnType<typeof unlockFee.readOriginalAuthorFee> | undefined;
-  const feeContext = async () => ({
-    workflowId,
-    original: await (originalPromise ??= unlockFee.readOriginalAuthorFee(workflowId)),
-    appId: claims.appId,
-    viewerUserId: userId,
-    privateRun: claims.privateRun === true,
-  });
   const deps: OutputUnlockDeps = {
     readWorkflow: async () => getWorkflow({ token: await token(), path: { workflowId } }),
-    quoteAuthorFee: async () =>
-      unlockFee.quoteUnlockAuthorFee({ ...(await feeContext()), disclosure }),
     assertUnlockAllowed: () =>
       orchestration.assertUnlockAllowed({
         domain: resolveBlockMaturity(claims).isGreen ? 'green' : 'red',
-        showNsfw: !!user.showNsfw,
+        showNsfw,
       }),
     assertUnlockReleasesOutput: async () =>
       orchestration.assertUnlockReleasesOutput({ token: await token(), workflowId }),
@@ -14989,12 +14981,6 @@ async function outputUnlockDeps(opts: {
         signal: AbortSignal.timeout(unlockService.OUTPUT_UNLOCK_ORCHESTRATOR_TIMEOUT_MS),
       });
     },
-    chargeAuthorFee: async (reservedAuthorFeeBuzz) =>
-      unlockFee.chargeUnlockAuthorFee({
-        ...(await feeContext()),
-        appBlockId: claims.appBlockId,
-        reservedAuthorFeeBuzz,
-      }),
     acquireLock: () => acquireOutputUnlockLock(workflowId),
   };
   return { deps, unlockService };

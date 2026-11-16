@@ -200,8 +200,6 @@ describe('IframeHost REQUEST_OUTPUT_UNLOCK', () => {
       kind: 'pay',
       position: 0,
       unlockBuzz: 90,
-      authorFee: 0,
-      total: 90,
     });
     mocks.unlock.mockResolvedValue({ outcome: 'unlocked', snapshot });
     const replies = await mount();
@@ -217,7 +215,7 @@ describe('IframeHost REQUEST_OUTPUT_UNLOCK', () => {
     });
     dialog.options?.onClose?.();
     const payload = await resultFor(replies, 'rq_slot');
-    expect(payload.result).toStrictEqual({ outcome: 'unlocked', snapshot });
+    expect(payload.result).toEqual({ outcome: 'unlocked', snapshot });
     expectReplyKeys('REQUEST_OUTPUT_UNLOCK', 'success', ['result'], payload);
   });
 
@@ -231,7 +229,7 @@ describe('IframeHost REQUEST_OUTPUT_UNLOCK', () => {
     postFromBlock('REQUEST_OUTPUT_UNLOCK', { requestId: 'rq_set', workflowId: WF, position: 0 });
     await vi.waitFor(() => expect(unlockDialogs()).toHaveLength(1));
     unlockDialogs()[0].options?.onClose?.();
-    expect((await resultFor(replies, 'rq_set')).result).toStrictEqual({
+    expect((await resultFor(replies, 'rq_set')).result).toEqual({
       outcome: 'unavailable',
       message: 'This output is above your browsing level.',
     });

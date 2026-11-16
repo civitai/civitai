@@ -212,6 +212,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: [],
     why: 'NONE OF THESE BUCKETS. Bounded by its batch instead: only for an open batch of this viewer and app, and at most three upload URLs per file the daily batch quota was charged for at startMediaUploadBatch. The per-install catalog bucket would let one viewer’s 1,000-file batch drain every viewer’s allowance on a page app.',
   },
+  previewOutputUnlock: {
+    buckets: ['catalog'],
+    why: 'The read-only half of the output unlock: one orchestrator workflow read, classified at the token ceiling; prices and materialises nothing. A signed-in session that is the token subject is required as well.',
+  },
   previewQuoteGrant: {
     buckets: ['catalog'],
     why: 'The read-only half of the viewer-confirmed quote consent pair, either kind — a quote read, a Buzz balance read and the viewer’s daily-limit read; materialises nothing. previewTrainingQuote is its training-named delegate.',
@@ -247,6 +251,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   submitWorkflow: {
     buckets: ['submit', 'submit-user'],
     why: 'Its own :submit: bucket per (install, token subject), at twice the catalog ceiling estimateWorkflow charges, plus :submit-user: per subject across all installs at twice that, both above every kind branch so a submit refused before reserveAppSpend still counts. reserveAppSpend still bounds accepted generations.',
+  },
+  unlockOutput: {
+    buckets: ['catalog'],
+    why: 'The confirmed output unlock: at most one per workflow at a time (a Redis NX lock refuses a concurrent second), a click in the host dialog under a signed-in session that is the token subject, and every spend reserved against the viewer daily limit first. The catalog bucket bounds the reads a refused or repeated click costs.',
   },
   updateUserSettings: {
     buckets: [],
