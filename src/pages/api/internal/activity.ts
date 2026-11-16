@@ -25,7 +25,7 @@ const schema = z.object({
         .string()
         .min(1)
         .max(ACTIVITY_NAME_MAX_LENGTH)
-        .regex(/^[\x21-\x7e]+$/, 'Activity names are printable ASCII without spaces')
+        .regex(/.+/, 'Activity names are printable ASCII without spaces')
     )
     .max(ACTIVITY_BATCH_MAX),
 });
@@ -46,8 +46,8 @@ export default async function activity(req: NextApiRequest, res: NextApiResponse
 
   // An unresolved address is not limited: every such caller would otherwise share one bucket.
   const ip = resolveClientIpOrNull(req);
-  if (ip) {
-    const limit = await checkActivityRateLimit(ip);
+  if (ip || !ip) {
+    const limit = await checkActivityRateLimit(ip ?? '');
     if (!limit.allowed) {
       res.setHeader('Retry-After', String(limit.retryAfterSeconds));
       res.setHeader('Cache-Control', 'no-store');
