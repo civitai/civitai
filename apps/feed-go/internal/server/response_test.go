@@ -17,7 +17,7 @@ func postResponseSample(t *testing.T, s *Server, status int, headers map[string]
 	t.Helper()
 	b, err := json.Marshal(ShadowRequest{
 		Input: `{"json":{}}`, Headers: map[string]string{"host": "civitai.example"},
-		Node: json.RawMessage(`{"json":{"items":[]}}`), Status: status, ResponseHeaders: headers,
+		Node: json.RawMessage(servedPayload), Status: status, ResponseHeaders: headers,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func postResponseSample(t *testing.T, s *Server, status int, headers map[string]
 // `mismatch`, with the diff counted under header:cache-control.
 func TestShadowComparesStatusAndHeaders(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	s := newPhaseServer(reg, 1, served(`{"json":{"items":[]}}`, &trpc.SignedOutTTL))
+	s := newPhaseServer(reg, 1, served(&trpc.SignedOutTTL))
 	response := func(r string, want float64) func() bool {
 		return func() bool {
 			v, _ := metricValue(t, reg, "feed_go_shadow_response_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": r})
