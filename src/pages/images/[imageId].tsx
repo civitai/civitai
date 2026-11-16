@@ -18,6 +18,8 @@ export const getServerSideProps = createServerSideProps({
     // and the `<head>`), the contest details (the rating the page gates on) and the hidden
     // preferences (NotFound for a creator the viewer blocked), and leaves the generation data to
     // the client; the content renders as a loading shell until the client has mounted.
+    // Decided before `image.get` answers, so a missing image (a 200 with the client NotFound) is
+    // still counted: waiting for it would serialize the full arm's prefetches, which start together.
     const deferredSsr =
       imageDetailId(args.ctx.params) !== null &&
       resolveSsrPrefetchCohort({ ...args, route: '/images/[imageId]' }) === 'skip';
