@@ -828,7 +828,7 @@ func TestServeV1LegacyAnswersAndFallbacks(t *testing.T) {
 	if !reflect.DeepEqual(f.trivial, []bool{true, false, false}) {
 		t.Fatalf("trivial = %v", f.trivial)
 	}
-	// ... the owner's unpublished image is theirs.
+	// The owner's unpublished image is served to them.
 	if got, err := serveV1(t, f, "ids=13", &Viewer{ID: 5}); err != nil || !strings.Contains(got, `"id":13,`) {
 		t.Fatalf("own unpublished: %s %v", got, err)
 	}

@@ -37,7 +37,7 @@ var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecoratio
 // packs `{...result, cachedAt}` (or the `{[idKey]: id, notFound: true, cachedAt}` marker), and read
 // back through the same decoder as a cache hit, so a computed miss and a later hit of what Node
 // wrote for it hydrate identically. The image meta (meta.go) is the exception: its misses are
-// neither written back nor kept in process (memoized).
+// neither written back nor kept in process (see memoized).
 type MissCompute struct {
 	// WriteBack (FEED_GO_CACHE_WRITEBACK, default off) writes each computed entry where, and as, the
 	// Node lookup writes it: same key, same msgpackr bytes, same expiry. Only for a miss Node would
