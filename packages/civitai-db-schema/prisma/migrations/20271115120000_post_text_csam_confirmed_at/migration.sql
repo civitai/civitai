@@ -168,9 +168,17 @@ BEGIN
     AND post_text_retention_skip(OLD."postId", OLD."userId") IS NULL
   THEN
     UPDATE "TextScanHold" h
+    -- Only the decision's own keys stay: the scan's reason, `previous` and any scan key may carry
+    -- the text.
     SET "text" = '',
-        "meta" = (CASE WHEN jsonb_typeof(h."meta") = 'object' THEN h."meta" ELSE '{}'::jsonb END)
-          || jsonb_build_object('retentionPurgedAt', now())
+        "reason" = '',
+        "meta" = jsonb_strip_nulls(jsonb_build_object(
+          'decision', h."meta" -> 'decision',
+          'reportChoice', h."meta" -> 'reportChoice',
+          'kind', h."meta" -> 'kind',
+          'priorHoldId', h."meta" -> 'priorHoldId',
+          'retentionPurgedAt', now()
+        ))
     WHERE h."entityType" = 'PostText' AND h."entityId" = OLD."id" AND h.label = 'csam'
       AND h.status = 'Confirmed';
     IF to_regprocedure('label_store.exclude(text,text,text)') IS NOT NULL THEN

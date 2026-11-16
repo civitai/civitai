@@ -28,6 +28,7 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "TextScanHold" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
   "label" TEXT NOT NULL, "status" TEXT NOT NULL, "text" TEXT NOT NULL DEFAULT 'held words',
+  "reason" TEXT NOT NULL DEFAULT 'quotes the held words',
   "textHash" TEXT NOT NULL DEFAULT 'h',
   "meta" JSONB, "decidedAt" TIMESTAMP(3),
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
@@ -291,6 +292,35 @@ describe('the delete trigger on a confirmed "none" text', () => {
     expect(await copies(textId, holdId)).toEqual({ row: false, holdText: '', snapshot: null });
   });
 
+  it("leaves no copy of the text anywhere on a redetected hold's row", async () => {
+    const { textId, holdId } = await confirmed({ confirmedDaysAgo: 366 });
+    await pg.query(`UPDATE "TextScanHold" SET meta = meta || $2::jsonb WHERE id = $1`, [
+      holdId,
+      JSON.stringify({
+        kind: 'redetected',
+        priorHoldId: 3,
+        textUpdatedAt: '2025-01-01T00:00:00Z',
+        context: 'held words in a scan key',
+        previous: [{ text: 'earlier held words', textHash: 'h0', reason: 'r' }],
+      }),
+    ]);
+
+    await deleteText(textId);
+
+    const { rows } = await pg.query<{ row: string; meta: Record<string, unknown> }>(
+      `SELECT to_jsonb(h)::text AS row, h.meta FROM "TextScanHold" h WHERE id = $1`,
+      [holdId]
+    );
+    expect(rows[0].row).not.toMatch(/held words/);
+    expect(rows[0].meta).toEqual({
+      decision: 'remove',
+      reportChoice: 'none',
+      kind: 'redetected',
+      priorHoldId: 3,
+      retentionPurgedAt: expect.any(String),
+    });
+  });
+
   it('drops nothing inside the year', async () => {
     const { textId, holdId } = await confirmed({ confirmedDaysAgo: 300 });
     await expect(deleteText(textId)).rejects.toThrow(/held/);
@@ -343,10 +373,11 @@ describe('post_text_retention_skip', () => {
 });
 
 describe('post_text_sync_csam_hold', () => {
-  async function text() {
+  async function text(held = true) {
     const { rows } = await pg.query<{ id: number }>(
       `INSERT INTO "PostText" ("postId", "userId", "index", "content", "csamHeld", "updatedAt")
-       VALUES (1, ${AUTHOR}, 0, 'x', true, now()) RETURNING id`
+       VALUES (1, ${AUTHOR}, 0, 'x', $1, now()) RETURNING id`,
+      [held]
     );
     return rows[0].id;
   }
@@ -368,6 +399,12 @@ describe('post_text_sync_csam_hold', () => {
     );
     return rows[0];
   }
+
+  it('holds a confirmed text its scan never marked held', async () => {
+    const id = await text(false);
+    await hold(id, 'Confirmed', 5);
+    expect(await synced(id)).toEqual({ held: true, days: 5 });
+  });
 
   it("keeps another hold's confirmation when one hold is dismissed", async () => {
     const id = await text();
