@@ -384,7 +384,6 @@ describe('feed-go shadow, end to end', () => {
       const metric = instrumentationRegistry.getSingleMetric(name);
       expect(metric, name).toBeDefined();
       const { values } = await metric!.get();
-      // Seeded for every endpoint, so the label set is visible without traffic.
       expect(values.map((v) => v.labels.feed_endpoint).sort(), name).toEqual(
         expect.arrayContaining(['as-posts', 'v1-images', 'infinite', 'model-getall'])
       );

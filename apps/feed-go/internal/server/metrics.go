@@ -14,9 +14,7 @@ const EndpointLabel = "feed_endpoint"
 // Metrics are this service's Prometheus series. The Go and process collectors (registered in main)
 // add `process_cpu_seconds_total` and the GC series the CPU-per-call measurement reads.
 //
-// Every feed_go_* series carries EndpointLabel (`feed_endpoint`: one of Endpoints, EndpointAsPosts |
-// EndpointV1Images | EndpointInfinite | EndpointModelGetAll): four values, so the label multiplies each
-// family's cardinality by four at most.
+// Every feed_go_* series carries EndpointLabel (`feed_endpoint`), one of Endpoints.
 type Metrics struct {
 	Requests      *prometheus.CounterVec   // endpoint, mode, outcome
 	Fallbacks     *prometheus.CounterVec   // endpoint, mode, reason
