@@ -13,6 +13,7 @@ import type * as ReviewAutodeployService from '~/server/services/blocks/review-a
 import type * as PublishRequestFinalise from '~/server/services/blocks/publish-request-finalise.service';
 import type * as AppBlockNotify from '~/server/services/blocks/app-block-notify';
 import type * as LiveUnpublish from '~/server/services/blocks/live-unpublish.service';
+import type * as AppListingService from '~/server/services/blocks/app-listing.service';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
@@ -163,7 +164,12 @@ const {
       // the app-block OauthClient's allowedScopes to the manifest-derived
       // ceiling + forces grants:[] on the subsequent-version + P2002-retry
       // paths.
-      oauthClient: { create: vi.fn(), update: vi.fn() },
+      oauthClient: {
+        create: vi.fn(),
+        update: vi.fn(),
+        // The ceiling a late hold puts back, read on the primary before step (3).
+        findUnique: vi.fn<DelegateMock>(async () => ({ allowedScopes: 33554431 })),
+      },
       // W13 auto-create-on-approve: approveRequest mints the onsite AppListing
       // (idempotent skip-if-exists, P2002-tolerant) right after the AppBlock row
       // exists so the app appears on the /apps grid without a manual backfill.
@@ -268,14 +274,20 @@ const { mockOnNewPendingSubmission, mockDeleteReviewResources } = vi.hoisted(() 
 }));
 // Calls through, so every approve here still runs the real final step (holds check included);
 // the spy proves approveRequest reaches it.
-const { finaliseSpy } = vi.hoisted(() => ({ finaliseSpy: { fn: null as unknown } }));
 vi.mock('~/server/services/blocks/publish-request-finalise.service', async (importOriginal) => {
   const actual = await importOriginal<typeof PublishRequestFinalise>();
-  const fn = vi.fn(actual.finaliseOnsiteApprove);
-  finaliseSpy.fn = fn;
-  return { ...actual, finaliseOnsiteApprove: fn };
+  return { ...actual, finaliseOnsiteApprove: vi.fn(actual.finaliseOnsiteApprove) };
 });
+const finaliseMock = async () =>
+  vi.mocked(
+    (await import('~/server/services/blocks/publish-request-finalise.service'))
+      .finaliseOnsiteApprove
+  );
 
+vi.mock('~/server/services/blocks/app-listing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingService>()),
+  bustAppListingCatalogCache: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/blocks/live-unpublish.service', async (importOriginal) => ({
   ...(await importOriginal<typeof LiveUnpublish>()),
   takeDownLiveApp: vi.fn(async () => ({})),
@@ -2071,10 +2083,7 @@ describe('approveRequest', () => {
 
   it('🔴 a hold placed after the claim expired leaves the held version unbuilt and unannounced', async () => {
     const { approveRequest } = await import('../publish-request.service');
-    const finalise = vi.mocked(
-      (await import('~/server/services/blocks/publish-request-finalise.service'))
-        .finaliseOnsiteApprove
-    );
+    const finalise = await finaliseMock();
     const notify = vi.mocked(
       (await import('~/server/services/blocks/app-block-notify')).notifyAppBlockSubmitter
     );
@@ -2082,6 +2091,10 @@ describe('approveRequest', () => {
       (await import('~/server/services/blocks/live-unpublish.service')).takeDownLiveApp
     );
     takeDown.mockClear();
+    const bust = vi.mocked(
+      (await import('~/server/services/blocks/app-listing.service')).bustAppListingCatalogCache
+    );
+    bust.mockClear();
     finalise.mockClear();
     notify.mockClear();
     mockTriggerBuild.mockClear();
@@ -2098,11 +2111,14 @@ describe('approveRequest', () => {
     expect(result.lateHoldIds).toEqual([7]);
     // The previous version stops serving on the subdomain too.
     expect(takeDown).toHaveBeenCalledWith('hello');
+    // The put-back listing is not served from a stale catalog cache.
+    expect(bust).toHaveBeenCalled();
   });
 
   it('first-version happy path wires the 4 external systems in order', async () => {
     const { approveRequest } = await import('../publish-request.service');
-    (finaliseSpy.fn as ReturnType<typeof vi.fn>).mockClear();
+    const finalise = await finaliseMock();
+    finalise.mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
     mockBundleBuffer.current = await makeValidBundle();
@@ -2117,8 +2133,8 @@ describe('approveRequest', () => {
     expect(result.forgejoCommitSha).toBe('commit_sha_abc');
 
     // 🔴 The approved flip goes through the final hold check, never around it.
-    expect(finaliseSpy.fn).toHaveBeenCalledTimes(1);
-    expect(finaliseSpy.fn).toHaveBeenCalledWith(
+    expect(finalise).toHaveBeenCalledTimes(1);
+    expect(finalise).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         publishRequestId: 'pubreq_1',
@@ -2971,9 +2987,31 @@ describe('approveRequest', () => {
     expect(claimReleases()).toBe(1);
   });
 
+  it('🔴 refuses a subsequent version before any write when its OAuth ceiling cannot be read', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
+    });
+    mockDbWrite.oauthClient.findUnique.mockResolvedValueOnce(null);
+    mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    mockForgejo.commitFiles.mockClear();
+    mockDbWrite.appBlock.update.mockClear();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/could not read the OAuth client/);
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+    expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+  });
+
   it('subsequent-version happy path skips OauthClient + repo create', async () => {
     const { approveRequest } = await import('../publish-request.service');
-    (finaliseSpy.fn as ReturnType<typeof vi.fn>).mockClear();
+    const finalise = await finaliseMock();
+    finalise.mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue({
       id: 'apb_existing',
@@ -2996,6 +3034,21 @@ describe('approveRequest', () => {
       trustTier: 'unverified',
     };
     mockDbWrite.appBlock.findUnique.mockResolvedValueOnce(prior);
+    const listingBefore = {
+      id: 'al_hello',
+      kind: 'onsite',
+      status: 'approved',
+      contentRating: 'pg',
+      name: 'Hello',
+      tagline: null,
+      description: null,
+      category: null,
+      sourceRepoUrl: null,
+      appBlockId: 'apb_existing',
+    };
+    mockDbWrite.appListing.findUnique.mockImplementationOnce(async (args: unknown) =>
+      (args as { where: { slug?: string } }).where.slug === 'hello' ? listingBefore : null
+    );
 
     const result = await approveRequest({
       publishRequestId: 'pubreq_1',
@@ -3005,16 +3058,27 @@ describe('approveRequest', () => {
     expect(result.isFirstVersion).toBe(false);
     expect(result.appBlockId).toBe('apb_existing');
     // 🔴 What the app ran under before this approve reaches the final step, for a late hold.
-    expect(finaliseSpy.fn).toHaveBeenCalledWith(
+    expect(finalise).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         priorVersion: { block: prior, oauthClientId: 'oc_existing', allowedScopes: 33554431 },
       })
     );
+    // 🔴 The store listing as it was before the approve reaches it too.
+    expect(finalise).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        priorListing: expect.objectContaining({
+          id: 'al_hello',
+          name: 'Hello',
+          status: 'approved',
+        }),
+      })
+    );
 
     // 🔴 The approved flip goes through the final hold check, never around it.
-    expect(finaliseSpy.fn).toHaveBeenCalledTimes(1);
-    expect(finaliseSpy.fn).toHaveBeenCalledWith(
+    expect(finalise).toHaveBeenCalledTimes(1);
+    expect(finalise).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         publishRequestId: 'pubreq_1',

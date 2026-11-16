@@ -3255,7 +3255,8 @@ export type ApproveRequestResult = {
   /** Holds placed after the approve claim expired. When set, the block was re-suspended and
    * nothing after the final writes ran: no build, no deploy, no approval notice. */
   lateHoldIds?: number[];
-  /** Set when the live takedown for a late hold did not remove the app (the readiness app). */
+  /** Set when the live takedown for a late hold left the app serving: the shared static server's
+   * readiness-probe app is never taken down. */
   liveNote?: string;
 };
 
@@ -3622,6 +3623,9 @@ async function approveRequestUnderClaim(
   let appBlockId: string;
   let repoUrl: string;
   let priorVersion: PriorRuntime | undefined;
+  // Read on the primary before anything below writes, for a late hold to put back.
+  const { snapshotOnsiteListing } = await import('./publish-request-finalise.service');
+  const priorListing = await snapshotOnsiteListing(dbWrite, request.slug);
 
   if (isFirstVersion) {
     const blockIdError = newBlockIdError(request.slug);
@@ -3778,11 +3782,22 @@ async function approveRequestUnderClaim(
         trustTier: true,
       },
     });
+    const client = await dbWrite.oauthClient.findUnique({
+      where: { id: existingAppBlock.appId },
+      select: { allowedScopes: true },
+    });
+    // Without the ceiling a late hold could not put back, nothing may be written yet. (A missing
+    // block row fails the update below the same way.)
+    if (!client) {
+      throw new Error(
+        `approve refused: could not read the OAuth client of ${request.slug} to restore on a late hold`
+      );
+    }
     if (prior) {
       priorVersion = {
         block: { ...prior, manifest: prior.manifest as Prisma.InputJsonValue },
         oauthClientId: existingAppBlock.appId,
-        allowedScopes: existingAppBlock.app?.allowedScopes,
+        allowedScopes: client.allowedScopes,
       };
     }
     // Subsequent version: refresh manifest + version + approvedScopes
@@ -4562,11 +4577,27 @@ async function approveRequestUnderClaim(
       forgejoCommitSha,
       screenshots: storedScreenshots as object,
       priorVersion,
+      priorListing,
     })
   );
   // A held version must not build, deploy or be announced; a moderator clears the hold first.
   // The suspended block stops only the on-site runtime, so the live pointer comes down too.
   if (lateHoldIds.length) {
+    // The store listing was put back in the same transaction; drop the cached catalog copy.
+    try {
+      const { bustAppListingCatalogCache } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      await bustAppListingCatalogCache();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] catalog cache bust failed after a late hold (id=${request.id}); ` +
+          `the store self-corrects within CacheTTL.sm: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
     const { takeDownLiveApp } = await import('./live-unpublish.service');
     const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
     return {

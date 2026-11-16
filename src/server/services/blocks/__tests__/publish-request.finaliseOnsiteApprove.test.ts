@@ -10,7 +10,10 @@ vi.mock('~/server/services/blocks/publish-request-holds.service', () => ({
   resolveHoldsAtApprove,
 }));
 
-import { finaliseOnsiteApprove } from '~/server/services/blocks/publish-request-finalise.service';
+import {
+  finaliseOnsiteApprove,
+  snapshotOnsiteListing,
+} from '~/server/services/blocks/publish-request-finalise.service';
 import '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 
@@ -21,6 +24,13 @@ function fakeTx() {
     appBlockPublishRequest: { update: vi.fn(async () => ({})) },
     appBlock: { update: vi.fn(async () => ({})) },
     oauthClient: { update: vi.fn(async () => ({})) },
+    appListing: {
+      findUnique: vi.fn(async (): Promise<unknown> => null),
+      update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
+    $queryRaw: vi.fn(async (): Promise<unknown> => []),
+    $executeRaw: vi.fn(async () => 1),
   };
 }
 
@@ -84,6 +94,54 @@ describe('finaliseOnsiteApprove', () => {
       where: { id: 'oc_1' },
       data: { allowedScopes: 5 },
     });
+  });
+
+  it('🔴 a late hold after the listing sync leaves the listing as it was before the approve', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    const tx = fakeTx();
+    const before = {
+      id: 'al_1',
+      status: 'approved',
+      contentRating: 'pg',
+      name: 'Old name',
+      tagline: 'Old tagline',
+      description: 'Old description',
+      category: 'tools',
+      sourceRepoUrl: null,
+      appBlockId: 'apb_1',
+    };
+    tx.appListing.findUnique.mockResolvedValueOnce({ ...before, kind: 'onsite' });
+    tx.$queryRaw.mockResolvedValueOnce([{ issueTrackerUrl: 'https://example.test/old' }]);
+    const priorListing = await snapshotOnsiteListing(tx as never, 'app-a');
+
+    await finaliseOnsiteApprove(tx as never, { ...input, priorListing });
+
+    const { id, ...fields } = before;
+    expect(tx.appListing.update).toHaveBeenCalledWith({ where: { id }, data: fields });
+    // The issue-tracker link goes back too (a raw write: the column is guarded).
+    expect(tx.$executeRaw).toHaveBeenCalledWith(
+      expect.anything(),
+      'https://example.test/old',
+      'al_1'
+    );
+  });
+
+  it('🔴 a listing the approve created goes back to a draft on a late hold', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    const tx = fakeTx();
+    await finaliseOnsiteApprove(tx as never, input);
+    expect(tx.appListing.updateMany).toHaveBeenCalledWith({
+      where: { appBlockId: 'apb_1', kind: 'onsite' },
+      data: { status: 'draft' },
+    });
+  });
+
+  it('touches no listing without a late hold', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [] });
+    const tx = fakeTx();
+    await finaliseOnsiteApprove(tx as never, input);
+    expect(tx.appListing.update).not.toHaveBeenCalled();
+    expect(tx.appListing.updateMany).not.toHaveBeenCalled();
   });
 
   it('writes no prior fields back without a late hold', async () => {

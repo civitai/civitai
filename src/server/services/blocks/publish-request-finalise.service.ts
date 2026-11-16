@@ -1,11 +1,5 @@
 import type { Prisma } from '@prisma/client';
 
-/**
- * Step (6) of `approveRequest`: the request's approved flip and the block's committed-sha
- * stamp, in one transaction with the final hold check. It runs after the code is committed, so a
- * hold the moderator was not shown cannot refuse it; it re-suspends the block instead (fail
- * closed), and the hold stays open for a moderator to clear before un-suspending.
- */
 /** The fields the app runs under, as they were before this approve wrote the new version's. */
 export type PriorRuntime = {
   block: {
@@ -17,9 +11,57 @@ export type PriorRuntime = {
     trustTier: string;
   };
   oauthClientId: string;
-  allowedScopes?: number;
+  allowedScopes: number;
 };
 
+/** The on-site store listing as it was before this approve synced the new version's copy. */
+export type PriorListing = {
+  id: string;
+  status: string;
+  contentRating: string | null;
+  name: string;
+  tagline: string | null;
+  description: string | null;
+  category: string | null;
+  sourceRepoUrl: string | null;
+  appBlockId: string | null;
+  /** Unset when the column is not there yet, so there is nothing to put back. */
+  issueTracker?: { value: string | null };
+};
+
+/** Read on the primary before step (3), next to the block snapshot. */
+export async function snapshotOnsiteListing(
+  db: Prisma.TransactionClient,
+  slug: string
+): Promise<PriorListing | undefined> {
+  const row = await db.appListing.findUnique({
+    where: { slug },
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      contentRating: true,
+      name: true,
+      tagline: true,
+      description: true,
+      category: true,
+      sourceRepoUrl: true,
+      appBlockId: true,
+    },
+  });
+  if (!row || row.kind !== 'onsite') return undefined;
+  const { kind: _kind, ...listing } = row;
+  const { readListingIssueTrackerUrl } = await import('./app-listing-issue-tracker.service');
+  const tracker = await readListingIssueTrackerUrl(row.id, db);
+  return tracker.available ? { ...listing, issueTracker: { value: tracker.value } } : listing;
+}
+
+/**
+ * Step (6) of `approveRequest`: the request's approved flip and the block's committed-sha
+ * stamp, in one transaction with the final hold check. It runs after the code is committed, so a
+ * hold the moderator was not shown cannot refuse it; it re-suspends the block instead (fail
+ * closed), and the hold stays open for a moderator to clear before un-suspending.
+ */
 export async function finaliseOnsiteApprove(
   tx: Prisma.TransactionClient,
   input: {
@@ -32,6 +74,8 @@ export async function finaliseOnsiteApprove(
     screenshots: object;
     /** Unset for a first version: with no build behind it, it has nothing to serve. */
     priorVersion?: PriorRuntime;
+    /** Unset when the app had no on-site listing before this approve. */
+    priorListing?: PriorListing;
   }
 ) {
   const { resolveHoldsAtApprove } = await import('./publish-request-holds.service');
@@ -64,11 +108,34 @@ export async function finaliseOnsiteApprove(
           screenshots: input.screenshots,
         },
   });
-  if (late.length && input.priorVersion?.allowedScopes != null) {
+  if (late.length) await rollBackHeldVersion(tx, input);
+  return { lateHoldIds: late };
+}
+
+/** The held version's client ceiling and store copy go back to what they were before step (3). */
+async function rollBackHeldVersion(
+  tx: Prisma.TransactionClient,
+  input: { appBlockId: string; priorVersion?: PriorRuntime; priorListing?: PriorListing }
+) {
+  if (input.priorVersion) {
     await tx.oauthClient.update({
       where: { id: input.priorVersion.oauthClientId },
       data: { allowedScopes: input.priorVersion.allowedScopes },
     });
   }
-  return { lateHoldIds: late };
+  const prior = input.priorListing;
+  if (!prior) {
+    // A listing this approve created never went through review: back to a draft.
+    await tx.appListing.updateMany({
+      where: { appBlockId: input.appBlockId, kind: 'onsite' },
+      data: { status: 'draft' },
+    });
+    return;
+  }
+  const { id, issueTracker, ...fields } = prior;
+  await tx.appListing.update({ where: { id }, data: fields });
+  if (issueTracker) {
+    const { writeListingIssueTrackerUrl } = await import('./app-listing-issue-tracker.service');
+    await writeListingIssueTrackerUrl(tx, id, issueTracker.value);
+  }
 }
