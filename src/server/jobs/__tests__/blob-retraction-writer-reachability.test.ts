@@ -403,6 +403,21 @@ function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
     return 1;
   }
 
+  // `blockBannedUserImages`, the ban's whole-library block.
+  if (sql.includes('UPDATE "Image"') && sql.includes('WHERE "userId" = ? AND ingestion <>')) {
+    const [nsfwLevel, kept, reason, userId] = values as [number, string, string, number];
+    let count = 0;
+    for (const row of store.images) {
+      if (row.userId !== userId || row.ingestion === 'Blocked') continue;
+      row.ingestion = 'Blocked';
+      row.nsfwLevel = nsfwLevel;
+      if (row.blockedFor !== kept) row.blockedFor = reason;
+      fireQueueTrigger(row);
+      count++;
+    }
+    return count;
+  }
+
   // Not the scan verdict's `"blockedFor" = CASE WHEN <raw CSAM test>`, which this fixture does not model.
   if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? THEN'))
     return moderatorBlock(values).length;

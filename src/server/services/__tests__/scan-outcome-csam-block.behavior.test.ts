@@ -50,6 +50,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { auditPostImageMeta } from '~/utils/metadata/audit';
 import { getImagesModRules } from '~/server/services/image.service';
 import { evaluateRules } from '~/server/utils/mod-rules';
+import { createNotification } from '~/server/services/notification.service';
 import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const holder = vi.hoisted(() => ({
@@ -233,6 +234,37 @@ describe('a scan of a CSAM-blocked image', () => {
     expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
     // Control: the rule's reason does reach a row without a CSAM block.
     expect((await imageRow(OTHER)).blockedFor).toBe('moderated');
+    // Only a moderator's CSAM review decides the block: no rule notice, no rule metadata.
+    expect(vi.mocked(createNotification).mock.calls.map(([n]) => n.key)).toEqual([
+      `image-block:${OTHER}`,
+    ]);
+    const ruleIds = await holder.db.query<{ id: number; ruleId: string | null }>(
+      `SELECT id, metadata->>'ruleId' AS "ruleId" FROM "Image" WHERE id IN (${CSAM}, ${OTHER}) ORDER BY id`
+    );
+    expect(ruleIds.rows).toEqual([
+      { id: CSAM, ruleId: null },
+      { id: OTHER, ruleId: '1' },
+    ]);
+  });
+
+  it('keeps the block while an appeal is pending, when the block landed after the load', async () => {
+    dbMock.dbWrite.appeal.findMany.mockResolvedValue([{ entityId: CSAM }] as never);
+    // Loaded under an earlier block; the CSAM reason was written before the scan's fresh read.
+    const image = { ...(await loaded(CSAM)), ingestion: 'Rescan', blockedFor: 'moderated' };
+    await holder.db.exec(`UPDATE "Image" SET ingestion = 'Rescan' WHERE id = ${CSAM}`);
+
+    const outcome = await resolveScanOutcome({
+      image: image as ScanImage,
+      workflowId: 'wf',
+      prompt: 'a landscape',
+    });
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+    expect(outcome).toMatchObject({
+      ingestion: 'Blocked',
+      blockedFor: 'CSAM',
+      reviewKey: 'appeal',
+    });
   });
 
   it('keeps the block once a rescan request has moved it to Rescan', async () => {
@@ -265,6 +297,10 @@ describe('the rating block', () => {
     expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
     // Control: the rating's reason does reach a row without a CSAM block.
     expect((await imageRow(OTHER)).blockedFor).toBe('tos');
+    const stamped = await holder.db.query<{ updatedAt: Date | null }>(
+      `SELECT "updatedAt" FROM "Image" WHERE id = ${OTHER}`
+    );
+    expect(stamped.rows[0].updatedAt, 'the rating block did not stamp updatedAt').not.toBeNull();
 
     const outcome = await resolveScanOutcome({
       image: await loaded(CSAM),
