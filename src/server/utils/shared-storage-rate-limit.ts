@@ -398,3 +398,19 @@ export async function reserveSharedWrite(
     },
   };
 }
+
+/**
+ * Server-side PUBLISH (`POST /storage/_publish/:to`), per (user, app): one token per publish call,
+ * whatever the number of documents it copies (up to `DOC_STORE_PUBLISH_BOUNDS.maxKeys`). Its own
+ * keyspace, so a publish never spends the ad-hoc shared write budget above, and ad-hoc writes
+ * never spend this one. Burst and daily are the same 10, one back every 2.4 hours. Rejections:
+ * the legacy bucket's numbers, in this keyspace. A publish that changes nothing gives its token
+ * back. What it bounds is the moderation scan of every copied document and the rating job each
+ * copy becomes once content levels are on, so the key cap is the real per-call ceiling.
+ */
+export const DOC_STORE_PUBLISH_BUDGET: SharedWriteBudgetParams = {
+  keyspace: 'docs-publish:v1',
+  burst: { capacity: 10, refillIntervalMs: DAY_MS / 10 },
+  daily: { capacity: 10, refillIntervalMs: DAY_MS / 10 },
+  rejections: SHARED_WRITE_BUDGET.rejections,
+};

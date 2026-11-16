@@ -18,6 +18,10 @@
 //                                    PATCH  one update operator: $inc, $mark or $unmark
 //   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
 //   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
+//   ['_publish', to]                 POST   publish   { from, keys, prune?, prunePrefix? }
+//   ['_unpublish', to]               POST   unpublish { keys }
+// `_publish` / `_unpublish` exist only while the per-app Flipt flag `app-blocks-storage-publish`
+// is on; off, they answer exactly as an unknown route (see PUBLISH below).
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
 //
@@ -38,6 +42,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { SessionUser } from '~/types/session';
@@ -59,6 +64,8 @@ import {
 } from '~/server/services/blocks/block-write-trust.service';
 import {
   assertCollection,
+  assertPublishKeys,
+  assertPublishPair,
   assertShareWritable,
   PUBLISHED_NS,
   refuseReportWithdrawal,
@@ -83,6 +90,7 @@ import type {
 } from '~/server/services/apps/doc-store.types';
 import {
   DOC_STORE_BOUNDS,
+  DOC_STORE_PUBLISH_BOUNDS,
   DocStoreError,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
@@ -99,12 +107,14 @@ import {
 } from '~/server/services/apps/shared-data-moderation';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import {
   checkDocStoreRateLimit,
   DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
+  DOC_STORE_PUBLISH_BUDGET,
   DOC_STORE_READ_RATE_LIMIT_MAX,
   DOC_STORE_REPORT_RATE_LIMIT_MAX,
   DOC_STORE_SHARED_WRITE_BUDGET,
@@ -125,10 +135,14 @@ import {
 
 /** Every literal path segment, and the one position each may occupy. */
 const GET_MANY_SEGMENT = '_get';
+const PUBLISH_SEGMENT = '_publish';
+const UNPUBLISH_SEGMENT = '_unpublish';
 const COUNTERS_SEGMENT = 'counters';
 const MARKS_SEGMENT = 'marks';
 export const STORAGE_RESERVED_SEGMENTS = [
   { segment: GET_MANY_SEGMENT, position: 0 },
+  { segment: PUBLISH_SEGMENT, position: 0 },
+  { segment: UNPUBLISH_SEGMENT, position: 0 },
   { segment: COUNTERS_SEGMENT, position: 2 },
   { segment: MARKS_SEGMENT, position: 2 },
 ] as const;
@@ -137,6 +151,8 @@ export type StorageRoute =
   | { op: 'info' }
   | { op: 'list' | 'create'; collection: string }
   | { op: 'getMany'; collection: string }
+  // Server-side publish and unpublish into the shared collection `collection` (PUBLISH below).
+  | { op: 'publish' | 'unpublish'; collection: string }
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
   | { op: 'increment'; collection: string; key: string; name: string }
   | { op: 'mark' | 'unmark'; collection: string; key: string; name: string }
@@ -165,6 +181,8 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
       return pick({ GET: { op: 'list', collection: a }, POST: { op: 'create', collection: a } });
     case 2:
       if (a === GET_MANY_SEGMENT) return pick({ POST: { op: 'getMany', collection: b } });
+      if (a === PUBLISH_SEGMENT) return pick({ POST: { op: 'publish', collection: b } });
+      if (a === UNPUBLISH_SEGMENT) return pick({ POST: { op: 'unpublish', collection: b } });
       if (a.startsWith('_')) return null;
       return pick({
         GET: { op: 'get', collection: a, key: b },
@@ -196,6 +214,7 @@ export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   if (op === 'info') return 'storage_info';
   if (op === 'list' || op === 'get' || op === 'getMany') return 'storage_read';
   if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
+  if (op === 'publish' || op === 'unpublish') return 'storage_write';
   // increment, mark, unmark, and `patch` (whose only operators are tallies).
   return 'storage_tally';
 }
@@ -1128,7 +1147,195 @@ async function run(
           : { marked: result.marked, count: result.count }
       );
     }
+    case 'publish':
+      return ok(await runPublish(body, access, store, coll));
+    case 'unpublish':
+      return ok(await runUnpublish(req, body, access, store, coll));
   }
+}
+
+// ---------------------------------------------------------------------------
+// PUBLISH — server-side publish and unpublish
+// ---------------------------------------------------------------------------
+//
+// `POST /_publish/:to { from, keys, prune?, prunePrefix? }` copies the CALLING viewer's own
+// private documents at `keys` from the private collection `from` into the shared collection `to`,
+// authored by that viewer — the data is read by the server from the viewer's own private key
+// space, never taken from the request. One call, one transaction, one publish-budget token.
+// `POST /_unpublish/:to { keys }` deletes the viewer's own copies at `keys`, in one transaction.
+//
+// Each copy is checked as a normal shared write is: the collection schema and the
+// `ownedModelVersions` rule (before any budget), the moderation scan in the app's mode (enforce:
+// inline, any hit refuses the WHOLE publish with the key it was found in; shadow: after commit),
+// the per-user and app ceilings (charged at once, so a publish the cap cannot hold is refused
+// whole). A copy whose content is unchanged is not written, not scanned and takes no seq.
+//
+// It does NOT spend the shared write budget (`DOC_STORE_SHARED_WRITE_BUDGET`, 30 / 300): it
+// spends `DOC_STORE_PUBLISH_BUDGET` (10 a day per user and app), given back when the publish does
+// not land or changes nothing. Unpublish spends the `write` bucket once per call, like a delete.
+//
+// Keys: 1–500 (`DOC_STORE_PUBLISH_BOUNDS.maxKeys`), no duplicates, refused before anything is
+// spent. A key with no private document, a copy another user authored, and the viewer's own copy
+// a moderator hid are skipped and reported (`skipped[].reason`: `missing` / `not_author` /
+// `hidden`), never refused and never touched.
+//
+// `prune`: the viewer's own visible copies in `to` whose key no longer has a private document in
+// `from` (only under `prunePrefix` when given) are deleted, at most 500 per call
+// (`pruneIncomplete: true` when more remain). Copies of other groups whose private documents
+// still exist are never pruned.
+//
+// FLAG: `app-blocks-storage-publish`, evaluated per app (entityId = the app block id, no context).
+// Off — the default, and when Flipt is unreachable — both paths answer as an unknown route.
+
+/** Whether a matched route is served for this request: everything but publish, or publish with the flag on. */
+async function isPublishRouteServed(req: NextApiRequest, match: Match): Promise<boolean> {
+  if (!match || !('route' in match)) {
+    // A wrong method on a publish path: served only when the route itself would be.
+    const segs = pathSegments(req);
+    if (segs[0] !== PUBLISH_SEGMENT && segs[0] !== UNPUBLISH_SEGMENT) return true;
+  } else if (match.route.op !== 'publish' && match.route.op !== 'unpublish') {
+    return true;
+  }
+  const appBlockId = (req as BlockScopedNextApiRequest).blockClaims?.appBlockId;
+  if (!appBlockId) return false;
+  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_PUBLISH, appBlockId);
+}
+
+const publishBody = z.strictObject({
+  from: z.string(),
+  keys: z.array(z.string()),
+  prune: z.boolean().optional(),
+  prunePrefix: z.string().optional(),
+});
+const unpublishBody = z.strictObject({ keys: z.array(z.string()) });
+
+/** A refusal raised while handling one key, with that key added to its details. */
+function withKey(err: unknown, key: string): unknown {
+  if (!(err instanceof DocStoreError)) return err;
+  return new DocStoreError(err.code, err.message, { ...err.details, key });
+}
+
+async function runPublish(
+  body: unknown,
+  access: StorageAccess,
+  store: DocStore,
+  to: DocCollection
+): Promise<unknown> {
+  const { ctx } = access;
+  const uid = requireViewer(access);
+  const input = parseBody(publishBody, body);
+  const keys = assertPublishKeys(input.keys);
+  if (input.prunePrefix !== undefined) {
+    if (input.prune !== true) {
+      throw invalid('prunePrefix needs prune: true', { reason: 'prune_prefix_without_prune' });
+    }
+    if (!DOC_STORE_BOUNDS.key.test(input.prunePrefix)) {
+      throw invalid('prunePrefix must be 1–128 characters of [A-Za-z0-9._:-]');
+    }
+  }
+  const from = collectionOf(access, input.from);
+  assertPublishPair(from, to);
+  assertPublishScope(access, to);
+  const user = await assertTrusted(uid);
+
+  // What would be written, read now; every body is checked as a shared write's would be BEFORE
+  // the budget is spent. `publishCopies` re-reads them under lock and refuses any that changed.
+  const preview = await store.previewPublish(ctx, from, to, keys);
+  const toWrite = preview.flatMap((e) => (e.source ? [{ key: e.key, ...e.source }] : []));
+  for (const doc of toWrite) {
+    try {
+      validateDocAgainstCollectionSchema(ctx, to, doc.data);
+      await assertOwnedModelVersions(to.config, doc.data, uid);
+    } catch (err) {
+      throw withKey(err, doc.key);
+    }
+  }
+
+  const reservation = await reserveSharedWrite(uid, ctx.appId, DOC_STORE_PUBLISH_BUDGET);
+  if (!reservation.allowed) {
+    throw new DocStoreError('rate_limited', 'publish budget exhausted', {
+      bucket: 'publish',
+      retryAfter: reservation.retryAfterSeconds,
+    });
+  }
+  let landed = false;
+  try {
+    const afterCommit = new Map<string, AfterCommit>();
+    for (const doc of toWrite) {
+      try {
+        afterCommit.set(
+          doc.key,
+          await moderate(access, user, 'update', doc.key, { data: doc.data, key: doc.key })
+        );
+      } catch (err) {
+        throw withKey(err, doc.key);
+      }
+    }
+    const result = await store.publishCopies(ctx, from, await withSchemaMajor(access, to), {
+      keys,
+      checked: new Map(toWrite.map((d) => [d.key, d.hash])),
+      prune: input.prune
+        ? { prefix: input.prunePrefix, limit: DOC_STORE_PUBLISH_BOUNDS.pruneLimit }
+        : undefined,
+    });
+    landed = true;
+    const changed = result.created.length + result.updated.length + result.pruned.length;
+    // Nothing changed: the publish cost nothing, so its token goes back.
+    if (changed === 0) await reservation.release({ rejected: false });
+    for (const key of [...result.created, ...result.updated]) afterCommit.get(key)?.();
+    await syncWithdrawn(ctx, result.pruned, uid);
+    return result;
+  } catch (err) {
+    if (!landed) {
+      // A source that changed mid-publish is a race, not a bad request: no rejection charge.
+      const race = err instanceof DocStoreError && err.details?.reason === 'source_changed';
+      await reservation.release({ rejected: !race && !isOurFault(err) });
+    }
+    throw err;
+  }
+}
+
+async function runUnpublish(
+  req: NextApiRequest,
+  body: unknown,
+  access: StorageAccess,
+  store: DocStore,
+  to: DocCollection
+): Promise<unknown> {
+  const uid = requireViewer(access);
+  const keys = assertPublishKeys(parseBody(unpublishBody, body).keys);
+  if (to.config.visibility !== 'shared') {
+    throw invalid('unpublish removes documents from a shared collection', {
+      reason: 'publish_visibility',
+    });
+  }
+  assertShareWritable(to);
+  // Like a delete: `apps:storage` only, no trust gate, the `write` bucket once per call.
+  await charge('write', access, req);
+  const result = await store.unpublishCopies(access.ctx, to, keys);
+  await syncWithdrawn(access.ctx, result.deleted, uid);
+  return result;
+}
+
+/** The author removed published items: their App Store cards follow, as after a delete. */
+async function syncWithdrawn(
+  ctx: StorageAccess['ctx'],
+  keys: readonly string[],
+  uid: number
+): Promise<void> {
+  if (ctx.ns !== PUBLISHED_NS || keys.length === 0) return;
+  await limitConcurrency(
+    keys.map(
+      (itemKey) => () =>
+        syncStoreItem({
+          appBlockId: ctx.appId,
+          itemKey,
+          change: 'withdrawn',
+          authorUserId: uid,
+        })
+    ),
+    5
+  );
 }
 
 function deleteIfVersion(req: NextApiRequest): number | undefined {
@@ -1141,6 +1348,8 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
 }
 
 const FROM_PARAM = 'from';
+
+const noSuchRoute = () => new DocStoreError('not_found', 'no such storage route');
 
 /** The import selector, or null. Only collection routes take one; `info` refuses it as stray. */
 function importSourceOf(req: NextApiRequest): string | null {
@@ -1158,14 +1367,19 @@ function importSourceOf(req: NextApiRequest): string | null {
 function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
   if (route.op === 'list' || route.op === 'get' || route.op === 'getMany') return 'read';
   // `patch` carries only tally operators, each an authoring write like the routes it replaces.
-  return route.op === 'delete' ? 'delete' : 'author';
+  // (`publish` / `unpublish` never reach an import: `assertNoStrayQuery` refuses their `from`.)
+  return route.op === 'delete' || route.op === 'unpublish' ? 'delete' : 'author';
 }
 
 /** Query parameters other than the route's own are refused everywhere except a list. */
 function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
   if (route.op === 'list') return;
   const own = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
-  const allowed = route.op === 'info' ? own : [...own, FROM_PARAM];
+  // A publish names its source in the BODY and runs in this app only: no `?from=` import.
+  const allowed =
+    route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+      ? own
+      : [...own, FROM_PARAM];
   const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
   if (stray) throw invalid(`unknown query parameter ${stray}`);
 }
@@ -1180,7 +1394,10 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
   return async function storageHandler(req: NextApiRequest, res: NextApiResponse) {
     try {
       const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
-      if (!match) throw new DocStoreError('not_found', 'no such storage route');
+      if (!match) throw noSuchRoute();
+      // Off for this app, publish and unpublish are not routes at all: the same refusal as any
+      // unknown path, before any other gate (a wrong method's 405 included).
+      if (!(await isPublishRouteServed(req, match))) throw noSuchRoute();
       // A deprecated per-tally path says so on every response the handler gives, a refusal and a
       // wrong method's 405 included.
       if (isLegacyTallyPath(pathSegments(req))) {
