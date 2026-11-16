@@ -319,6 +319,24 @@ export async function withCuratedShowcases<E extends { images: ImagesForModelVer
   if (!versionIds.length) return byVersion;
   try {
     const showcases = await getVersionShowcases(versionIds);
+    // A deleted or held image can still sit in the cache (its bust can't find it by post), so the
+    // community images served here are re-checked against the image rows.
+    const communityIds = versionIds.flatMap((id) =>
+      showcases[id] ? communityFor(showcases[id], site).map((image) => image.id) : []
+    );
+    const servable = new Set(
+      communityIds.length
+        ? (
+            await dbRead.$queryRaw<{ id: number }[]>`
+              SELECT i.id FROM "Image" i
+              JOIN "Post" p ON p.id = i."postId"
+              WHERE i.id IN (${Prisma.join(communityIds)})
+                AND p.availability = 'Public'
+                AND ${Prisma.join(showcaseImageConditions(), ' AND ')}
+            `
+          ).map((row) => row.id)
+        : []
+    );
     const result: Record<number, E> = { ...byVersion };
     for (const versionId of versionIds) {
       const entry = showcases[versionId];
@@ -331,7 +349,8 @@ export async function withCuratedShowcases<E extends { images: ImagesForModelVer
       );
       if (!ids) continue;
       const byId = new Map<number, ImagesForModelVersions>(owner.map((image) => [image.id, image]));
-      for (const image of communityFor(entry, site)) byId.set(image.id, image);
+      for (const image of communityFor(entry, site))
+        if (servable.has(image.id)) byId.set(image.id, image);
       result[versionId] = {
         ...byVersion[versionId],
         images: ids.flatMap((id) => byId.get(id) ?? []),

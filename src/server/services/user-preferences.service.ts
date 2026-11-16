@@ -1136,7 +1136,6 @@ async function toggleBlockUser({
   const { bustVersionShowcasesForUser } = await import(
     '~/server/services/version-showcase.service'
   );
-  // Each bust logs and swallows its own failure.
   await Promise.all([
     bustVersionShowcasesForUser(targetUserId, userId),
     bustVersionShowcasesForUser(userId, targetUserId),

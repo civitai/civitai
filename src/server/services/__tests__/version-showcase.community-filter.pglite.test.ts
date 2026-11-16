@@ -56,6 +56,7 @@ const {
   getShowcaseCommunityCovers,
   dropInvalidCommunityCovers,
   repointVersionShowcases,
+  withCuratedShowcases,
 } = await import('../version-showcase.service');
 const { getImagesForModelVersion } = await import('../image.service');
 
@@ -327,6 +328,19 @@ describe('when a featured image stops qualifying', () => {
 
     expect(before.size).toBe(1);
     expect(after.size).toBe(0);
+  });
+
+  it('the public API stops serving a deleted image at once, though the cache still holds it', async () => {
+    const id = await featured();
+    await db.query(`UPDATE "ModelVersionShowcaseItem" SET position = 0 WHERE "imageId" = $1`, [id]);
+    const api = async () =>
+      (await withCuratedShowcases({ [VERSION]: { images: [] } }, 'red'))[VERSION].images.map(
+        (image) => image.id
+      );
+    expect(await api()).toEqual([id]);
+    await db.query(`DELETE FROM "Image" WHERE id = $1`, [id]);
+    expect(await served()).toContain(id);
+    expect(await api()).toEqual([]);
   });
 
   it("doesn't count a row featured on another model", async () => {

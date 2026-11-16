@@ -25,7 +25,7 @@ export const watchedEntityFields = {
     'allowCommercialUse',
     'allowDerivatives',
     'allowDifferentLicense',
-    // Every cover write records its before and after, which is what a rollback restores from.
+    // Rollback restores covers from these fields.
     'coverImageId',
     'sfwCoverImageId',
   ],

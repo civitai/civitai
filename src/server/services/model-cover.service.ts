@@ -417,7 +417,6 @@ async function afterCoverChange({
   await modelsSearchIndex.queueUpdate([
     { id: modelId, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  // The record a rollback restores covers from.
   const rows = diffEntityChanges({
     entityType: 'Model',
     entityId: modelId,

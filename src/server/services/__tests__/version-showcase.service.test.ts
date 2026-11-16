@@ -99,6 +99,7 @@ describe('withCuratedShowcases: the public API list', () => {
       ],
       community: [{ id: 9, site: 'red', nsfwLevel: 1 }],
     };
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 9 }] as never);
     const result = await showcase.withCuratedShowcases(
       { [VERSION]: { images: [owner(1), owner(2)] } },
       'red'
