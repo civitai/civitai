@@ -24,14 +24,14 @@ export const crucibleCoverListedWhere = {
 
 /**
  * Which crucibles the semantic search index keeps: the scans every list surface requires, a cover
- * that is not minor or blocked, not Cancelled, not taken down, and an owner who is not banned or
+ * that is not minor, POI or blocked, not Cancelled, not taken down, and an owner who is not banned or
  * deleted. The event-engine's
  * CRUCIBLE_ELIGIBLE_SQL is a copy, pinned by the crucible-eligibility parity test. The viewer's
  * levels, textNsfw and the green-site gate are applied per query.
  */
 export const crucibleSemanticEligibleWhere: Prisma.Sql[] = [
   crucibleScannedSql,
-  Prisma.sql`NOT i.minor AND NOT ${hasBlockMarkerSql('i')}`,
+  Prisma.sql`NOT i.minor AND NOT i.poi AND NOT ${hasBlockMarkerSql('i')}`,
   Prisma.sql`c.status <> ${CrucibleStatus.Cancelled}::"CrucibleStatus"`,
   Prisma.sql`c."takenDownAt" IS NULL`,
   Prisma.sql`NOT EXISTS (SELECT 1 FROM "User" u WHERE u.id = c."userId"

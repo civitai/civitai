@@ -180,13 +180,46 @@ describe('refresh walk timers', () => {
 
 // An owner's ban and a cover's later moderation change no challenge or crucible row, so the walk is
 // what deletes those points; moderation requires it at least daily.
+describe('the startup walk', () => {
+  test('walks once startupDelayMs after start, before the first interval', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor]: [number]) => ({
+          rows: [1, 2].filter((id) => id > cursor).map((id) => ({ id })),
+        })),
+      };
+      const queue = {
+        lanes: new Map([['crucible', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const timers = startRefreshers(
+        [domain('crucible', { everyMs: 60_000, batch: 10, startupDelayMs: 1000 })],
+        queue as never,
+        pg as never
+      );
+      expect(timers).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(added).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(added).toEqual([1, 2]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('challenge and crucible refresh walks', () => {
   test.each([
     ['challenge', () => import('@/vector-sync/challenges/domain').then((m) => m.challengeDomain)],
     ['crucible', () => import('@/vector-sync/crucibles/domain').then((m) => m.crucibleDomain)],
-  ])('%s walks its whole table at least daily', async (_name, load) => {
+  ])('%s walks its whole table at least daily, and soon after every start', async (_name, load) => {
     const { refresh } = await load();
     expect(refresh).toBeDefined();
     expect(refresh!.everyMs).toBeLessThanOrEqual(24 * 60 * 60_000);
+    expect(refresh!.startupDelayMs).toBeDefined();
+    expect(refresh!.startupDelayMs!).toBeLessThan(refresh!.everyMs);
   });
 });

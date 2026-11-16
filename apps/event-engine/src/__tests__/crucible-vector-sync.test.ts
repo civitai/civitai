@@ -14,7 +14,7 @@ describe('crucible payload, against the real query', () => {
         "deletedAt" timestamp);
       CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int, ingestion text,
         "needsReview" text, "tosViolation" boolean DEFAULT false, minor boolean DEFAULT false,
-        "blockedFor" text);
+        "blockedFor" text, poi boolean DEFAULT false);
       CREATE TABLE "Crucible" (id int PRIMARY KEY, name text, description text,
         status "CrucibleStatus", "contentType" "MediaType", "nsfwLevel" int, "textNsfw" boolean,
         "buzzType" text, "userId" int, "imageId" int, ingestion text, "takenDownAt" timestamp);

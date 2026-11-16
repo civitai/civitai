@@ -247,7 +247,8 @@ export type Domain<P extends DomainPayload> = {
    * For a domain whose eligibility or document reads state no CDC signal covers: every `everyMs`,
    * all ids are re-synced, so a point that no longer qualifies is deleted.
    */
-  refresh?: { everyMs: number; batch: number };
+  /** startupDelayMs: also walk once this long after start, so a restart never skips a pass. */
+  refresh?: { everyMs: number; batch: number; startupDelayMs?: number };
   /** What its vectors are made from, when not the text of search_text (3D models: the thumbnail). */
   embedInput?: EmbedInputFor<P>;
   store: () => VectorStore<P>;

@@ -10,7 +10,7 @@ import { crucibleDocument } from './document';
  * payload and filtered per query.
  */
 export const CRUCIBLE_ELIGIBLE_SQL = `c.ingestion = 'Scanned' AND i.ingestion = 'Scanned'
-  AND i."needsReview" IS NULL AND NOT i."tosViolation" AND NOT i.minor AND i."blockedFor" IS NULL
+  AND i."needsReview" IS NULL AND NOT i."tosViolation" AND NOT i.minor AND NOT i.poi AND i."blockedFor" IS NULL
   AND i."nsfwLevel" <> 32
   AND c.status <> 'Cancelled' AND c."takenDownAt" IS NULL
   AND NOT EXISTS (SELECT 1 FROM "User" u WHERE u.id = c."userId"

@@ -16,7 +16,8 @@ const SCHEMA = `
   CREATE TABLE "Image" (
     id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL, "needsReview" text,
     "tosViolation" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
-    "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 1
+    "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 1,
+    poi boolean NOT NULL DEFAULT false
   );
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
   CREATE TABLE "Crucible" (
@@ -34,7 +35,7 @@ type Over = {
   cover?: false | string;
   /** SQL values for the cover's needsReview, tosViolation, e.g. `'Minor', false`. Default: not held. */
   review?: string;
-  /** SQL values for the cover's minor, blockedFor[, nsfwLevel]. Default: neither, PG. */
+  /** SQL values for the cover's minor, blockedFor[, nsfwLevel[, poi]]. Default: neither, PG. */
   flags?: string;
   /** The owner's bannedAt, deletedAt. Default: an active owner. */
   owner?: string;
@@ -80,6 +81,7 @@ const spec: ParitySpec = {
     crucible(14, 'ownerNotBanned', false, { owner: 'now(), NULL' }),
     crucible(15, 'ownerNotDeleted', false, { owner: 'NULL, now()' }),
     crucible(16, 'coverNotBlockedLevel', false, { flags: 'false, NULL, 32' }),
+    crucible(17, 'coverNotPoi', false, { flags: 'false, NULL, 1, true' }),
     // Upcoming and finished crucibles stay searchable; the caller filters status.
     crucible(8, 'pending', true, { status: 'Pending' }),
     crucible(9, 'completed', true, { status: 'Completed' }),
@@ -96,6 +98,7 @@ const spec: ParitySpec = {
     'ownerNotBanned',
     'ownerNotDeleted',
     'coverNotBlockedLevel',
+    'coverNotPoi',
   ],
   site: async (prisma) =>
     (

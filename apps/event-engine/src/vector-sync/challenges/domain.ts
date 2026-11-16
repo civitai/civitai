@@ -29,7 +29,7 @@ export function challengeRefFromEvent(topic: string, value: unknown): DomainRef 
  * Challenge row, so no event re-syncs the point. The walk re-reads every row, which
  * deletes the points they made ineligible.
  */
-export const CHALLENGE_REFRESH = { everyMs: 60 * 60_000, batch: 500 };
+export const CHALLENGE_REFRESH = { everyMs: 60 * 60_000, batch: 500, startupDelayMs: 5 * 60_000 };
 
 export const challengeDomain: Domain<ChallengePayload> = {
   name: 'challenge',

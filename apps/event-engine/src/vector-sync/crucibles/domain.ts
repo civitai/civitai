@@ -26,7 +26,7 @@ export function crucibleRefFromEvent(_topic: string, value: unknown): DomainRef 
  * Crucible row, so no event re-syncs the point. The walk re-reads every row, which
  * deletes the points they made ineligible.
  */
-export const CRUCIBLE_REFRESH = { everyMs: 60 * 60_000, batch: 500 };
+export const CRUCIBLE_REFRESH = { everyMs: 60 * 60_000, batch: 500, startupDelayMs: 5 * 60_000 };
 
 export const crucibleDomain: Domain<CruciblePayload> = {
   name: 'crucible',
