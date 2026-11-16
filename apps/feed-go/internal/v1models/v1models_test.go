@@ -116,12 +116,12 @@ func TestPostgresSlugify(t *testing.T) {
 
 func TestCursorValues(t *testing.T) {
 	fields := parseSortString(`mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC`)
-	v, err := cursorValues(fields, "2026-06-02 09:00:00.25|5300")
+	v, err := cursorValues(fields, "2026-06-02 09:00:00.250|5300")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// dayjs reads the fraction's first three digits as milliseconds: ".25" is 25 ms, not 250.
-	if got := v[`mm."lastVersionAt"`]; got != time.Date(2026, 6, 2, 9, 0, 0, 25*int(time.Millisecond), time.UTC) {
+	// A 3-digit fraction is a millisecond count on every Node build.
+	if got := v[`mm."lastVersionAt"`]; got != time.Date(2026, 6, 2, 9, 0, 0, 250*int(time.Millisecond), time.UTC) {
 		t.Errorf("date: %v", got)
 	}
 	if v[`mm."modelId"`] != 5300 {
@@ -130,6 +130,16 @@ func TestCursorValues(t *testing.T) {
 	v, err = cursorValues(fields, "2026-06-02 09:00:00.9681|12abc")
 	if err != nil || v[`mm."lastVersionAt"`] != time.Date(2026, 6, 2, 9, 0, 0, 968*int(time.Millisecond), time.UTC) || v[`mm."modelId"`] != 12 {
 		t.Errorf("4-digit fraction / parseInt prefix: %v %v", v, err)
+	}
+	// A 1- or 2-digit fraction is read differently by the deployed Node and main (#9075): it falls
+	// back. Without a fraction, the token is read as before.
+	for _, c := range []string{"2026-06-02 09:00:00.25|5300", "2026-06-02 09:00:00.5|5300", "2026-06-02T09:00:00.05|1"} {
+		if _, err := cursorValues(fields, c); reason(err) != "v1-models-short-fraction-cursor" {
+			t.Errorf("%q: %v, want v1-models-short-fraction-cursor", c, err)
+		}
+	}
+	if v, err := cursorValues(fields, "2026-06-02 09:00:00|7"); err != nil || v[`mm."lastVersionAt"`] != time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC) {
+		t.Errorf("no fraction: %v %v", v, err)
 	}
 	for _, c := range []string{"|5", "5", "1|2|3", "-5|1", "2026-06-02T09:00:00.000Z", "2026-06-02Z|1", "x-y|1", "0050-01-01|1", "1|2147483648"} {
 		if _, err := cursorValues(fields, c); reason(err) != "v1-models-cursor" {
@@ -190,7 +200,7 @@ func TestRawQueryCursorForms(t *testing.T) {
 	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 	// A DESC-headed sort splits into the equality branch, then the strict tuple branch.
 	text, args, err := RawQuery(&RawInput{
-		Take: 1, Cursor: "2026-06-02 09:00:00.25|5300", Sort: SortNewest, Types: []string{"LORA", "LoCon"},
+		Take: 1, Cursor: "2026-06-02 09:00:00.250|5300", Sort: SortNewest, Types: []string{"LORA", "LoCon"},
 		BrowsingLevel: 31, DisablePoi: true, DisableMinor: true, Now: now,
 	})
 	if err != nil {
@@ -207,7 +217,7 @@ func TestRawQueryCursorForms(t *testing.T) {
 			t.Errorf("split statement lacks %q:\n%s", frag, n)
 		}
 	}
-	if len(args) != 18 || args[8] != 2 || args[17] != 2 || args[6] != time.Date(2026, 6, 2, 9, 0, 0, 25*int(time.Millisecond), time.UTC) {
+	if len(args) != 18 || args[8] != 2 || args[17] != 2 || args[6] != time.Date(2026, 6, 2, 9, 0, 0, 250*int(time.Millisecond), time.UTC) {
 		t.Errorf("split args: %d %#v", len(args), args)
 	}
 

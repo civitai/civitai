@@ -421,8 +421,11 @@ func resolveFileName(m nameModel, v nameVersion, f nameFile, versionFiles []name
 
 // headerSafeName strips control and format characters, replaces `"` and `\`, and breaks every `%`
 // followed by two hex digits. After it, safeDecodeURIComponent has nothing to decode: the name is
-// returned as it is.
+// returned as it is. Invalid UTF-8 (never in a Postgres text value, which is what Node reads) is
+// replaced with U+FFFD first: stripping a character from between two stray bytes could otherwise
+// join them into a control character ("\xc2\x7f\x89" → U+0089).
 func headerSafeName(s string) string {
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	s = unsafeNameChars.ReplaceAllString(s, "")
 	s = strings.NewReplacer(`"`, "_", `\`, "_").Replace(s)
 	var b strings.Builder

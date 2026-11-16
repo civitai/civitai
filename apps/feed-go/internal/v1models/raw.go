@@ -171,6 +171,13 @@ func cursorValues(fields []sortField, cursor string) (map[string]any, error) {
 			if !ok {
 				return nil, fallback.New("v1-models-cursor")
 			}
+			// A 1- or 2-digit fraction (Postgres drops trailing zeros: 250 ms renders as ".25") is
+			// read as fractional seconds on main (#9075) but as a millisecond count by the deployed
+			// Node, so neither reading matches both: it falls back, as model.getAll's does.
+			// TODO(short-fraction-cursor): remove once the Node cursor fix is deployed.
+			if m := dayjsParse.FindStringSubmatch(v); m != nil && m[7] != "" && len(m[7]) < 3 {
+				return nil, fallback.Newf("v1-models-short-fraction-cursor", "%q", v)
+			}
 			out[f.field] = t
 			continue
 		}
@@ -188,8 +195,8 @@ func cursorValues(fields []sortField, cursor string) (map[string]any, error) {
 }
 
 // dayjsUTC is dayjs.utc(value) for a string dayjs parses itself (REGEX_PARSE, no `Z` suffix): the
-// fields are read as UTC, the fraction by its first three digits as a millisecond count (so ".96" is
-// 96 ms, as dayjs reads it), out-of-range fields roll over as Date.UTC rolls them. A string dayjs
+// fields are read as UTC, the fraction by its first three digits as a millisecond count (a shorter
+// fraction never reaches it: cursorValues falls back), out-of-range fields roll over as Date.UTC rolls them. A string dayjs
 // hands to the Date constructor instead is not read here (ok false), nor is a year below 100 (Date.UTC
 // maps it to the 1900s).
 func dayjsUTC(v string) (time.Time, bool) {

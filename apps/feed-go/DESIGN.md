@@ -1395,7 +1395,7 @@ The public model API: `src/pages/api/v1/models/index.ts` (a `MixedAuthEndpoint`)
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Query | every key above except those on the right; unknown keys ignored and kept for `nextPage` | `query` (`v1-models-query`: Meilisearch), every other schema key (`v1-models-<key>`: `tag`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`) |
+| Query | every key above except those on the right; unknown keys ignored and kept for `nextPage` | `query` (`v1-models-query`: Meilisearch), every other schema key (`v1-models-<key>`: `tag`, `supportsGeneration`, `checkpointType`, …), a signed-out `favorites`/`hidden` (`v1-models-authed-only`), `limit=0` or over 100 (`v1-models-limit`), the 429 (`v1-models-page-limit`), a Recently Added or unknown sort (`v1-models-sort`), a value `Number()` or zod reads otherwise (`v1-models-input-*`), a cursor Node answers with a 400 or reads through JS's Date parser (`v1-models-cursor`), a cursor timestamp with a 1- or 2-digit fraction (`v1-models-short-fraction-cursor`, §16.7) |
 | Viewer | the list signed out; `[id]` always (it reads no session) | a list session (`v1-models-session`); API credentials (`bearer-token`; the sampler never sends them) |
 | Statement | all four FROM forms, every sort but Recently Added, both cursor forms, the period bound, types, base models, username, ids, earlyAccess, archived, the addons' POI/minor/tag clauses | a username the replica does not hold (`v1-models-username-miss`) |
 | Caches | every hit; the paid-access and metric-privacy misses (their lookups are plain replica reads) | a model-data, model-tags, tag-name, images, files or membership miss (`v1-models-*-miss`), a stale images/files/tag entry Node would revalidate (`v1-models-*-stale`), a gallery-settings key Node would rebuild (`gallery-settings-miss`), a held model whose settings carry no level |
@@ -1440,7 +1440,9 @@ the same statement (text and bound values) from Go.
 
 - `superjson.Plain` escapes U+2028/U+2029 where `JSON.stringify` writes them raw (same decoded
   value; the comparator decodes);
-- a cursor's fraction is read as dayjs reads it — `.25` is 25 ms, not 250 — which is Node's own
-  behaviour, ported as it is;
+- a cursor timestamp with a 1- or 2-digit fraction (`.25`) falls back
+  (`v1-models-short-fraction-cursor`): the deployed Node reads it as a millisecond count (25 ms),
+  main since #9075 as fractional seconds (250 ms), so no reading matches both. The fallback goes once
+  the fix is deployed (the TODO on `cursorValues`), as model.getAll's does (§15.7);
 - the caches are read, never refilled or revalidated: a miss falls back, and the answer serves what
   Node's cache held milliseconds earlier (`stats.*` and `nextCursor` noise on busy lists).

@@ -507,7 +507,7 @@ const list = (query, headers = {}) => ({
   fx(
     'list-newest-nsfw-date-cursor',
     list(
-      'types=LORA&types=LoCon&sort=Newest&nsfw=true&limit=1&cursor=2026-06-02%2009%3A00%3A00.25%7C5300'
+      'types=LORA&types=LoCon&sort=Newest&nsfw=true&limit=1&cursor=2026-06-02%2009%3A00%3A00.250%7C5300'
     ),
     w
   );

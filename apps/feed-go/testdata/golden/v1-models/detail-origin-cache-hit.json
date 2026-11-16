@@ -280,7 +280,7 @@
     }
   },
   "expect": {
-    "body": null,
+    "body": "{\"id\":5004,\"name\":\"Cached Model\",\"type\":\"Checkpoint\",\"creator\":{\"username\":\"artist_one\",\"image\":null},\"tags\":[\"style\"],\"modelVersions\":[{\"id\":6031,\"name\":\"v1\",\"publishedAt\":\"2026-05-04T09:00:00.000Z\",\"files\":[{\"id\":7031,\"name\":\"cached.safetensors\",\"type\":\"Model\",\"sizeKB\":1.5}],\"downloadUrl\":\"https://site.example.test/api/download/models/6031\"}]}",
     "sql": null
   }
 }

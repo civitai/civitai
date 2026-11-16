@@ -620,7 +620,15 @@
     }
   },
   "expect": {
-    "body": null,
-    "sql": null
+    "body": "{\"id\":5002,\"name\":\"Safe Golden Model\",\"coverImageId\":8012,\"sfwCoverImageId\":8011,\"description\":\"<p>Safe words</p>\",\"allowNoCredit\":true,\"allowCommercialUse\":[\"Image\",\"RentCivit\"],\"allowDerivatives\":true,\"allowDifferentLicense\":false,\"type\":\"LORA\",\"minor\":false,\"sfwOnly\":false,\"poi\":false,\"nsfw\":false,\"nsfwLevel\":7,\"availability\":\"Public\",\"userId\":1001,\"hasActivePaidAccess\":false,\"hasSfwFace\":true,\"baseModels\":[\"SDXL 1.0\"],\"cosmetic\":null,\"eventDecoration\":null,\"supportsGeneration\":false,\"stats\":{\"downloadCount\":1008,\"thumbsUpCount\":310,\"thumbsDownCount\":3,\"commentCount\":12,\"tippedAmountCount\":40},\"creator\":{\"username\":\"artist_one\",\"image\":null},\"tags\":[\"character\",\"style\"],\"modelVersions\":[{\"id\":6011,\"index\":0,\"name\":\"v6011\",\"baseModel\":\"SDXL 1.0\",\"baseModelType\":\"Standard\",\"createdAt\":\"2026-05-03T09:00:00.000Z\",\"publishedAt\":\"2026-05-04T09:00:00.000Z\",\"status\":\"Published\",\"flags\":0,\"availability\":\"Public\",\"nsfwLevel\":7,\"description\":\"\",\"covered\":false,\"coveredNext\":false,\"stats\":{\"downloadCount\":105,\"thumbsUpCount\":21,\"thumbsDownCount\":1},\"files\":[{\"id\":7011,\"sizeKB\":12345.6789,\"name\":\"file_7011.safetensors\",\"overrideName\":null,\"type\":\"Model\",\"pickleScanResult\":\"Success\",\"pickleScanMessage\":\"No Pickle imports\",\"virusScanResult\":\"Success\",\"virusScanMessage\":null,\"scannedAt\":\"2026-05-04T09:30:00.000Z\",\"metadata\":{\"format\":\"SafeTensor\",\"size\":\"pruned\",\"fp\":\"fp16\"},\"hashes\":{\"AutoV2\":\"A7011\",\"SHA256\":\"ABCDEF7011\"},\"downloadUrl\":\"https://site.example.test/api/download/models/6011?fileId=7011\",\"primary\":true}],\"images\":[{\"url\":\"https://image.example.test/golden/00000000-0000-4000-8000-000000008011/original=true/8011.jpeg\",\"nsfwLevel\":2,\"width\":832,\"height\":1216,\"hash\":\"UHASH8011\",\"type\":\"image\",\"onSite\":false,\"hasMeta\":true,\"hasPositivePrompt\":true,\"remixOfId\":null,\"poi\":false,\"minor\":false}],\"downloadUrl\":\"https://site.example.test/api/download/models/6011\"}]}",
+    "sql": {
+      "text": "SELECT mm.\"modelId\" as \"id\", m.\"name\", m.\"sfwName\", m.\"coverImageId\", m.\"sfwCoverImageId\", m.\"description\", m.\"sfwDescription\", m.\"allowNoCredit\", m.\"allowCommercialUse\", m.\"allowDerivatives\", m.\"allowDifferentLicense\", m.\"type\", mm.\"minor\", m.\"sfwOnly\", mm.\"poi\", m.\"nsfw\", mm.\"nsfwLevel\", mm.\"status\", m.\"createdAt\", mm.\"lastVersionAt\", m.\"publishedAt\", m.\"locked\", m.\"meta\", mm.\"mode\", mm.\"availability\", jsonb_build_object( 'downloadCount', mm.\"downloadCount\", 'thumbsUpCount', mm.\"thumbsUpCount\", 'thumbsDownCount', mm.\"thumbsDownCount\", 'commentCount', mm.\"commentCount\", 'collectedCount', mm.\"collectedCount\", 'tippedAmountCount', mm.\"tippedAmountCount\" ) as \"rank\", mm.\"userId\", CONCAT(mm.\"thumbsUpCount\", '|', mm.\"downloadCount\", '|', mm.\"modelId\") as \"cursorId\" FROM \"ModelMetric\" mm JOIN \"Model\" m ON m.\"id\" = mm.\"modelId\" WHERE mm.\"status\" = $1::\"ModelStatus\" AND mm.\"modelId\" IN ($2) AND mm.\"availability\" != 'Private'::\"Availability\" AND (mm.\"nsfwLevel\" & $3) != 0 ORDER BY mm.\"thumbsUpCount\" DESC, mm.\"downloadCount\" DESC, mm.\"modelId\" LIMIT $4",
+      "values": [
+        "Published",
+        5002,
+        3,
+        101
+      ]
+    }
   }
 }
