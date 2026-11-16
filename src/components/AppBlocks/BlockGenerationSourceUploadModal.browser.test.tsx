@@ -652,6 +652,22 @@ describe('BlockGenerationSourceUploadModal — scanned rows', () => {
     expect(onResolved).not.toHaveBeenCalled();
   });
 
+  test('🔴 closing the modal before the copy is asked for issues no persist', async () => {
+    let answer: (v: boolean) => void = () => undefined;
+    const path = scannedRows({ usesScannedRows: () => new Promise<boolean>((r) => (answer = r)) });
+    const onResolved = vi.fn();
+    openModal(onResolved, path);
+    await userEvent.upload(await fileInputEl(), makeImageFile());
+    await vi.waitFor(() => expect(path.usesScannedRows).toHaveBeenCalledTimes(1));
+
+    useDialogStore.getState().closeAll();
+    await vi.waitFor(() => expect(document.querySelector('input[type="file"]')).toBeNull());
+    answer(true);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(path.persist).not.toHaveBeenCalled();
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+
   test('closing the modal while the copy is being made resolves nothing', async () => {
     let finish: (v: typeof PERSISTED) => void = () => undefined;
     const path = scannedRows({

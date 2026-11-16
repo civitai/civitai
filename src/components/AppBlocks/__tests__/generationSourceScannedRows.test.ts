@@ -74,6 +74,24 @@ describe('toGenerationSource', () => {
     await expect(toGenerationSource(BLOB, p)).rejects.toBe(refused);
   });
 
+  it('🔴 a pick that is no longer current (re-picked, closed) issues no persist, and resolves null', async () => {
+    let current = true;
+    const p = path({
+      usesScannedRows: vi.fn(async () => {
+        current = false; // the viewer moved on while the path was being read
+        return true;
+      }),
+    });
+    await expect(toGenerationSource(BLOB, p, () => current)).resolves.toBeNull();
+    expect(p.persist).not.toHaveBeenCalled();
+  });
+
+  it('a pick that is still current is persisted (the control for the case above)', async () => {
+    const p = path();
+    await expect(toGenerationSource(BLOB, p, () => true)).resolves.toEqual(PERSISTED);
+    expect(p.persist).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the caller’s other fields (a media upload’s kind, mimeType, sizeBytes)', async () => {
     const media = { ...BLOB, kind: 'image' as const, mimeType: 'image/jpeg', sizeBytes: 1234 };
     await expect(toGenerationSource(media, path())).resolves.toEqual({

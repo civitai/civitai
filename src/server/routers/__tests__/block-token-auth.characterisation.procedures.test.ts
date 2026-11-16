@@ -1656,14 +1656,13 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok']
     ),
   },
-  // `persistGenerationSource`'s preamble, then the per-user generation-source bucket the two share
-  // (the per-user `rateLimit` middleware does not run under test), then the url check refuses
-  // the fixture.
+  // `persistGenerationSource`'s preamble, then the scanned-rows flag, which no Flipt answers here,
+  // so a call past the preamble stops there, before its own bounds.
   'blocks.persistUploadedGenerationSource': {
     'valid token': E(
-      'BAD_REQUEST',
-      'that url is not an uploaded generation source',
-      ['checkBlockGenerationSourceUserRateLimit(42)'],
+      'FORBIDDEN',
+      'picked generation sources are not enabled',
+      [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),
@@ -1683,9 +1682,9 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:threw:42']
     ),
     'rate limited': E(
-      'TOO_MANY_REQUESTS',
-      'Too many generation sources saved — slow down.',
-      ['checkBlockGenerationSourceUserRateLimit(42)'],
+      'FORBIDDEN',
+      'picked generation sources are not enabled',
+      [],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     "session user is not the token subject (session user's run flag off)": E(

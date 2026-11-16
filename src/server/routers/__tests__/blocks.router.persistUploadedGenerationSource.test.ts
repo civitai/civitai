@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   sessionUser: vi.fn(),
   persistUploaded: vi.fn(),
   persistOutput: vi.fn(),
+  isFlipt: vi.fn(),
   rateLimitApplied: [] as unknown[],
 }));
 
@@ -35,6 +36,10 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: (...a: unknown[]) => h.appBlocksEnabled(...a),
   isAppBlocksAuthorEnabled: vi.fn(),
   isAppBlocksPostCreationEnabled: vi.fn(),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  isFlipt: (...a: unknown[]) => h.isFlipt(...a),
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...a: unknown[]) => h.sessionUser(...a) },
@@ -160,6 +165,7 @@ beforeEach(() => {
   h.sessionUser.mockImplementation(async (id: number) => ({ id }));
   h.persistUploaded.mockResolvedValue(RESULT);
   h.persistOutput.mockResolvedValue(RESULT);
+  h.isFlipt.mockImplementation(async (flag: string) => flag === 'app-block-source-scanned-rows');
 });
 
 describe('blocks.persistUploadedGenerationSource — the preamble', () => {
@@ -243,17 +249,37 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
   });
 });
 
-describe('blocks.persistUploadedGenerationSource — bounds shared with persistGenerationSource', () => {
+describe('blocks.persistUploadedGenerationSource — the scanned-rows flag', () => {
+  it('🔴 refuses while app-block-source-scanned-rows is OFF, and persists nothing', async () => {
+    h.isFlipt.mockResolvedValue(false);
+    await expect(call()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'picked generation sources are not enabled',
+    });
+    expect(h.persistUploaded).not.toHaveBeenCalled();
+  });
+
+  it('reads the flag as the gate does: that flag, no entity', async () => {
+    await call();
+    expect(h.isFlipt.mock.calls).toEqual([['app-block-source-scanned-rows']]);
+  });
+});
+
+describe('blocks.persistUploadedGenerationSource — bounds of its own', () => {
   const moderator = (id = VIEWER_ID) => ctx({ id, isModerator: true });
 
-  it('🔴 one hourly bucket per user across BOTH procedures: the 61st save is refused', async () => {
-    for (let i = 0; i < 30; i++) await expect(call({}, moderator())).resolves.toEqual(RESULT);
-    for (let i = 0; i < 30; i++) await expect(callOutput(moderator())).resolves.toEqual(RESULT);
+  it('🔴 its hourly bucket is its own: 60 output saves leave uploads untouched', async () => {
+    for (let i = 0; i < 60; i++) await expect(callOutput(moderator())).resolves.toEqual(RESULT);
+    await expect(call({}, moderator())).resolves.toEqual(RESULT);
+  });
+
+  it('the 61st upload persist in the hour is refused, and never reaches the service', async () => {
+    for (let i = 0; i < 60; i++) await expect(call({}, moderator())).resolves.toEqual(RESULT);
     await expect(call({}, moderator())).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: 'Too many generation sources saved — slow down.',
     });
-    expect(h.persistUploaded).toHaveBeenCalledTimes(30);
+    expect(h.persistUploaded).toHaveBeenCalledTimes(60);
   });
 
   it('the bucket is per user: another user is not refused', async () => {
@@ -262,27 +288,40 @@ describe('blocks.persistUploadedGenerationSource — bounds shared with persistG
     await expect(call({}, moderator(OTHER_USER_ID))).resolves.toEqual(RESULT);
   });
 
-  it('🔴 a third concurrent save is refused while two are in flight, whichever procedure holds them', async () => {
+  const holdOpen = () => {
     const finish: Array<() => void> = [];
-    h.persistUploaded.mockImplementation(
-      () => new Promise((resolve) => finish.push(() => resolve(RESULT)))
-    );
-    h.persistOutput.mockImplementation(
-      () => new Promise((resolve) => finish.push(() => resolve(RESULT)))
-    );
-    const first = call({}, moderator());
-    await vi.waitFor(() => expect(h.persistUploaded).toHaveBeenCalledTimes(1));
-    const second = callOutput(moderator());
-    await vi.waitFor(() => expect(h.persistOutput).toHaveBeenCalledTimes(1));
+    const hold = () => new Promise((resolve) => finish.push(() => resolve(RESULT)));
+    h.persistUploaded.mockImplementation(hold);
+    h.persistOutput.mockImplementation(hold);
+    return () => finish.splice(0).forEach((f) => f());
+  };
 
+  it('🔴 an upload persist is NOT refused while 2 output-source saves are in flight', async () => {
+    const release = holdOpen();
+    const outputs = [callOutput(moderator()), callOutput(moderator())];
+    await vi.waitFor(() => expect(h.persistOutput).toHaveBeenCalledTimes(2));
+    // Positive control: the output pool IS full.
+    await expect(callOutput(moderator())).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'A generation source is already being saved — wait for it to finish.',
+    });
+    const upload = call({}, moderator());
+    await vi.waitFor(() => expect(h.persistUploaded).toHaveBeenCalledTimes(1));
+    release();
+    await expect(upload).resolves.toEqual(RESULT);
+    await Promise.all(outputs);
+  });
+
+  it('a third concurrent upload persist is refused while two uploads are in flight', async () => {
+    const release = holdOpen();
+    const uploads = [call({}, moderator()), call({}, moderator())];
+    await vi.waitFor(() => expect(h.persistUploaded).toHaveBeenCalledTimes(2));
     await expect(call({}, moderator())).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: 'A generation source is already being saved — wait for it to finish.',
     });
-    expect(h.persistUploaded).toHaveBeenCalledTimes(1);
-
-    finish.splice(0).forEach((f) => f());
-    await expect(first).resolves.toEqual(RESULT);
-    await expect(second).resolves.toEqual(RESULT);
+    expect(h.persistUploaded).toHaveBeenCalledTimes(2);
+    release();
+    await Promise.all(uploads);
   });
 });
