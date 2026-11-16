@@ -2,7 +2,7 @@ import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
 import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
@@ -315,8 +315,12 @@ function ImageContent({
     defaultValue: true,
   });
   const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
-  const retractedSrc = features.modRetractedMedia ? retractedMediaUrl(image, currentUser) : null;
+  // Optional: the carousel also renders without a session provider.
+  const session = useOptionalCivitaiSessionContext();
+  const retractedSrc =
+    features.modRetractedMedia && session?.type === 'authed'
+      ? retractedMediaUrl(image, session)
+      : null;
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
