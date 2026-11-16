@@ -84,17 +84,20 @@ export async function finaliseOnsiteApprove(
     actorUserId: input.reviewerUserId,
     afterSideEffects: true,
   });
-  await tx.appBlockPublishRequest.update({
-    where: { id: input.publishRequestId },
-    data: {
-      status: 'approved',
-      reviewedByUserId: input.reviewerUserId,
-      reviewedAt: new Date(),
-      approvalNotes: input.approvalNotes,
-      forgejoCommitSha: input.forgejoCommitSha,
-      appBlockId: input.appBlockId,
-    },
-  });
+  // A held version stays pending: an 'approved' request is what the next version's review is
+  // diffed against, and what every other reader takes as the live version.
+  if (!late.length)
+    await tx.appBlockPublishRequest.update({
+      where: { id: input.publishRequestId },
+      data: {
+        status: 'approved',
+        reviewedByUserId: input.reviewerUserId,
+        reviewedAt: new Date(),
+        approvalNotes: input.approvalNotes,
+        forgejoCommitSha: input.forgejoCommitSha,
+        appBlockId: input.appBlockId,
+      },
+    });
   await tx.appBlock.update({
     where: { id: input.appBlockId },
     // A held version is never marked current, and its unreviewed manifest, scopes and tier are

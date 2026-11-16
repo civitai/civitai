@@ -3786,8 +3786,8 @@ async function approveRequestUnderClaim(
       where: { id: existingAppBlock.appId },
       select: { allowedScopes: true },
     });
-    // Without the ceiling a late hold could not put back, nothing may be written yet. (A missing
-    // block row fails the update below the same way.)
+    // A late hold must be able to put the ceiling back, so refuse before any write if it can't be
+    // read. (A missing block row fails the update below the same way.)
     if (!client) {
       throw new Error(
         `approve refused: could not read the OAuth client of ${request.slug} to restore on a late hold`

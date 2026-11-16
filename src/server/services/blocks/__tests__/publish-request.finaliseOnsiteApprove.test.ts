@@ -55,7 +55,7 @@ describe('finaliseOnsiteApprove', () => {
     );
   });
 
-  it('🔴 a late hold re-suspends the block in the same transaction, and the request is still approved', async () => {
+  it('🔴 a late hold re-suspends the block in the same transaction and leaves the request pending', async () => {
     resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
     const tx = fakeTx();
     await expect(finaliseOnsiteApprove(tx as never, input)).resolves.toEqual({
@@ -66,9 +66,8 @@ describe('finaliseOnsiteApprove', () => {
       where: { id: 'apb_1' },
       data: { status: 'suspended' },
     });
-    expect(tx.appBlockPublishRequest.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'approved' }) })
-    );
+    // 🔴 The held request stays pending, so the next version is reviewed against the live one.
+    expect(tx.appBlockPublishRequest.update).not.toHaveBeenCalled();
   });
 
   it('🔴 a late hold puts back the manifest, scopes and tier the app ran under', async () => {
@@ -174,5 +173,8 @@ describe('finaliseOnsiteApprove', () => {
     const [{ data }] = tx.appBlock.update.mock.calls[0] as unknown as [{ data: object }];
     expect(data).not.toHaveProperty('status');
     expect(data).toMatchObject({ currentVersionSha: SHA });
+    expect(tx.appBlockPublishRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'approved' }) })
+    );
   });
 });
