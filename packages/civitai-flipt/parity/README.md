@@ -57,12 +57,27 @@ newest pair is JS 0.7.0 with Go v1.6.0.
 
 Hashing, in both trees: a boolean threshold rollout matches when
 `crc32(entityId + flagKey) % 100 < percentage`; a variant picks its distribution by
-`crc32(flagKey + entityId) % 1000` against cumulative bucket edges. What changed between them is how
-the edges are built: 0.2.0 sums `trunc(rollout * 10)`, so distributions that do not reach exactly
-100% (`33.33/33.33/33.34`, `10.05/89.95`, or a total under 100) leave the top buckets matching
-nothing; from 0.4.0 the rollouts are normalised to their sum, rounded, and the last edge is pinned
-to 1000. The reason reported for a disabled boolean flag with no rollouts also changed
-(`DEFAULT` to `FLAG_DISABLED`). `latest-divergences.json` lists every case that moves.
+`crc32(flagKey + entityId) % 1000` against cumulative bucket edges. What changed between the two
+trees is how those edges are built: the pinned one sums `trunc(rollout * 10)`, so a distribution
+list whose tenths do not add up to exactly 1000 leaves the top buckets matching nothing; the newest
+one normalises the rollouts to their sum, rounds each edge, and pins the last edge to 1000. The
+reason reported for a disabled boolean flag with no rollouts also changed (`DEFAULT` to
+`FLAG_DISABLED`).
+
+Measured on this corpus (CI, 1678 cases): Go v1.1.1 returns the Node 0.2.0 result on every case.
+Go v1.6.0 differs on 97, all listed in `latest-divergences.json`:
+
+- `bool-disabled-no-rollouts`, 40 cases: same `enabled: false`, reason `DEFAULT` becomes
+  `FLAG_DISABLED`.
+- `variant-under-100` (30% + 20%), 48 cases: entities in buckets 500-999 matched nothing and now
+  get `a` or `b`; some in 300-499 move from `b` to `a`.
+- `variant-thirds` (33.33/33.33/33.34), 4 cases: bucket 999 matched nothing and now gets `three`;
+  bucket 666 moves from `three` to `two`.
+- `variant-uneven` (10.05/89.95), 5 cases: bucket 999 matched nothing and now gets `large`; bucket
+  100 moves from `large` to `small`.
+
+Boolean thresholds (including 33.3%), segment matching and the string edge cases, and distributions
+whose tenths are exact (50/50, 12.5/37.5/50, 0/100) agree between the two trees on every case.
 
 The JS SDK refuses an empty or whitespace-only `entityId` before the engine sees it; the Go SDK
 does not. The corpus never sends one (Node always sends a user id or `anonymous`); a Go adapter has
