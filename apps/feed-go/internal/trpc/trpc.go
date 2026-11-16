@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -143,7 +144,7 @@ func WriteResult(w http.ResponseWriter, payload []byte, ttl *CacheTTL) {
 		h.Set("Cache-Control", "public, max-age="+strconv.Itoa(ttl.Browser)+", s-maxage="+strconv.Itoa(ttl.Edge)+
 			", stale-while-revalidate="+strconv.Itoa(ttl.StaleWhileRevalidate))
 	} else {
-		h.Set("Cache-Control", "max-age=0, private, no-cache")
+		h.Set("Cache-Control", apipolicy.PrivateCacheControl()) // PRIVATE_CACHE_CONTROL
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"result":{"data":`))

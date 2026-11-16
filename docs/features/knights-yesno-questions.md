@@ -23,11 +23,10 @@ shared with ratings. What marks one is `audience` (`players` or `moderators`); a
 The item's question (`questionKey`) is one `KnightsQuestion` per axis, `knights.yesno.<axis>`, kind `bool`, options yes and no.
 Its `prompt` is a plain fallback question for the axis (`axisPrompt` in `keys.ts`), shown only where an item or Acolyte pair has no
 question text of its own; overlapping axes share one;
-`votesToResolve` is the number of answers a consensus needs (default 5) and `maxVotes` the most it is ever asked (default 10); both are
-read from the row on every answer, so tuning it takes effect at once (the Codex does not quote the number). A `maxVotes` below
-`votesToResolve` is treated as `votesToResolve`. The item's own `votesNeeded` is unused for yes/no.
-Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired` or `moderator-retired`). A yes/no item is never `Resolved`, so write-back, escalation and the
-settle sweeps never touch it. Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
+`votesToResolve` (default 5) feeds the label store's rule row (`minHuman`); it and `maxVotes` no longer decide a question in the game,
+which follows the rating stage rule below. The item's own `votesNeeded` is unused for yes/no.
+Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale`, `retired` or `moderator-retired`). A yes/no item is never `Resolved`, so write-back and the rating
+escalation and settle sweeps never touch it (it has no `expiresAt`; its own stage escalation is below). Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
 open rating item per question and image exempts yes/no items, which share an axis and an image.
 
 ## Import
@@ -109,11 +108,22 @@ votes, never player rows.
 refusals, and `insertVote` / `creditVote`. The ledger row is under the item's own id, with `answer` `yes` or `no`, the vote XP at once
 and gold held as pending. The item row lock serialises its votes.
 
-A question has a consensus when `votesToResolve` players have answered and one answer has a strict majority (one vote per player, as the
-label store counts). A tie keeps it open, but answers arrive one at a time under the item row lock, so after a tie at an even
-`votesToResolve` the very next answer decides. A close with no outcome therefore happens only when `maxVotes` equals an even
-`votesToResolve` (including a `maxVotes` below it, which is clamped up to it): the tie is then at the cap. With the defaults (5 to resolve,
-10 at most) it never happens: five yes/no answers cannot tie, so every question resolves at the fifth answer. At the close, in the same transaction:
+A stage decides a question by the rating stage rule (`STAGE_RULES` in `queue/stage-rules.ts`, applied by `decideChoice`): unanimous at
+the answers the stage needs, then one answer holding 75% up to the stage's cap. One vote per player, as the label store counts; only the
+current stage's (`minRank`) answers count, and earlier stages' answers stay pending and are graded by the final outcome.
+
+| Stage | Settles at | Then (yes-no) | Cap |
+|---|---|---|---|
+| Knight | 4-0 | 4-1, 5-1, 6-1, 6-2, 7-2, 8-2 | 10 |
+| Templar | 3-0 | 3-1, 4-1, 5-1 | 6 |
+| Paladin | 2-0 | 3-0, 3-1 | 4 |
+
+A stage that reaches its cap without that agreement (a plain majority such as 7-3 included) does not close the question while a higher rank is staffed: it moves to the next
+staffed rank (`nextStaffedRank` over `staffedRanks`, as a rating item escalates: Knight, then Templar, then Paladin), with
+`escalatedAt` set and no deadline. Players below that rank are no longer served it or allowed to answer (`stagesWorkedBy` in the feed,
+`canVote` in `insertVote`). At the last staffed stage it closes as `no-consensus`; a yes/no question never goes to the Inquisitors.
+
+At the close, in the same transaction:
 
 - The majority answer is graded `correct` and the others `failed`; a close with no outcome leaves every vote `inconclusive`, as for a
   rating item. The item becomes `Consensus`, which counts as final, and the votes are paid by `settleItemVotes`, the rating path.

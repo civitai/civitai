@@ -154,7 +154,7 @@ describe('what a player is offered', () => {
   it('stops offering a question once it has a consensus, while another player still gets the rest', async () => {
     const ids = await seed([row('a', 10), row('b', 11)]);
     for (let u = 1; u <= 6; u++) await seedPlayer(pg, u);
-    for (let u = 1; u <= 5; u++) await answer(u, ids.a);
+    for (let u = 1; u <= 4; u++) await answer(u, ids.a);
 
     expect((await pick(6))?.itemId).toBe(ids.b);
     expect((await pick(6, { stretch: 8 }))?.itemId).toBe(ids.b);
