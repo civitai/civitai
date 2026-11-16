@@ -104,10 +104,10 @@ export async function listEvidenceHeldOwners(
 }
 
 /**
- * Places a manual hold on an owner unless an open one with the same reason already exists, so a
- * repeated request does not stack rows. Only `manual`: `subject` and `secondary` holds belong to a
- * CSAM report, and the table's role check refuses them without one. `releaseAt` NULL holds until released; a date ends the hold
- * through "EvidenceHeldUser" with no job.
+ * Places a manual hold unless an open one with the same reason exists, so a repeat does not stack
+ * rows. Only `manual`: `subject` and `secondary` holds belong to a CSAM report and the table's role
+ * check refuses them without one. A null `releaseAt` holds until released; a date ends the hold in
+ * the "EvidenceHeldUser" view, with no job.
  */
 export async function placeEvidenceHold(
   db: Kysely<DB>,
@@ -143,7 +143,11 @@ export async function placeEvidenceHold(
   return { id, created: true };
 }
 
-/** Releases one open hold. False when it does not exist or was already released. */
+/**
+ * Releases one open manual hold. False when there is no such hold: unknown, already released, or a
+ * report hold, whose preservation period is not a moderator's to end (a release purges what the
+ * hold kept).
+ */
 export async function releaseEvidenceHold(
   db: Kysely<DB>,
   input: { id: number; releasedById: number; releaseReason: string }
@@ -156,6 +160,7 @@ export async function releaseEvidenceHold(
       releaseReason: input.releaseReason,
     })
     .where('id', '=', input.id)
+    .where('role', '=', 'manual')
     .where('releasedAt', 'is', null)
     .executeTakeFirst();
   return Number(result.numUpdatedRows) > 0;

@@ -62,7 +62,6 @@ const releaseSchema = z.object({
   releaseReason: z.string().trim().min(1, 'Give a reason for releasing.').max(500),
 });
 
-// Same grant as the load.
 export const actions: Actions = {
   place: requiresGrant('csam.report.file', async ({ request, locals }) => {
     const input = parseForm(placeSchema, await request.formData());
@@ -92,7 +91,7 @@ export const actions: Actions = {
     if (!released)
       return fail(409, {
         scope: 'release',
-        error: 'That hold is already released or does not exist.',
+        error: 'Only an open manual hold can be released here.',
       });
     await recordModActivity({
       userId: locals.user.id,

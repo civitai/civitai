@@ -85,8 +85,9 @@ describe('placeEvidenceHold', () => {
     expect(other.created).toBe(true);
   });
 
-  it('stores the end date as UTC, and the view ends the hold there', async () => {
+  it('stores the end date as UTC even from a session off UTC, and the view ends the hold there', async () => {
     const end = new Date('2030-01-15T00:00:00Z');
+    await pg.exec(`SET TIME ZONE 'America/Chicago';`);
     await placeEvidenceHold(db, {
       userId: 2,
       role: 'manual',
@@ -94,11 +95,69 @@ describe('placeEvidenceHold', () => {
       createdById: MOD,
       releaseAt: end,
     });
+    await pg.exec(`SET TIME ZONE 'UTC';`);
     expect((await heldUntil(2))?.heldUntil?.toISOString()).toBe(end.toISOString());
   });
 });
 
+const keptImages = async (userId: number) =>
+  Number(
+    (
+      await db
+        .selectFrom('EvidenceHoldImage')
+        .select(sql<number>`count(*)::int`.as('n'))
+        .where('userId', '=', userId)
+        .executeTakeFirstOrThrow()
+    ).n
+  );
+
 describe('releaseEvidenceHold', () => {
+  it('refuses a report hold: it stays open and nothing it kept is purged', async () => {
+    const REPORTED = 6;
+    await pg.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (${REPORTED}, 'reported');
+      INSERT INTO "EvidenceHold" ("userId", "csamReportId", "role", "reason")
+        VALUES (${REPORTED}, 990000001, 'subject', 'report sent');
+      INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (990000011, ${REPORTED});
+    `);
+    const hold = await db
+      .selectFrom('EvidenceHold')
+      .select('id')
+      .where('userId', '=', REPORTED)
+      .executeTakeFirstOrThrow();
+
+    expect(
+      await releaseEvidenceHold(db, { id: hold.id, releasedById: MOD, releaseReason: 'early' })
+    ).toBe(false);
+    const row = await db
+      .selectFrom('EvidenceHold')
+      .select('releasedAt')
+      .where('id', '=', hold.id)
+      .executeTakeFirstOrThrow();
+    expect(row.releasedAt).toBeNull();
+    expect(await heldUntil(REPORTED)).toBeDefined();
+    expect(await keptImages(REPORTED)).toBe(1);
+  });
+
+  it('releasing a manual hold does purge what it kept (the control for the case above)', async () => {
+    const MANUAL = 7;
+    await pg.exec(`INSERT INTO "User" ("id", "username") VALUES (${MANUAL}, 'manual');`);
+    const { id } = await placeEvidenceHold(db, {
+      userId: MANUAL,
+      role: 'manual',
+      reason: 'kept',
+      createdById: MOD,
+    });
+    await pg.exec(
+      `INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (990000012, ${MANUAL});`
+    );
+    expect(await keptImages(MANUAL)).toBe(1);
+    expect(await releaseEvidenceHold(db, { id, releasedById: MOD, releaseReason: 'done' })).toBe(
+      true
+    );
+    expect(await keptImages(MANUAL)).toBe(0);
+  });
+
   it('records who released it and why, and the owner is no longer held', async () => {
     const { id } = await placeEvidenceHold(db, {
       userId: 3,
@@ -117,6 +176,12 @@ describe('releaseEvidenceHold', () => {
       .where('id', '=', id)
       .executeTakeFirstOrThrow();
     expect(row.releasedAt).not.toBeNull();
+    const releasedAt = await db
+      .selectFrom('EvidenceHold')
+      .select(sql<Date>`"releasedAt" AT TIME ZONE 'UTC'`.as('at'))
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow();
+    expect(Math.abs(releasedAt.at.getTime() - Date.now())).toBeLessThan(60_000);
     expect(row).toMatchObject({ releasedById: MOD, releaseReason: 'restored' });
     expect(await heldUntil(3)).toBeUndefined();
   });

@@ -167,6 +167,7 @@
                         {hold.extensionReference ?? '—'}
                       </span>
                     {/if}
+                    {#if hold.role === 'manual'}
                     <form method="POST" action="?/release" use:enhance class="flex items-center gap-1">
                       <input type="hidden" name="holdId" value={hold.id} />
                       <Input
@@ -179,6 +180,7 @@
                       />
                       <Button type="submit" size="sm" variant="outline">Release</Button>
                     </form>
+                    {/if}
                   </li>
                 {/each}
               </ul>
