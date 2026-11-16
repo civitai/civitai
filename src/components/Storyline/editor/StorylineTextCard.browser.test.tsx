@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as PostEditProviderMod from '~/components/Post/EditV2/PostEditProvider';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 const { setText, addText, deleteText, setTexts, held, failure, inFlight } = vi.hoisted(() => ({
@@ -63,7 +64,10 @@ vi.mock('~/components/RichTextEditor/RichTextEditor', () => ({
     </div>
   ),
 }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
+  showErrorNotification: vi.fn(),
+}));
 vi.mock('~/components/RenderHtml/RenderHtml', () => ({
   RenderHtml: ({ html }: { html: string }) => <div dangerouslySetInnerHTML={{ __html: html }} />,
 }));

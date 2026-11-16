@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../../test/component-setup';
 import type * as PostEditProviderMod from '~/components/Post/EditV2/PostEditProvider';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 // The real StorylineTextCard and PostImageCards, over a store that really holds the texts: the
@@ -98,7 +99,10 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 vi.mock('~/components/Storyline/editor/usePostStorylineMode', () => ({
   usePostStorylineMode: () => ({ inStoryline: true }),
 }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
+  showErrorNotification: vi.fn(),
+}));
 // The real editor is TipTap behind next/dynamic; the card's contract is the HTML it hands back.
 vi.mock('~/components/RichTextEditor/RichTextEditor', () => ({
   RichTextEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
