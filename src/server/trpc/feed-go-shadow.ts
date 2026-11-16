@@ -178,8 +178,6 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   };
 }
 
-export { pickSessionCookies } from '~/server/utils/session-cookies';
-
 type ShadowRequestLike = {
   method?: string;
   /** The request target as Node received it (`req.url`); read by the REST route only. */

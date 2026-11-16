@@ -14,7 +14,6 @@ import {
   feedGoV1ShapeClass,
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
-  pickSessionCookies,
   pickShadowHeaders,
   readFeedGoShadowConfig,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
@@ -22,6 +21,7 @@ import {
   SHADOW_DEFAULT_TIMEOUT_MS,
   type FeedGoShadowConfig,
 } from '~/server/trpc/feed-go-shadow';
+import { pickSessionCookies } from '~/server/utils/session-cookies';
 
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
