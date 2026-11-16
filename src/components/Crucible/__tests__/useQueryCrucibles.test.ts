@@ -9,7 +9,7 @@ import { CrucibleStatus } from '~/shared/utils/prisma/enums';
  * The /crucibles feed has no text search of its own: with the flag on, a query is answered by
  * semantic search alone, and nothing else ever shows the feed's unfiltered rows as its results.
  */
-type Call = { input: Record<string, unknown>; opts: { enabled: boolean } };
+type Call = { input: Record<string, unknown>; opts: { enabled: boolean; retry?: boolean } };
 type Result = { data?: { pages: { items: { id: number }[] }[] }; isError?: boolean };
 const state = vi.hoisted(() => ({
   features: {} as Record<string, boolean>,
@@ -33,7 +33,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const query =
     (key: 'semantic' | 'feed') => (input: Record<string, unknown>, opts: { enabled: boolean }) => {
       state[key] = { input, opts };
-      // A disabled query holds no data.
       return {
         isLoading: false,
         isRefetching: false,
@@ -111,10 +110,13 @@ describe('useQueryCrucibles routing', () => {
     expect(state.semantic.input.status).toEqual([CrucibleStatus.Active]);
   });
 
-  it('shows nothing, not the unfiltered feed, when semantic search errors', () => {
+  // The feed has no text search to fall back to: a failed search is shown as failed, at once.
+  it('reports a failed search as an error, never as unfiltered feed rows', () => {
     state.semanticResult = { isError: true };
     const result = renderHook(() => useQueryCrucibles({ query: 'dragons' }));
+    expect(state.semantic.opts.retry).toBe(false);
     expect(state.feed.opts.enabled).toBe(false);
+    expect(result.current.isError).toBe(true);
     expect(result.current.crucibles).toEqual([]);
   });
 });
