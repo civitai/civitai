@@ -212,13 +212,15 @@ describe('POST /api/v1/models/com-face', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  // The refusal is the endpoint's own reply in `error`, marked so Creator Studio offers the
+  // dispute instead of a retry; the rest go through the shared error handler's `message`.
   it.each([
-    [COM_FACE_REFUSED_MESSAGE, /in the model editor/, 422],
-    [COM_FACE_REFUSED_EDIT_MESSAGE, /in the model editor/, 400],
-    [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/, 400],
-  ])(
+    [COM_FACE_REFUSED_MESSAGE, /in the model editor/, 422, 'error', 'intent-refused'],
+    [COM_FACE_REFUSED_EDIT_MESSAGE, /in the model editor/, 400, 'message', undefined],
+    [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/, 400, 'message', undefined],
+  ] as const)(
     'tells the card which fields a refused draft read, apart from a check that failed',
-    async (thrown, shown, status) => {
+    async (thrown, shown, status, field, code) => {
       caller.model.getCoverCandidates.mockResolvedValue([
         { id: 2, url: 'b', type: 'image', nsfwLevel: 2 },
       ]);
@@ -227,12 +229,9 @@ describe('POST /api/v1/models/com-face', () => {
       );
       const res = await call({ action: 'draft', modelId: 11 });
       expect(res.statusCode).toBe(status);
-      // The refusal is the endpoint's own reply; the rest go through the shared error handler.
-      const message = status === 422 ? res.body.error : res.body.message;
-      expect(message).toMatch(shown);
-      expect(message).toMatch(/civitai\.red/);
-      // A refusal is marked so Creator Studio offers the dispute instead of a retry.
-      expect(res.body.code).toBe(status === 422 ? 'intent-refused' : undefined);
+      expect(res.body[field]).toMatch(shown);
+      expect(res.body[field]).toMatch(/civitai\.red/);
+      expect(res.body.code).toBe(code);
     }
   );
 

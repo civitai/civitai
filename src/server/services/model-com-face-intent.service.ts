@@ -42,7 +42,6 @@ export function reusableComFaceIntent(
   const record = (meta as ModelMeta | null)?.comFaceIntent;
   if (!record || typeof record !== 'object' || record.textHash !== textHash) return null;
   if (typeof record.detected !== 'boolean') return null;
-  // An overturned detection stands as allowed for the text it was ruled on.
   return { detected: record.detected && !record.overturnedAt, reason: record.reason };
 }
 
@@ -117,12 +116,8 @@ export async function recordComFaceIntent(
 
 /**
  * A sexual-intent detection on a mature model's own stored listing: the model is made for sexual
- * content, so its nsfw rating is locked, with the system marker so the owner can dispute it through
- * a locked-setting review. Guarded in the WHERE: only while the stored verdict is still this
- * detection for this text, not overturned, and no lock, minor or real-person flag is on.
+ * content, so its nsfw rating is locked, with the system marker so the owner can dispute it.
  * A model that is not mature keeps listing by its images, so it is refused a face but not locked.
- * A text-scan rating marker it replaces is kept on the verdict and put back when the lock is lifted
- * (`overturnComFaceIntentSql`): an allowed dispute rules on the intent, not on the rating.
  */
 export async function lockForComFaceIntent(modelId: number, textHash: string) {
   const locked = await dbWrite.$transaction(async (tx) => {

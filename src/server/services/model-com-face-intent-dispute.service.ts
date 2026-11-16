@@ -19,7 +19,8 @@ import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entitie
 import { hasLaterVerdictUnderLock, readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 
 const SYSTEM_USER_ID = constants.system.user.id;
-// BATCH_SIZE x the slower pass's wait (up to a minute each) must stay well inside the job's run lock.
+// BATCH_SIZE x the slower pass's wait (DISPUTE_CHECK_WAIT_SECONDS in model-sfw-face.service.ts)
+// must stay well inside the job's run lock.
 const BATCH_SIZE = 4;
 /** Runs without a verdict before the dispute is left to a moderator. */
 const MAX_ATTEMPTS = 3;

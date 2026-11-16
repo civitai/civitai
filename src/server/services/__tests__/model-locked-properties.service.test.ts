@@ -1374,7 +1374,8 @@ describe('upsertModel — content flags the row ends up with', () => {
           meta: { systemNsfwLock: { source: 'xguard-text-moderation', at: scanLock.at } },
         });
         await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
-        expect(updateData().nsfw).not.toBe(false);
+        // Left out of the write (the stored true stands) or written as true; never cleared.
+        expect([undefined, true]).toContain(updateData().nsfw);
       });
 
       it('never blocks on a marker no clean read can release (an older xguard rating)', async () => {

@@ -76,7 +76,7 @@
         return false;
       }
       const err = e as Error & { status?: number; code?: string };
-      // The listing check refused it: retrying gives the same answer; the editor offers a dispute.
+      // A refusal is final for this text: retrying gives the same answer.
       if (err.code === 'intent-refused') {
         cards[model.id] = { state: 'refused', reason: err.message };
         return true;
