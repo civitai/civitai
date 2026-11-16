@@ -70,6 +70,8 @@ type QueryCache struct {
 	Redis   redis.UniversalClient
 	Prefix  string // CACHE_KEY_NAMESPACE prefix; empty in production
 	Enabled bool   // IMAGE_QUERY_CACHING
+	// ReadOnly reads entries but never writes one (the Go-first probe: it makes no writes).
+	ReadOnly bool
 }
 
 // Key is the cache key for a built query: sha256 over the SQL text and its bound values.
@@ -119,7 +121,7 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 		}
 		return nil, err
 	}
-	if useCache {
+	if useCache && !cache.ReadOnly {
 		if raw, err := json.Marshal(out); err == nil {
 			// One pipelined round trip for the entry and its bust-tag memberships (a cluster client
 			// splits it per node). Fail open: a cache write error never fails the request.

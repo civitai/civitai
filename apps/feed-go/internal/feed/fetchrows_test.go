@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
 
 // blockingDB blocks every query until its context ends, then returns the context's error, as pgx does
@@ -63,5 +65,36 @@ func TestFetchRowsCallerCancellationIsAnError(t *testing.T) {
 func TestFetchRowsOtherErrorsStayErrors(t *testing.T) {
 	if _, err := FetchRows(context.Background(), failingDB{}, nil, Built{SQL: "select 1"}); err == nil {
 		t.Fatal("a query error that is not a timeout must stay an error")
+	}
+}
+
+// A read-only query cache (the Go-first probe's) reads an entry but never writes one; the same cache
+// writable is the positive control that a miss is written at all.
+func TestFetchRowsReadOnlyCacheNeverWrites(t *testing.T) {
+	b := Built{SQL: "select 1", CacheTTL: time.Minute, CacheTags: []string{"images-model-7"}}
+	for _, readOnly := range []bool{false, true} {
+		r := testkit.NewRedis()
+		db := &testkit.DB{Routes: []testkit.Route{{Match: "select 1", Rows: func([]any) (*testkit.Rows, error) {
+			return testkit.NewRows([]string{"id"}), nil
+		}}}}
+		cache := &QueryCache{Redis: r, Enabled: true, ReadOnly: readOnly}
+		if _, err := FetchRows(context.Background(), db, cache, b); err != nil {
+			t.Fatal(err)
+		}
+		keys := r.AllKeys()
+		if readOnly && len(keys) != 0 {
+			t.Fatalf("read-only: wrote %v", keys)
+		}
+		if !readOnly && len(keys) != 2 {
+			t.Fatalf("writable: wrote %v, want the entry and its tag set", keys)
+		}
+	}
+	// A read-only cache still answers from an entry.
+	r := testkit.NewRedis()
+	cache := &QueryCache{Redis: r, Enabled: true, ReadOnly: true}
+	r.SetString(cache.Key(b), []byte(`[{"id":9}]`))
+	rows, err := FetchRows(context.Background(), failingDB{}, cache, b)
+	if err != nil || len(rows) != 1 || rows[0].ID != 9 {
+		t.Fatalf("rows %v, err %v; want the cached row without a query", rows, err)
 	}
 }

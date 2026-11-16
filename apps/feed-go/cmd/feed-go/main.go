@@ -26,6 +26,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
 )
@@ -68,8 +69,7 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 	return c
 }
 
-// primaryMaxConns bounds the primary pool: only the frame and event-decoration miss lookups (one
-// query each per page, plus the frames' withheld check) use it, and only with write-back on.
+// primaryMaxConns bounds the primary pool, used only by the write-back miss lookups (DESIGN.md §3.1).
 const primaryMaxConns = 4
 
 func run(log *slog.Logger) error {
@@ -128,8 +128,10 @@ func run(log *slog.Logger) error {
 		primary = primaryPool
 	}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss)
-	log.Info("cache misses", "compute", sources.Compute != nil, "writeback", cfg.CacheWriteBack,
-		"frameNegative", cfg.FrameCacheNegative)
+	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
+	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
+	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
+		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative)
 	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
@@ -197,19 +199,39 @@ func run(log *slog.Logger) error {
 	}
 	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
 	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
+	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	infinite := &feed.InfiniteDeps{
 		Deps:    deps,
 		Sources: sources,
-		Blocked: &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix},
+		Blocked: blocked,
+	}
+	// The model.getAll shadow shares the replica, the cache readers, the gallery settings and the
+	// addons; its own flags are mirrored by FEED_GO_* variables (DESIGN.md §15.3).
+	models := &modelfeed.Deps{
+		DB:      pool,
+		Sources: sources,
+		Gallery: deps.Gallery,
+		Addons:  deps.Addons.Addons,
+		Blocked: blocked,
+		Config: modelfeed.Config{
+			BaseModelMetrics:        cfg.BaseModelFeedMetrics,
+			ImagesSlim:              cfg.ModelImagesSlim,
+			CoverageNext:            cfg.CoverageNext,
+			LoadingOpenToAll:        cfg.LoadingOpenToAll,
+			VisibleDecorationEvents: cfg.DecorationEvents,
+		},
 	}
 	srv := &server.Server{
-		Resolver:       resolver,
-		Deps:           deps,
-		Hosts:          cfg.Hosts,
-		RegionRules:    cfg.RegionRules,
-		Metrics:        metrics,
-		Log:            log,
-		ShadowQueue:    make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		Resolver:    resolver,
+		Deps:        deps,
+		Models:      models,
+		Hosts:       cfg.Hosts,
+		RegionRules: cfg.RegionRules,
+		Metrics:     metrics,
+		Log:         log,
+		ShadowQueue: make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		// The Go-first probes get as many slots as the comparisons, in their own queue.
+		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
 		Infinite:       infinite,

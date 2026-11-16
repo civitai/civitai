@@ -14,9 +14,7 @@ const EndpointLabel = "feed_endpoint"
 // Metrics are this service's Prometheus series. The Go and process collectors (registered in main)
 // add `process_cpu_seconds_total` and the GC series the CPU-per-call measurement reads.
 //
-// Every feed_go_* series carries EndpointLabel (`feed_endpoint`: one of Endpoints, EndpointAsPosts |
-// EndpointV1Images | EndpointInfinite): three values, so the label multiplies each family's
-// cardinality by three at most.
+// Every feed_go_* series carries EndpointLabel (`feed_endpoint`), one of Endpoints.
 type Metrics struct {
 	Requests      *prometheus.CounterVec   // endpoint, mode, outcome
 	Fallbacks     *prometheus.CounterVec   // endpoint, mode, reason
@@ -35,7 +33,19 @@ type Metrics struct {
 	// the solo phases are shorter than the rest (the length bias, DESIGN.md §10.1).
 	ShadowPhaseSoloWall *prometheus.CounterVec
 
-	// Panics counts recovered panics by where (serve | shadow). Not per endpoint.
+	// The Go-first probe (probe.go, DESIGN.md "Go-first probe").
+	GoFirst        *prometheus.CounterVec // endpoint, result: would_serve | would_miss | raced | unsupported | error
+	GoFirstMiss    *prometheus.CounterVec // endpoint, cache: probes in which that cache missed an id
+	GoFirstDropped *prometheus.CounterVec // endpoint: probes dropped (queue full, shutting down)
+	GoFirstRaced   *prometheus.CounterVec // endpoint, cache: probes in which that cache had a raced entry
+	// The cost gate: database queries a Go-first serve would make for the misses Go answers itself,
+	// by cache, and the pages they were counted over (served probes only).
+	GoFirstDBReads *prometheus.CounterVec // endpoint, cache
+	GoFirstPages   *prometheus.CounterVec // endpoint
+	// Seconds from the Node request's start to the probe's first cache read.
+	GoFirstCheckLag *prometheus.HistogramVec // endpoint
+
+	// Panics counts recovered panics by where (serve | shadow | probe). Not per endpoint.
 	Panics *prometheus.CounterVec
 	// RevocationFailOpen counts session revocation reads that failed and allowed the request.
 	RevocationFailOpen prometheus.Counter
@@ -57,6 +67,9 @@ type Metrics struct {
 func (m *Metrics) ObserveCacheMiss(cache, result string, n int) {
 	m.CacheMisses.WithLabelValues(cache, result).Add(float64(n))
 }
+
+// probeLagBuckets resolve the first tens of milliseconds, where the probe races Node's fills.
+var probeLagBuckets = []float64{.001, .0025, .005, .01, .015, .025, .05, .075, .1, .25, .5, 1, 2.5}
 
 // NewMetrics registers the series on reg.
 func NewMetrics(reg prometheus.Registerer) *Metrics {
@@ -103,9 +116,38 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_shadow_phase_solo_wall_seconds_total",
 			Help: "Wall seconds of the shadow-sample phases counted in feed_go_shadow_phase_cpu_seconds_total.",
 		}, []string{EndpointLabel, "phase", "outcome"}),
+		GoFirst: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_gofirst_total",
+			Help: "Go-first probes by result: would_serve, would_miss (a cache Go falls back on missed), raced (an entry filled after the request began), unsupported (another fallback), error.",
+		}, []string{EndpointLabel, "result"}),
+		GoFirstMiss: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_gofirst_miss_total",
+			Help: "Go-first probes in which the cache missed at least one id, by cache (whatever the probe's result).",
+		}, []string{EndpointLabel, "cache"}),
+		GoFirstDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_gofirst_dropped_total",
+			Help: "Go-first probes dropped because the probe queue was full or the service was shutting down.",
+		}, []string{EndpointLabel}),
+		GoFirstRaced: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_gofirst_raced_total",
+			Help: "Go-first probes in which the cache held an entry filled at or after the request began (less the skew margin): the probe likely lost the race to Node's fill there.",
+		}, []string{EndpointLabel, "cache"}),
+		GoFirstDBReads: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_gofirst_db_reads_total",
+			Help: "Database queries a Go-first serve would make for the cache misses Go answers itself (replica path or computed), by cache; served probes (would_serve, raced) only. A lower bound.",
+		}, []string{EndpointLabel, "cache"}),
+		GoFirstPages: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_gofirst_pages_total",
+			Help: "Page hydrations checked by served Go-first probes (would_serve, raced): the denominator of DB reads per page.",
+		}, []string{EndpointLabel}),
+		GoFirstCheckLag: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "feed_go_gofirst_check_lag_seconds",
+			Help:    "Seconds from the start of the sampled Node request to the probe's first page-cache read (the margin over Node's own fills).",
+			Buckets: probeLagBuckets,
+		}, []string{EndpointLabel}),
 		Panics: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_panics_total",
-			Help: "Recovered panics, by where they were caught (serve: a public request, answered by the fallback; shadow: a shadow sample, dropped).",
+			Help: "Recovered panics, by where they were caught (serve: a public request, answered by the fallback; shadow: a shadow sample, dropped; probe: a Go-first probe, counted as error).",
 		}, []string{"where"}),
 		RevocationFailOpen: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "feed_go_revocation_fail_open_total",
@@ -134,7 +176,18 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.ShadowDropped.WithLabelValues(e)
 		m.ShadowResults.WithLabelValues(e, "deadline")
 	}
-	for _, w := range []string{"serve", "shadow"} {
+	for _, e := range ProbeEndpoints {
+		for _, r := range []string{ProbeWouldServe, ProbeWouldMiss, ProbeRaced, ProbeUnsupported, ProbeError} {
+			m.GoFirst.WithLabelValues(e, r)
+		}
+		for _, c := range probeCaches() {
+			m.GoFirstMiss.WithLabelValues(e, c)
+			m.GoFirstRaced.WithLabelValues(e, c)
+		}
+		m.GoFirstPages.WithLabelValues(e)
+		m.GoFirstDropped.WithLabelValues(e)
+	}
+	for _, w := range []string{"serve", "shadow", "probe"} {
 		m.Panics.WithLabelValues(w)
 	}
 	for _, r := range []string{"ok", "error"} {
@@ -150,6 +203,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
+		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
 		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses)
 	return m
 }

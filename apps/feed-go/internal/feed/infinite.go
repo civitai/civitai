@@ -142,12 +142,14 @@ const BlockedTagsTTL = 30 * time.Second
 // caller's context, so a caller that leaves cannot fail the others waiting on it).
 const blockedTagsReadTimeout = 2 * time.Second
 
-// BlockedTags reads getBlockedBrowsingTags' list: the ids of `system:blocked-browsing-tags`. A key
-// Node would rebuild (absent or unreadable as a list) falls back, as does a read error.
+// BlockedTags reads getBlockedBrowsingTags' list of `system:blocked-browsing-tags`: its ids
+// (image.getInfinite) and its lowercased names (model.getAll). A key Node would rebuild (absent or
+// unreadable as a list) falls back, as does a read error.
 //
 // Like Node's createTtlMemo, a list read successfully is served from memory for TTL; an error is
 // never memoized (the next call reads again). Concurrent callers of an expired memo share one read
-// (single flight). The returned map is shared: callers must not modify it.
+// (single flight). The returned maps are shared: callers must not modify them. One BlockedTags is
+// shared by every procedure that reads the list, as the one memo is in Node.
 type BlockedTags struct {
 	Cache  redis.UniversalClient
 	Prefix string
@@ -157,13 +159,40 @@ type BlockedTags struct {
 	Now func() time.Time
 
 	mu      sync.Mutex
-	ids     map[int]bool
+	memo    *blockedList
 	readAt  time.Time
 	refresh singleflight.Group
 }
 
+// blockedList is one read of the list. Each consumer's own reading of an entry it cannot use (a
+// non-integer id, a nameless entry) is its own error, kept beside the other's result: in Node the
+// memo holds the list and each consumer fails on it on every call.
+type blockedList struct {
+	ids      map[int]bool
+	idsErr   error
+	names    map[string]bool
+	namesErr error
+}
+
 // IDs returns the blocked tag ids.
 func (b *BlockedTags) IDs(ctx context.Context) (map[int]bool, error) {
+	l, err := b.list(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return l.ids, l.idsErr
+}
+
+// Names returns the blocked tag names, lowercased (`t.name.toLowerCase()`).
+func (b *BlockedTags) Names(ctx context.Context) (map[string]bool, error) {
+	l, err := b.list(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return l.names, l.namesErr
+}
+
+func (b *BlockedTags) list(ctx context.Context) (*blockedList, error) {
 	ttl := b.TTL
 	if ttl == 0 {
 		ttl = BlockedTagsTTL
@@ -174,23 +203,23 @@ func (b *BlockedTags) IDs(ctx context.Context) (map[int]bool, error) {
 	}
 	if ttl > 0 {
 		b.mu.Lock()
-		ids, fresh := b.ids, b.ids != nil && now().Sub(b.readAt) < ttl
+		l, fresh := b.memo, b.memo != nil && now().Sub(b.readAt) < ttl
 		b.mu.Unlock()
 		if fresh {
-			return ids, nil
+			return l, nil
 		}
 	}
-	ch := b.refresh.DoChan("ids", func() (any, error) {
+	ch := b.refresh.DoChan("list", func() (any, error) {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), blockedTagsReadTimeout)
 		defer cancel()
-		ids, err := b.read(rctx)
+		l, err := b.read(rctx)
 		if err != nil {
 			return nil, err
 		}
 		b.mu.Lock()
-		b.ids, b.readAt = ids, now()
+		b.memo, b.readAt = l, now()
 		b.mu.Unlock()
-		return ids, nil
+		return l, nil
 	})
 	select {
 	case <-ctx.Done():
@@ -199,12 +228,12 @@ func (b *BlockedTags) IDs(ctx context.Context) (map[int]bool, error) {
 		if res.Err != nil {
 			return nil, res.Err
 		}
-		return res.Val.(map[int]bool), nil
+		return res.Val.(*blockedList), nil
 	}
 }
 
 // read is one read of the cache key, without the memo.
-func (b *BlockedTags) read(ctx context.Context) (map[int]bool, error) {
+func (b *BlockedTags) read(ctx context.Context) (*blockedList, error) {
 	raw, err := b.Cache.Get(ctx, b.Prefix+BlockedTagsKey).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, fallback.New("blocked-tags-miss")
@@ -212,29 +241,55 @@ func (b *BlockedTags) read(ctx context.Context) (map[int]bool, error) {
 	if err != nil {
 		return nil, fallback.Newf("blocked-tags-read-failed", "%v", err)
 	}
-	return ParseBlockedTags(raw)
+	return parseBlockedList(raw)
 }
 
-// ParseBlockedTags reads a cached `[{id, name}]` list. Anything else is a value Node would replace
-// from the database (its JSON.parse / Array.isArray guard), which this service does not read.
-func ParseBlockedTags(raw []byte) (map[int]bool, error) {
-	var list []struct {
-		ID json.Number `json:"id"`
-	}
+// parseBlockedList reads a cached `[{id, name}]` list. Anything but a JSON array is a value Node
+// would replace from the database (its JSON.parse / Array.isArray guard), which this service does
+// not read.
+func parseBlockedList(raw []byte) (*blockedList, error) {
+	var list []map[string]any
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&list); err != nil || list == nil {
 		return nil, fallback.New("blocked-tags-stale")
 	}
-	out := make(map[int]bool, len(list))
+	l := &blockedList{ids: make(map[int]bool, len(list)), names: make(map[string]bool, len(list))}
 	for _, t := range list {
-		f, err := t.ID.Float64()
+		n, _ := t["id"].(json.Number)
+		f, err := n.Float64()
 		if err != nil || f != math.Trunc(f) {
-			return nil, fallback.New("blocked-tags-stale")
+			l.ids, l.idsErr = nil, fallback.New("blocked-tags-stale")
+		} else if l.ids != nil {
+			l.ids[int(f)] = true
 		}
-		out[int(f)] = true
+		name, ok := t["name"].(string)
+		if !ok {
+			// `t.name.toLowerCase()` throws on a nameless entry: a 500 this service does not mimic.
+			l.names, l.namesErr = nil, fallback.New("blocked-tags-stale")
+		} else if l.names != nil {
+			l.names[strings.ToLower(name)] = true
+		}
 	}
-	return out, nil
+	return l, nil
+}
+
+// ParseBlockedTags reads a cached `[{id, name}]` list's ids.
+func ParseBlockedTags(raw []byte) (map[int]bool, error) {
+	l, err := parseBlockedList(raw)
+	if err != nil {
+		return nil, err
+	}
+	return l.ids, l.idsErr
+}
+
+// ParseBlockedTagNames reads a cached `[{id, name}]` list's names, lowercased.
+func ParseBlockedTagNames(raw []byte) (map[string]bool, error) {
+	l, err := parseBlockedList(raw)
+	if err != nil {
+		return nil, err
+	}
+	return l.names, l.namesErr
 }
 
 // InfiniteDeps are image.getInfinite's collaborators: the gallery port's (feed client, replica,

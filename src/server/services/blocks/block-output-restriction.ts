@@ -29,7 +29,8 @@ import type {
  * Restricted urls are withheld from the app entirely, so a restricted output reaches
  * the app only as a position in `outputs`.
  *
- * THE DECISION, in order, exactly as below. Several rules take their shape from the
+ * THE DECISION, in the order below, except that an unrated output (`null` / `''`) is
+ * checked against 1c first, then 1b, then 1. Several rules take their shape from the
  * on-site generator's blob rules in `shared/orchestrator/workflow-data.ts`
  * (`holdUnrated` / `PENDING_RATING`, `NSFW_CAPPED`, `canUpgrade`,
  * `NEVER_RATED_VIDEO_ECOSYSTEMS`), but this is NOT a copy of them. It is judged against

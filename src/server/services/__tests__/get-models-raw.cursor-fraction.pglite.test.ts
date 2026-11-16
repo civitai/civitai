@@ -6,11 +6,9 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 /**
  * Walks the model feed's Newest and Oldest sorts page by page against a real Postgres (PGlite).
  *
- * The page cursor is `CONCAT(mm."lastVersionAt", '|', id)`, and Postgres renders a timestamp
- * without its trailing fractional zeros: 250 ms comes out as `10:00:00.25`. The cursor parser
- * used to read those digits as a whole number of milliseconds (25 ms), so the next page started
- * from the wrong place — rows skipped on Newest, repeated on Oldest. Every row below sits in the
- * same second so that any misread lands among them. Ids and times are invented.
+ * The cursor is `CONCAT(mm."lastVersionAt", '|', id)`; Postgres drops trailing fractional zeros,
+ * so the parser must read `.25` as 250 ms. All rows share one second so a misread lands among
+ * them.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
