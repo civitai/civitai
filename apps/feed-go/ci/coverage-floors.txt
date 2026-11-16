@@ -16,6 +16,7 @@ internal/dbpool 95
 internal/feed 76
 internal/feedsvc 92
 internal/hydrate 86
+internal/inputschema 75
 internal/jspack 88
 internal/modelfeed 92
 internal/safe 100
