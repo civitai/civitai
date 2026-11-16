@@ -530,7 +530,7 @@ func TestServeV1ViewerAndCreator(t *testing.T) {
 	f := newV1Fixture([]RawImage{row(11, 101, "image", "b", 1, "")})
 	f.feed.ans = feedsvc.Answer{Status: 200, IDs: []int{11}}
 	f.src.usernames = map[string]int{"alice": 5}
-	if _, err := serveV1(t, f, "username=alice&region=x", &Viewer{ID: 5}); err != nil {
+	if _, err := serveV1(t, f, "username=alice", &Viewer{ID: 5}); err != nil {
 		t.Fatal(err)
 	}
 	// A username is resolved for the feed; the viewer's own `username` does not make it their own feed
