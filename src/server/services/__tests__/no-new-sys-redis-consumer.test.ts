@@ -28,8 +28,7 @@ import {
  * `sysRedis` in the file (e.g. `redis: PointsRedis` injected by a caller) is invisible here; the
  * caller that passes it in is on the list. The KEY SET is not checked here at all: a new
  * `REDIS_SYS_KEYS` entry, defined in `packages/civitai-redis` and used from a file already on the
- * list, passes. Pinning the key set is the job of a sys-key ledger in that package (#9060), which
- * has not landed; until it does, nothing enforces sign-off for a new sys key.
+ * list, passes.
  */
 
 const GLOBS = ['src/**/*.{ts,tsx}'];
