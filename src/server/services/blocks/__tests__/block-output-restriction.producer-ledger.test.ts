@@ -57,6 +57,12 @@ const LEDGER: Record<string, string> = {
   // `projectAppWorkflow` is the positions projection's `workflow` half.
   'src/server/services/blocks/workflow.service.ts::projectAppWorkflow::projectAppWorkflowWithPositions':
     'ceiling',
+  // The output UNLOCK (`block-output-unlock.service`): its one snapshot call, at the ceiling
+  // `outputAt` is handed. Only the TOKEN ceiling's snapshot (`blockOutputCeilingFromClaims`)
+  // ever leaves that module; the domain-only and all-ratings calls in
+  // `planBlockOutputUnlock` decide between link-out and a settings pointer and are discarded.
+  'src/server/services/blocks/block-output-unlock.service.ts::outputAt::snapshotFromWorkflow':
+    'ceiling',
   // The author's activity view: reads only a COUNT of every output (restricted ones
   // included), never a url, so the fail-closed (PG) ceiling is passed.
   'src/server/services/app-assistant/app-activity.service.ts::generationOf::projectAppWorkflow':
