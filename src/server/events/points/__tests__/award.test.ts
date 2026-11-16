@@ -163,7 +163,6 @@ const scoring: EventScoring = {
   types: {
     view: { weight: 1, once: 'day', entities: ['Image', 'Model', 'Article'] },
     reaction: { weight: 5, once: 'event', entities: ['Image', 'Article'] },
-    comment: { weight: 5, once: 'event', entities: ['Image', 'Article'] },
     remix: { weight: 25, once: 'event', entities: ['Image'] },
     modelLike: { weight: 5, once: 'event', entities: ['Model'] },
   },
@@ -221,13 +220,6 @@ const reaction = (actorId: number, entityId = 100) => ({
   entityType: 'Image' as const,
   entityId,
   sourceId: `ImageReaction:${entityId}:${actorId}`,
-});
-const comment = (actorId: number, entityId = 100) => ({
-  type: 'comment' as const,
-  actorId,
-  entityType: 'Image' as const,
-  entityId,
-  sourceId: `ImageComment:${entityId}:${actorId}`,
 });
 
 describe('cappedGrant', () => {
@@ -627,15 +619,15 @@ describe('when the ledger write fails', () => {
   // forever (the referee then sees remove as the latest row). Not restoring costs only live points
   // shown until the next referee run. If you are about to add a restore here, read award.ts first.
   it('leaves a failed removal unmarked, so a re-add is written to the ledger and earns again', async () => {
-    await engine.awardEventPoints([comment(1)]);
+    await engine.awardEventPoints([reaction(1)]);
     build({
       insertLedger: async () => {
         throw new Error('clickhouse timeout');
       },
     });
-    await engine.removeEventPoints([comment(1)]);
+    await engine.removeEventPoints([reaction(1)]);
     build();
-    await engine.awardEventPoints([comment(1)]);
+    await engine.awardEventPoints([reaction(1)]);
     expect(ledger.map((r) => `${r.op}:${r.actorId}`)).toEqual(['add:1', 'add:1']);
   });
 });
@@ -786,44 +778,24 @@ describe('state refresh', () => {
 
 describe('removeEventPoints', () => {
   it('writes removals on hatted posts only, and lets the person earn again after', async () => {
-    await engine.awardEventPoints([comment(1)]);
-    await engine.removeEventPoints([comment(1), comment(2), comment(1, 999)]);
+    await engine.awardEventPoints([reaction(1)]);
+    await engine.removeEventPoints([reaction(1), reaction(2), reaction(1, 999)]);
     expect(ledger.map((r) => `${r.op}:${r.actorId}:${r.entityId}`)).toEqual([
       'add:1:100',
       'remove:1:100',
       'remove:2:100',
     ]);
-    await engine.awardEventPoints([comment(1)]);
+    await engine.awardEventPoints([reaction(1)]);
     expect(ledger.at(-1)).toMatchObject({ op: 'add', actorId: 1 });
   });
 
   it('pairs the removal with its add by source id, even when Redis lost the dedupe mark', async () => {
-    await engine.awardEventPoints([comment(1)]);
+    await engine.awardEventPoints([reaction(1)]);
     fake.sets.clear();
-    await engine.removeEventPoints([comment(1)]);
-    expect(ledger.map((r) => [r.op, r.sourceId])).toEqual([
-      ['add', 'ImageComment:100:1'],
-      ['remove', 'ImageComment:100:1'],
-    ]);
-  });
-
-  // Decision (forward only): the first reaction counts; an un-react takes nothing back and a
-  // re-react adds nothing.
-  it('keeps a reaction through un-react and re-react: one add, no removal', async () => {
-    await engine.awardEventPoints([reaction(1)]);
     await engine.removeEventPoints([reaction(1)]);
-    await engine.awardEventPoints([reaction(1)]);
-    expect(ledger.map((r) => `${r.op}:${r.type}:${r.actorId}`)).toEqual(['add:reaction:1']);
-    expect(livePoints('hat', HAT_FIELD)).toBe(5);
-  });
-
-  it('still takes a comment back when the comment is deleted', async () => {
-    await engine.awardEventPoints([reaction(1), comment(1)]);
-    await engine.removeEventPoints([reaction(1), comment(1)]);
-    expect(ledger.map((r) => `${r.op}:${r.type}`)).toEqual([
-      'add:reaction',
-      'add:comment',
-      'remove:comment',
+    expect(ledger.map((r) => [r.op, r.sourceId])).toEqual([
+      ['add', 'ImageReaction:100:1'],
+      ['remove', 'ImageReaction:100:1'],
     ]);
   });
 });
@@ -940,15 +912,15 @@ describe('the time an action carries', () => {
   it('stamps a removal with its own time and takes it from that season', async () => {
     const preview = new Date('2026-10-20T12:00:00.000Z');
     now = preview;
-    await engine.awardEventPoints([comment(1)]);
+    await engine.awardEventPoints([reaction(1)]);
     now = new Date('2026-11-02T12:00:00.000Z');
-    await engine.removeEventPoints([{ ...comment(1), time: preview }]);
+    await engine.removeEventPoints([{ ...reaction(1), time: preview }]);
 
     expect(ledger.map((r) => [r.op, r.time])).toEqual([
       ['add', '2026-10-20 12:00:00.000'],
       ['remove', '2026-10-20 12:00:00.000'],
     ]);
-    const seen = eventSeasonKeys(EVENT.name, 'preview').seen('comment', 'Image', 100);
+    const seen = eventSeasonKeys(EVENT.name, 'preview').seen('reaction', 'Image', 100);
     expect(fake.sets.get(seen)?.has('1')).toBe(false);
   });
 });
@@ -1106,9 +1078,15 @@ describe('Hat Turf', () => {
     expect(livePoints('owner', '21')).toBe(0);
   });
 
-  it('a comment earned under a turf lead that has since ended is still found and netted out', async () => {
+  it('a reaction earned under a turf lead that has since ended is still found and netted out', async () => {
     build({ loadScoredEvents: async () => [turfEvent('live')] });
-    const action = comment(30, 200);
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 200,
+      sourceId: 'ImageReaction:200:30',
+    };
     await engine.awardEventPoints([action]);
     fake.setTurf(EVENT.name, 'Image:200', '');
     await engine.refresh();
@@ -1117,8 +1095,8 @@ describe('Hat Turf', () => {
     expect(await engine.hasTurfMark({ ...action, actorId: 31 })).toBe(false);
     await engine.removeEventPoints([action]);
     expect(ledger.map((r) => [r.type, r.op])).toEqual([
-      ['comment', 'add'],
-      ['comment', 'remove'],
+      ['reaction', 'add'],
+      ['reaction', 'remove'],
     ]);
   });
 
@@ -1173,22 +1151,17 @@ describe('Hat Turf', () => {
     expect(await engine.hasTurfMark(action)).toBe(true);
   });
 
-  it('nets a shadow comment out under its shadow type', async () => {
+  it('nets a shadow reaction out under its shadow type', async () => {
     build({ loadScoredEvents: async () => [turfEvent('shadow')] });
-    const action = comment(30, 200);
+    const action = {
+      type: 'reaction' as const,
+      actorId: 30,
+      entityType: 'Image' as const,
+      entityId: 200,
+      sourceId: 'ImageReaction:200:30',
+    };
     await engine.awardEventPoints([action]);
     await engine.removeEventPoints([action]);
-    expect(ledger.map((r) => [r.type, r.op])).toContainEqual(['shadow:comment', 'remove']);
-  });
-
-  it('keeps a shadow reaction through un-react and re-react, as live does', async () => {
-    build({ loadScoredEvents: async () => [turfEvent('shadow')] });
-    const action = reaction(30, 200);
-    await engine.awardEventPoints([action]);
-    const added = ledger.map((r) => `${r.op}:${r.type}`);
-    expect(added).toContain('add:shadow:reaction');
-    await engine.removeEventPoints([action]);
-    await engine.awardEventPoints([action]);
-    expect(ledger.map((r) => `${r.op}:${r.type}`)).toEqual(added);
+    expect(ledger.map((r) => [r.type, r.op])).toContainEqual(['shadow:reaction', 'remove']);
   });
 });

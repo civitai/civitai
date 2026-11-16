@@ -655,11 +655,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     return 0;
   }
 
-  async function removeEventPoints(all: EventPointRemoval[]) {
-    // A reaction's first add is kept: an un-react writes no removal and leaves the `seen` mark, so a
-    // re-react is not a first and writes nothing. Live and shadow alike. Removal rows already in the
-    // ledger from before this rule still net out at the referee.
-    const removals = all.filter((removal) => removal.type !== 'reaction');
+  async function removeEventPoints(removals: EventPointRemoval[]) {
     if (!removals.length) return;
     try {
       await ensureFresh();
@@ -677,9 +673,8 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
             const turf = event.turf?.entries.get(key);
             const time = removal.time ?? deps.now();
             // Only someone who earned on this entity this season, or anyone on a hatted entity (in
-            // case Redis lost the mark), has anything to net out, so removals elsewhere on the site
-            // write nothing. Removing them from `seen` lets a later re-add (a new comment, say) count
-            // as a first again.
+            // case Redis lost the mark), has anything to net out, so un-reacts elsewhere on the site
+            // write nothing. Removing them from `seen` lets a later re-add count as a first again.
             // Live totals keep the removed points until the referee nets them out.
             const keys = eventSeasonKeys(
               event.def.name,
@@ -726,7 +721,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     return loaded.some((event) => event.hats.has(key) || !!event.turf?.entries.has(key));
   }
 
-  // For removals, which must not skip like the first awards do: a removal on a server that has not
+  // For removals, which must not skip like the first awards do: an un-react on a server that has not
   // loaded yet would leave its add counting at the referee.
   async function isHattedEntityOnceLoaded(entityType: string, entityId: number) {
     await ensureFresh();
