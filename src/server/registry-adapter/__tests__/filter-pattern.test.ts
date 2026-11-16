@@ -6,7 +6,7 @@ import {
   compileFilterPattern,
 } from '~/server/registry-adapter/filter-pattern';
 import {
-  FILTER_MAX_PATTERNS,
+  FILTER_MAX_PATTERN_PLACES,
   FILTER_PATTERNS_MAX_TOTAL_SIZE,
   createFilterCompiler,
 } from '~/server/registry-adapter/json-schema';
@@ -289,32 +289,26 @@ describe('createFilterCompiler with patterns', () => {
     ['a pattern over the size bound', { pattern: fill('.{1000}') }, 'is larger than 256 once'],
     ['a Unicode property', { pattern: '\\p{L}' }, 'a Unicode property escape'],
     ['a negated Unicode property', { pattern: '\\P{L}' }, 'a Unicode property escape'],
-    // Each is under the per-pattern bound (size 200); together they are 600.
+    // Each place is under the per-pattern bound (size 200), so only the place count refuses.
     [
-      'three patterns over the total size',
+      'three distinct patterns: three places',
       { allOf: ['x', 'y', 'z'].map((e) => ({ properties: { d: { pattern: `[ab]{199}${e}` } } })) },
-      'larger than 512 in total',
-    ],
-    // One pattern of size 200, applied in three places: counted in each, so 600.
-    [
-      'one pattern applied in three places, over the total size',
-      {
-        properties: {
-          a: { pattern: 'a{200}' },
-          b: { pattern: 'a{200}' },
-          c: { pattern: 'a{200}' },
-        },
-      },
-      'larger than 512 in total',
+      'applies patterns in more than 2 places',
     ],
     [
-      'more distinct patterns than the bound',
+      'one pattern in three places: one distinct pattern, three places',
+      { properties: { a: { pattern: '^a' }, b: { pattern: '^a' }, c: { pattern: '^a' } } },
+      'applies patterns in more than 2 places',
+    ],
+    // ajv tests each patternProperties key again under additionalProperties: 2 keys, 4 places.
+    // (A key whose schema is `{}` is tested only there, so the schemas here are not `{}`.)
+    [
+      'two patternProperties keys re-tested by additionalProperties: four places',
       {
-        properties: Object.fromEntries(
-          [...Array(9).keys()].map((k) => [`p${k}`, { pattern: `^${k}` }])
-        ),
+        patternProperties: { '^a': { type: 'number' }, '^b': { type: 'number' } },
+        additionalProperties: false,
       },
-      'more than 8 distinct patterns',
+      'applies patterns in more than 2 places',
     ],
   ])('%s: bad_request, naming the reason', (_name, filter, why) => {
     let err: unknown;
@@ -328,8 +322,8 @@ describe('createFilterCompiler with patterns', () => {
     expect((err as Error).message).toContain(why);
   });
 
-  it('the filter bounds: the total is two largest patterns, and 8 distinct patterns', () => {
-    expect([FILTER_PATTERNS_MAX_TOTAL_SIZE, FILTER_MAX_PATTERNS]).toEqual([512, 8]);
+  it('the filter bounds: 2 places, and a total of two largest patterns', () => {
+    expect([FILTER_MAX_PATTERN_PLACES, FILTER_PATTERNS_MAX_TOTAL_SIZE]).toEqual([2, 512]);
   });
 
   // Positive controls for the filter bounds: under each, the filter is applied.
@@ -350,15 +344,21 @@ describe('createFilterCompiler with patterns', () => {
     ]);
   });
 
-  // ajv's meta-schema holds patterns of its own; they must not count against the filter's bound.
-  it('8 distinct patterns, with a $id, are applied', () => {
+  it('one patternProperties key re-tested by additionalProperties (two places) is applied', () => {
+    const f = compile({
+      patternProperties: { '^n_': { type: 'number' } },
+      additionalProperties: false,
+    })!;
+    expect([f({ n_a: 1 }), f({ n_a: 'text' }), f({ s: 1 })]).toEqual([true, false, false]);
+  });
+
+  // ajv's meta-schema holds patterns of its own (4 asks); they must not count against the bound.
+  it('2 distinct patterns, with a $id, are applied', () => {
     const f = compile({
       $id: 'urn:example:filter',
-      properties: Object.fromEntries(
-        [...Array(8).keys()].map((k) => [`p${k}`, { pattern: `^${k}` }])
-      ),
+      properties: { p0: { pattern: '^0' }, p1: { pattern: '^1' } },
     })!;
-    expect([f({ p3: '3' }), f({ p3: '4' })]).toEqual([true, false]);
+    expect([f({ p0: '0', p1: '1' }), f({ p0: '0', p1: '2' })]).toEqual([true, false]);
   });
 });
 

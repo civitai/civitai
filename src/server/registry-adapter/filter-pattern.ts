@@ -392,7 +392,7 @@ export function compileFilterPattern(pattern: string): CompiledFilterPattern {
 
 /**
  * An ajv `code.regExp` engine that counts only once armed, and says how many distinct patterns
- * it counted.
+ * it compiled for the filter.
  */
 export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () => number };
 
@@ -402,11 +402,10 @@ export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () 
  *
  * ajv asks for a pattern once for each place it is applied (a `pattern`, a `patternProperties`
  * key, and that key again under `additionalProperties`), and each place runs it once per value
- * it applies to. So the sizes are summed over every ask, a repeated pattern counted each time,
- * and a filter whose sum exceeds `maxTotalSize` throws {@link FilterPatternError}: the matching
- * work per body is then bounded by `maxTotalSize` times the body's length. A filter with more
- * than `maxPatterns` distinct patterns throws too: each compiled pattern keeps a lazily built DFA
- * that re2js lets grow to ~8 MB, whatever the pattern's size.
+ * it applies to. Every ask is a place, a repeated pattern counted each time. A filter with more
+ * than `maxPlaces` places, or whose sizes summed over its places exceed `maxTotalSize`, throws
+ * {@link FilterPatternError}. Places are what bound the worst case: a place whose input keeps
+ * re2js's DFA from fitting costs tens of milliseconds whatever the pattern's size.
  *
  * Nothing is counted before {@link FilterRegExpEngine.arm}: ajv compiles its meta-schema's own
  * patterns (for `$id`, `$anchor` and the like) through the same engine, the first time it
@@ -414,20 +413,24 @@ export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () 
  */
 export function filterRegExpEngine({
   maxTotalSize,
-  maxPatterns,
+  maxPlaces,
 }: {
   maxTotalSize: number;
-  maxPatterns: number;
+  maxPlaces: number;
 }): FilterRegExpEngine {
   const compiled = new Map<string, CompiledFilterPattern>();
   const counted = new Set<string>();
   let armed = false;
+  let places = 0;
   let total = 0;
   const engine = (pattern: string) => {
-    if (armed && !counted.has(pattern)) {
-      if (counted.size >= maxPatterns) {
+    if (armed) {
+      places += 1;
+      if (places > maxPlaces) {
         throw new FilterPatternError(
-          `filter has more than ${maxPatterns} distinct patterns, which this registry does not apply`
+          `filter applies patterns in more than ${maxPlaces} places (each pattern and ` +
+            'patternProperties key counts, and a patternProperties key again under ' +
+            'additionalProperties), which this registry does not apply'
         );
       }
       counted.add(pattern);

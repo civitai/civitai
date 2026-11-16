@@ -18,28 +18,33 @@ export function newValidator() {
 }
 
 /**
- * Largest total size of a filter's patterns, each counted once per place it is applied and as
- * {@link FILTER_PATTERN_MAX_SIZE} counts it: two patterns of the largest size. A pattern runs on
- * re2js's DFA where its states fit the DFA's memory, and otherwise rebuilds the DFA and falls back
- * to its NFA, which takes time in its size times the input's length.
+ * Most places a filter may apply a pattern: each `pattern`, each `patternProperties` key, and
+ * each such key again where `additionalProperties` re-tests it, a pattern repeated counted every
+ * time. A pattern runs on re2js's DFA where its states fit the DFA's memory, and otherwise
+ * rebuilds the DFA and falls back to its NFA, so a place whose input keeps the DFA from fitting
+ * costs tens of milliseconds whatever its size: the number of places, more than their size, sets
+ * the worst case.
  *
- * Measured through ajv against 20 000 characters of random `a`/`b` (text that keeps the DFA from
- * fitting), best of 3, `^x` 0 ms throughout:
- *   - one `[ab]*a[ab]{250}$` (size 253): ~95 ms, ~360 ms against 200 000 characters;
- *   - one `[ab]{0,125}b[ab]{125}c` (253): ~160 ms, ~720 ms against 200 000;
- *   - that shape in 2 places of ~253: ~270-350 ms; in 8 places of ~61: ~610 ms.
- * Each place that thrashes the DFA costs tens of milliseconds whatever its size, so the worst case
- * grows with the number of places more than with their size. At 1024 for both bounds the same
- * shapes took ~310 ms for one pattern and ~970 ms for 8 places.
+ * Measured through ajv against random `a`/`b` text (which keeps the DFA from fitting), best of 3,
+ * `^x` 0 ms throughout: `[ab]{0,125}b[ab]{125}c` (size 253), the worst shape found, ~130 ms in one
+ * place and ~250-270 ms in two (the same pattern twice or two variants) per 20 000 characters,
+ * ~0.7 s and ~1.3 s per 200 000; smaller sizes of that shape cost less. With 8 places allowed, 8
+ * places of ~61 took ~610 ms per 20 000.
+ *
+ * Distinct patterns are at most the places, so this also bounds the compiled patterns a filter
+ * keeps, each with a DFA re2js lets grow to ~8 MB as bodies are matched (measured: ~8.7 MB of
+ * heap for `.{0,1000}[xy]` after one 20 000-character match, ~4 MB for the 23-sized
+ * `[ab]*a[ab]{20}$`).
  */
-export const FILTER_PATTERNS_MAX_TOTAL_SIZE = 2 * FILTER_PATTERN_MAX_SIZE;
+export const FILTER_MAX_PATTERN_PLACES = 2;
 
 /**
- * Most distinct patterns a filter may hold. Each keeps a DFA re2js lets grow to ~8 MB as bodies
- * are matched (measured: ~8.7 MB of heap for `.{0,1000}[xy]` after one 20 000-character match,
- * ~4 MB for the 23-sized `[ab]*a[ab]{20}$`), so this bounds what one filter can retain.
+ * Largest total size of a filter's patterns, each counted once per place it is applied and as
+ * {@link FILTER_PATTERN_MAX_SIZE} counts it: two patterns of the largest size. With
+ * {@link FILTER_MAX_PATTERN_PLACES} at 2 this bound follows from the other two and never refuses
+ * on its own; it is kept so that raising the place bound does not lift the total with it.
  */
-export const FILTER_MAX_PATTERNS = 8;
+export const FILTER_PATTERNS_MAX_TOTAL_SIZE = 2 * FILTER_PATTERN_MAX_SIZE;
 
 /**
  * {@link newValidator} for a request filter: its `pattern` and `patternProperties` run on a
@@ -71,12 +76,15 @@ export const FILTER_MAX_DEPTH = 32;
  * applies to, so the work outside patterns is bounded by the filter's size times the body's.
  *
  * `pattern` and `patternProperties` are applied, not refused: they run on a linear-time engine
- * (`filter-pattern.ts`), whose cost per character is the pattern's size (its counted repetitions
- * multiplied out), not its length. So a pattern's size is bounded ({@link FILTER_PATTERN_MAX_SIZE})
- * and so is the sum over every place a filter applies one ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE}),
- * and the pattern work is bounded by that sum times the body's length. A pattern it cannot run
+ * (`filter-pattern.ts`), whose cost per character grows with the pattern's size (its counted
+ * repetitions multiplied out), not its length, plus a cost per place the pattern is applied when
+ * the input keeps its DFA from fitting. So a pattern's size is bounded
+ * ({@link FILTER_PATTERN_MAX_SIZE}), and so are the places a filter applies one
+ * ({@link FILTER_MAX_PATTERN_PLACES}) and their sizes' sum ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE});
+ * the pattern work per body is then a few hundred milliseconds per 20 000 characters of string
+ * at worst (measured at {@link FILTER_MAX_PATTERN_PLACES}). A pattern it cannot run
  * with ECMA-262's meaning (a lookaround, a backreference), one over its length or size bound, or a
- * filter over the total or {@link FILTER_MAX_PATTERNS}, is `bad_request` when it is compiled.
+ * filter over {@link FILTER_MAX_PATTERN_PLACES} or the total, is `bad_request` when it is compiled.
  */
 const REFUSED_FILTER_KEYS = [
   '$ref',
@@ -122,7 +130,8 @@ const NAME_MAP_KEYWORDS: ReadonlySet<string> = new Set([
  * ajv validation is synchronous and runs per entity, per poll, on the one event loop that serves
  * every stream, so a costly filter would stall every consumer, not just its sender. The work
  * outside patterns is bounded by the filter's size times the body's; pattern work by
- * {@link FILTER_PATTERNS_MAX_TOTAL_SIZE} times the body's length.
+ * {@link FILTER_MAX_PATTERN_PLACES} places of at most {@link FILTER_PATTERN_MAX_SIZE} each, run over
+ * the body's strings.
  */
 export function filterRefusal(filter: unknown): string | null {
   // `names`: the node is a NAME_MAP_KEYWORDS map, whose keys are names rather than keywords.
@@ -165,7 +174,9 @@ export function filterRefusal(filter: unknown): string | null {
  * Compiled filters are cached by their text, at most `maxCached` of them holding at most
  * `maxCachedPatterns` patterns in all (the cache is emptied when either is full), so many distinct
  * filters cost compile time, never unbounded memory: a cached pattern can keep ~8 MB of DFA
- * ({@link FILTER_MAX_PATTERNS}), so the patterns, not the filters, are what the cache must count.
+ * ({@link FILTER_MAX_PATTERN_PLACES}), so the patterns, not the filters, are what the cache must
+ * count. A filter holds at most 2 patterns, so 100 filters could otherwise hold 200 (~1.7 GB at
+ * the worst measured); 16 bounds it to ~140 MB.
  */
 export type BodyPredicate = (body: unknown) => boolean;
 
@@ -188,7 +199,7 @@ export function createFilterCompiler(maxCached = 100, maxCachedPatterns = 16) {
     let validate: ValidateFunction;
     const regExp = filterRegExpEngine({
       maxTotalSize: FILTER_PATTERNS_MAX_TOTAL_SIZE,
-      maxPatterns: FILTER_MAX_PATTERNS,
+      maxPlaces: FILTER_MAX_PATTERN_PLACES,
     });
     try {
       const ajv = newFilterValidator(regExp);
