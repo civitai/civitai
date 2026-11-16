@@ -13,14 +13,16 @@ import type * as TrpcModule from '~/utils/trpc';
  * `__tests__/deepLinkLogic.test.ts`; this file mounts the REAL `PageBlockHost` and drives
  * the REAL postMessage bridge.
  *
- *  1. BLOCK_INIT.context and ROUTE_CHANGED carry `search` and `hash` from `routerState.asPath`
- *     (host-owned `from` stripped).
+ *  1. BLOCK_INIT.context and ROUTE_CHANGED carry `search` and `hash` from `router.asPath`
+ *     (host-owned `from`, `sl` and `src` stripped).
  *  2. A router move — what Next does on popstate (back/forward) — delivers ROUTE_CHANGED,
  *     including a move that changes ONLY the search or the hash.
- *  3. NAVIGATE: app scope pushes a history entry; `replace: true` replaces instead; a
- *     navigate to the URL already showing pushes nothing.
+ *  3. NAVIGATE: app scope pushes a history entry (with `scroll: false`); `replace: true`
+ *     replaces instead; a navigate to the URL already showing pushes nothing, judged against
+ *     the href the host last moved to, not a stale `router.asPath`.
  *  4. SHARE_LINK → SHARE_LINK_RESULT with the canonical URL, copied only when the
- *     clipboard write resolved, refusals for escapes, and a rate limit.
+ *     clipboard write resolved AND the app's frame has focus, refusals for escapes, and a
+ *     rate limit.
  *
  * ⚠️ WHAT THIS FILE CANNOT SEE: the `next/router` mock is a static object, so there is no
  * real history stack. "Back returns to the gallery" depends on Next's own popstate handler
@@ -177,6 +179,17 @@ async function driveToReady() {
   });
 }
 
+/** Let queued postMessages land, so a count read afterwards is settled. */
+const settle = () => new Promise((r) => setTimeout(r, 60));
+
+/** Give the app's frame focus — the parent-side state a click inside the frame leaves. */
+function focusFrame() {
+  iframeEl().focus();
+  // Precondition, asserted: without it the copy tests would pass through the focus gate's
+  // `none` branch and measure nothing.
+  expect(document.activeElement).toBe(iframeEl());
+}
+
 /** What Next's popstate handler does to the router before React re-renders. */
 function moveRouter(path: string[], asPath: string) {
   routerState.query = { slug: SLUG, path };
@@ -247,6 +260,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
+    await settle();
+    const before = posts.of('ROUTE_CHANGED').length;
 
     // Back: from the character to the gallery.
     moveRouter([], `/apps/run/${SLUG}?sort=new#grid`);
@@ -258,6 +273,9 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
         hash: '#grid',
       });
     });
+    await settle();
+    // Exactly ONE per move, not a burst.
+    expect(posts.of('ROUTE_CHANGED')).toHaveLength(before + 1);
 
     // Forward: back to the character and take.
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42?take=3`);
@@ -269,6 +287,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
         hash: '',
       });
     });
+    await settle();
+    expect(posts.of('ROUTE_CHANGED')).toHaveLength(before + 2);
     posts.stop();
   });
 
@@ -278,6 +298,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
+    await settle();
+    const before = posts.of('ROUTE_CHANGED').length;
 
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42?take=2`);
     await rerender(<PageBlockHost {...baseProps} />);
@@ -288,6 +310,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
         hash: '',
       });
     });
+    await settle();
+    expect(posts.of('ROUTE_CHANGED')).toHaveLength(before + 1);
     posts.stop();
   });
 
@@ -297,6 +321,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
     const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const posts = listenForHostPosts();
+    await settle();
+    const before = posts.of('ROUTE_CHANGED').length;
 
     moveRouter(['c', '42'], `/apps/run/${SLUG}/c/42#take-2`);
     await rerender(<PageBlockHost {...baseProps} />);
@@ -307,6 +333,8 @@ describe('BLOCK_INIT and ROUTE_CHANGED carry search and hash', () => {
         hash: '#take-2',
       });
     });
+    await settle();
+    expect(posts.of('ROUTE_CHANGED')).toHaveLength(before + 1);
     posts.stop();
   });
 });
@@ -323,6 +351,7 @@ describe('NAVIGATE history semantics', () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
     expect(router.push).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/42?take=3`, undefined, {
       shallow: true,
+      scroll: false,
     });
     expect(router.replace).not.toHaveBeenCalled();
   });
@@ -336,6 +365,7 @@ describe('NAVIGATE history semantics', () => {
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
     expect(router.replace).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/42?take=4`, undefined, {
       shallow: true,
+      scroll: false,
     });
     expect(router.push).not.toHaveBeenCalled();
   });
@@ -353,7 +383,30 @@ describe('NAVIGATE history semantics', () => {
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
     expect(router.push).toHaveBeenCalledWith(`/apps/run/${SLUG}/c/43`, undefined, {
       shallow: true,
+      scroll: false,
     });
+  });
+
+  test('🔴 two NAVIGATEs in one tick — into a view and straight back — push BOTH', async () => {
+    // The dedupe used to read `router.asPath`, which still holds the PRE-push path until
+    // the async push commits, so the second (back to the index) matched it and was dropped.
+    routerState.query = { slug: SLUG };
+    routerState.asPath = `/apps/run/${SLUG}`;
+    await renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('NAVIGATE', { path: 'c/42' });
+    postFromBlock('NAVIGATE', { path: '' });
+
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledTimes(2));
+    expect(pushMock().mock.calls).toEqual([
+      [`/apps/run/${SLUG}/c/42`, undefined, { shallow: true, scroll: false }],
+      [`/apps/run/${SLUG}`, undefined, { shallow: true, scroll: false }],
+    ]);
+    // …and the same index again is now the URL showing, so it adds nothing.
+    postFromBlock('NAVIGATE', { path: '' });
+    await settle();
+    expect(router.push).toHaveBeenCalledTimes(2);
   });
 
   test('replace:true does not change site-scope navigation (still a non-shallow push)', async () => {
@@ -376,6 +429,7 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
     await driveToReady();
     const posts = listenForHostPosts();
 
+    focusFrame();
     postFromBlock('SHARE_LINK', { requestId: 'share-1', subPath: 'c/42', search: '?take=3' });
 
     await vi.waitFor(() => {
@@ -403,6 +457,7 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
     await driveToReady();
     const posts = listenForHostPosts();
 
+    focusFrame();
     postFromBlock('SHARE_LINK', { requestId: 'share-2', subPath: 'c/42' });
 
     await vi.waitFor(() => {
@@ -411,6 +466,34 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
         result: { url: `${ORIGIN}/apps/run/${SLUG}/c/42`, copied: false, method: 'none' },
       });
     });
+    // The write WAS attempted and rejected — not skipped by a gate.
+    expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
+    posts.stop();
+  });
+
+  test('🔴 activation from a click on HOST chrome (focus outside the frame) copies nothing', async () => {
+    await renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const posts = listenForHostPosts();
+    const hostButton = document.createElement('button');
+    hostButton.textContent = 'host chrome';
+    document.body.appendChild(hostButton);
+    try {
+      hostButton.focus();
+      expect(document.activeElement).toBe(hostButton);
+
+      postFromBlock('SHARE_LINK', { requestId: 'share-h', subPath: 'c/42' });
+
+      await vi.waitFor(() => {
+        expect(posts.last('SHARE_LINK_RESULT')?.payload).toEqual({
+          requestId: 'share-h',
+          result: { url: `${ORIGIN}/apps/run/${SLUG}/c/42`, copied: false, method: 'none' },
+        });
+      });
+      expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    } finally {
+      hostButton.remove();
+    }
     posts.stop();
   });
 
@@ -440,6 +523,7 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
     await driveToReady();
     const posts = listenForHostPosts();
 
+    focusFrame();
     postFromBlock('SHARE_LINK', { requestId: 'share-a', subPath: 'c/1' });
     postFromBlock('SHARE_LINK', { requestId: 'share-b', subPath: 'c/2' });
 
@@ -455,6 +539,31 @@ describe('SHARE_LINK → SHARE_LINK_RESULT', () => {
     });
     expect(byId['share-b']).toEqual({ requestId: 'share-b', error: 'rate_limited' });
     expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
+    posts.stop();
+  });
+
+  test('🔴 the share URL carries no host-owned pair (`sl`, `src`, `from`)', async () => {
+    await renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const posts = listenForHostPosts();
+    focusFrame();
+
+    postFromBlock('SHARE_LINK', {
+      requestId: 'share-s',
+      subPath: 'c/42',
+      search: '?sl=asl_x&take=3&src=detail&from=home',
+    });
+
+    await vi.waitFor(() => {
+      expect(posts.last('SHARE_LINK_RESULT')?.payload).toEqual({
+        requestId: 'share-s',
+        result: {
+          url: `${ORIGIN}/apps/run/${SLUG}/c/42?take=3`,
+          copied: true,
+          method: 'clipboard',
+        },
+      });
+    });
     posts.stop();
   });
 

@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { APP_SURFACE_PARAM } from '~/shared/utils/app-store-telemetry';
+import { APPS_RUN_FROM_PARAM, HOST_OWNED_RUN_PARAMS } from '~/shared/utils/apps-run-origin';
+import { BLOCK_HOST_SHARE_LINK } from '../blockInitFragmentGate';
 import {
-  BRIDGE_LOCATION_MAX_LENGTH,
+  SHARE_LINK_MAX_FIELD_LENGTH,
   createShareLinkLimiter,
   navigateWantsReplace,
   performShareLink,
@@ -27,7 +30,14 @@ import {
 const ORIGIN = 'https://civitai.com';
 const SLUG = 'live-characters';
 const PREFIX = `${ORIGIN}/apps/run/${SLUG}`;
-const OK_OPTS = { base: '/apps/run', slug: SLUG, origin: ORIGIN, ready: true, reviewMode: false };
+const OK_OPTS = {
+  base: '/apps/run',
+  slug: SLUG,
+  origin: ORIGIN,
+  ready: true,
+  reviewMode: false,
+  shareable: true,
+};
 
 describe('resolveBridgeLocation — search and hash forwarded to the block', () => {
   it('reads the search and hash off the host path', () => {
@@ -49,26 +59,37 @@ describe('resolveBridgeLocation — search and hash forwarded to the block', () 
     expect(resolveBridgeLocation(`/apps/run/${SLUG}?fr%6Fm=home&take=3`).search).toBe('?take=3');
   });
 
+  it('🔴 strips EVERY host-owned attribution pair — `sl` and `src` as well as `from`', () => {
+    expect(
+      resolveBridgeLocation(
+        `/apps/run/${SLUG}/c/42?sl=asl_01J0000000000000000000000A&take=3&src=store_card&from=home#top`
+      )
+    ).toEqual({ search: '?take=3', hash: '#top' });
+    expect(resolveBridgeLocation(`/apps/run/${SLUG}?%73l=x&s%72c=detail`)).toEqual({
+      search: '',
+      hash: '',
+    });
+  });
+
+  it('the host-owned list names the exported host params (one list, not three spellings)', () => {
+    expect([...HOST_OWNED_RUN_PARAMS].sort()).toEqual(['from', 'sl', 'src']);
+    expect(HOST_OWNED_RUN_PARAMS).toContain(APPS_RUN_FROM_PARAM);
+    expect(HOST_OWNED_RUN_PARAMS).toContain(APP_SURFACE_PARAM);
+  });
+
   it('keeps the remaining pairs byte-for-byte, in order', () => {
     expect(resolveBridgeLocation(`/apps/run/${SLUG}?q=a%20b+c&z=1&a=2`).search).toBe(
       '?q=a%20b+c&z=1&a=2'
     );
   });
 
-  it(`drops a search or hash longer than ${BRIDGE_LOCATION_MAX_LENGTH} chars rather than truncating it`, () => {
-    expect(BRIDGE_LOCATION_MAX_LENGTH).toBe(2048);
-    const long = 'x'.repeat(BRIDGE_LOCATION_MAX_LENGTH);
-    expect(resolveBridgeLocation(`/apps/run/${SLUG}?q=${long}#ok`)).toEqual({
-      search: '',
-      hash: '#ok',
+  it('forwards a long search and hash INTACT — the host does not cap its own URL', () => {
+    // Overshoots the share-side cap, so a re-introduced inbound cap at that constant fails here.
+    const long = 'x'.repeat(SHARE_LINK_MAX_FIELD_LENGTH + 500);
+    expect(resolveBridgeLocation(`/apps/run/${SLUG}?q=${long}#${long}`)).toEqual({
+      search: `?q=${long}`,
+      hash: `#${long}`,
     });
-    expect(resolveBridgeLocation(`/apps/run/${SLUG}?ok=1#${long}`)).toEqual({
-      search: '?ok=1',
-      hash: '',
-    });
-    // At the cap exactly: kept.
-    const atCap = 'y'.repeat(BRIDGE_LOCATION_MAX_LENGTH - 3);
-    expect(resolveBridgeLocation(`/apps/run/${SLUG}?q=${atCap}`).search).toBe(`?q=${atCap}`);
   });
 
   it('never forwards a control character', () => {
@@ -117,6 +138,15 @@ describe('resolveShareLinkRequest — the canonical share URL', () => {
     });
   });
 
+  it('🔴 never carries a host-owned pair: `sl` and `src` are stripped as well as `from`', () => {
+    expect(
+      resolveShareLinkRequest(
+        { requestId: 'r1', subPath: 'c/42', search: '?sl=asl_x&take=3&src=detail&fr%6Fm=home' },
+        OK_OPTS
+      )
+    ).toEqual({ kind: 'ok', requestId: 'r1', url: `${PREFIX}/c/42?take=3` });
+  });
+
   it('never carries the host-owned `from` pair', () => {
     expect(
       resolveShareLinkRequest(
@@ -145,9 +175,9 @@ describe('resolveShareLinkRequest — the canonical share URL', () => {
     ['a control character', { subPath: 'c\u0000' }],
     ['a non-string subPath', { subPath: 42 }],
     ['a non-string search', { search: ['?a=1'] }],
-    ['an over-long subPath', { subPath: 'a/'.repeat(BRIDGE_LOCATION_MAX_LENGTH) }],
-    ['an over-long search', { search: `?q=${'x'.repeat(BRIDGE_LOCATION_MAX_LENGTH)}` }],
-    ['an over-long hash', { hash: `#${'x'.repeat(BRIDGE_LOCATION_MAX_LENGTH)}` }],
+    ['an over-long subPath', { subPath: 'a/'.repeat(SHARE_LINK_MAX_FIELD_LENGTH) }],
+    ['an over-long search', { search: `?q=${'x'.repeat(SHARE_LINK_MAX_FIELD_LENGTH)}` }],
+    ['an over-long hash', { hash: `#${'x'.repeat(SHARE_LINK_MAX_FIELD_LENGTH)}` }],
   ])('refuses %s', (_label, fields) => {
     expect(resolveShareLinkRequest({ requestId: 'r1', ...fields }, OK_OPTS)).toEqual({
       kind: 'refuse',
@@ -217,6 +247,13 @@ describe('resolveShareLinkRequest — the canonical share URL', () => {
     ).toEqual({ kind: 'refuse', requestId: 'r1', error: SHARE_LINK_UNAVAILABLE_ERROR });
   });
 
+  it('refuses where the surface may not share — the dev tunnel, whose slug is a block id', () => {
+    expect(BLOCK_HOST_SHARE_LINK['dev-tunnel']).toBe(false);
+    expect(
+      resolveShareLinkRequest({ requestId: 'r1', subPath: 'c' }, { ...OK_OPTS, shareable: false })
+    ).toEqual({ kind: 'refuse', requestId: 'r1', error: SHARE_LINK_UNAVAILABLE_ERROR });
+  });
+
   it('refuses before the handshake', () => {
     expect(
       resolveShareLinkRequest({ requestId: 'r1', subPath: 'c' }, { ...OK_OPTS, ready: false })
@@ -251,6 +288,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     await expect(
       performShareLink(URL_, {
         userActivation: true,
+        frameHasFocus: true,
         coarsePointer: false,
         clipboardWriteText: writeText,
       })
@@ -265,6 +303,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     await expect(
       performShareLink(URL_, {
         userActivation: true,
+        frameHasFocus: true,
         coarsePointer: false,
         clipboardWriteText: writeText,
       })
@@ -278,6 +317,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     await expect(
       performShareLink(URL_, {
         userActivation: true,
+        frameHasFocus: true,
         coarsePointer: false,
         clipboardWriteText: writeText,
       })
@@ -286,7 +326,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
 
   it('no clipboard API → method none', async () => {
     await expect(
-      performShareLink(URL_, { userActivation: true, coarsePointer: false })
+      performShareLink(URL_, { userActivation: true, frameHasFocus: true, coarsePointer: false })
     ).resolves.toEqual({
       url: URL_,
       copied: false,
@@ -298,6 +338,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     void performShareLink(URL_, {
       userActivation: true,
+      frameHasFocus: true,
       coarsePointer: false,
       clipboardWriteText: writeText,
     });
@@ -310,9 +351,34 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     await expect(
       performShareLink(URL_, {
         userActivation: false,
+        frameHasFocus: true,
         coarsePointer: true,
         clipboardWriteText: writeText,
         share,
+      })
+    ).resolves.toEqual({ url: URL_, copied: false, method: 'none' });
+    expect(writeText).not.toHaveBeenCalled();
+    expect(share).not.toHaveBeenCalled();
+  });
+
+  it('🔴 activation WITHOUT focus on the frame (a click on host chrome) touches neither API', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const share = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      performShareLink(URL_, {
+        userActivation: true,
+        frameHasFocus: false,
+        coarsePointer: true,
+        clipboardWriteText: writeText,
+        share,
+      })
+    ).resolves.toEqual({ url: URL_, copied: false, method: 'none' });
+    await expect(
+      performShareLink(URL_, {
+        userActivation: true,
+        frameHasFocus: false,
+        coarsePointer: false,
+        clipboardWriteText: writeText,
       })
     ).resolves.toEqual({ url: URL_, copied: false, method: 'none' });
     expect(writeText).not.toHaveBeenCalled();
@@ -324,6 +390,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     await expect(
       performShareLink(URL_, {
         userActivation: null,
+        frameHasFocus: true,
         coarsePointer: false,
         clipboardWriteText: writeText,
       })
@@ -336,6 +403,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     await expect(
       performShareLink(URL_, {
         userActivation: true,
+        frameHasFocus: true,
         coarsePointer: true,
         clipboardWriteText: writeText,
         share,
@@ -348,7 +416,12 @@ describe('performShareLink — the copy or share, and an honest result', () => {
   it('a cancelled or refused share sheet is method none', async () => {
     const share = vi.fn().mockRejectedValue(new DOMException('cancelled', 'AbortError'));
     await expect(
-      performShareLink(URL_, { userActivation: true, coarsePointer: true, share })
+      performShareLink(URL_, {
+        userActivation: true,
+        frameHasFocus: true,
+        coarsePointer: true,
+        share,
+      })
     ).resolves.toEqual({ url: URL_, copied: false, method: 'none' });
   });
 
@@ -358,6 +431,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     await expect(
       performShareLink(URL_, {
         userActivation: true,
+        frameHasFocus: true,
         coarsePointer: true,
         clipboardWriteText: writeText,
         share,
@@ -373,6 +447,7 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     await expect(
       performShareLink(URL_, {
         userActivation: true,
+        frameHasFocus: true,
         coarsePointer: false,
         clipboardWriteText: writeText,
         share,
