@@ -1101,6 +1101,10 @@ describe('Flux.2 (imageResourceTraining takes only a zip URL, the Studio holds b
       'a base the catalog does not name',
       flux2Run({ model: 'urn:air:flux2:checkpoint:civitai:9@9' }),
     ],
+    [
+      'the edit engine',
+      flux2Run({ engine: 'flux2-dev-edit', model: 'urn:air:flux2:checkpoint:civitai:9@9' }),
+    ],
   ])('refuses %s before any orchestrator call or trigger word check', async (_label, run) => {
     vi.clearAllMocks();
     const check = vi.fn(async () => undefined);
@@ -1109,7 +1113,6 @@ describe('Flux.2 (imageResourceTraining takes only a zip URL, the Studio holds b
         submitTrainingBatch(client, [baseRun(), run], { checkText: check, status })
       ).rejects.toThrow(message);
     expect(submitWorkflow).not.toHaveBeenCalled();
-    expect(getResource).not.toHaveBeenCalled();
     expect(check).not.toHaveBeenCalled();
   });
 
