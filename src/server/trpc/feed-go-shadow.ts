@@ -683,6 +683,7 @@ export function captureFeedGoShadowV1Images(sample: FeedGoShadowSample, body: un
 
 /** The `/api/v1/images` request shapes, by what feed-go can port (see FEED_GO_V1_SHAPE_CLASSES). */
 export type FeedGoV1ShapeInput = {
+  ids?: readonly unknown[];
   imageId?: unknown;
   modelId?: unknown;
   modelVersionId?: unknown;

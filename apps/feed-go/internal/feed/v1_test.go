@@ -897,3 +897,12 @@ func TestServeV1WithMeta(t *testing.T) {
 		t.Fatalf("legacy meta asked %v", got)
 	}
 }
+
+// AddonLevel is `onlySelectableLevels(level || public) || public`.
+func TestAddonLevel(t *testing.T) {
+	for in, want := range map[int]int{0: 1, 32: 1, 33: 1, 3: 3, 6: 6, 63: 31} {
+		if got := AddonLevel(in); got != want {
+			t.Errorf("AddonLevel(%d) = %d, want %d", in, got, want)
+		}
+	}
+}

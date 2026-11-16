@@ -331,11 +331,7 @@ func infiniteEmpty() *InfiniteAnswer {
 // infiniteFilters is enforceBlockedBrowsingTags' addon half plus applyHideChallengesExclusion, at
 // the request's level: the addons' exclusions, except their tags on the viewer's own feed.
 func infiniteFilters(in *InfiniteInput, addons []browsing.Addon, level int, viewer Viewer, viewerUsername string) AddonFilters {
-	lv := browsing.OnlySelectable(orInt(level, browsing.PublicLevels))
-	if lv == 0 {
-		lv = browsing.PublicLevels
-	}
-	resolved := browsing.ResolveAddons(addons, lv, viewer.IsModerator, "")
+	resolved := browsing.ResolveAddons(addons, AddonLevel(level), viewer.IsModerator, "")
 	excluded := append([]int(nil), in.ExcludedTagIDs...)
 	if !in.ownScoped(viewer.ID, viewerUsername) && len(resolved.ExcludedTagIDs) > 0 {
 		excluded = unionInts(excluded, resolved.ExcludedTagIDs)

@@ -240,12 +240,8 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 	// viewer there carries no username, so only a `userId` naming the viewer is their own feed (which
 	// keeps its tag exclusions off). disablePoi / disableMinor are always on for this route.
 	var excluded []int
-	addonLevel := browsing.OnlySelectable(orInt(level, browsing.PublicLevels))
-	if addonLevel == 0 {
-		addonLevel = browsing.PublicLevels
-	}
 	ownScoped := ownScope(viewer.ID, "", in.UserID, in.Username)
-	if resolved := browsing.ResolveAddons(d.Addons(ctx), addonLevel, viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
+	if resolved := browsing.ResolveAddons(d.Addons(ctx), AddonLevel(level), viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
 		excluded = unionInts(nil, resolved.ExcludedTagIDs)
 	}
 	userID := in.UserID
@@ -391,12 +387,8 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 	// enforceBlockedBrowsingTags: the addons at the request's level, for this viewer. Here the viewer
 	// is the session user, username included, so a `username` naming the viewer is their own feed too.
 	var excluded []int
-	addonLevel := browsing.OnlySelectable(orInt(level, browsing.PublicLevels))
-	if addonLevel == 0 {
-		addonLevel = browsing.PublicLevels
-	}
 	ownScoped := ownScope(viewer.ID, viewerUsername, in.UserID, in.Username)
-	if resolved := browsing.ResolveAddons(d.Addons(ctx), addonLevel, viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
+	if resolved := browsing.ResolveAddons(d.Addons(ctx), AddonLevel(level), viewer.IsModerator, ""); !ownScoped && len(resolved.ExcludedTagIDs) > 0 {
 		excluded = unionInts(nil, resolved.ExcludedTagIDs)
 	}
 	userID := in.UserID
