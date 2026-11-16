@@ -1,6 +1,8 @@
+import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import { SongCommentsProvider } from '~/components/Music/TimedComments/SongCommentsContext';
 import type { SongImage } from '~/components/MusicPlayer/PostSong';
+import { parseNumericString } from '~/utils/query-string-helpers';
 
 type ImageDetailCommentsProps = {
   imageId: number;
@@ -10,6 +12,8 @@ type ImageDetailCommentsProps = {
 };
 
 export function ImageDetailComments({ imageId, userId, song }: ImageDetailCommentsProps) {
+  // A routed dialog's `?highlight=` is in the browser router only; Next's still has the page's.
+  const { query } = useBrowserRouter();
   const section = (
     <CommentSection
       entityType="image"
@@ -18,6 +22,7 @@ export function ImageDetailComments({ imageId, userId, song }: ImageDetailCommen
       title={null}
       hideSort
       borderless
+      highlight={parseNumericString(query.highlight)}
     />
   );
   return song ? <SongCommentsProvider song={song}>{section}</SongCommentsProvider> : section;
