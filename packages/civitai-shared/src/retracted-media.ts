@@ -15,7 +15,7 @@ const MINOR_SERVABLE_LEVELS = [1, 2];
 /** The flag the route reads; off, it answers 403. */
 export const RETRACTED_MEDIA_FLIPT_KEY = 'mod-retracted-media';
 
-/** The mod-activity name of one served response from byte 0. */
+/** The mod-activity name recorded for every response that carries bytes, ranges included. */
 export const RETRACTED_SERVED_ACTIVITY = 'retractedMedia:view';
 
 /** Per moderator, per minute. */
