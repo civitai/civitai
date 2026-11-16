@@ -20,10 +20,10 @@
 // THE RECORD of what was verified is the `Unit tests (main batch)` commit status on HEAD: the
 // gate skips only when a success or failure was actually POSTED there (headVerdict). A crashed
 // verify job leaves `error` (its last step) or nothing, so HEAD is re-verified next time.
-// The bisect's green base is still read from the run list: lint.yml runs on <ref> dispatched by
-// github-actions[bot] (only this gate dispatches lint.yml as the bot with `only: unit` on these
-// refs; full-ci.yml's bot dispatches are `only: all` on PR branches and SKIP `unit-verify`), the
-// newest that concluded success with that job run.
+// The bisect's green base comes from the run list: of the 20 newest lint.yml runs on <ref> with
+// event workflow_dispatch and actor github-actions[bot] that concluded success (this run
+// excluded), the newest whose `Unit verified (main batch)` job concluded success or failure.
+// Its head_sha is the base. The `only` input is not filtered on; the run list does not carry it.
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -189,6 +189,24 @@ const sh = (cmd, args, opts = {}) =>
 const gh = (...args) => sh('gh', args);
 const repo = () => process.env.GITHUB_REPOSITORY;
 
+/** What the gate dispatches: this workflow, with this value for its `only` input. */
+export const DISPATCH = { workflow: 'lint.yml', only: 'unit' };
+
+/** The exact `gh` argv the gate runs to dispatch the batch on <ref>. */
+export function dispatchArgs(ref, repoName) {
+  return [
+    'workflow',
+    'run',
+    DISPATCH.workflow,
+    '--repo',
+    repoName,
+    '--ref',
+    ref,
+    '-f',
+    `only=${DISPATCH.only}`,
+  ];
+}
+
 /** Recent bot-dispatched lint.yml runs on <ref>, newest first (the gate's only dispatches). */
 function botRuns(ref, status) {
   const q = new URLSearchParams({
@@ -247,7 +265,7 @@ function gate(ref) {
   }
   const d = decideRun({ head, headState, inProgress, error });
   summary([`${d.run ? 'Dispatching' : 'Skipped'}: ${d.reason}.`]);
-  if (d.run) gh('workflow', 'run', 'lint.yml', '--repo', repo(), '--ref', ref, '-f', 'only=unit');
+  if (d.run) gh(...dispatchArgs(ref, repo()));
 }
 
 /**

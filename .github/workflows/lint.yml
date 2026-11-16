@@ -630,9 +630,6 @@ jobs:
     # unit-batched.yml, after which `unit-verify` posts the verdict as a commit status
     # (on the first bad commit when red). See "THE UNIT SUITE IS THE EXCEPTION" in the header.
     #
-    # Why not per push: these four shards were the biggest single cost on `main`, and
-    # batching runs them on a schedule, only when main moved, whatever the push rate.
-    #
     # Why, measured over 24h (448 Lint runs, 2026-10): these four shards were 59% of
     # all Lint job-minutes, ~12,400 of ~21,000, ~10,000 of it on PRs. The plan's
     # org-wide concurrent-job limit was saturated around the clock and jobs queued

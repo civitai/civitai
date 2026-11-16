@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
+import { dispatchArgs } from '../ci/unit-batched.mjs';
+
 // Guards that a COMMIT ON `main` gets a CI verdict.
 //
 // THE REGRESSION THIS EXISTS FOR, stated so it is not re-derived from scratch.
@@ -29,14 +31,9 @@ import { describe, expect, it } from 'vitest';
 // tiers into a different workflow, renaming the jobs, or splitting the file
 // keeps this green; losing main coverage does not, however it is lost.
 //
-// THE UNIT SUITE IS VERIFIED IN BATCHES, NOT PER PUSH. Its verdict for a commit on `main` comes
-// from a scheduled batch run that bisects a red to the first bad commit and posts a failing commit
-// status there, so a red still lands on the commit that caused it, one interval or more later
-// rather than minutes (MAX_BATCH_HOURS bounds the interval). The guard for
-// it below asserts that path (a schedule that fires at least every MAX_BATCH_HOURS, a dispatch
-// target that runs the suite, a job that posts commit statuses) rather
-// than a push-reachable job. The regression above, a commit on `main` with no verdict at all, is
-// what both forms rule out.
+// The unit suite is verified in batches, not per push (lint.yml header). The guard below asserts
+// that path (a schedule within MAX_BATCH_HOURS, a dispatch that runs the suite, a job that posts
+// commit statuses) instead of a push-reachable job.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
@@ -224,9 +221,18 @@ describe('CI coverage for commits on main', () => {
         hit,
         `no workflow scheduled at least every ${MAX_BATCH_HOURS} h runs \`scripts/ci/unit-batched.mjs gate\``
       ).not.toHaveLength(0);
-      const gate = readFileSync(path.resolve(HERE, '../ci/unit-batched.mjs'), 'utf8');
-      expect(gate).toContain("'workflow', 'run', 'lint.yml'");
-      expect(gate).toContain("'only=unit'");
+      // The gate dispatches lint.yml with `only: unit`, the dispatch the next test checks runs it.
+      expect(dispatchArgs('main', 'owner/repo')).toEqual([
+        'workflow',
+        'run',
+        'lint.yml',
+        '--repo',
+        'owner/repo',
+        '--ref',
+        'main',
+        '-f',
+        'only=unit',
+      ]);
     });
 
     it('lint.yml runs test:unit:run on a dispatch with only: unit', () => {
