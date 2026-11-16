@@ -1,5 +1,6 @@
 import type { RouterOutput } from '~/types/router';
 import type { VersionShowcaseSite } from '~/shared/constants/version-showcase.constants';
+import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
 
 type EditorData = RouterOutput['versionShowcase']['getEditor'];
 
@@ -19,9 +20,20 @@ export const siteLabel: Record<VersionShowcaseSite, string> = {
   red: 'civitai.red',
 };
 
+/** The other site, when only it is curated: this site then serves that showcase. */
+export function inheritedSite(
+  data: Pick<EditorData, 'rows'>,
+  site: VersionShowcaseSite
+): VersionShowcaseSite | null {
+  const other: VersionShowcaseSite = site === 'com' ? 'red' : 'com';
+  const curated = (s: VersionShowcaseSite) => data.rows.some((row) => row.site === s);
+  return !curated(site) && curated(other) ? other : null;
+}
+
 /** The site's list as the carousel orders it: positioned items, then the rest in today's order. */
 export function buildShowcaseItems(data: EditorData, site: VersionShowcaseSite): Item[] {
-  const rows = data.rows.filter((row) => row.site === site);
+  const source = inheritedSite(data, site) ?? site;
+  const rows = data.rows.filter((row) => row.site === source);
   const rowById = new Map(rows.map((row) => [row.imageId, row]));
   const owner: Item[] = data.ownerImages.map((image) => ({
     imageId: image.id,
@@ -33,7 +45,7 @@ export function buildShowcaseItems(data: EditorData, site: VersionShowcaseSite):
     nsfwLevel: image.nsfwLevel,
   }));
   const community: Item[] = data.community
-    .filter((image) => image.site === site)
+    .filter((image) => image.site === source && (site !== 'com' || isComSafeLevel(image.nsfwLevel)))
     .map((image) => ({
       imageId: image.id,
       source: 'Community',

@@ -28,7 +28,13 @@ import {
 import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { buildShowcaseItems, parseImageId, siteLabel, type Item } from './version-showcase.utils';
+import {
+  buildShowcaseItems,
+  inheritedSite,
+  parseImageId,
+  siteLabel,
+  type Item,
+} from './version-showcase.utils';
 
 export default function VersionShowcaseEditor({
   modelVersionId,
@@ -126,6 +132,16 @@ export default function VersionShowcaseEditor({
             remove them.
             {site === 'com' && ' civitai.com only shows images rated PG or PG-13.'}
           </Text>
+          {inheritedSite(data, site) && (
+            <Alert color="gray" p="xs">
+              <Text size="xs">
+                {siteLabel[site]} isn&apos;t curated yet, so it shows your{' '}
+                {siteLabel[inheritedSite(data, site)!]} showcase
+                {site === 'com' && ', without community images above PG-13'}. Saving here gives{' '}
+                {siteLabel[site]} its own.
+              </Text>
+            </Alert>
+          )}
           {!data.isLatestPublished && (
             <Alert color="blue" p="xs">
               <Text size="xs">

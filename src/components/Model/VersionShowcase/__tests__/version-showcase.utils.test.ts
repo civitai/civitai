@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildShowcaseItems, parseImageId } from '../version-showcase.utils';
+import { buildShowcaseItems, inheritedSite, parseImageId } from '../version-showcase.utils';
 
 describe('parseImageId', () => {
   it('reads the id from an image link, with or without a query, or a bare number', () => {
@@ -46,5 +46,23 @@ describe('buildShowcaseItems', () => {
 
   it('keeps each site separate', () => {
     expect(buildShowcaseItems(data, 'com').map((item) => item.imageId)).toEqual([1, 2, 3]);
+  });
+
+  it('shows an uncurated site the other site’s showcase, without .red-only community images on .com', () => {
+    const redOnly = {
+      rows: [
+        { imageId: 8, site: 'red', source: 'Community', position: 0, excluded: false },
+        { imageId: 9, site: 'red', source: 'Community', position: 1, excluded: false },
+      ],
+      ownerImages: [image(1)],
+      community: [
+        { ...image(8), site: 'red', authorUsername: 'ann' },
+        { ...image(9), nsfwLevel: 4, site: 'red', authorUsername: 'bob' },
+      ],
+    } as never;
+    expect(inheritedSite(redOnly, 'com')).toBe('red');
+    expect(inheritedSite(redOnly, 'red')).toBeNull();
+    expect(buildShowcaseItems(redOnly, 'com').map((item) => item.imageId)).toEqual([8, 1]);
+    expect(buildShowcaseItems(redOnly, 'red').map((item) => item.imageId)).toEqual([8, 9, 1]);
   });
 });
