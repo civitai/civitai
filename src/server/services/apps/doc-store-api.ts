@@ -107,7 +107,6 @@ import {
 } from '~/server/services/apps/shared-data-moderation';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
@@ -1317,25 +1316,23 @@ async function runUnpublish(
   return result;
 }
 
+const SYNC_WITHDRAWN_BATCH = 5;
+
 /** The author removed published items: their App Store cards follow, as after a delete. */
 async function syncWithdrawn(
   ctx: StorageAccess['ctx'],
   keys: readonly string[],
   uid: number
 ): Promise<void> {
-  if (ctx.ns !== PUBLISHED_NS || keys.length === 0) return;
-  await limitConcurrency(
-    keys.map(
-      (itemKey) => () =>
-        syncStoreItem({
-          appBlockId: ctx.appId,
-          itemKey,
-          change: 'withdrawn',
-          authorUserId: uid,
-        })
-    ),
-    5
-  );
+  if (ctx.ns !== PUBLISHED_NS) return;
+  // A few at a time; `syncStoreItem` never throws (it logs its own failures).
+  for (let i = 0; i < keys.length; i += SYNC_WITHDRAWN_BATCH) {
+    await Promise.all(
+      keys.slice(i, i + SYNC_WITHDRAWN_BATCH).map((itemKey) =>
+        syncStoreItem({ appBlockId: ctx.appId, itemKey, change: 'withdrawn', authorUserId: uid })
+      )
+    );
+  }
 }
 
 function deleteIfVersion(req: NextApiRequest): number | undefined {
