@@ -19,6 +19,8 @@ import {
   type WorkflowTemplate,
 } from '@civitai/orchestration-client';
 import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
@@ -656,6 +658,10 @@ async function assertCustomModelTrainable(
       throw new TrainingBatchValidationError(`${field}.customModel: model could not be found.`);
     throw new Error(`custom model lookup failed (${response?.status ?? 'no response'})`);
   }
+  // The orchestrator's AIR is resolved from the version, so it names the model the version belongs to
+  // even when the submitted AIR pairs that version with another model id.
+  if (isBlockedCustomModel(data.air))
+    throw new TrainingBatchValidationError(`${field}.customModel: ${BLOCKED_CUSTOM_MODEL_MESSAGE}`);
   if (!isSafeTensorFormat(data.fileFormat))
     throw new TrainingBatchValidationError(
       `${field}.customModel: ${NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE}`
