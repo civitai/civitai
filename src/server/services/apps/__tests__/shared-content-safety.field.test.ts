@@ -68,7 +68,6 @@ describe('🔴 assertSharedTextSafe names the refused field', () => {
     ['poi, in the body', 'A calm lake', `with ${POI_TERM}`, 'poi', 'body'],
     ['pattern, in the title', `buy ${PATTERN_TERM} now`, 'a calm lake', 'pattern', 'title'],
     ['pattern, in the body', 'A calm lake', `buy ${PATTERN_TERM} now`, 'pattern', 'body'],
-    ['audit, in the body', 'A calm lake', `see ${AUDIT_TERM} here`, 'audit', 'body'],
   ])('%s → %s / %s', async (_name, title, body, category, field) => {
     const err = await refusal(title, body);
     expect(err.category).toBe(category);
@@ -85,6 +84,13 @@ describe('🔴 assertSharedTextSafe names the refused field', () => {
     const told = JSON.stringify({ message: err.message, field: err.field });
     expect(told).not.toContain(MINOR_TERM);
     expect(told).not.toContain(title);
+  });
+
+  it('an audit block is not placed: the platform audit is not re-run per field', async () => {
+    const err = await refusal('A calm lake', `see ${AUDIT_TERM} here`);
+    expect(err.category).toBe('audit');
+    expect(err.field).toBeUndefined();
+    expect(auditPromptServer).toHaveBeenCalledTimes(1);
   });
 
   it('a pattern hit that cannot be placed names no field (never a guess)', async () => {
