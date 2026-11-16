@@ -550,8 +550,10 @@ describe('the issue record, moved from sysRedis to the cluster', () => {
   it('reads a cluster record without reading sysRedis', async () => {
     redis.set(clusterKey(CLUSTER_ONLY), String(CALLER));
     redisMock.sysRedis.mGet.mockClear();
+    const hits = outcomeCount('record_sys_fallback_hit');
     expect(await outcome(CLUSTER_ONLY, WINDOW)).toBe('accepted');
     expect(redisMock.sysRedis.mGet).not.toHaveBeenCalled();
+    expect(outcomeCount('record_sys_fallback_hit')).toBe(hits);
   });
 
   it('accepts after the cutover, inside the window, a key recorded only in sysRedis', async () => {
@@ -567,10 +569,15 @@ describe('the issue record, moved from sysRedis to the cluster', () => {
     redis.set(clusterKey(CLUSTER_ONLY), String(CALLER));
     sys.set(sysKey(SYS_ONLY), String(CALLER));
     redisMock.sysRedis.mGet.mockClear();
+    const hits = outcomeCount('record_sys_fallback_hit');
     await expect(
       keyIssuers({ urls: [CLUSTER_ONLY, SYS_ONLY], userId: CALLER, now: WINDOW })
     ).resolves.toMatchObject({ unrecorded: [], recordReadFailed: false });
     expect(redisMock.sysRedis.mGet).toHaveBeenCalledExactlyOnceWith([sysKey(SYS_ONLY)]);
+    // Counted once per read the fallback answered, and not when it finds nothing.
+    expect(outcomeCount('record_sys_fallback_hit')).toBe(hits + 1);
+    await keyIssuers({ urls: [WRITTEN], userId: CALLER, now: WINDOW });
+    expect(outcomeCount('record_sys_fallback_hit')).toBe(hits + 1);
   });
 
   it('reads no sysRedis record from UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL', async () => {

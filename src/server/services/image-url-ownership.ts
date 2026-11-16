@@ -302,7 +302,7 @@ export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-18T16:00:00Z');
 
 const uploadKeyOwnerCounter = registerCounterWithLabels({
   name: 'upload_key_owner_total',
-  help: 'Image upload key issue records: writes that needed a retry or failed, keys handed out or withheld without one, and unrecorded keys accepted or refused on save.',
+  help: 'Image upload key issue records: writes that needed a retry or failed, reads that failed or were answered by the sysRedis fallback, keys handed out or withheld without one, and unrecorded keys accepted or refused on save.',
   labelNames: ['outcome'] as const,
 });
 
@@ -413,7 +413,10 @@ async function ownersFromRedis(keys: string[], now: Date) {
   const missing = keys.filter((k) => !owners.has(k));
   if (missing.length && now < UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL) {
     try {
+      const before = owners.size;
       ownersIn(owners, missing, await withSysReadDeadline(sysRedis.mGet(missing.map(sysOwnerKey))));
+      // Shows when the fallback stops finding records, so it can be deleted.
+      if (owners.size > before) uploadKeyOwnerCounter.inc({ outcome: 'record_sys_fallback_hit' });
     } catch {
       readFailed = true;
     }

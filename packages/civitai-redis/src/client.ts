@@ -3226,8 +3226,9 @@ const REDIS_KEYS_UNPREFIXED = {
     PUSH_QUOTA: 'system:push-quota',
     CATEGORIES: 'system:categories',
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
-    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days). A cache: a
-    // miss falls back to the upload request log, then the caller's own Image rows.
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days). A cache: the
+    // cache cluster can evict a record before its TTL under memory pressure, so 30 days is a
+    // maximum. A miss falls back to the upload request log, then the caller's own Image rows.
     UPLOAD_KEY_OWNER: 'system:upload-key-owner',
   },
   CACHES: {
