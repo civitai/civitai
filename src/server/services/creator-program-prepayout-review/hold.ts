@@ -49,12 +49,12 @@ export async function hasPayoutHold(userId: number) {
     return resolveHolds(rows).heldUserIds.has(userId);
   } catch (e) {
     if (!isMissingTable(e)) throw e;
-    await logToAxiom({
+    logToAxiom({
       name: 'creator-program-payout-hold-unchecked',
       type: 'error',
       userId,
       message: 'Payout review table missing; cash-out refused',
-    }).catch(() => undefined);
+    });
     // Fail closed: a hold that cannot be read must not let money out.
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
@@ -203,7 +203,7 @@ export async function decidePayoutReview(
   });
   if (!count) throw conflict(`Review ${review.id} changed while deciding it`);
 
-  await logToAxiom({
+  logToAxiom({
     name: 'creator-program-payout-review-decision',
     type: 'info',
     reviewId: review.id,
@@ -301,7 +301,7 @@ export async function openPayoutHold(input: OpenPayoutHold, openedBy: string, no
     review = { id: existing.id, version: existing.version + 1 };
   }
 
-  await logToAxiom({
+  logToAxiom({
     name: 'creator-program-payout-review-decision',
     type: 'info',
     reviewId: review.id,

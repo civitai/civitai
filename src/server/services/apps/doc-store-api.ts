@@ -18,6 +18,10 @@
 //                                    PATCH  one update operator: $inc, $mark or $unmark
 //   [c, key, 'counters', name]       POST   increment         (deprecated: PATCH $inc)
 //   [c, key, 'marks', name]          PUT    mark    DELETE unmark  (deprecated: PATCH $mark/$unmark)
+//   ['_publish', to]                 POST   publish   { from, keys, prune? }
+//   ['_unpublish', to]               POST   unpublish { keys }
+// `_publish` / `_unpublish` exist only while the per-app Flipt flag `app-blocks-storage-publish`
+// is on; off, they answer exactly as an unknown route (see PUBLISH below).
 // `_get` is a POST with a body (not a GET query) because 100 keys of 128 characters do not
 // fit in a URL every proxy accepts.
 //
@@ -38,6 +42,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { sessionClient } from '~/server/auth/session-client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { SessionUser } from '~/types/session';
@@ -59,6 +64,8 @@ import {
 } from '~/server/services/blocks/block-write-trust.service';
 import {
   assertCollection,
+  assertPublishKeys,
+  assertPublishPair,
   assertShareWritable,
   PUBLISHED_NS,
   refuseReportWithdrawal,
@@ -78,11 +85,14 @@ import type {
   DocAuthor,
   DocCollection,
   DocListQuery,
+  DocRatingStatus,
   DocRecord,
   DocStoreErrorCode,
 } from '~/server/services/apps/doc-store.types';
+import { withDocLevelGate } from '~/server/services/apps/doc-levels';
 import {
   DOC_STORE_BOUNDS,
+  DOC_STORE_PUBLISH_BOUNDS,
   DocStoreError,
   REPORT_MARK,
 } from '~/server/services/apps/doc-store.types';
@@ -95,6 +105,7 @@ import {
   scanSharedData,
   scheduleSharedDataShadow,
   sharedRefusalField,
+  type SharedDataModerationMode,
   type SharedDataSurface,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
@@ -106,6 +117,7 @@ import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 import {
   checkDocStoreRateLimit,
   DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
+  DOC_STORE_PUBLISH_BUDGET,
   DOC_STORE_READ_RATE_LIMIT_MAX,
   DOC_STORE_REPORT_RATE_LIMIT_MAX,
   DOC_STORE_SHARED_WRITE_BUDGET,
@@ -126,10 +138,14 @@ import {
 
 /** Every literal path segment, and the one position each may occupy. */
 const GET_MANY_SEGMENT = '_get';
+const PUBLISH_SEGMENT = '_publish';
+const UNPUBLISH_SEGMENT = '_unpublish';
 const COUNTERS_SEGMENT = 'counters';
 const MARKS_SEGMENT = 'marks';
 export const STORAGE_RESERVED_SEGMENTS = [
   { segment: GET_MANY_SEGMENT, position: 0 },
+  { segment: PUBLISH_SEGMENT, position: 0 },
+  { segment: UNPUBLISH_SEGMENT, position: 0 },
   { segment: COUNTERS_SEGMENT, position: 2 },
   { segment: MARKS_SEGMENT, position: 2 },
 ] as const;
@@ -138,6 +154,8 @@ export type StorageRoute =
   | { op: 'info' }
   | { op: 'list' | 'create'; collection: string }
   | { op: 'getMany'; collection: string }
+  // Server-side publish and unpublish into the shared collection `collection` (PUBLISH below).
+  | { op: 'publish' | 'unpublish'; collection: string }
   | { op: 'get' | 'put' | 'delete'; collection: string; key: string }
   | { op: 'increment'; collection: string; key: string; name: string }
   | { op: 'mark' | 'unmark'; collection: string; key: string; name: string }
@@ -166,6 +184,8 @@ export function matchStorageRoute(method: string, segments: readonly string[]): 
       return pick({ GET: { op: 'list', collection: a }, POST: { op: 'create', collection: a } });
     case 2:
       if (a === GET_MANY_SEGMENT) return pick({ POST: { op: 'getMany', collection: b } });
+      if (a === PUBLISH_SEGMENT) return pick({ POST: { op: 'publish', collection: b } });
+      if (a === UNPUBLISH_SEGMENT) return pick({ POST: { op: 'unpublish', collection: b } });
       if (a.startsWith('_')) return null;
       return pick({
         GET: { op: 'get', collection: a, key: b },
@@ -197,6 +217,7 @@ export function storageEndpointLabel(req: NextApiRequest): DocStoreEndpoint {
   if (op === 'info') return 'storage_info';
   if (op === 'list' || op === 'get' || op === 'getMany') return 'storage_read';
   if (op === 'create' || op === 'put' || op === 'delete') return 'storage_write';
+  if (op === 'publish' || op === 'unpublish') return 'storage_write';
   // increment, mark, unmark, and `patch` (whose only operators are tallies).
   return 'storage_tally';
 }
@@ -299,7 +320,7 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
         message: err instanceof Error ? err.message : String(err),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
     sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
     return;
   }
@@ -610,6 +631,13 @@ export type PresentedDoc = {
   key: string;
   data: Record<string, unknown>;
   version: number;
+  /**
+   * Content levels on only (`doc-levels.ts`): the effective level (NsfwLevel bit; the moderator's
+   * override first) and the rating status, each null when unset. Server-set: nothing an app
+   * writes reaches them. Absent while levels are off, so those responses are unchanged.
+   */
+  level?: number | null;
+  ratingStatus?: DocRatingStatus | null;
   createdAt: string;
   updatedAt: string;
   author: PresentedAuthor;
@@ -651,6 +679,7 @@ async function presentDocs(
           key: d.key,
           data: d.data,
           version: d.version,
+          ...(d.rating ? { level: d.rating.level, ratingStatus: d.rating.status } : {}),
           createdAt: d.createdAt.toISOString(),
           updatedAt: d.updatedAt.toISOString(),
           author: author(d.author),
@@ -810,15 +839,19 @@ const nothingAfterCommit: AfterCommit = () => undefined;
  *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category and
  *   the field it sits in (`sharedRefusalField`: a JSON path such as `data.actions[2].text`, or
  *   `key`), never the matched term or text, and raises the shared block alert.
+ *
+ * `resolvedMode`: the mode the caller already resolved for this app (a publish resolves it once
+ * for all its documents); omitted, it is resolved here.
  */
 async function moderate(
   access: StorageAccess,
   user: SessionUser,
   surface: SharedDataSurface,
   rowKey: string,
-  input: { data?: Record<string, unknown>; key?: string }
+  input: { data?: Record<string, unknown>; key?: string },
+  resolvedMode?: SharedDataModerationMode
 ): Promise<AfterCommit> {
-  const mode = await resolveSharedDataModerationMode(access.ctx.appId);
+  const mode = resolvedMode ?? (await resolveSharedDataModerationMode(access.ctx.appId));
   if (mode === 'off') return nothingAfterCommit;
   // Moderators are exempt from the pattern list here exactly as on the legacy surface.
   const scanOpts = { isModerator: user.isModerator };
@@ -855,7 +888,7 @@ async function moderate(
           error: err instanceof Error ? err.name : typeof err,
         },
         'block-audit'
-      ).catch(() => undefined);
+      );
       throw new DocStoreError('moderation_unavailable', 'content could not be reviewed right now', {
         retryAfter: 5,
       });
@@ -1131,7 +1164,192 @@ async function run(
           : { marked: result.marked, count: result.count }
       );
     }
+    case 'publish':
+      return ok(await runPublish(req, body, access, store, coll));
+    case 'unpublish':
+      return ok(await runUnpublish(req, body, access, store, coll));
   }
+}
+
+// ---------------------------------------------------------------------------
+// PUBLISH — server-side publish and unpublish
+// ---------------------------------------------------------------------------
+//
+// `POST /_publish/:to { from, keys, prune? }` copies the CALLING viewer's own private documents
+// at `keys` from the private `from` into the shared `to`, authored by that viewer: the server
+// reads the data from the viewer's own key space, never from the request. `POST /_unpublish/:to
+// { keys }` deletes the viewer's own copies. What a copy, a skip (`skipped[].reason`) and a prune
+// do, and how the per-user and app ceilings are charged: `publishCopies` / `unpublishCopies`
+// (`doc-store.ts`).
+//
+// Each copy is checked as a shared write is: the target's schema and `ownedModelVersions` rule
+// before any budget, then the moderation scan in the app's mode. Enforce: any hit refuses the
+// WHOLE publish, naming its key; shadow: scanned after commit. An unchanged copy is not scanned.
+// A key list over `DOC_STORE_PUBLISH_BOUNDS.maxKeys`, empty or with a duplicate is refused before
+// anything is spent.
+//
+// Budgets: every publish call first spends one token of the `write` bucket
+// (`DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX`) BEFORE the trust lookup and the source/target reads,
+// never refunded, so even a publish that changes nothing is throttled. It then spends one token of
+// `DOC_STORE_PUBLISH_BUDGET` — never `DOC_STORE_SHARED_WRITE_BUDGET` — given back when the publish
+// does not land or changes nothing.
+//
+// ⚠️ `prune` is scoped by `from`, not by where a copy came from: an app that feeds one shared
+// collection from SEVERAL private collections deletes the other sources' copies when it prunes
+// from one of them.
+//
+// FLAG: `app-blocks-storage-publish`, evaluated per app (entityId = the app block id, no context).
+// Off — the default, and when Flipt is unreachable — both paths answer as an unknown route.
+
+/** Whether a matched route is served for this request: everything but publish, or publish with the flag on. */
+async function isPublishRouteServed(req: NextApiRequest, match: Match): Promise<boolean> {
+  if (!match || !('route' in match)) {
+    // A wrong method on a publish path: served only when the route itself would be.
+    const segs = pathSegments(req);
+    if (segs[0] !== PUBLISH_SEGMENT && segs[0] !== UNPUBLISH_SEGMENT) return true;
+  } else if (match.route.op !== 'publish' && match.route.op !== 'unpublish') {
+    return true;
+  }
+  const appBlockId = (req as BlockScopedNextApiRequest).blockClaims?.appBlockId;
+  if (!appBlockId) return false;
+  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_PUBLISH, appBlockId);
+}
+
+const publishBody = z.strictObject({
+  from: z.string(),
+  keys: z.array(z.string()),
+  prune: z.boolean().optional(),
+});
+const unpublishBody = z.strictObject({ keys: z.array(z.string()) });
+
+/** A refusal raised while handling one key, with that key added to its details. */
+function withKey(err: unknown, key: string): unknown {
+  if (!(err instanceof DocStoreError)) return err;
+  return new DocStoreError(err.code, err.message, { ...err.details, key });
+}
+
+/** A refusal of a publish that lost a race, not a bad request: no rejection token is charged. */
+const PUBLISH_RACE_REASONS: ReadonlySet<unknown> = new Set([
+  'source_changed',
+  'target_changed',
+  'concurrent_write',
+]);
+
+async function runPublish(
+  req: NextApiRequest,
+  body: unknown,
+  access: StorageAccess,
+  store: DocStore,
+  to: DocCollection
+): Promise<unknown> {
+  const { ctx } = access;
+  const uid = requireViewer(access);
+  const input = parseBody(publishBody, body);
+  const keys = assertPublishKeys(input.keys);
+  const from = collectionOf(access, input.from);
+  assertPublishPair(from, to);
+  assertPublishScope(access, to);
+  // The per-call throttle, BEFORE the trust lookup, the source/target reads and the ownership
+  // lookups below: never refunded, so a loop of publishes that change nothing is still bounded.
+  await charge('write', access, req);
+  const user = await assertTrusted(uid);
+
+  // What would be written, read now; every body is checked as a shared write's would be BEFORE
+  // the budget is spent. `publishCopies` re-reads them under lock and refuses any that changed.
+  const preview = await store.previewPublish(ctx, from, to, keys);
+  const toWrite = preview.flatMap((e) => (e.source ? [{ key: e.key, ...e.source }] : []));
+  for (const doc of toWrite) {
+    try {
+      validateDocAgainstCollectionSchema(ctx, to, doc.data);
+      await assertOwnedModelVersions(to.config, doc.data, uid);
+    } catch (err) {
+      throw withKey(err, doc.key);
+    }
+  }
+
+  const reservation = await reserveSharedWrite(uid, ctx.appId, DOC_STORE_PUBLISH_BUDGET);
+  if (!reservation.allowed) {
+    throw new DocStoreError('rate_limited', 'publish budget exhausted', {
+      bucket: 'publish',
+      retryAfter: reservation.retryAfterSeconds,
+    });
+  }
+  let landed = false;
+  try {
+    const afterCommit = new Map<string, AfterCommit>();
+    // One mode for the whole publish (two Flipt evaluations), not one per document.
+    const mode = toWrite.length > 0 ? await resolveSharedDataModerationMode(ctx.appId) : undefined;
+    for (const doc of toWrite) {
+      try {
+        afterCommit.set(
+          doc.key,
+          await moderate(access, user, 'update', doc.key, { data: doc.data, key: doc.key }, mode)
+        );
+      } catch (err) {
+        throw withKey(err, doc.key);
+      }
+    }
+    const result = await store.publishCopies(ctx, from, await withSchemaMajor(access, to), {
+      keys,
+      checked: new Map(toWrite.map((d) => [d.key, d.hash])),
+      prune: input.prune ? { limit: DOC_STORE_PUBLISH_BOUNDS.pruneLimit } : undefined,
+    });
+    landed = true;
+    const changed = result.created.length + result.updated.length + result.pruned.length;
+    // Nothing changed: the publish cost nothing, so its token goes back.
+    if (changed === 0) await reservation.release({ rejected: false });
+    for (const key of [...result.created, ...result.updated]) afterCommit.get(key)?.();
+    await syncWithdrawn(ctx, result.pruned, uid);
+    return result;
+  } catch (err) {
+    if (!landed) {
+      // A publish that lost a race is not a bad request: no rejection charge.
+      const race = err instanceof DocStoreError && PUBLISH_RACE_REASONS.has(err.details?.reason);
+      await reservation.release({ rejected: !race && !isOurFault(err) });
+    }
+    throw err;
+  }
+}
+
+async function runUnpublish(
+  req: NextApiRequest,
+  body: unknown,
+  access: StorageAccess,
+  store: DocStore,
+  to: DocCollection
+): Promise<unknown> {
+  const uid = requireViewer(access);
+  const keys = assertPublishKeys(parseBody(unpublishBody, body).keys);
+  if (to.config.visibility !== 'shared') {
+    throw invalid('unpublish removes documents from a shared collection', {
+      reason: 'publish_visibility',
+    });
+  }
+  assertShareWritable(to);
+  // Like a delete: `apps:storage` only, no trust gate, the `write` bucket once per call.
+  await charge('write', access, req);
+  const result = await store.unpublishCopies(access.ctx, to, keys);
+  await syncWithdrawn(access.ctx, result.deleted, uid);
+  return result;
+}
+
+/**
+ * The author removed published items: their App Store cards follow, as after a delete. One call
+ * for all of them (at most 500): one parent-listing lookup, updates batched by `itemKey IN (…)`.
+ * `syncStoreItem` never throws (it logs its own failures).
+ */
+async function syncWithdrawn(
+  ctx: StorageAccess['ctx'],
+  keys: readonly string[],
+  uid: number
+): Promise<void> {
+  if (ctx.ns !== PUBLISHED_NS || keys.length === 0) return;
+  await syncStoreItem({
+    appBlockId: ctx.appId,
+    itemKey: keys,
+    change: 'withdrawn',
+    authorUserId: uid,
+  });
 }
 
 function deleteIfVersion(req: NextApiRequest): number | undefined {
@@ -1144,6 +1362,8 @@ function deleteIfVersion(req: NextApiRequest): number | undefined {
 }
 
 const FROM_PARAM = 'from';
+
+const noSuchRoute = () => new DocStoreError('not_found', 'no such storage route');
 
 /** The import selector, or null. Only collection routes take one; `info` refuses it as stray. */
 function importSourceOf(req: NextApiRequest): string | null {
@@ -1161,14 +1381,19 @@ function importSourceOf(req: NextApiRequest): string | null {
 function importOpOf(route: Exclude<StorageRoute, { op: 'info' }>): ImportOp {
   if (route.op === 'list' || route.op === 'get' || route.op === 'getMany') return 'read';
   // `patch` carries only tally operators, each an authoring write like the routes it replaces.
-  return route.op === 'delete' ? 'delete' : 'author';
+  // (`publish` / `unpublish` never reach an import: `assertNoStrayQuery` refuses their `from`.)
+  return route.op === 'delete' || route.op === 'unpublish' ? 'delete' : 'author';
 }
 
 /** Query parameters other than the route's own are refused everywhere except a list. */
 function assertNoStrayQuery(req: NextApiRequest, route: StorageRoute): void {
   if (route.op === 'list') return;
   const own = route.op === 'delete' ? ['path', 'ifVersion'] : ['path'];
-  const allowed = route.op === 'info' ? own : [...own, FROM_PARAM];
+  // A publish names its source in the BODY and runs in this app only: no `?from=` import.
+  const allowed =
+    route.op === 'info' || route.op === 'publish' || route.op === 'unpublish'
+      ? own
+      : [...own, FROM_PARAM];
   const stray = Object.keys(req.query).find((k) => !allowed.includes(k));
   if (stray) throw invalid(`unknown query parameter ${stray}`);
 }
@@ -1183,7 +1408,10 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
   return async function storageHandler(req: NextApiRequest, res: NextApiResponse) {
     try {
       const match = matchStorageRoute(req.method ?? 'GET', pathSegments(req));
-      if (!match) throw new DocStoreError('not_found', 'no such storage route');
+      if (!match) throw noSuchRoute();
+      // Off for this app, publish and unpublish are not routes at all: the same refusal as any
+      // unknown path, before any other gate (a wrong method's 405 included).
+      if (!(await isPublishRouteServed(req, match))) throw noSuchRoute();
       // A deprecated per-tally path says so on every response the handler gives, a refusal and a
       // wrong method's 405 included.
       if (isLegacyTallyPath(pathSegments(req))) {
@@ -1225,7 +1453,10 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       if (isTallyRoute(op)) {
         recordStorageTallyOp(TALLY_METRIC_OP[op.op], route.op === 'patch' ? 'v2' : 'legacy');
       }
-      const reply = await run(req, body, op, access, deps.store());
+      // Content levels (`doc-levels.ts`): with the flag on for the app whose documents this
+      // reaches, the store gates every shared read on the token's viewer level.
+      const gated = await withDocLevelGate(access, claims);
+      const reply = await run(req, body, op, gated, deps.store());
       res.status(reply.status).json(reply.body);
     } catch (err) {
       if (err instanceof BodyAbortedError) {

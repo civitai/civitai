@@ -204,7 +204,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         modelVersionId: outcome.modelVersionId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -223,7 +223,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         modelVersionId: outcome.modelVersionId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -242,7 +242,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         fileId,
       },
       'webhooks'
-    ).catch();
+    );
     return;
   }
 
@@ -409,7 +409,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
             fileId,
           },
           'webhooks'
-        ).catch(() => null)
+        )
       );
     }
   }
@@ -452,7 +452,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           fileId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   }
 
@@ -471,7 +471,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           error: err instanceof Error ? err.message : String(err),
         },
         'webhooks'
-      ).catch();
+      );
     });
   }
 
@@ -499,7 +499,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           modelVersionId,
         },
         'webhooks'
-      ).catch(() => undefined)
+      )
     );
   }
 
@@ -525,7 +525,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
           modelVersionId,
         },
         'webhooks'
-      ).catch(() => undefined)
+      )
     );
 }
 
@@ -571,9 +571,7 @@ export async function applyScanOnlyOutcome(outcome: ScanOutcome): Promise<void> 
     },
   });
   const log = (type: 'info' | 'warning', fields: Record<string, unknown>) =>
-    logToAxiom({ type, name: 'scan-only-rescan', fileId, ...fields }, 'webhooks').catch(
-      () => undefined
-    );
+    logToAxiom({ type, name: 'scan-only-rescan', fileId, ...fields }, 'webhooks');
   if (!file || file.type === 'Training Data') return void log('warning', { skipped: 'file' });
 
   const verdict = outcome.pickleScan && pickleVerdictFor(outcome.pickleScan, file);
@@ -687,7 +685,7 @@ async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile)
         fileId: file.id,
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 }
 
@@ -964,7 +962,7 @@ export async function processModelFileScanResult(req: NextApiRequest) {
           duplicate: true,
         },
         'webhooks'
-      ).catch();
+      );
       return;
     }
 
@@ -982,7 +980,7 @@ export async function processModelFileScanResult(req: NextApiRequest) {
             workflowId: event.workflowId,
           },
           'webhooks'
-        ).catch(() => undefined)
+        )
       );
       throw error;
     }
@@ -1019,7 +1017,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
         status: event.status,
       },
       'webhooks'
-    ).catch();
+    );
     await applyScanOutcome({ fileId, modelVersionId, trainingDataUrl, failed: true });
     return;
   }
@@ -1097,7 +1095,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
           workflowId: event.workflowId,
         },
         'webhooks'
-      ).catch();
+      );
       return;
     }
   }
@@ -1167,7 +1165,7 @@ async function handleScanWorkflow(event: WorkflowEvent) {
       workflowId: event.workflowId,
     },
     'webhooks'
-  ).catch();
+  );
 }
 
 // -----------------------------------------------------------------------------

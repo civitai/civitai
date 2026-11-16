@@ -19,7 +19,7 @@ import { tipaltiTaxFormRequiredEmail } from '~/server/email/templates';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'user-payment-configuration', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'user-payment-configuration', type: 'error', ...data });
 };
 
 export async function getUserPaymentConfiguration({ userId }: { userId: number }) {

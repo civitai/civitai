@@ -81,7 +81,7 @@ export async function readScannerHits(
       name: 'review-batch-scanner-read-failed',
       type: 'warning',
       message: (e as Error).message,
-    }).catch(() => null);
+    });
     return null;
   }
 }

@@ -624,7 +624,7 @@ async function keepServerCopy(bucket: string, fileId: number, uploaderKey: strin
     name: 'service-deal-file-held',
     message: 'no server copy of a kept upload',
     details: { fileId, error: (lastError as Error)?.message },
-  }).catch(() => null);
+  });
 }
 
 /**
@@ -680,7 +680,7 @@ export async function recordFinalScanResult({
         name: 'service-deal-file-removed-failed',
         message: 'a removed deal file failed its scan',
         details: { fileId, dealId: file.dealId, kind: file.kind, failReason: file.failReason },
-      }).catch(() => null);
+      });
     return { recorded: true, held: false };
   }
   const held =
@@ -1086,7 +1086,7 @@ const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
     message: 'Could not record a deal file access',
     ...access,
     error: error instanceof Error ? error.message : String(error),
-  }).catch(() => null);
+  });
 
 // ---------------------------------------------------------------------------------------------
 // Preview pipeline (the job)
@@ -1133,7 +1133,7 @@ export async function readObject(bucket: string, key: string) {
 }
 
 const logPreview = (message: string, fields: Record<string, unknown>, type = 'info') =>
-  logToAxiom({ name: 'creator-service-preview', type, message, ...fields }).catch(() => null);
+  logToAxiom({ name: 'creator-service-preview', type, message, ...fields });
 
 /** A seller-fixable problem fails the file with its reason; anything else is retried when stale. */
 async function failOrRetry(preview: ClaimedPreview, error: unknown) {

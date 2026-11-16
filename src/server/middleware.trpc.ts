@@ -287,14 +287,14 @@ async function recordTaggedUrl(
         // Only a URL in the client's own form reaches this point, so `url` is one the site requests.
         { name: 'edge-cache-tag-cap', type: 'warn', tag, cap: edgeTagSetCap(tag), path, url },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     });
     return Math.min(...recorded);
   } catch (error) {
     logToAxiom(
       { name: 'edge-cache-record-failed', type: 'error', message: (error as Error).message, tags },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return 0;
   }
 }
@@ -312,7 +312,7 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     if (!!ctx.req?.query?.batch) {
       const message = `Content not cached: ${path}`;
       if (!isProd) console.log(message);
-      else logToAxiom({ name: 'edge-cache-it', type: 'warn', message }, 'civitai-prod').catch();
+      else logToAxiom({ name: 'edge-cache-it', type: 'warn', message }, 'civitai-prod');
       return await next();
     }
     if (!isProd) return await next();
@@ -372,7 +372,7 @@ export function purgeOnSuccess(tags: string[]) {
         logToAxiom(
           { name: 'edge-purge-failed', type: 'error', message: error.message, tags, path },
           'civitai-prod'
-        ).catch(() => undefined)
+        )
       );
 
     return result;

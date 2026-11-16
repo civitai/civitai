@@ -98,7 +98,7 @@ export async function setTextScanConfig(
   // No fallback here: merging a patch over defaults would silently erase the stored overrides.
   const next = withDefaults({ ...withDefaults(await readStoredConfig()), ...patch });
   await sysRedis.set(REDIS_SYS_KEYS.TEXT_SCAN.CONFIG, JSON.stringify(next));
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'config updated',
@@ -128,7 +128,7 @@ export async function setTextScanRollout(
     await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.MODES, entityType);
   }
   resetTextScanRolloutCache();
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'rollout updated',
@@ -157,7 +157,7 @@ export async function setTextScanWebSearchRollout(
     await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.WEB_SEARCH, entityType);
   }
   resetTextScanRolloutCache();
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'web-search rollout updated',
@@ -180,7 +180,7 @@ export async function setTextScanLabelMode(
   if (mode === 'review') await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, label, 'review');
   else await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, label);
   resetTextScanRolloutCache();
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'label mode updated',
@@ -205,7 +205,7 @@ export async function setTextScanCsamMode(
     await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD, 'review');
   else await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.LABEL_MODES, TEXT_SCAN_CSAM_MODE_FIELD);
   resetTextScanRolloutCache();
-  await logToAxiom({
+  logToAxiom({
     name: 'text-scan',
     type: 'info',
     message: 'label mode updated',

@@ -278,7 +278,7 @@ const trpcHandler = createNextApiHandler({
       // its `errorRef`, and the router's own log line doesn't carry one.
       const errorRef = getClientSafeError(error)?.errorRef;
       if (!wasServerFaultLogged(error) || errorRef) {
-        await logToAxiom(
+        logToAxiom(
           {
             path,
             trpcType: type,

@@ -107,6 +107,7 @@ const civitaiWorkspacePkgs = [
   'db-schema',
   'db',
   'redis',
+  'email',
   'clickhouse',
   'axiom',
   // `@civitai/flipt` (packages/civitai-flipt) backs src/server/flipt/client.ts, which the

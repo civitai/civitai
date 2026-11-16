@@ -1373,7 +1373,7 @@ function logBountyPayoutError({
     bountyId,
     userId,
     transactionPrefix,
-  }).catch(() => null);
+  });
 }
 
 async function refundBountyPrefix(txId: string, description: string, details: MixedObject) {
@@ -1838,7 +1838,7 @@ export async function refundUnpayableBountyAward(bountyId: number) {
       message: `Bounty ${bountyId}: refund of an unpayable award failed; deleted by a moderator anyway`,
       bountyId,
       benefactors,
-    }).catch(() => null);
+    });
   }
   return true;
 }
@@ -1968,7 +1968,7 @@ export async function releaseStuckBountyAward(
     refundDescription: 'Reason: Bounty refund, the bounty was closed by a moderator',
   });
   for (const supporter of unpaid)
-    await logToAxiom({
+    logToAxiom({
       name: 'bounty-award',
       type: 'error',
       message: `Bounty ${bountyId}: award from user ${supporter.userId} has no charge on record; neither paid nor refunded, for a manual ruling`,
@@ -1978,7 +1978,7 @@ export async function releaseStuckBountyAward(
       buzzTransactionId: supporter.buzzTransactionId,
       winnerUserId: read.payoutWinnerUserId,
       moderatorId,
-    }).catch(() => null);
+    });
   return { unpaidAwards: unpaid.length, refundSettled };
 }
 
@@ -2169,7 +2169,7 @@ export async function resolveUnpaidBountyAward({
     return true;
   });
   if (recorded)
-    await logToAxiom({
+    logToAxiom({
       name: 'bounty-award',
       type: 'info',
       message: `Bounty ${bountyId}: unpaid award from user ${userId} resolved as ${ruling}`,
@@ -2178,7 +2178,7 @@ export async function resolveUnpaidBountyAward({
       ruling,
       ledgerReference,
       moderatorId,
-    }).catch(() => null);
+    });
   return { recorded };
 }
 

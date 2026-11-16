@@ -207,7 +207,7 @@ function emitSlowLog(input: TrpcSlowLogInput, slowMs: number, droppedSinceLast: 
       if (droppedSinceLast > 0) payload.droppedSinceLastLog = droppedSinceLast;
 
       const { logToAxiom } = await import('~/server/logging/client');
-      await logToAxiom(payload);
+      logToAxiom(payload);
     } catch {
       // Logging failure must never surface.
     }

@@ -62,7 +62,7 @@ export async function grantAppRepoWrite(opts: { slug: string; userId: number }):
         error: err instanceof Error ? err.message : String(err),
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 }
 
@@ -97,7 +97,7 @@ export async function revokeAppRepoWrite(opts: { slug: string; userId: number })
         error: err instanceof Error ? err.message : String(err),
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 }
 
@@ -124,7 +124,7 @@ async function grantSourceRepoWrite(opts: { slug: string; userId: number }): Pro
         error: err instanceof Error ? err.message : String(err),
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 }
 
@@ -155,6 +155,6 @@ async function revokeSourceRepoWrite(opts: { slug: string; userId: number }): Pr
         error: err instanceof Error ? err.message : String(err),
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
   }
 }

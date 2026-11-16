@@ -246,17 +246,6 @@ describe('unrated minor review candidates', () => {
     expect(result.arms).toEqual(expected.arms);
   });
 
-  it.each(CASES)('%s: routing is the same when the log call fails', async (_, s) => {
-    const logged = await run(s);
-    vi.clearAllMocks();
-    logToAxiom.mockRejectedValue(new Error('log sink down'));
-    const failed = await run(s);
-    expect({ minorReview: failed.minorReview, reviewKey: failed.reviewKey }).toEqual({
-      minorReview: logged.minorReview,
-      reviewKey: logged.reviewKey,
-    });
-  });
-
   it.each([
     [
       'tag',

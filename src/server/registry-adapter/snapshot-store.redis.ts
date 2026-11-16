@@ -20,9 +20,8 @@ export const streamStatesKey = (stream: string) =>
  *
  * One MULTI writes the snapshot and moves its digest to the head of the stream's list, reads
  * what falls past the bound and trims it, and refreshes the list's TTL, so concurrent writers of
- * one stream never lose each other's digests (a multi-key MULTI on the system client, as
- * `download-repeats.ts` and `rate-limiting.ts` use). The digests that fell off are deleted after
- * the MULTI.
+ * one stream never lose each other's digests (a multi-key MULTI on the system client). The
+ * digests that fell off are deleted after the MULTI.
  * If one of them is pushed again meanwhile, its cursor expires early, which costs a
  * re-snapshot and nothing else.
  */

@@ -1281,7 +1281,7 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor` | `query` (Meilisearch), `collectionId`, `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added (`model-sort-recently-added`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); a date token with a 1- or 2-digit fraction, which Node misreads (`short-fraction-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor` | `query` (Meilisearch), `collectionId`, `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added (`model-sort-recently-added`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
 | Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
@@ -1356,11 +1356,6 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   this service and a Node pod up to 30 s apart;
 - a cursor's date token is read in Postgres' own `CONCAT` form only; any other spelling dayjs accepts
   falls back;
-- a cursor's date token with a 1- or 2-digit fraction (`.25`, how Postgres writes 250 ms) falls back
-  (`short-fraction-cursor`): this service reads it as 250 ms, but Node's dayjs reads the digits as
-  milliseconds (25 ms) and starts the next page at the wrong row. That is a Node bug, fixed on main
-  by #9075 but not yet deployed; the fallback goes once the fix is deployed (the TODO on
-  `cursorTimestamp`);
 - `ids` falls back whenever it is present, empty included: Node reads `[]` as `[]` and `""` as `[0]`,
   both truthy, so either turns off the private-model filter;
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,

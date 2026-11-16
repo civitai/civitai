@@ -179,7 +179,7 @@ async function insertRows({
     });
   } catch (e) {
     const error = e as Error;
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-audit-write-failed',
       type: 'error',
       message: error.message,
@@ -252,7 +252,7 @@ async function writeRegexShadowComparison(args: {
     });
   } catch (e) {
     const error = e as Error;
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-regex-shadow-write-failed',
       type: 'error',
       message: error.message,

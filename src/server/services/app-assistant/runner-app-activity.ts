@@ -27,7 +27,7 @@ export async function runnerAppActivityRoute(req: AxiomAPIRequest, res: NextApiR
       app: parsed.app,
       grantId: verified.grantId,
       ...extra,
-    }).catch(() => undefined);
+    });
 
   try {
     // Every gate the runner's token mint checks, then the App Blocks author capability the live

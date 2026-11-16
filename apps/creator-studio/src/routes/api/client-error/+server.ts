@@ -18,7 +18,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
   const parsed = clientErrorSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json({ ok: false }, { status: 400 });
 
-  await getLogger().logToAxiom({
+  getLogger().logToAxiom({
     name: 'creator-studio-client-error',
     userId: locals.user.id,
     ...parsed.data,

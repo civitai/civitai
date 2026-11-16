@@ -95,7 +95,7 @@ export const reconcileRestrictedImages = createJob(
     restrictedImageReconcileLastSuccessGauge.set(Math.floor(Date.now() / 1000));
 
     if (flagged > 0) {
-      await logToAxiom(
+      logToAxiom(
         {
           name: 'reconcile-restricted-images',
           type: 'warning',
