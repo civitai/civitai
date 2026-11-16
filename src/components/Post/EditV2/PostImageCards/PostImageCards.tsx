@@ -1,6 +1,6 @@
 import { Button, Tabs, Text } from '@mantine/core';
 import { IconPencil, IconPhoto, IconPlus } from '@tabler/icons-react';
-import React from 'react';
+import React, { useState } from 'react';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { AddedImage } from '~/components/Post/EditV2/PostImageCards/AddedImage';
@@ -16,8 +16,9 @@ import type { PostEditTextDetail } from '~/server/services/post.service';
 import { mergeEditorItems } from '~/components/Post/EditV2/post-edit-items';
 import { textIndexAfter } from '~/shared/utils/post-items';
 import { STORYLINE_TEXT_MAX_PER_POST } from '~/shared/utils/storyline';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+
+/** An "Add text" the author has opened: a card with no row until they type into it. */
+type TextDraft = { index: number; textId?: number };
 
 const NO_TEXTS: PostEditTextDetail[] = [];
 
@@ -26,11 +27,15 @@ export function PostImageCards() {
   // Without the flag the text routes refuse every change, so the editor shows images only; the
   // server keeps each text where it is.
   const textOn = !!useFeatureFlags().storylineText;
-  const texts = textOn ? storeTexts : NO_TEXTS;
+  const allTexts = textOn ? storeTexts : NO_TEXTS;
+  const [draft, setDraft] = useState<TextDraft | null>(null);
+  // Once a draft's first character creates its row, the draft keeps rendering that row so the
+  // editor is not remounted mid-typing.
+  const texts = allTexts.filter((t) => t.id !== draft?.textId);
   const { maxItems } = useMediaUploadSettingsContext();
   const { showPreview, toggleShowPreview } = usePostPreviewContext();
   const tab = showPreview ? 'preview' : 'edit';
-  const canAddText = useCanAddStorylineText() && texts.length < STORYLINE_TEXT_MAX_PER_POST;
+  const canAddText = useCanAddStorylineText() && allTexts.length < STORYLINE_TEXT_MAX_PER_POST;
 
   if (!images.length) return null;
 
@@ -38,6 +43,21 @@ export function PostImageCards() {
   const addSlots = canAddText && !showPreview;
   let imageNumber = 0;
   let textNumber = 0;
+  const slotAt = (index: number) =>
+    draft?.index === index ? (
+      <div data-text-id={draft.textId} className="flex flex-col gap-1">
+        <StorylineTextCard
+          key="draft"
+          text={null}
+          label={`Text ${++textNumber} / ${STORYLINE_TEXT_MAX_PER_POST}`}
+          draftIndex={index}
+          onCreated={(created) => setDraft({ index, textId: created.id })}
+          onDismiss={() => setDraft(null)}
+        />
+      </div>
+    ) : (
+      <AddTextSlot onAdd={() => setDraft({ index })} />
+    );
 
   return (
     <>
@@ -60,19 +80,19 @@ export function PostImageCards() {
         </Tabs.List>
       </Tabs>
       <div className="flex flex-col gap-3">
-        {addSlots && <AddTextSlot index={textIndexAfter(undefined, items[0]?.key)} />}
+        {addSlots && slotAt(textIndexAfter(undefined, items[0]?.key))}
         {items.map((item) => {
-          const slot = addSlots && <AddTextSlot index={textIndexAfter(item.key, undefined)} />;
+          const slotIndex = textIndexAfter(item.key, undefined);
           if (item.type === 'text')
             return (
               <React.Fragment key={`text-${item.text.id}`}>
-                <div data-text-id={item.text.id} className="flex flex-col gap-1">
-                  <Text size="sm" fw={600} c="dimmed">
-                    Text {++textNumber} / {STORYLINE_TEXT_MAX_PER_POST}
-                  </Text>
-                  <StorylineTextCard text={item.text} />
+                <div data-text-id={item.text.id}>
+                  <StorylineTextCard
+                    text={item.text}
+                    label={`Text ${++textNumber} / ${STORYLINE_TEXT_MAX_PER_POST}`}
+                  />
                 </div>
-                {slot}
+                {addSlots && slotAt(slotIndex)}
               </React.Fragment>
             );
           const { image } = item;
@@ -88,7 +108,7 @@ export function PostImageCards() {
                 </Text>
                 <PostImageCard image={image} />
               </div>
-              {image.type === 'added' && slot}
+              {image.type === 'added' && addSlots && slotAt(slotIndex)}
             </React.Fragment>
           );
         })}
@@ -108,22 +128,14 @@ export function useCanAddStorylineText() {
   return flagOn && !!post && inStoryline && currentUser?.id === post.user.id;
 }
 
-function AddTextSlot({ index }: { index: number }) {
-  const [postId, setTexts] = usePostEditStore((state) => [state.post?.id, state.setTexts]);
-  const { mutate, isPending } = trpc.storyline.addText.useMutation({
-    onSuccess: (text) => setTexts((texts) => [...texts, text]),
-    onError: (error) => showErrorNotification({ title: 'Text not added', error }),
-  });
-  if (!postId) return null;
-
+function AddTextSlot({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="flex justify-center">
       <Button
         variant="subtle"
         size="compact-sm"
         leftSection={<IconPlus size={14} />}
-        loading={isPending}
-        onClick={() => mutate({ postId, index })}
+        onClick={onAdd}
       >
         Add text
       </Button>

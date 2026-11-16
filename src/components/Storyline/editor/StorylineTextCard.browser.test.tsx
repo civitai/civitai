@@ -4,8 +4,9 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import type * as PostEditProviderMod from '~/components/Post/EditV2/PostEditProvider';
 import type * as TrpcModule from '~/utils/trpc';
 
-const { setText, deleteText, setTexts, held } = vi.hoisted(() => ({
+const { setText, addText, deleteText, setTexts, held } = vi.hoisted(() => ({
   setText: vi.fn(),
+  addText: vi.fn(),
   deleteText: vi.fn(),
   setTexts: vi.fn(),
   held: { data: { code: 'FORBIDDEN' }, message: "This can't be removed right now." },
@@ -24,33 +25,27 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     isPending: false,
     isSuccess: false,
     isError: false,
+    isIdle: true,
   });
   return {
     ...(await importOriginal<typeof TrpcModule>()),
     trpc: makeTrpcProxy({
       'storyline.setText': { useMutation: mutation(setText) },
+      'storyline.addText': { useMutation: mutation(addText) },
       'storyline.deleteText': { useMutation: mutation(deleteText) },
     }),
   };
 });
 vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
   ...(await orig<typeof PostEditProviderMod>()),
-  usePostEditStore: (selector: (state: unknown) => unknown) => selector({ setTexts }),
+  usePostEditStore: (selector: (state: unknown) => unknown) =>
+    selector({ setTexts, post: { id: 5 } }),
   usePendingSave: vi.fn(),
 }));
 // The real editor is TipTap behind next/dynamic; the card's contract is the HTML it hands back.
 vi.mock('~/components/RichTextEditor/RichTextEditor', () => ({
-  RichTextEditor: ({
-    value,
-    onChange,
-    toolbarEnd,
-  }: {
-    value: string;
-    onChange: (v: string) => void;
-    toolbarEnd?: React.ReactNode;
-  }) => (
+  RichTextEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <div>
-      <div>{toolbarEnd}</div>
       <textarea aria-label="Text" value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   ),
@@ -67,7 +62,7 @@ const text = { id: 7, index: 1, content: '<p>Once</p>' };
 describe('StorylineTextCard', () => {
   test('autosaves what the author typed, once, after the pause', async () => {
     setText.mockImplementation(({ id, content }) => ({ id, content }));
-    renderWithProviders(<StorylineTextCard text={text} />);
+    renderWithProviders(<StorylineTextCard text={text} label="Text 1 / 20" />);
     await page.getByLabelText('Text', { exact: true }).fill('<p>Once upon</p>');
     await expect.poll(() => setText.mock.calls.length, { timeout: 3000 }).toBe(1);
     expect(setText).toHaveBeenCalledWith({ id: 7, content: '<p>Once upon</p>' });
@@ -82,11 +77,64 @@ describe('StorylineTextCard', () => {
 
   test('a held text goes read-only with the server message, and offers no more edits', async () => {
     deleteText.mockReturnValue(held);
-    renderWithProviders(<StorylineTextCard text={text} />);
+    renderWithProviders(<StorylineTextCard text={text} label="Text 1 / 20" />);
     await page.getByRole('button', { name: 'Delete text' }).click();
     await expect.element(page.getByRole('status')).toHaveTextContent(held.message);
     await expect.element(page.getByLabelText('Text', { exact: true })).not.toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Delete text' })).not.toBeInTheDocument();
     await expect.element(page.getByText('Once')).toBeVisible();
+  });
+
+  test('the label, the status and delete share the card heading row', async () => {
+    renderWithProviders(<StorylineTextCard text={text} label="Text 3 / 20" />);
+    const label = page.getByText('Text 3 / 20');
+    await expect.element(label).toBeVisible();
+    const row = label.element().parentElement as HTMLElement;
+    expect(row.contains(page.getByRole('button', { name: 'Delete text' }).element())).toBe(true);
+  });
+
+  describe('a draft (Add text)', () => {
+    const draft = (props = {}) => (
+      <StorylineTextCard text={null} label="Text 1 / 20" draftIndex={4} {...props} />
+    );
+
+    test('makes no row until something is typed', async () => {
+      addText.mockClear();
+      renderWithProviders(draft());
+      await expect.element(page.getByLabelText('Text', { exact: true })).toBeVisible();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(addText).not.toHaveBeenCalled();
+    });
+
+    test('whitespace alone does not create it', async () => {
+      addText.mockClear();
+      renderWithProviders(draft());
+      await page.getByLabelText('Text', { exact: true }).fill('<p> </p>');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(addText).not.toHaveBeenCalled();
+    });
+
+    test('the first typed words create the row at its slot, then save those words', async () => {
+      addText.mockReset();
+      setText.mockReset();
+      const created = { id: 31, index: 4, content: '' };
+      addText.mockReturnValue(created);
+      setText.mockImplementation(({ id, content }) => ({ id, content }));
+      const onCreated = vi.fn();
+      renderWithProviders(draft({ onCreated }));
+      await page.getByLabelText('Text', { exact: true }).fill('<p>Once</p>');
+      expect(addText).toHaveBeenCalledWith({ postId: 5, index: 4 });
+      expect(onCreated).toHaveBeenCalledWith(created);
+      expect(setText).toHaveBeenCalledWith({ id: 31, content: '<p>Once</p>' });
+    });
+
+    test('Delete on an untouched draft dismisses it without a server call', async () => {
+      deleteText.mockClear();
+      const onDismiss = vi.fn();
+      renderWithProviders(draft({ onDismiss }));
+      await page.getByRole('button', { name: 'Delete text' }).click();
+      expect(onDismiss).toHaveBeenCalledOnce();
+      expect(deleteText).not.toHaveBeenCalled();
+    });
   });
 });
