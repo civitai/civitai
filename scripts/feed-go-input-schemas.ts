@@ -4,7 +4,7 @@
  * defaults it applies to an absent key.
  *
  *   - `getInfiniteImagesSchema`: `image.getImagesAsPostsInfinite` and `image.getInfinite`.
- *   - `getAllModelsSchema`: `model.getAll` (the router's `.extend({ page: z.never() })` input).
+ *   - `getAllModelsSchema`: `model.getAll` (its router input, `getAllModelsInputSchema`).
  *   - `imagesEndpointSchema`: `GET /api/v1/images`.
  *
  * The Go parsers accept only the keys listed here, and fall back (`input-unknown-key`) on any other, so
@@ -22,16 +22,13 @@ import { join } from 'node:path';
 import * as z from 'zod';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { imagesEndpointSchema } from '~/server/schema/images-endpoint.schema';
-import { getAllModelsSchema } from '~/server/schema/model.schema';
+import { getAllModelsInputSchema } from '~/server/schema/model.schema';
 
 export const FEED_GO_INPUT_SCHEMAS_PATH = join(
   __dirname,
   '..',
   'apps/feed-go/internal/inputschema/schemas.json'
 );
-
-// What model.router.ts's `getAll` declares as its input.
-const modelGetAllInput = getAllModelsSchema.extend({ page: z.never().optional() });
 
 type Projected = { properties?: Record<string, { default?: unknown }> };
 
@@ -52,7 +49,7 @@ function project(schema: z.ZodType) {
 export function buildFeedGoInputSchemas() {
   return {
     getInfiniteImagesSchema: project(getInfiniteImagesSchema),
-    getAllModelsSchema: project(modelGetAllInput),
+    getAllModelsSchema: project(getAllModelsInputSchema),
     imagesEndpointSchema: project(imagesEndpointSchema),
   };
 }
