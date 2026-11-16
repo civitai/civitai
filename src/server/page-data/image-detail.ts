@@ -15,10 +15,15 @@ type ImageDetailResolverArgs = {
   ctx: { params?: ParsedUrlQuery };
   ssg?: Ssg;
   session?: Session | null;
+  /**
+   * The page's `ssrSignedInSkipPrefetchImages` `skip` arm: leave out `image.getGenerationData`,
+   * which only the content reads (the client fetches it after mount). Never set by the endpoint.
+   */
+  deferred?: boolean;
 };
 
 /** The page's image id, or `null` when the URL's is not a number (the page is then a 404). */
-function imageDetailId(params: ParsedUrlQuery | undefined) {
+export function imageDetailId(params: ParsedUrlQuery | undefined) {
   const id = Number((params ?? {}).imageId);
   return isNumber(id) ? id : null;
 }
@@ -65,10 +70,10 @@ export type ImageDetailMainImage = {
  * read — where the page is a 404; once it is not, the page is a 200 whatever the reads answer
  * (an image the viewer cannot get is a page without one, not a 404).
  *
- * Start all four prefetches synchronously, in the page's `trpcState` order: the dehydrated query
- * order must match the page's.
+ * Start all four prefetches (three under `deferred`) synchronously, in the page's `trpcState`
+ * order: the dehydrated query order must match the page's.
  */
-export function startImageDetailPageData({ ctx, ssg, session }: ImageDetailResolverArgs):
+export function startImageDetailPageData({ ctx, ssg, session, deferred }: ImageDetailResolverArgs):
   | { notFound: true }
   | {
       mainImage: Promise<ImageDetailMainImage>;
@@ -78,7 +83,7 @@ export function startImageDetailPageData({ ctx, ssg, session }: ImageDetailResol
   if (id === null) return { notFound: true };
 
   const image = readImageDetailImage({ id, ssg });
-  const generationData = ssg?.image.getGenerationData.prefetch({ id });
+  const generationData = deferred ? undefined : ssg?.image.getGenerationData.prefetch({ id });
   const forcedBrowsingLevel = readImageDetailForcedBrowsingLevel({ id, ssg, session });
   const hidden = ssg?.hiddenPreferences.getHidden.prefetch();
 

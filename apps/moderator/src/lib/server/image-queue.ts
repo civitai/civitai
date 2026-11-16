@@ -30,7 +30,11 @@ import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
-import { FLAG_KEPT_THROUGH_BLOCK, type ImageViewSlug } from '$lib/image-review';
+import {
+  FLAG_KEPT_THROUGH_BLOCK,
+  reviewHighlightCategories,
+  type ImageViewSlug,
+} from '$lib/image-review';
 import { violationInputSchema } from '$lib/violations';
 import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
@@ -141,8 +145,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       cursor,
       limit,
     });
-    // The minor queue highlights only minor-relevant categories; other queues highlight the whole prompt.
-    const categories = view === 'minor' ? (['minor', 'young', 'age'] as const) : undefined;
+    const categories = reviewHighlightCategories(view);
     return {
       ...base,
       view,
@@ -152,7 +155,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
         items.map(({ prompt, negativePrompt, ...item }) => ({
           ...item,
           promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
-            categories: categories ? [...categories] : undefined,
+            categories,
           }),
         }))
       ),

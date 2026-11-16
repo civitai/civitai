@@ -30,6 +30,11 @@ import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { redis } from '~/server/redis/client';
+import {
+  beginFeedGoShadowV1Models,
+  captureFeedGoShadowRest,
+  finishFeedGoShadow,
+} from '~/server/trpc/feed-go-shadow';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -214,6 +219,11 @@ const baseHandler = PublicEndpoint(async function handler(
   // ledger's classification of this route as READ_PUBLIC goes with it.
   const isBlockScoped = !!(req as BlockScopedNextApiRequest).blockClaims;
 
+  // feed-go shadow (flag `feed-go-shadow-v1-models`, default off): a sampled 200 body is POSTed to
+  // feed-go's internal compare endpoint after the handler, never awaited. Never throws. A request
+  // with an API credential (a block token included) is never mirrored. See
+  // `~/server/trpc/feed-go-shadow`.
+  const shadow = beginFeedGoShadowV1Models(req, 'id');
   try {
     // Cache only when enabled (IS_DATAPACKET) AND this is the pure-public path.
     const shouldCache = PUBLIC_MODEL_RESPONSE_TTL > 0 && !isBlockScoped;
@@ -230,11 +240,13 @@ const baseHandler = PublicEndpoint(async function handler(
     // stored.
     if (body === null) return res.status(404).json({ error: `No model with id ${id}` });
 
-    return res
-      .status(200)
-      .json(await withListableTrainingData(body, isRedCapableHost(req.headers.host)));
+    const out = await withListableTrainingData(body, isRedCapableHost(req.headers.host));
+    if (shadow) captureFeedGoShadowRest(shadow, out);
+    return res.status(200).json(out);
   } catch (error) {
     return handleEndpointError(res, error);
+  } finally {
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
   }
 });
 

@@ -20,6 +20,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
+	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
@@ -49,7 +50,7 @@ const (
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll, EndpointV1Models, EndpointV1ModelsID}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -98,8 +99,19 @@ type Server struct {
 	Infinite *feed.InfiniteDeps
 	// Models serves the `model.getAll` shadow; nil = every such sample falls back.
 	Models *modelfeed.Deps
+	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go); nil =
+	// every such sample falls back.
+	V1Models *V1ModelsDeps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
+	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
+	// dbpool.DefaultMaxConns, never unlimited): the Node app's `heavy-image` bulkhead. A request past
+	// it is not computed: it is the `bulkhead` fallback, proxied to the Node app. Shadow samples and
+	// probes are bounded by their own queues and never take a serve slot.
+	MaxInFlight int
+
+	// inFlight counts the public requests holding a serve slot (feed_go_serve_in_flight).
+	inFlight atomic.Int64
 
 	// The shadow goroutines' lifetime: bg is cancelled by Close, which then waits on shadows.
 	bgOnce   sync.Once
@@ -115,6 +127,8 @@ type Server struct {
 	computeV1Fn       func(context.Context, *http.Request) (*computed, error)
 	computeInfiniteFn func(context.Context, *http.Request) (*computed, error)
 	computeModelsFn   func(context.Context, *http.Request) (*computed, error)
+	// computeV1ModelsFn replaces both REST model computes (tests only).
+	computeV1ModelsFn func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -171,6 +185,9 @@ type computed struct {
 	// served_empty and result match_empty, so the per-served-call CPU and the match rate cover only
 	// answers that did the work.
 	trivial bool
+	// cached: the answer is a cached response body read as Node read it (v1models.Answer.Cached), no
+	// build. Recorded as outcome served_cached and result match_cached, apart for the same reason.
+	cached bool
 }
 
 // compute answers a request, or returns a fallback/other error.
@@ -430,6 +447,75 @@ func AcceptableOrigin(r *http.Request, allowed map[string]bool) bool {
 	return host != "" && allowed[host]
 }
 
+// errBulkhead is the `bulkhead` fallback: one value, so a pod shedding under load allocates nothing
+// to say so.
+var errBulkhead = fallback.New("bulkhead")
+
+func (s *Server) maxInFlight() int64 {
+	if s.MaxInFlight > 0 {
+		return int64(s.MaxInFlight)
+	}
+	return dbpool.DefaultMaxConns
+}
+
+// ResolveMaxInFlight is the serve cap from FEED_GO_MAX_IN_FLIGHT (explicit, 0 = not set) and the
+// replica pool's connection ceiling (poolMaxConns, as dbpool resolved it: FEED_GO_DB_MAX_CONNS, a
+// pool_max_conns in the URL, or the default). Unset, the cap is the ceiling: every admitted compute
+// can then hold a connection, so a full pod sheds at once instead of admitting computes that wait in
+// the pool until the budget turns them into `deadline` fallbacks. An explicit cap wins, and one above
+// the ceiling is logged as a warning (not refused). Both values are logged under their env names.
+func ResolveMaxInFlight(log *slog.Logger, explicit, poolMaxConns int) int {
+	if poolMaxConns <= 0 {
+		poolMaxConns = dbpool.DefaultMaxConns
+	}
+	limit := poolMaxConns
+	if explicit > 0 {
+		limit = explicit
+	}
+	log.Info("serving limits", "FEED_GO_MAX_IN_FLIGHT", limit, "explicit", explicit > 0, "db_max_conns", poolMaxConns)
+	if limit > poolMaxConns {
+		log.Warn("FEED_GO_MAX_IN_FLIGHT exceeds the replica pool's max connections: computes past the pool wait for a connection, up to the request budget, instead of shedding",
+			"FEED_GO_MAX_IN_FLIGHT", limit, "db_max_conns", poolMaxConns)
+	}
+	return limit
+}
+
+// acquireServe takes a serve slot, or reports false at once when MaxInFlight are already held: never
+// a wait, as the Node bulkhead (acquireBulkheadSlot) never queues. No allocation either way.
+func (s *Server) acquireServe() bool {
+	limit := s.maxInFlight()
+	for {
+		n := s.inFlight.Load()
+		if n >= limit {
+			return false
+		}
+		if s.inFlight.CompareAndSwap(n, n+1) {
+			s.Metrics.ServeInFlight.Inc()
+			return true
+		}
+	}
+}
+
+func (s *Server) releaseServe() {
+	s.inFlight.Add(-1)
+	s.Metrics.ServeInFlight.Dec()
+}
+
+// InFlight is the number of public requests computing now.
+func (s *Server) InFlight() int64 { return s.inFlight.Load() }
+
+// computeServe is computeWithin for a public request, inside a serve slot. A full pod is the
+// `bulkhead` fallback without computing anything. The slot is held for the computation only, never
+// for the proxied fallback that may follow, and is released however the computation ends (answer,
+// fallback, error, panic, deadline, client gone) by the deferred release.
+func (s *Server) computeServe(r *http.Request, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
+	if !s.acquireServe() {
+		return nil, errBulkhead
+	}
+	defer s.releaseServe()
+	return s.computeWithin(r.Context(), r, "serve", fn)
+}
+
 func (s *Server) budget() time.Duration {
 	if s.RequestBudget > 0 {
 		return s.RequestBudget
@@ -526,7 +612,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if s.computeFn != nil {
 			fn = s.computeFn
 		}
-		c, err = s.computeWithin(r.Context(), r, "serve", fn)
+		c, err = s.computeServe(r, fn)
 	default:
 		// The app's answer differs by environment and credential (non-production and bearer callers
 		// are accepted, a cookie caller in production is refused): never decided here.
@@ -748,6 +834,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 			computeFn = s.computeModelsFn
 		}
 	}
+	if b, c, cl, ok := s.v1ModelsRoute(endpoint); ok {
+		build, computeFn, compareFn, classify = b, c, shadow.CompareJSON, cl
+	}
 	r, err := build(ctx, req)
 	if err != nil {
 		s.Metrics.ShadowResults.WithLabelValues(endpoint, "bad_request").Inc()
@@ -780,8 +869,11 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	// Released once the comparison and its classification (the last readers of payload) are done.
 	defer c.release()
 	served := "served"
-	if c.trivial {
+	switch {
+	case c.trivial:
 		served = "served_empty"
+	case c.cached:
+		served = "served_cached"
 	}
 	s.endPhase(phase, endpoint, "compute", served)
 	s.Metrics.Requests.WithLabelValues(endpoint, "shadow", served).Inc()
@@ -797,6 +889,9 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	if c.trivial && result == "match" {
 		// A trivial answer that differs is still counted as the diff it is (fields, membership, …).
 		result = "match_empty"
+	}
+	if c.cached && result == "match" {
+		result = "match_cached"
 	}
 	s.endPhase(phase, endpoint, "compare", "ok")
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
