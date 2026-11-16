@@ -396,6 +396,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // segment. DEFAULT-OFF — absent or Flipt unreachable holds nothing. See
   // `storage-migration-run.service.ts`.
   APP_BLOCKS_STORAGE_MIGRATION_HOLD = 'app-blocks-storage-migration-hold',
+  // Server-side PUBLISH and UNPUBLISH in the document store (`POST /storage/_publish/:to`,
+  // `/_unpublish/:to`: copy a viewer's own private documents into a shared collection in one call,
+  // on its own publish budget). EVALUATED PER APP like the moderation pair above (entityId = the
+  // app block id, NO context): ramp by boolean, percentage, or an ENTITY_ID segment of app block
+  // ids. DEFAULT-OFF — absent or Flipt unreachable, both paths answer as an unknown route. See
+  // PUBLISH in `doc-store-api.ts`.
+  APP_BLOCKS_STORAGE_PUBLISH = 'app-blocks-storage-publish',
   // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
   // submit, on the git-push path and at approve, for a hook that is new or changed against the
   // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push

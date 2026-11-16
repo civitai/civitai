@@ -382,6 +382,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/__tests__/user-remove-all-content.doc-store.test.ts',
     // The route suite reads the rows a request wrote, to assert the namespace it landed in.
     'server/services/apps/__tests__/doc-store-api.contract.test.ts',
+    // The publish suite reads back the copies, seqs, usage and tombstones a publish wrote.
+    'server/services/apps/__tests__/doc-store-api.publish.test.ts',
     // The tally-operator suite compares the rows the old routes and the PATCH operators write.
     'server/services/apps/__tests__/doc-store-api.tally-operators.test.ts',
     // Seeds report times and counts the rows a moderator delete must remove.
@@ -395,6 +397,9 @@ describe('only the doc-store module touches the appdata tables', () => {
     'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
+    // Reads back the rating columns a publish under content levels left on each copy.
+    'server/services/apps/__tests__/doc-store.publish.levels.pglite.test.ts',
+    'server/services/apps/__tests__/doc-store.publish.pg.test.ts',
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
     'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',

@@ -117,11 +117,16 @@ import type {
   DocStoreContext,
   DocStoreLimits,
   DocStoreUsage,
+  PublishAction,
+  PublishPreviewEntry,
+  PublishResult,
   QuotaCeiling,
+  UnpublishResult,
 } from '~/server/services/apps/doc-store.types';
 import {
   DEFAULT_DOC_STORE_LIMITS,
   DOC_STORE_BOUNDS as B,
+  DOC_STORE_PUBLISH_BOUNDS,
   DocStoreError,
   DocStoreMigrationPendingError,
   isDocStoreError,
@@ -317,6 +322,102 @@ function scopeUid(ctx: DocStoreContext, coll: DocCollection): number {
 function requireShared(coll: DocCollection, what: string): void {
   if (coll.config.visibility !== 'shared') {
     throw invalid(`${what} exist on shared collections only`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Server-side publish: the rules both the route and the store apply
+// ---------------------------------------------------------------------------
+
+/**
+ * The keys of one publish or unpublish: 1 to `DOC_STORE_PUBLISH_BOUNDS.maxKeys`, each a valid
+ * key, none twice. Each refusal is `invalid_request` with a stable `details.reason`. Exported so
+ * the route refuses before it spends any budget; the store runs it again itself.
+ */
+export function assertPublishKeys(keys: unknown): string[] {
+  if (!Array.isArray(keys) || keys.length === 0) {
+    throw invalid('keys must name at least one document', { reason: 'empty_keys' });
+  }
+  if (keys.length > DOC_STORE_PUBLISH_BOUNDS.maxKeys) {
+    throw invalid(`at most ${DOC_STORE_PUBLISH_BOUNDS.maxKeys} keys per call`, {
+      reason: 'too_many_keys',
+      max: DOC_STORE_PUBLISH_BOUNDS.maxKeys,
+    });
+  }
+  const seen = new Set<string>();
+  for (const key of keys) {
+    assertKey(key as string);
+    if (seen.has(key)) throw invalid('a key is named twice', { reason: 'duplicate_key', key });
+    seen.add(key);
+  }
+  return [...seen];
+}
+
+/**
+ * A publish copies from a PRIVATE collection into a SHARED one viewers write (`own`). Anything
+ * else is refused (`invalid_request`, `reason: 'publish_visibility'`, or the shared collection's
+ * own `write_policy`). Exported for the route; the store runs it itself.
+ */
+export function assertPublishPair(from: DocCollection, to: DocCollection): void {
+  assertCollection(from);
+  if (from.config.visibility !== 'private' || to.config.visibility !== 'shared') {
+    throw invalid('publish copies from a private collection into a shared one', {
+      reason: 'publish_visibility',
+    });
+  }
+  assertShareWritable(to);
+}
+
+/**
+ * What a publish does with one key (`PublishAction`). The ONE place this is decided: the route's
+ * pre-read and the store's locked transaction both call it, so what was checked and what is
+ * written cannot be classified apart.
+ */
+export function classifyPublish(
+  viewer: number,
+  source: { hash: string } | undefined,
+  /** The shared row: `author_kind`, `author_uid`, `hidden`, `hash` (`SQL_PUBLISH_TARGETS`). */
+  copy: Record<string, unknown> | undefined
+): PublishAction {
+  if (copy) {
+    const mine = copy.author_kind === 'user' && Number(copy.author_uid) === viewer;
+    // Someone else's copy, hidden or not, is reported the same way: it is not the caller's.
+    if (!mine) return 'not_author';
+    if (copy.hidden === true) return 'hidden';
+  }
+  if (!source) return 'missing';
+  if (!copy) return 'create';
+  return copy.hash === source.hash ? 'unchanged' : 'update';
+}
+
+/** Postgres `deadlock_detected`. */
+const PG_DEADLOCK = '40P01';
+/** How many times a publish or unpublish transaction Postgres aborted as a deadlock is re-run. */
+export const PUBLISH_DEADLOCK_RETRIES = 2;
+
+/**
+ * Run `tx` (a whole transaction) again when Postgres aborted it as a deadlock (40P01), at most
+ * `retries` more times. The aborted attempt rolled back, so a re-run starts from nothing. Out of
+ * retries, the refusal is the store's retryable contention one (`rate_limited`,
+ * `reason: 'contention'`, as for a lock timeout), which the route refunds without a rejection.
+ * Any other error is thrown at once. Exported for its own test.
+ */
+export async function retryOnDeadlock<T>(
+  tx: () => Promise<T>,
+  retries = PUBLISH_DEADLOCK_RETRIES
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await tx();
+    } catch (err) {
+      if ((err as { code?: unknown } | null)?.code !== PG_DEADLOCK) throw err;
+      if (attempt >= retries) {
+        throw new DocStoreError('rate_limited', 'storage is busy; retry', {
+          reason: 'contention',
+          retryAfter: 1,
+        });
+      }
+    }
   }
 }
 
@@ -1115,6 +1216,60 @@ const listMarkedByMe = (name: string, user: string) => `EXISTS (SELECT 1 FROM ap
     WHERE mb.app_id = $1 AND mb.ns = $2 AND mb.coll = d.coll AND mb.key = d.key
       AND mb.name = ${name} AND mb.user_id = ${user})`;
 
+// SERVER-SIDE PUBLISH (`publishCopies`, `unpublishCopies`, `previewPublish`).
+//
+// 🔴 THE OWNER-SCOPE GUARD: a publish reads source documents ONLY from the caller's own private
+// key space, `scope_uid = $4` where $4 is the viewer of the resolved context (never request
+// input), and never from the shared key space (`scope_uid <> 0`). Another user's private document
+// at the same key is not visible to this statement.
+// $1 app, $2 ns, $3 source coll, $4 viewer, $5 keys
+const SQL_PUBLISH_SOURCES = `SELECT d.key, d.data, md5(d.data::text) AS hash
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int AND d.scope_uid <> 0
+    AND d.key = ANY($5::text[]) AND ${VISIBLE}`;
+// The shared documents at those keys, whoever wrote them, hidden ones included (the caller
+// decides). `md5(data::text)` is the content hash: jsonb's text form is canonical, so equal
+// content gives an equal hash. $1 app, $2 ns, $3 target coll, $4 keys
+const SQL_PUBLISH_TARGETS = `SELECT d.key, d.author_uid, d.author_kind, d.size_bytes,
+    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = ANY($4::text[])
+  ORDER BY d.key`;
+// The CALLER'S OWN copies among those keys, locked, in key order. Only the caller's: a publish or
+// unpublish never locks a row another user authored (those are `not_author` from the plain read
+// above), so naming another author's keys cannot hold their documents' locks.
+// $1 app, $2 ns, $3 target coll, $4 keys, $5 viewer
+const SQL_PUBLISH_LOCK_OWN_TARGETS = `SELECT d.key, d.author_uid, d.author_kind, d.size_bytes,
+    d.hidden_at IS NOT NULL AS hidden, md5(d.data::text) AS hash
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = ANY($4::text[])
+    AND d.author_kind = 'user' AND d.author_uid = $5::int
+  ORDER BY d.key
+  FOR UPDATE`;
+// The caller's OWN visible copies in the target collection whose key no longer has a private
+// document in the SOURCE collection. Scoped by the source, not by how the copy got there: a copy
+// published from another private collection has no document in this one, so it is a candidate.
+// $1 app, $2 ns, $3 target coll, $4 source coll, $5 viewer, $6 limit
+const SQL_PUBLISH_PRUNE_CANDIDATES = `SELECT d.key FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
+    AND d.author_kind = 'user' AND d.author_uid = $5::int AND ${VISIBLE}
+    AND NOT EXISTS (SELECT 1 FROM appdata.doc p
+      WHERE p.app_id = $1 AND p.ns = $2 AND p.coll = $4 AND p.scope_uid = $5::int AND p.key = d.key)
+  ORDER BY d.key
+  LIMIT $6::int`;
+// `SQL_CHARGE_APP` for a transaction that changes several documents at once: `last_seq` moves
+// by $7, one seq per changed document, and the caller numbers them `last_seq - $7 + 1 …
+// last_seq`. Same ceilings, same row lock.
+// $1 app, $2 ns, $3 Δbytes, $4 Δdocs, $5 byte limit, $6 doc limit, $7 seqs taken
+const SQL_CHARGE_APP_SEQS = `INSERT INTO appdata.usage_app AS u (app_id, ns, bytes, docs, last_seq)
+  SELECT $1, $2, $3::bigint, $4::int, $7::bigint
+  WHERE ($3::bigint <= 0 OR $3::bigint <= $5::bigint) AND ($4::int <= 0 OR $4::int <= $6::int)
+  ON CONFLICT (app_id, ns) DO UPDATE
+  SET bytes = u.bytes + EXCLUDED.bytes, docs = u.docs + EXCLUDED.docs, last_seq = u.last_seq + $7::bigint
+  WHERE (EXCLUDED.bytes <= 0 OR u.bytes + EXCLUDED.bytes <= $5::bigint)
+    AND (EXCLUDED.docs <= 0 OR u.docs + EXCLUDED.docs <= $6::int)
+  RETURNING u.last_seq`;
+
 // ---------------------------------------------------------------------------
 // Row mapping
 // ---------------------------------------------------------------------------
@@ -1713,22 +1868,24 @@ function buildDocStore(deps: DocStoreDeps) {
     preResolvedCeilings.set(ctx, resolved);
   }
 
-  /** Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`. */
+  /**
+   * Charge one write: `usage_app` (which also yields the seq), then the caller's `usage_user`.
+   * `seqs` > 1 charges a transaction that changed that many documents (a publish): the returned
+   * seq is the LAST of `seqs` consecutive ones.
+   */
   async function charge(
     c: DocStoreClient,
     ctx: DocStoreContext,
     app: UsageDelta,
-    user: UserCharge
+    user: UserCharge,
+    seqs = 1
   ): Promise<number> {
     await deps.hooks?.beforeUsageCharge?.();
-    const appRes = await c.query(SQL_CHARGE_APP, [
-      ctx.appId,
-      ctx.ns,
-      app.bytes,
-      app.docs,
-      limits.appBytes,
-      limits.appDocs,
-    ]);
+    const appArgs = [ctx.appId, ctx.ns, app.bytes, app.docs, limits.appBytes, limits.appDocs];
+    const appRes =
+      seqs === 1
+        ? await c.query(SQL_CHARGE_APP, appArgs)
+        : await c.query(SQL_CHARGE_APP_SEQS, [...appArgs, seqs]);
     if (appRes.rows.length === 0) {
       throw new DocStoreError('quota_exceeded', 'app storage quota exceeded', { ceiling: 'app' });
     }
@@ -2804,6 +2961,387 @@ function buildDocStore(deps: DocStoreDeps) {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // Server-side publish
+  // -------------------------------------------------------------------------
+
+  type PublishTargetRow = Record<string, unknown> & { key: string; hash: string };
+  type PublishSourceRow = { key: string; data: Record<string, unknown>; hash: string };
+
+  /**
+   * The shared rows at `keys` in `to`, by key: every author's from a plain read, and with `lock`
+   * the caller's own re-read under `FOR UPDATE` (`SQL_PUBLISH_LOCK_OWN_TARGETS`), so their entries
+   * are the locked rows (and an own row deleted in between is gone). Another author's row is never
+   * locked.
+   */
+  async function readPublishTargets(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    to: DocCollection,
+    viewer: number,
+    keys: string[],
+    lock: boolean
+  ): Promise<Map<string, PublishTargetRow>> {
+    const targets = new Map<string, PublishTargetRow>();
+    const rows = (await c.query(SQL_PUBLISH_TARGETS, [ctx.appId, ctx.ns, to.name, keys])).rows;
+    for (const r of rows) targets.set(r.key as string, r as PublishTargetRow);
+    if (!lock) return targets;
+    const own = (
+      await c.query(SQL_PUBLISH_LOCK_OWN_TARGETS, [ctx.appId, ctx.ns, to.name, keys, viewer])
+    ).rows;
+    const locked = new Map(own.map((r) => [r.key as string, r as PublishTargetRow]));
+    for (const [key, row] of [...targets]) {
+      const mine = row.author_kind === 'user' && Number(row.author_uid) === viewer;
+      if (mine && !locked.has(key)) targets.delete(key);
+    }
+    for (const [key, row] of locked) targets.set(key, row);
+    return targets;
+  }
+
+  async function readPublishRows(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    from: DocCollection,
+    to: DocCollection,
+    viewer: number,
+    keys: string[],
+    lock: boolean
+  ) {
+    const targets = await readPublishTargets(c, ctx, to, viewer, keys, lock);
+    const sources = new Map<string, PublishSourceRow>();
+    const sourceRows = (
+      await c.query(SQL_PUBLISH_SOURCES, [ctx.appId, ctx.ns, from.name, viewer, keys])
+    ).rows;
+    for (const r of sourceRows) sources.set(r.key as string, r as PublishSourceRow);
+    return { targets, sources };
+  }
+
+  /**
+   * What a publish of `keys` from the caller's private `from` into the shared `to` would do now,
+   * key by key in key order, with the private body of every key it would write. The route reads
+   * this to validate and moderate exactly those bodies before `publishCopies`, which re-reads
+   * them under lock and refuses (`source_changed`) any that changed in between.
+   */
+  async function previewPublish(
+    ctx: DocStoreContext,
+    from: DocCollection,
+    to: DocCollection,
+    keys: string[]
+  ): Promise<PublishPreviewEntry[]> {
+    assertPublishPair(from, to);
+    const viewer = requireViewer(ctx);
+    const unique = assertPublishKeys(keys).sort();
+    const { targets, sources } = await withTx(ctx, (c) =>
+      readPublishRows(c, ctx, from, to, viewer, unique, false)
+    );
+    return unique.map((key) => {
+      const source = sources.get(key);
+      const action = classifyPublish(viewer, source, targets.get(key));
+      return action === 'create' || action === 'update'
+        ? { key, action, source: { data: source!.data, hash: source!.hash } }
+        : { key, action };
+    });
+  }
+
+  /**
+   * Copy the caller's private documents at `keys` from `from` into the shared `to`, authored by
+   * the caller, in ONE transaction: every copy lands or none does.
+   *
+   * - Only the caller's own private documents are read (`SQL_PUBLISH_SOURCES`); a key with none is
+   *   skipped as `missing`. A copy someone else authored is skipped as `not_author`, one a
+   *   moderator hid as `hidden`; neither is touched.
+   * - A copy whose content hash equals its source's is `unchanged`: no write, no seq.
+   * - Every copy written must have the content hash the caller checked (`checked`, from
+   *   `previewPublish`); a source that changed since is refused whole as `version_conflict` with
+   *   `reason: 'source_changed'`, and a key the preview did not plan to write (its copy changed:
+   *   another author's copy deleted, the caller's own changed) with `reason: 'target_changed'`, so
+   *   nothing unchecked is ever written.
+   * - Content levels on (`ctx.levels`): every copy it creates or updates is marked pending
+   *   (`markRatingPending`), exactly as a shared put is, so it is hidden from other viewers until
+   *   it is rated again; an unchanged copy keeps its rating.
+   * - `prune`: the caller's own visible copies in `to` whose key has no private document in
+   *   `from` are deleted, at most `limit` per call — including copies the caller published from
+   *   ANOTHER private collection, which have no document in `from`.
+   * - The usage of every change is charged at once (`charge` with one seq per changed document),
+   *   so the per-user and app ceilings refuse the whole publish or none of it.
+   *
+   * LOCKS: only the caller's OWN copies (at `keys` and the prune candidates), in key order, then
+   * any own row a concurrent publish created, in key order, then `usage_app`, then `usage_user`.
+   * Another author's row is read, never locked. That is NOT deadlock-free: two publishes of
+   * overlapping keys can still take two lock orders (one inserts a key the other then waits on,
+   * when a write commits that key between their lock reads), and Postgres aborts one with
+   * 40P01. The whole transaction is then retried (`retryOnDeadlock`, at most
+   * `PUBLISH_DEADLOCK_RETRIES` times); the caller's publish budget is reserved once, outside it.
+   */
+  async function publishCopies(
+    ctx: DocStoreContext,
+    from: DocCollection,
+    to: DocCollection,
+    req: {
+      keys: string[];
+      checked: ReadonlyMap<string, string>;
+      prune?: { limit: number };
+    }
+  ): Promise<PublishResult> {
+    assertPublishPair(from, to);
+    const viewer = requireViewer(ctx);
+    const keys = assertPublishKeys(req.keys).sort();
+    const prune = req.prune;
+    if (prune) {
+      if (!Number.isSafeInteger(prune.limit) || prune.limit < 1) {
+        throw invalid('prune limit must be a positive integer');
+      }
+    }
+    await resolveCeilings(ctx, [viewer]);
+
+    return retryOnDeadlock(() =>
+      withTx(ctx, async (c) => {
+        const result: PublishResult = {
+          created: [],
+          updated: [],
+          unchanged: [],
+          pruned: [],
+          skipped: [],
+          pruneIncomplete: false,
+        };
+        let candidates: string[] = [];
+        if (prune) {
+          candidates = (
+            await c.query(SQL_PUBLISH_PRUNE_CANDIDATES, [
+              ctx.appId,
+              ctx.ns,
+              to.name,
+              from.name,
+              viewer,
+              prune.limit + 1,
+            ])
+          ).rows.map((r) => r.key as string);
+          result.pruneIncomplete = candidates.length > prune.limit;
+          candidates = candidates.slice(0, prune.limit);
+        }
+        const lockKeys = [...new Set([...keys, ...candidates])].sort();
+        const { targets, sources } = await readPublishRows(
+          c,
+          ctx,
+          from,
+          to,
+          viewer,
+          lockKeys,
+          true
+        );
+
+        // Prune first, from the LOCKED rows: still the caller's, visible, with no private source.
+        const pruneKeys = candidates.filter((key) => {
+          const copy = targets.get(key);
+          return (
+            copy !== undefined &&
+            !sources.has(key) &&
+            classifyPublish(viewer, undefined, copy) === 'missing'
+          );
+        });
+        const pruneSet = new Set(pruneKeys);
+
+        let bytes = 0;
+        let docs = 0;
+        const written: string[] = [];
+        for (const key of keys) {
+          const source = sources.get(key);
+          let copy: PublishTargetRow | undefined = targets.get(key);
+          let action = classifyPublish(viewer, source, copy);
+          if (action === 'create') {
+            assertChecked(req.checked, key, source!.hash);
+            const json = serializeData(source!.data);
+            validateDocAgainstCollectionSchema(ctx, to, source!.data);
+            const indexRows = indexRowsFor(to, source!.data);
+            const ins = await c.query(SQL_INSERT_DOC, [
+              ctx.appId,
+              ctx.ns,
+              to.name,
+              0,
+              key,
+              json,
+              viewer,
+            ]);
+            if (ins.rows.length > 0) {
+              const size = Number(ins.rows[0].size_bytes);
+              bytes += size;
+              docs += 1;
+              await markRatingPending(c, ctx, to, key);
+              await syncIndex(c, ctx, to, key, indexRows);
+              result.created.push(key);
+              written.push(key);
+              continue;
+            }
+            // A concurrent writer created it after our read: read it (locked if it is ours) and
+            // decide again.
+            copy = (await readPublishTargets(c, ctx, to, viewer, [key], true)).get(key);
+            if (!copy) {
+              throw new DocStoreError('version_conflict', 'concurrent write; retry', {
+                currentVersion: null,
+                reason: 'concurrent_write',
+                key,
+              });
+            }
+            action = classifyPublish(viewer, source, copy);
+          }
+          if (action === 'update') {
+            assertChecked(req.checked, key, source!.hash);
+            const json = serializeData(source!.data);
+            validateDocAgainstCollectionSchema(ctx, to, source!.data);
+            const indexRows = indexRowsFor(to, source!.data);
+            const res = await c.query(SQL_UPDATE_DOC, [
+              ctx.appId,
+              ctx.ns,
+              to.name,
+              0,
+              key,
+              json,
+              viewer,
+            ]);
+            bytes += Number(res.rows[0].size_bytes) - Number(copy!.size_bytes);
+            await markRatingPending(c, ctx, to, key);
+            await syncIndex(c, ctx, to, key, indexRows);
+            result.updated.push(key);
+            written.push(key);
+          } else if (action === 'unchanged') {
+            result.unchanged.push(key);
+          } else if (action === 'create') {
+            // Unreachable: a row the re-lock found is never absent.
+            throw new Error('doc-store: publish re-lock classified a present copy as absent');
+          } else if (!(action === 'missing' && pruneSet.has(key))) {
+            // A requested key the prune below deletes is reported there, not as missing.
+            result.skipped.push({ key, reason: action });
+          }
+        }
+
+        for (const key of pruneKeys) {
+          await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, to.name, 0, key]);
+          await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, to.name, key]);
+          await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, to.name, key]);
+          bytes -= Number(targets.get(key)!.size_bytes);
+          docs -= 1;
+          result.pruned.push(key);
+        }
+
+        const changed = written.length + pruneKeys.length;
+        if (changed === 0) return result;
+        const last = await charge(
+          c,
+          ctx,
+          { bytes, docs },
+          { uid: viewer, bytes, docs, ceiling: 'author' },
+          changed
+        );
+        let seq = last - changed;
+        for (const key of written) {
+          seq += 1;
+          await stampWrittenDoc(c, ctx, to, 0, key, seq, viewer);
+        }
+        for (const key of pruneKeys) {
+          seq += 1;
+          await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, to.name, 0, key, seq]);
+        }
+        return result;
+      })
+    );
+  }
+
+  /**
+   * A body about to be written must be the one the caller checked. No checked hash at all means the
+   * preview did not plan to write this key (`target_changed`: its copy changed since); a different
+   * one means the private document changed (`source_changed`).
+   */
+  function assertChecked(checked: ReadonlyMap<string, string>, key: string, hash: string) {
+    const seen = checked.get(key);
+    if (seen === undefined) {
+      throw new DocStoreError('version_conflict', 'a shared copy changed while publishing', {
+        reason: 'target_changed',
+        key,
+      });
+    }
+    if (seen !== hash) {
+      throw new DocStoreError('version_conflict', 'a private document changed while publishing', {
+        reason: 'source_changed',
+        key,
+      });
+    }
+  }
+
+  async function syncIndex(
+    c: DocStoreClient,
+    ctx: DocStoreContext,
+    coll: DocCollection,
+    key: string,
+    indexRows: IndexRow[]
+  ) {
+    await c.query(SQL_SYNC_INDEX, [
+      ctx.appId,
+      ctx.ns,
+      coll.name,
+      0,
+      key,
+      indexRows.map((r) => r.name),
+      indexRows.map((r) => r.vText),
+      indexRows.map((r) => r.vNum),
+      indexRows.map((r) => r.type),
+    ]);
+  }
+
+  /**
+   * Delete the caller's own shared documents at `keys` in `to`, in ONE transaction. A key with no
+   * visible document is `missing` (a hidden one reads as missing, as `delete` does); one someone
+   * else authored is `not_author` and never touched.
+   */
+  async function unpublishCopies(
+    ctx: DocStoreContext,
+    to: DocCollection,
+    keys: string[]
+  ): Promise<UnpublishResult> {
+    assertCollection(to);
+    requireShared(to, 'unpublish targets');
+    assertShareWritable(to);
+    const viewer = requireViewer(ctx);
+    const sorted = assertPublishKeys(keys).sort();
+    return retryOnDeadlock(() =>
+      withTx(ctx, async (c) => {
+        const targets = await readPublishTargets(c, ctx, to, viewer, sorted, true);
+        const result: UnpublishResult = { deleted: [], skipped: [] };
+        let bytes = 0;
+        for (const key of sorted) {
+          const copy = targets.get(key);
+          if (!copy || copy.hidden === true) {
+            result.skipped.push({ key, reason: 'missing' });
+            continue;
+          }
+          if (!(copy.author_kind === 'user' && Number(copy.author_uid) === viewer)) {
+            result.skipped.push({ key, reason: 'not_author' });
+            continue;
+          }
+          await c.query(SQL_DELETE_DOC, [ctx.appId, ctx.ns, to.name, 0, key]);
+          await c.query(SQL_DELETE_TALLIES, [ctx.appId, ctx.ns, to.name, key]);
+          await c.query(SQL_DELETE_MARKS, [ctx.appId, ctx.ns, to.name, key]);
+          bytes += Number(copy.size_bytes);
+          result.deleted.push(key);
+        }
+        const n = result.deleted.length;
+        if (n === 0) return result;
+        const last = await charge(
+          c,
+          ctx,
+          { bytes: -bytes, docs: -n },
+          { uid: viewer, bytes: -bytes, docs: -n, ceiling: 'author' },
+          n
+        );
+        let seq = last - n;
+        for (const key of result.deleted) {
+          seq += 1;
+          await c.query(SQL_TOMBSTONE, [ctx.appId, ctx.ns, to.name, 0, key, seq]);
+        }
+        return result;
+      })
+    );
+  }
+
   const store = {
     get,
     getMany,
@@ -2818,6 +3356,9 @@ function buildDocStore(deps: DocStoreDeps) {
     limits,
     viewerLimits,
     isUsable,
+    previewPublish,
+    publishCopies,
+    unpublishCopies,
   };
   /**
    * Shared documents of `appId` under `key` in any of `collections`, production namespace only,
