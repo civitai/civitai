@@ -1,5 +1,5 @@
 // Package server is the HTTP surface: the public tRPC path for the one procedure, and the internal
-// shadow-compare endpoints (that procedure, `image.getInfinite`, and the public REST
+// shadow-compare endpoints (that procedure, `image.getInfinite`, `model.getAll`, and the public REST
 // `GET /api/v1/images`).
 package server
 
@@ -22,6 +22,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/safe"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
@@ -34,16 +35,20 @@ const Procedure = "image.getImagesAsPostsInfinite"
 // ProcedureInfinite is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
 const ProcedureInfinite = "image.getInfinite"
 
+// ProcedureModelGetAll is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
+const ProcedureModelGetAll = "model.getAll"
+
 // Endpoint labels: every feed_go_* series carries `feed_endpoint`, one of these, so CPU per call and
 // parity read per endpoint (DESIGN.md §10).
 const (
-	EndpointAsPosts  = "as-posts"  // tRPC image.getImagesAsPostsInfinite
-	EndpointV1Images = "v1-images" // REST GET /api/v1/images
-	EndpointInfinite = "infinite"  // tRPC image.getInfinite (shadow only)
+	EndpointAsPosts     = "as-posts"     // tRPC image.getImagesAsPostsInfinite
+	EndpointV1Images    = "v1-images"    // REST GET /api/v1/images
+	EndpointInfinite    = "infinite"     // tRPC image.getInfinite (shadow only)
+	EndpointModelGetAll = "model-getall" // tRPC model.getAll (shadow only)
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
-var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite}
+var Endpoints = []string{EndpointAsPosts, EndpointV1Images, EndpointInfinite, EndpointModelGetAll}
 
 // V1ImagesPath is the REST route the v1-images shadow describes.
 const V1ImagesPath = "/api/v1/images"
@@ -84,6 +89,8 @@ type Server struct {
 	V1 *feed.V1Deps
 	// Infinite serves the `image.getInfinite` shadow; nil = every such sample falls back.
 	Infinite *feed.InfiniteDeps
+	// Models serves the `model.getAll` shadow; nil = every such sample falls back.
+	Models *modelfeed.Deps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 
@@ -100,6 +107,7 @@ type Server struct {
 	computeFn         func(context.Context, *http.Request) (*computed, error)
 	computeV1Fn       func(context.Context, *http.Request) (*computed, error)
 	computeInfiniteFn func(context.Context, *http.Request) (*computed, error)
+	computeModelsFn   func(context.Context, *http.Request) (*computed, error)
 }
 
 // phaseClock is the start of one shadow phase.
@@ -235,6 +243,51 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 		req.ViewerUsername = user.Username
 	}
 	ans, err := feed.ServeInfinite(ctx, s.Infinite, req)
+	if err != nil {
+		return nil, err
+	}
+	buf, err := superjson.SerializeBuffer(ans.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}, nil
+}
+
+// computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
+// fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
+// procedure (the same middleware runs on both). It is only shadowed here, so no cache header is
+// computed (Node's: `public, s-maxage=60` signed out, none for a session).
+func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*computed, error) {
+	if s.Models == nil {
+		return nil, fallback.New("model-getall-unconfigured")
+	}
+	if r.Method != http.MethodGet {
+		return nil, fallback.New("method")
+	}
+	raw, err := trpc.ParseInput(r)
+	if err != nil {
+		return nil, fallback.Newf("input-envelope", "%v", err)
+	}
+	in, err := modelfeed.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if r.Header.Get(verifiedBotHeader) != "" {
+		return nil, fallback.New("verified-bot")
+	}
+	user, err := s.Resolver.Resolve(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	authorized := user != nil && !user.Banned
+	isModerator := authorized && user.IsModerator
+	color := s.Hosts.ColorOf(r.Host)
+	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
+	req := modelfeed.Request{Input: in, Cap: browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))}
+	if authorized {
+		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
+	}
+	ans, err := modelfeed.Serve(ctx, s.Models, req)
 	if err != nil {
 		return nil, err
 	}
@@ -455,6 +508,11 @@ func (s *Server) ShadowInfiniteHandler(w http.ResponseWriter, r *http.Request) {
 	s.shadowHandler(w, r, EndpointInfinite) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
 }
 
+// ShadowModelGetAllHandler is the internal compare endpoint for the tRPC procedure `model.getAll`.
+func (s *Server) ShadowModelGetAllHandler(w http.ResponseWriter, r *http.Request) {
+	s.shadowHandler(w, r, EndpointModelGetAll) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
+}
+
 // ShadowV1Handler is the internal compare endpoint for REST `GET /api/v1/images`.
 func (s *Server) ShadowV1Handler(w http.ResponseWriter, r *http.Request) {
 	s.shadowHandler(w, r, EndpointV1Images) //nolint:contextcheck // the sample is compared after the 202 is written, on the server's background context: it must outlive the request
@@ -540,6 +598,11 @@ func SyntheticInfiniteRequest(ctx context.Context, req ShadowRequest) (*http.Req
 	return syntheticTRPCRequest(ctx, req, ProcedureInfinite)
 }
 
+// SyntheticModelGetAllRequest rebuilds the `model.getAll` request a model-getall sample describes.
+func SyntheticModelGetAllRequest(ctx context.Context, req ShadowRequest) (*http.Request, error) {
+	return syntheticTRPCRequest(ctx, req, ProcedureModelGetAll)
+}
+
 func syntheticTRPCRequest(ctx context.Context, req ShadowRequest, procedure string) (*http.Request, error) {
 	u := &url.URL{Path: "/api/trpc/" + procedure, RawQuery: url.Values{"input": {req.Input}}.Encode()}
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -596,6 +659,13 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 		classify = shadow.ClassifyFlat
 		if s.computeInfiniteFn != nil {
 			computeFn = s.computeInfiniteFn
+		}
+	case EndpointModelGetAll:
+		// The superjson envelope, as for the gallery; classified by model id (a flat page).
+		build, computeFn = SyntheticModelGetAllRequest, s.computeModelGetAll
+		classify = shadow.ClassifyFlat
+		if s.computeModelsFn != nil {
+			computeFn = s.computeModelsFn
 		}
 	}
 	r, err := build(ctx, req)

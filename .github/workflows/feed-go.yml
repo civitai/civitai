@@ -1,7 +1,7 @@
 name: feed-go
 
 # apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`, and in
-# shadow only of `image.getInfinite` and `GET /api/v1/images`; see apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
+# shadow only of `image.getInfinite`, `model.getAll` and `GET /api/v1/images`; see apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
 # This workflow is its only gate: gofmt, vet, the unit tests with coverage floors, the integration
 # tests and a build of the binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
@@ -181,13 +181,15 @@ jobs:
           failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' integration.json | wc -l)
           hydrate=$(jq -r "$top | select(.Package|endswith(\"/internal/hydrate\")) | .Test" integration.json | wc -l)
           feed=$(jq -r "$top | select(.Package|endswith(\"/internal/feed\")) | .Test" integration.json | wc -l)
+          models=$(jq -r "$top | select(.Package|endswith(\"/internal/modelfeed\")) | .Test" integration.json | wc -l)
           passed=$(jq -r "$top | .Test" integration.json | wc -l)
-          echo "passed integration tests: $passed (hydrate $hydrate, feed $feed), failed: $failed"
+          echo "passed integration tests: $passed (hydrate $hydrate, feed $feed, modelfeed $models), failed: $failed"
           # Positive control: below these floors (the TestIntegration* functions per package) the tests
           # stopped being discovered — a wrong tag or -run filter runs zero tests and exits 0.
           [ "$failed" -eq 0 ]
           [ "$hydrate" -ge 18 ]
           [ "$feed" -ge 12 ]
+          [ "$models" -ge 5 ]
 
       - name: go build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go
@@ -304,6 +306,7 @@ jobs:
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
         internal/hydrate:FuzzUnpack:230000
+        internal/modelfeed:FuzzParse:210000
         internal/shadow:FuzzCompare:420000
         internal/shadow:FuzzCompareJSON:620000
         internal/superjson:FuzzAppendString:570000

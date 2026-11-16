@@ -17,6 +17,7 @@ internal/feed 76
 internal/feedsvc 92
 internal/hydrate 86
 internal/jspack 88
+internal/modelfeed 92
 internal/safe 100
 internal/server 93
 internal/shadow 95
