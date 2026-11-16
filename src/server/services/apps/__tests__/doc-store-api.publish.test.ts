@@ -43,6 +43,8 @@ const h = vi.hoisted(() => ({
   /** Run once, inside the next data scan (between the route's pre-read and its transaction). */
   onScan: null as null | (() => Promise<void>),
   scans: 0,
+  /** Every shared-data moderation flag evaluation, by flag. */
+  modeFlagLookups: [] as string[],
 }));
 
 const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
@@ -51,6 +53,7 @@ const PUBLISH_FLAG = 'app-blocks-storage-publish';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   const isFlipt = async (flag: string, entityId?: string, context?: unknown) => {
+    if (flag === SHADOW_FLAG || flag === ENFORCE_FLAG) h.modeFlagLookups.push(flag);
     if (flag === SHADOW_FLAG) return h.moderationMode === 'shadow';
     if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
     if (flag === PUBLISH_FLAG) {
@@ -410,6 +413,7 @@ beforeEach(() => {
   h.publishFlagEntities = [];
   h.onScan = null;
   h.scans = 0;
+  h.modeFlagLookups = [];
   cardSync.calls = [];
   h.users.clear();
   h.users.set(V1, user(V1, true));
@@ -763,6 +767,19 @@ describe('publish', () => {
       details: { category: 'blocked', key: 'm2' },
     });
     expect(await sharedRows(A)).toEqual([]);
+  });
+
+  it('resolves the moderation mode once per publish, not once per document', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    for (const k of ['o1', 'o2', 'o3']) await expectOk(putPrivate(t, k, { k }));
+    h.modeFlagLookups = [];
+    h.scans = 0;
+    const r = await expectOk(publish(t, { from: 'drafts', keys: ['o1', 'o2', 'o3'] }));
+    expect((r.body as { created: string[] }).created).toEqual(['o1', 'o2', 'o3']);
+    // Every document is still scanned; the two mode flags are each evaluated once.
+    expect(h.scans).toBe(3);
+    expect([...h.modeFlagLookups].sort()).toEqual([ENFORCE_FLAG, SHADOW_FLAG]);
   });
 
   it('in shadow moderation the same batch lands (scanned after the write)', async () => {
