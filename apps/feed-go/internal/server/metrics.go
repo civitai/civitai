@@ -3,6 +3,7 @@ package server
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
@@ -47,8 +48,9 @@ type Metrics struct {
 
 	// Panics counts recovered panics by where (serve | shadow | probe). Not per endpoint.
 	Panics *prometheus.CounterVec
-	// RevocationFailOpen counts session revocation reads that failed and allowed the request.
-	RevocationFailOpen prometheus.Counter
+	// RevocationDegraded counts session revocation reads that failed, by the verdict then given from the
+	// markers already read (verdict: deny_cached | allow_unknown).
+	RevocationDegraded *prometheus.CounterVec
 	// JWKSRefresh counts periodic JWKS refreshes by result (ok | error).
 	JWKSRefresh *prometheus.CounterVec
 	// JWKSStale counts the times the key set was dropped for being older than its maximum staleness.
@@ -149,10 +151,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_panics_total",
 			Help: "Recovered panics, by where they were caught (serve: a public request, answered by the fallback; shadow: a shadow sample, dropped; probe: a Go-first probe, counted as error).",
 		}, []string{"where"}),
-		RevocationFailOpen: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "feed_go_revocation_fail_open_total",
-			Help: "Session revocation reads that failed (store slow or down) and let the session through, as the app does.",
-		}),
+		RevocationDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_revocation_degraded_total",
+			Help: "Session revocation reads that failed (store slow or down), by verdict: deny_cached (a revocation marker this process had already read applied; signed out) or allow_unknown (no known marker applied; the session was allowed), as the app's session_revocation_degraded_total.",
+		}, []string{"verdict"}),
 		JWKSRefresh: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_jwks_refresh_total",
 			Help: "Periodic JWKS refreshes by result (ok|error); an error keeps the last good key set.",
@@ -196,6 +198,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, r := range []string{"upstream", "canceled"} {
 		m.FallbackProxyErrors.WithLabelValues(r)
 	}
+	for _, v := range []string{auth.VerdictDenyCached, auth.VerdictAllowUnknown} {
+		m.RevocationDegraded.WithLabelValues(v)
+	}
 	for _, c := range hydrate.MissCaches {
 		for _, r := range []string{"computed", "error"} {
 			m.CacheMisses.WithLabelValues(c, r)
@@ -204,6 +209,6 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
-		m.Panics, m.RevocationFailOpen, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses)
+		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses)
 	return m
 }

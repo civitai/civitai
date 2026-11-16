@@ -57,6 +57,10 @@ type Config struct {
 	// listener only (never the public one).
 	Pprof bool
 
+	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
+	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
+	RevocationMarkerCache bool
+
 	// System redis through its Sentinels (internal/sysredis). Same names and precedence as the
 	// Node app: a non-empty REDIS_SYS_SENTINELS selects Sentinel mode, else REDIS_SYS_URL is used.
 	RedisSysSentinels        string // REDIS_SYS_SENTINELS: comma-separated host[:port]
@@ -141,6 +145,7 @@ func Load() (*Config, error) {
 	}
 	ms := intEnv("REDIS_SYS_READ_TIMEOUT_MS", 1000)
 	c.SysReadTimeout = time.Duration(ms) * time.Millisecond
+	c.RevocationMarkerCache = envSwitchOn(os.Getenv("SESSION_REVOCATION_CACHE"))
 	c.Hosts = browsing.HostColors{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
@@ -281,6 +286,16 @@ func boolEnv(k string, def bool) bool {
 		return false
 	}
 	return def
+}
+
+// envSwitchOn is isEnvSwitchOn (packages/civitai-shared/src/env-switch.ts): a default-ON switch that only
+// `off`, `0` or `false` (any case, surrounding whitespace ignored) turns off, so a typo never disables it.
+func envSwitchOn(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "0", "false":
+		return false
+	}
+	return true
 }
 
 func intEnv(k string, def int) int {

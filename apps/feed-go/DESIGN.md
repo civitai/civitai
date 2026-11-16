@@ -274,10 +274,27 @@ the authenticated viewer or for nobody.
   impersonation end time, the 90-day lineage limit. Any failure is **signed out**, never an error
   and never a guess. No header or body field can name a user.
 - Revocation is the same registry read as the main app (`session:token-state`, `session:family-state`,
-  `session:all`, `session:user-cut:*`), one pipelined round trip, failing **open** on a slow store,
-  exactly as the app does (a revoked token can be honoured for the length of a store outage on both).
-  Every fail-open is counted (`feed_go_revocation_fail_open_total`); the warning is logged at most once
-  per 10 s, with the number suppressed since the previous line.
+  `session:all`, `session:user-cut:*`), one pipelined round trip bounded by `REDIS_SYS_READ_TIMEOUT_MS`
+  (default 1000 ms). When that read fails (an error or the deadline) the verdict is the app's
+  `createRevocationCheck` one (`packages/civitai-auth/src/revocation-check.ts`): it comes from a
+  per-process record of the revocation markers this service has already read
+  (`internal/auth/markers.go`, a port of `revocation-marker-cache.ts`). A marker seen here still denies
+  (`deny_cached`, signed out); a session with no known marker is allowed (`allow_unknown`), because the
+  record is not a replica and signing everyone out during a store outage is not the policy. The record
+  keeps a token/family state only when it is `invalid` and a cut-off whenever it has a value, deletes an
+  entry when a later read finds it gone, records nothing from a failed command (but does record the
+  commands that answered in a round trip where another failed), and is bounded at 20 000 entries, least
+  recently used evicted first, with no time-based expiry (`REVOCATION_MARKER_CACHE_MAX_ENTRIES`; a held
+  marker only revokes tokens signed before it, so keeping it longer cannot deny a session the store would
+  allow). `SESSION_REVOCATION_CACHE=off|0|false` turns the record off (plain fail-open), as in the app.
+  Each failed read is counted by verdict (`feed_go_revocation_degraded_total{verdict}`, the app's
+  `session_revocation_degraded_total`); the warning is logged at most once per 10 s, with the number
+  suppressed since the previous line.
+  *How this differs from Node:* the app can also put the read behind its own read breaker
+  (`REDIS_SYS_READ_BREAKER_ENABLED`, default off), which refuses the read without waiting once tripped.
+  That is not ported: an open breaker gives the same verdict as a failed read (from the record), so it
+  changes how long a failed read takes, not what it answers. Each process holds its own record, here as in
+  the app, so feed-go and a Node pod can differ on a revocation only one of them has read.
 - The JWKS is refetched every `FEED_GO_JWKS_REFRESH_MS` (default 10 min, ±10% jitter), as well as on
   an unknown `kid`, so a signing key the hub removed stops verifying without a restart. A failed
   refresh — an error status, an undecodable body, or a set with no usable ES256 key — keeps the last
