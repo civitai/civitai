@@ -170,6 +170,21 @@ describe('a timed comment’s time in the list', () => {
         const ratio = (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
         expect(ratio).toBeGreaterThanOrEqual(4.5);
       });
+
+    // A highlighted comment tints the card behind the chip; an opaque chip keeps its own contrast.
+    for (const scheme of ['light', 'dark'] as const)
+      test(`whatever is behind it, in ${scheme} mode`, async () => {
+        await renderChip();
+        document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+        const chip = page.getByRole('button', { name: 'Play from 0:42' }).element();
+        const style = getComputedStyle(chip);
+        const [, , , alpha = 1] = rgb(style.backgroundColor);
+        expect(alpha).toBe(1);
+        const text = lum(rgb(style.color));
+        const background = lum(rgb(style.backgroundColor));
+        const ratio = (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+        expect(ratio).toBeGreaterThanOrEqual(4.5);
+      });
   });
 
   test('is not shown outside a song’s comments', async () => {
