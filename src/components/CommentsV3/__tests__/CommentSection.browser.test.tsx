@@ -299,6 +299,32 @@ describe('CommentSection', () => {
     expect(api.calls.some((c) => c.startsWith('getThread'))).toBe(false);
   });
 
+  // The music player opens a song's detail with the comment to mark passed in, often before the
+  // section has loaded, and sometimes on a section already open.
+  test('a passed-in highlight marks its comment once a slow first page arrives', async () => {
+    const page1 = api.section();
+    let answer: () => void = () => undefined;
+    const arrived = new Promise<void>((resolve) => (answer = resolve));
+    api.section = (() => arrived.then(() => page1)) as unknown as typeof api.section;
+    renderWithProviders(<CommentSection entityType="article" entityId={10} highlight={11} />);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    answer();
+    await expect.element(page.getByText('comment 11')).toBeVisible();
+    await expect
+      .poll(() => document.getElementById('comment-11')!.className)
+      .toMatch(/highlightedComment/);
+  });
+
+  test('a highlight passed to a section already open marks its comment', async () => {
+    const screen = await renderWithProviders(<CommentSection entityType="article" entityId={10} />);
+    await expect.element(page.getByText('comment 11')).toBeVisible();
+    expect(document.getElementById('comment-11')!.className).not.toMatch(/highlightedComment/);
+    await screen.rerender(<CommentSection entityType="article" entityId={10} highlight={11} />);
+    await expect
+      .poll(() => document.getElementById('comment-11')?.className)
+      .toMatch(/highlightedComment/);
+  });
+
   test('a highlight beyond the first page opens that comment’s thread', async () => {
     router.query = { highlight: '3' };
     api.thread = ({ commentId }) =>
