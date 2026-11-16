@@ -226,7 +226,6 @@ describe('bounty write responses', () => {
     expect(asMod).toEqual({ id: 9, name: 'B', details });
   });
 
-  // Its edit form was filled from a capped read, so the save must keep what that read dropped.
   it.each([
     ['a capped editor', { canViewNsfw: false }, true],
     ['an uncapped editor', { canViewNsfw: true }, false],
