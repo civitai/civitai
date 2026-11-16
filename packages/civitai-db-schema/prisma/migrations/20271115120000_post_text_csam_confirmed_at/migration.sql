@@ -149,6 +149,38 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE SET search_path = public, pg_temp;
 
+-- 4b. The moderator's note is also copied into the label store as the label's reasonNote, which
+-- `label_store.exclude` keeps. Clears it on one subject's csam text-hold labels and nothing else. Its
+-- EXECUTE goes to the app role the way `label_store.exclude`'s does (ask an infra owner); until then the
+-- purge raises and the text stays.
+CREATE OR REPLACE FUNCTION label_store.drop_label_notes(
+  p_subject_type TEXT, p_subject_id TEXT, p_family TEXT
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = label_store, pg_temp
+AS $$
+DECLARE
+  v_n INTEGER;
+BEGIN
+  IF p_family IS DISTINCT FROM 'csam_text_hold' THEN
+    RAISE EXCEPTION 'label_store.drop_label_notes: family % is not allowed', p_family;
+  END IF;
+  UPDATE label_store.label l
+  SET "reasonNote" = NULL
+  FROM label_store.subject s
+  WHERE s."id" = l."subjectId"
+    AND s."subjectType" = p_subject_type AND s."subjectId" = p_subject_id
+    AND l."family" = p_family
+    AND l."reasonNote" IS NOT NULL;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION label_store.drop_label_notes(TEXT, TEXT, TEXT) FROM PUBLIC;
+
 -- 5. The delete trigger: refuses a held text as before; a confirmed "none" text past its year takes its
 -- hold copy and label-store snapshot with it, in the same statement.
 CREATE OR REPLACE FUNCTION post_text_keep_held() RETURNS trigger AS $$
@@ -191,6 +223,7 @@ BEGIN
     IF to_regprocedure('label_store.exclude(text,text,text)') IS NOT NULL THEN
       PERFORM label_store.exclude('post_text_text', OLD."id"::text, 'retention');
     END IF;
+    PERFORM label_store.drop_label_notes('post_text_text', OLD."id"::text, 'csam_text_hold');
   END IF;
   RETURN OLD;
 END;

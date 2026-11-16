@@ -38,7 +38,11 @@ CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL,
 CREATE TABLE "Appeal" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL, "status" TEXT NOT NULL);
 CREATE SCHEMA label_store;
 CREATE TABLE label_store.subject (
-  "subjectType" TEXT, "subjectId" TEXT, "snapshot" JSONB, "excludedReason" TEXT
+  "id" SERIAL PRIMARY KEY, "subjectType" TEXT, "subjectId" TEXT, "snapshot" JSONB, "excludedReason" TEXT
+);
+CREATE TABLE label_store.label (
+  "id" SERIAL PRIMARY KEY, "subjectId" INTEGER NOT NULL REFERENCES label_store.subject ("id") ON DELETE CASCADE,
+  "family" TEXT NOT NULL, "reasonNote" TEXT
 );
 CREATE FUNCTION label_store.exclude(p_type TEXT, p_id TEXT, p_reason TEXT) RETURNS INTEGER AS $$
   UPDATE label_store.subject SET "snapshot" = NULL, "excludedReason" = p_reason
@@ -78,7 +82,8 @@ async function confirmed({
     [textId, meta]
   );
   await pg.query(
-    `INSERT INTO label_store.subject VALUES ('post_text_text', $1, '{"text":"held words"}', NULL)`,
+    `INSERT INTO label_store.subject ("subjectType", "subjectId", "snapshot")
+     VALUES ('post_text_text', $1, '{"text":"held words"}')`,
     [String(textId)]
   );
   return { textId, holdId: hold.rows[0].id };
@@ -130,7 +135,8 @@ beforeEach(async () => {
     })) as never);
   await pg.exec(`
     DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"; DELETE FROM "EvidenceHold";
-    DELETE FROM "Appeal"; DELETE FROM "TextScanHold"; DELETE FROM label_store.subject;
+    DELETE FROM "Appeal"; DELETE FROM "TextScanHold"; DELETE FROM label_store.label;
+    DELETE FROM label_store.subject;
     UPDATE "PostText" SET "csamHeld" = false;
     DELETE FROM "PostText"; DELETE FROM "Post";
     INSERT INTO "Post" ("id", "userId") VALUES (1, ${AUTHOR}), (2, ${AUTHOR});
@@ -361,6 +367,33 @@ describe('the delete trigger on a confirmed "none" text', () => {
       supersededBy: holdId,
       decisionNotePurged: true,
     });
+  });
+
+  it("clears the moderator's note on the text's csam hold labels, and only those", async () => {
+    const { textId } = await confirmed({ confirmedDaysAgo: 366 });
+    await pg.query(
+      `INSERT INTO label_store.label ("subjectId", "family", "reasonNote")
+       SELECT s."id", f.family, f.note FROM label_store.subject s,
+         (VALUES ('csam_text_hold', 'note: held words'), ('other_family', 'kept note')) f(family, note)
+       WHERE s."subjectId" = $1`,
+      [String(textId)]
+    );
+
+    await deleteText(textId);
+
+    const { rows } = await pg.query<{ family: string; reasonNote: string | null }>(
+      `SELECT l."family", l."reasonNote" FROM label_store.label l ORDER BY l."family"`
+    );
+    expect(rows).toEqual([
+      { family: 'csam_text_hold', reasonNote: null },
+      { family: 'other_family', reasonNote: 'kept note' },
+    ]);
+  });
+
+  it('refuses to clear notes in any other label family', async () => {
+    await expect(
+      pg.query(`SELECT label_store.drop_label_notes('post_text_text', '1', 'other_family')`)
+    ).rejects.toThrow(/not allowed/);
   });
 
   it('drops nothing inside the year', async () => {
