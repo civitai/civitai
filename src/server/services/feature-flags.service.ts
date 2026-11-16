@@ -1,6 +1,5 @@
 import type { IncomingMessage } from 'http';
 import { buildFliptContext as buildSharedFliptContext } from '@civitai/flipt/context';
-import { RETRACTED_MEDIA_FLIPT_KEY } from '@civitai/shared/retracted-media';
 import type * as FliptClient from '~/server/flipt/client';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
@@ -515,9 +514,10 @@ const featureFlags = createFeatureFlags({
   newsroom: ['public'],
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
-  // Kill switch for the retracted-media routes. On for moderators at deploy: an absent Flipt key
-  // falls through to ['mod']. Create `mod-retracted-media` in Flipt, disabled, to turn it off.
-  modRetractedMedia: { availability: ['mod'], fliptKey: RETRACTED_MEDIA_FLIPT_KEY },
+  // Kill switch for the main app's retracted-media route and the UI that loads from it. On for
+  // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
+  // `mod-retracted-media` in Flipt, disabled, to turn it off.
+  modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {

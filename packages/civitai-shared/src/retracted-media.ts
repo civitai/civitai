@@ -1,12 +1,8 @@
 /**
- * Blocked images served to moderators from storage, for when the public CDN no longer serves them,
- * by the main app's `/api/mod/retracted-media`. In a shared package so a moderator-app route runs the
- * same rules. Constants only, so the feature-flag list can read the key without pulling in the SQL;
- * the rules are in `retracted-media-tier`.
+ * Blocked images served to moderators from storage, for when the public CDN does not serve them, by
+ * the main app's `/api/mod/retracted-media` and the moderator app's `/api/retracted-media`. Constants
+ * only, so a client-reachable import never pulls in the SQL; the rules are in `retracted-media-tier`.
  */
-
-/** The flag the route reads; off, it answers 403. */
-export const RETRACTED_MEDIA_FLIPT_KEY = 'mod-retracted-media';
 
 /** The mod-activity name recorded for every response that carries bytes, ranges included. */
 export const RETRACTED_SERVED_ACTIVITY = 'retractedMedia:view';
