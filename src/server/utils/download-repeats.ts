@@ -27,7 +27,6 @@ const REPEAT_COUNT_DEADLINE_MS = 1_000;
 export async function countsTowardDownloadLimit(userKey: string, fileId: number) {
   const key = `${REDIS_KEYS.DOWNLOAD.REPEATS}:${userKey}:${fileId}` as const;
   try {
-    // Through the cluster cache guard: its deadline, breaker, fail-open counter and log.
     const results = await clusterCacheGuard.call(
       'countsTowardDownloadLimit',
       () => {
