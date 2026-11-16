@@ -379,8 +379,8 @@ func classifyOrder(g, n []string) string {
 	return "membership"
 }
 
-// flatItemIDs returns the `json.items[].id` sequence of a superjson envelope whose items are images
-// (image.getInfinite's flat page), not posts.
+// flatItemIDs returns the `json.items[].id` sequence of a superjson envelope whose items are keyed by
+// their own `id` (a flat page: image.getInfinite's images, model.getAll's models), not posts.
 func flatItemIDs(env []byte) ([]string, error) {
 	var e struct {
 		JSON struct {
@@ -399,11 +399,12 @@ func flatItemIDs(env []byte) ([]string, error) {
 	return out, nil
 }
 
-// ClassifyFlat is Classify for a superjson envelope of images (image.getInfinite): its items are
-// keyed by their image `id`, so match, order (same images, different order), membership (different
-// images), fields (same images in the same order, field differences). The report itself is
-// Compare's: the same annotation handling, and categories over the flat shape (`items.*.<field>`,
-// `items.*.user.<field>`, `nextCursor`, `source`), truncated at the same opaque keys.
+// ClassifyFlat is Classify for a superjson envelope of a flat page (image.getInfinite's images,
+// model.getAll's models): its items are keyed by their own `id`, so match, order (same items,
+// different order), membership (different items), fields (same items in the same order, field
+// differences). The report itself is Compare's: the same annotation handling, and categories over the
+// flat shape (`items.*.<field>`, `items.*.user.<field>`, `nextCursor`, `source`), truncated at the same
+// opaque keys.
 func ClassifyFlat(r *Report, goEnv, nodeEnv []byte) string {
 	if r.Match {
 		return "match"

@@ -45,7 +45,12 @@ export const FEED_GO_SHADOW_OUTCOMES = [
 export type FeedGoShadowOutcome = (typeof FEED_GO_SHADOW_OUTCOMES)[number];
 
 /** The mirrored routes, as feed-go labels them (`feed_endpoint` on its feed_go_* series too). */
-export const FEED_GO_SHADOW_ENDPOINTS = ['as-posts', 'v1-images', 'infinite'] as const;
+export const FEED_GO_SHADOW_ENDPOINTS = [
+  'as-posts',
+  'v1-images',
+  'infinite',
+  'model-getall',
+] as const;
 export type FeedGoShadowEndpoint = (typeof FEED_GO_SHADOW_ENDPOINTS)[number];
 
 const NAME = 'civitai_app_feed_go_shadow_samples_total';
@@ -59,7 +64,8 @@ const feedGoShadowCounter = registerInstrumentationMetric(
         'Sampled requests mirrored to the feed-go shadow comparator, by outcome and endpoint ' +
         '(as-posts: image.getImagesAsPostsInfinite, flag feed-go-shadow; v1-images: GET ' +
         '/api/v1/images, flag feed-go-shadow-v1-images; infinite: image.getInfinite, flag ' +
-        'feed-go-shadow-infinite). Only sampled requests are counted ' +
+        'feed-go-shadow-infinite; model-getall: model.getAll, flag feed-go-shadow-model-getall). ' +
+        'Only sampled requests are counted ' +
         '(FEED_GO_SHADOW_URL set, FEED_GO_SHADOW_SAMPLE_RATE > 0).',
       labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],
@@ -127,7 +133,7 @@ const feedGoProbeCounter = registerInstrumentationMetric(
 );
 
 try {
-  for (const endpoint of ['as-posts', 'infinite'] as const) {
+  for (const endpoint of ['as-posts', 'infinite', 'model-getall'] as const) {
     for (const outcome of FEED_GO_PROBE_OUTCOMES) {
       feedGoProbeCounter.inc({ outcome, feed_endpoint: endpoint }, 0);
     }

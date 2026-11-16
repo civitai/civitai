@@ -18,12 +18,14 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
 /**
  * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
  * request, mirror what Node saw and what it answered to that service's internal compare endpoint.
- * Node keeps serving every request. Three routes are mirrored, each behind its own flag:
+ * Node keeps serving every request. Four routes are mirrored, each behind its own flag:
  *
  * - `image.getImagesAsPostsInfinite` (tRPC; flag `feed-go-shadow`): the raw `input` and the
  *   superjson envelope the transformer wrote, captured in an AsyncLocalStorage scope;
  * - `image.getInfinite` (tRPC; flag `feed-go-shadow-infinite`): the same capture, posted to its
  *   own compare path (`feed_endpoint="infinite"`);
+ * - `model.getAll` (tRPC; flag `feed-go-shadow-model-getall`): the same capture, posted to its own
+ *   compare path (`feed_endpoint="model-getall"`);
  * - `GET /api/v1/images` (REST; flag `feed-go-shadow-v1-images`): the raw query string, the path
  *   and the JSON body the handler passed to `res.json`, captured by the handler itself. A request
  *   carrying an API credential is not mirrored (`skipped_credential`): the body can echo it.
@@ -66,10 +68,15 @@ export const FEED_GO_SHADOW_INFINITE_PATH = `/internal/shadow/${FEED_GO_SHADOW_I
 /** The REST route mirrored under its own flag, and feed-go's compare path for it. */
 export const FEED_GO_SHADOW_V1_IMAGES_ROUTE = '/api/v1/images';
 export const FEED_GO_SHADOW_V1_IMAGES_PATH = `/internal/shadow${FEED_GO_SHADOW_V1_IMAGES_ROUTE}`;
+/** The third tRPC procedure mirrored under its own flag, and feed-go's compare path for it. */
+export const FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE = 'model.getAll';
+export const FEED_GO_SHADOW_MODEL_GET_ALL_PATH = `/internal/shadow/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
 /** feed-go's Go-first probe path for the procedure. */
 export const FEED_GO_PROBE_PATH = `/internal/probe/${FEED_GO_SHADOW_PROCEDURE}`;
 /** feed-go's Go-first probe path for `image.getInfinite`. */
 export const FEED_GO_PROBE_INFINITE_PATH = `/internal/probe/${FEED_GO_SHADOW_INFINITE_PROCEDURE}`;
+/** feed-go's Go-first probe path for `model.getAll`. */
+export const FEED_GO_PROBE_MODEL_GET_ALL_PATH = `/internal/probe/${FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE}`;
 
 export const SHADOW_DEFAULT_TIMEOUT_MS = 2_000;
 export const SHADOW_MAX_TIMEOUT_MS = 10_000;
@@ -95,6 +102,8 @@ export type FeedGoShadowConfig = {
   v1ImagesUrl: string | undefined;
   /** Full compare endpoint URL for `image.getInfinite`, or undefined (disabled). */
   infiniteUrl: string | undefined;
+  /** Full compare endpoint URL for `model.getAll`, or undefined (disabled). */
+  modelGetAllUrl: string | undefined;
   rate: number;
   timeoutMs: number;
   maxInFlight: number;
@@ -104,6 +113,8 @@ export type FeedGoShadowConfig = {
   probeUrl: string | undefined;
   /** Full Go-first probe URL for `image.getInfinite`, or undefined (disabled). */
   probeInfiniteUrl: string | undefined;
+  /** Full Go-first probe URL for `model.getAll`, or undefined (disabled). */
+  probeModelGetAllUrl: string | undefined;
   /** The fraction of sampled requests that are also probed (0 = none, 1 = every one). */
   probeRate: number;
 };
@@ -118,8 +129,10 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
   let url: string | undefined;
   let v1ImagesUrl: string | undefined;
   let infiniteUrl: string | undefined;
+  let modelGetAllUrl: string | undefined;
   let probeUrl: string | undefined;
   let probeInfiniteUrl: string | undefined;
+  let probeModelGetAllUrl: string | undefined;
   const base = env.FEED_GO_SHADOW_URL?.trim();
   if (base) {
     try {
@@ -128,23 +141,29 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
         url = new URL(FEED_GO_SHADOW_PATH, parsed).toString();
         v1ImagesUrl = new URL(FEED_GO_SHADOW_V1_IMAGES_PATH, parsed).toString();
         infiniteUrl = new URL(FEED_GO_SHADOW_INFINITE_PATH, parsed).toString();
+        modelGetAllUrl = new URL(FEED_GO_SHADOW_MODEL_GET_ALL_PATH, parsed).toString();
         probeUrl = new URL(FEED_GO_PROBE_PATH, parsed).toString();
         probeInfiniteUrl = new URL(FEED_GO_PROBE_INFINITE_PATH, parsed).toString();
+        probeModelGetAllUrl = new URL(FEED_GO_PROBE_MODEL_GET_ALL_PATH, parsed).toString();
       }
     } catch {
       url = undefined;
       v1ImagesUrl = undefined;
       infiniteUrl = undefined;
+      modelGetAllUrl = undefined;
       probeUrl = undefined;
       probeInfiniteUrl = undefined;
+      probeModelGetAllUrl = undefined;
     }
   }
   return {
     url,
     v1ImagesUrl,
     infiniteUrl,
+    modelGetAllUrl,
     probeUrl,
     probeInfiniteUrl,
+    probeModelGetAllUrl,
     probeRate: envNumber(env.FEED_GO_GOFIRST_PROBE_SAMPLE_RATE, 0, 0, 1),
     rate: envNumber(env.FEED_GO_SHADOW_SAMPLE_RATE, 0, 0, 1),
     timeoutMs: Math.round(
@@ -238,6 +257,8 @@ export type FeedGoShadowDeps = {
   enabledV1Images?: () => boolean;
   /** The `feed-go-shadow-infinite` flag (absent: `image.getInfinite` is never sampled). */
   enabledInfinite?: () => boolean;
+  /** The `feed-go-shadow-model-getall` flag (absent: `model.getAll` is never sampled). */
+  enabledModelGetAll?: () => boolean;
   random?: () => number;
   fetch?: typeof fetch;
   record?: (outcome: FeedGoShadowOutcome, endpoint: FeedGoShadowEndpoint) => void;
@@ -260,6 +281,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const { config, enabled } = deps;
   const enabledV1Images = deps.enabledV1Images ?? (() => false);
   const enabledInfinite = deps.enabledInfinite ?? (() => false);
+  const enabledModelGetAll = deps.enabledModelGetAll ?? (() => false);
   const random = deps.random ?? Math.random;
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const record = deps.record ?? recordFeedGoShadowOutcome;
@@ -296,12 +318,18 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       url: config.infiniteUrl,
       enabled: enabledInfinite,
     },
+    [FEED_GO_SHADOW_MODEL_GET_ALL_PROCEDURE]: {
+      endpoint: 'model-getall',
+      url: config.modelGetAllUrl,
+      enabled: enabledModelGetAll,
+    },
   };
 
   /** The compare URL a sample of this endpoint is posted to. */
   function urlOf(endpoint: FeedGoShadowEndpoint) {
     if (endpoint === 'v1-images') return config.v1ImagesUrl;
     if (endpoint === 'infinite') return config.infiniteUrl;
+    if (endpoint === 'model-getall') return config.modelGetAllUrl;
     return config.url;
   }
 
@@ -313,7 +341,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       if (config.rate <= 0) return undefined;
       if ((req.method ?? '').toUpperCase() !== 'GET') return undefined;
-      // Exactly the mirrored procedures, unbatched (the web client never batches either).
+      // Exactly the mirrored procedures, unbatched (the web client never batches either:
+      // NEVER_BATCH_PROCEDURES in src/utils/trpc.ts).
       const procedure = req.query.trpc;
       if (typeof procedure !== 'string' || req.query.batch !== undefined) return undefined;
       const route = Object.prototype.hasOwnProperty.call(trpcRoutes, procedure)
@@ -417,6 +446,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
           ? config.probeUrl
           : sample.endpoint === 'infinite'
           ? config.probeInfiniteUrl
+          : sample.endpoint === 'model-getall'
+          ? config.probeModelGetAllUrl
           : undefined;
       if (!url || config.probeRate <= 0) return;
       if (!enabledProbe()) return;
@@ -487,7 +518,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     if (inFlight === 0) return;
     try {
       const sample = storage.getStore();
-      // The tRPC samples (as-posts, infinite); a REST sample captures its own body.
+      // The tRPC samples (as-posts, infinite, model-getall); a REST sample captures its own body.
       if (!sample || sample.endpoint === 'v1-images' || sample.captured || sample.done) return;
       sample.captured = wroteDevalue ? { data } : { envelope: written };
     } catch {
@@ -603,6 +634,9 @@ function getInstance(): FeedGoShadow {
     ),
     enabledInfinite: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_INFINITE)
+    ),
+    enabledModelGetAll: createCachedFlagGate(
+      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_SHADOW_MODEL_GET_ALL)
     ),
     enabledProbe: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_GO_GOFIRST_PROBE)

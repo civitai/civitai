@@ -49,13 +49,23 @@ func cacheState(r *testkit.Redis) map[string]string {
 type goldenProbeCase struct {
 	dir, procedure string
 	min            int
+	setup          func(*testing.T, *goldenFixture) *goldenEnv
 	serve          func(*Server, context.Context, *http.Request) (*computed, error)
 	request        func(context.Context, ShadowRequest) (*http.Request, error)
+	// required: the caches the emptied-cache comparison must reach as would_miss.
+	required []string
+	// presence: the probe checks presence itself (a recorder); model.getAll runs its serving path
+	// and reports only the cache its fallback names, so a miss Go answers is not reported.
+	presence bool
 }
 
 var goldenProbeCases = []goldenProbeCase{
-	{"as-posts", Procedure, goldenMinAsPosts, (*Server).compute, SyntheticRequest},
-	{"infinite", ProcedureInfinite, goldenMinInfinite, (*Server).computeInfinite, SyntheticInfiniteRequest},
+	{"as-posts", Procedure, goldenMinAsPosts, goldenSetup, (*Server).compute, SyntheticRequest,
+		[]string{hydrate.CacheTagIDs, hydrate.CacheMetrics, CacheSessionUser, CacheGallerySettings}, true},
+	{"infinite", ProcedureInfinite, goldenMinInfinite, goldenSetup, (*Server).computeInfinite, SyntheticInfiniteRequest,
+		[]string{hydrate.CacheTagIDs, hydrate.CacheMetrics}, true},
+	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
+		[]string{hydrate.CacheUserCosmetics, CacheModelData}, false},
 }
 
 // The registry holds exactly the procedures the golden cases cover (a new registration needs its
@@ -91,17 +101,7 @@ func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture, procedure s
 
 // missReasonCache is the cache a serving fallback reason is a miss on ("" for any other reason): the
 // page caches' Reasons and the pre-hydration ones.
-func missReasonCache(reason string) string {
-	if c := preHydrateMissReasons[reason]; c != "" {
-		return c
-	}
-	for _, c := range hydrate.PageCaches {
-		if c.Reason != "" && c.Reason == reason {
-			return c.Name
-		}
-	}
-	return ""
-}
+func missReasonCache(reason string) string { return fallbackMissCache(reason) }
 
 // The probe over every golden request of each registered procedure, against what serving does with
 // the same request:
@@ -116,10 +116,19 @@ func TestProbeGolden(t *testing.T) {
 
 func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 	seen := map[string]int{}
+	expected := map[string]bool{}
 	for _, path := range goldenFiles(t, gc.dir, gc.min) {
 		fx := goldenLoad(t, path)
+		switch want := fx.Expect.Fallback; {
+		case want == "":
+			expected[ProbeWouldServe] = true
+		case missReasonCache(want) != "":
+			expected[ProbeWouldMiss] = true
+		default:
+			expected[ProbeUnsupported] = true
+		}
 		t.Run(fx.Name, func(t *testing.T) {
-			env := goldenSetup(t, fx)
+			env := gc.setup(t, fx)
 			cache := goldenCache(t, env)
 			before := cacheState(cache)
 			result, missed, err := runGoldenProbe(t, env, fx, gc.procedure)
@@ -141,7 +150,11 @@ func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 					}
 					seen["cold:"+c]++
 				}
-				env.feed.check(t, true)
+				if gc.presence {
+					// The image procedures' pages come from the feed service: the probe asked it
+					// exactly what serving asks.
+					env.feed.check(t, true)
+				}
 			case c != "":
 				if result != ProbeWouldMiss || !slices.Contains(missed, c) {
 					t.Fatalf("Go falls back with %s; probe %s missed %v (err %v), want would_miss on %s", want, result, missed, err, c)
@@ -155,9 +168,14 @@ func probeGoldenDir(t *testing.T, gc goldenProbeCase) {
 			}
 		})
 	}
-	// Positive control: the fixtures reached the outcomes (would_miss is reached by the next test,
-	// which empties the caches Go falls back on), and on as-posts every cold-<cache> fixture.
-	outcomes := []string{ProbeWouldServe, ProbeUnsupported}
+	// Positive control: the probe reached every outcome the fixtures' expectations imply, and on
+	// as-posts every cold-<cache> fixture. (would_miss is also reached by the next test.)
+	outcomes := []string{ProbeWouldServe}
+	for _, r := range []string{ProbeWouldMiss, ProbeUnsupported} {
+		if expected[r] {
+			outcomes = append(outcomes, r)
+		}
+	}
 	if gc.dir == "as-posts" {
 		for _, c := range goldenColdCache {
 			outcomes = append(outcomes, "cold:"+c)
@@ -194,6 +212,16 @@ func goldenKeyCache(key string) string {
 		return CacheSessionUser
 	case "model:gallery-settings":
 		return CacheGallerySettings
+	case hydrate.KeyDataForModel:
+		return CacheModelData
+	case hydrate.KeyModelTags:
+		return CacheModelTags
+	case hydrate.KeyModelFrames:
+		return CacheModelFrames
+	case hydrate.KeyModelEvents:
+		return CacheModelDecorations
+	case hydrate.KeyVersionImages:
+		return CacheVersionImages
 	}
 	for _, c := range hydrate.PageCaches {
 		if c.Key == m[1] {
@@ -237,13 +265,13 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 						cold.Redis[k] = v
 					}
 				}
-				served := goldenSetup(t, &cold)
+				served := gc.setup(t, &cold)
 				r, err := gc.request(context.Background(), ShadowRequest{Input: cold.Request.Input, Headers: served.headers})
 				if err != nil {
 					t.Fatal(err)
 				}
 				_, serveErr := gc.serve(served.server, context.Background(), r)
-				result, missed, probeErr := runGoldenProbe(t, goldenSetup(t, &cold), &cold, gc.procedure)
+				result, missed, probeErr := runGoldenProbe(t, gc.setup(t, &cold), &cold, gc.procedure)
 				reason := fallback.Reason(serveErr)
 				switch {
 				case serveErr == nil:
@@ -275,16 +303,12 @@ func probeAgreesOnEachCacheMiss(t *testing.T, gc goldenProbeCase) {
 	// Go fills itself (else the would_serve arm proves nothing). The golden server computes the
 	// user-cosmetic, frame and event-decoration misses (MissCompute), so those serve; tag ids and
 	// metric hashes still fall back. The infinite fixtures reach the per-image ones.
-	required := []string{hydrate.CacheTagIDs, hydrate.CacheMetrics}
-	if gc.dir == "as-posts" {
-		required = append(required, CacheSessionUser, CacheGallerySettings)
-	}
-	for _, c := range required {
+	for _, c := range gc.required {
 		if missCompared[c] == 0 {
 			t.Errorf("no golden request compared a %s miss (compared: %v)", c, missCompared)
 		}
 	}
-	if serveCompared[hydrate.CacheBasicUsers] == 0 {
+	if gc.presence && serveCompared[hydrate.CacheBasicUsers] == 0 {
 		t.Errorf("no golden request was served with its basic users cold and reported them (the would_serve arm is unexercised): %v", serveCompared)
 	}
 	t.Logf("would_miss compared %v; would_serve compared %v", missCompared, serveCompared)

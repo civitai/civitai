@@ -23,6 +23,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
+	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 )
 
 // ProbePathPrefix is the internal route of the probes: `<prefix><procedure>`.
@@ -62,6 +63,17 @@ const (
 	CacheBlockedTags     = "blocked-tags" // image.getInfinite only
 )
 
+// model.getAll's caches (internal/hydrate/models.go). Every miss on them falls back, so its probe
+// runs the serving path itself and reports the cache its fallback names.
+const (
+	CacheModelData          = "model-data"
+	CacheModelTags          = "model-tags"
+	CacheModelFrames        = "model-frames"
+	CacheModelDecorations   = "model-decorations"
+	CacheVersionImages      = "version-images"
+	CacheCreatorMemberships = "creator-memberships"
+)
+
 var preHydrateMissReasons = map[string]string{
 	"session-cache-miss":     CacheSessionUser,     // the session user is fetched from the auth hub
 	"session-cache-cleared":  CacheSessionUser,     // a cleared entry is refetched the same way
@@ -69,16 +81,42 @@ var preHydrateMissReasons = map[string]string{
 	"gallery-settings-stale": CacheGallerySettings, // a key from before the SFW hold is rebuilt
 	"blocked-tags-miss":      CacheBlockedTags,     // the blocked-tag list is rebuilt from the database
 	"blocked-tags-stale":     CacheBlockedTags,     // a value Node would replace
+	// model.getAll's hydration falls back on each of its cache misses.
+	"model-data-miss":       CacheModelData,
+	"model-tags-miss":       CacheModelTags,
+	"model-frame-miss":      CacheModelFrames,
+	"model-decoration-miss": CacheModelDecorations,
+	"model-images-miss":     CacheVersionImages,
+	"membership-miss":       CacheCreatorMemberships,
+}
+
+// fallbackMissCache is the cache a fallback reason is a miss on: a pre-hydration or model cache, or
+// a page cache whose miss falls back (PageCaches' Reason: model.getAll falls back on a user-cosmetics
+// miss); "" for any other reason.
+func fallbackMissCache(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	if c := preHydrateMissReasons[reason]; c != "" {
+		return c
+	}
+	for _, c := range hydrate.PageCaches {
+		if c.Reason == reason {
+			return c.Name
+		}
+	}
+	return ""
 }
 
 // probeCaches is every `cache` label value, in report order.
 func probeCaches() []string {
-	out := make([]string, 0, 3+len(hydrate.PageCaches))
+	out := make([]string, 0, 9+len(hydrate.PageCaches))
 	out = append(out, CacheSessionUser, CacheGallerySettings, CacheBlockedTags)
 	for _, c := range hydrate.PageCaches {
 		out = append(out, c.Name)
 	}
-	return out
+	return append(out, CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations,
+		CacheVersionImages, CacheCreatorMemberships)
 }
 
 // ProbeRequest is what the Node app posts at the start of a sampled request.
@@ -106,11 +144,13 @@ type probeSpec struct {
 // probes is the registry, by procedure. A ported procedure plugs in with one entry (its endpoint
 // label and its run); ProbeEndpoints lists the labels for seeding.
 // ProbeEndpoints are the feed_endpoint labels the registered probes report under.
-var ProbeEndpoints = []string{EndpointAsPosts, EndpointInfinite}
+var ProbeEndpoints = []string{EndpointAsPosts, EndpointInfinite, EndpointModelGetAll}
 
 var probes = map[string]probeSpec{
 	Procedure:         {endpoint: EndpointAsPosts, run: (*Server).probeAsPosts},
 	ProcedureInfinite: {endpoint: EndpointInfinite, run: (*Server).probeInfinite},
+	// model.getAll: every cache miss falls back, so the serving path itself is the probe.
+	ProcedureModelGetAll: {endpoint: EndpointModelGetAll, run: (*Server).probeModelGetAll},
 }
 
 // probeAsPosts resolves an image.getImagesAsPostsInfinite page exactly as compute does — the same
@@ -144,6 +184,25 @@ func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydra
 	d := *s.Infinite
 	d.Deps = probeDeps(s.Infinite.Deps, rec)
 	_, err = feed.ServeInfinite(ctx, &d, ireq)
+	return err
+}
+
+// probeModelGetAll resolves a model.getAll page by running its serving path (prepareModelGetAll,
+// modelfeed.Serve) over the deployment's own deps. That path writes no cache (its hydration has no
+// write-back and no page-query cache) and falls back on every cache miss, so its fallback reason is
+// the presence answer: the first cache it found cold. It does query the replica as serving does
+// (the page query, the basic users and profile pictures on a miss), and records no raced entries and
+// no DB reads: rec is not consulted.
+func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, _ *hydrate.PresenceProbe) error {
+	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: req.Input, Headers: req.Headers})
+	if err != nil {
+		return err
+	}
+	mreq, err := s.prepareModelGetAll(ctx, r)
+	if err != nil {
+		return err
+	}
+	_, err = modelfeed.Serve(ctx, s.Models, mreq)
 	return err
 }
 
@@ -280,7 +339,7 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 // checked.
 func classifyProbe(err error, misses map[string]int, raced bool, missReason func(string) string) (string, []string) {
 	reason := fallback.Reason(err)
-	pre := preHydrateMissReasons[reason]
+	pre := fallbackMissCache(reason)
 	var missed []string
 	wouldMiss := pre != ""
 	for _, name := range probeCaches() {

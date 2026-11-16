@@ -13,6 +13,7 @@ import { createFeedGoShadow, type FeedGoShadowConfig } from '~/server/trpc/feed-
 const SHADOW_URL = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPostsInfinite';
 const PROBE_INF_URL = 'http://feed-go.test:9090/internal/probe/image.getInfinite';
+const PROBE_MODELS_URL = 'http://feed-go.test:9090/internal/probe/model.getAll';
 const INPUT = '{"json":{"modelVersionId":9,"limit":20}}';
 const STARTED_AT = 1_763_200_000_123.25;
 
@@ -21,12 +22,14 @@ function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig
     url: SHADOW_URL,
     v1ImagesUrl: 'http://feed-go.test:9090/internal/shadow/api/v1/images',
     infiniteUrl: 'http://feed-go.test:9090/internal/shadow/image.getInfinite',
+    modelGetAllUrl: 'http://feed-go.test:9090/internal/shadow/model.getAll',
     rate: 1,
     timeoutMs: 500,
     maxInFlight: 4,
     maxPerSecond: 1000,
     probeUrl: PROBE_URL,
     probeInfiniteUrl: PROBE_INF_URL,
+    probeModelGetAllUrl: PROBE_MODELS_URL,
     probeRate: 1,
     ...overrides,
   };
@@ -66,6 +69,7 @@ function harness(
     enabled: () => opts.shadow ?? true,
     enabledV1Images: () => true,
     enabledInfinite: () => true,
+    enabledModelGetAll: () => true,
     enabledProbe: () => opts.probe ?? true,
     random: opts.random ?? (() => 0),
     fetch: fetchMock as unknown as typeof fetch,
@@ -84,7 +88,9 @@ function harness(
     await settle();
   };
   const probeCalls = () =>
-    fetchMock.mock.calls.filter(([url]) => url === PROBE_URL || url === PROBE_INF_URL);
+    fetchMock.mock.calls.filter(([url]) =>
+      [PROBE_URL, PROBE_INF_URL, PROBE_MODELS_URL].includes(url)
+    );
   return { shadow, probeOutcomes, shadowOutcomes, fetchMock, probeCalls, flush, settle };
 }
 
@@ -220,6 +226,17 @@ describe('the Go-first probe', () => {
     );
     await off.settle();
     expect(off.probeCalls()).toHaveLength(0);
+  });
+
+  it('probes a model.getAll sample at its own probe path', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request({ query: { trpc: 'model.getAll', input: INPUT } }));
+    expect(sample?.endpoint).toBe('model-getall');
+    h.shadow.probe(sample);
+    await h.settle();
+    const calls = h.probeCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe(PROBE_MODELS_URL);
   });
 
   it('runs at most once per sample, and never for a REST sample', async () => {

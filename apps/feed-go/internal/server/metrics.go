@@ -15,8 +15,8 @@ const EndpointLabel = "feed_endpoint"
 // add `process_cpu_seconds_total` and the GC series the CPU-per-call measurement reads.
 //
 // Every feed_go_* series carries EndpointLabel (`feed_endpoint`: one of Endpoints, EndpointAsPosts |
-// EndpointV1Images | EndpointInfinite): three values, so the label multiplies each family's
-// cardinality by three at most.
+// EndpointV1Images | EndpointInfinite | EndpointModelGetAll): four values, so the label multiplies each
+// family's cardinality by four at most.
 type Metrics struct {
 	Requests      *prometheus.CounterVec   // endpoint, mode, outcome
 	Fallbacks     *prometheus.CounterVec   // endpoint, mode, reason

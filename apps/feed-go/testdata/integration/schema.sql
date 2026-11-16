@@ -17,6 +17,15 @@ CREATE TYPE "CosmeticSource" AS ENUM ('Trophy', 'Purchase', 'Event', 'Membership
 CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
 CREATE TYPE "ReviewReactions" AS ENUM ('Like', 'Dislike', 'Laugh', 'Cry', 'Heart');
 CREATE TYPE "Model3DStatus" AS ENUM ('Draft', 'Published', 'Unpublished', 'Deleted');
+CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Training', 'Published', 'Scheduled', 'Unpublished', 'UnpublishedViolation', 'GatherInterest', 'Deleted');
+CREATE TYPE "ModelType" AS ENUM ('Checkpoint', 'TextualInversion', 'Hypernetwork', 'AestheticGradient', 'LORA', 'LoCon', 'DoRA',
+  'Controlnet', 'Upscaler', 'MotionModule', 'VAE', 'TextEncoder', 'UNet', 'CLIPVision', 'Poses', 'Wildcards', 'Workflows',
+  'ComfyWorkflows', 'Detection', 'VisionLanguage', 'CLIP', 'LLM', 'Other');
+CREATE TYPE "CheckpointType" AS ENUM ('Trained', 'Merge');
+CREATE TYPE "CommercialUse" AS ENUM ('None', 'Image', 'RentCivit', 'Rent', 'Sell', 'SellMerge');
+CREATE TYPE "TrainingStatus" AS ENUM ('Pending', 'Submitted', 'Paused', 'Denied', 'Processing', 'InReview', 'Failed', 'Approved', 'Expired');
+CREATE TYPE "PaidAccessEntityType" AS ENUM ('ModelVersion', 'ComicChapter');
+CREATE TYPE "SaleDiscountType" AS ENUM ('Fixed', 'Percent');
 CREATE TYPE "CosmeticEntity" AS ENUM ('Model', 'Image', 'Article', 'Post', 'Model3D');
 CREATE TYPE "CosmeticShopItemStatus" AS ENUM ('Draft', 'PendingReview', 'Published', 'Rejected', 'RequestedChanges', 'Archived');
 
@@ -122,18 +131,42 @@ CREATE TABLE "CosmeticShopItem" (
   "rejectionReason" text
 );
 
+-- The columns after "gallerySettings" (and on ModelVersion after "modelId") are model.getAll's
+-- (internal/modelfeed); their defaults are the app's, so the image tests' inserts need not name them.
 CREATE TABLE "Model" (
   id                integer PRIMARY KEY,
   "userId"          integer NOT NULL,
   mode              "ModelModifier",
   minor             boolean NOT NULL DEFAULT false,
   "sfwOnly"         boolean NOT NULL DEFAULT false,
-  "gallerySettings" jsonb NOT NULL DEFAULT '{"users": [], "tags": [], "images": []}'
+  "gallerySettings" jsonb NOT NULL DEFAULT '{"users": [], "tags": [], "images": []}',
+  name                    citext NOT NULL DEFAULT 'model',
+  "sfwName"               citext,
+  "coverImageId"          integer,
+  "sfwCoverImageId"       integer,
+  type                    "ModelType" NOT NULL DEFAULT 'Checkpoint',
+  poi                     boolean NOT NULL DEFAULT false,
+  nsfw                    boolean NOT NULL DEFAULT false,
+  "nsfwLevel"             integer NOT NULL DEFAULT 0,
+  status                  "ModelStatus" NOT NULL DEFAULT 'Draft',
+  "createdAt"             timestamp(3) NOT NULL DEFAULT now(),
+  "publishedAt"           timestamp(3),
+  locked                  boolean NOT NULL DEFAULT false,
+  meta                    jsonb NOT NULL DEFAULT '{}',
+  availability            "Availability" NOT NULL DEFAULT 'Public',
+  "checkpointType"        "CheckpointType",
+  "allowNoCredit"         boolean NOT NULL DEFAULT true,
+  "allowCommercialUse"    "CommercialUse"[] NOT NULL DEFAULT '{Image,RentCivit,Rent,Sell,SellMerge}',
+  "allowDerivatives"      boolean NOT NULL DEFAULT true,
+  "allowDifferentLicense" boolean NOT NULL DEFAULT true
 );
 
 CREATE TABLE "ModelVersion" (
-  id        integer PRIMARY KEY,
-  "modelId" integer NOT NULL
+  id               integer PRIMARY KEY,
+  "modelId"        integer NOT NULL,
+  "baseModel"      text NOT NULL DEFAULT 'SD 1.5',
+  status           "ModelStatus" NOT NULL DEFAULT 'Draft',
+  "trainingStatus" "TrainingStatus"
 );
 
 CREATE TABLE "Model3D" (
@@ -162,4 +195,85 @@ CREATE TABLE "Placement" (
   data         jsonb NOT NULL DEFAULT '{}',
   status       text NOT NULL,
   "resolvedAt" timestamp(3)
+);
+
+-- model.getAll (internal/modelfeed).
+CREATE TABLE "ModelMetric" (
+  "modelId"           integer PRIMARY KEY,
+  "downloadCount"     integer NOT NULL DEFAULT 0,
+  "commentCount"      integer NOT NULL DEFAULT 0,
+  "collectedCount"    integer NOT NULL DEFAULT 0,
+  "imageCount"        integer NOT NULL DEFAULT 0,
+  "tippedAmountCount" integer NOT NULL DEFAULT 0,
+  "thumbsUpCount"     integer NOT NULL DEFAULT 0,
+  "thumbsDownCount"   integer NOT NULL DEFAULT 0,
+  poi                 boolean NOT NULL DEFAULT false,
+  minor               boolean NOT NULL DEFAULT false,
+  "nsfwLevel"         integer NOT NULL DEFAULT 0,
+  "userId"            integer NOT NULL DEFAULT 0,
+  "lastVersionAt"     timestamp(3),
+  mode                "ModelModifier",
+  status              "ModelStatus" NOT NULL DEFAULT 'Draft',
+  availability        "Availability" NOT NULL DEFAULT 'Public',
+  "hotScore"          integer
+);
+
+CREATE TABLE "ModelBaseModelMetric" (
+  "modelId"       integer NOT NULL,
+  "baseModel"     text NOT NULL,
+  "thumbsUpCount" integer NOT NULL DEFAULT 0,
+  "downloadCount" integer NOT NULL DEFAULT 0,
+  "imageCount"    integer NOT NULL DEFAULT 0,
+  status          "ModelStatus" NOT NULL DEFAULT 'Draft',
+  availability    "Availability" NOT NULL DEFAULT 'Public',
+  "nsfwLevel"     integer NOT NULL DEFAULT 0,
+  mode            "ModelModifier",
+  poi             boolean NOT NULL DEFAULT false,
+  minor           boolean NOT NULL DEFAULT false,
+  "hotScore"      integer,
+  PRIMARY KEY ("modelId", "baseModel")
+);
+
+CREATE TABLE "Tag" (
+  id   integer PRIMARY KEY,
+  name citext NOT NULL UNIQUE
+);
+
+CREATE TABLE "TagsOnModels" (
+  "modelId" integer NOT NULL,
+  "tagId"   integer NOT NULL,
+  PRIMARY KEY ("modelId", "tagId")
+);
+
+CREATE TABLE "PaidAccess" (
+  "entityType"    "PaidAccessEntityType" NOT NULL,
+  "entityId"      integer NOT NULL,
+  "ownerId"       integer NOT NULL,
+  "endsAt"        timestamp(3),
+  "timeframeDays" integer,
+  terms           jsonb NOT NULL DEFAULT '{}',
+  PRIMARY KEY ("entityType", "entityId")
+);
+
+CREATE TABLE "ModelFile" (
+  id               integer PRIMARY KEY,
+  type             text NOT NULL DEFAULT 'Model',
+  "modelVersionId" integer NOT NULL,
+  metadata         jsonb
+);
+
+CREATE TABLE "ModelVersionSale" (
+  id               integer PRIMARY KEY,
+  "userId"         integer NOT NULL,
+  "discountType"   "SaleDiscountType" NOT NULL DEFAULT 'Percent',
+  "discountAmount" integer NOT NULL DEFAULT 10,
+  "startsAt"       timestamp(3) NOT NULL,
+  "endsAt"         timestamp(3) NOT NULL,
+  "canceledAt"     timestamp(3)
+);
+
+CREATE TABLE "ModelVersionSaleItem" (
+  "saleId"         integer NOT NULL,
+  "modelVersionId" integer NOT NULL,
+  PRIMARY KEY ("saleId", "modelVersionId")
 );
