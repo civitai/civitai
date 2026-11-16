@@ -68,7 +68,7 @@ export type AxiomLogger = {
    * Resolve once every Axiom dual-write this logger started has an outcome (landed, failed, or
    * passed its AXIOM_INGEST_TIMEOUT_MS budget), so at most that long. Used by tests today. It is
    * also the shutdown hook a short-lived process would await before exiting, since `logToAxiom`
-   * no longer waits for the dual-write, but nothing in production calls it yet.
+   * does not wait for the dual-write, but nothing in production calls it yet.
    */
   flush: () => Promise<void>;
   safeError: typeof safeError;
@@ -347,7 +347,7 @@ export function createAxiomLogger(
       // SERIALIZATION GUARD: this write is UNCONDITIONAL and logToAxiom is called on hot
       // paths (the central tRPC 500 handler, payment webhooks, uploads) with arbitrary
       // objects. JSON.stringify THROWS on BigInt / circular refs, so an unguarded
-      // stringify could break a caller that previously never hit this line.
+      // stringify would throw into the caller.
       // Contain it: a serialization failure must NEVER break the caller — emit a minimal,
       // stringify-safe fallback (itself wrapped) so the event isn't silently lost.
       //
@@ -423,27 +423,19 @@ export function createAxiomLogger(
        * `logToAxiom` must never reject. Callers neither await nor catch it, so an uncontained
        * throw here would reach them, as an `unhandledRejection` that exits Node by default.
        *
-       * WHY IT IS NOT AWAITED. The first containment raced the ingest against a 2 s budget and
-       * awaited the race, which bounded the caller at 2 s per logged event: still seconds of
-       * added latency on a request that logs several events against a stalled endpoint. The
-       * caller now waits for nothing. The stderr line is written synchronously above and the
-       * dual-write's outcome is recorded in the background. Nothing here cancels the request.
+       * Not awaited: a stalled ingest must not add caller latency (unless AXIOM_AWAIT_UPLOADS).
+       * Every promise in the chain must end in a handler, or a rejection becomes an
+       * `unhandledRejection` and, in background worker pods that do not await, exits Node.
        *
-       * THE RACE now bounds only how long an outcome takes to be REPORTED: an ingest still
-       * pending at AXIOM_INGEST_TIMEOUT_MS is recorded as `'timeout'`.
+       * THE RACE bounds how long an outcome takes to be REPORTED: an ingest still pending at
+       * AXIOM_INGEST_TIMEOUT_MS is recorded as `'timeout'`. Nothing here cancels the request.
        *
-       * THE PAIRING converts a rejection into the value `'error'` so the outcome chain records
-       * it. Because nothing awaits the dual-write, every promise in that chain must end in a
-       * handler, or a rejection becomes an `unhandledRejection` and, in the background `jobs`
-       * pods, exits Node. The paired form is what ends it: both racers then only ever
-       * resolve. The rejection handler on the race's `.then` is unreachable today and is kept only
-       * as a belt. Pinned by the NO UNHANDLED REJECTION test.
+       * THE PAIRING converts a rejection into the value `'error'`, so both racers only ever
+       * resolve. The rejection handler on the race's `.then` is unreachable today and is kept
+       * only as a belt. Pinned by the NO UNHANDLED REJECTION test.
        */
-      // 🔴 NOT AWAITED, unless AXIOM_AWAIT_UPLOADS=true (end of this block). The caller gets control
-      // back as soon as the stderr line above is written; the dual-write finishes in the background. The 2 s race below now bounds how long we wait
-      // for an OUTCOME to report, not how long the caller waits. Over the in-flight cap the Axiom
-      // copy is dropped rather than queued: an unbounded queue in front of a stalled endpoint is
-      // the pile-up the cap exists to prevent.
+      // Over the in-flight cap the Axiom copy is dropped rather than queued: an unbounded queue in
+      // front of a stalled endpoint is the pile-up the cap exists to prevent.
       if (inFlight.count >= AXIOM_MAX_INGESTS_IN_FLIGHT) {
         recordIngestOutcome('dropped', datastream);
         return;
@@ -479,8 +471,7 @@ export function createAxiomLogger(
       );
       pendingOutcomes.add(outcome);
       void outcome.then(() => pendingOutcomes.delete(outcome));
-      // Off-switch (AXIOM_AWAIT_UPLOADS=true): wait for the outcome, which the race bounds at
-      // AXIOM_INGEST_TIMEOUT_MS. This is the behaviour before the dual-write stopped being awaited.
+      // Off-switch (AXIOM_AWAIT_UPLOADS=true): wait for the outcome, bounded by AXIOM_INGEST_TIMEOUT_MS.
       if (config.awaitUploads) await outcome;
     } else {
       console.log('logToAxiom', sendData);

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -15,14 +16,12 @@ import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const ROOTS = ['src', 'apps', 'packages'];
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '__tests__',
-  '__mocks__',
-  'dist',
-  'build',
-  '.svelte-kit',
-]);
+const SKIP_DIRS = new Set(['node_modules', '__tests__', '__mocks__']);
+// Build output is skipped only directly under a package root (a directory with a package.json):
+// a `build/` or `dist/` anywhere else, such as src/tests/build/, is source.
+const BUILD_OUTPUT_DIRS = new Set(['dist', 'build', '.svelte-kit']);
+const isBuildOutput = (parent: string, name: string) =>
+  BUILD_OUTPUT_DIRS.has(name) && fs.existsSync(path.join(parent, 'package.json'));
 
 type Counts = { catch: number; await: number };
 
@@ -120,7 +119,7 @@ function walk(dir: string, out: string[]): void {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) walk(full, out);
+      if (!SKIP_DIRS.has(entry.name) && !isBuildOutput(dir, entry.name)) walk(full, out);
     } else if (
       /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(entry.name) &&
       !/\.d\.ts$/.test(entry.name) &&
@@ -169,6 +168,32 @@ describe('no-logtoaxiom-catch', () => {
       catch: 4,
       await: 2,
     });
+  });
+
+  it('skips build output only at a package root, so a nested build/ is still scanned', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'no-logtoaxiom-catch-'));
+    try {
+      const files = [
+        'package.json',
+        'build/a.ts',
+        'dist/b.ts',
+        '.svelte-kit/c.ts',
+        'src/tests/build/d.ts',
+        'src/dist/e.ts',
+      ];
+      for (const rel of files) {
+        fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+        fs.writeFileSync(path.join(root, rel), '');
+      }
+      const out: string[] = [];
+      walk(root, out);
+      expect(out.map((f) => path.relative(root, f).replace(/\\/g, '/')).sort()).toEqual([
+        'src/dist/e.ts',
+        'src/tests/build/d.ts',
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('no `.catch`/`await` on logToAxiom outside the ledger', () => {
