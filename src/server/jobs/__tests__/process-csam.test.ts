@@ -29,6 +29,33 @@ vi.mock('~/server/services/csam.service-new', () => mocks);
 const evidence = vi.hoisted(() => ({ checkCsamArchiveEvidence: vi.fn() }));
 vi.mock('~/server/services/csam-archive-evidence.service', () => evidence);
 
+// The archive switch: the flag, the separate archiver's queue, and the stamp read-back.
+const sw = vi.hoisted(() => ({
+  flag: true as boolean | null,
+  queued: new Set<number>(),
+  stamped: new Set<number>(),
+  archiveQueueStates: vi.fn(),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ensureFliptInitialized: vi.fn(async () => undefined),
+  isFliptSync: vi.fn(() => sw.flag),
+}));
+vi.mock('@civitai/db-queries/evidence-archive-queue', () => ({
+  archiveQueueStates: sw.archiveQueueStates,
+}));
+vi.mock('~/server/db/kyselyDb', () => ({
+  kyselyWrite: {
+    selectFrom: () => ({
+      select: () => ({
+        where: (_c: string, _op: string, id: number) => ({
+          executeTakeFirst: async () => ({ archivedAt: sw.stamped.has(id) ? new Date() : null }),
+        }),
+      }),
+    }),
+  },
+}));
+
 import {
   CSAM_ARCHIVE_JOB_LOCK_SECONDS,
   CSAM_ARCHIVE_MEASURED_PASS_SECONDS,
@@ -45,6 +72,13 @@ const reports = [{ id: 8801 }, { id: 8802 }, { id: 8803 }];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sw.flag = true;
+  sw.queued = new Set();
+  sw.stamped = new Set();
+  sw.archiveQueueStates.mockImplementation(
+    async (_db: unknown, ids: number[]) =>
+      new Map(ids.filter((id) => sw.queued.has(id)).map((id) => [id, 'queued']))
+  );
   mocks.getCsamsToArchive.mockResolvedValue(reports);
   mocks.getCsamsToReport.mockResolvedValue(reports);
   mocks.archiveCsamDataForReport.mockResolvedValue(undefined);
@@ -349,5 +383,92 @@ describe('send-csam-reports blocked-report alert', () => {
     mocks.logBlockedCsamReports.mockRejectedValueOnce(new Error('synthetic check failure'));
 
     await expect(sendJob!.run({}).result).resolves.not.toThrow();
+  });
+});
+
+describe('archive-csam-reports and the separate archiver', () => {
+  const withUsers = [
+    { id: 8801, userId: 501 },
+    { id: 8802, userId: 502 },
+    { id: 8803, userId: null },
+  ];
+  const archived = () =>
+    mocks.archiveCsamDataForReport.mock.calls.map(([r]) => (r as { id: number }).id);
+  const logs = (subType: string) =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([arg]) => arg as Record<string, unknown>)
+      .filter((arg) => arg?.subType === subType);
+
+  beforeEach(() => mocks.getCsamsToArchive.mockResolvedValue(withUsers));
+
+  it('ON: skips a report the archiver queued after the list was read, checked just before its turn', async () => {
+    // The archiver's backfill queues 8802 while 8801 is being archived.
+    mocks.archiveCsamDataForReport.mockImplementation(async (r: { id: number }) => {
+      if (r.id === 8801) sw.queued.add(8802);
+    });
+
+    await archiveJob!.run({}).result;
+
+    expect(archived()).toEqual([8801, 8803]);
+    // The null-user report needs no lookup: nothing queues it.
+    expect(sw.archiveQueueStates.mock.calls.map(([, ids]) => ids)).toEqual([[8801], [8802]]);
+  });
+
+  it('OFF: archives only the report with no user', async () => {
+    sw.flag = false;
+    await archiveJob!.run({}).result;
+    expect(archived()).toEqual([8803]);
+  });
+
+  it('an unreadable flag runs as ON, alerts, and lists each report it stamped', async () => {
+    sw.flag = null;
+    sw.stamped = new Set([8801]);
+    await archiveJob!.run({}).result;
+
+    expect(archived()).toEqual([8801, 8802, 8803]);
+    const unreadable = logs('archive-flag-unreadable');
+    expect(unreadable.filter((l) => l.reportId === undefined)).toHaveLength(1);
+    expect(unreadable.filter((l) => l.reportId !== undefined).map((l) => l.reportId)).toEqual([
+      8801,
+    ]);
+    expect(unreadable.every((l) => l.type === 'error')).toBe(true);
+  });
+
+  it('control: a readable flag logs nothing as unreadable', async () => {
+    sw.stamped = new Set([8801]);
+    await archiveJob!.run({}).result;
+    expect(logs('archive-flag-unreadable')).toEqual([]);
+  });
+
+  it('a failed queue lookup leaves the report for the next tick, logged by id and class only', async () => {
+    sw.archiveQueueStates.mockImplementation(async (_db: unknown, ids: number[]) => {
+      if (ids[0] === 8802)
+        throw Object.assign(new Error('synthetic lookup failure'), { name: 'DatabaseError' });
+      return new Map();
+    });
+    await archiveJob!.run({}).result;
+
+    expect(archived()).toEqual([8801, 8803]);
+    expect(logs('archive-queue-lookup')).toEqual([
+      {
+        name: 'csam-report',
+        type: 'error',
+        subType: 'archive-queue-lookup',
+        reportId: 8802,
+        error: 'DatabaseError',
+      },
+    ]);
+  });
+
+  it('logs the tick start and end with the flag reading, even when the tick throws', async () => {
+    sw.flag = false;
+    mocks.getCsamsToArchive.mockRejectedValueOnce(new Error('synthetic list failure'));
+    await expect(archiveJob!.run({}).result).rejects.toThrow('synthetic list failure');
+
+    const ticks = logs('archive-tick');
+    expect(ticks.map((t) => t.phase)).toEqual(['start', 'end']);
+    expect(ticks.every((t) => t.inAppOn === false && t.readable === true)).toBe(true);
+    expect(ticks[0].tickId).toBe(ticks[1].tickId);
+    expect(ticks[0].tickId).toMatch(/^[0-9a-f-]{36}$/);
   });
 });

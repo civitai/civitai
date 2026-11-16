@@ -1,7 +1,11 @@
 import { GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { S3Client } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
+import { sql } from 'kysely';
+import { archiveQueueState } from '@civitai/db-queries/evidence-archive-queue';
+import { JOB_QUEUE_OVERDUE_MINUTES } from '@civitai/shared/job-queue';
 import { dbWrite } from '~/server/db/client';
+import { kyselyWrite } from '~/server/db/kyselyDb';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { setCsamArchiveIncomplete } from '~/server/metrics/csam-archive.metrics';
@@ -27,18 +31,21 @@ type ArchiveObjectRow = {
   namedMissing: number | null;
 };
 
-type CheckFailure = Exclude<CsamArchiveIncompleteReason, 'skipped' | 'stale' | 'unsupported'>;
+type CheckFailure = Exclude<
+  CsamArchiveIncompleteReason,
+  'skipped' | 'stale' | 'unsupported' | 'queue_failing'
+>;
 
 // Mirrors the `unsupported` filter in getCsamsToArchive: generator evidence, and a generated-image
 // report naming no URL. Both stay unarchived, so their users' image-retention hold cannot lift until a
 // dedicated archiver for them stamps `archivedAt`.
-const UNSUPPORTED_SQL = Prisma.sql`(
-  COALESCE(details -> 'generatorEvidence' ->> 'version' = ${String(
+const UNSUPPORTED_SQL = sql<boolean>`(
+  COALESCE(r.details -> 'generatorEvidence' ->> 'version' = ${String(
     GENERATOR_EVIDENCE_VERSION
   )}, false)
   OR (
-    type::text = 'GeneratedImage'
-    AND NOT COALESCE(jsonb_path_exists(details, '$.generatedImages[*].blobs[*].url ? (@ != "" && @ != null)'), false)
+    r.type::text = 'GeneratedImage'
+    AND NOT COALESCE(jsonb_path_exists(r.details, '$.generatedImages[*].blobs[*].url ? (@ != "" && @ != null)'), false)
   )
 )`;
 
@@ -144,6 +151,7 @@ export async function checkCsamArchiveEvidence({
     skipped: 0,
     stale: 0,
     unsupported: 0,
+    queue_failing: 0,
     images_missing: 0,
     object_missing: 0,
     entries_mismatch: 0,
@@ -151,25 +159,32 @@ export async function checkCsamArchiveEvidence({
     check_error: 0,
   };
 
-  // The archive job leaves these out, so they are counted apart rather than read as stale.
-  const [pending] = await dbWrite.$queryRaw<
-    { skipped: number; stale: number; unsupported: number }[]
-  >`
+  // The archive job leaves skipped and unsupported reports out, so they are counted apart rather
+  // than read as stale. A report waiting in the separate archiver's queue is not stale either, but
+  // one whose queue row is failing or overdue is, and a failing row counts on its own whatever the
+  // report's archivedAt says, so a failed archiver run is never hidden.
+  const queueState = archiveQueueState('r', JOB_QUEUE_OVERDUE_MINUTES.CsamArchive);
+  const unarchived = sql<boolean>`(r."archivedAt" IS NULL AND r.details ->> 'archiveSkipped' IS NULL)`;
+  const {
+    rows: [pending],
+  } = await sql<{ skipped: number; stale: number; unsupported: number; queue_failing: number }>`
     SELECT
-      count(*) FILTER (WHERE details ->> 'archiveSkipped' IS NOT NULL)::int AS skipped,
+      count(*) FILTER (WHERE r."archivedAt" IS NULL AND r.details ->> 'archiveSkipped' IS NOT NULL)::int AS skipped,
+      count(*) FILTER (WHERE ${unarchived} AND ${UNSUPPORTED_SQL})::int AS unsupported,
       count(*) FILTER (
-        WHERE details ->> 'archiveSkipped' IS NULL AND ${UNSUPPORTED_SQL}
-      )::int AS unsupported,
-      count(*) FILTER (
-        WHERE details ->> 'archiveSkipped' IS NULL AND NOT ${UNSUPPORTED_SQL}
-          AND "reportSentAt" < now() - interval '6 hours'
-      )::int AS stale
-    FROM "CsamReport"
-    WHERE "reportSentAt" IS NOT NULL AND "archivedAt" IS NULL
-  `;
+        WHERE ${unarchived} AND NOT ${UNSUPPORTED_SQL}
+          AND r."reportSentAt" < now() - interval '6 hours'
+          AND s.state IS DISTINCT FROM 'queued'
+      )::int AS stale,
+      count(*) FILTER (WHERE s.state = 'failing')::int AS queue_failing
+    FROM "CsamReport" r
+    CROSS JOIN LATERAL (SELECT ${queueState} AS state) s
+    WHERE r."reportSentAt" IS NOT NULL
+  `.execute(kyselyWrite);
   counts.skipped = pending?.skipped ?? 0;
   counts.stale = pending?.stale ?? 0;
   counts.unsupported = pending?.unsupported ?? 0;
+  counts.queue_failing = pending?.queue_failing ?? 0;
 
   // Reports archived before objects were recorded have nothing to check against and are left out.
   const candidates = await dbWrite.$queryRaw<Candidate[]>`
