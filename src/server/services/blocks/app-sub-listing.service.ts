@@ -171,6 +171,22 @@ export async function syncSubListingRatingFromDoc(args: {
   }
 }
 
+/**
+ * A card's title/tagline refusal, naming the field the belt refused in the card's own words
+ * (`body` is the tagline). Never the term or the text.
+ */
+function cardTextRejected(err: SharedContentBlockedError): SubListingError {
+  const message =
+    err.field === 'title'
+      ? 'The title was not accepted'
+      : err.field === 'body'
+      ? 'The tagline was not accepted'
+      : err.field === 'title and body'
+      ? 'The title and tagline were not accepted'
+      : 'The title or tagline was not accepted';
+  return new SubListingError(400, 'text_rejected', message);
+}
+
 export class SubListingError extends Error {
   constructor(
     readonly status: number,
@@ -532,9 +548,7 @@ export async function upsertSubListing(args: {
     content.title = safe.title;
     content.tagline = safe.body ?? null;
   } catch (err) {
-    if (err instanceof SharedContentBlockedError) {
-      throw new SubListingError(400, 'text_rejected', 'The title or tagline was not accepted');
-    }
+    if (err instanceof SharedContentBlockedError) throw cardTextRejected(err);
     throw err;
   }
 
@@ -1037,9 +1051,7 @@ export async function upsertCatalogSubListing(args: {
     content.title = safe.title;
     content.tagline = safe.body ?? null;
   } catch (err) {
-    if (err instanceof SharedContentBlockedError) {
-      throw new SubListingError(400, 'text_rejected', 'The title or tagline was not accepted');
-    }
+    if (err instanceof SharedContentBlockedError) throw cardTextRejected(err);
     throw err;
   }
 

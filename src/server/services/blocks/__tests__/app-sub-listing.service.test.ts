@@ -469,6 +469,21 @@ describe('upsertSubListing — refusals', () => {
     await expectError(upsert(), 400, 'text_rejected');
   });
 
+  it.each([
+    ['title', 'The title was not accepted'],
+    ['body', 'The tagline was not accepted'],
+    ['title and body', 'The title and tagline were not accepted'],
+  ] as const)(
+    '🔴 a refusal of the %s names it, in the card’s own words',
+    async (field, message) => {
+      mockTextSafe.mockRejectedValueOnce(
+        new SharedContentBlockedError('minor', 'Content flagged for review', { field })
+      );
+      const err = await upsert().catch((e: unknown) => e);
+      expect(err).toMatchObject({ status: 400, code: 'text_rejected', message });
+    }
+  );
+
   it('answers 503 while the tables are absent, and while item storage is unreachable', async () => {
     read.appListing.findFirst.mockRejectedValueOnce(
       Object.assign(new Error('The table `public.app_sub_listing_parents` does not exist'), {

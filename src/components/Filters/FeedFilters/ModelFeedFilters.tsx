@@ -12,9 +12,13 @@ import type { PeriodMode } from '~/server/schema/base.schema';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { Tooltip } from '~/components/MantineOverlays';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { set, ...queryFilters } = useModelQueryParams();
   const { filters, setFilters } = useModelBrowseFilters();
   const { favorites, query } = queryFilters;
@@ -39,11 +43,26 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
         </Popover>
       )}
       {currentUser && <FollowedFilter type="models" variant="button" />}
-      <SortFilter
-        type="models"
-        value={filters.sort}
-        onChange={(sort) => setFilters({ sort: sort as ModelSort })}
-      />
+      {query && features.modelFeedSearch ? (
+        // The search ranks by match; a feed sort would be a promise it can't keep.
+        <Tooltip label="Clear the search to sort the feed" withArrow>
+          <div>
+            <SelectMenuV2
+              label="Best match"
+              value="best-match"
+              options={[{ label: 'Best match', value: 'best-match' }]}
+              onClick={() => undefined}
+              disabled
+            />
+          </div>
+        </Tooltip>
+      ) : (
+        <SortFilter
+          type="models"
+          value={filters.sort}
+          onChange={(sort) => setFilters({ sort: sort as ModelSort })}
+        />
+      )}
       <DumbModelFiltersDropdown
         w="100%"
         size="compact-sm"
