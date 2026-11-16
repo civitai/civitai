@@ -6403,7 +6403,8 @@ export const blocksRouter = router({
    * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
    *
    * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
-   * runtime flag. Identity comes from the token, never the body; the url is the only thing the
+   * runtime flag. Then `app-block-source-scanned-rows` must be on (FORBIDDEN otherwise), read as
+   * the generation gate reads it. Identity comes from the token, never the body; the url is the only thing the
    * caller supplies, and the service accepts only a consumer blob on a trusted orchestrator host.
    *
    * BOUNDS: the per-user 60/h `rateLimit` (keyed on this path), then
@@ -6439,6 +6440,14 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
+      // Only while the gate refuses blobs: the same flag, read the same way (global, no entity).
+      const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
+      if (!(await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS))) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'picked generation sources are not enabled',
+        });
+      }
       return withUploadedGenerationSourceBounds(userId, async () => {
         const { persistUploadedGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
