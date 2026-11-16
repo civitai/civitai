@@ -20,6 +20,7 @@ function fakeTx() {
   return {
     appBlockPublishRequest: { update: vi.fn(async () => ({})) },
     appBlock: { update: vi.fn(async () => ({})) },
+    oauthClient: { update: vi.fn(async () => ({})) },
   };
 }
 
@@ -58,6 +59,54 @@ describe('finaliseOnsiteApprove', () => {
     expect(tx.appBlockPublishRequest.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'approved' }) })
     );
+  });
+
+  it('🔴 a late hold puts back the manifest, scopes and tier the app ran under', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    const tx = fakeTx();
+    const block = {
+      manifest: { scopes: ['old'] },
+      version: '1.0.0',
+      approvedScopes: ['old'],
+      contentRating: 'pg',
+      renderMode: 'iframe',
+      trustTier: 'unverified',
+    };
+    await finaliseOnsiteApprove(tx as never, {
+      ...input,
+      priorVersion: { block, oauthClientId: 'oc_1', allowedScopes: 5 },
+    });
+    expect(tx.appBlock.update).toHaveBeenCalledWith({
+      where: { id: 'apb_1' },
+      data: { status: 'suspended', ...block },
+    });
+    expect(tx.oauthClient.update).toHaveBeenCalledWith({
+      where: { id: 'oc_1' },
+      data: { allowedScopes: 5 },
+    });
+  });
+
+  it('writes no prior fields back without a late hold', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [] });
+    const tx = fakeTx();
+    await finaliseOnsiteApprove(tx as never, {
+      ...input,
+      priorVersion: {
+        block: {
+          manifest: {},
+          version: '1.0.0',
+          approvedScopes: [],
+          contentRating: 'pg',
+          renderMode: 'iframe',
+          trustTier: 'unverified',
+        },
+        oauthClientId: 'oc_1',
+        allowedScopes: 5,
+      },
+    });
+    const [{ data }] = tx.appBlock.update.mock.calls[0] as unknown as [{ data: object }];
+    expect(data).not.toHaveProperty('approvedScopes');
+    expect(tx.oauthClient.update).not.toHaveBeenCalled();
   });
 
   it('leaves the block status alone with no late hold', async () => {

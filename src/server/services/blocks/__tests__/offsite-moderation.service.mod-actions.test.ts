@@ -1840,12 +1840,13 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
       ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
     );
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
-    await expect(
-      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
-    ).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-      message: expect.stringMatching(/open review hold/),
-    });
+    const err = await republishOwnListing({
+      input: { appListingId: APP_ID },
+      userId: OWNER,
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    // 🔴 The owner never learns that a hold exists.
+    expect((err as Error).message).not.toMatch(/hold|review|moderat/i);
     expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
   });
 
@@ -1859,10 +1860,18 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
       ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
     );
     mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
-    await expect(
-      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const err = await republishOwnListing({
+        input: { appListingId: APP_ID },
+        userId: OWNER,
+      }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+      expect((err as Error).message).not.toMatch(/hold|review|moderat/i);
+      expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+    } finally {
+      quiet.mockRestore();
+    }
   });
 
   it('🔴 ON-SITE republish FORBIDDEN when the last event is a MOD delist — no listing flip AND no block flip', async () => {

@@ -20,6 +20,7 @@ import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
+import type { PriorRuntime } from '~/server/services/blocks/publish-request-finalise.service';
 import { createHash } from 'crypto';
 import { structuredPatch } from 'diff';
 import JSZip from 'jszip';
@@ -3620,6 +3621,7 @@ async function approveRequestUnderClaim(
 
   let appBlockId: string;
   let repoUrl: string;
+  let priorVersion: PriorRuntime | undefined;
 
   if (isFirstVersion) {
     const blockIdError = newBlockIdError(request.slug);
@@ -3764,6 +3766,25 @@ async function approveRequestUnderClaim(
   } else {
     appBlockId = existingAppBlock.id;
     repoUrl = existingAppBlock.repoUrl ?? '';
+    // What the app runs under now, put back if the final hold check finds a late hold.
+    const prior = await dbWrite.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: {
+        manifest: true,
+        version: true,
+        approvedScopes: true,
+        contentRating: true,
+        renderMode: true,
+        trustTier: true,
+      },
+    });
+    if (prior) {
+      priorVersion = {
+        block: { ...prior, manifest: prior.manifest as Prisma.InputJsonValue },
+        oauthClientId: existingAppBlock.appId,
+        allowedScopes: existingAppBlock.app?.allowedScopes,
+      };
+    }
     // Subsequent version: refresh manifest + version + approvedScopes
     // on the existing row. currentVersionSha is stamped in step (6) below,
     // right after the Forgejo commit returns the approved sha.
@@ -4540,6 +4561,7 @@ async function approveRequestUnderClaim(
       appBlockId,
       forgejoCommitSha,
       screenshots: storedScreenshots as object,
+      priorVersion,
     })
   );
   // A held version must not build, deploy or be announced; a moderator clears the hold first.
@@ -4892,6 +4914,29 @@ export type RetriggerBuildResult = {
   forgejoCommitSha: string;
 };
 
+/** A held version is approved but never built; re-triggering its build must not ship it. */
+async function assertNoOpenHoldForRetrigger(slug: string): Promise<void> {
+  const { dbWrite } = await import('~/server/db/client');
+  const { getOpenHoldsBySlug } = await import('./publish-request-holds.service');
+  let open: number;
+  try {
+    open = (await getOpenHoldsBySlug(dbWrite, [slug])).length;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[retriggerBuild] hold read failed; refusing to rebuild', err);
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      "Could not read this app's review holds, so its build cannot be re-triggered. Try again, or ask an engineer to check the review-holds tables."
+    );
+  }
+  if (open) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      'This app has an open review hold. A moderator must clear it on the review page before its build can run.'
+    );
+  }
+}
+
 /**
  * "APPROVED BUT NOT SUCCESSFULLY BUILT" — the precise, documented definition of a
  * request this function will re-fire a build for:
@@ -4935,29 +4980,6 @@ export type RetriggerBuildResult = {
  * branch's "no timestamp → refuse". `approveRequest` always stamps `reviewedAt`,
  * so a real approved row always has an anchor.
  */
-/** A held version is approved but never built; re-triggering its build must not ship it. */
-async function assertNoOpenHoldForRetrigger(slug: string): Promise<void> {
-  const { dbWrite } = await import('~/server/db/client');
-  const { getOpenHoldsBySlug } = await import('./publish-request-holds.service');
-  let open: number;
-  try {
-    open = (await getOpenHoldsBySlug(dbWrite, [slug])).length;
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[retriggerBuild] hold read failed; refusing to rebuild', err);
-    throw new RetriggerBuildError(
-      'NOT_RETRIGGERABLE',
-      "Could not read this app's review holds, so its build cannot be re-triggered. Try again, or ask an engineer to check the review-holds tables."
-    );
-  }
-  if (open) {
-    throw new RetriggerBuildError(
-      'NOT_RETRIGGERABLE',
-      'This app has an open review hold. A moderator must clear it on the review page before its build can run.'
-    );
-  }
-}
-
 function assertRetriggerableDeployState(
   deployState: string | null,
   deployUpdatedAt: Date | null,

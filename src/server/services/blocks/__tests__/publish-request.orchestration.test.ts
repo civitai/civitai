@@ -2987,6 +2987,15 @@ describe('approveRequest', () => {
       },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
+    const prior = {
+      manifest: { blockId: 'hello', version: '0.1.0' },
+      version: '0.1.0',
+      approvedScopes: ['old:scope'],
+      contentRating: 'pg',
+      renderMode: 'iframe',
+      trustTier: 'unverified',
+    };
+    mockDbWrite.appBlock.findUnique.mockResolvedValueOnce(prior);
 
     const result = await approveRequest({
       publishRequestId: 'pubreq_1',
@@ -2995,6 +3004,13 @@ describe('approveRequest', () => {
 
     expect(result.isFirstVersion).toBe(false);
     expect(result.appBlockId).toBe('apb_existing');
+    // 🔴 What the app ran under before this approve reaches the final step, for a late hold.
+    expect(finaliseSpy.fn).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        priorVersion: { block: prior, oauthClientId: 'oc_existing', allowedScopes: 33554431 },
+      })
+    );
 
     // 🔴 The approved flip goes through the final hold check, never around it.
     expect(finaliseSpy.fn).toHaveBeenCalledTimes(1);

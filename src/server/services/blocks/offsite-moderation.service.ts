@@ -549,10 +549,17 @@ async function classifyListingForAction(appListingId: string): Promise<{
  */
 async function flipBackingBlockStatus(
   tx: Prisma.TransactionClient,
-  opts: { isOnsite: boolean; appBlockId: string | null; from: string; to: string }
+  opts: {
+    isOnsite: boolean;
+    appBlockId: string | null;
+    from: string;
+    to: string;
+    /** The owner, not a moderator, is restoring: refusals must not reveal moderation state. */
+    ownerFacing?: boolean;
+  }
 ): Promise<boolean> {
   if (!opts.isOnsite || !opts.appBlockId) return false;
-  if (opts.to === 'approved') await assertNoOpenReviewHold(tx, opts.appBlockId);
+  if (opts.to === 'approved') await assertNoOpenReviewHold(tx, opts.appBlockId, opts.ownerFacing);
   const flip = await tx.appBlock.updateMany({
     where: { id: opts.appBlockId, status: opts.from },
     data: { status: opts.to },
@@ -565,7 +572,14 @@ async function flipBackingBlockStatus(
  * moderator clears the hold, whichever path would restore it. Fails closed when the holds cannot
  * be read, as approve does.
  */
-async function assertNoOpenReviewHold(tx: Prisma.TransactionClient, appBlockId: string) {
+const OWNER_RESTORE_UNAVAILABLE =
+  "This app can't be republished right now. Contact support if this persists.";
+
+async function assertNoOpenReviewHold(
+  tx: Prisma.TransactionClient,
+  appBlockId: string,
+  ownerFacing = false
+) {
   const block = await tx.appBlock.findUnique({
     where: { id: appBlockId },
     select: { blockId: true },
@@ -577,16 +591,20 @@ async function assertNoOpenReviewHold(tx: Prisma.TransactionClient, appBlockId: 
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[offsite-moderation] hold read failed; refusing to restore the block', err);
+    if (ownerFacing)
+      throw new OffsiteModerationError('NOT_TRANSITIONABLE', OWNER_RESTORE_UNAVAILABLE);
     throw new OffsiteModerationError(
       'FORBIDDEN',
       "Could not read this app's review holds, so it cannot be restored. Try again, or ask an engineer to check the review-holds tables."
     );
   }
-  if (open)
-    throw new OffsiteModerationError(
-      'FORBIDDEN',
-      'This app has an open review hold. A moderator must clear it on the review page before the app can be restored.'
-    );
+  if (!open) return;
+  if (ownerFacing)
+    throw new OffsiteModerationError('NOT_TRANSITIONABLE', OWNER_RESTORE_UNAVAILABLE);
+  throw new OffsiteModerationError(
+    'FORBIDDEN',
+    'This app has an open review hold. A moderator must clear it on the review page before the app can be restored.'
+  );
 }
 
 /**
@@ -2166,6 +2184,7 @@ export async function republishOwnListing(opts: {
         appBlockId: listing.appBlockId,
         from: 'suspended',
         to: 'approved',
+        ownerFacing: true,
       });
       if (!flippedBlock) onsiteBlockRestoreDrift = true;
       else liveRestore = { slug: listing.slug, appBlockId: listing.appBlockId };
