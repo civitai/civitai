@@ -44,8 +44,8 @@ name: tRPC server parity
 #
 # Why `deployment_status` and not the `status` event: GitHub cannot filter `status` at the
 # trigger, so EVERY commit status in the repository started a run of this workflow, nearly all
-# of them skipped (measurements: the PR that made this change). Deployments here come from the
-# preview pipeline (once per verified preview) and production deploys.
+# of them skipped. Deployments here come from the preview pipeline (once per verified preview)
+# and production deploys.
 #
 # 🔴 A `deployment_status` run uses this file as it is on the DEPLOYED commit (the PR head), not
 # the default branch's copy. So:
@@ -110,7 +110,7 @@ on:
   # Every deployment state change fires (queued, in_progress, success, failure; not inactive),
   # for every environment. The gate job's `if:` keeps only environment `preview` in state
   # `success`; the preview pipeline posts exactly that, once per verified preview, and production
-  # deploys (a few a day, several states each) list as skipped runs.
+  # deploys list as skipped runs.
   deployment_status:
 
 # `packages: read` lets the job's token pull the preview image, if the package grants this
@@ -323,7 +323,7 @@ jobs:
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # `statuses: write`: a dispatch or deployment run reports on its commit as the `tRPC parity`
-    # status. (Posting it starts no run: this workflow no longer listens to `status`.)
+    # status.
     permissions:
       contents: read
       packages: read

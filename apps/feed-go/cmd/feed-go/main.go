@@ -21,6 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
+	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -58,12 +59,15 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 
 // missCompute is how hydration answers the misses of the caches Node fills on read
 // (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back). primary is the
-// primary database, used (and opened) only with write-back on.
-func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int)) *hydrate.MissCompute {
+// primary database, used (and opened) only with write-back on. The tag-ids lookup's browsing gate
+// reads blocked and addons, the blocked-tag list and addons the procedures read.
+func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int),
+	blocked *feed.BlockedTags, addons func(context.Context) []browsing.Addon) *hydrate.MissCompute {
 	if !cfg.ComputeMisses {
 		return nil
 	}
-	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe}
+	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
+		TagGate: feed.ImageTagGate(blocked, addons)}
 	if cfg.CacheWriteBack {
 		c.Primary = primary
 	}
@@ -128,7 +132,10 @@ func run(log *slog.Logger) error {
 		defer primaryPool.Close()
 		primary = primaryPool
 	}
-	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss)
+	// One blocked-tag list (one memo, as in Node) and one addon source for every reader.
+	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
+	addons := &feed.AddonSource{Sys: sys}
+	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
@@ -167,7 +174,7 @@ func run(log *slog.Logger) error {
 		Cache:    &feed.QueryCache{Redis: cache, Prefix: cfg.CacheKeyPrefix, Enabled: cfg.ImageQueryCache},
 		Hydrator: sources,
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
-		Addons:   &feed.AddonSource{Sys: sys},
+		Addons:   addons,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
@@ -200,7 +207,6 @@ func run(log *slog.Logger) error {
 	}
 	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
 	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
-	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	infinite := &feed.InfiniteDeps{
 		Deps:    deps,
 		Sources: sources,
