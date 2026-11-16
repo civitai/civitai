@@ -403,8 +403,8 @@ export async function reserveSharedWrite(
  * Server-side PUBLISH (`POST /storage/_publish/:to`), per (user, app): one token per publish call,
  * whatever the number of documents it copies (up to `DOC_STORE_PUBLISH_BOUNDS.maxKeys`). Its own
  * keyspace, so a publish never spends the ad-hoc shared write budget above, and ad-hoc writes
- * never spend this one. Rejections:
- * the legacy bucket's numbers, in this keyspace. A publish that changes nothing gives its token
+ * never spend this one. Rejections use the legacy bucket's numbers
+ * (`SHARED_WRITE_BUDGET.rejections`), in this keyspace. A publish that changes nothing gives its token
  * back. What it bounds is the moderation scan of every copied document and the rating job each
  * copy becomes once content levels are on, so the key cap is the real per-call ceiling.
  */

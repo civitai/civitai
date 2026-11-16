@@ -230,3 +230,21 @@ func TestLoadCacheMissSettings(t *testing.T) {
 		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q", c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
 	}
 }
+
+// FEED_GO_MAX_IN_FLIGHT: a positive integer is an explicit cap; anything else (unset, zero, negative,
+// junk) is 0, "not set", which the server resolves to the pool's ceiling — never an unlimited pod.
+func TestLoadMaxInFlight(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]int{"": 0, "0": 0, "-3": 0, "junk": 0, "1": 1, "7": 7, "64": 64} {
+		t.Setenv("FEED_GO_MAX_IN_FLIGHT", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.MaxInFlight != want {
+			t.Errorf("FEED_GO_MAX_IN_FLIGHT=%q -> %d, want %d", in, c.MaxInFlight, want)
+		}
+	}
+}
