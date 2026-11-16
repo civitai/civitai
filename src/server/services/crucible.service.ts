@@ -1,3 +1,5 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { randomUUID } from 'crypto';
 import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
@@ -116,6 +118,13 @@ import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/clie
 import { CacheTTL, constants } from '~/server/common/constants';
 import { revokeCrucibleEntry } from '~/server/services/crucible-entry-accepted';
 import { visibleEntryImageSql } from '~/server/services/crucible-entry-sql';
+import {
+  imageNotRestrictedSql,
+  imageNotRestrictedWhere,
+  isImageNotRestricted,
+  servableImage,
+} from '~/server/common/image-visibility';
+import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   getEntryElo,
@@ -680,6 +689,7 @@ const greenSiteSql = (isGreen: boolean) =>
 /** Crucible `c` with cover `i`, as list surfaces may show it to a viewer at `viewerLevel`. */
 const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
   ${crucibleScannedSql}
+  AND ${imageNotRestrictedSql()}
   ${
     viewerLevel > 0 && !Flags.intersects(viewerLevel, nsfwBrowsingLevelsFlag)
       ? Prisma.sql`AND NOT c."textNsfw"`
@@ -1228,7 +1238,13 @@ export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> &
   position: number | null;
 };
 
-export type CrucibleDetail = CrucibleDetailRow & {
+type ServableCover<K extends 'image' | 'heroImage'> = ReturnType<
+  typeof servableImage<NonNullable<CrucibleDetailRow[K]>>
+>;
+
+export type CrucibleDetail = Omit<CrucibleDetailRow, 'image' | 'heroImage'> & {
+  image: ServableCover<'image'>;
+  heroImage: ServableCover<'heroImage'>;
   paidEntryCount: number;
   entrantCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
@@ -1307,6 +1323,10 @@ export const getCrucibleDetail = async ({
         : { viewerEntries: [], viewerEntriesSoFar: 0 },
     ]
   );
+  // A withheld cover hides the page from all but its creator and moderators: the controller's
+  // isCrucibleHiddenByScan reads the nulled image.
+  const image = servableImage(crucible.image, userId);
+  const heroImage = servableImage(crucible.heroImage, userId);
 
   // dbWrite: the owner refetches right after a removal, and the replica may not have it yet.
   const ownerRemovalsLeft =
@@ -1344,6 +1364,9 @@ export const getCrucibleDetail = async ({
 
   return {
     ...crucible,
+    imageId: image?.id ?? null,
+    image,
+    heroImage,
     paidEntryCount,
     entrantCount: entrantCounts.get(id) ?? 0,
     viewerEntries,
@@ -1633,7 +1656,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   const visible: Prisma.CrucibleWhereInput[] = [
     {
       ingestion: CrucibleIngestionStatus.Scanned,
-      image: crucibleCoverListedWhere,
+      image: { AND: [crucibleCoverListedWhere, imageNotRestrictedWhere()] },
     },
   ];
   if (effectiveLevel > 0) {
@@ -1847,6 +1870,7 @@ export type CrucibleEntryIneligibleReason =
   | 'missing-required-resource'
   | 'wrong-base-model'
   | 'required-model-level'
+  | 'restricted-model'
   | 'contest-banned'
   | 'not-found';
 
@@ -1860,6 +1884,7 @@ const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
     "This image wasn't made with a checkpoint of one of this crucible's allowed base models.",
   'required-model-level':
     'A model this crucible requires can only be used for PG and PG-13 content, so this entry can only be PG or PG-13.',
+  'restricted-model': `This image can't be entered: ${RESTRICTED_IMAGE_REASON}.`,
   'contest-banned': CONTEST_BANNED_MESSAGE,
   'not-found': 'Image not found',
 };
@@ -1880,7 +1905,7 @@ const getAllowedResources = (crucible: EntryEligibilityCrucible) =>
  */
 const getEntryIneligibleReasons = async (
   crucible: EntryEligibilityCrucible,
-  images: { id: number; createdAt: Date; nsfwLevel: number }[],
+  images: Pick<Selectable<DB['Image']>, 'id' | 'createdAt' | 'nsfwLevel' | 'modelRestricted'>[],
   userId: number
 ) => {
   const contestBanned = images.length > 0 && (await isContestBanned(userId));
@@ -1926,6 +1951,7 @@ const getEntryIneligibleReasons = async (
         }
       }
       if (requiredModelHeldToSfw && isMature(image)) reasons.push('required-model-level');
+      if (isRestrictedImage(image)) reasons.push('restricted-model');
 
       return [image.id, reasons];
     })
@@ -1963,7 +1989,7 @@ export const checkCrucibleEntryEligibility = async ({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds }, userId },
-    select: { id: true, createdAt: true, nsfwLevel: true },
+    select: { id: true, createdAt: true, nsfwLevel: true, modelRestricted: true },
   });
   const reasonsByImage = await getEntryIneligibleReasons(crucible, images, userId);
 
@@ -2150,6 +2176,7 @@ export const submitEntry = async ({
         userId: true,
         type: true,
         nsfwLevel: true,
+        modelRestricted: true,
         metadata: true,
         createdAt: true,
         ingestion: true,
@@ -3566,7 +3593,7 @@ const getContestBannedEntrantIds = async (
 
 /**
  * An entry by a site-banned or contest-banned entrant, or whose image was blocked, held for review, flagged, unpublished,
- * or re-rated outside the crucible's levels, can't place; its fee stays in the pool and the next
+ * re-rated outside the crucible's levels or restricted by its base model, can't place; its fee stays in the pool and the next
  * entrant moves up. A scan still in progress doesn't disqualify. A ban that lands after the crucible
  * is finalized holds the prize instead (see `prize.service`).
  */
@@ -3581,9 +3608,14 @@ const rankableEntryWhere = (
   // path filter drops those rows.
   userId: { notIn: contestBannedIds },
   image: {
-    ...enteredImageWhere(),
-    ingestion: { not: ImageIngestionStatus.Blocked },
-    nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
+    AND: [
+      {
+        ...enteredImageWhere(),
+        ingestion: { not: ImageIngestionStatus.Blocked },
+        nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
+      },
+      imageNotRestrictedWhere(),
+    ],
   },
 });
 
@@ -5486,6 +5518,8 @@ export const getUserActiveCrucibles = async ({
             select: {
               url: true,
               nsfwLevel: true,
+              modelRestricted: true,
+              userId: true,
               ...crucibleCoverScanSelect,
             },
           },
@@ -5566,9 +5600,11 @@ export const getUserActiveCrucibles = async ({
         position: newBestPosition,
         // On green the ceiling holds for the host too, as on the crucible's own cards.
         imageUrl:
-          site.isGreen && isImageHiddenFromGreenViewer(entry.crucible.image?.nsfwLevel, userId)
+          !entry.crucible.image ||
+          !isImageNotRestricted(entry.crucible.image, userId) ||
+          (site.isGreen && isImageHiddenFromGreenViewer(entry.crucible.image.nsfwLevel, userId))
             ? null
-            : entry.crucible.image?.url ?? null,
+            : entry.crucible.image.url,
       });
     }
   }

@@ -51,6 +51,8 @@ import { parseFeedCursor } from '~/server/common/feed-cursor';
 import { CacheTTL, constants } from '~/server/common/constants';
 import {
   hasBlockMarker,
+  imageNotRestrictedSql,
+  imageRestrictedSql,
   imageReviewedSql,
   pendingLevelImageSql,
   pendingOthersImageConditions,
@@ -247,7 +249,6 @@ import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
   browsingLevels as selectableBrowsingLevels,
-  nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -2867,12 +2868,7 @@ const getAllImagesUncaptured = async (
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
-      -- Filter out images with NSFW level that are linked to license-restricted base models
-      -- Images with nsfwLevel >= 4 (R-XXX) cannot use base models with restricted licenses
-      AND (
-        (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-        OR NOT i."modelRestricted"
-      )
+      AND ${imageNotRestrictedSql({ viewerId: userId })}
   `;
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
@@ -4058,6 +4054,8 @@ export async function filterPinnedImagesToVersion<T extends { id: number }>(
 }
 
 type GetImageRaw = GetAllImagesRaw & {
+  // Mature and made with a base model that restricts mature images; true for the uploader too.
+  restricted: boolean;
   reactions?: ReviewReactions[];
   postId?: number | null;
   // User fields from JOIN (not in GetAllImagesRaw since main query uses cache)
@@ -4096,6 +4094,7 @@ export const getImage = async ({
       i.minor,
       i.poi,
       i."acceptableMinor",
+      ${imageRestrictedSql()} AS "restricted",
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -4353,10 +4352,7 @@ export const getImagesForModelVersion = async ({
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
           AND p."modelVersionId" = full_mv.id
           AND ${Prisma.join(imageWhere, ' AND ')}
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
+          AND ${imageNotRestrictedSql({ viewerId: userId })}
         ORDER BY i."postId", i.index, i.id
         LIMIT ${imagesPerVersion}
       ) i
@@ -4668,10 +4664,7 @@ export const getImagesForPosts = async ({
       i.poi
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
-      AND (
-        (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-        OR NOT i."modelRestricted"
-      )
+      AND ${imageNotRestrictedSql({ viewerId: userId })}
     ORDER BY i.index ASC, i.id
   `;
   const imageIds = images.map((i) => i.id);
@@ -4856,6 +4849,7 @@ export const getImagesByEntity = async ({
     }
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
+  AND.push(imageNotRestrictedSql({ viewerId: userId }));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -5519,10 +5513,7 @@ export const getEntityCoverImage = async ({
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND ${imageNotFlagged}
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
+          AND ${imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null })}
           ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
 
@@ -5559,10 +5550,7 @@ export const getEntityCoverImage = async ({
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND ${imageNotFlagged}
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
+          AND ${imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null })}
           ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
 
@@ -5584,6 +5572,7 @@ export const getEntityCoverImage = async ({
         WHERE e."entityType" = 'Image'
           AND ${imageVisible}
           AND ${modelNotWithheld}
+          AND ${imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null })}
 
         UNION
         -- ARTICLES
@@ -5607,6 +5596,7 @@ export const getEntityCoverImage = async ({
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
               AND ${imageNotFlagged}
+              AND ${imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null })}
         ) t
 
         UNION
@@ -5634,10 +5624,7 @@ export const getEntityCoverImage = async ({
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND ${imageNotFlagged}
-            AND (
-              (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-              OR NOT i."modelRestricted"
-            )
+            AND ${imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null })}
           ORDER BY e."entityId", i."postId", i.index, i.id
         ) t
 
@@ -5691,6 +5678,7 @@ export const getEntityCoverImage = async ({
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND ${imageNotFlagged}
+            AND ${imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null })}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (

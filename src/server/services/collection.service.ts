@@ -32,6 +32,7 @@ import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
@@ -3223,6 +3224,19 @@ export const validateContestCollectionEntry = async ({
       confirmOnPrimary: true,
     });
     if (blocked) throw throwBadRequestError('This challenge is not available.');
+  }
+
+  // No moderator exception: no one but the uploader would see the entry in the contest.
+  if (imageIds.length > 0) {
+    const entryImages = await dbRead.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { nsfwLevel: true, modelRestricted: true },
+    });
+    if (entryImages.some(isRestrictedImage)) {
+      throw throwBadRequestError(
+        `This image can't be entered: ${RESTRICTED_IMAGE_REASON}. Please enter a different image.`
+      );
+    }
   }
 
   // Block re-submitting an image a challenge judge has already scored. Removal

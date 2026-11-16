@@ -1,3 +1,5 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { uniqBy } from 'lodash-es';
 import {
   onStorySparked,
@@ -118,7 +120,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { PlacementSpaceMode } from '~/shared/utils/placement';
 import { effectivePlacementPrice, resolvePlacementSpace } from '~/shared/utils/placement';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 export type Viewer = { id: number; isModerator?: boolean } | undefined;
@@ -4075,18 +4077,10 @@ export async function getStorylineEarlyAccessStats() {
   return { signups, createClickReaders: clicks?.readers ?? 0, createClicks: clicks?.clicks ?? 0 };
 }
 
-export type StorylineFeedCover = {
-  id: number;
-  url: string;
-  type: MediaType;
-  nsfwLevel: number;
-  hash: string | null;
-  width: number | null;
-  height: number | null;
-  userId: number;
-  minor: boolean;
-  poi: boolean;
-};
+export type StorylineFeedCover = Pick<
+  Selectable<DB['Image']>,
+  'id' | 'url' | 'type' | 'nsfwLevel' | 'hash' | 'width' | 'height' | 'userId' | 'minor' | 'poi'
+>;
 
 export type StorylineImageGate = {
   viewer: Viewer;
@@ -4144,7 +4138,7 @@ function storylineImageVisible(gate: StorylineImageGate) {
   return Prisma.sql`i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
       AND i."acceptableMinor" = false
       -- Shown to everyone who sees the card or page, so no minor or real-person image.
-      AND i.minor = false AND i.poi = false
+      AND i.minor = false AND i.poi = false AND ${imageNotRestrictedSql()}
       AND (p.id IS NULL OR p.availability <> 'Private' OR p."userId" = ${viewerId})
       AND i."nsfwLevel" <> 0
       AND (i."nsfwLevel" & ${gate.browsingLevel}::int) <> 0

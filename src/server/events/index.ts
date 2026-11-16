@@ -1,6 +1,7 @@
 import dayjs from '~/shared/utils/dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
 import type { EventAccess, EventViewer } from '~/server/events/event-access';
 import {
@@ -412,6 +413,7 @@ export const eventEngine = {
         JOIN "Image" i ON i.id = ci."imageId"
         JOIN "User" u ON u.id = i."userId"
         WHERE c."userId" = -1 AND c.name = ${eventDef.coverImageCollection}
+          AND ${imageNotRestrictedSql()}
         ORDER BY ci."createdAt" DESC
         LIMIT 1
       `;

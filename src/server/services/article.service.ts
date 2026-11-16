@@ -1,5 +1,6 @@
 import type { EventViewer } from '~/server/events/event-access';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { Prisma } from '@prisma/client';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -620,8 +621,12 @@ export const getArticles = async ({
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const cover = coverImages.find((x) => x.id === article.coverId);
-        const isOwnerOrMod = !!sessionUser?.isModerator || article.userId === sessionUser?.id;
-        const coverImage = isArticleImageViewable(cover, isOwnerOrMod) ? cover : undefined;
+        const coverImage = isArticleImageViewable(
+          cover,
+          articleImageViewer(sessionUser, article.userId)
+        )
+          ? cover
+          : undefined;
         const match = articleStats[article.id];
 
         return {
@@ -730,7 +735,7 @@ export const getCivitaiNews = async () => {
     const user = users.find((x) => x.id === article.userId);
     const cover = coverImages.find((x) => x.id === article.coverId);
     // A public page with no viewer: no owner exception.
-    const coverImage = isArticleImageViewable(cover, false) ? cover : undefined;
+    const coverImage = isArticleImageViewable(cover, 'other') ? cover : undefined;
     return {
       ...article,
       user: user ?? null,
@@ -850,9 +855,9 @@ export const getArticleById = async ({
       type: 'Article',
     });
 
-    const isOwnerOrMod = isModerator || userId === article.userId;
-    const coverImage = viewableArticleImage(article.coverImage, isOwnerOrMod);
-    const bannerImage = viewableArticleImage(article.bannerImage, isOwnerOrMod);
+    const viewer = articleImageViewer({ id: userId, isModerator }, article.userId);
+    const coverImage = viewableArticleImage(article.coverImage, viewer);
+    const bannerImage = viewableArticleImage(article.bannerImage, viewer);
 
     // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
     // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
@@ -886,17 +891,29 @@ export const getArticleById = async ({
 
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
-/** Owners and moderators always; anyone else per `servableArticleImage`. */
-function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview'>>(
-  image: T | null | undefined,
-  isOwnerOrMod: boolean
-): image is T {
+type ArticleImageViewer = 'owner' | 'moderator' | 'other';
+
+const articleImageViewer = (
+  viewer: { id?: number; isModerator?: boolean } | undefined,
+  articleUserId: number | null
+): ArticleImageViewer =>
+  viewer?.id === articleUserId ? 'owner' : viewer?.isModerator ? 'moderator' : 'other';
+
+/** A moderator gets no exception for a restricted image; anyone else per `servableArticleImage`. */
+function isArticleImageViewable<
+  T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview' | 'nsfwLevel' | 'modelRestricted'>
+>(image: T | null | undefined, viewer: ArticleImageViewer): image is T {
   if (!image) return false;
-  return isOwnerOrMod || servableArticleImage(image) !== null;
+  if (viewer === 'owner') return true;
+  if (viewer === 'moderator') return !isRestrictedImage(image);
+  return servableArticleImage(image) !== null;
 }
 
-function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
-  if (!isArticleImageViewable(image, isOwnerOrMod)) return undefined;
+function viewableArticleImage(
+  image: ArticleImageRow | null | undefined,
+  viewer: ArticleImageViewer
+) {
+  if (!isArticleImageViewable(image, viewer)) return undefined;
   return {
     ...image,
     nsfwLevel: image.nsfwLevel as NsfwLevel,
@@ -1086,6 +1103,28 @@ export const upsertArticle = async ({
           if (!isImgOwner) throw throwAuthorizationError('Invalid banner image');
         },
       });
+    }
+
+    // A moderator's form never received a restricted cover or banner, so its null is not a removal.
+    const clearedIds =
+      article && article.userId !== userId
+        ? [coverId === null ? article.coverId : null, bannerId === null ? article.bannerId : null]
+        : [];
+    if (clearedIds.some(isDefined)) {
+      const restrictedIds = new Set(
+        (
+          await dbWrite.image.findMany({
+            where: { id: { in: clearedIds.filter(isDefined) } },
+            select: { id: true, nsfwLevel: true, modelRestricted: true },
+          })
+        )
+          .filter(isRestrictedImage)
+          .map((image) => image.id)
+      );
+      if (coverId === null && article?.coverId && restrictedIds.has(article.coverId))
+        coverId = undefined;
+      if (bannerId === null && article?.bannerId && restrictedIds.has(article.bannerId))
+        bannerId = undefined;
     }
 
     if (!id) {
@@ -1487,7 +1526,12 @@ export const upsertArticle = async ({
       // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
       // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
       const replacedImageIds: number[] = [];
-      if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
+      if (
+        coverId !== undefined &&
+        article.coverId !== coverId &&
+        article.coverId &&
+        article.coverId !== result.bannerId
+      ) {
         const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
         const shownElsewhere =
           isImgOwner &&

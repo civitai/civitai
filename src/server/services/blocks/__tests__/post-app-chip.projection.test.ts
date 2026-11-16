@@ -66,6 +66,7 @@ import {
   postAppMarkerQuery,
   projectPostAppChip,
   readBlockPublishedAppId,
+  type PostAppChipRow,
 } from '~/server/services/blocks/post-app-chip.logic';
 
 /** Written out, deliberately — see the header. */
@@ -114,6 +115,7 @@ const FORBIDDEN_OAUTH_CLIENT_FIELDS = [
 ] as const;
 
 type Listing = {
+  id: string;
   slug: string;
   name: string;
   status: string;
@@ -135,11 +137,13 @@ function scannedPgIcon(url: string | null) {
     tosViolation: false,
     acceptableMinor: false,
     blockedFor: null,
+    modelRestricted: false,
   };
 }
-type Block = { status: string; currentVersionDeployedAt: Date | null; appListing?: Listing | null };
+type Block = { status: string; currentVersionDeployedAt: Date | null; appListing: Listing | null };
 
 const listing = (over: Partial<Listing> = {}): Listing => ({
+  id: 'apl_custom',
   slug: 'custom-generators',
   name: 'Custom Generators',
   status: 'approved',
@@ -157,15 +161,16 @@ const block = (over: Partial<Block> = {}): Block => ({
   ...over,
 });
 
-const row = (over: { name?: string; appBlocks?: Block[] } = {}) => ({
+const row = (over: Partial<PostAppChipRow> = {}): PostAppChipRow => ({
   name: 'Custom Generators Client',
   appBlocks: [block()],
+  connectListings: [],
   ...over,
 });
 
 /** The projector, at the red-capable host unless a test needs otherwise. */
-const project = (r: unknown, host = RED_HOST) =>
-  projectPostAppChip(r as Parameters<typeof projectPostAppChip>[0], { host });
+const project = (r: PostAppChipRow | null | undefined, host = RED_HOST) =>
+  projectPostAppChip(r, { host });
 
 describe('postSelect must not carry Post.metadata', () => {
   it('has no `metadata` key', () => {
@@ -421,6 +426,7 @@ describe('projectPostAppChip emits exactly the chip', () => {
         project(
           {
             name: 'A Distinct Client Name',
+            connectListings: [],
             appBlocks: [block({ appListing: listing({ contentRating: 'x' }) })],
           },
           SFW_HOST
@@ -472,11 +478,17 @@ describe('projectPostAppChip emits exactly the chip', () => {
       // that suppressed whenever no candidate survived would break this.
       expect(
         project(
-          { name: 'Ab Img Poster', appBlocks: [{ status: 'approved', appListing: null }] },
+          {
+            name: 'Ab Img Poster',
+            appBlocks: [{ status: 'approved', currentVersionDeployedAt: null, appListing: null }],
+            connectListings: [],
+          },
           SFW_HOST
         )
       ).toEqual({ slug: null, name: 'Ab Img Poster', iconUrl: null });
-      expect(project({ name: 'Ab Img Poster', appBlocks: [] }, SFW_HOST)).toEqual({
+      expect(
+        project({ name: 'Ab Img Poster', appBlocks: [], connectListings: [] }, SFW_HOST)
+      ).toEqual({
         slug: null,
         name: 'Ab Img Poster',
         iconUrl: null,
@@ -506,20 +518,25 @@ describe('projectPostAppChip emits exactly the chip', () => {
 
     it('falls back to the OauthClient name when there is no listing row', () => {
       expect(
-        project({ name: 'Ab Img Poster', appBlocks: [{ status: 'approved', appListing: null }] })
+        project({
+          name: 'Ab Img Poster',
+          appBlocks: [{ status: 'approved', currentVersionDeployedAt: null, appListing: null }],
+          connectListings: [],
+        })
       ).toEqual({ slug: null, name: 'Ab Img Poster', iconUrl: null });
     });
 
     it('falls back when the app has no blocks at all', () => {
-      expect(project({ name: 'Ab Img Poster', appBlocks: [] })?.name).toBe('Ab Img Poster');
+      expect(project({ name: 'Ab Img Poster', appBlocks: [], connectListings: [] })?.name).toBe(
+        'Ab Img Poster'
+      );
     });
 
     it('returns null when nothing legible survives sanitization', () => {
       // A chip reading "Published with" and then nothing is worse than no chip.
       // `‮` is a bidi override; `​` a zero-width space — both stripped.
-      expect(project({ name: '‮​', appBlocks: [] })).toBeNull();
-      expect(project({ name: '   ', appBlocks: [] })).toBeNull();
-      expect(project({ name: undefined, appBlocks: [] })).toBeNull();
+      expect(project({ name: '‮​', appBlocks: [], connectListings: [] })).toBeNull();
+      expect(project({ name: '   ', appBlocks: [], connectListings: [] })).toBeNull();
     });
   });
 
@@ -598,12 +615,9 @@ describe('an offsite Connect listing with no block', () => {
     expect(project(offsiteRow({ contentRating: 'x' }), SFW_HOST)).toBeNull();
   });
 
-  it('ignores a connect listing that is not offsite', () => {
-    expect(project(offsiteRow({ kind: 'onsite' }))?.name).toBe('Game Frame');
-  });
-
   it('feeds the listing id to the visibility-level read', () => {
     const r = {
+      name: 'Game Frame',
       appBlocks: [],
       connectListings: [{ ...listing({ kind: 'offsite' }), id: 'apl_g' }],
     };

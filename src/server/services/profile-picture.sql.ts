@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import { imageNotRestrictedSql, imageReviewedSql } from '~/server/common/image-visibility';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 
 /** When a profile picture may be served to anyone but its owner; any other picture is served as none. */
@@ -7,6 +7,7 @@ export const servableProfilePictureSql = Prisma.sql`
   i.ingestion <> 'Blocked'::"ImageIngestionStatus"
   AND i."needsReview" IS DISTINCT FROM 'csam'
   AND ${imageReviewedSql('i')}
+  AND ${imageNotRestrictedSql()}
 `;
 
 export type RawQueryClient = {

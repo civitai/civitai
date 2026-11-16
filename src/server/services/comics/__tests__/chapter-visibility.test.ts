@@ -13,9 +13,10 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   BlockedUsers: listOf([23]),
 }));
 
-const { isComicProjectHidden, isPanelTainted } = await import(
+const { isComicProjectHidden, isPanelTainted, withholdRestrictedPanelImages } = await import(
   '~/server/services/comics/chapter-visibility'
 );
+const { servableImage } = await import('~/server/common/image-visibility');
 
 const OWNER = 5;
 const project = (over: Record<string, unknown> = {}) => ({
@@ -80,5 +81,51 @@ describe('a panel', () => {
     ['with a clean image', clean, false],
   ])('%s holds its chapter back: %s', (_, image, tainted) => {
     expect(isPanelTainted({ image })).toBe(tainted);
+  });
+});
+
+describe('an image made with a base model that restricts mature images', () => {
+  const R = 4;
+  const PG = 1;
+  const image = (nsfwLevel: number, modelRestricted = true) => ({
+    id: 1,
+    url: 'u',
+    nsfwLevel,
+    modelRestricted,
+    userId: OWNER,
+  });
+  const servedPanel = (img: ReturnType<typeof image>, viewerId?: number) => {
+    const chapter = {
+      panels: [{ imageUrl: 'u' as string | null, image: img as typeof img | null }],
+    };
+    withholdRestrictedPanelImages([chapter], viewerId);
+    return chapter.panels[0];
+  };
+
+  it('is withheld as a panel from a stranger, a moderator and a signed-out reader', () => {
+    for (const viewerId of [reader.id, moderator.id, undefined])
+      expect(servedPanel(image(R), viewerId)).toEqual({ imageUrl: null, image: null });
+  });
+
+  it('is withheld as a cover from a stranger, a moderator and a signed-out reader', () => {
+    for (const viewerId of [reader.id, moderator.id, undefined])
+      expect(servableImage(image(R), viewerId)).toBeNull();
+  });
+
+  it('is served to its uploader', () => {
+    expect(servedPanel(image(R), OWNER).imageUrl).toBe('u');
+    expect(servableImage(image(R), OWNER)).toEqual({ id: 1, url: 'u', nsfwLevel: R });
+  });
+
+  it.each([
+    ['SFW with the flag', image(PG)],
+    ['mature without the flag', image(R, false)],
+  ])('is served to anyone when %s', (_, img) => {
+    expect(servedPanel(img, undefined).imageUrl).toBe('u');
+    expect(servableImage(img, undefined)).toEqual({
+      id: 1,
+      url: 'u',
+      nsfwLevel: img.nsfwLevel,
+    });
   });
 });

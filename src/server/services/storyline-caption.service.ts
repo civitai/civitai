@@ -3,6 +3,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 /**
  * Sets the caption the post's author wrote on one image of a storyline chapter, or of a draft
@@ -136,6 +137,7 @@ export async function getStorylineImageCaptions({
           { tags: { none: { tagId: { in: hiddenTagIds }, disabled: false } } },
           ...(viewerId != null ? [{ userId: viewerId }] : []),
         ],
+        AND: [imageNotRestrictedWhere()],
       },
     },
     select: {

@@ -28,6 +28,7 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { PlacementSpaceMode, PlacementSpaceSetting } from '~/shared/utils/placement';
 import {
@@ -940,6 +941,7 @@ const summaryPostSelect = {
       minor: false,
       poi: false,
       needsReview: null,
+      ...imageNotRestrictedWhere(),
     },
     // `type` so a video cover is not requested as an image; `hash` and size for its blur.
     select: {

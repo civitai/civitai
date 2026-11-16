@@ -64,7 +64,8 @@ beforeAll(async () => {
       "userId" integer NOT NULL, minor boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
       "postId" integer, ingestion text NOT NULL DEFAULT 'Pending',
       "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text,
-      "acceptableMinor" boolean NOT NULL DEFAULT false);
+      "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false);
     CREATE TABLE "TagsOnImageDetails" ("imageId" integer, "tagId" integer, disabled boolean DEFAULT false);
     CREATE TABLE "PlacementSpace" (surface text, "entityType" text, "entityId" integer, mode text,
       price integer);

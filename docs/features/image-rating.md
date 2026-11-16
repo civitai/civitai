@@ -140,11 +140,19 @@ Every public read path below requires **reviewed** and `needsReview IS NULL`, th
 The `metrics-images` Meilisearch feed (the main image feed) applies its own query-time filters on the fields
 it indexes rather than calling `imageReviewedSql`; a change to the rule above has to be made there separately.
 
-Owners always see their own images, including unrated and in-review ones. Moderators see everything in the
-pending views.
+Reads also require **not restricted**: `imageNotRestrictedSql` / `imageNotRestrictedWhere` in the same file
+hide a mature image made with a base model that restricts mature images (see
+`docs/nsfw-license-restrictions.md`). It has two exceptions: the uploader's own image, only where the read is
+per viewer, and a moderator opening the image itself by id (`getImage`,
+`assertImageVisibleToViewer`: `imageVisibilityConditions` applies no conditions for moderators).
 
-When adding a new image read path, use `imageReviewedSql()`, or `isImageReviewed` for rows already fetched —
-do not re-derive visibility from `nsfwLevel` alone.
+Owners always see their own images, including unrated and in-review ones, and their restricted ones on per-viewer
+reads. Moderators see everything in the main site's pending views except restricted images, which they reach
+through the image's direct link; the moderator app's queues still list them.
+
+When adding a new image read path, use `imageReviewedSql()` and `imageNotRestrictedSql({ viewerId })` (or
+`isImageReviewed` / `isImageNotRestricted` for rows already fetched) — do not re-derive visibility from
+`nsfwLevel` alone.
 
 ### 8. Sort order
 

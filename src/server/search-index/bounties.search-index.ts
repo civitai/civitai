@@ -14,6 +14,7 @@ import { bountiesFilterableAttributes } from '~/server/search-index/filterable-a
 import { bountiesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
@@ -327,6 +328,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
         WHERE i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${imageNotRestrictedSql()}
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT

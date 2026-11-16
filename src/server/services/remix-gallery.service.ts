@@ -41,7 +41,11 @@ import {
   storylineRootVisibleSql,
 } from '~/server/services/storyline.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  imageNotRestrictedSql,
+  imageRestrictedSql,
+  imageReviewedSql,
+} from '~/server/common/image-visibility';
 import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
 import { toQueueImage } from '~/server/utils/queue-image';
 import {
@@ -50,10 +54,7 @@ import {
   throwBadRequestError,
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import {
-  nsfwBrowsingLevelsFlag,
-  onlySelectableLevels,
-} from '~/shared/constants/browsingLevel.constants';
+import { onlySelectableLevels } from '~/shared/constants/browsingLevel.constants';
 import {
   declineFeeAmount,
   encodePlacementQueueCursor,
@@ -80,6 +81,7 @@ import {
   remixGalleryRemovableAt,
   remixGalleryShuffleSeed,
 } from '~/shared/utils/remix-gallery';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 const SURFACE = REMIX_GALLERY_SURFACE;
 const TARGET_TYPE = REMIX_GALLERY_TARGET_TYPE;
@@ -88,6 +90,7 @@ type SubmissionImage = {
   id: number;
   userId: number;
   nsfwLevel: number;
+  modelRestricted: boolean;
   minor: boolean;
   poi: boolean;
   tosViolation: boolean;
@@ -172,7 +175,7 @@ const remixOfIdSql = (alias = 'i') => {
  */
 async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
   const [row] = await dbWrite.$queryRaw<SubmissionImage[]>`
-    SELECT i.id, i."userId", i."nsfwLevel", i.minor, i.poi, i."tosViolation",
+    SELECT i.id, i."userId", i."nsfwLevel", i."modelRestricted", i.minor, i.poi, i."tosViolation",
            i.ingestion::text AS ingestion, i."needsReview",
            p."publishedAt",
            ${remixOfIdSql()} AS "remixOfId",
@@ -331,7 +334,12 @@ export async function createRemixGallerySubmission({
   const pendingReadiness = !submission.publishedAt || submission.ingestion !== 'Scanned';
 
   // Not creator preferences, so they are refused under either content rule.
-  if (submission.tosViolation || submission.minor || submission.poi)
+  if (
+    submission.tosViolation ||
+    submission.minor ||
+    submission.poi ||
+    isRestrictedImage(submission)
+  )
     throw throwBadRequestError('remix gallery: that image cannot be submitted');
   // `needsReview` is a verdict on a SCANNED image, so it refuses. On an unscanned
   // one it is simply not set yet, and `startReadyRemixSubmissionClocks` applies
@@ -888,7 +896,13 @@ async function assertStillAcceptable({
   if (!placement) throw throwBadRequestError('remix gallery: that submission no longer exists');
 
   const submission = await loadSubmissionImage(imageId);
-  if (submission.tosViolation || submission.minor || submission.poi || submission.needsReview)
+  if (
+    submission.tosViolation ||
+    submission.minor ||
+    submission.poi ||
+    submission.needsReview ||
+    isRestrictedImage(submission)
+  )
     throw throwBadRequestError('remix gallery: that image can no longer be shown');
 
   const space = await resolvePlacementSpaceFor({
@@ -1294,6 +1308,7 @@ const hostIsShowable = (alias = 'i') => {
     AND ${imageReviewedSql(alias)}
     AND NOT ${t}."tosViolation"
     AND ${t}."nsfwLevel" != ${NsfwLevel.Blocked}
+    AND ${imageNotRestrictedSql({ alias })}
   ) IS TRUE)`;
 };
 
@@ -1461,17 +1476,7 @@ const postedImageIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         AND NOT i.poi
         AND (i."nsfwLevel" & ${levels}) != 0
         AND i."nsfwLevel" != 0
-        -- Licensing, not moderation: an image built on a restricted base model
-        -- may not be shown at R or above. Copied from getAllImages verbatim
-        -- rather than simplified to NOT i."modelRestricted" - the column is not
-        -- in the Prisma schema and the backfill that writes it uses
-        -- IS DISTINCT FROM true, so a bare NOT would drop every SFW row the
-        -- moment a NULL appears, emptying galleries rather than over-showing.
-        -- The first arm settles SFW rows before nullability can matter.
-        AND (
-          (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-          OR NOT i."modelRestricted"
-        )${minorHostCeiling(host)}${hostContentBand(host)}`;
+        AND ${imageNotRestrictedSql()}${minorHostCeiling(host)}${hostContentBand(host)}`;
 
 export function parseGalleryCursor(cursor?: string | null) {
   if (!cursor) return null;
@@ -1892,6 +1897,18 @@ const queueImageIsListable = (imageId: Prisma.Sql) => Prisma.sql`
   )`;
 
 /**
+ * Not in `queueImageIsListable`: the readiness pass refunds a restricted submission still awaiting
+ * readiness. One flagged after its clock started is hidden from the owner here and left to expire.
+ */
+const submissionShownToOwner = (ownerId: number) => Prisma.sql`
+  EXISTS (
+    SELECT 1
+    FROM "Image" si
+    WHERE si.id = (pl.data ->> 'imageId')::int
+      AND ${imageNotRestrictedSql({ alias: 'si', viewerId: ownerId })}
+  )`;
+
+/**
  * Both images are tested: a submission the owner can see, on a host that still
  * renders. A host taken down after submissions arrived leaves rows nobody can
  * judge — the gallery they would appear in is gone — and those refund in full on
@@ -1914,6 +1931,7 @@ async function countListablePendingSubmissions({
       AND pl.status = 'pending'
       AND ${queueImageIsListable(Prisma.sql`(pl.data ->> 'imageId')::int`)}
       AND ${queueImageIsListable(Prisma.sql`pl."targetId"`)}
+      AND ${submissionShownToOwner(ownerId)}
   `;
 
   return row?.count ?? 0;
@@ -2480,7 +2498,8 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
            img.id AS "imageId",
            img."nsfwLevel",
            img."needsReview",
-           (img."tosViolation" OR img.minor OR img.poi OR img.ingestion = 'Blocked') AS doomed,
+           (img."tosViolation" OR img.minor OR img.poi OR img.ingestion = 'Blocked'
+             OR ${imageRestrictedSql({ alias: 'img' })}) AS doomed,
            -- 🔴 The alias MUST NOT be "i". queueImageIsListable declares its own
            -- FROM "Image" i internally, so passing i.id from an outer alias named
            -- i is captured by the inner one: the correlation degenerates to
@@ -2502,6 +2521,7 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
       AND (
         img.id IS NULL
         OR (img."tosViolation" OR img.minor OR img.poi OR img.ingestion = 'Blocked')
+        OR ${imageRestrictedSql({ alias: 'img' })}
         OR ${queueImageIsListable(Prisma.sql`img.id`)}
       )
       -- A row waiting on a moderator is selected ONCE, to be marked, and then
@@ -2713,6 +2733,7 @@ export async function getPendingRemixGallerySubmissions({
       }
       AND ${queueImageIsListable(Prisma.sql`(pl.data ->> 'imageId')::int`)}
       AND ${queueImageIsListable(Prisma.sql`pl."targetId"`)}
+      AND ${submissionShownToOwner(ownerId)}
     ORDER BY pl."createdAt" ASC, pl.id ASC
     LIMIT ${limit + 1}
   `;

@@ -69,7 +69,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
@@ -183,6 +184,10 @@ async function sees(viewer: Viewer) {
 
 const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
   ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
+  [
+    'rated R on a restricted base model',
+    { image: { '"nsfwLevel"': '4', '"modelRestricted"': 'true' } },
+  ],
   ['not yet scanned', { image: { ingestion: `'Pending'` } }],
   [
     'with a mod-locked rating from a Knights vote whose scan errored',

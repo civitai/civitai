@@ -1469,11 +1469,13 @@ export async function getHeldDetectionModelCount() {
 export type MinorHashMatchDetail = {
   modelCoverUrl: string | null;
   modelCoverType: string | null;
+  modelCoverRestricted: boolean | null;
   modelCreatedAt: Date | null;
   uploaderModelCount: number;
   uploaderJoinedAt: Date | null;
   minorModelCoverUrl: string | null;
   minorModelCoverType: string | null;
+  minorModelCoverRestricted: boolean | null;
   minorModelStatus: string | null;
   /** `TakenDown` sits on top of `status`, so a taken-down seed can still read Published. */
   minorModelMode: string | null;
@@ -1503,8 +1505,10 @@ export async function getMinorHashMatchDetail({
 }) {
   // Every seed-side id is cast rather than left to inference: a null bind reaches Postgres untyped,
   // and `col = $1` with no type to resolve against fails.
-  const cover = (id: number | null, field: 'url' | 'type') => sql`
-    (SELECT i.${sql.raw(`"${field}"`)}::text
+  const cover = (id: number | null, column: 'url' | 'type' | 'modelRestricted') => sql`
+    (SELECT ${
+      column === 'modelRestricted' ? sql`i."modelRestricted"` : sql`i.${sql.ref(column)}::text`
+    }
      FROM "ModelVersion" mv
      JOIN "Post" p ON p."modelVersionId" = mv.id
      JOIN "Image" i ON i."postId" = p.id
@@ -1517,12 +1521,14 @@ export async function getMinorHashMatchDetail({
     SELECT
       ${cover(modelId, 'url')} AS "modelCoverUrl",
       ${cover(modelId, 'type')} AS "modelCoverType",
+      ${cover(modelId, 'modelRestricted')} AS "modelCoverRestricted",
       m."createdAt" AS "modelCreatedAt",
       (SELECT count(*)::int FROM "Model" om WHERE om."userId" = m."userId" AND om.status <> 'Deleted')
         AS "uploaderModelCount",
       u."createdAt" AS "uploaderJoinedAt",
       ${cover(minorModelId, 'url')} AS "minorModelCoverUrl",
       ${cover(minorModelId, 'type')} AS "minorModelCoverType",
+      ${cover(minorModelId, 'modelRestricted')} AS "minorModelCoverRestricted",
       mm.status::text AS "minorModelStatus",
       mm.mode::text AS "minorModelMode",
       mm.meta->>'unpublishedAt' AS "minorModelUnpublishedAt",

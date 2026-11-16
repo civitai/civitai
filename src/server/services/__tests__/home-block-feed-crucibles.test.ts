@@ -48,6 +48,7 @@ const row = (id: number, overrides: Partial<Row> = {}): Row => ({
   image: {
     needsReview: null,
     tosViolation: false,
+    modelRestricted: false,
     ...(overrides.image ?? { ingestion: ImageIngestionStatus.Scanned, nsfwLevel: NsfwLevel.PG }),
   },
 });

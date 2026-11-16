@@ -61,7 +61,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, name text, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "needsReview" text, type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
       (${CLEAN}, 'clean', ${CLEAN_AUTHOR}, 'Scanned', NULL),
@@ -72,6 +73,8 @@ beforeAll(async () => {
       (60, 'error', 6, 'Error', NULL);
     INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevelLocked") VALUES
       (70, 'pending-mod-rated', 7, 'Pending', true);
+    INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "modelRestricted") VALUES
+      (80, 'restricted-r', 8, 4, true), (90, 'restricted-pg', 9, 1, true);
   `);
 });
 afterAll(() => pg.close());
@@ -136,10 +139,17 @@ describe('servable profile pictures', () => {
       50,
       60,
       70,
+      80,
+      90,
     ]);
 
     // Unscanned pictures (Pending, Error) are left out; a moderator's rating stands in for a scan.
-    expect(pictureUrls(pictures)).toEqual(['clean', 'other-review', 'pending-mod-rated']);
+    expect(pictureUrls(pictures)).toEqual([
+      'clean',
+      'other-review',
+      'pending-mod-rated',
+      'restricted-pg',
+    ]);
   });
 
   it('bounty search docs carry no author picture that may not be served', async () => {

@@ -1,4 +1,5 @@
 import { dbRead } from '~/server/db/client';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Flags } from '~/shared/utils/flags';
@@ -119,6 +120,8 @@ export interface ShowcaseImage {
  *     Images with `nsfwLevel = 0` (unrated / pending) never intersect and are
  *     therefore excluded — the same fail-closed stance the feed takes for
  *     non-own unrated content.
+ *   - not a restricted mature image (`imageNotRestrictedWhere`), unless the
+ *     viewer uploaded it.
  *
  * Returns an empty array when the version has no images yet — block UI
  * renders a "no preview images" state rather than crashing.
@@ -137,6 +140,7 @@ export async function getModelShowcaseImages(
         ingestion: 'Scanned',
         tosViolation: false,
         postId: { not: null },
+        ...imageNotRestrictedWhere({ viewerId: viewer?.userId }),
       },
     },
     select: {

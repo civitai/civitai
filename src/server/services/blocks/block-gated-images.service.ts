@@ -1,3 +1,5 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { Prisma } from '@prisma/client';
 import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -8,6 +10,7 @@ import {
   type OffsiteRatingValue,
 } from '~/shared/constants/browsingLevel.constants';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import { isImageNotRestricted } from '~/server/common/image-visibility';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { BLOCK_PUBLISHED_APP_ID_META_KEY } from '~/server/services/blocks/block-image-upload.service';
 
@@ -106,32 +109,35 @@ export function resolveViewerBrowsingLevel(maxBrowsingLevel: number | undefined 
   return selectable || publicBrowsingLevelsFlag;
 }
 
-/** Raw row shape read from Postgres for the clamp decision. */
-type GatedImageRow = {
-  id: number;
-  /** The image's AUTHOR. Read for ONE decision: may this viewer see their own
-   *  not-yet-rated image (see `ratingPending` on {@link BlockGatedImage}). */
-  userId: number;
-  url: string;
-  nsfwLevel: number;
-  ingestion: string;
-  width: number | null;
-  height: number | null;
-  needsReview: string | null;
-  poi: boolean | null;
-  minor: boolean | null;
-  tosViolation: boolean | null;
-  acceptableMinor: boolean | null;
-  blockedFor: string | null;
-};
+/**
+ * Raw row read from Postgres for the clamp decision. `userId` is the image's AUTHOR: the viewer
+ * may see their own not-yet-rated image (see `ratingPending` on {@link BlockGatedImage}) and their
+ * own restricted one.
+ */
+type GatedImageRow = Pick<
+  Selectable<DB['Image']>,
+  | 'id'
+  | 'userId'
+  | 'url'
+  | 'nsfwLevel'
+  | 'ingestion'
+  | 'width'
+  | 'height'
+  | 'needsReview'
+  | 'poi'
+  | 'minor'
+  | 'tosViolation'
+  | 'acceptableMinor'
+  | 'blockedFor'
+  | 'modelRestricted'
+>;
 
 export async function getBlockGatedImagesByIds(input: {
   imageIds: number[];
   browsingLevel: number;
   /** OauthClient id of the CALLING app — scopes the read to images IT published. */
   appId: string;
-  /** The requesting viewer — sources their blocked-users / blocked-tags sets,
-   *  and decides the one owner branch (`ratingPending`) below. */
+  /** The requesting viewer: sources their blocked-users / blocked-tags sets, and the owner exceptions. */
   userId: number;
 }): Promise<{ images: BlockGatedImage[] }> {
   // Dedupe (preserving first-seen request order) + cap to bound load. Non-finite
@@ -178,7 +184,8 @@ export async function getBlockGatedImagesByIds(input: {
   const rows = await dbRead.$queryRaw<GatedImageRow[]>`
     SELECT
       i."id", i."userId", i."url", i."nsfwLevel", i."ingestion", i."width", i."height",
-      i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor"
+      i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor",
+      i."modelRestricted"
     FROM "Image" i
     WHERE i."id" = ANY(${orderedIds}::int[])
       AND i."postId" IS NULL
@@ -194,6 +201,10 @@ export async function getBlockGatedImagesByIds(input: {
   for (const id of orderedIds) {
     const row = byId.get(id);
     if (!row) continue;
+    if (!isImageNotRestricted(row, input.userId)) {
+      images.push({ imageId: id, status: 'hidden' });
+      continue;
+    }
     const verdict = classifyGatedImageForViewer(
       {
         ingestion: row.ingestion,
@@ -212,7 +223,7 @@ export async function getBlockGatedImagesByIds(input: {
       continue;
     }
     if (verdict.status === 'pending') {
-      // 🔴 THE ONE IDENTITY BRANCH, AND IT LIVES HERE RATHER THAN IN THE PURE
+      // 🔴 THE PENDING IDENTITY BRANCH LIVES HERE RATHER THAN IN THE PURE
       // CLAMP. Nothing has rated this image yet. Its AUTHOR may see it — they
       // generated it, they confirmed the publish, and their block already holds
       // the same picture's orchestrator url from `pollWorkflow`, so the gated

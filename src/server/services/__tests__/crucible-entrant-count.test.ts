@@ -103,3 +103,47 @@ describe('entrant count surfaces', () => {
     expect(valuesOf(queryRaw.mock.calls[0])).toEqual([[1]]);
   });
 });
+
+describe('the detail page cover and hero', () => {
+  const UPLOADER = 7;
+  const image = (id: number) => ({
+    id,
+    url: `u${id}`,
+    nsfwLevel: 4,
+    modelRestricted: true,
+    userId: UPLOADER,
+  });
+
+  beforeEach(() => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      id: 1,
+      userId: UPLOADER,
+      freeEntriesPerUser: 1,
+      _count: { entries: 0 },
+      status: CrucibleStatus.Active,
+      imageId: 10,
+      image: image(10),
+      heroImage: image(11),
+    });
+    queryRaw.mockResolvedValue([]);
+  });
+
+  it.each([
+    ['a signed-out viewer', {}],
+    ['a moderator', { userId: 99, isModerator: true }],
+  ])('withholds a restricted image from %s', async (_, viewer) => {
+    const detail = await getCrucibleDetail({ id: 1, ...viewer });
+
+    expect(detail?.image).toBeNull();
+    expect(detail?.imageId).toBeNull();
+    expect(detail?.heroImage).toBeNull();
+  });
+
+  it('shows its uploader the images, without the restriction fields', async () => {
+    const detail = await getCrucibleDetail({ id: 1, userId: UPLOADER });
+
+    expect(detail?.image).toEqual({ id: 10, url: 'u10', nsfwLevel: 4 });
+    expect(detail?.imageId).toBe(10);
+    expect(detail?.heroImage).toEqual({ id: 11, url: 'u11', nsfwLevel: 4 });
+  });
+});

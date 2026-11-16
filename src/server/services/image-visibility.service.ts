@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import { imageNotRestrictedSql, imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { isPgInt4, queryPrismaSql } from '~/server/db/prisma-sql-kysely';
@@ -96,6 +96,7 @@ export function imageVisibilityConditions({
       ? Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`
       : Prisma.sql`(i."acceptableMinor" = FALSE)`,
     ...imageBlockedForConditions({ userId }),
+    imageNotRestrictedSql({ viewerId: userId }),
   ];
 }
 

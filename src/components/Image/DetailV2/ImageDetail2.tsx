@@ -119,6 +119,7 @@ import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMen
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 const PREFETCH_THRESHOLD = 5;
 
@@ -746,6 +747,22 @@ function ImageDetail2Content() {
                       </AlertWithIcon>
                     )}
                     {isOwner && <OwnerBlockedImageNotice image={image} />}
+                    {/* Only `image.get` returns `restricted`, so an image opened from a feed row (a moderator's own upload) shows no notice. */}
+                    {currentUser?.isModerator &&
+                      'restricted' in image &&
+                      image.restricted === true && (
+                        <AlertWithIcon
+                          icon={<IconAlertTriangle />}
+                          color="orange"
+                          iconColor="orange"
+                          title="Restricted"
+                          radius={0}
+                          px="md"
+                        >
+                          Hidden from everyone but its uploader in feeds, galleries and search,
+                          because {RESTRICTED_IMAGE_REASON}. Moderators can still open it by id.
+                        </AlertWithIcon>
+                      )}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>

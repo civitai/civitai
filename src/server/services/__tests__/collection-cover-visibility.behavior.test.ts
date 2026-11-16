@@ -258,9 +258,10 @@ describe('which covers a stranger is shown', () => {
     expect(await servable(REMOVED, { id: 99, isModerator: true })).toBe(true);
   });
 
-  it('follows the base-model rules for the image owner too, and not for staff', async () => {
-    expect(await servable(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(false);
-    expect(await servable(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(true);
+  it('shows a restricted base model R image to its uploader only, not to staff', async () => {
+    expect(await servable(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(true);
+    expect(await servable(VIEWER_RESTRICTED_R, { id: STRANGER })).toBe(false);
+    expect(await servable(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(false);
   });
 });
 
@@ -337,11 +338,9 @@ describe('getCollectionById', () => {
     expect(await coverOf(RESTRICTED_PG)).toBe(RESTRICTED_PG);
   });
 
-  it("withholds the owner's own R cover on a restricted base model, but not from staff", async () => {
-    expect(await coverOf(VIEWER_RESTRICTED_R, { id: VIEWER })).toBeNull();
-    expect(await coverOf(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBe(
-      VIEWER_RESTRICTED_R
-    );
+  it("returns the owner's own R cover on a restricted base model, and withholds it from staff", async () => {
+    expect(await coverOf(VIEWER_RESTRICTED_R, { id: VIEWER })).toBe(VIEWER_RESTRICTED_R);
+    expect(await coverOf(VIEWER_RESTRICTED_R, { id: 99, isModerator: true })).toBeNull();
   });
 });
 

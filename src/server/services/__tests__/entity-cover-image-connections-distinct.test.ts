@@ -250,6 +250,7 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
         // `imageNotFlagged`; its rows are in entity-cover-image-visibility.behavior.test.ts.
         'AND ( i."acceptableMinor" = FALSE OR (?::boolean AND i."userId" = ?) OR ?::boolean ) ' +
+        'AND ((i."nsfwLevel" & ?) = 0 OR NOT i."modelRestricted") ' +
         // Only types with a visibility rule here, then canViewBounty or the article rule.
         `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
         'AND ( ?::boolean ' +

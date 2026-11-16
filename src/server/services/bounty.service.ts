@@ -77,6 +77,7 @@ import type {
 import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -944,7 +945,7 @@ export const getBountyImages = async ({
     where: {
       entityId: id,
       entityType: 'Bounty',
-      image: { OR: imageOr },
+      image: { OR: imageOr, AND: [imageNotRestrictedWhere({ viewerId: userId })] },
     },
     select: { image: { select: imageSelect } },
   });
@@ -1096,7 +1097,7 @@ export const getImagesForBounties = async ({
     where: {
       entityType: 'Bounty',
       entityId: { in: bountyIds },
-      image: { OR: imageOr },
+      image: { OR: imageOr, AND: [imageNotRestrictedWhere({ viewerId: userId })] },
     },
     select: {
       entityId: true,

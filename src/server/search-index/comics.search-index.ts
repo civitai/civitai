@@ -3,6 +3,7 @@ import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
@@ -208,6 +209,7 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
       FROM "ComicProject" cp
       JOIN "Image" i ON i.id = cp."coverImageId"
       WHERE cp.id IN (SELECT id FROM target)
+      AND ${imageNotRestrictedSql()}
     ), stats AS MATERIALIZED (
       SELECT
         t.id AS "projectId",

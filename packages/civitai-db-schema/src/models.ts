@@ -1741,6 +1741,7 @@ export interface Image {
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
+  modelRestricted: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   tags?: TagsOnImageDetails[];

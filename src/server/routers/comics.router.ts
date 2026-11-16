@@ -46,7 +46,14 @@ import {
   isComicProjectHidden,
   isPanelTainted,
   readerPanelsWhere,
+  withholdRestrictedPanelImages,
 } from '~/server/services/comics/chapter-visibility';
+import {
+  imageNotRestrictedWhere,
+  imageRestrictionSelect,
+  isImageNotRestricted,
+  servableImage,
+} from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { assertCanGenerate, getUserQueueStatus } from '~/server/services/orchestrator/queue-limits';
@@ -966,12 +973,18 @@ export const comicsRouter = router({
           status: ComicProjectStatus.Active,
         },
         include: {
-          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
-          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+          heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
           chapters: {
             include: {
               _count: { select: { panels: true } },
               panels: {
+                where: {
+                  OR: [
+                    { imageId: null },
+                    { image: imageNotRestrictedWhere({ viewerId: ctx.user.id }) },
+                  ],
+                },
                 take: 1,
                 orderBy: { position: 'asc' },
                 select: { imageUrl: true },
@@ -991,14 +1004,16 @@ export const comicsRouter = router({
         // On green, strip NSFW cover/hero/thumbnail images so the card is still
         // visible and navigable but doesn't display mature imagery. This route is
         // protected so the viewer is always logged in — allow PG + PG13.
+        const servableCover = servableImage(p.coverImage, ctx.user.id);
+        const servableHero = servableImage(p.heroImage, ctx.user.id);
         const coverImage =
-          ctx.features.isGreen && p.coverImage && !hasSafeBrowsingLevel(p.coverImage.nsfwLevel)
+          ctx.features.isGreen && servableCover && !hasSafeBrowsingLevel(servableCover.nsfwLevel)
             ? null
-            : p.coverImage;
+            : servableCover;
         const heroImage =
-          ctx.features.isGreen && p.heroImage && !hasSafeBrowsingLevel(p.heroImage.nsfwLevel)
+          ctx.features.isGreen && servableHero && !hasSafeBrowsingLevel(servableHero.nsfwLevel)
             ? null
-            : p.heroImage;
+            : servableHero;
         const safeThumbnailUrl =
           ctx.features.isGreen && Flags.intersects(p.nsfwLevel, nsfwBrowsingLevelsFlag)
             ? null
@@ -1030,8 +1045,8 @@ export const comicsRouter = router({
       const project = await dbWrite.comicProject.findUnique({
         where: { id: input.id },
         include: {
-          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
-          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+          heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
           chapters: {
             orderBy: { position: 'asc' },
             include: {
@@ -1079,7 +1094,13 @@ export const comicsRouter = router({
                   orderBy: { position: 'asc' },
                   include: {
                     image: {
-                      select: { id: true, url: true, width: true, height: true, nsfwLevel: true },
+                      select: {
+                        id: true,
+                        url: true,
+                        width: true,
+                        height: true,
+                        ...imageRestrictionSelect,
+                      },
                     },
                   },
                 },
@@ -1087,12 +1108,14 @@ export const comicsRouter = router({
             })
           : [];
 
-      if (ctx.features.isGreen) {
-        for (const ref of references) {
-          ref.images = ref.images.filter(
-            (ri: any) => !ri.image.nsfwLevel || hasSafeBrowsingLevel(ri.image.nsfwLevel)
-          );
-        }
+      for (const ref of references) {
+        ref.images = ref.images.filter(
+          (ri) =>
+            isImageNotRestricted(ri.image, ctx.user.id) &&
+            (!ctx.features.isGreen ||
+              !ri.image.nsfwLevel ||
+              hasSafeBrowsingLevel(ri.image.nsfwLevel))
+        );
       }
 
       const chapters = project.chapters.map((chapter) => {
@@ -1147,6 +1170,8 @@ export const comicsRouter = router({
       const { chapters: _chapters, ...projectRest } = project;
       return {
         ...projectRest,
+        coverImage: servableImage(project.coverImage, ctx.user.id),
+        heroImage: servableImage(project.heroImage, ctx.user.id),
         chapters,
         references,
         hiddenReason: projectHiddenReason,
@@ -1191,7 +1216,7 @@ export const comicsRouter = router({
               references: { select: { referenceId: true } },
               image: {
                 select: {
-                  nsfwLevel: true,
+                  ...imageRestrictionSelect,
                   width: true,
                   height: true,
                   // Exposed to the workspace UI so PanelCard can show *why*
@@ -1215,6 +1240,7 @@ export const comicsRouter = router({
       });
 
       if (!chapter) throw throwNotFoundError();
+      withholdRestrictedPanelImages([chapter], ctx.user.id);
 
       // Same green-domain mature-content stripping as `getProject`.
       if (ctx.features.isGreen) {
@@ -1258,7 +1284,7 @@ export const comicsRouter = router({
                   // Pull the underlying Image's nsfwLevel so the reader can
                   // blur and hide mature panels on a domain that doesn't
                   // permit them, instead of bypassing the site's NSFW guard.
-                  image: { select: { nsfwLevel: true } },
+                  image: { select: imageRestrictionSelect },
                 },
               },
             },
@@ -1269,6 +1295,7 @@ export const comicsRouter = router({
       if (!project || (project.userId !== ctx.user.id && !ctx.user.isModerator)) {
         throw throwAuthorizationError();
       }
+      withholdRestrictedPanelImages(project.chapters, ctx.user.id);
 
       // Server-side gate: on green, strip mature panels' `imageUrl` so the
       // raw CDN URL never reaches the client. Client-side blur on its own
@@ -1633,7 +1660,7 @@ export const comicsRouter = router({
             select: {
               id: true,
               url: true,
-              nsfwLevel: true,
+              ...imageRestrictionSelect,
               type: true,
               metadata: true,
               width: true,
@@ -1646,7 +1673,7 @@ export const comicsRouter = router({
             select: {
               id: true,
               url: true,
-              nsfwLevel: true,
+              ...imageRestrictionSelect,
               type: true,
               metadata: true,
               width: true,
@@ -1698,6 +1725,7 @@ export const comicsRouter = router({
                     ingestion: ImageIngestionStatus.Scanned,
                     needsReview: null,
                     tosViolation: false,
+                    ...imageNotRestrictedWhere({ viewerId: ctx.user?.id }),
                   },
                 },
                 take: 1,
@@ -1754,8 +1782,10 @@ export const comicsRouter = router({
       const items = projects.map((p) => {
         const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
         const chapterCount = p.chapters.length;
+        const servableCover = servableImage(p.coverImage, ctx.user?.id);
+        const servableHero = servableImage(p.heroImage, ctx.user?.id);
         const rawThumbnailUrl =
-          p.coverImage?.url ??
+          servableCover?.url ??
           p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ??
           null;
 
@@ -1763,13 +1793,13 @@ export const comicsRouter = router({
         // Logged-in viewers see PG + PG13; logged-out viewers see PG only.
         const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
         const coverImage =
-          ctx.features.isGreen && p.coverImage && !passesSfwGate(p.coverImage.nsfwLevel)
+          ctx.features.isGreen && servableCover && !passesSfwGate(servableCover.nsfwLevel)
             ? null
-            : p.coverImage;
+            : servableCover;
         const heroImage =
-          ctx.features.isGreen && p.heroImage && !passesSfwGate(p.heroImage.nsfwLevel)
+          ctx.features.isGreen && servableHero && !passesSfwGate(servableHero.nsfwLevel)
             ? null
-            : p.heroImage;
+            : servableHero;
         // Project nsfwLevel is bit_or of all chapters. Strip thumbnail if any R+
         // bit is present, or (for logged-out viewers) any PG13 bit is present.
         const thumbnailUrl =
@@ -1844,8 +1874,8 @@ export const comicsRouter = router({
           name: true,
           description: true,
           userId: true,
-          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
-          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          coverImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
+          heroImage: { select: { id: true, url: true, ...imageRestrictionSelect } },
           heroImagePosition: true,
           meta: true,
           genre: true,
@@ -1891,7 +1921,7 @@ export const comicsRouter = router({
                   image: {
                     select: {
                       id: true,
-                      nsfwLevel: true,
+                      ...imageRestrictionSelect,
                       hash: true,
                       width: true,
                       height: true,
@@ -1998,6 +2028,7 @@ export const comicsRouter = router({
         };
       });
 
+      withholdRestrictedPanelImages(chapters, ctx.user?.id);
       // On green, strip imageUrl from NSFW panels so they appear blocked.
       if (ctx.features.isGreen) {
         stripNsfwPanelImages(chapters, !!ctx.user);
@@ -2006,6 +2037,8 @@ export const comicsRouter = router({
       // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
       const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
       const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
+      const coverImage = servableImage(project.coverImage, ctx.user?.id);
+      const heroImage = servableImage(project.heroImage, ctx.user?.id);
 
       return {
         id: project.id,
@@ -2014,13 +2047,13 @@ export const comicsRouter = router({
         nsfwLevel: project.nsfwLevel,
         meta: parseComicProjectMeta(project.meta),
         coverImage:
-          ctx.features.isGreen && project.coverImage && !passesSfwGate(project.coverImage.nsfwLevel)
+          ctx.features.isGreen && coverImage && !passesSfwGate(coverImage.nsfwLevel)
             ? null
-            : project.coverImage,
+            : coverImage,
         heroImage:
-          ctx.features.isGreen && project.heroImage && !passesSfwGate(project.heroImage.nsfwLevel)
+          ctx.features.isGreen && heroImage && !passesSfwGate(heroImage.nsfwLevel)
             ? null
-            : project.heroImage,
+            : heroImage,
         heroImagePosition: project.heroImagePosition,
         user: project.user,
         isOwnerOrMod: canViewDrafts,

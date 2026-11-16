@@ -47,7 +47,8 @@ beforeAll(async () => {
       "nsfwLevel" integer NOT NULL DEFAULT 1, hash text, width integer, height integer,
       "tosViolation" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
       "acceptableMinor" boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
-      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text);
+      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text,
+      "modelRestricted" boolean NOT NULL DEFAULT false);
     CREATE TABLE "TagsOnImageDetails" ("imageId" integer, "tagId" integer,
       disabled boolean NOT NULL DEFAULT false);
     CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');

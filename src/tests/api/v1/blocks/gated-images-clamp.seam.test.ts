@@ -148,6 +148,7 @@ const row = (id: number, over: Record<string, unknown> = {}) => ({
   tosViolation: false,
   acceptableMinor: false,
   blockedFor: null,
+  modelRestricted: false,
   ...over,
 });
 

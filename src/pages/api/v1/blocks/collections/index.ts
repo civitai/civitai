@@ -256,9 +256,9 @@ type PrimaryCoverImage = { id: number; url: string | null } & PublicCollectionIm
 
 /**
  * The ids of the collections whose own cover image can be served: it has a url, may be shown
- * to a stranger (`getServableCoverCollectionIds`), passes `isPublicCollectionImage`, and is not refused by `getAllImages`' restricted base model
- * condition. That condition only refuses an image whose own level has a mature bit, so
- * only those candidates are looked up. Every other collection falls back to
+ * to a stranger (`getServableCoverCollectionIds`), passes `isPublicCollectionImage`, and is not
+ * restricted by its base model (`getModelRestrictedImageIds`). Only an image whose own level has a
+ * mature bit can be restricted, so only those candidates are looked up. Every other collection falls back to
  * `getFallbackCoverImages`, which applies the same rule in SQL.
  */
 async function getUsablePrimaryCovers(
