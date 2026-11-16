@@ -518,7 +518,8 @@ const VISIBLE = `d.hidden_at IS NULL`;
 
 /**
  * 🔴 THE content-level predicate: whether document `d` may be returned to the viewer `viewer` whose
- * browsing level is `level` (both SQL placeholders, or `NULL::int` for a read with no viewer).
+ * own browsing level is `level`, on a token whose domain ceiling is `domain` (SQL placeholders;
+ * `NULL::int` as `viewer` for a read with no viewer, which then never takes the author arm).
  * Used ONLY while content levels are on (`DocStoreContext.levels`); every statement that returns
  * shared documents to a reader has a levels twin that ANDs this next to `VISIBLE`, and
  * `doc-store.levels-ledger.test.ts` fails when a statement that reads documents is added outside
@@ -527,20 +528,25 @@ const VISIBLE = `d.hidden_at IS NULL`;
  * Visible when any of:
  * - the document is private (`scope_uid <> 0`): only its owner's key space ever reads it;
  * - it is a counter document: created empty by an increment, it holds no `data` to rate;
- * - the viewer is its user author: an author always sees their own documents, rated or not;
+ * - the viewer is its user author and it is not rated yet (status NULL or `pending`): an author
+ *   always sees what they wrote until it is rated;
  * - it has been rated (`rated` / `overridden`) and its effective level — the moderator's
- *   `override_level` when set, else the rated `level` — shares a bit with the viewer's level
- *   (the site's bitwise browsing-level test). A NULL level shares nothing.
- * So an unrated (NULL) or `pending` document is hidden from everyone but its author, and so is a
- * `Blocked` (32) one, since no browsing level includes that bit.
+ *   `override_level` when set, else the rated `level` — shares a bit with the CAP (the site's
+ *   bitwise browsing-level test). The cap is the domain ceiling for the document's own author
+ *   (their own R document shows on a red-capable host, not on the SFW one, whatever their own
+ *   setting), and the viewer's level for everyone else. A NULL level shares nothing.
+ * So an unrated (NULL) or `pending` document is hidden from everyone but its author, and a
+ * `Blocked` (32) one from everyone, its author included, since no browsing level includes it.
  *
  * COALESCE(…, false): never NULL, so `NOT` of it (the feed's `hidden`) is never NULL either.
  */
-export function sharedDocLevelVisible(viewer: string, level: string): string {
+export function sharedDocLevelVisible(viewer: string, level: string, domain: string): string {
+  const isAuthor = `(d.author_kind = 'user' AND d.author_uid = ${viewer})`;
   return `COALESCE(d.scope_uid <> 0 OR d.author_kind = 'counter'
-    OR (d.author_kind = 'user' AND d.author_uid = ${viewer})
+    OR (${isAuthor} AND (d.rating_status IS NULL OR d.rating_status = 'pending'))
     OR (d.rating_status IN ('rated', 'overridden')
-      AND (COALESCE(d.override_level, d.level) & ${level}) <> 0), false)`;
+      AND (COALESCE(d.override_level, d.level)
+        & CASE WHEN ${isAuthor} THEN ${domain} ELSE ${level} END) <> 0), false)`;
 }
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 viewer, $6 keys
@@ -548,11 +554,12 @@ const SQL_GET_MANY = `SELECT ${docColumns('$5::int')}
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
     AND d.key = ANY($6::text[]) AND ${VISIBLE}`;
-// Its levels twin. $7 the viewer's level.
+// Its levels twin. $7 the viewer's level, $8 the token's domain ceiling.
 const SQL_GET_MANY_LEVELS = `SELECT ${docColumns('$5::int', true)}
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = $4::int
-    AND d.key = ANY($6::text[]) AND ${VISIBLE} AND ${sharedDocLevelVisible('$5::int', '$7::int')}`;
+    AND d.key = ANY($6::text[]) AND ${VISIBLE}
+    AND ${sharedDocLevelVisible('$5::int', '$7::int', '$8::int')}`;
 
 // $1 app, $2 ns, $3 coll, $4 scope_uid, $5 key
 const SQL_LOCK_DOC = `SELECT d.version, d.author_uid, d.author_kind, d.size_bytes,
@@ -691,11 +698,12 @@ const SQL_LOOKUP_SHARED_KEY = `SELECT d.coll,
     AND d.key = $4
   ORDER BY d.coll
   LIMIT 2`;
-// Its levels twin: a document the gate leaves out for a reader with no identity reads as hidden,
-// so an unrated or pending item cannot become a store card or take spend attribution. $5 level.
+// Its levels twin: the same `hidden` (a moderator hide only: the lookup stays level-blind, so
+// spend attribution never reads a level), plus the rating, which App Store publishing decides on
+// (`app-sub-listing.service.ts`: an unrated item is refused, a rated one's card inherits its level).
 const SQL_LOOKUP_SHARED_KEY_LEVELS = `SELECT d.coll,
     CASE WHEN d.author_kind = 'user' THEN d.author_uid END AS author_uid,
-    (d.hidden_at IS NOT NULL OR NOT ${sharedDocLevelVisible('NULL::int', '$5::int')}) AS hidden
+    d.hidden_at IS NOT NULL AS hidden${RATING_COLUMNS}
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = ANY($3::text[]) AND d.scope_uid = 0
     AND d.key = $4
@@ -718,7 +726,11 @@ const SQL_FEED_DOCS_SINCE = `SELECT d.key, d.data, d.version, d.seq, d.hidden_at
 // Its levels twin: a document the gate leaves out for the audience's level reads as hidden (a
 // delete in the stream). $7 the audience's level.
 const SQL_FEED_DOCS_SINCE_LEVELS = `SELECT d.key, d.data, d.version, d.seq,
-    (d.hidden_at IS NOT NULL OR NOT ${sharedDocLevelVisible('NULL::int', '$7::int')}) AS hidden
+    (d.hidden_at IS NOT NULL OR NOT ${sharedDocLevelVisible(
+      'NULL::int',
+      '$7::int',
+      '$7::int'
+    )}) AS hidden
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.seq > $4::bigint AND d.seq <= $5::bigint
@@ -741,7 +753,7 @@ const SQL_FEED_DOCS_ALL = `SELECT d.key, d.data, d.version, d.seq FROM appdata.d
 const SQL_FEED_DOCS_ALL_LEVELS = `SELECT d.key, d.data, d.version, d.seq FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.hidden_at IS NULL AND d.seq <= $5::bigint AND d.key > $4::text
-    AND ${sharedDocLevelVisible('NULL::int', '$7::int')}
+    AND ${sharedDocLevelVisible('NULL::int', '$7::int', '$7::int')}
   ORDER BY d.key
   LIMIT $6::int`;
 // $1 app, $2 ns, $3 coll, $4 key
@@ -1407,7 +1419,10 @@ export type SharedKeyMatch = {
   collection: string;
   /** Null for a document no user authored (an `app` or `counter` document). */
   authorUid: number | null;
+  /** A moderator hide. Never a level: the lookup is level-blind. */
   hidden: boolean;
+  /** Asked for (`{ rating: true }`, content levels on) only. */
+  rating?: DocRating;
 };
 
 function buildDocStore(deps: DocStoreDeps) {
@@ -1867,7 +1882,11 @@ function buildDocStore(deps: DocStoreDeps) {
       ctx,
       async (c) =>
         (ctx.levels
-          ? await c.query(SQL_GET_MANY_LEVELS, [...params, ctx.levels.viewerLevel])
+          ? await c.query(SQL_GET_MANY_LEVELS, [
+              ...params,
+              ctx.levels.viewerLevel,
+              ctx.levels.domainLevel ?? ctx.levels.viewerLevel,
+            ])
           : await c.query(SQL_GET_MANY, params)
         ).rows
     );
@@ -2105,7 +2124,13 @@ function buildDocStore(deps: DocStoreDeps) {
     const conds: string[] = [];
     // The levels gate, next to `VISIBLE` (in `listBase`).
     if (ctx.levels) {
-      conds.push(sharedDocLevelVisible(viewerParam, `${p(ctx.levels.viewerLevel)}::int`));
+      conds.push(
+        sharedDocLevelVisible(
+          viewerParam,
+          `${p(ctx.levels.viewerLevel)}::int`,
+          `${p(ctx.levels.domainLevel ?? ctx.levels.viewerLevel)}::int`
+        )
+      );
     }
 
     const where = Object.entries(q.where ?? {});
@@ -2781,7 +2806,7 @@ function buildDocStore(deps: DocStoreDeps) {
     appId: string,
     collections: readonly string[],
     key: string,
-    opts: { levels?: DocLevelGate } = {}
+    opts: { rating?: boolean } = {}
   ): Promise<SharedKeyMatch[]> {
     const names = collections.filter((n) => B.collectionName.test(n));
     if (names.length === 0 || !B.key.test(key) || DOT_ONLY_KEY.test(key)) return [];
@@ -2790,8 +2815,8 @@ function buildDocStore(deps: DocStoreDeps) {
     const rows = await withTx(
       ctx,
       async (c) =>
-        (opts.levels
-          ? await c.query(SQL_LOOKUP_SHARED_KEY_LEVELS, [...params, opts.levels.viewerLevel])
+        (opts.rating
+          ? await c.query(SQL_LOOKUP_SHARED_KEY_LEVELS, params)
           : await c.query(SQL_LOOKUP_SHARED_KEY, params)
         ).rows
     );
@@ -2799,6 +2824,7 @@ function buildDocStore(deps: DocStoreDeps) {
       collection: r.coll as string,
       authorUid: r.author_uid === null || r.author_uid === undefined ? null : Number(r.author_uid),
       hidden: r.hidden === true,
+      ...(opts.rating ? { rating: toDocRating(r) } : {}),
     }));
   }
 

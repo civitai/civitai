@@ -56,13 +56,19 @@ export type DocStoreContext = {
 
 /**
  * Content levels of shared documents, on (see `DocStoreContext.levels`). A shared write marks its
- * document `pending`; a read by anyone but the document's author leaves out the documents whose
- * status is unrated or `pending`, and those whose effective level (`override_level` if set, else
- * `level`) has no bit in common with `viewerLevel`.
+ * document `pending`; a read leaves out the documents whose status is unrated or `pending` (unless
+ * the reader is their author), and rated ones whose effective level (`override_level` if set, else
+ * `level`) has no bit in common with `viewerLevel` — or, for the reader's own documents, with
+ * `domainLevel` (`sharedDocLevelVisible` in `doc-store.ts`).
  */
 export type DocLevelGate = {
   /** The viewer's browsing level, a bitwise NsfwLevel flag set (`viewerDocLevel`). */
   viewerLevel: number;
+  /**
+   * The token's domain ceiling (`domainDocLevel`), which caps an author's own RATED documents.
+   * Absent for a read with no viewer (the registry feed), where `viewerLevel` stands in.
+   */
+  domainLevel?: number;
 };
 
 export type DocRatingStatus = 'pending' | 'rated' | 'overridden';

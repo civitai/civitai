@@ -99,7 +99,11 @@ function main() {
   });
   const docs = createDocFeed({
     source: liveSharedDocSource(),
-    resolve: resolveFromCatalog(readApps, undefined, isSharedDocLevelsOn),
+    // Export only what content levels gate: an app whose levels flag is off publishes nothing.
+    resolve: resolveFromCatalog(readApps, undefined, {
+      docLevelsOn: isSharedDocLevelsOn,
+      requireDocLevels: true,
+    }),
     store,
     pollMs,
     sleep: abortableSleep,

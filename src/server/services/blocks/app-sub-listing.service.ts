@@ -32,6 +32,7 @@ import {
   APP_SUB_LISTING_ITEM_KEY_MAX,
   APP_SUB_LISTING_TAGLINE_MAX,
   APP_SUB_LISTING_TITLE_MAX,
+  effectiveSubListingRating,
   isAppSubListingId,
   isRatingAtLeastAsStrict,
   isValidSubListingExternalId,
@@ -40,6 +41,9 @@ import {
   type AppSubListingStatus,
 } from '~/shared/constants/app-sub-listing.constants';
 import type { SessionUser } from '~/types/session';
+import { NsfwLevel } from '~/server/common/enums';
+import type { DocRating } from '~/server/services/apps/doc-store.types';
+import { contentRatingFromNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 import type {
   ListSubListingQueueInput,
   ModerateSubListingInput,
@@ -65,6 +69,7 @@ export type SubListingErrorCode =
   | 'not_enabled'
   | 'untrusted'
   | 'item_not_found'
+  | 'item_not_rated'
   | 'not_your_item'
   | 'text_rejected'
   | 'image_not_yours'
@@ -82,6 +87,74 @@ export type SubListingErrorCode =
   | 'creator_not_linked'
   | 'creator_not_found'
   | 'author_mismatch';
+
+/**
+ * Content levels (`doc-levels.ts`): a card inherits its item's effective level (the moderator's
+ * override first), as the card's content rating, which the store already filters per viewer
+ * (`subListingMatureFilter`). The author may still choose a stricter rating; never a looser one.
+ * An item not yet rated cannot be published; a Blocked one is not found.
+ */
+function cardRatingFromItem(rating: DocRating, chosen: string | null): string | null {
+  if (rating.status !== 'rated' && rating.status !== 'overridden') {
+    throw new SubListingError(
+      409,
+      'item_not_rated',
+      'This item has not been rated yet. Publish it once it has a content rating.'
+    );
+  }
+  if (rating.level == null || rating.level & NsfwLevel.Blocked) {
+    throw new SubListingError(404, 'item_not_found', 'Item not found');
+  }
+  return effectiveSubListingRating(contentRatingFromNsfwLevel(rating.level), chosen);
+}
+
+/**
+ * A re-rate or a moderator override of a published item: its card follows, live and staged
+ * rating alike (`cardRatingFromItem`'s mapping). A Blocked item's card is hidden. For the rater
+ * and the override (builds 3 and 5) to call; best-effort like `syncSubListingForSharedRow`.
+ */
+export async function syncSubListingRatingFromDoc(args: {
+  appBlockId: string;
+  itemKey: string;
+  /** The item's effective level (override first). */
+  level: number;
+}): Promise<void> {
+  try {
+    const parent = await dbRead.appListing.findFirst({
+      where: { appBlockId: args.appBlockId, revisionOfId: null },
+      select: { id: true },
+    });
+    if (!parent) return;
+    const where = { parentListingId: parent.id, itemKey: args.itemKey };
+    if (args.level & NsfwLevel.Blocked) {
+      await transitionActive({
+        where,
+        data: {
+          status: 'hidden',
+          statusReason: 'The item was rated Blocked',
+          moderatedAt: new Date(),
+          ...CLEAR_PENDING,
+        },
+      });
+      return;
+    }
+    const rating = contentRatingFromNsfwLevel(args.level);
+    await dbWrite.appSubListing.updateMany({ where, data: { contentRating: rating } });
+    await dbWrite.appSubListing.updateMany({
+      where: { ...where, pendingSubmittedAt: { not: null } },
+      data: { pendingContentRating: rating },
+    });
+    await bustCatalog();
+  } catch (err) {
+    if (isMissingTableError(err)) return;
+    logToAxiom({
+      name: 'app-sub-listing-rating-sync-failed',
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+      appBlockId: args.appBlockId,
+    }).catch(() => null);
+  }
+}
 
 export class SubListingError extends Error {
   constructor(
@@ -271,7 +344,12 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
   }
 }
 
-export type SharedItemRead = { authorUserId: number | null; hidden: boolean } | null;
+export type SharedItemRead = {
+  authorUserId: number | null;
+  hidden: boolean;
+  /** The item's content rating, while content levels are on for the app (`doc-levels.ts`). */
+  rating?: DocRating;
+} | null;
 
 /**
  * The app's shared item stored under `key`, hidden included, from the document store when the
@@ -305,7 +383,13 @@ export async function readSharedItemForSubListing(
         appBlockId,
       }).catch(() => null);
     }
-    return item.kind === 'found' ? { authorUserId: item.authorUid, hidden: item.hidden } : null;
+    return item.kind === 'found'
+      ? {
+          authorUserId: item.authorUid,
+          hidden: item.hidden,
+          ...(item.rating ? { rating: item.rating } : {}),
+        }
+      : null;
   } catch (err) {
     // A store we cannot read cannot prove the item is missing.
     logToAxiom({
@@ -419,6 +503,7 @@ export async function upsertSubListing(args: {
   if (item.authorUserId !== user.id) {
     throw new SubListingError(403, 'not_your_item', 'Only the item author can publish it');
   }
+  if (item.rating) content.contentRating = cardRatingFromItem(item.rating, content.contentRating);
 
   await assertCardImage(content.imageId, user.id);
 

@@ -7,10 +7,11 @@
  *   whose documents are read or written, NO context), like the shared-data moderation flags. Off,
  *   the store's context carries no `levels` and every statement is the one it ran before.
  * - A block-token reader (the storage REST routes): the token's viewer level
- *   ({@link viewerDocLevel}).
+ *   ({@link viewerDocLevel}) for other people's documents, and the token's domain ceiling
+ *   ({@link domainDocLevel}) for the reader's own rated documents.
  * - The registry feed: the subscription's audience ({@link audienceDocLevel}).
- * - The server key lookup (App Store item cards, spend attribution): no reader identity, so every
- *   browsable level ({@link SERVER_LOOKUP_DOC_LEVEL}): only the rating status gates it.
+ * - The server key lookup is level-blind: it reports each item's rating (asked for while the flag
+ *   is on) and App Store publishing decides on it; spend attribution ignores it.
  *
  * Levels are the site's NsfwLevel bits and a viewer level is a bitwise set of them; a document is
  * within it when its one level bit is in the set (the site's bitwise browsing-level semantics).
@@ -21,7 +22,10 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
 import type { StorageAccess } from '~/server/services/apps/doc-store-access';
 import type { DocLevelGate } from '~/server/services/apps/doc-store.types';
 import { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-viewer-ceiling';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  onlySelectableLevels,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 
 /** Whether content levels are on for the app whose shared documents are being read or written. */
 export function isSharedDocLevelsOn(appBlockId: string): Promise<boolean> {
@@ -41,6 +45,18 @@ export function viewerDocLevel(
 }
 
 /**
+ * The cap on a reader's OWN rated documents: the token's domain ceiling alone (the color domain's
+ * maturity), not the reader's personal setting, so their own R document shows on a red-capable
+ * host and not on the SFW one. Blocked is never selectable; fails closed to PG, as
+ * {@link viewerDocLevel} does.
+ */
+export function domainDocLevel(claims: Pick<BlockTokenClaims, 'maxBrowsingLevel'>): number {
+  const max = claims.maxBrowsingLevel;
+  if (typeof max !== 'number' || !Number.isFinite(max)) return publicBrowsingLevelsFlag;
+  return onlySelectableLevels(max) || publicBrowsingLevelsFlag;
+}
+
+/**
  * A registry subscription's level, from the mature ratings its audience may read
  * (`registry-adapter/audience.ts`): PG and PG-13 for everyone (the site never hides those by
  * rating), R with `r`, X with `x`. XXX is never included: an audience records only `r` and `x`,
@@ -53,13 +69,6 @@ export function audienceDocLevel(allowed: { r: boolean; x: boolean }): number {
 }
 
 /**
- * The server key lookup's level: every browsable level (`Blocked` excluded). The lookup has no
- * reader, and what reads it renders with its own per-viewer maturity, so only the rating status
- * (and a Blocked level) leave a document out.
- */
-export const SERVER_LOOKUP_DOC_LEVEL: number = allBrowsingLevelsFlag;
-
-/**
  * `access` as the store must run it for this block token: with the levels gate on its context
  * when the flag is on for the app whose documents it reaches (the import's source app through an
  * import), unchanged otherwise.
@@ -69,13 +78,9 @@ export async function withDocLevelGate(
   claims: Pick<BlockTokenClaims, 'maxBrowsingLevel' | 'viewerBrowsingLevel'>
 ): Promise<StorageAccess> {
   if (!(await isSharedDocLevelsOn(access.ctx.appId))) return access;
-  const levels: DocLevelGate = { viewerLevel: viewerDocLevel(claims) };
+  const levels: DocLevelGate = {
+    viewerLevel: viewerDocLevel(claims),
+    domainLevel: domainDocLevel(claims),
+  };
   return { ...access, ctx: { ...access.ctx, levels } };
-}
-
-/** The lookup's gate for an app, or undefined while its flag is off. */
-export async function lookupDocLevelGate(appBlockId: string): Promise<DocLevelGate | undefined> {
-  return (await isSharedDocLevelsOn(appBlockId))
-    ? { viewerLevel: SERVER_LOOKUP_DOC_LEVEL }
-    : undefined;
 }

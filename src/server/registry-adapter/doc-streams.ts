@@ -31,10 +31,14 @@ export function resolveFromCatalog(
   readApps: () => Promise<CatalogApp[]>,
   features: Readonly<Record<AppStorageFeature, boolean>> = APP_STORAGE_ENABLED_FEATURES,
   /**
-   * Whether content levels are on for an app (`isSharedDocLevelsOn`). Off unless given: the
-   * process wires the flag in (`main.ts`).
+   * Content levels (`doc-levels.ts`). `docLevelsOn` says whether the flag is on for an app (off
+   * unless given). With `requireDocLevels`, an app whose flag is off publishes NOTHING: its
+   * documents are never exported ungated. The registry process sets both (`main.ts`).
    */
-  docLevelsOn: (appBlockId: string) => Promise<boolean> = async () => false
+  levels: {
+    docLevelsOn?: (appBlockId: string) => Promise<boolean>;
+    requireDocLevels?: boolean;
+  } = {}
 ): ResolveStream {
   return async (schema) => {
     if (!features.registryExport) return null;
@@ -66,7 +70,8 @@ export function resolveFromCatalog(
       ref.slug,
       derivation
     ).filter((d) => familyUrns.has(d.urn));
-    const docLevels = await docLevelsOn(app.block.id);
+    const docLevels = levels.docLevelsOn ? await levels.docLevelsOn(app.block.id) : false;
+    if (levels.requireDocLevels && !docLevels) return null;
     return {
       appId: app.block.id,
       slug: ref.slug,
