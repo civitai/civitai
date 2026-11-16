@@ -1,6 +1,9 @@
 package inputschema
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEmbeddedSchemas(t *testing.T) {
 	s := Get(InfiniteImages)
@@ -46,6 +49,21 @@ func TestMissingDefaultPanics(t *testing.T) {
 		}
 	}()
 	Get(ImagesEndpoint).DefaultInt("limit") // numericString's preprocess hides it from the projection
+}
+
+// A default of another type panics too (decoding it into the asked type fails), so a regenerated file
+// whose default changed type stops the service at startup instead of serving a zero value.
+func TestWrongTypeDefaultPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("a string default read as an int did not panic")
+		}
+		if msg, _ := r.(string); !strings.Contains(msg, `default for "sort": json:`) {
+			t.Fatalf("panic %v, want the decode failure for sort", r)
+		}
+	}()
+	Get(AllModels).DefaultInt("sort")
 }
 
 func TestUnknownSchemaPanics(t *testing.T) {
