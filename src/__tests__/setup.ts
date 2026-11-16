@@ -185,9 +185,8 @@ process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432
 delete process.env.NOTIFICATIONS_ENDPOINT;
 delete process.env.NOTIFICATIONS_TOKEN;
 delete process.env.NOTIFICATIONS_NOTICES_TOKEN;
-// ~/server/email/client sends through @civitai/email, which reads EMAIL_* from process.env (not the
-// ~/env/server mock below), so a shell exporting real SMTP settings would send real mail. Deleted for
-// the same reason; the email client's own tests set the values they need.
+// @civitai/email reads EMAIL_* from process.env, not the ~/env/server mock below, so a shell
+// exporting real SMTP settings would send real mail.
 for (const key of [
   'EMAIL_HOST',
   'EMAIL_PORT',

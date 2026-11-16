@@ -7,6 +7,9 @@ import { describe, expect, it } from 'vitest';
 const EXPECTED = ['packages/civitai-email/src/client.ts: 1'];
 
 const ROOT = path.resolve(__dirname, '../../..');
+// The directories that hold app and package code. Walking ROOT itself would also walk nested
+// worktrees under .claude/worktrees and count their copy of the real call site.
+const SOURCE_ROOTS = ['src', 'apps', 'packages', 'scripts'];
 const SKIP_DIRS = new Set([
   'node_modules',
   '.git',
@@ -47,7 +50,7 @@ describe('nodemailer transport ledger', () => {
   it('has exactly one createTransport call site outside tests', () => {
     const found: string[] = [];
     const seen = { files: 0 };
-    scan(ROOT, found, seen);
+    for (const dir of SOURCE_ROOTS) scan(path.join(ROOT, dir), found, seen);
     // The walk must actually have covered the repo, or an empty result would be meaningless.
     expect(seen.files).toBeGreaterThan(1000);
     expect(found.sort()).toEqual(EXPECTED);
