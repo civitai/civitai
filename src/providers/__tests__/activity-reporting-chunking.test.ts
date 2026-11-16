@@ -36,7 +36,7 @@ describe('ActivityReportingProvider batching', () => {
     expect(batches.flat()).toEqual(names);
   });
 
-  it('keeps a click recorded while a request is in flight and sends it', async () => {
+  it('keeps a click recorded while a request is in flight and sends it on the next flush', async () => {
     queueActivity('remix:image');
     fetchMock.mockImplementationOnce(async () => {
       queueActivity('copy:prompt');
@@ -44,8 +44,29 @@ describe('ActivityReportingProvider batching', () => {
     });
 
     await sendActivities();
+    // Not in the same flush: one flush sends only what was buffered when it started.
+    expect(sentBatches()).toEqual([['remix:image']]);
 
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(sentBatches()).toEqual([['remix:image'], ['copy:prompt']]);
+  });
+
+  it('sends one request per flush when every request lands a new click', async () => {
+    // A click arrives during each of the first 5 requests. A flush that kept draining until the
+    // buffer was empty would send 6 requests back to back (bounded here so it cannot spin forever).
+    let clicksDuringRequests = 5;
+    fetchMock.mockImplementation(async () => {
+      if (clicksDuringRequests-- > 0) queueActivity('copy:prompt');
+      return { ok: true };
+    });
+    queueActivity('remix:image');
+
+    await sendActivities();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Drain what the test queued so the module-level buffer is empty for the next case.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sentBatches().flat()).toEqual(['remix:image', ...Array(5).fill('copy:prompt')]);
   });
 
   it('sends nothing when the buffer is empty', async () => {

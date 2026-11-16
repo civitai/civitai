@@ -13,10 +13,13 @@ export function queueActivity(activity: string) {
 export async function sendActivities() {
   try {
     // The server refuses a batch over ACTIVITY_BATCH_MAX whole, so a large buffer goes out in
-    // chunks. Each chunk is taken off the buffer BEFORE its request, so a click recorded while a
-    // request is in flight stays queued for the next one instead of being cleared with it.
-    while (activities.length) {
-      const batch = activities.splice(0, ACTIVITY_CLIENT_BATCH_SIZE);
+    // chunks. Only what was buffered when this flush started is sent: a click recorded while a
+    // request is in flight stays queued for the NEXT flush, 10 s later, so steady clicking on a
+    // slow connection cannot turn one flush into a request per round trip.
+    let pending = activities.length;
+    while (pending > 0) {
+      const batch = activities.splice(0, Math.min(pending, ACTIVITY_CLIENT_BATCH_SIZE));
+      pending -= batch.length;
       await fetch('/api/internal/activity', {
         method: 'POST',
         headers: {
