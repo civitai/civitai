@@ -50,7 +50,7 @@ export async function countsTowardDownloadLimit(userKey: string, fileId: number)
       message: 'repeat counter unavailable; counting',
       fileId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     return true;
   }
 }
