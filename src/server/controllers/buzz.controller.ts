@@ -472,7 +472,7 @@ async function claimTipRecord(userId: number, sharedId: string) {
       userId,
       sharedId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     return true;
   }
 }

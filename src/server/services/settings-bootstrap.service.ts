@@ -54,7 +54,7 @@ function settle<T, F>(promise: Promise<T>, fallback: F, member: string): Promise
         timeoutMs,
       },
       'settings'
-    ).catch();
+    );
   }).catch(() => fallback);
 }
 
@@ -331,7 +331,7 @@ export async function resolveSettingsBootstrapForRender(
         message: e instanceof Error ? e.message : String(e),
       },
       'settings'
-    ).catch();
+    );
     throw new Error(
       `settings bootstrap failed: ${[name, typeof code === 'string' ? code : undefined]
         .filter(Boolean)

@@ -941,7 +941,7 @@ compared at `POST /internal/shadow/api/v1/images`. Nothing serves it publicly.
    SFW-only one intersects the level with its held gallery level (empty → empty page). A version or
    post that cannot be found empties the page. The empty answer is `{ items: [], metadata: {} }`.
 6. **Routing.** `ids`, `imageId`, or a `modelId` without a version take the legacy Postgres path
-   (`getAllImages`); everything else asks the image feed service (`route: 'rest'`): the browsing
+   (`getAllImages`, §13.2.1); everything else asks the image feed service (`route: 'rest'`): the browsing
    addons resolved at the level (a `userId` naming the viewer keeps its tag exclusions off), a
    `username` resolved to its id, `mapSearchInputToFeedQuery(input, 'primary', 'rest')` (a `postId`
    is served in the requested sort on this caller), then the feed's ids hydrated with
@@ -956,8 +956,11 @@ compared at `POST /internal/shadow/api/v1/images`. Nothing serves it publicly.
    `baseModel`, else null: `getBaseModelFromResources` as image.service.ts imports it, from
    `src/server/redis/caches.ts`, not the same-named ecosystem-group helper in
    `generation.constants.ts`) and
-   `modelVersionIds` (the detected resources). Then `withoutHeldImages`: an image above its post's
-   held model level is left out, whatever the request named.
+   `modelVersionIds` (the detected resources), and `meta`: null without `withMeta`; with it, the
+   image's entry of `imageMetaCache` (`{id, meta}`, its `meta` null when the image hides it), flat
+   when `flatMeta` says so and, when it is absent, flat on the feed path and wrapped as `{ id, meta }`
+   on the legacy path. Then `withoutHeldImages`: an image above its post's held model level is left
+   out, whatever the request named.
 8. **Body.** `res.json({ items, metadata })`, plain JSON (not superjson): `metadata` holds `nextCursor`
    (the feed's `feed:<a>:<b>`), `currentPage` / `pageSize` when paging, and `nextPage`, the request's
    own URL with `cursor` (or `page`) set, on `https://<host>` in production.
@@ -966,15 +969,33 @@ compared at `POST /internal/shadow/api/v1/images`. Nothing serves it publicly.
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Query | every member above except those on the right, Next's `req.query` parsing (repeated keys, `Object.keys` order for `nextPage`) | `ids` (`v1-ids`) and `imageId` (`v1-image-id`) and a `modelId` without a version (`v1-model-only`): the legacy Postgres path; `tags` (`v1-tags`), `baseModels` (`v1-base-models`), `withMeta=true` (`v1-with-meta`: the meta cache is compressed, its reader is not ported), `withTags=true` (`v1-with-tags`); any value `Number()` would read differently from a plain integer (`v1-input-number`), a repeated schema key (`v1-input-duplicate`), a sort the feed does not have (`v1-sort`), `userId=0` (`v1-user-zero`), a malformed escape (`v1-query-encoding`) |
+| Query | every member above except those on the right, `ids` (the legacy path, §13.2.1), `withMeta` / `flatMeta`, Next's `req.query` parsing (repeated keys, `Object.keys` order for `nextPage`) | `imageId` (`v1-image-id`) and a `modelId` without a version (`v1-model-only`): the legacy Postgres path; `tags` (`v1-tags`), `baseModels` (`v1-base-models`), `withTags=true` (`v1-with-tags`); any value `Number()` would read differently from a plain integer (`v1-input-number`), an `ids` part that is not a plain decimal from 1 to 2^31-1, or more than 100 parts (`v1-input-ids`: hex, exponents and a `.0` read as integers there), a repeated schema key (`v1-input-duplicate`), a sort the feed does not have (`v1-sort`), `userId=0` (`v1-user-zero`), a malformed escape (`v1-query-encoding`) |
 | Viewer | signed out; session cookies (the same resolver as §4); a banned session as signed out | API keys / bearer tokens (`bearer-token`); the sampler does not send them at all (§13.4) |
 | Gates | withheld, held level, unknown version / post; the per-post hold on every page | a gallery settings key Node would rebuild (`gallery-settings-miss`); a held model whose settings carry no level (`v1-held-level-unset`) |
-| Pages | the feed's page, its cursor, the empty-page answers (`requiringMeta`, `limit=0`, an empty feed answer) | a feed failure or a non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-refused`, `v1-cursor`, `v1-page-limit`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`: Node retries an empty one on another replica) |
-| Hydration | basic users (cache, replica on a miss), thumbnails, metric hashes, image resources (cache), the hold's post→version and version→model caches (replica on a miss or past their TTL), a `username` on the replica | a metric hash miss (`metrics-miss`), an image-resources miss (`image-resources-miss`: Node picks a replica by write lag), a username the replica does not hold (`v1-username-miss`: Node reads the primary next) |
+| Pages | the feed's page, its cursor, the empty-page answers (`requiringMeta`, `limit=0`, an empty feed answer); the legacy page (§13.2.1) | a feed failure or a non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-refused`, `v1-cursor`, `v1-page-limit`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`: Node retries an empty one on another replica); on the legacy path a cursor that is not a positive integer (`v1-legacy-cursor`) and a query error (`v1-legacy-error`) |
+| Hydration | basic users (cache, replica on a miss), thumbnails, metric hashes, image resources (cache), the hold's post→version and version→model caches (replica on a miss or past their TTL), a `username` on the replica; with `withMeta`, `imageMetaCache` (brotli-compressed values and plain ones, notFound markers; a miss computed from the replica with its lookup's query, §3.1, never written back) | a metric hash miss (`metrics-miss`), an image-resources miss (`image-resources-miss`: Node picks a replica by write lag), a username the replica does not hold (`v1-username-miss`: Node reads the primary next); an image-meta miss without the miss computation (`image-meta-miss`) or one whose lookup failed (`image-meta-miss-failed`), a cached meta holding a value JSON.stringify writes as a Buffer (`image-meta-shape`) |
 | Config | | no `FEED_SERVICE_URL` (`index-feed-unconfigured`), no `NEXT_PUBLIC_IMAGE_LOCATION` (`v1-image-location-unconfigured`) |
 
 The endpoint publishes no cosmetics, frames, tags, reactions or event decorations, so this port does
 not read them, and their cache misses (a fallback on the gallery procedure) cost nothing here.
+
+### 13.2.1 The legacy path (`ids`)
+
+An `ids` batch is `getAllImages` itself, not the feed: the same page query as image.getInfinite's
+Postgres arm (`ImagesQuery.Build`), with the batch as `i."id" = ANY(…)` and the request's period
+(`createdAt` since the period's start), type, post, version, creator (`userId`, or a `username`
+resolved on the replica), the browsing addons (here the session user, username included, decides
+the own-feed carve-out), POI and minor always excluded, no cache unless a version scopes it. Its
+order is getAllImages', never the request's: the id descending (ascending for Oldest, the resource
+join's id with a version), a post's own media by index when `postId` comes without `modelId`; a
+repeated or unknown id is simply absent. Paging: `page` is `OFFSET (page - 1) * limit` (a 429 past
+1000 as on the feed path), a cursor is the inclusive keyset on the order's column. `LIMIT limit + 1`;
+the look-ahead row is popped and its cursor column is `nextCursor` — a NUMBER here (the id, or a
+post's index, which can be 0 or NULL; then `nextCursor` is `0` / `null` and there is no `nextPage`),
+so `limit=0` reads one row and answers an empty page with a `nextCursor`. A page of only unselectable
+levels is empty without a query, and so is a statement timeout (as Node answers it on this path). The
+publish filter, shaping and the per-post hold are the feed path's, except that `createdAt` is the
+image's own (the feed path publishes `sortAt`), and an empty page is an answer (no read rescue).
 
 ### 13.3 Flags and settings
 
@@ -1052,9 +1073,9 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="v1-images",
 
 **What share of the route that is.** The figure above says nothing about the requests the port
 cannot take. Node counts every request of the route, sampled or not and whatever the flag, by shape
-class in `civitai_app_feed_go_v1_shape_total{class}`: `ported` (a shape the port answers), the
-`unported_*` shapes it falls back on by construction (`ids`, `imageId`, `modelId_only`, `tags`,
-`baseModels`, `withMeta`, `withTags`), `api_key`, and `non200`. The share of the route a Go service
+class in `civitai_app_feed_go_v1_shape_total{class}`: `ported` (a shape the port answers, `ids` and
+`withMeta` included), the `unported_*` shapes it falls back on by construction (`imageId`,
+`modelId_only`, `tags`, `baseModels`, `withTags`), `api_key`, and `non200`. The share of the route a Go service
 could take is
 
 ```promql
@@ -1077,7 +1098,12 @@ the per-route CPU attribution over the same window.
   plain `&`-separated `key=value` text (`+` as a space, percent-escapes), and a malformed escape
   falls back rather than guess;
 - milliseconds between Node's feed call and this one: `membership` / `order` diffs on busy Newest
-  pages, `stats.*` value diffs, as in §7.
+  pages, `stats.*` value diffs, as in §7;
+- the legacy path reads this service's replica (Node: the DataPacket or the read replica by flag, the
+  primary for a version scope while `image-resource-use-write` is on) and its own page cache;
+- `imageMetaCache`: an entry past its 4h TTL is served as it is (Node re-reads the row when it takes
+  the refresh lock, which only matters when the meta changed since); a miss is read from the replica
+  and not written back, so it stays a miss for the next reader until Node fills it.
 
 ## 14. `image.getInfinite` (tRPC, shadow only)
 
@@ -1255,7 +1281,7 @@ read would see. Serving needs a Go-first miss measurement and Go-side miss filli
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor` | `query` (Meilisearch), `collectionId`, `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added (`model-sort-recently-added`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); a date token with a 1- or 2-digit fraction, which Node misreads (`short-fraction-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor` | `query` (Meilisearch), `collectionId`, `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added (`model-sort-recently-added`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
 | Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
@@ -1330,11 +1356,6 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   this service and a Node pod up to 30 s apart;
 - a cursor's date token is read in Postgres' own `CONCAT` form only; any other spelling dayjs accepts
   falls back;
-- a cursor's date token with a 1- or 2-digit fraction (`.25`, how Postgres writes 250 ms) falls back
-  (`short-fraction-cursor`): this service reads it as 250 ms, but Node's dayjs reads the digits as
-  milliseconds (25 ms) and starts the next page at the wrong row. That is a Node bug, fixed on main
-  by #9075 but not yet deployed; the fallback goes once the fix is deployed (the TODO on
-  `cursorTimestamp`);
 - `ids` falls back whenever it is present, empty included: Node reads `[]` as `[]` and `""` as `[0]`,
   both truthy, so either turns off the private-model filter;
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,

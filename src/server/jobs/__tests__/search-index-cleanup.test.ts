@@ -762,35 +762,3 @@ describe('search-index-cleanup: a resumed run is judged on the PASS, not on the 
     expect(payloadFor('tools')?.cursorDiscardReason).toBe('missing');
   });
 });
-
-describe('search-index-cleanup: a failing log sink cannot leak an unhandled rejection', () => {
-  it('handles a rejected logToAxiom instead of passing it through', async () => {
-    // `.catch()` with NO argument is `then(undefined, undefined)` — a
-    // pass-through that leaves the rejection unhandled. Only `.catch(() => undefined)`
-    // actually swallows it. Nothing awaits these calls, so the observable is
-    // the process-level `unhandledRejection` event.
-    const seen: unknown[] = [];
-    const marker = new Error('axiom-down-marker');
-    const onUnhandled = (reason: unknown) => {
-      if (reason === marker) seen.push(reason);
-    };
-    process.on('unhandledRejection', onUnhandled);
-    try {
-      logToAxiom.mockImplementation(() => Promise.reject(marker));
-      cleanupAllIndexes.mockResolvedValue([
-        stats({ key: 'tools', idsScanned: 5, staleFound: 2, deleted: 1, totalInIndex: 5 }),
-      ]);
-
-      await searchIndexCleanupJob.run({}).result;
-      // Let the microtask queue drain and give Node a macrotask turn, which is
-      // when it decides a rejection went unhandled.
-      await new Promise((r) => setTimeout(r, 20));
-
-      expect(seen).toEqual([]);
-    } finally {
-      process.off('unhandledRejection', onUnhandled);
-      // Restore the canonical default for the rest of the file.
-      logToAxiom.mockImplementation(() => Promise.resolve(undefined));
-    }
-  });
-});

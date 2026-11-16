@@ -66,8 +66,8 @@ const revocationReadGuard = createSysReadGuard({
  *
  * NOTE: it bounds only the awaited command it wraps. Most awaited sys WRITES are not wrapped:
  * on a half-open they are bounded only by `commandsQueueMaxLength` (heap), and their call
- * sites treat them as best-effort. A write whose outcome a caller acts on can be wrapped too:
- * `recordUploadKeyOwner` races its upload key issue record so a stalled write counts as failed.
+ * sites treat them as best-effort. A write whose outcome a caller acts on can be wrapped too, so
+ * a stalled write counts as failed.
  *
  * The deadline alone: it never consults the read breaker (see withSysReadBreaker). A
  * timeout rejects with a SysReadUnavailableError whose message says "timed out", and is

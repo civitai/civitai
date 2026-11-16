@@ -119,7 +119,7 @@ export const getHomeBlocksHandler = async ({
                 homeBlockId: homeBlock.id,
                 homeBlockType: homeBlock.type,
                 error: (error as Error)?.message,
-              }).catch(() => undefined);
+              });
             return null;
           });
           return data ?? unlisted;

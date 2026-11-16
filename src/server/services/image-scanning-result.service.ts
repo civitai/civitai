@@ -209,7 +209,7 @@ async function failScan(
       retryCount,
     },
     'webhooks'
-  ).catch(() => null);
+  );
   await sendIngestionSignal({
     imageId: error.imageId,
     userId,
@@ -336,7 +336,7 @@ export async function processImageScanningWorkflow({
         ingestion: outcome.ingestion,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.

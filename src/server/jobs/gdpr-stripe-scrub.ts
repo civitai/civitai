@@ -192,9 +192,7 @@ export const gdprStripeScrubJob = createJob(
     // emit the same warning every ten minutes until someone hand-fixes those rows, which is how a
     // channel gets muted — taking this error with it. The count stays in the returned summary.
     if (candidates.length >= WINDOW_SIZE)
-      await logToAxiom({ name: 'gdpr-stripe-scrub-queue', type: 'error', ...summary }).catch(
-        () => null
-      );
+      logToAxiom({ name: 'gdpr-stripe-scrub-queue', type: 'error', ...summary });
 
     return summary;
   },
@@ -240,7 +238,7 @@ async function recordAttempt(
   // the backoff reaches attempt 8 in under 11 hours against a 4-day window — so alerting on those
   // would fire four or five times for an account behaving exactly as designed.
   if ((failure || unbounded) && attempts >= ALERT_AFTER_ATTEMPTS) {
-    await logToAxiom({
+    logToAxiom({
       name: 'gdpr-stripe-scrub-stuck',
       type: 'error',
       userId,
@@ -251,6 +249,6 @@ async function recordAttempt(
       // its place in the window and nothing else reports it.
       step: failure?.step ?? 'pending',
       message: failure?.message,
-    }).catch(() => null);
+    });
   }
 }

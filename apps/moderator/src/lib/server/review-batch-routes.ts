@@ -89,7 +89,7 @@ export function batchItemHandler(tier: ReviewTier): RequestHandler {
         stage: 'fetch',
         batchHash: batch.hash,
         index: n,
-      }).catch(() => null);
+      });
       return json({ moved: true }, { status: 409, headers: noStore });
     }
     return streamStoredMedia({

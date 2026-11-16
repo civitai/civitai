@@ -190,7 +190,7 @@ async function resolve({
       promptIds: detection.promptIds ?? null,
       moderatorId: userId,
       ...(decision !== 'closed' && { reason: reason ?? null, note: note ?? null }),
-    }).catch(() => null);
+    });
 
   // Any label: the owner's appeal covers the model, and the queue disables its buttons on the same
   // rule (`hasPendingAppeal` in the moderator app's getRedetectedModels).

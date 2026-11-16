@@ -66,7 +66,8 @@ import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
 import {
   offersImageSearch,
   resolveSearchTarget,
-  searchesImagesFeedInPlace,
+  feedSearchPathname,
+  searchesFeedInPlace,
 } from '~/components/Search/search-target';
 import {
   buildFeedSearchUrl,
@@ -315,7 +316,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
 
   // Search v3: on a feed that answers `?query=`, the bar filters that feed on Enter or blur.
-  const filtersFeedInPlace = searchesImagesFeedInPlace(features, indexNameProp, router.pathname);
+  const filtersFeedInPlace = searchesFeedInPlace(features, indexNameProp, router.pathname);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
   // Each image search is an embedding plus a Qdrant query: the dropdown never runs one as the user
@@ -522,9 +523,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     focus: focusInput,
   }));
 
+  const feedPathname = feedSearchPathname(features, indexName);
   // Not the refined `query`: `parseQuery` has already stripped the `#tag`/`@user` tokens out of it.
   const searchPageUrl = () =>
-    (features.feedSearch && buildFeedSearchUrl(indexName, search)) ||
+    (feedPathname && buildFeedSearchUrl(feedPathname, search)) ||
     buildSearchPageUrl(indexName, search);
 
   const handleSubmit = () => {

@@ -89,10 +89,10 @@ function startOpenCount(limit: number): Promise<number | null> {
     })
     .catch(async (error: Error) => {
       if (openCountRead === read) openCountFailedUntil = Date.now() + OPEN_COUNT_BACKOFF_MS;
-      await logToAxiom(
+      logToAxiom(
         { type: 'knights-v2-open-count-error', error: error.message },
         'knights-v2-sources'
-      ).catch(() => undefined);
+      );
       return null;
     })
     .finally(() => {
@@ -121,10 +121,10 @@ async function openKnightItems(limit: number): Promise<number | null> {
     if (open !== TIMED_OUT) return open;
     if (Date.now() >= slowCountLoggedUntil) {
       slowCountLoggedUntil = Date.now() + OPEN_COUNT_TTL_MS;
-      await logToAxiom(
+      logToAxiom(
         { type: 'knights-v2-open-count-slow', timeoutMs: OPEN_COUNT_TIMEOUT_MS },
         'knights-v2-sources'
-      ).catch(() => undefined);
+      );
     }
     return null;
   } finally {
@@ -153,10 +153,10 @@ async function enqueueFromSource(
       items: [item],
     });
   } catch (error) {
-    await logToAxiom(
+    logToAxiom(
       { type, imageId: item.imageId, error: (error as Error).message },
       'knights-v2-sources'
-    ).catch(() => undefined);
+    );
   }
 }
 

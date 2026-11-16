@@ -1,8 +1,8 @@
 # Kysely query package (`@civitai/db-queries`) — migration plan
 
-> Status: **v2 draft, for discussion.** Comment inline with `@dev:` / `@ai:`.
-> Scaffold exists (uncommitted): `packages/civitai-db-queries/`, `src/server/db/kyselyDb.ts`,
-> `getKyselyWithoutLag`, the `bulkSetReportStatus` repoint, and the moderator spoke's `setReportStatus`.
+> **Status:** adopted. New queries follow this plan.
+> Until the migration finishes, Prisma ORM stays acceptable for simple CRUD; the day-to-day rule is the
+> "Use X for Y" table in `.claude/rules/server.md`.
 
 ## Goal
 

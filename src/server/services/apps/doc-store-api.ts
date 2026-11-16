@@ -78,9 +78,11 @@ import type {
   DocAuthor,
   DocCollection,
   DocListQuery,
+  DocRatingStatus,
   DocRecord,
   DocStoreErrorCode,
 } from '~/server/services/apps/doc-store.types';
+import { withDocLevelGate } from '~/server/services/apps/doc-levels';
 import {
   DOC_STORE_BOUNDS,
   DocStoreError,
@@ -94,6 +96,7 @@ import {
   scanCounterKey,
   scanSharedData,
   scheduleSharedDataShadow,
+  sharedRefusalField,
   type SharedDataSurface,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
@@ -298,7 +301,7 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
         message: err instanceof Error ? err.message : String(err),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
     sendEnvelope(req, res, 500, envelope('internal_error', GENERIC_SERVER_ERROR_MESSAGE));
     return;
   }
@@ -609,6 +612,13 @@ export type PresentedDoc = {
   key: string;
   data: Record<string, unknown>;
   version: number;
+  /**
+   * Content levels on only (`doc-levels.ts`): the effective level (NsfwLevel bit; the moderator's
+   * override first) and the rating status, each null when unset. Server-set: nothing an app
+   * writes reaches them. Absent while levels are off, so those responses are unchanged.
+   */
+  level?: number | null;
+  ratingStatus?: DocRatingStatus | null;
   createdAt: string;
   updatedAt: string;
   author: PresentedAuthor;
@@ -650,6 +660,7 @@ async function presentDocs(
           key: d.key,
           data: d.data,
           version: d.version,
+          ...(d.rating ? { level: d.rating.level, ratingStatus: d.rating.status } : {}),
           createdAt: d.createdAt.toISOString(),
           updatedAt: d.updatedAt.toISOString(),
           author: author(d.author),
@@ -806,8 +817,9 @@ const nothingAfterCommit: AfterCommit = () => undefined;
  *   is logged there and reaches nobody. The caller runs it only once the store has committed, so a
  *   write that fails records nothing.
  * - `enforce`: scanned inline, before the write. A scan that cannot run is refused as retryable
- *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category,
- *   never the matched text, and raises the shared block alert.
+ *   (`moderation_unavailable`); a hit is refused (`content_rejected`) with a coarse category and
+ *   the field it sits in (`sharedRefusalField`: a JSON path such as `data.actions[2].text`, or
+ *   `key`), never the matched term or text, and raises the shared block alert.
  */
 async function moderate(
   access: StorageAccess,
@@ -853,7 +865,7 @@ async function moderate(
           error: err instanceof Error ? err.name : typeof err,
         },
         'block-audit'
-      ).catch(() => undefined);
+      );
       throw new DocStoreError('moderation_unavailable', 'content could not be reviewed right now', {
         retryAfter: 5,
       });
@@ -877,6 +889,7 @@ async function moderate(
       );
       throw new DocStoreError('content_rejected', 'content was rejected by moderation', {
         category: COARSE_CATEGORY[hit.category] ?? 'blocked',
+        ...sharedRefusalField(scan, hit, field),
       });
     }
   }
@@ -1222,7 +1235,10 @@ export function createStorageHandler(deps: StorageApiDeps = { store: getDocStore
       if (isTallyRoute(op)) {
         recordStorageTallyOp(TALLY_METRIC_OP[op.op], route.op === 'patch' ? 'v2' : 'legacy');
       }
-      const reply = await run(req, body, op, access, deps.store());
+      // Content levels (`doc-levels.ts`): with the flag on for the app whose documents this
+      // reaches, the store gates every shared read on the token's viewer level.
+      const gated = await withDocLevelGate(access, claims);
+      const reply = await run(req, body, op, gated, deps.store());
       res.status(reply.status).json(reply.body);
     } catch (err) {
       if (err instanceof BodyAbortedError) {

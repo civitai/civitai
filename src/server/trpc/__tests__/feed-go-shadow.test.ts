@@ -846,13 +846,22 @@ describe('feedGoV1ShapeClass', () => {
   it.each([
     ['a plain gallery page', { modelVersionId: 9 }, 200, 'ported'],
     ['modelId with a version', { modelId: 3, modelVersionId: 9 }, 200, 'ported'],
-    ['an id batch', { ids: [1, 2] }, 200, 'unported_ids'],
+    ['an id batch', { ids: [1, 2] }, 200, 'ported'],
+    ['an id batch with meta', { ids: [1, 2], withMeta: true }, 200, 'ported'],
+    ['an id batch for one image', { ids: [1], imageId: 5 }, 200, 'unported_imageId'],
+    [
+      'an id batch under a model without a version',
+      { ids: [1], modelId: 3 },
+      200,
+      'unported_modelId_only',
+    ],
     ['one image', { imageId: 5 }, 200, 'unported_imageId'],
     ['a model without a version', { modelId: 3 }, 200, 'unported_modelId_only'],
     ['tags', { tags: [5] }, 200, 'unported_tags'],
     ['base models', { baseModels: ['SDXL 1.0'] }, 200, 'unported_baseModels'],
-    ['meta', { withMeta: true }, 200, 'unported_withMeta'],
+    ['meta', { withMeta: true }, 200, 'ported'],
     ['tags on images', { withTags: true }, 200, 'unported_withTags'],
+    ['tags on images with meta', { withTags: true, withMeta: true }, 200, 'unported_withTags'],
     ['a 503', { modelVersionId: 9 }, 503, 'non200'],
   ] as const)('%s is %s', (_name, data, status, want) => {
     expect(feedGoV1ShapeClass(req, data, status)).toBe(want);

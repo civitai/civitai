@@ -316,7 +316,7 @@ async function getRecentlyOpenedBlockIds(ctx: MetricProcessorRunContext): Promis
         message:
           'AppListing metrics could not read App_Open discovery from ClickHouse; this run recomputes install_count only and picks up missed plays on the next run',
         details: { error: (error as Error)?.message },
-      }).catch();
+      });
     }
   );
 }
@@ -399,7 +399,7 @@ async function getRecentlyVisitedListingIds(ctx: MetricProcessorRunContext): Pro
         message:
           'AppListing metrics could not read App_Visit discovery from ClickHouse; missed visits are picked up on the next run',
         details: { error: (error as Error)?.message },
-      }).catch();
+      });
     }
   );
 }

@@ -129,8 +129,8 @@ export const CREDENTIAL_ATTRIBUTION_EVENT = 'webhook credential presented';
  * credential is still presented but BY WHOM — a count with no way to reach the caller cannot be acted
  * on.
  *
- * Fire-and-forget, and swallows its own failure both ways a promise-returning call can fail —
- * attribution must never be the thing that breaks a request. Same contract as `logAxiomError`.
+ * Fire-and-forget. The `try` covers a logger that throws synchronously, so attribution cannot
+ * break a request.
  */
 function logCredentialAttribution(
   event: Parameters<Handle>[0]['event'],
@@ -144,7 +144,7 @@ function logCredentialAttribution(
       path: event.url.pathname,
       method: event.request.method,
       userAgent: event.request.headers.get('user-agent'),
-    }).catch(() => {});
+    });
   } catch {
     /* see above: a logging fault must not surface as a failed moderation call */
   }
@@ -213,7 +213,7 @@ export const handle: Handle = async ({ event, resolve }) => {
       name: 'held-sheet-refused-beside-session',
       type: 'warning',
       userId: webSession.user.id,
-    }).catch(() => undefined);
+    });
     return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
   }
   if (webSession && webSession.status !== 'ok' && webSession.reason === 'unavailable') {

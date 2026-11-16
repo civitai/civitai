@@ -112,7 +112,7 @@ export async function bulkClearCommentV3TosViolation({ ids }: { ids: number[] })
       name: 'comment-tos-restore',
       message: 'Clearing a ToS flag failed; the comments stay hidden',
       details: { table: 'CommentV3', ids, error: (e as Error)?.message },
-    }).catch(() => undefined);
+    });
     return { ...none, failed: ids.length };
   }
 }

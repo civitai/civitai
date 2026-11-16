@@ -150,7 +150,7 @@ function source(world: { rating: string | null; blockRating?: string }) {
   });
   const docs = createDocFeed({
     source: fixtureDocSource(() => cat),
-    resolve: resolveFromCatalog(readApps, SWITCH_ON),
+    resolve: resolveFromCatalog(readApps, SWITCH_ON, { requireDocLevels: false }),
     store,
     pollMs: 5,
     sleep: abortableSleep,

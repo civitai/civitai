@@ -37,6 +37,7 @@ export type ViewerGate =
 const GATE_KIND = {
   images: 'level',
   articles: 'level',
+  models: 'level',
   comics: 'level',
   models3d: 'level',
   storylines: 'level',

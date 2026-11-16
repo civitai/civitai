@@ -356,12 +356,14 @@ func (s *Server) computeV1(ctx context.Context, r *http.Request) (*computed, err
 		return nil, err
 	}
 	var viewer *feed.Viewer
+	viewerUsername := ""
 	if user != nil && !user.Banned {
 		viewer = &feed.Viewer{ID: user.ID, IsModerator: user.IsModerator}
+		viewerUsername = user.Username
 	}
 	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
 	ans, err := feed.ServeV1(ctx, s.V1, feed.V1Request{
-		Input: in, Viewer: viewer, RegionRestricted: restricted, Host: r.Host, Path: r.URL.Path,
+		Input: in, Viewer: viewer, ViewerUsername: viewerUsername, RegionRestricted: restricted, Host: r.Host, Path: r.URL.Path,
 	})
 	if err != nil {
 		return nil, err

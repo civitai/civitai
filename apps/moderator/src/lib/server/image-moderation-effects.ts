@@ -375,7 +375,7 @@ export async function applyBlockSideEffects(
       name: 'image-notice-under-review',
       imageId,
       userId: img.userId,
-    }).catch(() => undefined);
+    });
   await Promise.all([
     bestEffort('blocklist', imageId, () =>
       addImagesToBlocklist([
