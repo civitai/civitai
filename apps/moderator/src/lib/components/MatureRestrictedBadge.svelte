@@ -9,7 +9,7 @@
   <Badge
     variant="secondary"
     class="w-fit {className}"
-    title="Made with a base model that restricts mature images: rated R or above, the site hides it from everyone but its uploader and moderators opening it by id."
+    title="Made with a base model that restricts mature images: rated R or above, it is hidden from feeds, galleries, covers and search. Its uploader still sees it where the page is built for them, and moderators can open it by id."
   >
     MatureRestricted
   </Badge>

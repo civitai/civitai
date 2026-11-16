@@ -888,64 +888,23 @@ describe('the article banner', () => {
     expect(deletedIds()).toContain(BANNER.id);
   });
 
-  // A moderator's form never received a restricted banner, so its null is not a removal.
-  describe('a cover or banner restricted by its base model', () => {
-    const flagRestricted = (restrictedIds: number[]) => {
-      const base = dbMock.dbWrite.image.findMany.getMockImplementation();
-      dbMock.dbWrite.image.findMany.mockImplementation((async (args: any) =>
-        args.select?.modelRestricted
-          ? args.where.id.in.map((id: number) => ({
-              id,
-              nsfwLevel: 4,
-              modelRestricted: restrictedIds.includes(id),
-            }))
-          : base?.(args)) as never);
-    };
-    const clearBanner = (userId: number) =>
-      upsertArticle({
-        id: ARTICLE_ID,
-        userId,
-        isModerator: userId === MODERATOR,
-        title: 'A title',
-        content: '<p>had images</p>',
-        status: 'Draft',
-        coverImage: { id: COVER.id, url: 'u' },
-        bannerImage: null,
-      } as never);
-
-    it("survives a moderator's save", async () => {
-      flagRestricted([BANNER.id]);
-      await clearBanner(MODERATOR);
-      expect(saved.bannerId).toBe(BANNER.id);
-      expect(deletedIds()).not.toContain(BANNER.id);
-    });
-
-    it("is still cleared by its owner's save", async () => {
-      flagRestricted([BANNER.id]);
-      await clearBanner(AUTHOR);
-      expect(saved.bannerId).toBeNull();
-    });
-
-    it("lets a moderator's save clear an unrestricted banner", async () => {
-      flagRestricted([]);
-      await clearBanner(MODERATOR);
-      expect(saved.bannerId).toBeNull();
-    });
-
-    it("keeps a restricted cover through a moderator's save", async () => {
-      flagRestricted([COVER.id]);
-      dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
-      await upsertArticle({
-        id: ARTICLE_ID,
-        userId: MODERATOR,
-        isModerator: true,
-        title: 'A title',
-        content: '<p>had images</p>',
-        status: 'Draft',
-        coverImage: null,
-      } as never);
-      expect(saved.coverId).toBe(COVER.id);
-      expect(deletedIds()).not.toContain(COVER.id);
-    });
+  // A moderator's form carries a restricted banner (getArticleById), so their null removes it.
+  it("clears a restricted banner on a moderator's save", async () => {
+    const base = dbMock.dbWrite.image.findMany.getMockImplementation();
+    dbMock.dbWrite.image.findMany.mockImplementation((async (args: any) =>
+      args.select?.modelRestricted
+        ? args.where.id.in.map((id: number) => ({ id, nsfwLevel: 4, modelRestricted: true }))
+        : base?.(args)) as never);
+    await upsertArticle({
+      id: ARTICLE_ID,
+      userId: MODERATOR,
+      isModerator: true,
+      title: 'A title',
+      content: '<p>had images</p>',
+      status: 'Draft',
+      coverImage: { id: COVER.id, url: 'u' },
+      bannerImage: null,
+    } as never);
+    expect(saved.bannerId).toBeNull();
   });
 });

@@ -145,7 +145,7 @@ export const imageNotRestrictedWhere = ({
   ],
 });
 
-/** What {@link isImageNotRestricted} and {@link servableImage} read from an `Image`. */
+/** What {@link isImageNotRestricted} reads from an `Image`. */
 export const imageRestrictionSelect = {
   nsfwLevel: true,
   modelRestricted: true,
@@ -158,11 +158,13 @@ export type RestrictableImage = Pick<Selectable<DB['Image']>, keyof typeof image
 export const isImageNotRestricted = (image: RestrictableImage, viewerId?: number | null) =>
   !isRestrictedImage(image) || (isUploaderId(viewerId) && image.userId === viewerId);
 
-/** `image` without `modelRestricted` and `userId`, or null when `viewerId` may not see it. */
-export function servableImage<T extends RestrictableImage>(image: T | null, viewerId?: number) {
-  if (!image || !isImageNotRestricted(image, viewerId)) return null;
-  const { modelRestricted: _modelRestricted, userId: _userId, ...rest } = image;
-  return rest;
+/** `row` with its image at `key` set to null when `viewerId` may not see it. */
+export function withServableImage<
+  K extends PropertyKey,
+  T extends { [P in K]: RestrictableImage | null | undefined }
+>(row: T, key: K, viewerId?: number | null): T & { [P in K]: T[P] | null } {
+  const image = row[key];
+  return { ...row, [key]: image && isImageNotRestricted(image, viewerId) ? image : null };
 }
 
 /** The exact complement of `imageNotRestrictedSql`: a NULL flag on a mature image counts as restricted. */

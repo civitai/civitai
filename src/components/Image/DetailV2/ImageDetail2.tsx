@@ -812,8 +812,9 @@ function ImageDetail2Content() {
                           radius={0}
                           px="md"
                         >
-                          Hidden from everyone but its uploader in feeds, galleries and search,
-                          because {RESTRICTED_IMAGE_REASON}. Moderators can still open it by id.
+                          Hidden from feeds, galleries and search (its uploader still sees it where
+                          the page is built for them), because {RESTRICTED_IMAGE_REASON}. Moderators
+                          can still open it by id.
                         </AlertWithIcon>
                       )}
                     {!text && image.poi && (

@@ -429,7 +429,7 @@ describe('getArticleByShareToken: body images', () => {
         n
       ).repeat(12)}`;
     const content =
-      [1, 2, 3, 4, 5]
+      [1, 2, 3, 4, 5, 7]
         .map(
           (n) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid(n)}/x.jpeg">`
         )
@@ -458,6 +458,7 @@ describe('getArticleByShareToken: body images', () => {
       row(3, { ingestion: 'Blocked' }),
       row(4, { needsReview: 'csam' }),
       row(5, { tosViolation: true }),
+      row(7, { nsfwLevel: 4, modelRestricted: true }),
     ];
     // Only the fields the service selects come back, as from Prisma.
     dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) => {
@@ -472,7 +473,7 @@ describe('getArticleByShareToken: body images', () => {
     expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1]);
     const sent = JSON.stringify(result);
     expect(sent).toContain(uuid(1));
-    for (const n of [2, 3, 4, 5, 6]) expect(sent).not.toContain(uuid(n));
+    for (const n of [2, 3, 4, 5, 6, 7]) expect(sent).not.toContain(uuid(n));
     expect(sent).not.toContain('csam');
   });
 });

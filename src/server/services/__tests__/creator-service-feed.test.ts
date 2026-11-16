@@ -38,6 +38,7 @@ type Row = {
     needsReview: string | null;
     tosViolation: boolean;
     nsfwLevel: number;
+    modelRestricted?: boolean;
   } | null;
   seller: {
     username: string | null;
@@ -273,5 +274,38 @@ describe('services feed', () => {
       if (!cursor) break;
     }
     expect(seen).toEqual(expected);
+  });
+});
+
+describe('services feed covers restricted by their base model', () => {
+  const cover = (nsfwLevel: number, modelRestricted: boolean) => ({
+    coverImageId: 1,
+    coverImage: {
+      ingestion: ImageIngestionStatus.Scanned,
+      needsReview: null,
+      tosViolation: false,
+      nsfwLevel,
+      modelRestricted,
+    },
+  });
+
+  it('keeps the offering listed but withholds a mature restricted cover, even from its seller', async () => {
+    const restricted = row({ maxNsfwLevel: NsfwLevel.R, ...cover(NsfwLevel.R, true) });
+    const sfw = row(cover(NsfwLevel.PG, true));
+    const clean = row({ maxNsfwLevel: NsfwLevel.R, ...cover(NsfwLevel.R, false) });
+    table = [restricted, sfw, clean];
+    for (const viewerId of [VISITOR, SELLER]) {
+      const { items } = await getServiceOfferingFeed({
+        sort: 'newest',
+        limit: 50,
+        servable: allBrowsingLevelsFlag,
+        browsingLevel: allBrowsingLevelsFlag,
+        viewerId,
+      });
+      const covers = Object.fromEntries(items.map((i) => [i.id, i.coverImage]));
+      expect(covers[restricted.id]).toBeNull();
+      expect(covers[sfw.id]).toMatchObject({ nsfwLevel: NsfwLevel.PG });
+      expect(covers[clean.id]).toMatchObject({ nsfwLevel: NsfwLevel.R });
+    }
   });
 });

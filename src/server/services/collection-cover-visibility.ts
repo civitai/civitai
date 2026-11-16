@@ -298,8 +298,9 @@ type CoverCandidate = { collectionId: number; collectionOwnerId: number; imageId
 type CoverDb = Pick<typeof dbRead, '$queryRaw'>;
 
 /**
- * The collection ids whose cover may be shown to `viewer`. Staff see any cover except a restricted
- * one; the image's owner sees their own past every rule; everyone else gets
+ * The collection ids whose cover may be shown to `viewer`. Moderators see any cover except a
+ * restricted image someone else uploaded; the image's owner sees their own past every rule except
+ * the gallery level of a minor or SFW-only model they don't own; everyone else gets
  * `servableCollectionCoverSql`. Decided on the image id the caller read,
  * so a cover changed since then can't be judged on the old one. Pass the client the cover was read
  * from, so the image is judged as of that read.

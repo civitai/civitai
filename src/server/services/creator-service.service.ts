@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { ImageReferenceInput } from '~/server/schema/image.schema';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import { withServableImage } from '~/server/common/image-visibility';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { updateServiceOfferingNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -71,7 +72,7 @@ export const serviceOfferingSelect = {
   status: true,
   createdAt: true,
   updatedAt: true,
-  coverImage: { select: profileImageSelect },
+  coverImage: { select: { ...profileImageSelect, modelRestricted: true } },
 } satisfies Prisma.ServiceOfferingSelect;
 
 /** What only the seller and moderators see: the seller's own rating and the content check. */
@@ -344,7 +345,9 @@ export async function getShopServiceOfferings({
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
   });
-  return withOpenSlots(offerings);
+  // No viewer: a restricted cover is withheld from its seller too, as the storefront shows what
+  // visitors see. The offering stays listed without it.
+  return withOpenSlots(offerings.map((offering) => withServableImage(offering, 'coverImage')));
 }
 
 const feedOrderBy = {
@@ -391,7 +394,7 @@ export async function getServiceOfferingFeed({
   });
   const page = rows.slice(0, limit);
   return {
-    items: await withOpenSlots(page),
+    items: await withOpenSlots(page.map((offering) => withServableImage(offering, 'coverImage'))),
     nextCursor: rows.length > limit ? page[page.length - 1].id : undefined,
   };
 }

@@ -67,7 +67,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageNotRestrictedWhere, isImageNotRestricted } from '~/server/common/image-visibility';
+import { imageNotRestrictedWhere, withServableImage } from '~/server/common/image-visibility';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
   getPolyGenPostBlock,
@@ -109,11 +109,6 @@ const model3dFileSelect = {
 // Every image a 3D model read returns: never its generation data, which no 3D model surface shows
 // and which an image's owner may have hidden.
 const model3dImageSelect = { ...imageSelect, meta: false } satisfies Prisma.ImageSelect;
-
-const servableModel3dImage = <T extends Parameters<typeof isImageNotRestricted>[0]>(
-  image: T | null,
-  viewerId: number | undefined
-) => (image && isImageNotRestricted(image, viewerId) ? image : null);
 
 const model3dDetailSelect = {
   id: true,
@@ -251,9 +246,11 @@ export const getModel3DById = async ({
       : null;
 
     return {
-      ...model3d,
-      thumbnailImage: servableModel3dImage(model3d.thumbnailImage, user?.id),
-      sourceImage: servableModel3dImage(model3d.sourceImage, user?.id),
+      ...withServableImage(
+        withServableImage(model3d, 'thumbnailImage', user?.id),
+        'sourceImage',
+        user?.id
+      ),
       tags: model3d.tags.map((t) => t.tag),
       userReview,
     };
@@ -436,8 +433,7 @@ async function withUserReviews(
   return rows.map(({ tags, ...rest }) => {
     const review = reviewByModel.get(rest.id);
     return {
-      ...rest,
-      thumbnailImage: servableModel3dImage(rest.thumbnailImage, user?.id),
+      ...withServableImage(rest, 'thumbnailImage', user?.id),
       tags: tags.map((t) => t.tagId),
       userReview: review ? { id: review.id, recommended: review.recommended } : null,
     };
@@ -1347,7 +1343,7 @@ export const getModel3DByPostId = async ({
   )
     return null;
 
-  const thumbnail = servableModel3dImage(model3d.thumbnailImage, userId);
+  const { thumbnailImage: thumbnail } = withServableImage(model3d, 'thumbnailImage', userId);
   return {
     id: model3d.id,
     name: model3d.name,

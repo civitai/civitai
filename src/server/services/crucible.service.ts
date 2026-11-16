@@ -146,7 +146,7 @@ import {
   imageNotRestrictedSql,
   imageNotRestrictedWhere,
   isImageNotRestricted,
-  servableImage,
+  withServableImage,
 } from '~/server/common/image-visibility';
 import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -1512,13 +1512,14 @@ export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> &
   position: number | null;
 };
 
-type ServableCover<K extends 'image' | 'heroImage'> = ReturnType<
-  typeof servableImage<NonNullable<CrucibleDetailRow[K]>>
->;
-
-export type CrucibleDetail = Omit<CrucibleDetailRow, 'image' | 'heroImage'> & {
-  image: ServableCover<'image'>;
-  heroImage: ServableCover<'heroImage'>;
+export type CrucibleDetail = CrucibleDetailRow & {
+  /** `isCrucibleHiddenByScan` for this viewer, on the stored cover rather than the one served. */
+  hiddenByScan: boolean;
+  /** The crucible and its cover passed their checks, but the cover is restricted by its base model. Set
+   * for its owner and moderators only. */
+  coverRestricted: boolean;
+  /** A cover is stored, whether or not this viewer is sent it. */
+  hasCover: boolean;
   paidEntryCount: number;
   entrantCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
@@ -1597,10 +1598,23 @@ export const getCrucibleDetail = async ({
         : { viewerEntries: [], viewerEntriesSoFar: 0 },
     ]
   );
-  // A withheld cover hides the page from all but its creator and moderators: the controller's
-  // isCrucibleHiddenByScan reads the nulled image.
-  const image = servableImage(crucible.image, userId);
-  const heroImage = servableImage(crucible.heroImage, userId);
+  // Judged on the stored cover: a restricted one is withheld below, but the page still shows.
+  const hiddenByScan = isCrucibleHiddenByScan(crucible, { viewerId: userId, isModerator });
+  // For the page's notice to its managers: the cover passed its checks but is restricted, so the
+  // crucible is left out of feeds. Never sent to anyone else.
+  const stored = crucible.image;
+  const coverRestricted =
+    (isModerator || userId === crucible.userId) &&
+    crucible.ingestion === CrucibleIngestionStatus.Scanned &&
+    !!stored &&
+    stored.ingestion === ImageIngestionStatus.Scanned &&
+    stored.needsReview == null &&
+    !stored.tosViolation &&
+    isRestrictedImage(stored);
+  // A moderator sees a restricted cover and hero.
+  const { image, heroImage } = isModerator
+    ? crucible
+    : withServableImage(withServableImage(crucible, 'image', userId), 'heroImage', userId);
 
   // dbWrite: the owner refetches right after a removal, and the replica may not have it yet.
   const ownerRemovalsLeft =
@@ -1640,6 +1654,9 @@ export const getCrucibleDetail = async ({
     ...crucible,
     imageId: image?.id ?? null,
     image,
+    hiddenByScan,
+    coverRestricted,
+    hasCover: !!crucible.image,
     heroImage,
     paidEntryCount,
     entrantCount: entrantCounts.get(id) ?? 0,

@@ -12,8 +12,6 @@ import {
   SignalTopic,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
-import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import type { NewOrderHighRankType } from '~/server/games/new-order/utils';
 import {
   acolyteFailedJudgments,
@@ -1274,15 +1272,9 @@ export async function getSanityCheckImage(): Promise<SanityCheck | null> {
     // Fetch image data from database (url, metadata)
     const imageData = await dbRead.image.findUnique({
       where: { id: imageId },
-      select: {
-        url: true,
-        metadata: true,
-        needsReview: true,
-        nsfwLevel: true,
-        modelRestricted: true,
-      },
+      select: { url: true, metadata: true, needsReview: true },
     });
-    if (!imageData || isHeldForReview(imageData) || isRestrictedImage(imageData)) return null;
+    if (!imageData || isHeldForReview(imageData)) return null;
 
     return {
       imageId,
@@ -1780,7 +1772,6 @@ export async function getImagesQueue({
           post: {
             publishedAt: { not: null, lt: new Date() },
           },
-          ...imageNotRestrictedWhere(),
         },
         select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
       });
@@ -1932,7 +1923,7 @@ export async function getImagesQueue({
         // Batch fetch image data for all selected sanity checks
         const sanityImageIds = selectedChecks.map((entry) => Number(entry.split(':')[0]));
         const sanityImagesData = await dbRead.image.findMany({
-          where: { id: { in: sanityImageIds }, ...imageNotRestrictedWhere() },
+          where: { id: { in: sanityImageIds } },
           select: { id: true, url: true, metadata: true, needsReview: true },
         });
         const sanityImageMap = new Map(
@@ -2144,7 +2135,6 @@ export async function getPlayerHistory({
       post: {
         publishedAt: { not: null, lt: new Date() },
       },
-      ...imageNotRestrictedWhere(),
     },
     select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
   });

@@ -142,13 +142,15 @@ it indexes rather than calling `imageReviewedSql`; a change to the rule above ha
 
 Reads also require **not restricted**: `imageNotRestrictedSql` / `imageNotRestrictedWhere` in the same file
 hide a mature image made with a base model that restricts mature images (see
-`docs/nsfw-license-restrictions.md`). It has two exceptions: the uploader's own image, only where the read is
-per viewer, and a moderator opening the image itself by id (`getImage`,
-`assertImageVisibleToViewer`: `imageVisibilityConditions` applies no conditions for moderators).
+`docs/nsfw-license-restrictions.md`). Its exceptions are listed there under "Hiding images is one-way": chiefly
+the uploader's own image where the read is per viewer, a moderator opening the image by id (`getImage`,
+`assertImageVisibleToViewer`: `imageVisibilityConditions` applies no conditions for moderators), and an
+article's owner and moderators on that article's images.
 
 Owners always see their own images, including unrated and in-review ones, and their restricted ones on per-viewer
 reads. Moderators see everything in the main site's pending views except restricted images, which they reach
-through the image's direct link; the moderator app's queues still list them.
+by the image's id, on an article's or crucible's page and edit form, and in the labelled moderator tools;
+the moderator app's queues still list them.
 
 When adding a new image read path, use `imageReviewedSql()` and `imageNotRestrictedSql({ viewerId })` (or
 `isImageReviewed` / `isImageNotRestricted` for rows already fetched) — do not re-derive visibility from

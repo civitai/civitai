@@ -42,7 +42,7 @@ export type ChallengeCoverImage = {
   width: number | null;
   height: number | null;
   type: MediaType;
-  /** Set by the moderator edit reads, which keep a cover restricted by its base model. */
+  /** Set by the edit reads (moderator, and the creator's own), which keep a cover restricted by its base model. */
   restricted?: boolean;
 };
 

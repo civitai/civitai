@@ -890,7 +890,9 @@ export const getArticleById = async ({
       type: 'Article',
     });
 
-    const viewer = articleImageViewer({ id: userId, isModerator }, article.userId);
+    // On the article's own page and edit form a moderator gets its restricted cover and banner, as its
+    // owner does; card and feed covers still withhold them from moderators.
+    const viewer = isModerator ? 'owner' : articleImageViewer({ id: userId }, article.userId);
     // A cover or banner its model withholds is shown only to moderators, and to the article's
     // owner when they uploaded it. The edit form learns of one it may not see from the
     // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
@@ -972,7 +974,7 @@ const articleImageViewer = (
 ): ArticleImageViewer =>
   viewer?.id === articleUserId ? 'owner' : viewer?.isModerator ? 'moderator' : 'other';
 
-/** A moderator gets no exception for a restricted image; anyone else per `servableArticleImage`. */
+/** On cards and feeds a moderator gets no exception for a restricted image; anyone else per `servableArticleImage`. */
 function isArticleImageViewable<
   T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview' | 'nsfwLevel' | 'modelRestricted'>
 >(image: T | null | undefined, viewer: ArticleImageViewer): image is T {
@@ -1178,24 +1180,6 @@ export const upsertArticle = async ({
           if (!isImgOwner) throw throwAuthorizationError('Invalid banner image');
         },
       });
-    }
-
-    // A moderator's form never received a restricted cover or banner, so its null is not a removal.
-    const clearedIds =
-      article && article.userId !== userId
-        ? [coverId === null ? article.coverId : null, bannerId === null ? article.bannerId : null]
-        : [];
-    if (clearedIds.some(isDefined)) {
-      // primary: guards the write below, so a just-flagged image is seen.
-      const cleared = await dbWrite.image.findMany({
-        where: { id: { in: clearedIds.filter(isDefined) } },
-        select: { id: true, nsfwLevel: true, modelRestricted: true },
-      });
-      const restrictedIds = new Set(cleared.filter(isRestrictedImage).map((image) => image.id));
-      if (coverId === null && article?.coverId && restrictedIds.has(article.coverId))
-        coverId = undefined;
-      if (bannerId === null && article?.bannerId && restrictedIds.has(article.bannerId))
-        bannerId = undefined;
     }
 
     // A save that leaves out a cover or banner its model hides from this editor keeps it: the

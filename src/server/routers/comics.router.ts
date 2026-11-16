@@ -52,7 +52,7 @@ import {
   imageNotRestrictedWhere,
   imageRestrictionSelect,
   isImageNotRestricted,
-  servableImage,
+  withServableImage,
 } from '~/server/common/image-visibility';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
@@ -1004,8 +1004,8 @@ export const comicsRouter = router({
         // On green, strip NSFW cover/hero/thumbnail images so the card is still
         // visible and navigable but doesn't display mature imagery. This route is
         // protected so the viewer is always logged in — allow PG + PG13.
-        const servableCover = servableImage(p.coverImage, ctx.user.id);
-        const servableHero = servableImage(p.heroImage, ctx.user.id);
+        const { coverImage: servableCover } = withServableImage(p, 'coverImage', ctx.user.id);
+        const { heroImage: servableHero } = withServableImage(p, 'heroImage', ctx.user.id);
         const coverImage =
           ctx.features.isGreen && servableCover && !hasSafeBrowsingLevel(servableCover.nsfwLevel)
             ? null
@@ -1169,9 +1169,11 @@ export const comicsRouter = router({
 
       const { chapters: _chapters, ...projectRest } = project;
       return {
-        ...projectRest,
-        coverImage: servableImage(project.coverImage, ctx.user.id),
-        heroImage: servableImage(project.heroImage, ctx.user.id),
+        ...withServableImage(
+          withServableImage(projectRest, 'coverImage', ctx.user.id),
+          'heroImage',
+          ctx.user.id
+        ),
         chapters,
         references,
         hiddenReason: projectHiddenReason,
@@ -1782,8 +1784,8 @@ export const comicsRouter = router({
       const items = projects.map((p) => {
         const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
         const chapterCount = p.chapters.length;
-        const servableCover = servableImage(p.coverImage, ctx.user?.id);
-        const servableHero = servableImage(p.heroImage, ctx.user?.id);
+        const { coverImage: servableCover } = withServableImage(p, 'coverImage', ctx.user?.id);
+        const { heroImage: servableHero } = withServableImage(p, 'heroImage', ctx.user?.id);
         const rawThumbnailUrl =
           servableCover?.url ??
           p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ??
@@ -2037,8 +2039,8 @@ export const comicsRouter = router({
       // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
       const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
       const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
-      const coverImage = servableImage(project.coverImage, ctx.user?.id);
-      const heroImage = servableImage(project.heroImage, ctx.user?.id);
+      const { coverImage } = withServableImage(project, 'coverImage', ctx.user?.id);
+      const { heroImage } = withServableImage(project, 'heroImage', ctx.user?.id);
 
       return {
         id: project.id,

@@ -301,5 +301,14 @@ describe('comics public reads withhold a restricted image from everyone but its 
         thumbnail: `image-${CURRENT_COVER}.jpeg`,
       });
     });
+
+    it('drops a restricted hero for a stranger, not for its uploader', async () => {
+      const [row] = (await dbMock.dbRead.comicProject.findMany({} as never)) as any[];
+      dbMock.dbRead.comicProject.findMany.mockResolvedValue([
+        { ...row, heroImage: { ...row.heroImage, ...restricted } },
+      ] as never);
+      expect((await card(stranger())).hero).toBeNull();
+      expect((await card(owner())).hero).toBe(`image-${CURRENT_HERO}.jpeg`);
+    });
   });
 });

@@ -48,3 +48,30 @@ describe('getModel3DFeedItemsByIds', () => {
     expect(items.map((m) => m.userReview)).toEqual([null, null]);
   });
 });
+
+describe('getModel3DFeedItemsByIds thumbnails restricted by their base model', () => {
+  const thumb = (nsfwLevel: number) => ({
+    id: 9,
+    url: 'u',
+    userId: 5,
+    nsfwLevel,
+    modelRestricted: true,
+  });
+  const thumbnailFor = async (nsfwLevel: number, user?: { id: number }) => {
+    r.model3D.findMany.mockResolvedValue([
+      { id: 1, userId: 5, thumbnailImage: thumb(nsfwLevel), tags: [] },
+    ] as never);
+    const [item] = await getModel3DFeedItemsByIds({ ids: [1], user: user as SessionUser });
+    return item.thumbnailImage;
+  };
+
+  it('withholds a mature one from everyone but its uploader', async () => {
+    expect(await thumbnailFor(4)).toBeNull();
+    expect(await thumbnailFor(4, { id: 44 })).toBeNull();
+    expect(await thumbnailFor(4, { id: 5 })).toEqual(thumb(4));
+  });
+
+  it('keeps a SFW one', async () => {
+    expect(await thumbnailFor(1)).toEqual(thumb(1));
+  });
+});
