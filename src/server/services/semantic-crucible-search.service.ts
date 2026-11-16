@@ -98,7 +98,7 @@ export async function searchSemanticCrucibles({
     gate: {
       kind: 'crucible',
       nsfwLevels: Flags.instanceToArray(browsingLevel),
-      // As the feed: adult text only above the safe levels, which the effective level never is on green.
+      // Mirrors the feed's textNsfw gate.
       allowTextNsfw: Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag),
     },
     excludedUserIds,

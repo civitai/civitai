@@ -67,7 +67,8 @@ function CruciblesPage() {
             </Text>
             <Group gap={8} wrap="nowrap">
               {semanticCrucibleSearch && <FeedSearchInput placeholder="Search crucibles" />}
-              <SortFilter type="crucibles" />
+              {/* Search results come in rank order, so a sort would do nothing. */}
+              {!(semanticCrucibleSearch && query) && <SortFilter type="crucibles" />}
               <CrucibleFiltersDropdown />
             </Group>
           </Group>

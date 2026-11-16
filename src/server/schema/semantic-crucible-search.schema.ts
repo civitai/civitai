@@ -15,6 +15,5 @@ export const semanticCrucibleSearchSchema = baseQuerySchema.extend({
   status: z.enum(CrucibleStatus).exclude([CrucibleStatus.Cancelled]).array().optional(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
   limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
-  // Offset into the ranked candidate list.
   cursor: z.number().int().min(0).optional(),
 });
