@@ -35,12 +35,15 @@ func TestInputKeyLedger(t *testing.T) {
 	}
 }
 
-// A key outside the schema falls back before anything else is read; the tRPC client's own keys do not.
+// A key outside the schema falls back, after the unsupported keys (so the reason names the parity gap);
+// the tRPC client's own keys do not.
 func TestParseUnknownKeyFallsBack(t *testing.T) {
 	for raw, want := range map[string]string{
 		`{"json":{"limit":10,"someNewFilter":true}}`:                       "input-unknown-key",
 		`{"json":{"someNewFilter":null}}`:                                  "input-unknown-key",
-		`{"json":{"query":"x","someNewFilter":1}}`:                         "input-unknown-key", // before input-query
+		`{"json":{"query":"x","someNewFilter":1}}`:                         "input-query", // the unsupported key wins
+		`{"json":{"ids":[],"someNewFilter":1}}`:                            "input-ids",
+		`{"json":{"query":"","someNewFilter":1}}`:                          "input-unknown-key", // an empty one does not
 		`{"json":{"limit":10,"authed":true,"direction":"forward"}}`:        "",
 		`{"json":{"limit":10,"favorites":true,"collectionItemStatus":[]}}`: "", // ignored schema keys
 	} {

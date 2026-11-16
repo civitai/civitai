@@ -94,6 +94,12 @@ type Input struct {
 // never treated as absent here. trpcTransportKeys are the exception.
 var modelsSchema = inputschema.Get(inputschema.AllModels)
 
+// modelsDefaults are the schema defaults Parse starts from, decoded once at package init.
+var modelsDefaults = struct{ sort, period, periodMode string }{
+	sort: modelsSchema.DefaultString("sort"), period: modelsSchema.DefaultString("period"),
+	periodMode: modelsSchema.DefaultString("periodMode"),
+}
+
 // trpcTransportKeys are keys the site's tRPC client adds to every input and zod strips: `authed`
 // (authedCacheBypassLink, signed in) and `direction` (an infinite query's paging direction).
 var trpcTransportKeys = map[string]bool{"authed": true, "direction": true}
@@ -131,13 +137,6 @@ var unsupportedKeys = []string{
 // subset is a fallback, and so is a value the schema itself rejects (Node answers it with its own
 // BAD_REQUEST, which the sampler never mirrors).
 func Parse(m map[string]any) (*Input, error) {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	if k, ok := modelsSchema.Unknown(keys, trpcTransportKeys); ok {
-		return nil, fallback.Newf("input-unknown-key", "%s", k)
-	}
 	// `ids` changes the answer whenever it is present at all: commaDelimitedNumberArray turns [] into
 	// [], "" into [0] and null into [], and getModelsRaw's hidePrivateModels is `!ids && …`, so even
 	// an empty list shows private models (and "" filters to model 0). None of that is ported.
@@ -149,10 +148,19 @@ func Parse(m map[string]any) (*Input, error) {
 			return nil, fallback.New("input-" + k)
 		}
 	}
+	// After the unsupported keys, so a request carrying one of them and a new key too is counted under
+	// the parity gap it names rather than under input-unknown-key.
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	if k, ok := modelsSchema.Unknown(keys, trpcTransportKeys); ok {
+		return nil, fallback.Newf("input-unknown-key", "%s", k)
+	}
 	// The limit is the handler's (`limit = 100`): the schema's is optional, with no default.
 	in := &Input{
-		Limit: 100, Sort: modelsSchema.DefaultString("sort"), Period: modelsSchema.DefaultString("period"),
-		PeriodMode: modelsSchema.DefaultString("periodMode"),
+		Limit: 100, Sort: modelsDefaults.sort, Period: modelsDefaults.period,
+		PeriodMode: modelsDefaults.periodMode,
 	}
 	var err error
 	if v, ok := m["limit"]; ok && v != nil {

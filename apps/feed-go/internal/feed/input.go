@@ -66,6 +66,16 @@ type Input struct {
 // as absent here. trpcTransportKeys are the exception.
 var imagesSchema = inputschema.Get(inputschema.InfiniteImages)
 
+// imagesDefaults are the schema defaults parseInput and ParseV1 start from, decoded once at package
+// init (a schemas.json without one panics at startup, not on a request).
+var imagesDefaults = struct {
+	limit                    int
+	sort, period, periodMode string
+}{
+	limit: imagesSchema.DefaultInt("limit"), sort: imagesSchema.DefaultString("sort"),
+	period: imagesSchema.DefaultString("period"), periodMode: imagesSchema.DefaultString("periodMode"),
+}
+
 // trpcTransportKeys are keys the site's tRPC client adds to every input and zod strips: `authed`
 // (authedCacheBypassLink, signed in) and `direction` (an infinite query's paging direction).
 var trpcTransportKeys = map[string]bool{"authed": true, "direction": true}
@@ -109,17 +119,19 @@ func Parse(m map[string]any) (*Input, error) {
 
 // parseInput is Parse with the procedure's own list of keys that fall back when present.
 func parseInput(m map[string]any, unsupported []string) (*Input, error) {
-	if k, ok := imagesSchema.Unknown(mapKeys(m), trpcTransportKeys); ok {
-		return nil, fallback.Newf("input-unknown-key", "%s", k)
-	}
+	// A known key that is not ported runs first, so a request that carries one and a new key too is
+	// counted under the parity gap it names rather than under input-unknown-key.
 	for _, k := range unsupported {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.Newf("input-"+k, "%v", v)
 		}
 	}
+	if k, ok := imagesSchema.Unknown(mapKeys(m), trpcTransportKeys); ok {
+		return nil, fallback.Newf("input-unknown-key", "%s", k)
+	}
 	in := &Input{
-		Limit: imagesSchema.DefaultInt("limit"), Sort: imagesSchema.DefaultString("sort"),
-		Period: imagesSchema.DefaultString("period"), PeriodMode: imagesSchema.DefaultString("periodMode"),
+		Limit: imagesDefaults.limit, Sort: imagesDefaults.sort, Period: imagesDefaults.period,
+		PeriodMode: imagesDefaults.periodMode,
 	}
 	var err error
 	if v, ok := m["limit"]; ok && v != nil {

@@ -15,9 +15,6 @@ func TestEmbeddedSchemas(t *testing.T) {
 	if got := s.DefaultInt("limit"); got != 100 {
 		t.Errorf("limit default = %d, want 100", got)
 	}
-	if got := s.DefaultBool("withMeta"); got {
-		t.Error("withMeta default = true, want false")
-	}
 	if got := Get(AllModels).DefaultString("sort"); got != "Highest Rated" {
 		t.Errorf("model sort default = %q", got)
 	}

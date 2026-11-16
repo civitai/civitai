@@ -18,7 +18,7 @@ type QueryParam struct {
 	Values []string
 }
 
-// V1Input is the `/api/v1/images` query (imagesEndpointSchema in src/pages/api/v1/images/index.ts)
+// V1Input is the `/api/v1/images` query (imagesEndpointSchema in src/server/schema/images-endpoint.schema.ts)
 // for the supported subset, after the schema's defaults and transforms.
 type V1Input struct {
 	Limit          int // 0-200, default 100
@@ -58,6 +58,11 @@ const imageIDsBatchMax = 100
 var v1Schema = inputschema.Get(inputschema.ImagesEndpoint)
 
 var v1TransportKeys = map[string]bool{"token": true}
+
+// v1Defaults are imagesEndpointSchema's defaults, decoded once at package init.
+var v1Defaults = struct{ period, sort string }{
+	period: v1Schema.DefaultString("period"), sort: v1Schema.DefaultString("sort"),
+}
 
 // v1ParsedKeys are the schema keys ParseV1 reads: every one (TestInputKeyLedger), so a key added to
 // the schema must be ported or made a fallback.
@@ -201,13 +206,6 @@ func ParseV1(raw string) (*V1Input, error) {
 	if err != nil {
 		return nil, err
 	}
-	keys := make([]string, 0, len(params))
-	for _, p := range params {
-		keys = append(keys, p.Key)
-	}
-	if k, ok := v1Schema.Unknown(keys, v1TransportKeys); ok {
-		return nil, fallback.Newf("input-unknown-key", "%s", k)
-	}
 	vals := map[string]string{}
 	for _, p := range params {
 		if !v1Schema.Has(p.Key) {
@@ -230,13 +228,19 @@ func ParseV1(raw string) (*V1Input, error) {
 	case has("baseModels"):
 		return nil, fallback.New("v1-base-models")
 	}
+	// After the unported shapes, so a request carrying one of them and a new key too is counted under
+	// the shape it names (the app's shape counter classifies in this order too).
+	keys := make([]string, 0, len(params))
+	for _, p := range params {
+		keys = append(keys, p.Key)
+	}
+	if k, ok := v1Schema.Unknown(keys, v1TransportKeys); ok {
+		return nil, fallback.Newf("input-unknown-key", "%s", k)
+	}
 
 	// The limit's default is not in the projection (numericString's preprocess hides it); it is the
 	// same constants.galleryFilterDefaults.limit as getInfiniteImagesSchema's.
-	in := &V1Input{
-		Limit: imagesSchema.DefaultInt("limit"), Period: v1Schema.DefaultString("period"),
-		Sort: v1Schema.DefaultString("sort"), Query: params,
-	}
+	in := &V1Input{Limit: imagesDefaults.limit, Period: v1Defaults.period, Sort: v1Defaults.sort, Query: params}
 	num := func(k string, dst *int) error {
 		v, ok := vals[k]
 		if !ok {

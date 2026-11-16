@@ -70,8 +70,8 @@ func parseObj(t *testing.T, s string) map[string]any {
 	return m
 }
 
-// A key outside getInfiniteImagesSchema falls back, on both image procedures, before anything else is
-// read; the tRPC client's own keys (`authed`, `direction`) do not.
+// A key outside getInfiniteImagesSchema falls back, on both image procedures; the tRPC client's own
+// keys (`authed`, `direction`) do not.
 func TestParseUnknownKeyFallsBack(t *testing.T) {
 	for _, c := range []struct {
 		input string
@@ -91,9 +91,17 @@ func TestParseUnknownKeyFallsBack(t *testing.T) {
 			t.Errorf("ParseInfinite %s: reason %q (err %v), want %q", c.input, got, err, c.want)
 		}
 	}
-	// The unknown check runs first: it wins over a key that would fall back for its own reason.
-	if _, err := Parse(parseObj(t, `{"collectionId":5,"someNewFilter":1}`)); fallback.Reason(err) != "input-unknown-key" {
-		t.Errorf("unknown + unsupported: reason %q, want input-unknown-key", fallback.Reason(err))
+	// An unsupported key wins over an unknown one, so the reason names the parity gap; an empty value
+	// of it is not one, and the unknown key then decides.
+	for input, want := range map[string]string{
+		`{"collectionId":5,"someNewFilter":1}`: "input-collectionId",
+		`{"someNewFilter":1,"userId":7}`:       "input-userId",
+		`{"tags":[3],"aNewKey":true}`:          "input-tags",
+		`{"userId":null,"someNewFilter":1}`:    "input-unknown-key",
+	} {
+		if _, err := Parse(parseObj(t, input)); fallback.Reason(err) != want {
+			t.Errorf("unknown + unsupported %s: reason %q, want %q", input, fallback.Reason(err), want)
+		}
 	}
 }
 
@@ -127,6 +135,11 @@ func TestParseV1UnknownKeyFallsBack(t *testing.T) {
 		"foo":                  "input-unknown-key",
 		"limit=2&token=abc":    "",
 		"limit=2&sort=Newest":  "",
+		// An unported shape wins over an unknown key, so the reason names the shape.
+		"tags=5&utm_source=x":    "v1-tags",
+		"utm_source=x&imageId=3": "v1-image-id",
+		"baseModels=Pony&foo=1":  "v1-base-models",
+		"modelId=3&utm_source=x": "input-unknown-key", // v1-model-only is decided later, after the values
 	} {
 		_, err := ParseV1(q)
 		if got := fallback.Reason(err); got != want || (want == "" && err != nil) {
