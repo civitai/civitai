@@ -591,6 +591,8 @@ function ImageDetail2Content() {
                           <LegacyActionIcon
                             {...sharedActionIconProps}
                             onClick={handleSidebarToggle}
+                            aria-label={sidebarOpen ? 'Hide details' : 'Show details'}
+                            aria-expanded={sidebarOpen}
                           >
                             <IconLayoutSidebarRight {...sharedIconProps} />
                           </LegacyActionIcon>

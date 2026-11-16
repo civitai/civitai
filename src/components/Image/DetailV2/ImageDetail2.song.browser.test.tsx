@@ -447,3 +447,16 @@ describe('the song stage beside the open sidebar', () => {
         });
       });
 });
+
+describe('the sidebar toggle', () => {
+  test('is named for what it does, and the name follows the state', async () => {
+    await renderDetail();
+    const hide = page.getByRole('button', { name: 'Hide details' });
+    await expect.element(hide).toHaveAttribute('aria-expanded', 'true');
+    await hide.click();
+    const show = page.getByRole('button', { name: 'Show details' });
+    await expect.element(show).toHaveAttribute('aria-expanded', 'false');
+    await show.click();
+    await expect.element(page.getByRole('button', { name: 'Hide details' })).toBeInTheDocument();
+  });
+});
