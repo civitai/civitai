@@ -27,6 +27,7 @@ import {
   blockInitStorageMode,
   BLOCK_HOST_DEEP_LINK_BASE,
   BLOCK_HOST_SITE_NAVIGATION,
+  BLOCK_HOST_SHARE_LINK,
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
@@ -1474,7 +1475,7 @@ export function PageBlockHost({
 
   // The search and hash below the app route, forwarded so a block can deep-link into
   // its own state (`?take=3`, `#top`). Read from `router.asPath` (the address bar),
-  // with the host-owned `from` pair stripped and each capped — see
+  // with every host-owned pair (`from`, `sl`, `src`) stripped — see
   // `resolveBridgeLocation`. Separate fields from `subPath`, so nothing here can move
   // the slug or the path the block sees. Next re-renders on every route change,
   // including a hash-only one (its `onlyAHashChange` branch still calls `set`), so a
@@ -1483,6 +1484,30 @@ export function PageBlockHost({
     () => resolveBridgeLocation(router.asPath ?? ''),
     [router.asPath]
   );
+
+  // The href the host page is AT, for NAVIGATE's "already showing" check. 🔴 NOT
+  // `router.asPath` read at message time: a push is async, so two NAVIGATEs in one tick
+  // (`x`, then back to the index) would compare the second against the PRE-push path and
+  // swallow it; and an address-bar hash edit reaches no Next route state at all (Next's
+  // popstate handler only `replaceState`s for a state-less entry). So this ref is written
+  // SYNCHRONOUSLY when the host pushes or replaces, and resynced from the router on every
+  // committed route and from `window.location` on `hashchange` / `popstate`.
+  const currentHrefRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentHrefRef.current = router.asPath ?? null;
+  }, [router.asPath]);
+  useEffect(() => {
+    const sync = () => {
+      const { pathname, search, hash } = window.location;
+      currentHrefRef.current = `${pathname}${search}${hash}`;
+    };
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+    };
+  }, []);
 
   // 🔴 THIS CONTEXT IS NOT PROJECTED, AND THAT IS THE SECOND IDENTITY CHANNEL.
   // `IframeHost` runs its slot context through `projectBlockInitContext`, whose
@@ -2442,14 +2467,20 @@ export function PageBlockHost({
       //  - `replace: true` replaces the current entry (a state tweak such as which take
       //    is showing should not need a back press per tweak);
       //  - a move to the URL already showing pushes NOTHING, so a block re-asserting
-      //    its route cannot stack duplicate entries.
+      //    its route cannot stack duplicate entries. "Showing" is `currentHrefRef` (see
+      //    its declaration), written here before the async router call returns.
+      // `scroll: false` on both: an app's `#hash` names an element in the APP's
+      // document, and must not scroll the host page to a host element with that id.
       // Site scope keeps its old semantics: a non-shallow push off the app.
       if (req.scope === 'app') {
-        if (req.href === router.asPath) return;
+        if (req.href === currentHrefRef.current) return;
+        currentHrefRef.current = req.href;
         if (navigateWantsReplace(raw)) {
-          void router.replace(req.href, undefined, { shallow: true });
+          void router.replace(req.href, undefined, { shallow: true, scroll: false });
           return;
         }
+        void router.push(req.href, undefined, { shallow: true, scroll: false });
+        return;
       }
       void router.push(req.href, undefined, req.shallow ? { shallow: true } : undefined);
     });
@@ -2486,6 +2517,7 @@ export function PageBlockHost({
         origin: window.location.origin,
         ready: readGateStatus() === 'ready',
         reviewMode,
+        shareable: BLOCK_HOST_SHARE_LINK[surface],
       });
       if (decision.kind === 'drop') return;
       if (decision.kind === 'refuse') {
@@ -2505,9 +2537,11 @@ export function PageBlockHost({
         ?.userActivation;
       void performShareLink(decision.url, {
         userActivation: activation ? activation.isActive === true : null,
+        // Activation is page-wide (a click on host chrome counts); focus on THIS frame is
+        // what ties it to a click inside the app. See `performShareLink`.
+        frameHasFocus: iframeRef.current != null && document.activeElement === iframeRef.current,
         coarsePointer:
-          typeof window.matchMedia === 'function' &&
-          window.matchMedia('(pointer: coarse)').matches,
+          typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches,
         clipboardWriteText: nav?.clipboard?.writeText
           ? (text) => nav.clipboard.writeText(text)
           : undefined,

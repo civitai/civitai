@@ -1,4 +1,4 @@
-import { withRunLaunchOrigin } from '~/shared/utils/apps-run-origin';
+import { stripHostOwnedRunParams } from '~/shared/utils/apps-run-origin';
 import { resolveNavigateRequest } from './pageBlockHostLogic';
 
 /**
@@ -16,11 +16,11 @@ import { resolveNavigateRequest } from './pageBlockHostLogic';
  */
 
 /**
- * Longest `search`, `hash` or share `subPath` that crosses the bridge. Longer is DROPPED
- * (forwarded as `''`, or refused for a share), never truncated: a truncated query is a
- * different, wrong query that the app would route on.
+ * Longest `subPath`, `search` or `hash` an app may put in a SHARE_LINK. Longer is REFUSED,
+ * never truncated: a truncated query is a different, wrong link. Inbound only — the host
+ * forwards its own URL's search and hash to the app uncapped (`resolveBridgeLocation`).
  */
-export const BRIDGE_LOCATION_MAX_LENGTH = 2048;
+export const SHARE_LINK_MAX_FIELD_LENGTH = 2048;
 
 const LOCATION_SENTINEL_ORIGIN = 'https://page-block-host.invalid';
 
@@ -29,11 +29,12 @@ const LOCATION_SENTINEL_ORIGIN = 'https://page-block-host.invalid';
  *
  * - Read from `router.asPath`, which is what the address bar shows, through the WHATWG
  *   parser, so control characters arrive percent-encoded, never raw.
- * - The host-owned launch-origin pair (`from`, any spelling) is removed: the block never
- *   wrote it and must not be able to round-trip it (`withRunLaunchOrigin` is the one
- *   implementation of "which pairs are `from`"). Every other pair keeps its bytes and order.
- * - `search` is `''` or starts with `?`; `hash` is `''` or starts with `#`. Each is `''`
- *   when longer than {@link BRIDGE_LOCATION_MAX_LENGTH}.
+ * - Every host-owned pair (`HOST_OWNED_RUN_PARAMS`: `from`, `sl`, `src`, any spelling) is
+ *   removed: the block never wrote them, and host attribution must not reach it. Every other
+ *   pair keeps its bytes and order.
+ * - `search` is `''` or starts with `?`; `hash` is `''` or starts with `#`. No length cap:
+ *   this is the host's own URL, already bounded by what the browser and the server accept,
+ *   and a capped value would hand the app a deep link that silently lost its state.
  *
  * These are separate fields from `subPath` (which still comes from `router.query.path`), so
  * nothing in them can change the slug or the path prefix the block sees.
@@ -41,13 +42,11 @@ const LOCATION_SENTINEL_ORIGIN = 'https://page-block-host.invalid';
 export function resolveBridgeLocation(asPath: string): { search: string; hash: string } {
   let url: URL;
   try {
-    url = new URL(withRunLaunchOrigin(asPath, 'store'), LOCATION_SENTINEL_ORIGIN);
+    url = new URL(stripHostOwnedRunParams(asPath), LOCATION_SENTINEL_ORIGIN);
   } catch {
     return { search: '', hash: '' };
   }
-  const search = url.search.length > BRIDGE_LOCATION_MAX_LENGTH ? '' : url.search;
-  const hash = url.hash.length > BRIDGE_LOCATION_MAX_LENGTH ? '' : url.hash;
-  return { search, hash };
+  return { search: url.search, hash: url.hash };
 }
 
 // ── SHARE_LINK ──────────────────────────────────────────────────────────────
@@ -79,12 +78,16 @@ function optionalString(v: unknown): string | null | undefined {
  * app-scoped `NAVIGATE` (`resolveNavigateRequest`): the hostile filter (schemes,
  * protocol-relative, backslashes, encoded separators, control characters), the structural
  * dot-segment rule and app containment. So `..`, `%2e%2e`, `//evil.com` and `javascript:`
- * cannot produce a URL outside `/apps/run/<slug>/`. The launch-origin `from` pair is never
- * carried (`launchOrigin` is left at its `'store'` default, which drops every `from`).
+ * cannot produce a URL outside `/apps/run/<slug>/`. No host-owned pair (`from`, `sl`, `src`)
+ * is ever carried: they are stripped from the built URL (`stripHostOwnedRunParams`), so an app
+ * cannot plant host attribution in a link someone else opens.
  *
  * Shape rules on top of NAVIGATE's, so each field means one thing: `subPath` carries no `?`
  * or `#`; `search` is `''` or starts with `?` and carries no `#`; `hash` is `''` or starts
- * with `#`. Each is capped at {@link BRIDGE_LOCATION_MAX_LENGTH}.
+ * with `#`. Each is capped at {@link SHARE_LINK_MAX_FIELD_LENGTH}.
+ *
+ * `shareable` is the surface's `BLOCK_HOST_SHARE_LINK` entry: `false` (the dev tunnel, whose
+ * slug is a block id) refuses like a surface with no app route.
  *
  * Every refusal REPLIES (`kind: 'refuse'`) so the block's request settles. Only a payload
  * with no usable `requestId` is dropped: there is nothing to reply to.
@@ -97,6 +100,7 @@ export function resolveShareLinkRequest(
     origin: string;
     ready: boolean;
     reviewMode: boolean;
+    shareable: boolean;
   }
 ): ShareLinkDecision {
   if (!raw || typeof raw !== 'object') return { kind: 'drop' };
@@ -105,7 +109,9 @@ export function resolveShareLinkRequest(
   if (typeof requestId !== 'string' || requestId.length === 0) return { kind: 'drop' };
   const refuse = (error: string): ShareLinkDecision => ({ kind: 'refuse', requestId, error });
 
-  if (opts.reviewMode || opts.base == null) return refuse(SHARE_LINK_UNAVAILABLE_ERROR);
+  if (opts.reviewMode || opts.base == null || !opts.shareable) {
+    return refuse(SHARE_LINK_UNAVAILABLE_ERROR);
+  }
   if (!opts.ready) return refuse(SHARE_LINK_NOT_READY_ERROR);
 
   const subPath = optionalString(obj.subPath) ?? (obj.subPath === undefined ? '' : null);
@@ -114,9 +120,9 @@ export function resolveShareLinkRequest(
   if (subPath === null || search === null || hash === null) return refuse(SHARE_LINK_INVALID_ERROR);
 
   if (
-    subPath.length > BRIDGE_LOCATION_MAX_LENGTH ||
-    search.length > BRIDGE_LOCATION_MAX_LENGTH ||
-    hash.length > BRIDGE_LOCATION_MAX_LENGTH
+    subPath.length > SHARE_LINK_MAX_FIELD_LENGTH ||
+    search.length > SHARE_LINK_MAX_FIELD_LENGTH ||
+    hash.length > SHARE_LINK_MAX_FIELD_LENGTH
   ) {
     return refuse(SHARE_LINK_INVALID_ERROR);
   }
@@ -131,16 +137,18 @@ export function resolveShareLinkRequest(
     { base: opts.base, slug: opts.slug, siteNavigation: false }
   );
   if (!req || req.scope !== 'app') return refuse(SHARE_LINK_INVALID_ERROR);
-  return { kind: 'ok', requestId, url: `${opts.origin}${req.href}` };
+  return { kind: 'ok', requestId, url: `${opts.origin}${stripHostOwnedRunParams(req.href)}` };
 }
 
 /**
  * What {@link performShareLink} needs from the browser, injected so the decision is
  * testable. `userActivation` is `navigator.userActivation?.isActive`, or `null` when the
  * browser has no such API (then the attempt is made and the browser decides).
+ * `frameHasFocus` is `document.activeElement === <the block's iframe>`.
  */
 export type ShareLinkEnv = {
   userActivation: boolean | null;
+  frameHasFocus: boolean;
   coarsePointer: boolean;
   clipboardWriteText?: (text: string) => Promise<void>;
   share?: (data: { url: string }) => Promise<void>;
@@ -169,10 +177,20 @@ export type ShareLinkEnv = {
  * Without activation (`userActivation === false`) neither API is touched: the app gets the
  * URL and `method: 'none'`, so an app cannot pop a share sheet or write the clipboard on
  * its own.
+ *
+ * 🔴 ACTIVATION IS PAGE-WIDE, SO THE FRAME MUST ALSO HAVE FOCUS. `userActivation` says only
+ * that SOMETHING on the page was just clicked — a click on the host's own chrome counts too —
+ * so an app could fire a SHARE_LINK in the window after the viewer clicked a host button.
+ * Requiring `frameHasFocus` (the measured state after a click inside the frame: the parent's
+ * `activeElement` is the IFRAME) ties the copy to a click inside THIS app. Without it,
+ * neither API is touched and the reply is `method: 'none'`.
+ *
+ * The host emits exactly three results: `{ copied: true, method: 'clipboard' }`,
+ * `{ copied: false, method: 'share' }` and `{ copied: false, method: 'none' }`.
  */
 export function performShareLink(url: string, env: ShareLinkEnv): Promise<ShareLinkResult> {
   const none: ShareLinkResult = { url, copied: false, method: 'none' };
-  if (env.userActivation === false) return Promise.resolve(none);
+  if (env.userActivation === false || !env.frameHasFocus) return Promise.resolve(none);
 
   const data = { url };
   const useShare =

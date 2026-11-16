@@ -125,11 +125,11 @@ export interface PageContext extends SlotContext {
   subPath: string;
   /**
    * The query string below the app route, `''` or starting with `?`, from
-   * `router.asPath` with the host-owned `from` pair removed. `''` when longer than
-   * 2048 chars. Optional on the type because hosts before this field sent none.
+   * `router.asPath` with every host-owned pair (`HOST_OWNED_RUN_PARAMS`: `from`, `sl`,
+   * `src`) removed. Optional on the type because hosts before this field sent none.
    */
   search?: string;
-  /** The fragment, `''` or starting with `#`, same source and cap as `search`. */
+  /** The fragment, `''` or starting with `#`, from the same source as `search`. */
   hash?: string;
   /**
    * @deprecated Same unconditional identity disclosure as
