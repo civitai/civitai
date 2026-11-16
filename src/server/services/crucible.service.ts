@@ -2805,14 +2805,25 @@ async function getJudgePairKeys(crucibleId: number, userId: number) {
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
     loadVoteOutcomes(outcomesKey).catch((error: unknown) => {
       // A cache: without it the judge is only served pairs they could have skipped.
-      log(`Failed to read vote outcomes for crucible ${crucibleId}, user ${userId}: ${error}`);
+      logToAxiom({
+        type: 'warning',
+        name: 'crucible-vote-outcomes',
+        message: `Failed to read vote outcomes for crucible ${crucibleId}, user ${userId}`,
+        error: error instanceof Error ? error.message : String(error),
+        crucibleId,
+        userId,
+      }).catch();
       return undefined;
     }),
     sysRedis.sMembers(getDismissedPairsKey(crucibleId, userId)),
   ]);
   const withDismissed = (decided: string[]) =>
     dismissed.length ? [...new Set([...decided, ...dismissed])] : decided;
-  if (!outcomes) return { voted, decided: withDismissed(voted) };
+  // A counted vote adds one voted pair and one outcome. Fewer outcomes than voted pairs means some
+  // are missing (a rating update or outcome write that failed, an eviction, votes from before the
+  // key moved), and a partial set can break a cycle and decide a pair the full set leaves open, so
+  // it is not used.
+  if (!outcomes || outcomes.length < voted.length) return { voted, decided: withDismissed(voted) };
   return { voted, decided: withDismissed(decidedPairKeys(voted, outcomes)) };
 }
 
@@ -3929,7 +3940,14 @@ export const submitVote = async ({
           userId,
         }).catch();
     })().catch((error: unknown) =>
-      log(`Failed to record vote outcome for crucible ${crucibleId}, user ${userId}: ${error}`)
+      logToAxiom({
+        type: 'warning',
+        name: 'crucible-vote-outcomes',
+        message: `Failed to record vote outcome for crucible ${crucibleId}, user ${userId}`,
+        error: error instanceof Error ? error.message : String(error),
+        crucibleId,
+        userId,
+      }).catch()
     ),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
