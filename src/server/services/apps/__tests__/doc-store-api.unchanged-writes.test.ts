@@ -379,6 +379,10 @@ async function freeWrites(app: AppRow): Promise<number> {
   return values.find((v) => v.labels.app_block_id === app.id)?.value ?? 0;
 }
 
+/** The per-viewer `write` fixed-window counter (private writes, DELETEs), or null if never spent. */
+const writeBucket = (app: AppRow, uid = V1) =>
+  kv.get(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-write:${app.id}:u:${uid}`)?.value ?? null;
+
 const sharedBudget = (app: AppRow, uid = V1) =>
   lua.hash(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-shared-write:v1:${app.id}:${uid}`);
 
@@ -708,6 +712,43 @@ describe('flag off: byte-identical to today', () => {
     expect(sharedBudget(A)).toEqual(SHARED_AFTER_TWO_WRITES);
     expect(h.scans).toBe(2);
     expect((await row(A, 'k1')).version).toBe(2);
+  });
+
+  it("shared puts never spend the per-viewer write bucket (private writes' and DELETEs')", async () => {
+    h.unchangedFlag = false;
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(put(t, 'k1', { n: 1 }));
+    await expectOk(put(t, 'k1', { n: 1 }));
+    await expectOk(put(t, 'k1', { n: 2 }));
+    expect(writeBucket(A)).toBeNull();
+    // Positive control: the bucket this reads is the one a private write spends.
+    await expectOk(call({ token: t, method: 'PUT', path: '/drafts/p1', body: { data: { n: 1 } } }));
+    expect(writeBucket(A)).toBe('1');
+  });
+});
+
+describe('a moderator-hidden document', () => {
+  it("its author's identical put is the same 404 not_found with the flag on as off", async () => {
+    const outcome = async (flag: boolean) => {
+      h.unchangedFlag = flag;
+      h.scans = 0;
+      const A = freshApp();
+      const t = await mint(A, V1);
+      await expectOk(put(t, 'k1', { n: 1 }));
+      await harness.raw(
+        `UPDATE appdata.doc d SET hidden_at = now()
+           WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'clips' AND d.key = 'k1'`,
+        [A.id]
+      );
+      const r = await put(t, 'k1', { n: 1 });
+      return { status: r.status, body: r.body, budget: sharedBudget(A), scans: h.scans };
+    };
+    const off = await outcome(false);
+    const on = await outcome(true);
+    expect(off.status).toBe(404);
+    expect(off.body).toMatchObject({ code: 'not_found' });
+    expect(on).toEqual(off);
   });
 });
 
