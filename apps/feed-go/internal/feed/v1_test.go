@@ -851,9 +851,11 @@ func TestServeV1WithMeta(t *testing.T) {
 	feedPage := newV1Fixture([]RawImage{row(10, 100, "image", "a", 1, ""), row(11, 101, "image", "b", 1, "")})
 	legacy := newV1Fixture([]RawImage{legacyRow(11, 101, 11), legacyRow(10, 100, 10)})
 	feedPage.src.meta, legacy.src.meta = meta, meta
+	// The flat forms carry what precedes them (each image's stats), so a wrapped meta, whose inner
+	// `"meta":{…}` reads the same, does not match them.
 	const (
-		flat11    = `"meta":{"prompt":"p11","cfg":7.5}`
-		flat10    = `"meta":null`
+		flat11    = `"commentCount":1},"meta":{"prompt":"p11","cfg":7.5}`
+		flat10    = `"commentCount":0},"meta":null`
 		wrapped11 = `"meta":{"id":11,"meta":{"prompt":"p11","cfg":7.5}}`
 		wrapped10 = `"meta":{"id":10,"meta":null}`
 	)
