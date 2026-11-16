@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type * as RetiredIndexes from '~/server/search-index/retired-indexes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The mod endpoint that used to select from the feeds index (`metrics_images_v1`). Retired, the
@@ -7,7 +6,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // endpoints whose whole job was reading or backfilling that index were deleted with it.
 
 const m = vi.hoisted(() => ({
-  retired: { metrics: true },
   dropBlockedImageDeleteQueue: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
   trackModActivity: vi.fn(),
@@ -20,16 +18,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   ModEndpoint: (handler: unknown) => handler,
   WebhookEndpoint: (handler: unknown) => handler,
 }));
-
-// Retired by default; the un-retired case shows what the endpoint does once it reaches its query.
-vi.mock('~/server/search-index/retired-indexes', async (importOriginal) => {
-  const actual = await importOriginal<typeof RetiredIndexes>();
-  return {
-    ...actual,
-    isRetiredSearchIndex: (index: string) =>
-      index === 'metrics_images_v1' ? m.retired.metrics : actual.isRetiredSearchIndex(index),
-  };
-});
 
 vi.mock('~/server/services/image.service', () => ({
   dropBlockedImageDeleteQueue: m.dropBlockedImageDeleteQueue,
@@ -73,7 +61,6 @@ const call = async (handler: unknown, query: Record<string, string> = {}) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  m.retired.metrics = true;
   updateManyAndReturn.mockResolvedValue([]);
   updateMany.mockResolvedValue({ count: 0 });
 });

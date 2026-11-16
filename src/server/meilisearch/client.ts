@@ -40,71 +40,6 @@ export function buildSearchActor({
 }
 
 /**
- * Sentinel error message for a local fetch deadline firing before the upstream
- * responded. The raw-fetch helper that threw it went with the retired feeds
- * Meilisearch; the error classifiers below (and errorHandling.ts) still
- * recognise it, so an error carrying it keeps being treated as transient.
- */
-export const FETCH_DOCUMENTS_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
-
-/**
- * Reason label values for `meiliFetchFailfastTotal`. Each value describes a
- * distinct backend-side failure mode that callers choose to fast-fail /
- * break out of an iteration loop on. Kept as a const-as union so call-sites
- * get type-checked.
- *
- *  - `local-timeout`     — the local 5s deadline fired before the upstream
- *                          responded (PR #2370 — the original behaviour;
- *                          preserved for backward-compat dashboards)
- *  - `upstream-overload` — upstream returned HTTP 503 (the feeds proxy
- *                          shed because MEILI_MAX_CONCURRENT was hit)
- *  - `upstream-timeout`  — upstream returned HTTP 408 (Meilisearch backend
- *                          page-cache thrashing past its own timeout)
- *  - `upstream-error`    — any other 5xx (bad gateway, gateway timeout from
- *                          Traefik to feeds-proxy, etc.)
- *  - `upstream-circuit-open` — the per-backend wrapper said no before the
- *                          request hit the network: either the circuit
- *                          breaker is OPEN / HALF_OPEN-busy, or the wrapper's
- *                          per-call timeout (MEILI_CALL_TIMEOUT_MS) fired on
- *                          an SDK call that arrived at runWithLimiter (PR
- *                          follow-up to #2371). Both surface as
- *                          `MeiliCallTimeoutError`; we use a single bucket
- *                          because operationally they signal the same thing
- *                          — "upstream is unhealthy, stop iterating".
- */
-export type MeiliFetchFailfastReason =
-  | 'local-timeout'
-  | 'upstream-overload'
-  | 'upstream-timeout'
-  | 'upstream-error'
-  | 'upstream-circuit-open';
-
-/**
- * Reason constant for `MeiliCallTimeoutError`-driven fail-fast events. Lives
- * here (alongside the existing reason helpers) so the post-filter catch site
- * doesn't have to inline a string literal, mirroring the pattern PR #2371
- * established for the HTTP-status branches (which use
- * `failfastReasonForStatus`).
- *
- * Single bucket by design — see `MeiliFetchFailfastReason` JSDoc above.
- */
-export const MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN: MeiliFetchFailfastReason =
-  'upstream-circuit-open';
-
-/**
- * Map an HTTP status returned by the upstream Meili backend (or its proxy)
- * onto the fail-fast reason label. Callers should ONLY pass a status they
- * already decided is "fast-fail eligible" (408 or 5xx); 4xx-other (400 bad
- * filter, 401/403 auth) should re-throw at the call site and never reach
- * this helper.
- */
-export function failfastReasonForStatus(status: number): MeiliFetchFailfastReason {
-  if (status === 408) return 'upstream-timeout';
-  if (status === 503) return 'upstream-overload';
-  return 'upstream-error';
-}
-
-/**
  * Does `status` qualify for graceful-break treatment by post-filter / future
  * iteration-loop callers? True for the genuinely-transient upstream statuses:
  *   - 408 Request Timeout      (upstream-side timeout)
@@ -197,7 +132,6 @@ export const TRANSIENT_STATUSTEXT_TO_STATUS: Readonly<Record<string, number>> = 
  *     500 above IS transient; the distinction is Api(JSON) vs Communication.)
  *   - SDK `MeiliSearchTimeOutError` (name-matched; class isn't re-exported on
  *     the path we instanceof against) — the SDK's own wait/timeout
- *   - the raw-fetch local-deadline error (message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE)
  *
  * Deliberately NARROW: a 4xx-other (400 malformed filter, 401/403 auth) or any
  * other Error returns false and continues to surface as its real status (500
@@ -216,9 +150,6 @@ export function isTransientMeiliError(error: unknown): boolean {
     code?: string; // MeiliSearchCommunicationError (network errors) / MeiliSearchApiError
     errno?: string; // MeiliSearchCommunicationError (network errors)
   };
-
-  // A local-deadline abort (see FETCH_DOCUMENTS_TIMEOUT_MESSAGE).
-  if (e.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE) return true;
 
   if (e.name === 'MeiliSearchTimeOutError') return true;
 
@@ -297,88 +228,6 @@ function messageMatchesTransientStatusText(message: unknown): boolean {
     Object.prototype.hasOwnProperty.call(TRANSIENT_STATUSTEXT_TO_STATUS, message)
   );
 }
-
-/**
- * Map a transient Meili error (one that `isTransientMeiliError` returned true
- * for) onto a `MeiliFetchFailfastReason` label, so the `meiliFetchFailfastTotal`
- * counter stays attributable when a service catch reclassifies it to a 503.
- * Reuses `failfastReasonForStatus` for the status-bearing SDK errors (so the
- * label vocabulary matches the post-filter loop exactly) and adds the
- * timeout / network buckets the status helper doesn't cover:
- *   - civitai `MeiliCallTimeoutError` (wrapper timer / circuit-open) →
- *     `upstream-circuit-open`
- *   - `MeiliSearchTimeOutError` + the raw-fetch local-deadline message →
- *     `local-timeout`
- *   - network-level CommunicationError (errno/code, no HTTP status) →
- *     `upstream-error`
- * Caller contract: only pass errors `isTransientMeiliError(error)` accepts.
- */
-export function failfastReasonForTransientError(error: unknown): MeiliFetchFailfastReason {
-  if (error instanceof MeiliCallTimeoutError) return MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN;
-  if (error instanceof MeilisearchFetchError) return failfastReasonForStatus(error.status);
-
-  if (typeof error === 'object' && error !== null) {
-    const e = error as {
-      name?: string;
-      message?: string;
-      statusCode?: number;
-      httpStatus?: number;
-    };
-    if (e.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE) return 'local-timeout';
-    if (e.name === 'MeiliSearchTimeOutError') return 'local-timeout';
-    if (e.name === 'MeiliSearchApiError' && typeof e.httpStatus === 'number') {
-      return failfastReasonForStatus(e.httpStatus);
-    }
-    if (e.name === 'MeiliSearchCommunicationError' && typeof e.statusCode === 'number') {
-      return failfastReasonForStatus(e.statusCode);
-    }
-    // statusText-message fallback — derive the SAME reason label the status code
-    // would have produced, so `meiliFetchFailfastTotal` stays meaningful and the
-    // message-matched events bucket identically to their typed twins. This is
-    // reached for BOTH the stripped nameless-Error AND — critically — the REAL
-    // prod shape: a `MeiliSearchCommunicationError` whose `statusCode` was dropped
-    // by the SDK's httpErrorHandler double-wrap (name preserved, statusCode
-    // undefined). Without this, that message-matched CommunicationError would fall
-    // through to the generic `upstream-error` label instead of e.g.
-    // `upstream-overload` for a "Service Unavailable" (503).
-    if (typeof e.message === 'string') {
-      const statusFromText = TRANSIENT_STATUSTEXT_TO_STATUS[e.message];
-      if (typeof statusFromText === 'number') return failfastReasonForStatus(statusFromText);
-    }
-  }
-  // Network-level CommunicationError (no HTTP status) / anything else transient
-  // that didn't match a more specific bucket → the generic upstream-error label.
-  return 'upstream-error';
-}
-
-/**
- * Counter incremented every time a Meili call site fast-fails — i.e. a local
- * timer fired OR the upstream returned a status code that callers treat as
- * "backend unavailable, break gracefully". The `route` label
- * identifies the caller (so we can separate the pre-filter cascade from the
- * post-filter iteration cascade); `iteration` is meaningful for the
- * post-filter loop and defaults to `"0"` everywhere else; `reason` carries
- * the failure-mode label (see `MeiliFetchFailfastReason`).
- *
- * Renamed from `meili_fetch_timeout_total` (PR #2370) → `meili_fetch_failfast_total`
- * because the counter is no longer timeout-specific: it now captures every
- * fail-fast disposition its callers surface. Dashboards keyed
- * on the old name will go empty for a few minutes during the transition;
- * the panel update lands in a follow-up commit in the datapacket-talos
- * repo.
- *
- * Naming follows the prom-client wrapper's PROM_PREFIX convention — exposed
- * to Prometheus as `civitai_app_meili_fetch_failfast_total`.
- */
-export const meiliFetchFailfastTotal = registerCounterWithLabels({
-  name: 'meili_fetch_failfast_total',
-  help:
-    'Meilisearch fast-fail events (local timer fired OR ' +
-    'upstream returned 408/5xx) — the defensive cap that prevents ' +
-    'event-loop stalls from cascading into kubelet SIGKILL on ' +
-    'civitai-dp-prod-api. `reason` distinguishes the failure mode.',
-  labelNames: ['route', 'iteration', 'reason'] as const,
-});
 
 /**
  * Typed error thrown when the upstream Meili backend returns a non-ok HTTP

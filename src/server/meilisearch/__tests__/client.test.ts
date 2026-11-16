@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { MeiliSearch } from 'meilisearch';
 
-// Tests for the Meilisearch error classifiers (isTransientMeiliError,
-// failfastReasonForTransientError) and searchWithSignal. The raw-fetch helper
-// these once shared a file with went with the retired feeds Meilisearch.
+// Tests for the Meilisearch error classifier (isTransientMeiliError) and
+// searchWithSignal. The raw-fetch helper these once shared a file with went with
+// the retired feeds Meilisearch.
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -160,13 +160,6 @@ describe('isTransientMeiliError — transient upstream classification', () => {
     expect(isTransientMeiliError(new MeilisearchFetchError(429, ''))).toBe(true);
   });
 
-  it('returns true for the raw-fetch local-deadline error (FETCH_DOCUMENTS_TIMEOUT_MESSAGE)', async () => {
-    const { isTransientMeiliError, FETCH_DOCUMENTS_TIMEOUT_MESSAGE } = await import(
-      '~/server/meilisearch/client'
-    );
-    expect(isTransientMeiliError(new Error(FETCH_DOCUMENTS_TIMEOUT_MESSAGE))).toBe(true);
-  });
-
   it.each([400, 401, 403, 404, 422])(
     'returns FALSE for a non-transient %i status (real client/app error must surface, not be masked as 503)',
     async (status) => {
@@ -318,19 +311,6 @@ describe('isTransientMeiliError — transient upstream classification', () => {
       }
     );
 
-    it('failfastReasonForTransientError labels the re-wrapped CommunicationError by its statustext (503 → upstream-overload), not the generic upstream-error', async () => {
-      const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
-      expect(
-        failfastReasonForTransientError(makeRewrappedCommunicationError('Service Unavailable'))
-      ).toBe('upstream-overload');
-      expect(
-        failfastReasonForTransientError(makeRewrappedCommunicationError('Request Timeout'))
-      ).toBe('upstream-timeout');
-      expect(failfastReasonForTransientError(makeRewrappedCommunicationError('Bad Gateway'))).toBe(
-        'upstream-error'
-      );
-    });
-
     it('still returns FALSE for a re-wrapped CommunicationError whose message is NOT a transient statustext (no masking of a real bug)', async () => {
       const { isTransientMeiliError } = await import('~/server/meilisearch/client');
       // name preserved + statusCode undefined, but the message is an arbitrary
@@ -376,91 +356,6 @@ describe('isTransientMeiliError — transient upstream classification', () => {
     // Notably ABSENT: a bare "Internal Server Error" (500) — not masked.
     expect('Internal Server Error' in TRANSIENT_STATUSTEXT_TO_STATUS).toBe(false);
   });
-});
-
-// ─── failfastReasonForTransientError: label mapping for the reclassified 503s ──
-//
-// Audit 🟡 #3: when getImagesFromFeedSearch / getAllImagesIndex turn a transient
-// Meili error into a 503, they increment `meiliFetchFailfastTotal{route, reason}`
-// so a Meili outage stays attributable instead of vanishing into the unlabeled
-// 503 bucket. This proves the reason-label mapping the counter uses — it must
-// reuse the SAME vocabulary as the post-filter loop (failfastReasonForStatus)
-// and add the timeout / network buckets that helper doesn't cover.
-describe('failfastReasonForTransientError — reason label mapping', () => {
-  const makeCommunicationError = (statusCode: number) => {
-    const e = new Error('x') as Error & { name: string; statusCode: number };
-    e.name = 'MeiliSearchCommunicationError';
-    e.statusCode = statusCode;
-    return e;
-  };
-  const makeApiError = (httpStatus: number) => {
-    const e = new Error('x') as Error & { name: string; httpStatus: number };
-    e.name = 'MeiliSearchApiError';
-    e.httpStatus = httpStatus;
-    return e;
-  };
-
-  it('maps the status-bearing SDK errors via failfastReasonForStatus (same vocab as the post-filter loop)', async () => {
-    const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
-    expect(failfastReasonForTransientError(makeCommunicationError(408))).toBe('upstream-timeout');
-    expect(failfastReasonForTransientError(makeCommunicationError(503))).toBe('upstream-overload');
-    expect(failfastReasonForTransientError(makeCommunicationError(502))).toBe('upstream-error');
-    expect(failfastReasonForTransientError(makeApiError(503))).toBe('upstream-overload');
-    expect(failfastReasonForTransientError(makeApiError(504))).toBe('upstream-error');
-  });
-
-  it('maps the timeout cases to local-timeout', async () => {
-    const { failfastReasonForTransientError, FETCH_DOCUMENTS_TIMEOUT_MESSAGE } = await import(
-      '~/server/meilisearch/client'
-    );
-    const timeoutErr = new Error('timeout of 5000ms') as Error & { name: string };
-    timeoutErr.name = 'MeiliSearchTimeOutError';
-    expect(failfastReasonForTransientError(timeoutErr)).toBe('local-timeout');
-    expect(failfastReasonForTransientError(new Error(FETCH_DOCUMENTS_TIMEOUT_MESSAGE))).toBe(
-      'local-timeout'
-    );
-  });
-
-  it('maps the civitai wrapper errors', async () => {
-    const { failfastReasonForTransientError, MeiliCallTimeoutError, MeilisearchFetchError } =
-      await import('~/server/meilisearch/client');
-    expect(failfastReasonForTransientError(new MeiliCallTimeoutError('timeout'))).toBe(
-      'upstream-circuit-open'
-    );
-    expect(failfastReasonForTransientError(new MeilisearchFetchError(503, ''))).toBe(
-      'upstream-overload'
-    );
-    expect(failfastReasonForTransientError(new MeilisearchFetchError(408, ''))).toBe(
-      'upstream-timeout'
-    );
-  });
-
-  it('maps a network-level CommunicationError (no http status) to upstream-error', async () => {
-    const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
-    const e = new Error('ECONNREFUSED') as Error & { name: string; code: string; errno: string };
-    e.name = 'MeiliSearchCommunicationError';
-    e.code = 'ECONNREFUSED';
-    e.errno = 'ECONNREFUSED';
-    expect(failfastReasonForTransientError(e)).toBe('upstream-error');
-  });
-
-  // The stripped prod shape (plain Error, message-only) must derive the SAME
-  // reason label its status code would have produced via failfastReasonForStatus,
-  // so message-matched 503s bucket identically to their typed CommunicationError
-  // twins in meiliFetchFailfastTotal.
-  it.each([
-    ['Request Timeout', 'upstream-timeout'], // 408
-    ['Too Many Requests', 'upstream-error'], // 429 → generic (failfastReasonForStatus default)
-    ['Bad Gateway', 'upstream-error'], // 502
-    ['Service Unavailable', 'upstream-overload'], // 503
-    ['Gateway Timeout', 'upstream-error'], // 504
-  ])(
-    'maps a plain-Error statusText "%s" to %s (same label as the matching status code)',
-    async (message, expectedReason) => {
-      const { failfastReasonForTransientError } = await import('~/server/meilisearch/client');
-      expect(failfastReasonForTransientError(new Error(message))).toBe(expectedReason);
-    }
-  );
 });
 
 describe('withMeiliResourceSelect cancellation', () => {
