@@ -454,6 +454,30 @@ func TestIsRevokedPartialFailureStillAppliesTheMarkerItRead(t *testing.T) {
 	d.only(t, "partial failure", VerdictDenyCached, "down")
 }
 
+// Pipelined reports only the FIRST command error, and an absent key is one: a user-cut read that fails
+// after the token-state read found nothing must still be a failed read, answered from the record, not a
+// healthy read of "no cut" that lets the session through.
+func TestIsRevokedFailedCommandBehindAnAbsentOneIsAFailedRead(t *testing.T) {
+	r := testkit.NewRedis()
+	r.SetString("session:user-cut:42", []byte("1700000000001"))
+	var d degradedRecorder
+	rev := &Revocation{Redis: r, Markers: NewMarkerCache(0), OnDegraded: d.report}
+	if !rev.IsRevoked(context.Background(), revocationClaims()) {
+		t.Fatal("the healthy read did not revoke")
+	}
+	r.KeyErr = func(key string) error {
+		if key == "session:user-cut:42" {
+			return testkit.ErrDown
+		}
+		return nil
+	}
+	// token-state (first in the pipeline) answers redis.Nil, so Pipelined's own error is redis.Nil.
+	if !rev.IsRevoked(context.Background(), revocationClaims()) {
+		t.Error("a failed user-cut read behind an absent token state was read as no cut")
+	}
+	d.only(t, "nil then failure", VerdictDenyCached, "down")
+}
+
 // In a failed round trip go-redis can leave a command with no error and no value without having
 // answered it; that must not count as a read, or it would delete a marker the record holds.
 func TestObservedIgnoresAnUnansweredCommandInAFailedBatch(t *testing.T) {

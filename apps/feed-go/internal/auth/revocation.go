@@ -77,7 +77,17 @@ func (r *Revocation) IsRevoked(ctx context.Context, c *Claims) bool {
 		}
 		return nil
 	})
+	// Pipelined returns the FIRST command error, and an absent key (redis.Nil) is one, so a command that
+	// failed after one that found nothing is only visible on the command itself.
 	failed := err != nil && !errors.Is(err, redis.Nil)
+	for _, cmd := range []*redis.StringCmd{state, familyState, all, userCut, impUserCut, impCut} {
+		if cmd == nil {
+			continue
+		}
+		if e := cmd.Err(); e != nil && !errors.Is(e, redis.Nil) && !failed {
+			failed, err = true, e
+		}
+	}
 	if m := r.Markers; m != nil {
 		// Every read that came back is recorded, the failed ones are not: in the package each command
 		// resolves on its own and is recorded before the batch's failure is seen, so a marker read in the
