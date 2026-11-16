@@ -13,6 +13,7 @@ export type BlockOutputHiddenReason =
   | 'owner_only'
   | 'private'
   | 'paused'
+  | 'owner_hidden'
   | 'unrecognised_url';
 
 export type BlockOutputGate =

@@ -88,6 +88,8 @@ export async function resolveWorkflowMediaRefs(args: {
   appBlockId: string;
   viewerId: number | null;
   viewerBrowsingLevel: number;
+  /** Users the viewer hid, blocked or is blocked by: their refs do not replay to this viewer. */
+  hiddenOwnerIds: ReadonlySet<number>;
 }): Promise<WorkflowMediaItem[]> {
   const serving = await isBlockMediaServing();
   return args.refs.map((token) => {
@@ -103,7 +105,12 @@ export async function resolveWorkflowMediaRefs(args: {
 
 function judgeRef(
   token: string,
-  viewer: { appBlockId: string; viewerId: number | null; viewerBrowsingLevel: number },
+  viewer: {
+    appBlockId: string;
+    viewerId: number | null;
+    viewerBrowsingLevel: number;
+    hiddenOwnerIds: ReadonlySet<number>;
+  },
   serving: boolean
 ): WorkflowMediaItem {
   if (!serving) return { status: 'hidden', reason: 'paused' };
@@ -113,6 +120,9 @@ function judgeRef(
   if (!ref || ref.appBlockId !== viewer.appBlockId) return { status: 'hidden', reason: 'invalid' };
   if (ref.privateGen && ref.ownerId !== viewer.viewerId)
     return { status: 'hidden', reason: 'private' };
+  // One reason for every relation, so the reply does not tell the app which one it was.
+  if (ref.ownerId !== viewer.viewerId && viewer.hiddenOwnerIds.has(ref.ownerId))
+    return { status: 'hidden', reason: 'owner_hidden' };
 
   const { exp: _refExp, ...claims } = ref;
   const ticket = sealBlockMediaTicket({
@@ -148,11 +158,16 @@ export async function resolveWorkflowMediaForBlockClaims(input: {
   const { resolveViewerBrowsingLevel } = await import(
     '~/server/services/blocks/block-gated-images.service'
   );
+  const { getAllHiddenForUser } = await import('~/server/services/user-preferences.service');
+  const hidden = await getAllHiddenForUser({ userId });
   const media = await resolveWorkflowMediaRefs({
     refs: input.refs,
     appBlockId: input.claims.appBlockId,
     viewerId: userId,
     viewerBrowsingLevel: resolveViewerBrowsingLevel(input.claims),
+    hiddenOwnerIds: new Set(
+      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((u) => u.id)
+    ),
   });
   return { media };
 }

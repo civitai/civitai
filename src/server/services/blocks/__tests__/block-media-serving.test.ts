@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as BlobRatings from '~/server/services/orchestrator/blobRatings';
 import type { BlobState } from '~/server/services/orchestrator/blobRatings';
+import type * as UserPreferences from '~/server/services/user-preferences.service';
 
 const serving = { on: true };
 const blobState = vi.fn<(blobId: string) => Promise<BlobState>>();
@@ -14,6 +15,18 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 const appAccess = vi.fn<(userId: number) => Promise<void>>();
 vi.mock('~/server/services/blocks/block-token-access.service', () => ({
   assertAppBlocksEnabledForTokenUser: (userId: number) => appAccess(userId),
+}));
+type Relations = {
+  hiddenUsers: { id: number }[];
+  blockedUsers: { id: number }[];
+  blockedByUsers: { id: number }[];
+};
+const noRelations = (): Relations => ({ hiddenUsers: [], blockedUsers: [], blockedByUsers: [] });
+let relations = noRelations();
+const hiddenFor = vi.fn<(args: { userId: number }) => Promise<Relations>>(async () => relations);
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferences>()),
+  getAllHiddenForUser: (args: { userId: number }) => hiddenFor(args),
 }));
 vi.mock('~/server/services/orchestrator/blobRatings', async (importOriginal) => ({
   ...(await importOriginal<typeof BlobRatings>()),
@@ -53,6 +66,8 @@ beforeEach(() => {
   serving.on = true;
   blobState.mockReset();
   appAccess.mockReset().mockResolvedValue(undefined);
+  relations = noRelations();
+  hiddenFor.mockClear();
 });
 
 describe('resolveBlockMediaFetch (the media route)', () => {
@@ -190,7 +205,12 @@ describe('resolveBlockMediaFetch (the media route)', () => {
 });
 
 describe('resolveWorkflowMediaRefs (GET_WORKFLOW_MEDIA)', () => {
-  const viewer = { appBlockId: 'apb_1', viewerId: 99, viewerBrowsingLevel: NsfwLevel.PG };
+  const viewer = {
+    appBlockId: 'apb_1',
+    viewerId: 99,
+    viewerBrowsingLevel: NsfwLevel.PG,
+    hiddenOwnerIds: new Set<number>(),
+  };
 
   it('a replayed ref is re-judged for the replaying viewer, not the one who stored it', async () => {
     const [item] = await resolveWorkflowMediaRefs({
@@ -290,5 +310,49 @@ describe('resolveWorkflowMediaForBlockClaims (the bridge and REST body)', () => 
       })
     ).rejects.toThrow('app suspended');
     expect(appAccess).toHaveBeenCalledWith(99);
+  });
+});
+
+describe("replayed refs vs the viewer's hidden and blocked users", () => {
+  const tokenClaims = {
+    sub: 'user:99',
+    appBlockId: 'apb_1',
+    maxBrowsingLevel: allBrowsingLevelsFlag,
+    viewerBrowsingLevel: allBrowsingLevelsFlag,
+  };
+  const replay = async (refClaims = claims, sub = tokenClaims.sub) =>
+    (
+      await resolveWorkflowMediaForBlockClaims({
+        claims: { ...tokenClaims, sub },
+        refs: [sealBlockMediaRef(refClaims)!],
+      })
+    ).media[0];
+
+  it.each(['hiddenUsers', 'blockedUsers', 'blockedByUsers'] as const)(
+    "🔴 refuses a ref whose owner is in the viewer's %s, with one reason for every relation",
+    async (relation) => {
+      relations = { ...noRelations(), [relation]: [{ id: claims.ownerId }] };
+      expect(await replay()).toEqual({ status: 'hidden', reason: 'owner_hidden' });
+      expect(hiddenFor).toHaveBeenCalledWith({ userId: 99 });
+    }
+  );
+
+  it('CONTROL: a ref from an owner the viewer has no relation to replays', async () => {
+    relations = { ...noRelations(), blockedUsers: [{ id: 12345 }] };
+    expect((await replay()).status).toBe('visible');
+  });
+
+  it("the viewer's own ref replays even when the set names them", async () => {
+    relations = { ...noRelations(), blockedByUsers: [{ id: 7 }] };
+    expect((await replay(claims, 'user:7')).status).toBe('visible');
+  });
+
+  it('judges each ref in a batch by its own owner', async () => {
+    relations = { ...noRelations(), hiddenUsers: [{ id: 7 }] };
+    const { media } = await resolveWorkflowMediaForBlockClaims({
+      claims: tokenClaims,
+      refs: [sealBlockMediaRef(claims)!, sealBlockMediaRef({ ...claims, ownerId: 8 })!],
+    });
+    expect(media.map((m) => m.status)).toEqual(['hidden', 'visible']);
   });
 });
