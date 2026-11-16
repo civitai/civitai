@@ -77,6 +77,8 @@ describe('spokeAuthorize / spokeCallback', () => {
     expect(start.status).toBe(302);
     expect(start.headers.get('location')).toMatch(`${HUB}/api/auth/oauth/authorize?`);
     expect(start.headers.get('referrer-policy')).toBe('no-referrer');
+    // The pre-per-flow cookie too, for a callback served by an older build during a rollout.
+    expect(start.headers.getSetCookie().some((c) => c.startsWith('oauth_bridge='))).toBe(true);
     b.apply(start);
 
     const done = await spokeCallback(b.get(hubReturn(start)));
@@ -291,6 +293,32 @@ describe('parallel sign-in tabs', () => {
       tabs.map((tab) => ({ location: tab.page, signedIn: true, events: ['success'] }))
     );
     // Each callback cleared its own stash, so nothing is left to ride later callbacks.
-    expect([...b.jar.keys()].filter((k) => k.startsWith('oauth_bridge_'))).toEqual([]);
+    expect([...b.jar.keys()].filter((k) => k.startsWith('oauth_bridge'))).toEqual([]);
+  });
+
+  it('a tab whose callback fails leaves the other tabs able to finish', async () => {
+    const hub = pkceHub();
+    const b = browser();
+    const callbacks = ['/a', '/b'].map((page) => {
+      const start = spokeAuthorize(
+        b.get(`/api/auth/authorize?returnUrl=${encodeURIComponent(page)}`)
+      );
+      b.apply(start);
+      return hub(start);
+    });
+
+    // Tab A's code is refused by the hub: its stash goes, tab B's stays.
+    const failed = await spokeCallback(b.get(callbacks[0].replace('code=', 'code=refused-')));
+    b.apply(failed);
+    expect(failed.status).toBe(400);
+    const stashes = () => [...b.jar.keys()].filter((k) => k.startsWith('oauth_bridge_'));
+    expect(stashes()).toEqual([
+      `oauth_bridge_${new URL(callbacks[1], SELF).searchParams.get('state')}`,
+    ]);
+
+    const done = await spokeCallback(b.get(callbacks[1]));
+    b.apply(done);
+    expect(done.headers.get('location')).toBe('/b');
+    expect(b.jar.get(HOST)).toBe(TOKEN);
   });
 });

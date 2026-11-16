@@ -3,6 +3,7 @@ import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import {
   setSessionCookie,
   postLoginMarkerCookie,
+  POST_LOGIN_MARKER,
   clearLegacyCookies,
   hasAnyLegacyCookie,
   cookieDomainForHost,
@@ -24,7 +25,7 @@ const logAuth = (req: NextApiRequest, outcome: string, extra?: Record<string, un
   );
 
 // GET /api/auth/callback — RECEIVE the hub's authorization-code redirect. A THIN Next wrapper over the package
-// bridge: verify `state` against the bridge cookie + exchange the code for a civ-token SESSION at the hub's
+// bridge: verify `state` against this flow's bridge cookie + exchange the code for a civ-token SESSION at the hub's
 // first-party /session endpoint (server-to-server with the PKCE verifier), then set THIS domain's civ-token
 // cookie via setSessionCookie() and continue to returnUrl. The CSRF/exchange logic lives in @civitai/auth
 // (first-party-bridge). Cookie format is unchanged → existing sessions unaffected.
@@ -94,10 +95,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // network). `cookieCount` separates a real failure (>0 = other cookies reached the callback) from a full
     // cross-site block / bot (0 = no cookies at all) — the .red no_cookie residual was ~2/3 already-logged-in
     // duplicate callbacks + ~1/3 bots, with a negligible genuine-failure slice (ClickUp 868k9gug8).
-    // A failed state check for a browser that already holds a valid session here (a duplicate or
-    // back-button callback) needs no sign-in page: continue as signed in. Nothing is minted on this path.
+
+    // A duplicate callback right after this host's own sign-in completed (the post-login marker lives 60s)
+    // continues as signed in instead of showing the sign-in error; nothing is minted. Scoped to the marker so
+    // a failed add-account or account sync by an already signed-in user still shows its error.
     const signedIn =
-      result.error === 'oauth_state' && !!(await getHubSession(req).catch(() => null));
+      result.error === 'oauth_state' &&
+      !req.query.error &&
+      !!req.cookies[POST_LOGIN_MARKER] &&
+      !!(await getHubSession(req).catch(() => null));
     logAuth(req, 'exchange-error', {
       error: result.error,
       detail: result.detail,

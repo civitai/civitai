@@ -280,7 +280,7 @@ describe('completeFirstPartyCallback', () => {
     });
   });
 
-  it('treats a malformed/missing bridge cookie as detail: no_cookie (cross-site delivery failure)', async () => {
+  it('treats a malformed bridge cookie as detail: no_cookie (as if it never arrived)', async () => {
     const result = await completeFirstPartyCallback({
       selfOrigin: SELF,
       query: { code: 'abc', state: ST8 },
@@ -341,6 +341,17 @@ describe('completeFirstPartyCallback: one stash per flow', () => {
     ]);
   });
 
+  it('rejects a stash for this state that carries no verifier', async () => {
+    const fetchMock = okHub();
+    const result = await completeFirstPartyCallback({
+      selfOrigin: SELF,
+      query: { code: 'abc', state: ST8 },
+      cookies: flow(JSON.stringify({ s: ST8, r: '/dash' })),
+    });
+    expect(result).toMatchObject({ error: 'oauth_state' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['too short', 'abc'],
     ['a character outside base64url', `${'a'.repeat(31)};`],
@@ -375,7 +386,7 @@ describe('completeFirstPartyCallback: one stash per flow', () => {
     });
     expect(other).toMatchObject({
       error: 'oauth_state',
-      detail: 'state_mismatch',
+      detail: 'no_cookie',
       clearCookies: [],
     });
     expect(fetchMock).not.toHaveBeenCalled();

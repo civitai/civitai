@@ -18,14 +18,14 @@ import { safeReturnPath } from './return-path';
 /**
  * Short-lived cookies carrying the PKCE verifier + state + returnUrl between initiate and callback, one per
  * flow: `oauth_bridge_<state>`. A flow per name lets parallel sign-in tabs run without overwriting each
- * other's stash. The bare `oauth_bridge` is the pre-per-flow name, still written and read during a rollout so
- * a callback served by an older build finds its stash.
+ * other's stash. The bare `oauth_bridge` is the pre-per-flow name, kept for rollout (see
+ * `buildAuthorizeRedirect`).
  */
 export const OAUTH_BRIDGE_COOKIE = 'oauth_bridge';
-// The count of live bridge cookies is bounded by this TTL plus the callback clearing its own: they are sent
-// only to the callback path, so N abandoned flows cost about N * 250 bytes on that one request.
+// Live bridge cookies are bounded by this TTL plus each callback clearing its own. They are sent only to the
+// callback path.
 const OAUTH_BRIDGE_TTL_S = 600; // 10 min — matches the hub's auth-code TTL
-// `randomState()` output: 24 bytes as base64url. Checked before a state names a cookie.
+// `randomState()` shape (24 bytes, base64url). The query state is untrusted, so only this shape names a cookie.
 const STATE_PATTERN = /^[A-Za-z0-9_-]{32}$/;
 
 /** The bridge cookie for one flow. */
@@ -98,7 +98,7 @@ export interface AuthorizeRedirect {
 }
 
 /**
- * Initiate first-party login: generate PKCE + state, stash them (+ the validated returnUrl) in the bridge
+ * Initiate first-party login: generate PKCE + state, stash them (+ the validated returnUrl) in this flow's bridge
  * cookie, and build the hub authorize URL with this spoke's first-party client_id + exact redirect_uri.
  * Throws only if the hub isn't configured (`AUTH_JWT_ISSUER`).
  */
@@ -169,7 +169,7 @@ export type FirstPartyCallbackResult =
   | { error: string; returnUrl: string; detail?: string; clearCookies: string[] };
 
 /**
- * Complete first-party login: verify `state` against the bridge cookie, then exchange the code for a civ-token
+ * Complete first-party login: verify `state` against this flow's bridge cookie, then exchange the code for a civ-token
  * SESSION at the hub's `/api/auth/oauth/session` endpoint (server-to-server, with the PKCE verifier). Returns
  * the token + validated returnUrl, or an error code. Either way the caller sets `clearCookies` (this flow's
  * stash only, so other tabs' flows stay intact) and, on success, the session cookie.
@@ -211,13 +211,12 @@ export async function completeFirstPartyCallback(opts: {
   }
   // Rollout only (see buildAuthorizeRedirect): a stash written under the pre-per-flow name counts only
   // when it carries this exact state.
+  // Every authorize writes it, so one that holds another state is no sign of another flow.
   const legacy = parseStash(opts.cookies[OAUTH_BRIDGE_COOKIE]);
-  if (legacy) {
+  if (legacy && state && legacy.s === state) {
     stashCookieSeen = true;
-    if (state && legacy.s === state) {
-      stash ??= legacy;
-      clearCookies.push(clearBridgeCookie(secure, opts.cookieDomain));
-    }
+    stash ??= legacy;
+    clearCookies.push(clearBridgeCookie(secure, opts.cookieDomain));
   }
   if (!stashCookieSeen) {
     // Another flow's stash: this browser has sign-in in flight, just not for this state.
@@ -237,7 +236,7 @@ export async function completeFirstPartyCallback(opts: {
   //   no_code        — the hub didn't return code+state (a hub-side or redirect problem, not the cookie)
   //   no_cookie      — no bridge cookie came back at all: not delivered, expired, or already consumed by an
   //                    earlier callback for this flow (a duplicate or back-button callback)
-  //   state_mismatch — bridge cookies came back but none holds this state (a stale or foreign flow)
+  //   state_mismatch — another flow's bridge cookie came back, but none holds this state
   if (!code || !state) return { error: 'oauth_state', returnUrl, detail: 'no_code', clearCookies };
   if (!stash?.v) {
     const detail = stashCookieSeen ? 'state_mismatch' : 'no_cookie';

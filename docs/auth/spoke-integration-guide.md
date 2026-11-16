@@ -248,9 +248,11 @@ per-framework wiring over the package:
 
   export const guard = createSpokeGuard({ require: (u) => u.isModerator === true, isRevoked });
   ```
-- **Login bridge (cross-domain):** `buildAuthorizeRedirect({ selfOrigin, returnUrl })` → `{ location, setCookie }`
-  and `completeFirstPartyCallback({ selfOrigin, query, bridgeCookieValue })` → `{ token, returnUrl } | { error }`
-  (+ `generatePkce`, `randomState`, `safePath`, `clearBridgeCookie`, `OAUTH_BRIDGE_COOKIE`). The main app's
+- **Login bridge (cross-domain):** `buildAuthorizeRedirect({ selfOrigin, returnUrl, cookieDomain? })` →
+  `{ location, setCookies }` and `completeFirstPartyCallback({ selfOrigin, query, cookies, cookieDomain? })` →
+  `{ token, returnUrl, clearCookies } | { error, clearCookies }` (+ `generatePkce`, `randomState`, `safePath`,
+  `clearBridgeCookie`, `OAUTH_BRIDGE_COOKIE`). Each flow stashes under its own cookie, so parallel sign-in tabs
+  don't overwrite each other; set `clearCookies` on the callback response whatever the outcome. The main app's
   `authorize.ts`/`callback.ts` are now thin wrappers over these; a SvelteKit spoke mounts the same two calls in
   `+server.ts` handlers. Only the per-framework glue stays app-side: deriving the request origin
   (`resolveSelfOrigin`), reading the cookie/query, setting the session cookie, and issuing redirects.
