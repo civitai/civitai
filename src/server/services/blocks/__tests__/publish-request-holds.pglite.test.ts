@@ -476,6 +476,35 @@ describe('the final check after an on-site approve has committed', () => {
     ).rejects.toThrow(PublishRequestHeldError);
   });
 
+  it('🔴 the late hold it leaves open blocks the store-card approve that would un-suspend the app, until overridden', async () => {
+    const hold = await lateHold();
+    await tx((t) =>
+      resolveHoldsAtApprove(t, {
+        slug: 'app-a',
+        actorUserId: HUMAN,
+        shownHoldIds: [],
+        afterSideEffects: true,
+      })
+    );
+    await addRequest('alpr_a', 'app-a', 'pending', 'listing');
+    await expect(checkHoldsBeforeApprove(raw, { slug: 'app-a' })).rejects.toThrow(
+      PublishRequestHeldError
+    );
+    await expect(
+      tx((t) => resolveHoldsAtApprove(t, { slug: 'app-a', actorUserId: HUMAN, shownHoldIds: [] }))
+    ).rejects.toThrow(PublishRequestHeldError);
+    await expect(
+      tx((t) =>
+        resolveHoldsAtApprove(t, {
+          slug: 'app-a',
+          actorUserId: HUMAN,
+          shownHoldIds: [hold.id],
+          overrideReason: OVERRIDE,
+        })
+      )
+    ).resolves.toEqual({ overridden: [hold.id], late: [] });
+  });
+
   it('🔴 the lock wait timeout does not cover the writes after the lock', async () => {
     await addRequest('pubreq_a', 'app-a');
     const timeout = await tx(async (t) => {
