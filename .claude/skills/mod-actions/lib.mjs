@@ -13,6 +13,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const skillDir = __dirname;
 export const projectRoot = resolve(__dirname, '../../..');
 
+// Keys loadEnv copied from a .env file into process.env. A script that spawns another skill strips
+// these from the child's environment, so the child reads its own .env instead of inheriting this
+// one's (the repo-root .env names the local database under the same keys postgres-query uses).
+export const envKeysFromFiles = new Set();
+
 // Load .env files (skill-specific first, then project root)
 export function loadEnv() {
   const envFiles = [
@@ -32,6 +37,7 @@ export function loadEnv() {
         const value = trimmed.slice(eqIndex + 1);
         if (!process.env[key]) {
           process.env[key] = value;
+          envKeysFromFiles.add(key);
         }
       }
     } catch (e) {
