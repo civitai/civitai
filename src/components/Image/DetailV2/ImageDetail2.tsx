@@ -440,7 +440,7 @@ function ImageDetail2Content() {
             <div className="relative flex flex-1 overflow-hidden">
               <div
                 className={clsx(
-                  'relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]',
+                  'relative flex min-w-0 flex-1 flex-col @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]',
                   isSong && 'isolate'
                 )}
               >

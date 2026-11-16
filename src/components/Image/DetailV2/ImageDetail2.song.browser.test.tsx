@@ -1,4 +1,8 @@
-import type { ReactNode } from 'react';
+// The real cascade, so the detail view lays out as on the site.
+import '../../../../test/cascade-layer-order.css';
+import '@mantine/core/styles.layer.css';
+import '~/styles/globals.css';
+import type { ComponentProps, ReactNode } from 'react';
 import { DEFAULT_THEME, MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -8,6 +12,7 @@ import type * as TrpcModule from '~/utils/trpc';
 import type * as ImageDetailProviderModule from '~/components/Image/Detail/ImageDetailProvider';
 import type * as HatTurfDetailControlsModule from '~/components/HatTurf/detail/HatTurfDetailControls';
 import type * as HatTurfDetailProviderModule from '~/components/HatTurf/detail/HatTurfDetailProvider';
+import type * as ImageDetailCarouselModule from '~/components/Image/DetailV2/ImageDetailCarousel';
 
 import '../../../../test/component-setup';
 
@@ -37,7 +42,15 @@ const song = (metadata: Record<string, unknown>) => ({
   stats: {},
 });
 
-const state = vi.hoisted(() => ({ music: true, show: true, image: null as unknown }));
+const state = vi.hoisted(() => ({
+  music: true,
+  show: true,
+  image: null as unknown,
+  // The real carousel and stage, for layout; a probe otherwise.
+  realCarousel: false,
+  images: null as unknown[] | null,
+  index: 0,
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
@@ -46,8 +59,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 vi.mock('~/components/Image/Detail/ImageDetailProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageDetailProviderModule>()),
   useImageDetailContext: () => ({
-    images: [state.image],
-    index: 0,
+    images: state.images ?? [state.image],
+    index: state.index,
     active: false,
     close: () => undefined,
     toggleInfo: () => undefined,
@@ -182,11 +195,23 @@ vi.mock('~/components/ImageGuard/ImageGuard2', async (o) => {
   ImageGuard2.BlurToggle = function BlurToggle() {
     return null;
   };
-  return { ...(await o<object>()), ImageGuard2 };
+  const ImageGuardContent = ({ children }: { children: (safe: boolean) => ReactNode }) => (
+    <>{children(state.show)}</>
+  );
+  return { ...(await o<object>()), ImageGuard2, ImageGuardContent };
 });
-vi.mock('~/components/Image/DetailV2/ImageDetailCarousel', () => ({
-  ImageDetailCarousel: () => <div data-testid="carousel" />,
-}));
+vi.mock('~/components/Image/DetailV2/ImageDetailCarousel', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageDetailCarouselModule>();
+  return {
+    ...actual,
+    ImageDetailCarousel: (props: ComponentProps<typeof actual.ImageDetailCarousel>) =>
+      state.realCarousel ? (
+        <actual.ImageDetailCarousel {...props} />
+      ) : (
+        <div data-testid="carousel" />
+      ),
+  };
+});
 vi.mock('~/components/Reaction/Reactions', async (o) => ({
   ...(await o<object>()),
   Reactions: stub,
@@ -240,6 +265,9 @@ vi.mock('~/components/Image/DetailV2/CollapsibleCard', async (o) => ({
   CollapsibleCard: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+vi.mock('~/components/Music/SongDetail/useMoreFromCreator', () => ({
+  useMoreFromCreator: () => [],
+}));
 vi.mock('~/components/Music/SongDetail/SongStageBackdrop', () => ({
   SongStageBackdrop: () => <div data-testid="song-backdrop" />,
 }));
@@ -256,11 +284,11 @@ const { ClientOnlySectionsProvider } = await import(
 );
 const { ContainerProvider } = await import('~/components/ContainerProvider/ContainerProvider');
 
-function renderDetail() {
+function renderDetail(size = { width: 1280, height: 900 }) {
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <MantineProvider theme={{ colors: { accent: DEFAULT_THEME.colors.orange } }}>
-        <div style={{ width: 1280, height: 900 }}>
+        <div style={size}>
           <ContainerProvider containerName="main">
             <ClientOnlySectionsProvider enabled={false}>
               <ImageDetail2 />
@@ -277,6 +305,9 @@ beforeEach(async () => {
   state.music = true;
   state.show = true;
   state.image = song({});
+  state.realCarousel = false;
+  state.images = null;
+  state.index = 0;
 });
 
 describe('a song in the image detail view', () => {
@@ -320,5 +351,25 @@ describe('a song in the image detail view', () => {
     expect(document.querySelector('[data-testid="song-up-next"]')).toBeNull();
     expect(document.querySelector('[data-testid="song-more-from"]')).toBeNull();
     await expect.element(page.getByTestId('remix-gallery')).toBeInTheDocument();
+  });
+});
+
+describe('a song between other songs (the creator’s list the global player opens it in)', () => {
+  // The carousel mounts the slides either side too; three song stages side by side are wider
+  // than the stage, and they used to widen it and push the sidebar off the window (S13).
+  test('keeps the sidebar inside the window', async () => {
+    await page.viewport(1920, 1000);
+    state.realCarousel = true;
+    state.images = [1, 2, 3].map((id) => ({ ...song({}), id }));
+    state.image = state.images[1];
+    state.index = 1;
+    await renderDetail({ width: 1920, height: 1000 });
+    await expect.element(page.getByTestId('creator-card')).toBeInTheDocument();
+    await expect
+      .poll(() => document.querySelectorAll('[data-testid="song-detail-stage"]').length)
+      .toBe(3);
+    const sheet = page.getByTestId('image-detail-sheet').element().getBoundingClientRect();
+    expect(sheet.width).toBe(450);
+    expect(sheet.right).toBeLessThanOrEqual(1920);
   });
 });
