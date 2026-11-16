@@ -9,6 +9,12 @@ vi.mock('~/server/utils/og-image-helpers', async (importOriginal) => ({
   fetchImageAsDataUri,
 }));
 
+const community = vi.hoisted(() => ({ covers: new Map<string, unknown>() }));
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getShowcaseCommunityCovers: vi.fn(async () => community.covers),
+}));
+
 import handler from '~/pages/api/og';
 
 const OWNER_ID = 10;
@@ -32,6 +38,7 @@ function fakeFindFirst(rows: Row[]) {
       ? orderBy
       : [orderBy];
     const hit = rows
+      .filter((r) => where.id === undefined || r.id === where.id)
       .filter((r) => p.userId === undefined || r.post.userId === p.userId)
       .filter((r) => p.availability === undefined || r.post.availability === p.availability)
       .filter(
@@ -249,5 +256,32 @@ describe('/api/og?type=model on a minor or SFW-only model', () => {
     mockModel(OWNER_ID, { gallerySettings: { level: 1 } });
     await render();
     expect(pickedUrl()).toBe('owner-pg13');
+  });
+
+  describe("with someone else's image featured as the cover", () => {
+    const COVER = 90;
+    beforeEach(() => {
+      community.covers = new Map([
+        [
+          `1:${COVER}`,
+          {
+            image: { url: 'other-community', nsfwLevel: 2, type: 'image', width: 100, height: 100 },
+            sites: new Set(['red']),
+          },
+        ],
+      ]);
+    });
+
+    it('skips it when it is above the gallery level', async () => {
+      mockModel(OWNER_ID, { minor: true, gallerySettings: { level: 1 }, coverImageId: COVER });
+      await render();
+      expect(pickedUrl()).toBe('owner-pg');
+    });
+
+    it('uses it on an unflagged model', async () => {
+      mockModel(OWNER_ID, { coverImageId: COVER });
+      await render();
+      expect(pickedUrl()).toBe('other-community');
+    });
   });
 });

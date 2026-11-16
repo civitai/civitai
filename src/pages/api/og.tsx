@@ -28,7 +28,10 @@ import {
   isShowcaseCoverImage,
 } from '~/server/services/version-showcase.service';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
-import { getShowcaseHeldLevels } from '~/server/services/model.service';
+import {
+  getShowcaseHeldLevels,
+  withinHeldLevel as withinHeldLevelFilter,
+} from '~/server/services/model.service';
 import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
@@ -290,7 +293,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   ]);
   // A cover that is someone else's image the creator featured in the showcase: served only while
   // it still passes the showcase's filters, and credited to its author.
-  const communityCover =
+  const featuredCover =
     !coverImage && coverId && !withheld
       ? isShowcaseCoverImage(
           await getShowcaseCommunityCovers([{ modelId: id, imageId: coverId }]),
@@ -300,6 +303,10 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
             site: coverId === model.sfwCoverImageId ? 'com' : 'red',
           }
         )
+      : undefined;
+  const communityCover =
+    featuredCover && withinHeldLevelFilter([featuredCover], heldLevel).length
+      ? featuredCover
       : undefined;
 
   const stats: StatItem[] = metric

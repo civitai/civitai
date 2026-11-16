@@ -188,7 +188,13 @@ type PullDataResult = {
  * find. Only the cover: the rest of the community showcase stays out of search.
  */
 export async function appendCommunityCoverImages(
-  models: { id: number; coverImageId?: number | null; sfwCoverImageId?: number | null }[],
+  models: {
+    id: number;
+    coverImageId?: number | null;
+    sfwCoverImageId?: number | null;
+    minor?: boolean;
+    sfwOnly?: boolean;
+  }[],
   images: ImagesForModelVersions[]
 ) {
   const present = new Set(images.map((image) => image.id));
@@ -203,10 +209,25 @@ export async function appendCommunityCoverImages(
       .map(([site, imageId]) => ({ modelId: model.id, imageId, site }))
   );
   if (!missing.length) return;
-  const community = await getShowcaseCommunityCovers(missing);
+  const { getShowcaseHeldLevels, withinHeldLevel } = await import(
+    '~/server/services/model.service'
+  );
+  const [community, heldLevels] = await Promise.all([
+    getShowcaseCommunityCovers(missing),
+    getShowcaseHeldLevels(
+      models
+        .filter((model) => missing.some((cover) => cover.modelId === model.id))
+        .map((model) => ({ modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly }))
+    ),
+  ]);
   for (const cover of missing) {
     const image = isShowcaseCoverImage(community, cover);
-    if (image && !present.has(image.id)) {
+    // The document is shared by every searcher: a held model's cover stays within its level.
+    if (
+      image &&
+      withinHeldLevel([image], heldLevels.get(cover.modelId)).length &&
+      !present.has(image.id)
+    ) {
       images.push(image);
       present.add(image.id);
     }
