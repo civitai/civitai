@@ -1,15 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// The cores are covered in train-core.test.ts; here they only hand back the check the element gave
-// them, so the element's own reading of the host hook is what is under test.
-const core = vi.hoisted(() => ({
-  submitTrainingBatch: vi.fn(),
-  continueTraining: vi.fn(),
-}));
-vi.mock('$lib/train-core', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('$lib/train-core')>()),
-  submitTrainingBatch: core.submitTrainingBatch,
-  continueTraining: core.continueTraining,
+// The cores are covered in train-core.test.ts; here the edit core only hands back that it ran, so the
+// element's own reading of the host hooks is what is under test.
+const core = vi.hoisted(() => ({ submitEditImage: vi.fn() }));
+vi.mock('$lib/edit-helpers-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/edit-helpers-core')>()),
+  submitEditImage: core.submitEditImage,
 }));
 vi.mock('@civitai/orchestration-client', () => ({
   createCivitaiClient: () => ({ interceptors: { response: { use: () => undefined } } }),
@@ -17,68 +13,56 @@ vi.mock('@civitai/orchestration-client', () => ({
 
 import { elementBackend, type StudioElementHost } from './backend';
 import { AutoLabelRefusedError } from '$lib/autolabel-errors';
-import { TrainingTextRefusedError, type TrainingTextCheck } from '$lib/training-text';
+import { TrainingTextRefusedError } from '$lib/training-text';
 
-function host(checkTrainingText?: StudioElementHost['checkTrainingText']): StudioElementHost {
+function host(
+  checkTrainingText?: StudioElementHost['checkTrainingText'],
+  studioServer?: StudioElementHost['studioServer']
+): StudioElementHost {
   return {
     getOrchestratorToken: async () => 'token',
     checkTrainingText,
+    studioServer,
     config: { orchestratorEndpoint: 'https://orchestrator.example' },
     hrefFor: () => '/',
     navigate: async () => undefined,
   };
 }
 
-/** The check each core was handed, as the element built it. */
-const checkGiven = (fn: typeof core.submitTrainingBatch): TrainingTextCheck =>
-  fn.mock.calls[0][2].checkText;
+const edit = { prompt: 'make it red', imageUrl: 'https://blob.example/a.png' } as Parameters<
+  ReturnType<typeof elementBackend>['editImageSubmit']
+>[0];
 
-describe('elementBackend trigger word check', () => {
+describe('elementBackend edit prompt check', () => {
   beforeEach(() => {
-    core.submitTrainingBatch.mockReset().mockResolvedValue({ workflowIds: [] });
-    core.continueTraining.mockReset().mockResolvedValue('wf');
+    core.submitEditImage.mockReset().mockResolvedValue('wf-edit');
   });
 
-  it.each([
-    [
-      'submitTraining',
-      (b: ReturnType<typeof elementBackend>) => b.submitTraining([]),
-      core.submitTrainingBatch,
-    ],
-    [
-      'continueRun',
-      (b: ReturnType<typeof elementBackend>) => b.continueRun('wf', 1, 1, [], false),
-      core.continueTraining,
-    ],
-  ] as const)(
-    '%s hands the core a check that refuses what the host refuses',
-    async (_l, run, fn) => {
-      const hostCheck = vi.fn(async () => ({ ok: false as const, error: 'blocked: x' }));
-      await run(elementBackend(host(hostCheck)));
-      const check = checkGiven(fn);
-      await expect(check({ triggerWord: 'bad' })).rejects.toThrow(
-        new TrainingTextRefusedError('blocked: x')
-      );
-      expect(hostCheck).toHaveBeenCalledWith({ triggerWord: 'bad' });
-    }
-  );
+  it('submits nothing the host refuses, and says why', async () => {
+    const hostCheck = vi.fn(async () => ({ ok: false as const, error: 'blocked: x' }));
+    await expect(elementBackend(host(hostCheck)).editImageSubmit(edit)).rejects.toThrow(
+      new TrainingTextRefusedError('blocked: x')
+    );
+    expect(hostCheck).toHaveBeenCalledWith({
+      editPrompt: edit.prompt,
+      inputImages: [edit.imageUrl],
+    });
+    expect(core.submitEditImage).not.toHaveBeenCalled();
+  });
 
-  it('passes what the host passes', async () => {
-    await elementBackend(host(async () => ({ ok: true }))).submitTraining([]);
+  it('submits what the host passes', async () => {
     await expect(
-      checkGiven(core.submitTrainingBatch)({ triggerWord: 'ok' })
-    ).resolves.toBeUndefined();
+      elementBackend(host(async () => ({ ok: true }))).editImageSubmit(edit)
+    ).resolves.toEqual({ workflowId: 'wf-edit' });
   });
 
-  it('refuses every run when the host page offers no check', async () => {
-    await elementBackend(host(undefined)).submitTraining([]);
-    await expect(checkGiven(core.submitTrainingBatch)({ triggerWord: 'ok' })).rejects.toThrow();
-  });
-
-  it('lets a check that could not run fail rather than pass', async () => {
+  it('submits nothing when the host page offers no check, or the check could not run', async () => {
+    await expect(elementBackend(host(undefined)).editImageSubmit(edit)).rejects.toThrow();
     const failure = new Error('check failed');
-    await elementBackend(host(async () => Promise.reject(failure))).submitTraining([]);
-    await expect(checkGiven(core.submitTrainingBatch)({ triggerWord: 'ok' })).rejects.toBe(failure);
+    await expect(
+      elementBackend(host(async () => Promise.reject(failure))).editImageSubmit(edit)
+    ).rejects.toBe(failure);
+    expect(core.submitEditImage).not.toHaveBeenCalled();
   });
 });
 
@@ -119,16 +103,35 @@ describe('elementBackend modelLive', () => {
   });
 });
 
-describe('elementBackend mature confirm', () => {
-  beforeEach(() => {
-    core.continueTraining.mockReset().mockResolvedValue('wf');
-  });
-
-  it.each([true, false])('hands the core the ack the panel gave (%s)', async (ack) => {
-    await elementBackend(host(async () => ({ ok: true }))).continueRun('wf', 1, 1, ['blue'], ack);
-    expect(core.continueTraining.mock.calls[0][1]).toMatchObject({
+describe('elementBackend keep training', () => {
+  it.each([true, false])("sends the Studio server the panel's confirm (%s)", async (ack) => {
+    const studioServer = vi.fn(async () => Response.json({ workflowId: 'wf-next' }));
+    await expect(
+      elementBackend(host(undefined, studioServer)).continueRun('wf', 1, 2, ['blue'], ack)
+    ).resolves.toBe('wf-next');
+    const [path, init] = studioServer.mock.calls[0] as unknown as [string, RequestInit];
+    expect(path).toBe('/api/continue-training');
+    expect(JSON.parse(String(init.body))).toEqual({
       workflowId: 'wf',
+      fromEpoch: 1,
+      addEpochs: 2,
+      currencies: ['blue'],
       matureAck: ack,
     });
+  });
+
+  it("turns the server's mature refusal into the confirm", async () => {
+    const studioServer = async () =>
+      Response.json({ message: 'm', matureCount: 3 }, { status: 409 });
+    await expect(
+      elementBackend(host(undefined, studioServer)).continueRun('wf', 1, 2, ['green'], false)
+    ).rejects.toMatchObject({ matureCount: 3 });
+  });
+
+  it('prices and starts nothing on a host page without the Studio server', async () => {
+    const backend = elementBackend(host(async () => ({ ok: true })));
+    await expect(backend.continueQuote('wf', 1, 2, ['green'])).rejects.toThrow(/unavailable/);
+    await expect(backend.continueRun('wf', 1, 2, ['green'], true)).rejects.toThrow(/unavailable/);
+    expect(backend.datasetRating).toBeUndefined();
   });
 });

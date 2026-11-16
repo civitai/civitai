@@ -167,6 +167,12 @@ function TrainingStudioEmbed({
           return (await r.json()).token as string;
         },
         checkTrainingText: checkStudioTriggerWord,
+        // Starting or pricing a run, and Review's mature count, are the Studio server's: this
+        // app forwards them (/api/training-studio/studio/*). The element refuses them without it.
+        studioServer: (path: string, init?: RequestInit) => {
+          if (!path.startsWith('/api/')) return Promise.reject(new Error(`Unknown route ${path}`));
+          return fetch(`/api/training-studio/studio/${path.slice('/api/'.length)}`, init);
+        },
         // Auto-label is free: it runs on the system token here, never the user's (which would be
         // charged). The element refuses auto-label when a host lacks these.
         autoLabelSubmit: (
