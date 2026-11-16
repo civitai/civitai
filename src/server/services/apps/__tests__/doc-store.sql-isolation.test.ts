@@ -391,6 +391,8 @@ describe('only the doc-store module touches the appdata tables', () => {
     // Counts an app's rows in every table, to prove an app purge left none and touched no other app.
     'server/services/apps/__tests__/doc-store.app-purge.test.ts',
     'server/services/apps/__tests__/doc-store.functional.ts',
+    // Sets documents' rating columns directly (no rater yet) and reads back what a write stored.
+    'server/services/apps/__tests__/doc-store.levels.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.pg.test.ts',
     'server/services/apps/__tests__/doc-store.pglite.test.ts',
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
@@ -412,6 +414,11 @@ describe('only the doc-store module touches the appdata tables', () => {
     // The nullable schema_major column on doc, and its rollback (DDL only).
     'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.down.sql',
     'server/services/apps/migrations/20261106130000_appdata_doc_schema_major.sql',
+    // The content-level columns on doc, and their rollback (DDL only).
+    'server/services/apps/migrations/20261116120000_appdata_doc_levels.down.sql',
+    'server/services/apps/migrations/20261116120000_appdata_doc_levels.sql',
+    // Sets an item's rating columns directly (no rater yet) for the card-path cases.
+    'server/services/blocks/__tests__/shared-item-doc-store.pglite.test.ts',
   ];
   const PATTERN =
     /appdata\.(doc|doc_index|doc_tally|doc_mark|doc_tomb|usage_app|usage_user)\b|SCHEMA (IF (NOT )?EXISTS )?appdata\b/;

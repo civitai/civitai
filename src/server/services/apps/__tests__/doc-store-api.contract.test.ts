@@ -59,6 +59,8 @@ const h = vi.hoisted(() => ({
    * moderation cases describe ENFORCE, so that is every test's default (reset in `beforeEach`).
    */
   moderationMode: 'enforce' as 'off' | 'shadow' | 'enforce',
+  /** `app-blocks-shared-doc-levels` for every app; off unless a case turns it on. */
+  docLevels: false,
   isFlipt: undefined as unknown as ReturnType<
     typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
   >,
@@ -68,11 +70,13 @@ const h = vi.hoisted(() => ({
 
 const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
+const DOC_LEVELS_FLAG = 'app-blocks-shared-doc-levels';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   h.isFlipt = vi.fn(async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return h.moderationMode === 'shadow';
     if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
+    if (flag === DOC_LEVELS_FLAG) return h.docLevels;
     return real.isFlipt(flag, entityId, context as never);
   });
   return {
@@ -376,6 +380,8 @@ async function mint(opts: {
   reviewRunForReal?: boolean;
   /** The token's maturity ceiling; SFW (1) unless a test mints a red-host token. */
   maxBrowsingLevel?: number;
+  /** The viewer's own browsing level claim; absent unless a test sets it. */
+  viewerBrowsingLevel?: number;
 }): Promise<string> {
   const { token } = await BlockTokenService.sign({
     userId: opts.uid,
@@ -386,6 +392,9 @@ async function mint(opts: {
     scopes: opts.scopes,
     ctx: {},
     maxBrowsingLevel: opts.maxBrowsingLevel ?? 1,
+    ...(opts.viewerBrowsingLevel !== undefined
+      ? { viewerBrowsingLevel: opts.viewerBrowsingLevel }
+      : {}),
     domain: 'green',
     ...(opts.dev ? { dev: true } : {}),
     ...(opts.reviewRunForReal ? { reviewRunForReal: true } : {}),
@@ -672,7 +681,7 @@ let liveStore: DocStore;
 beforeAll(async () => {
   // With the manual `schema_major` migration applied, so the route's stamping is observable (the
   // column-absent path is `doc-store.schema-major.pglite.test.ts`).
-  harness = await createPgliteHarness({ rls: true, schemaMajor: true });
+  harness = await createPgliteHarness({ rls: true, schemaMajor: true, docLevels: true });
   liveStore = createDocStore({
     db: harness.db,
     limits: { ...DEFAULT_DOC_STORE_LIMITS, userDocs: contract.limits.viewerDocs },
@@ -690,6 +699,7 @@ beforeEach(() => {
   h.runEnabled = true;
   h.authorEnabled = true;
   h.moderationMode = 'enforce';
+  h.docLevels = false;
   h.ch.capture = false;
   h.ch.inserts = [];
   h.users.clear();
@@ -3833,5 +3843,144 @@ describe('collection schemas: a violating write is refused before anything is sp
     });
     expect(gated.status).toBe(403);
     expect(gated.body).toMatchObject({ code: 'not_eligible' });
+  });
+});
+
+describe('content levels (app-blocks-shared-doc-levels): read gate and read-only metadata', () => {
+  /** Set a document's rating directly: the rater (build 3) does not exist yet. */
+  async function rate(appId: string, key: string, level: number, status: string) {
+    await harness.raw(
+      `UPDATE appdata.doc d SET level = $3, rating_status = $4, rated_at = now()
+       WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'posts' AND d.key = $2`,
+      [appId, key, level, status]
+    );
+  }
+  async function stored(appId: string, key: string) {
+    const [row] = await harness.raw(
+      `SELECT d.level, d.rating_status FROM appdata.doc d
+       WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'posts' AND d.key = $2`,
+      [appId, key]
+    );
+    return row;
+  }
+  const scopes = contract.defaultScopes;
+
+  it('INVARIANT GUARD: flag off, a document read has exactly the fields it had before', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: { t: 1 } } })).status
+    ).toBe(200);
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes });
+    const got = await call({ token: v2, method: 'GET', path: '/posts/p1' });
+    expect(got.status).toBe(200);
+    expect(Object.keys(got.body as object).sort()).toEqual([
+      'author',
+      'counters',
+      'createdAt',
+      'data',
+      'key',
+      'marks',
+      'updatedAt',
+      'version',
+      'viewer',
+    ]);
+    expect(await stored(A.id, 'p1')).toEqual({ level: null, rating_status: null });
+  });
+
+  it('🔴 flag on: a write is pending, hidden from another viewer and shown to its author with read-only metadata', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    const put = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/p1',
+      body: { data: { t: 1 } },
+    });
+    expect(put.status).toBe(200);
+    expect(put.body).toMatchObject({ key: 'p1', version: 1, level: null, ratingStatus: 'pending' });
+    const v2 = await mint({
+      app: A,
+      uid: VIEWER_IDS.v2,
+      scopes,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: 31,
+    });
+    expect((await call({ token: v2, method: 'GET', path: '/posts/p1' })).status).toBe(404);
+    expect((await call({ token: v2, method: 'GET', path: '/posts' })).body).toMatchObject({
+      items: [],
+    });
+    const own = await call({ token: v1, method: 'GET', path: '/posts/p1' });
+    expect(own.body).toMatchObject({ key: 'p1', level: null, ratingStatus: 'pending' });
+  });
+
+  it('🔴 flag on: the reader’s level is the token’s domain ceiling AND the viewer’s own level', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    await call({ token: v1, method: 'PUT', path: '/posts/p13', body: { data: { t: 1 } } });
+    await rate(A.id, 'p13', 2, 'rated'); // PG-13
+    const read = async (maxBrowsingLevel: number, viewerBrowsingLevel?: number) =>
+      call({
+        token: await mint({
+          app: A,
+          uid: VIEWER_IDS.v2,
+          scopes,
+          maxBrowsingLevel,
+          ...(viewerBrowsingLevel !== undefined ? { viewerBrowsingLevel } : {}),
+        }),
+        method: 'GET',
+        path: '/posts/p13',
+      });
+    // A ceiling that admits PG-13 but a viewer who browses PG only: hidden.
+    expect((await read(31, 1)).status).toBe(404);
+    // No viewer claim: fails closed to PG.
+    expect((await read(31)).status).toBe(404);
+    // Both admit PG-13.
+    const shown = await read(7, 3);
+    expect(shown.status).toBe(200);
+    expect(shown.body).toMatchObject({ level: 2, ratingStatus: 'rated' });
+  });
+
+  it('🔴 flag on: an app cannot write level or ratingStatus', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    // Inside `data` they are the app's own fields: stored as data, never read as the rating.
+    const put = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/m1',
+      body: { data: { level: 1, ratingStatus: 'rated' } },
+    });
+    expect(put.status).toBe(200);
+    expect(put.body).toMatchObject({
+      data: { level: 1, ratingStatus: 'rated' },
+      level: null,
+      ratingStatus: 'pending',
+    });
+    expect(await stored(A.id, 'm1')).toEqual({ level: null, rating_status: 'pending' });
+    // Beside `data` they are refused.
+    for (const extra of [{ level: 1 }, { ratingStatus: 'rated' }]) {
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/m1',
+        body: { data: {}, ...extra },
+      });
+      expect(r.status).toBe(400);
+      expect(r.body).toMatchObject({ code: 'invalid_request' });
+    }
+    expect(await stored(A.id, 'm1')).toEqual({ level: null, rating_status: 'pending' });
+    // And another viewer does not see it as rated.
+    const v2 = await mint({
+      app: A,
+      uid: VIEWER_IDS.v2,
+      scopes,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: 31,
+    });
+    expect((await call({ token: v2, method: 'GET', path: '/posts/m1' })).status).toBe(404);
   });
 });
