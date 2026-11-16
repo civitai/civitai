@@ -11,6 +11,7 @@ import {
   chunkPosts,
   chunkSizeFor,
   describeServerError,
+  isPostable,
   isScheduleBusy,
   toBatchImage,
 } from './batch-composer.utils';
@@ -20,6 +21,7 @@ export type BatchSubmissionPayload = {
   tags: string[];
   tools: number[];
   techniques: number[];
+  /** Extra model versions every post lists; the promoted version is `modelVersionId`. */
   resourceIds: number[];
 };
 
@@ -98,7 +100,7 @@ export function BatchProgressModal({
             clientKey: clientKeyFor(post),
             title: post.title,
             publishedAt: post.publishedAt,
-            images: post.media.map((media) => toBatchImage(media)),
+            images: post.media.filter(isPostable).map(toBatchImage),
           })),
         });
         createdRef.current.push(...result.created);

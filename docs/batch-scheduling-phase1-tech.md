@@ -29,7 +29,10 @@ expect 0) and then closing against the two commits above. The only remaining ris
 
 **Server-side `post.scheduleBatch`, called per chunk of complete posts, preceded by one
 `post.validateBatchSchedule` query that checks the whole batch up front.** Uploads to S3 stay
-client-side and happen before any post exists.
+client-side and happen before any post exists. Each finished upload is now
+persisted at once as a postless `Image` row (`post.persistBatchMedia`), so its scan runs while the
+creator composes and `post.getBatchMediaStatus` can show the rating; `scheduleBatch` adopts those
+rows into the posts it creates instead of calling `addPostImage`.
 
 Why not a client-orchestrated loop over `post.create` / `post.addImage` / `post.update`:
 
@@ -51,10 +54,10 @@ Why not fully atomic / one call for everything:
 
 Why not a 200-image "staging" post later split into N posts:
 
-- Moving `Image.postId` bypasses `addPostImage`'s `(postId,url)` idempotency guard, requires
-  re-indexing `index`, recomputing `nsfwLevel` per post, re-busting `images-user` /
-  `images-modelVersion` / post caches, and the sweep/anti-bump logic assumes images are created under
-  their final post. Nothing is gained because S3 upload does not need a post id.
+- A staging post would be a real post (counted, publishable, indexed) that then has to be emptied.
+  Postless rows have none of that: they are owner-only and never indexed, and adoption sets `postId`
+  and `index` in one guarded update per image, then recomputes the post's level and busts its
+  caches, the same work `addPostImage` did per image.
 
 Unit of work: one `scheduleBatch` call creates up to `POST_BATCH_CHUNK_POSTS` (10) posts, each fully
 populated and scheduled before the next starts. On failure at post k inside a chunk: posts before k
@@ -288,9 +291,10 @@ Rough total: 1.5–2 weeks for one engineer, matching the scope.
 - **R1 — Request duration per chunk.** 10 posts × up to 20 images of `addPostImage` could approach a
   30–60 s request. Start with `POST_BATCH_CHUNK_POSTS = 10` but cap images per call at 60; measure
   `addPostImage` p95 in dev and tune the constant.
-- **R2 — Orphaned S3 objects.** Uploads happen before any post exists; abandoning the composer leaves
-  keys with no `Image` row. Accept for Phase 1; confirm with infra whether the upload bucket has a
-  lifecycle rule for unreferenced keys.
+- **R2 — Orphaned uploads.** A persisted draft the creator never schedules is a postless `Image`
+  row; `batch-draft-images-cleanup` deletes it and its file after `BATCH_DRAFT_RETENTION_DAYS` (7).
+  A file whose persist call never happened is still an S3 key with no row; confirm with infra
+  whether the upload bucket has a lifecycle rule for unreferenced keys.
 - **R3 — Two cap counters.** Normal creates count in Redis (`post:create`); batch posts count in the DB
   by go-live day. Batch-then-manual on the same day can exceed the tier by up to the tier size. Accept
   in Phase 1; optionally record attempts for posts going live today in a follow-up.

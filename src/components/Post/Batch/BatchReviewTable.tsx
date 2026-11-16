@@ -21,6 +21,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { IconGripVertical, IconPencil, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import type { RefObject } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -400,6 +401,14 @@ function ReviewThumb({
         draggable={false}
         className="size-full object-cover"
       />
+      {!!item.nsfwLevel && (
+        <BrowsingLevelBadge
+          browsingLevel={item.nsfwLevel}
+          size="xs"
+          className="absolute bottom-0 left-0 px-1"
+          data-testid="batch-review-level"
+        />
+      )}
       {sortable && (
         // The only part with touch-action: none, so a swipe that starts elsewhere on a
         // thumbnail still scrolls the list on a phone.
