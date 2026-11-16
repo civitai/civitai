@@ -18,7 +18,7 @@ const getRetractedMedia = vi.hoisted(() => vi.fn());
 const getGetUrlByKey = vi.hoisted(() => vi.fn());
 const trackModActivity = vi.hoisted(() => vi.fn());
 const checkFixedWindow = vi.hoisted(() => vi.fn());
-const flags = vi.hoisted(() => ({ modRetractedMedia: true }));
+const flags = vi.hoisted(() => ({ modRetractedMedia: true, csamReports: false }));
 const getFeatureFlagsAsync = vi.hoisted(() => vi.fn());
 
 // The moderator check, and what `noStore` does there, run for real in
@@ -105,6 +105,7 @@ const stored = (body = 'bytes', headers: Record<string, string> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   flags.modRetractedMedia = true;
+  flags.csamReports = false;
   getFeatureFlagsAsync.mockImplementation(async () => flags);
   getRetractedMedia.mockResolvedValue({ url: KEY, type: 'image', mimeType: null });
   getGetUrlByKey.mockResolvedValue({ url: SIGNED, bucket: 'media', key: KEY });
@@ -140,6 +141,14 @@ describe('/api/mod/retracted-media refusals', () => {
     expect(res.headers['cache-control']).toBe('private, no-store');
     expect(getGetUrlByKey).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('asks for the CSAM-review tier only for a moderator cleared for CSAM reports', async () => {
+    await call();
+    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: false });
+    flags.csamReports = true;
+    await call();
+    expect(getRetractedMedia).toHaveBeenLastCalledWith(7, { csamReview: true });
   });
 
   it('refuses a bad id with no-store', async () => {
@@ -189,7 +198,7 @@ describe('/api/mod/retracted-media serving', () => {
       'cache-control': 'private, no-store',
       'x-content-type-options': 'nosniff',
     });
-    expect(getRetractedMedia).toHaveBeenCalledWith(7);
+    expect(getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false });
     expect(getGetUrlByKey).toHaveBeenCalledWith(KEY, { s3: {}, bucket: 'media', expiresIn: 60 });
     expect(trackModActivity).toHaveBeenCalledWith(42, {
       entityType: 'image',

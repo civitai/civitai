@@ -5,14 +5,21 @@ import { childBrowsingTagIds } from '@civitai/shared';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
- * Which images `/api/mod/retracted-media` serves: the shared `retractedImageSql`, run against real
- * SQL. Each refused case differs from a served one in a single column or row, so each assertion pins
- * one leg of the statement.
+ * Which images `/api/mod/retracted-media` serves, and to whom: the shared `retracted-media-tier`
+ * SQL, run against real SQL. Each case differs from a `plain` one in a single column or row, so each
+ * assertion pins one leg of the statement.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 let pg: PGlite;
+
+const patterns = vi.hoisted(() => ({
+  current: null as { signal: RegExp[]; nonMinor: RegExp[] } | null,
+}));
+vi.mock('~/server/services/blocked-for-patterns', () => ({
+  blockedForPatterns: () => patterns.current,
+}));
 
 type Row = {
   id: number;
@@ -118,6 +125,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  patterns.current = null;
   dbMock.dbRead.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
@@ -129,102 +137,102 @@ beforeEach(() => {
 
 const { getRetractedMedia } = await import('~/server/services/retracted-media.service');
 
-const served = async (id: number) => (await getRetractedMedia(id)) !== null;
+/** Who sees the image: `none` (refused to every moderator), `plain` (any moderator) or `suspect`
+ *  (only a moderator cleared for CSAM review). */
+const tierOf = async (id: number) => {
+  const cleared = await getRetractedMedia(id, { csamReview: true });
+  const anyMod = await getRetractedMedia(id, { csamReview: false });
+  if (!cleared) {
+    expect(anyMod).toBeNull();
+    return 'none';
+  }
+  return anyMod ? 'plain' : 'suspect';
+};
+
+const expectTiers = async (tier: string, ids: number[]) => {
+  for (const id of ids) expect({ id, tier: await tierOf(id) }).toEqual({ id, tier });
+};
 
 describe('getRetractedMedia', () => {
-  it('serves a blocked image for each listed reason', async () => {
-    for (const id of [1, 2, 3, 5])
-      expect({ id, served: await served(id) }).toEqual({ id, served: true });
-    expect(await getRetractedMedia(1)).toEqual({ url: 'key-1', type: 'image', mimeType: null });
+  it('serves a blocked image with a known non-minor reason to any moderator', async () => {
+    await expectTiers('plain', [1, 2, 3, 5]);
+    expect(await getRetractedMedia(1, { csamReview: false })).toEqual({
+      url: 'key-1',
+      type: 'image',
+      mimeType: null,
+      tier: 'plain',
+    });
   });
 
   it('survives a report with a malformed secondary user or image list', async () => {
-    expect(await served(1)).toBe(true);
+    await expectTiers('plain', [1]);
   });
 
-  // Deliberate: a block with no reason is refused. Do not re-admit it without a review of every
-  // path that blocks an image.
-  it('refuses a block with no reason', async () => {
-    expect(await served(4)).toBe(false);
+  it('keeps a block with no reason to cleared moderators', async () => {
+    await expectTiers('suspect', [4]);
   });
 
-  it('refuses any other block reason', async () => {
-    expect(await served(10)).toBe(false);
-    expect(await served(11)).toBe(false);
+  it('reads any other reason as a signal while the patterns are missing', async () => {
+    await expectTiers('suspect', [10]);
+  });
+
+  it('reads a reason by the private patterns: known non-minor is plain, a signal is suspect', async () => {
+    patterns.current = { signal: [], nonMinor: [/^scan-reason-/u] };
+    await expectTiers('plain', [10]);
+    patterns.current = { signal: [/^scan-reason-x$/u], nonMinor: [/^scan-reason-/u] };
+    await expectTiers('suspect', [10]);
+  });
+
+  it('never serves held media, which the held-media route serves', async () => {
+    // CSAM block, CSAM review flag, an owner who is a report's subject.
+    await expectTiers('none', [11, 13, 20]);
   });
 
   it('refuses an image that is not blocked, and a missing id', async () => {
-    expect(await served(12)).toBe(false);
-    expect(await served(999)).toBe(false);
-  });
-
-  it('refuses an image flagged for csam review', async () => {
-    expect(await served(13)).toBe(false);
-  });
-
-  // Deliberate: any CSAM or minor signal keeps an image off this route, at every browsing level,
-  // PG included; such images are reviewed in the queues instead.
-  it('refuses a minor review flag at any level, PG included', async () => {
-    expect(await served(14)).toBe(false);
-    expect(await served(15)).toBe(false);
-  });
-
-  it('refuses a minor-marked image at any level, PG included', async () => {
-    expect(await served(16)).toBe(false);
-    expect(await served(17)).toBe(false);
-  });
-
-  it('refuses an acceptable-minor image at PG', async () => {
-    expect(await served(25)).toBe(false);
-  });
-
-  it('refuses an image with a child tag, but not for a disabled one', async () => {
-    expect(await served(26)).toBe(false);
-    expect(await served(1)).toBe(true);
-  });
-
-  it('refuses an image whose hash is a CSAM block', async () => {
-    expect(await served(27)).toBe(false);
-  });
-
-  it('refuses an image whose label item is on a csam hold', async () => {
-    expect(await served(28)).toBe(false);
-  });
-
-  it('refuses an image a scan flagged for csam or a minor, but not a clean flag', async () => {
-    expect(await served(29)).toBe(false);
-    expect(await served(30)).toBe(false);
-    expect(await served(2)).toBe(true);
-  });
-
-  it('refuses an image a moderator voted csam or minor, but not another reason', async () => {
-    expect(await served(31)).toBe(false);
-    expect(await served(32)).toBe(false);
-    expect(await served(2)).toBe(true);
+    await expectTiers('none', [12, 999]);
   });
 
   it('refuses an image under an evidence hold', async () => {
-    expect(await served(18)).toBe(false);
+    await expectTiers('none', [18]);
   });
 
-  it('refuses an AiNotVerified image whose owner is under an evidence hold', async () => {
-    expect(await served(19)).toBe(false);
+  it('keeps a minor review flag to cleared moderators, PG included', async () => {
+    await expectTiers('suspect', [14, 15]);
   });
 
-  it('refuses an image whose owner is the subject of a report', async () => {
-    expect(await served(20)).toBe(false);
+  it('keeps a minor-marked or acceptable-minor image to cleared moderators', async () => {
+    await expectTiers('suspect', [16, 17, 25]);
   });
 
-  it('refuses an AiNotVerified image whose owner is the subject of a report', async () => {
-    expect(await served(21)).toBe(false);
+  it('keeps a child-tagged image to cleared moderators, but not for a disabled tag', async () => {
+    await expectTiers('suspect', [26]);
+    await expectTiers('plain', [1]);
   });
 
-  it('refuses an AiNotVerified image whose owner is a report’s secondary user', async () => {
-    expect(await served(22)).toBe(false);
+  it('keeps an image whose hash is a CSAM block to cleared moderators', async () => {
+    await expectTiers('suspect', [27]);
   });
 
-  it('refuses an image listed on a report, in either list shape', async () => {
-    expect(await served(23)).toBe(false);
-    expect(await served(24)).toBe(false);
+  it('keeps an image whose label item is on a csam hold to cleared moderators', async () => {
+    await expectTiers('suspect', [28]);
+  });
+
+  it('keeps a csam or minor scan flag to cleared moderators, but not a clean flag', async () => {
+    await expectTiers('suspect', [29, 30]);
+    await expectTiers('plain', [2]);
+  });
+
+  it('keeps a csam or minor vote to cleared moderators, but not another reason', async () => {
+    await expectTiers('suspect', [31, 32]);
+    await expectTiers('plain', [2]);
+  });
+
+  it('keeps an AiNotVerified image of a held or reported owner to cleared moderators', async () => {
+    // Evidence-held owner, report subject, report secondary user.
+    await expectTiers('suspect', [19, 21, 22]);
+  });
+
+  it('keeps an image listed on a report, in either list shape, to cleared moderators', async () => {
+    await expectTiers('suspect', [23, 24]);
   });
 });

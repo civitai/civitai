@@ -32,12 +32,12 @@ const query = z.object({ imageId: z.coerce.number().int().positive().max(2_147_4
 /**
  * A blocked image or video for a moderator, from storage rather than the public CDN, which stops
  * serving a blocked image's url. The browser names an image id and nothing else: the key comes from
- * the row, and only for an image `retractedImageSql` allows. The bytes come through this server; the
- * storage URL never leaves it.
+ * the row, and only for an image `getRetractedMedia` allows this moderator. The bytes come through
+ * this server; the storage URL never leaves it.
  */
 async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
-  if (!(await getFeatureFlagsAsync({ user, req })).modRetractedMedia)
-    return void res.status(403).json({ error: 'Forbidden' });
+  const flags = await getFeatureFlagsAsync({ user, req });
+  if (!flags.modRetractedMedia) return void res.status(403).json({ error: 'Forbidden' });
 
   const parsed = query.safeParse(req.query);
   if (!parsed.success) return void res.status(400).json({ error: 'Bad image id' });
@@ -54,7 +54,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     return void res.status(429).json({ error: 'Too many requests' });
   }
 
-  const media = await getRetractedMedia(imageId);
+  const media = await getRetractedMedia(imageId, { csamReview: !!flags.csamReports });
   if (!media) return void res.status(404).json({ error: 'Not available here' });
   if (!isProbeableMediaKey(media.url))
     return void res.status(422).json({ error: 'This file is not in a servable place' });

@@ -94,6 +94,6 @@ describe('retracted-media is moderator-only', () => {
     expect(res.statusCode).toBe(404);
     // The handler's own answers rely on the real wrapper's no-store too, not only its refusals.
     expect(res.headers['cache-control']).toBe('private, no-store');
-    expect(getRetractedMedia).toHaveBeenCalledWith(7);
+    expect(getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false });
   });
 });

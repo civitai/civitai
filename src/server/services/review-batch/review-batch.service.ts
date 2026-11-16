@@ -6,7 +6,6 @@ import {
   imageAuditContentHash,
   imageRoutesHeld,
   newReviewBatchId,
-  parseBlockedForPatterns,
   REVIEW_BATCH_TTL_SECONDS,
   REVIEW_MEDIA_ORIGIN,
   reviewBatchHash,
@@ -28,6 +27,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 import type { SessionUser } from '~/types/session';
 import { batchKey, deleteBatch, keySetKey } from './review-batch.store';
+import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
 
 const CLICKHOUSE_TIMEOUT_SECONDS = 3;
 /** Longer than any mint takes, so a lock only outlives a crashed one. */
@@ -84,16 +84,6 @@ export async function readScannerHits(
     });
     return null;
   }
-}
-
-let patternsRaw: string | undefined;
-let patterns: ReturnType<typeof parseBlockedForPatterns> = null;
-function blockedForPatterns() {
-  if (env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS !== patternsRaw) {
-    patternsRaw = env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS;
-    patterns = parseBlockedForPatterns(patternsRaw);
-  }
-  return patterns;
 }
 
 /** Whether the batch is declared suspect: by its minter, or by having no source card. */
