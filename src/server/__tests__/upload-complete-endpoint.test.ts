@@ -646,10 +646,8 @@ describe('/api/upload/complete — a successful completion is VERIFIED against t
   });
 
   /**
-   * 🔴 THE RESPONSE MUST NOT WAIT ON TELEMETRY. On 2026-08-23 the log call sat ahead of the
-   * response and Axiom's ingest was unreachable, so a stored object was answered with a 500.
-   * `logToAxiom` no longer rejects (pinned in packages/civitai-axiom), so a rejecting logger is
-   * no longer a case to test; what still matters here is that the response is committed first.
+   * 🔴 THE RESPONSE MUST NOT WAIT ON TELEMETRY: commit the response before logging, so a slow or
+   * failing log cannot turn a stored object into a 500.
    */
   describe('telemetry runs after the response', () => {
     /**

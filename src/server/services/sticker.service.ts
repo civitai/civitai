@@ -536,9 +536,7 @@ export async function purchaseStickerUses({
     remaining = holdingsAfter.reduce((sum, h) => sum + (h.remaining ?? 0), 0);
     await refreshOwnedStickerCache([userId]);
   } catch (error) {
-    // Not awaited: the payout below must not wait on telemetry. logToAxiom
-    // never rejects, so the unattached promise cannot become an unhandled
-    // rejection that throws past the payout.
+    // Not awaited: the payout below must not wait on telemetry.
     void logToAxiom({
       level: 'error',
       message: 'Sticker top-up bookkeeping failed after the grant committed',

@@ -212,8 +212,7 @@ describe('/api/upload/abort — error classification', () => {
 
   /**
    * 🔴 THE RESPONSE MUST NOT WAIT ON TELEMETRY. Mirrors the block in
-   * ./upload-complete-endpoint.test.ts. `logToAxiom` no longer rejects (pinned in
-   * packages/civitai-axiom), so only the ordering is left to test.
+   * ./upload-complete-endpoint.test.ts.
    */
   describe('telemetry runs after the response', () => {
     /**
