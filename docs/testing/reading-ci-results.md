@@ -51,7 +51,8 @@ component suites cover and the PR is near merge-ready, not on every PR. Adding i
 ESLint) and the app suites on the branch head straight away (`.github/workflows/full-ci.yml`;
 nothing is dispatched when the PR's own run on that commit already started the unit shards; so a
 PR opened WITH the label gets the app suites only if its paths reach them). The label stays on
-until the full unit suite has passed once on the PR: lint.yml's `full-ci-done` job then removes it,
+until the full unit suite has passed once on the PR (on some commit, not necessarily the head):
+lint.yml's `full-ci-done` job then removes it,
 so later pushes run the normal PR suites (a cancelled or red unit run leaves it on); re-add it to
 ask again. Same-repo PRs only; it does not lift the draft
 gate on schema drift or tRPC parity. Or dispatch one on the branch, which

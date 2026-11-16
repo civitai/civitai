@@ -12,7 +12,8 @@ name: Full CI on label
 # ── THE LABEL STAYS ON UNTIL THE FULL UNIT SUITE HAS PASSED ONCE ON THE PR ───────────────────
 #
 # lint.yml's `full-ci-done` job removes the label after a Lint run whose four unit shards all
-# passed: the PR's own run (it carries the label), or the dispatch below (it passes `pr`). So
+# passed, on some commit of the PR, not necessarily its head: the PR's own run (it carries the
+# label), or the dispatch below (it passes `pr`). So
 # the label buys one PASSING full unit run; after that, pushes go back to the normal PR run (no
 # unit shards, ESLint only on a draft). To ask again, re-add it. A cancelled, failed or skipped
 # unit run leaves the label on, so the next push runs the shards again. (This job does not
@@ -150,12 +151,21 @@ jobs:
           fi
           # skip_passed: the dispatch skips the suites the PR run on this commit already passed
           # (lint.yml, the `passed` job). pr: lint.yml's `full-ci-done` job removes this PR's
-          # label once the dispatch's unit shards pass. A branch cut before an input existed
-          # answers 422 (unexpected input), so dispatch it without, newest input first; without
-          # `pr` the label stays until a PR run's shards pass.
-          gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true -f pr="$PR" \
-            || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \
-            || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
+          # label once the dispatch's unit shards pass. A branch cut before an input existed is
+          # rejected with "HTTP 422: Unexpected inputs provided: [...]"; only then is it
+          # dispatched again without, newest input first, and the summary says the dispatch
+          # carries no `pr` (the label stays until a PR run's shards pass). Any other failure
+          # fails this step, as a failed dispatch always did.
+          nopr=""
+          if ! err=$(gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true -f pr="$PR" 2>&1 >/dev/null); then
+            if ! grep -q 'Unexpected inputs provided' <<< "$err"; then
+              echo "$err" >&2
+              exit 1
+            fi
+            nopr=1
+            gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \
+              || gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
+          fi
           gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
           # moderator-boot.yml arrived in #7673: a branch cut before it has no such workflow, and the
           # dispatch answers 422. That must not fail the job after lint and apps were dispatched.
@@ -176,6 +186,9 @@ jobs:
           sleep 10
           echo "### Full CI dispatched on \`$HEAD_REF\`" >> "$GITHUB_STEP_SUMMARY"
           echo "The \`full-ci\` label stays on until a full unit run passes on this PR (lint.yml, \`full-ci-done\`)." >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$nopr" ]; then
+            echo "This branch's lint.yml has no \`pr\` input, so the Lint dispatch carries none: the label stays on until a PR run's unit shards pass." >> "$GITHUB_STEP_SUMMARY"
+          fi
           for wf in lint.yml apps.yml moderator-boot.yml feed-go.yml beacon-go.yml registry-adapter-image.yml; do
             url=$(gh run list -R "$REPO" --workflow "$wf" --branch "$HEAD_REF" --event workflow_dispatch \
               --limit 1 --json url -q '.[0].url' || true)

@@ -47,6 +47,7 @@ type Step = {
 type Job = {
   name?: string;
   if?: string;
+  'continue-on-error'?: boolean | string;
   needs?: string | string[];
   permissions?: Record<string, string>;
   outputs?: Record<string, string>;
@@ -332,6 +333,35 @@ describe('the full-ci label', () => {
       );
     });
 
+    // `needs.unit.result == 'success'` means "the suite passed" only while `unit` is fail-closed:
+    // a `continue-on-error` job or test step would read success over a red suite, and a matrix
+    // that runs fewer than four shards on a full run would be a partial pass. These pin that.
+    it('relies on a fail-closed `unit`: no continue-on-error on the job', () => {
+      expect(doc.jobs?.unit?.['continue-on-error']).toBeUndefined();
+    });
+
+    it('relies on a fail-closed `unit`: continue-on-error only on the named cache-save step', () => {
+      const lenient = (doc.jobs?.unit?.steps ?? [])
+        .filter((st) => st['continue-on-error'] !== undefined && st['continue-on-error'] !== false)
+        .map((st) => st.name ?? st.uses ?? '(unnamed)');
+      expect(lenient).toEqual(['Save Vite pre-bundle cache']);
+    });
+
+    // Evaluate the matrix expression for every `only` a full run can have.
+    it('relies on a full `unit` matrix: [1, 2, 3, 4] when only is unset, all or unit', () => {
+      const expr = norm(String(doc.jobs?.unit?.strategy?.matrix?.shard ?? ''));
+      const m =
+        /^fromJSON\('(\{.*\})'\)\[inputs\.only \|\| 'all'\] \|\| fromJSON\('(\[.*\])'\)$/.exec(
+          expr
+        );
+      expect(m, `unrecognised shard expression: ${expr}`).not.toBeNull();
+      const perOnly = JSON.parse(m?.[1] ?? '{}') as Record<string, number[]>;
+      const fallback = JSON.parse(m?.[2] ?? '[]') as number[];
+      const shards = (only: string | undefined) => perOnly[only || 'all'] || fallback;
+      for (const only of [undefined, '', 'all', 'unit'])
+        expect(shards(only), `only=${only}`).toEqual([1, 2, 3, 4]);
+    });
+
     // `only: unit-<n>` runs one shard; its success says nothing about the other three.
     it('only after a full run of all four shards', () => {
       expect(c[1], 'the second conjunct must exclude single-shard dispatches').toBe(FULL_RUN);
@@ -435,6 +465,27 @@ describe('the full-ci label', () => {
       expect(step['continue-on-error']).toBeUndefined();
       expect(step.run).toContain('gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"');
       expect(step.run).toContain('gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF"');
+    });
+
+    // A branch cut before `pr` existed rejects it with this text (measured: gh prints
+    // "HTTP 422: Unexpected inputs provided: [...]"). Only then is Lint dispatched without `pr`;
+    // any other failure fails the step, and the summary says when the dispatch carries no `pr`.
+    it('drops `pr` only on the unknown-input rejection, and says so', () => {
+      const run =
+        (jobs[0].steps ?? []).find((st) => /gh workflow run lint\.yml/.test(st.run ?? ''))?.run ??
+        '';
+      const first =
+        'if ! err=$(gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true -f pr="$PR" 2>&1 >/dev/null); then';
+      const gate = 'if ! grep -q \'Unexpected inputs provided\' <<< "$err"; then';
+      const retry =
+        'gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all -f skip_passed=true \\';
+      expect(run).toContain(first);
+      expect(run).toContain(gate);
+      expect(run.indexOf(first)).toBeLessThan(run.indexOf(gate));
+      expect(run.indexOf(gate)).toBeLessThan(run.indexOf(retry));
+      expect(run.slice(run.indexOf(gate), run.indexOf(retry))).toContain('exit 1');
+      expect(run).toContain('if [ -n "$nopr" ]; then');
+      expect(run).toMatch(/carries none: the label stays on until a PR run's unit shards pass/);
     });
 
     // A PR opened with the label gets `opened` and `labeled` at once, and the `opened` Lint run

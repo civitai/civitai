@@ -168,9 +168,9 @@ name: Lint
 # four `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
 # `github.event.pull_request.labels`, the label set in that run's event payload.
 # apps.yml honours the same label, behind its own `paths:` filter. The label stays
-# on until the full unit suite has passed once on the PR: the `full-ci-done` job
-# removes it after a run whose four shards all passed, so later pushes run without
-# the shards; a cancelled or red unit run leaves it on. Re-add it to ask again. Add it
+# on until the full unit suite has passed once on the PR (on some commit, not
+# necessarily the head): the `full-ci-done` job removes it after a run whose four
+# shards all passed, so later pushes run without the shards; a cancelled or red unit run leaves it on. Re-add it to ask again. Add it
 # only when the change touches code the unit or component suites cover and the PR is
 # near merge-ready.
 #   gh pr edit <n> --add-label full-ci
@@ -1633,8 +1633,9 @@ jobs:
 
   # ── THE `full-ci` LABEL COMES OFF ONCE THE FULL UNIT SUITE HAS PASSED ───────────────────────
   #
-  # The label stays on a PR until one Lint run has passed all four unit shards for it; this job
-  # then removes it, so later pushes run without the shards (re-add it to ask again). Which runs:
+  # The label stays on a PR until one Lint run has passed all four unit shards for it (on some
+  # commit of the PR, not necessarily its head); this job then removes it, so later pushes run
+  # without the shards (re-add it to ask again). Which runs:
   #   - a pull_request run whose payload carries the label, from a branch in this repo (a fork's
   #     token cannot edit labels);
   #   - a dispatch with the `pr` input, which only full-ci.yml passes. The batch verification
@@ -1666,14 +1667,14 @@ jobs:
           say() { echo "$1" >> "$GITHUB_STEP_SUMMARY"; }
           if [ "$EVENT" = workflow_dispatch ]; then
             if ! [[ "$PR" =~ ^[0-9]+$ ]]; then
-              echo "::warning title=full-ci label not removed::pr input '$PR' is not a PR number"
-              say "**full-ci label not removed**: the \`pr\` input is not a PR number."
+              echo "::warning title=full-ci label not removed::the pr input is not a PR number (see the job summary)"
+              say "**full-ci label not removed**: the \`pr\` input (\`${PR//[$'\r\n']/ }\`) is not a PR number."
               exit 0
             fi
             head=$(gh api "repos/$REPO/pulls/$PR" --jq '[.state, .head.repo.full_name, .head.ref] | join(" ")' || true)
             if [ "$head" != "open $REPO $GITHUB_REF_NAME" ]; then
-              echo "::warning title=full-ci label not removed::PR #$PR is not an open PR from $GITHUB_REF_NAME in this repo ($head)"
-              say "**full-ci label not removed**: PR #$PR is not an open PR whose head is \`$GITHUB_REF_NAME\`."
+              echo "::warning title=full-ci label not removed::the pr input does not name an open PR from this branch (see the job summary)"
+              say "**full-ci label not removed**: PR #$PR is not an open PR whose head is \`$GITHUB_REF_NAME\` (got: ${head//[$'\r\n']/ })."
               exit 0
             fi
           fi
@@ -1682,7 +1683,7 @@ jobs:
           elif grep -q 'HTTP 404' <<< "$out"; then
             say "The full unit suite passed; the \`full-ci\` label was already off #$PR."
           else
-            echo "::warning title=full-ci label not removed::$out"
-            say "**Could not remove the \`full-ci\` label** from #$PR; remove it by hand, or later pushes keep running the unit shards."
+            echo "::warning title=full-ci label not removed::removing the label failed (see the job summary)"
+            say "**Could not remove the \`full-ci\` label** from #$PR (${out//[$'\r\n']/ }); remove it by hand, or later pushes keep running the unit shards."
           fi
           say "To run the full suite again, re-add it: \`gh pr edit $PR --add-label full-ci\`"
