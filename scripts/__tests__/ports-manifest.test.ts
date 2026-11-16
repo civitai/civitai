@@ -86,16 +86,23 @@ describe('manifest schema', () => {
     ).toContain('/ports/0/flags/shadow: must be string');
   });
 
-  it.each<[string, Port]>([
-    ['an unknown status', { ...base(), status: 'live' }],
+  // Each row names the error its rule must produce, so a row rejected by some other rule fails.
+  it.each<[string, Port, string]>([
+    [
+      'an unknown status',
+      { ...base(), status: 'live' },
+      '/ports/0/status: must be equal to one of the allowed values',
+    ],
     [
       'shadow without a shadow flag',
       { ...base(), flags: { shadow: null, transport: null, probe: null } },
+      '/ports/0/flags/shadow: must be string',
     ],
-    ['shadow with a holdout', { ...base(), holdout: 5 }],
+    ['shadow with a holdout', { ...base(), holdout: 5 }, '/ports/0/holdout: must be null'],
     [
       'ramp without a transport flag',
       { ...base(), status: 'ramp', flags: { shadow: 'fx-shadow', transport: null, probe: null } },
+      '/ports/0/flags/transport: must be string',
     ],
     [
       'soak without a holdout',
@@ -104,44 +111,81 @@ describe('manifest schema', () => {
         status: 'soak',
         soak: { startedAt: '2026-01-01', signedOffBy: null, signedOffAt: null },
       },
+      '/ports/0/holdout: must be number',
     ],
-    ['soak without a soak record', { ...base(), status: 'soak', holdout: 5 }],
+    [
+      'soak without a soak record',
+      { ...base(), status: 'soak', holdout: 5 },
+      '/ports/0/soak: must be object',
+    ],
     [
       'node-fallback without a sign-off',
       { ...base(), status: 'node-fallback', soak: { ...signedOff, signedOffBy: null } },
+      '/ports/0/soak/signedOffBy: must be string',
     ],
     [
-      'ramp without a shadow flag',
-      {
-        ...base(),
-        status: 'ramp',
-        flags: { shadow: null, transport: 'fx-transport', probe: null },
-      },
+      'go-only that still has a Node entry',
+      { ...goOnly(), nodeEntry: base().nodeEntry },
+      '/ports/0/nodeEntry: must be null',
     ],
-    ['go-only that still has a Node entry', { ...goOnly(), nodeEntry: base().nodeEntry }],
-    // The soak sign-off alone does not let the Node path go.
-    ['go-only without a Node-deletion sign-off', { ...goOnly(), nodeDeletion: null }],
-    ['go-only with no nodeDeletion field', without(goOnly(), 'nodeDeletion')],
     [
       'go-only whose Node-deletion sign-off names nobody',
       { ...goOnly(), nodeDeletion: { signedOffBy: '', signedOffAt: '2026-02-01' } },
+      '/ports/0/nodeDeletion/signedOffBy: must NOT have fewer than 1 characters',
     ],
-    ['a Node-deletion sign-off during shadow', { ...base(), nodeDeletion: deletionSignedOff }],
-    ['a port without metricEndpoint', without(base(), 'metricEndpoint')],
-    ['a metricEndpoint that is not a label value', { ...base(), metricEndpoint: 'Infinite Feed' }],
+    [
+      'a Node-deletion sign-off during shadow',
+      { ...base(), nodeDeletion: deletionSignedOff },
+      '/ports/0/nodeDeletion: must be null',
+    ],
+    [
+      'a port without metricEndpoint',
+      without(base(), 'metricEndpoint'),
+      "/ports/0: must have required property 'metricEndpoint'",
+    ],
+    [
+      'a metricEndpoint that is not a label value',
+      { ...base(), metricEndpoint: 'Infinite Feed' },
+      '/ports/0/metricEndpoint: must match pattern "^[a-z0-9][a-z0-9-]*$"',
+    ],
     // Dependencies are computed in CI and never stored.
-    ['a port that stores nodeDeps', { ...base(), nodeDeps: ['src/a.ts'] }],
-    ['a port that stores goDeps', { ...base(), goDeps: ['apps/feed-go/a.go'] }],
+    [
+      'a port that stores nodeDeps',
+      { ...base(), nodeDeps: ['src/a.ts'] },
+      '/ports/0: must NOT have additional properties',
+    ],
+    [
+      'a port that stores goDeps',
+      { ...base(), goDeps: ['apps/feed-go/a.go'] },
+      '/ports/0: must NOT have additional properties',
+    ],
     [
       'a Node entry outside src/',
       { ...base(), nodeEntry: { file: 'apps/x/route.ts', symbol: 'default' } },
+      '/ports/0/nodeEntry/file: must match pattern "^src/.+\\.tsx?$"',
     ],
-    ['a Go handler outside the Go services', { ...base(), goHandler: ['apps/other/main.go'] }],
-    ['a tRPC id that is a REST route', { ...base(), id: 'GET /api/v1/images' }],
-    ['a REST id without a method', { ...base(), kind: 'rest', id: '/api/v1/images' }],
-    ['a holdout over 100%', { ...base(), status: 'soak', holdout: 101, soak: signedOff }],
-  ])('rejects %s', (_name, port) => {
-    expect(errs(port)).not.toEqual([]);
+    [
+      'a Go handler outside the Go services',
+      { ...base(), goHandler: ['apps/other/main.go'] },
+      '/ports/0/goHandler/0: must match pattern "^apps/(feed-go|beacon-go)/.+\\.go$"',
+    ],
+    [
+      'a tRPC id that is a REST route',
+      { ...base(), id: 'GET /api/v1/images' },
+      '/ports/0/id: must match pattern "^[a-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9]*$"',
+    ],
+    [
+      'a REST id without a method',
+      { ...base(), kind: 'rest', id: '/api/v1/images' },
+      '/ports/0/id: must match pattern "^(GET|POST|PUT|PATCH|DELETE) /api/\\S+$"',
+    ],
+    [
+      'a holdout over 100%',
+      { ...base(), status: 'soak', holdout: 101, soak: signedOff },
+      '/ports/0/holdout: must be <= 100',
+    ],
+  ])('rejects %s', (_name, port, expected) => {
+    expect(errs(port)).toContain(expected);
   });
 });
 

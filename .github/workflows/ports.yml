@@ -1,27 +1,12 @@
 name: Node→Go ports
 
-# ports/manifest.json is the one list of endpoints ported from the Node app to a Go service
-# (ports/README.md). This workflow keeps it true and says which ports a PR touches. It runs no
-# test suite but its own generator tests, so it stays cheap.
+# Checks ports/manifest.json and its markers, and reports which ports a PR touches; what each
+# job does is in ports/README.md (CI).
 #
-# Job `manifest` (PRs and pushes to main):
-#   - the generator's tests (scripts/__tests__/ports-*.test.ts), counted, since vitest given a
-#     file it does not match runs the rest and still exits 0;
-#   - `node scripts/ports/generate.mjs --check`: validates the manifest against
-#     ports/manifest.schema.json and the lifecycle checks beside it, and fails if any
-#     `@ported-to-go` marker in src/ differs from what it would write (missing, stale, on the wrong
-#     symbol, on something that is not a port, or damaged).
-#
-# Job `touched` (PRs only, report-only): computes every port's Node and Go dependencies from
-# source, at the PR head and at the merge base, and writes the ports this PR's changed files
-# touch, with the files, to the step summary (`node scripts/ports/touched.mjs --base <base>`).
-# The dependency lists are not committed anywhere, so nothing can go stale; this job never fails
-# on a touched port or on a list it could not compute (it lists those in the summary).
-#
-# Its own workflow because it needs Node and Go together; lint.yml has no Go and the Go
-# workflows are filtered to their own app. The path filter is everything a port can depend on:
-# the Node deps reach src/ and packages/ (and the event-engine-common pin), the Go deps the two
-# Go apps.
+# Its own workflow because it needs Node and Go together: lint.yml has no Go, and the Go workflows
+# are filtered to their own app. The path filter is that wide because it is everything a port can
+# depend on: the Node deps reach src/ and packages/ (and the event-engine-common pin), the Go deps
+# the two Go apps, and a change to any of them can change which ports a PR touches.
 on:
   pull_request:
     branches: [main, release]
@@ -78,6 +63,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Counted: vitest given a file it does not match runs the rest and still exits 0.
       - name: Generator tests
         env:
           PORTS_REQUIRE_GO: '1'

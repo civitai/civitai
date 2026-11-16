@@ -88,6 +88,9 @@ export function loadSubmodules(root) {
  * files are not this repo's, and a checkout may not have them, so its pin is the dependency),
  * `{ kind: 'external' }` (a package, not followed) or `{ kind: 'unresolved' }` (relative or
  * aliased, and no file matches: the graph would be wrong).
+ * Siblings: src/server/services/__tests__/import-graph.harness.ts and scripts/test-perf/graph.mjs
+ * (resolveSpecifier). This one differs by resolving against git-tracked files only and reading no
+ * package `exports` maps; mirror a resolution fix across all three where it applies.
  */
 export function resolveSpecifier(tracked, fromRel, spec, aliases, submodules = []) {
   const inSubmodule = (rel) => submodules.find((s) => rel === s || rel.startsWith(`${s}/`));
