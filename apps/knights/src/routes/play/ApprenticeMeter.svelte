@@ -1,4 +1,6 @@
 <script lang="ts">
+  import HeartsRow from '$lib/HeartsRow.svelte';
+
   let {
     level,
     levelFraction,
@@ -6,6 +8,8 @@
     bar,
     knightLevel,
     answerWindow,
+    hearts = null,
+    maxHearts = 0,
   }: {
     level: number;
     /** How far through the current level the player is, 0 to 1. */
@@ -15,6 +19,9 @@
     bar: number;
     knightLevel: number;
     answerWindow: number;
+    /** Lives left; wrong answers cost them. Null hides the row. */
+    hearts?: number | null;
+    maxHearts?: number;
   } = $props();
 
   let accuracyPercent = $derived(accuracy === null ? null : Math.floor(accuracy * 100));
@@ -27,6 +34,7 @@
 <section class="meter" aria-label="Apprenticeship progress">
   <div class="row">
     <span class="label">Level {level} of {knightLevel}<span class="long">&nbsp;·&nbsp;Acolyte</span></span>
+    {#if hearts !== null}<HeartsRow {hearts} {maxHearts} />{/if}
     <span
       class="accuracy"
       class:good={onBar}
@@ -64,6 +72,9 @@
     width: 100%;
     max-width: 1056px;
     margin: 0 auto;
+  }
+  .row > :global(.hearts) {
+    margin-right: auto;
   }
   .label {
     color: var(--io-parchment);

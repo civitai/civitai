@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ImageDetailPageData from '~/server/page-data/image-detail';
 
 /**
  * The `ssr-client-only-sections` seam on the two routes that use it: `getServerSideProps` puts the
@@ -24,7 +25,8 @@ vi.mock('~/server/utils/ssr-client-only-sections', () => ({
   ssrClientOnlySectionsOn: () => m.on,
 }));
 
-vi.mock('~/server/page-data/image-detail', () => ({
+vi.mock('~/server/page-data/image-detail', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageDetailPageData>()),
   resolveImageDetailPageData: vi.fn(async ({ ctx }: { ctx: { params?: { imageId?: string } } }) =>
     ctx.params?.imageId === 'nope'
       ? { notFound: true }

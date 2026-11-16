@@ -25,10 +25,13 @@ import (
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// served is a computeFn that answers at once with a fixed payload.
-func served(payload string, ttl *trpc.CacheTTL) func(context.Context, *http.Request) (*computed, error) {
+// servedPayload is the page served() answers.
+const servedPayload = `{"json":{"items":[]}}`
+
+// served is a computeFn that answers at once with servedPayload.
+func served(ttl *trpc.CacheTTL) func(context.Context, *http.Request) (*computed, error) {
 	return func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(payload), ttl: ttl}, nil
+		return &computed{payload: []byte(servedPayload), ttl: ttl}, nil
 	}
 }
 
@@ -72,16 +75,17 @@ func serveServer(reg *prometheus.Registry, fn func(context.Context, *http.Reques
 	}
 }
 
-func requests(t *testing.T, reg *prometheus.Registry, mode, outcome string) float64 {
+// requests reads feed_go_requests_total{feed_endpoint="as-posts",mode="serve",outcome=<outcome>}.
+func requests(t *testing.T, reg *prometheus.Registry, outcome string) float64 {
 	t.Helper()
-	v, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": EndpointAsPosts, "mode": mode, "outcome": outcome})
+	v, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": EndpointAsPosts, "mode": "serve", "outcome": outcome})
 	return v
 }
 
 func TestServeHTTPServedPath(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	fb := &proxyRecorder{}
-	s := serveServer(reg, served(`{"json":{"items":[]}}`, &trpc.SignedOutTTL), fb)
+	s := serveServer(reg, served(&trpc.SignedOutTTL), fb)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, publicRequest())
 	if w.Code != 200 || fb.calls != 0 {
@@ -93,11 +97,11 @@ func TestServeHTTPServedPath(t *testing.T) {
 	if got := w.Header().Get("Cache-Control"); got != "public, max-age=60, s-maxage=60, stale-while-revalidate=30" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
-	if requests(t, reg, "serve", "served") != 1 {
+	if requests(t, reg, "served") != 1 {
 		t.Fatal("served request not counted")
 	}
 	// Signed in (no TTL): private.
-	s.computeFn = served(`{"json":{"items":[]}}`, nil)
+	s.computeFn = served(nil)
 	w = httptest.NewRecorder()
 	s.ServeHTTP(w, publicRequest())
 	if got := w.Header().Get("Cache-Control"); got != "max-age=0, private, no-cache" {
@@ -116,8 +120,8 @@ func TestServeHTTPErrorFallsBack(t *testing.T) {
 	if w.Code != http.StatusTeapot || fb.calls != 1 {
 		t.Fatalf("code=%d proxied=%d, want the proxy's 418 and 1", w.Code, fb.calls)
 	}
-	if fallbackCount(t, reg, "error") != 1 || requests(t, reg, "serve", "error") != 1 {
-		t.Fatalf("error fallback not recorded: reason=%v outcome=%v", fallbackCount(t, reg, "error"), requests(t, reg, "serve", "error"))
+	if fallbackCount(t, reg, "error") != 1 || requests(t, reg, "error") != 1 {
+		t.Fatalf("error fallback not recorded: reason=%v outcome=%v", fallbackCount(t, reg, "error"), requests(t, reg, "error"))
 	}
 }
 
@@ -667,8 +671,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 17 {
-		t.Fatalf("checked %d per-endpoint families, want 17 (a family was renamed or lost)", checked)
+	if checked != 18 {
+		t.Fatalf("checked %d per-endpoint families, want 18 (a family was renamed or lost)", checked)
 	}
 }
 
