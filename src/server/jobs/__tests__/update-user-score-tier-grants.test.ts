@@ -31,22 +31,20 @@ const afterLaunch = new Date(
 function batchCtx({
   grant = async () => [],
   owed = [{ id: 7, isModerator: false }],
-  markSeen = async () => [],
+  updated = updatedRow,
 }: {
   grant?: () => Promise<unknown[]>;
   owed?: { id: number; isModerator: boolean }[];
-  markSeen?: () => Promise<unknown[]>;
+  updated?: typeof updatedRow;
 } = {}) {
   const calls: { sql: string; params?: unknown[] }[] = [];
   const pg = {
     cancellableQuery: vi.fn(async (sql: string, params?: unknown[]) => {
       calls.push({ sql, params });
       const result = sql.includes('UPDATE "User"')
-        ? async () => [updatedRow]
+        ? async () => [updated]
         : sql.includes('INSERT INTO "UserCreatorMilestone"')
         ? grant
-        : sql.includes('UPDATE "UserCreatorMilestone"')
-        ? markSeen
         : async () => owed;
       return { result, cancel: async () => undefined };
     }),
@@ -150,30 +148,20 @@ describe('persistScoreBatch while Creator Journey is flagged', () => {
 describe('persistScoreBatch before a definition launches', () => {
   const unregistered = { ...crossing, milestoneKey: 'score:unregistered' };
 
-  it('marks silenced crossings seen and announces only launched ones', async () => {
-    const { ctx, markSeenCalls } = batchCtx({ grant: async () => [crossing, unregistered] });
+  it('stamps silenced crossings seen in the grant and announces only launched ones', async () => {
+    const { ctx, grantCalls, markSeenCalls } = batchCtx({
+      grant: async () => [crossing, unregistered],
+    });
     await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
-    expect(markSeenCalls()).toHaveLength(1);
-    expect(JSON.parse(markSeenCalls()[0].params?.[0] as string)).toEqual([
-      { userId: 7, milestoneKey: 'score:unregistered' },
-    ]);
+    const [, userIds, announcedKeys] = grantCalls()[0].params as [string, number[], string[]];
+    expect(userIds).toEqual([7]);
+    expect(announcedKeys).toContain('score:spark');
+    expect(announcedKeys).not.toContain('score:unregistered');
+    expect(markSeenCalls()).toEqual([]);
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
     expect(mocks.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'creator-score-tier-reached:7:score:spark' })
     );
-  });
-
-  it('still announces launched crossings when marking the rest seen fails', async () => {
-    const failure = new Error('deadlock detected');
-    const { ctx } = batchCtx({
-      grant: async () => [crossing, unregistered],
-      markSeen: async () => {
-        throw failure;
-      },
-    });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
-    expect(ctx.tierGrantErrors).toEqual([failure]);
-    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -215,7 +203,10 @@ describe('persistScoreBatch alerts staff to a new Legend', () => {
 
   // A silent grant (a tier already passed, the launch backfill) is a Founding Legend, not a new one.
   it('does not alert on a silent grant', async () => {
-    const { ctx } = batchCtx({ grant: async () => [{ ...legendCrossing, silent: true }] });
+    const { ctx } = batchCtx({
+      grant: async () => [{ ...legendCrossing, silent: true }],
+      updated: { userId: 7, oldTotal: '1000000', newTotal: '1000600' },
+    });
     await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(staffAlerts()).toEqual([]);
   });
