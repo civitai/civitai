@@ -622,13 +622,13 @@ describe('nightly grant before a definition launches', () => {
 
   it('stamps a silenced crossing seen in its INSERT, as a dated crossing', async () => {
     // A seen stamp issued as a later statement fails here, as a dropped connection would.
+    const real = pg as unknown as {
+      cancellableQuery: (sql: string, params?: unknown[]) => Promise<unknown>;
+    };
     const failingStamp = {
       cancellableQuery: async (sql: string, params?: unknown[]) => {
         if (sql.includes('UPDATE "UserCreatorMilestone"')) throw new Error('stamp failed');
-        return (pg as { cancellableQuery: typeof failingStamp.cancellableQuery }).cancellableQuery(
-          sql,
-          params
-        );
+        return real.cancellableQuery(sql, params);
       },
     };
     const ctx = {
