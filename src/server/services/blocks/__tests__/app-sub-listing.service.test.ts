@@ -353,16 +353,24 @@ describe('upsertSubListing — refusals', () => {
         expect(write.appSubListing.create).not.toHaveBeenCalled();
       });
 
-      it('a re-rate or override updates the item’s card, live and staged ratings alike', async () => {
+      it('🔴 a re-rate keeps an author’s stricter choice: picked x, re-rated r, the card stays x', async () => {
+        write.appSubListing.findMany.mockResolvedValueOnce([
+          { id: 'asl_STRICT', contentRating: 'x', pendingContentRating: null },
+          { id: 'asl_LOOSE', contentRating: 'pg', pendingContentRating: 'pg13' },
+        ]);
         await syncSubListingRatingFromDoc({ appBlockId: 'apb_1', itemKey: 'gen-1', level: 4 });
-        expect(write.appSubListing.updateMany).toHaveBeenCalledWith({
-          where: { parentListingId: PARENT, itemKey: 'gen-1' },
-          data: { contentRating: 'r' },
-        });
-        expect(write.appSubListing.updateMany).toHaveBeenCalledWith({
-          where: { parentListingId: PARENT, itemKey: 'gen-1', pendingSubmittedAt: { not: null } },
-          data: { pendingContentRating: 'r' },
-        });
+        expect(write.appSubListing.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { parentListingId: PARENT, itemKey: 'gen-1' } })
+        );
+        expect(write.appSubListing.update.mock.calls).toEqual([
+          [
+            {
+              where: { id: 'asl_STRICT' },
+              data: { contentRating: 'x', pendingContentRating: null },
+            },
+          ],
+          [{ where: { id: 'asl_LOOSE' }, data: { contentRating: 'r', pendingContentRating: 'r' } }],
+        ]);
         expect(mockBust).toHaveBeenCalled();
       });
     });
@@ -1176,5 +1184,70 @@ describe('moderateSubListing', () => {
 
   it('a missing row is 404', async () => {
     await expectError(mod({ id: 'asl_x', action: 'approve' }), 404, 'not_found');
+  });
+});
+
+describe('🔴 content levels on: a card is approved or restored only for a rated item', () => {
+  const mod = (input: Record<string, unknown>) =>
+    moderateSubListing({ input: { version: VERSION, ...input } as never, moderatorId: 9 });
+  const rated = (level: number | null, status: string | null) => [
+    { collection: 'generators', authorUid: AUTHOR, hidden: false, rating: { level, status } },
+  ];
+  const EDIT = {
+    status: 'approved',
+    pendingTitle: 'Gen Two',
+    pendingSubPath: 'g/TWO',
+    pendingSubmittedAt: new Date('2026-10-02'),
+  };
+  beforeEach(() => {
+    docLevels.on = true;
+    read.appBlock.findUnique.mockResolvedValue({
+      blockId: 'custom-generators',
+      manifest: {
+        storage: { collections: { generators: { visibility: 'shared', write: 'own' } } },
+      },
+    });
+  });
+
+  it.each([
+    ['approve', { status: 'pending' }],
+    ['approve-edit', EDIT],
+    ['restore', { status: 'hidden' }],
+  ] as const)('%s is refused while the item is pending', async (action, state) => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow(state));
+    mockFindShared.mockResolvedValue(rated(null, 'pending'));
+    await expectError(mod({ id: 'asl_x', action }), 409, 'item_not_rated');
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['approve', { status: 'pending' }],
+    ['approve-edit', EDIT],
+    ['restore', { status: 'hidden' }],
+  ] as const)('%s goes through for a rated item', async (action, state) => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow(state));
+    mockFindShared.mockResolvedValue(rated(4, 'rated'));
+    await mod({ id: 'asl_x', action });
+    expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('restore treats a Blocked item as not found', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
+    mockFindShared.mockResolvedValue(rated(32, 'rated'));
+    const err = await mod({ id: 'asl_x', action: 'restore' }).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      status: 409,
+      code: 'invalid_transition',
+      message: 'This item is hidden or removed in the app; it cannot be restored here',
+    });
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('INVARIANT GUARD: flag off, approve reads no rating', async () => {
+    docLevels.on = false;
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));
+    await mod({ id: 'asl_x', action: 'approve' });
+    expect(mockFindShared).not.toHaveBeenCalled();
+    expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
   });
 });

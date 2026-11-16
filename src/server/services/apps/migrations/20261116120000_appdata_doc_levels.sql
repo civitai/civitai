@@ -15,6 +15,12 @@
 --   - `override_level`, `override_by`, `override_at`
 --                      a moderator's level, which wins over `level` while set;
 --   - `rated_at`       when `level` was last set.
+--   - `rated_version`, `override_version`
+--                      the document `version` the rating and the override were given for. A
+--                      rating or override counts only while it matches the document's current
+--                      `version` (every rewrite of the body bumps it: a put, a schema migration);
+--                      otherwise the document reads as pending, so a rating never outlives the
+--                      content it rated, whoever or whatever rewrote it.
 --   Read by the store only while the per-app flag `app-blocks-shared-doc-levels` is on
 --   (`doc-levels.ts`); with it off no statement names these columns.
 --
@@ -29,8 +35,8 @@
 --   If the ALTER times out, re-run it. The existing grants and row-level policies cover the new
 --   columns.
 --
--- IDEMPOTENT: IF NOT EXISTS, and each constraint is added only when absent. ROLLBACK: the sibling
---   `20261116120000_appdata_doc_levels.down.sql`.
+-- IDEMPOTENT: IF NOT EXISTS, and each constraint is added only when absent from `appdata.doc`.
+--   ROLLBACK: the sibling `20261116120000_appdata_doc_levels.down.sql`.
 
 BEGIN;
 SET LOCAL lock_timeout = '1s';
@@ -40,18 +46,23 @@ ALTER TABLE appdata.doc
   ADD COLUMN IF NOT EXISTS override_level integer,
   ADD COLUMN IF NOT EXISTS override_by integer,
   ADD COLUMN IF NOT EXISTS override_at timestamptz,
-  ADD COLUMN IF NOT EXISTS rated_at timestamptz;
+  ADD COLUMN IF NOT EXISTS rated_at timestamptz,
+  ADD COLUMN IF NOT EXISTS rated_version integer,
+  ADD COLUMN IF NOT EXISTS override_version integer;
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'doc_level_bit') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conname = 'doc_level_bit' AND conrelid = 'appdata.doc'::regclass) THEN
     ALTER TABLE appdata.doc ADD CONSTRAINT doc_level_bit
       CHECK (level IS NULL OR level IN (1, 2, 4, 8, 16, 32)) NOT VALID;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'doc_override_level_bit') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conname = 'doc_override_level_bit' AND conrelid = 'appdata.doc'::regclass) THEN
     ALTER TABLE appdata.doc ADD CONSTRAINT doc_override_level_bit
       CHECK (override_level IS NULL OR override_level IN (1, 2, 4, 8, 16, 32)) NOT VALID;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'doc_rating_status') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conname = 'doc_rating_status' AND conrelid = 'appdata.doc'::regclass) THEN
     ALTER TABLE appdata.doc ADD CONSTRAINT doc_rating_status
       CHECK (rating_status IS NULL OR rating_status IN ('pending', 'rated', 'overridden')) NOT VALID;
   END IF;

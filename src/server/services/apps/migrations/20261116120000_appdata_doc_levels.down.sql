@@ -11,5 +11,7 @@ ALTER TABLE appdata.doc
   DROP COLUMN IF EXISTS override_level,
   DROP COLUMN IF EXISTS override_by,
   DROP COLUMN IF EXISTS override_at,
-  DROP COLUMN IF EXISTS rated_at;
+  DROP COLUMN IF EXISTS rated_at,
+  DROP COLUMN IF EXISTS rated_version,
+  DROP COLUMN IF EXISTS override_version;
 COMMIT;

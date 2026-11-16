@@ -66,7 +66,9 @@ const OPTED_IN = { notes: notes(200, { registry: 'public' }), drafts: notes(50) 
 describe('resolveFromCatalog', () => {
   // The live switch ships off; these cases turn it on, and the cases below keep it off.
   const SWITCH_ON = { ...APP_STORAGE_ENABLED_FEATURES, registryExport: true };
-  const resolve = (apps: CatalogApp[]) => resolveFromCatalog(async () => apps, SWITCH_ON);
+  // Content levels have their own cases below; these read the export ungated.
+  const resolve = (apps: CatalogApp[]) =>
+    resolveFromCatalog(async () => apps, SWITCH_ON, { requireDocLevels: false });
 
   it('🔴 with the live switch off, an approved manifest that declares registry:"public" publishes nothing', async () => {
     expect(await resolveFromCatalog(async () => [app(OPTED_IN)])(V('notes', 1))).toBeNull();
@@ -195,6 +197,13 @@ describe('🔴 registry export needs content levels (app-blocks-shared-doc-level
       docLevelsOn,
       requireDocLevels: true,
     });
+
+  it('🔴 a caller that says nothing about levels fails closed: nothing is published', async () => {
+    on.add('ab_orbit_31');
+    expect(
+      await resolveFromCatalog(async () => [app(OPTED_IN)], SWITCH_ON)(V('notes', 1))
+    ).toBeNull();
+  });
 
   it('with the switch on, an app whose levels flag is off publishes nothing', async () => {
     on.clear();

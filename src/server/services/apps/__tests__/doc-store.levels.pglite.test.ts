@@ -3,12 +3,19 @@ import {
   createDocStore,
   createDocStoreFeed,
   createDocStoreLookup,
+  createDocStoreMaintenance,
   type DocStore,
   type DocStoreFeed,
   type DocStoreLookup,
 } from '~/server/services/apps/doc-store';
 import type { DocCollection, DocStoreContext } from '~/server/services/apps/doc-store.types';
-import { createPgliteHarness, type Harness } from './doc-store.harness';
+import { readFileSync } from 'fs';
+import {
+  createPgliteHarness,
+  MIGRATION_DOC_LEVELS_DOWN,
+  MIGRATION_DOC_LEVELS_UP,
+  type Harness,
+} from './doc-store.harness';
 import { BOARD, ctx, freshApp, NS_PROD, PREFS, TALLIES } from './doc-store.functional';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -46,7 +53,11 @@ const gated = (
 const RED = 31;
 const COM = 3;
 
-/** Set a document's rating columns directly (superuser): the rater (build 3) does not exist yet. */
+/**
+ * Set a document's rating columns directly (superuser): the rater (build 3) does not exist yet. A
+ * rating and an override are recorded against the document's CURRENT version, as the rater and
+ * the override will record them.
+ */
 async function rate(
   h: Harness,
   app: string,
@@ -56,7 +67,9 @@ async function rate(
 ) {
   await h.raw(
     `UPDATE appdata.doc d SET level = $5, rating_status = $6, override_level = $7,
-       rated_at = CASE WHEN $5::int IS NULL THEN NULL ELSE now() END
+       rated_at = CASE WHEN $5::int IS NULL THEN NULL ELSE now() END,
+       rated_version = CASE WHEN $5::int IS NULL THEN NULL ELSE d.version END,
+       override_version = CASE WHEN $7::int IS NULL THEN NULL ELSE d.version END
      WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.key = $4`,
     [app, NS_PROD, coll.name, key, r.level ?? null, r.status ?? null, r.override ?? null]
   );
@@ -137,13 +150,14 @@ describe('levels OFF (no gate on the context)', () => {
 });
 
 describe('levels ON', () => {
-  it('a shared write marks the document pending and clears its level, keeping an override', async () => {
+  it('a shared write marks the document pending and clears its level; the stale override no longer counts', async () => {
     const app = freshApp('LVLWRITE');
     const author = gated(ctx(app, NS_PROD, AUTHOR), 7);
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'w1', { t: 'v1' });
     await rate(h, app, BOARD, 'w1', { level: 4, status: 'overridden', override: 2 });
     const written = await store.put(author, BOARD, 'w1', { t: 'v2' });
-    expect(written.rating).toEqual({ level: 2, status: 'pending' });
+    // The override was for the version before the edit: it no longer applies.
+    expect(written.rating).toEqual({ level: null, status: 'pending' });
     expect(await stored(h, app, BOARD, 'w1')).toEqual({
       level: null,
       rating_status: 'pending',
@@ -153,6 +167,64 @@ describe('levels ON', () => {
     const created = await store.create(author, BOARD, { t: 'new' });
     expect(created.rating).toEqual({ level: null, status: 'pending' });
     expect((await stored(h, app, BOARD, created.key)).rating_status).toBe('pending');
+  });
+
+  describe('🔴 a rating or override counts only for the version it was given for', () => {
+    const COM_VIEWER = 3; // PG | PG-13
+
+    it('an override down to PG, then an edit, then a rating of X: a com viewer does not see it', async () => {
+      const app = freshApp('LVLVEROVR');
+      const author = gated(ctx(app, NS_PROD, AUTHOR), 31, RED);
+      await store.put(author, BOARD, 'v1', { t: 'first' });
+      await rate(h, app, BOARD, 'v1', { level: 8, status: 'overridden', override: 1 });
+      const other = gated(ctx(app, NS_PROD, OTHER), COM_VIEWER, COM);
+      // Positive control: the override applies to the version it was given for.
+      expect(await readsOf(store, other, BOARD, 'v1')).toEqual(seen('v1'));
+      await store.put(author, BOARD, 'v1', { t: 'second, rewritten' });
+      // The rater rates the NEW version X; the old override is still in its column.
+      await h.raw(
+        `UPDATE appdata.doc d SET level = 8, rating_status = 'rated', rated_at = now(),
+           rated_version = d.version
+         WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'board' AND d.key = 'v1'`,
+        [app]
+      );
+      expect(await readsOf(store, other, BOARD, 'v1')).toEqual(unseen);
+      expect((await store.get(author, BOARD, 'v1'))?.rating).toEqual({
+        level: 8,
+        status: 'rated',
+      });
+    });
+
+    it('an edit while levels were off: once they are on, the document reads as pending', async () => {
+      const app = freshApp('LVLVEROFF');
+      await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'e1', { t: 'clean' });
+      await rate(h, app, BOARD, 'e1', { level: 2, status: 'rated' });
+      const other = gated(ctx(app, NS_PROD, OTHER), 31, RED);
+      expect(await readsOf(store, other, BOARD, 'e1')).toEqual(seen('e1'));
+      // Written with no levels on the context: nothing marks it pending.
+      await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'e1', { t: 'something else' });
+      expect((await stored(h, app, BOARD, 'e1')).rating_status).toBe('rated');
+      expect(await readsOf(store, other, BOARD, 'e1')).toEqual(unseen);
+      expect((await store.get(gated(ctx(app, NS_PROD, AUTHOR), 1), BOARD, 'e1'))?.rating).toEqual({
+        level: null,
+        status: 'pending',
+      });
+    });
+
+    it('a schema-migration rewrite of the body: the document reads as pending', async () => {
+      const app = freshApp('LVLVERMIG');
+      await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'm1', { t: 'before' });
+      await rate(h, app, BOARD, 'm1', { level: 2, status: 'rated' });
+      const other = gated(ctx(app, NS_PROD, OTHER), 31, RED);
+      expect(await readsOf(store, other, BOARD, 'm1')).toEqual(seen('m1'));
+      const result = await createDocStoreMaintenance({ db: h.db }).migrateDocuments(
+        app,
+        BOARD,
+        (data) => ({ ...data, t: 'after' })
+      );
+      expect(result.migrated).toBe(1);
+      expect(await readsOf(store, other, BOARD, 'm1')).toEqual(unseen);
+    });
   });
 
   it('a private write is never marked, and a private read is never gated', async () => {
@@ -352,5 +424,57 @@ describe('levels ON', () => {
       authorUid: AUTHOR,
       hidden: false,
     });
+  });
+});
+
+describe('the content-level migration', () => {
+  it('rolls back and re-applies cleanly: the down drops every column it added', async () => {
+    const m = await createPgliteHarness({ rls: true, docLevels: true });
+    try {
+      const columns = async () =>
+        (
+          await m.raw(
+            `SELECT a.attname FROM pg_catalog.pg_attribute a
+               JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'appdata' AND c.relname = 'doc' AND NOT a.attisdropped
+               AND a.attname IN ('level', 'rating_status', 'override_level', 'override_by',
+                 'override_at', 'rated_at', 'rated_version', 'override_version', 'seq')
+             ORDER BY a.attname`
+          )
+        ).map((r) => r.attname as string);
+      const ALL = [
+        'level',
+        'override_at',
+        'override_by',
+        'override_level',
+        'override_version',
+        'rated_at',
+        'rated_version',
+        'rating_status',
+        'seq',
+      ];
+      expect(await columns()).toEqual(ALL);
+      await m.raw(readFileSync(MIGRATION_DOC_LEVELS_DOWN, 'utf8'));
+      // `seq` is the positive control: the query still finds a column that was never dropped.
+      expect(await columns()).toEqual(['seq']);
+      // Re-applied, twice: idempotent, constraints included.
+      await m.raw(readFileSync(MIGRATION_DOC_LEVELS_UP, 'utf8'));
+      await m.raw(readFileSync(MIGRATION_DOC_LEVELS_UP, 'utf8'));
+      expect(await columns()).toEqual(ALL);
+      const constraints = await m.raw(
+        `SELECT conname FROM pg_catalog.pg_constraint
+         WHERE conrelid = 'appdata.doc'::regclass
+           AND conname IN ('doc_level_bit', 'doc_override_level_bit', 'doc_rating_status')
+         ORDER BY conname`
+      );
+      expect(constraints.map((r) => r.conname)).toEqual([
+        'doc_level_bit',
+        'doc_override_level_bit',
+        'doc_rating_status',
+      ]);
+    } finally {
+      await m.close();
+    }
   });
 });

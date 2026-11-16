@@ -3850,7 +3850,8 @@ describe('content levels (app-blocks-shared-doc-levels): read gate and read-only
   /** Set a document's rating directly: the rater (build 3) does not exist yet. */
   async function rate(appId: string, key: string, level: number, status: string) {
     await harness.raw(
-      `UPDATE appdata.doc d SET level = $3, rating_status = $4, rated_at = now()
+      `UPDATE appdata.doc d SET level = $3, rating_status = $4, rated_at = now(),
+         rated_version = d.version
        WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'posts' AND d.key = $2`,
       [appId, key, level, status]
     );

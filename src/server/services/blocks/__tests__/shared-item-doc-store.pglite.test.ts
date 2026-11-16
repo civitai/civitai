@@ -502,7 +502,8 @@ describe('content levels on (app-blocks-shared-doc-levels): the card path and at
   /** Set an item's rating directly: the rater (build 3) does not exist yet. */
   const rate = (app: string, key: string, level: number, status: string) =>
     harness.raw(
-      `UPDATE appdata.doc d SET level = $3, rating_status = $4, rated_at = now()
+      `UPDATE appdata.doc d SET level = $3, rating_status = $4, rated_at = now(),
+         rated_version = d.version
        WHERE d.app_id = $1 AND d.ns = 'prod' AND d.key = $2`,
       [app, key, level, status]
     );
