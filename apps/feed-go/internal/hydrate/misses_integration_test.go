@@ -234,3 +234,64 @@ func TestIntegrationModelFrameMissComputed(t *testing.T) {
 		t.Fatalf("1150502 = %#v, want a notFound marker", v)
 	}
 }
+
+const (
+	// {modelVersionId:1150711, images:[
+	//   {id:1150731, userId:1150801, name:'integ-a', url:'integ-url-a', nsfwLevel:1, width:8, height:9, hash:'integ-hash',
+	//    type:'image', metadata:JSON.parse('{"width": 8, "height": 9}'), minor:false, poi:false, modelVersionId:1150711,
+	//    availability:'Public', hasMeta:true, hasPositivePrompt:true, onSite:true, remixOfId:null},
+	//   {id:1150738, userId:1150801, name:null, url:'integ-url-b', nsfwLevel:2, width:null, height:null, hash:null,
+	//    type:'video', metadata:JSON.parse('{}'), minor:false, poi:true, modelVersionId:1150711, availability:'Public',
+	//    hasMeta:false, hasPositivePrompt:false, onSite:false, remixOfId:77}], cachedAt}
+	integWantVersionImages = "de0003ae6d6f64656c56657273696f6e4964ce00118ef7a6696d6167657392de0012a26964ce00118f0ba6757365724964ce00118f51a46e616d65a7696e7465672d61a375726cab696e7465672d75726c2d61a96e7366774c6576656c01a5776964746808a668656967687409a468617368aa696e7465672d68617368a474797065a5696d616765a86d65746164617461de0002a5776964746808a668656967687409a56d696e6f72c2a3706f69c2ae6d6f64656c56657273696f6e4964ce00118ef7ac617661696c6162696c697479a65075626c6963a76861734d657461c3b1686173506f73697469766550726f6d7074c3a66f6e53697465c3a972656d69784f664964c0de0012a26964ce00118f12a6757365724964ce00118f51a46e616d65c0a375726cab696e7465672d75726c2d62a96e7366774c6576656c02a57769647468c0a6686569676874c0a468617368c0a474797065a5766964656fa86d65746164617461de0000a56d696e6f72c2a3706f69c3ae6d6f64656c56657273696f6e4964ce00118ef7ac617661696c6162696c697479a65075626c6963a76861734d657461c2b1686173506f73697469766550726f6d7074c2a66f6e53697465c2a972656d69784f6649644da86361636865644174d6ff6a2fe940"
+	// {modelVersionId:1150712, notFound:true, cachedAt}
+	integWantVersionImagesMarker = "de0003ae6d6f64656c56657273696f6e4964ce00118ef8a86e6f74466f756e64c3a86361636865644174d6ff6a2fe940"
+)
+
+// The showcase lookup against the real schema: of model 1150701's version 1150711, only the owner's
+// published post's images that are rated, reviewed (scanned, or a mod-locked level over a scan error
+// that was not permanent), not blocked, not a ToS violation, not awaiting review, and not an R+ image
+// on a license-restricted model, in (post, index, id) order; the computed columns (hasMeta under
+// hideMeta, hasPositivePrompt, onSite, remixOfId) as Postgres computes them. 1150712 has no image:
+// a minute's marker. Written as Node writes them (2 d).
+func TestIntegrationVersionImagesMissComputed(t *testing.T) {
+	e := integMissSetup(t)
+	integtest.Exec(t, e.pool, `DELETE FROM "Image" WHERE id BETWEEN 1150700 AND 1150799;
+		DELETE FROM "Post" WHERE id BETWEEN 1150700 AND 1150799;
+		DELETE FROM "ModelVersion" WHERE id BETWEEN 1150700 AND 1150799;
+		DELETE FROM "Model" WHERE id BETWEEN 1150700 AND 1150799;
+		INSERT INTO "Model" (id, "userId") VALUES (1150701, 1150801);
+		INSERT INTO "ModelVersion" (id, "modelId") VALUES (1150711, 1150701), (1150712, 1150701);
+		INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
+		  (1150721, 1150801, 1150711, now()),
+		  (1150722, 1150802, 1150711, now()),
+		  (1150723, 1150801, 1150711, NULL);
+		INSERT INTO "Image" (id, name, url, "userId", "postId", index, hash, width, height, type, metadata, meta, "hideMeta",
+		  "nsfwLevel", "nsfwLevelLocked", ingestion, "blockedFor", "tosViolation", "needsReview", "modelRestricted", poi) VALUES
+		  (1150731, 'integ-a', 'integ-url-a', 1150801, 1150721, 1, 'integ-hash', 8, 9, 'image', '{"height": 9, "width": 8}',
+		   '{"prompt": "p", "civitaiResources": []}', false, 1, false, 'Scanned', NULL, false, NULL, false, false),
+		  (1150732, 'restricted', 'u', 1150801, 1150721, 0, NULL, NULL, NULL, 'image', '{}', NULL, false, 4, false, 'Scanned', NULL, false, NULL, true, false),
+		  (1150733, 'unscanned', 'u', 1150801, 1150721, 2, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Pending', NULL, false, NULL, false, false),
+		  (1150734, 'unrated', 'u', 1150801, 1150721, 3, NULL, NULL, NULL, 'image', '{}', NULL, false, 0, false, 'Scanned', NULL, false, NULL, false, false),
+		  (1150735, 'blocked', 'u', 1150801, 1150721, 4, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Scanned', 'tos', false, NULL, false, false),
+		  (1150736, 'tos', 'u', 1150801, 1150721, 5, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Scanned', NULL, true, NULL, false, false),
+		  (1150737, 'review', 'u', 1150801, 1150721, 6, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Scanned', NULL, false, 'minor', false, false),
+		  (1150738, NULL, 'integ-url-b', 1150801, 1150721, 7, NULL, NULL, NULL, 'video', '{}',
+		   '{"prompt": "hidden", "extra": {"remixOfId": 77}}', true, 2, true, 'Error', NULL, false, NULL, false, true),
+		  (1150739, 'not-the-owner', 'u', 1150802, 1150722, 0, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Scanned', NULL, false, NULL, false, false),
+		  (1150740, 'unpublished', 'u', 1150801, 1150723, 0, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Scanned', NULL, false, NULL, false, false);`)
+	ctx := integtest.Ctx(t)
+	ids := []int{1150711, 1150712}
+	got, writable := e.src.read(ctx, KeyVersionImages, ids, versionImagesTTL)
+	if err := e.src.fillVersionImages(ctx, ids, got, writable); err != nil {
+		t.Fatal(err)
+	}
+	if d := got[1150711]; d.NotFound {
+		t.Fatalf("1150711 = %+v, want its showcase", d)
+	}
+	if d, ok := got[1150712]; !ok || !d.NotFound {
+		t.Fatalf("1150712 = %+v, want a notFound entry", d)
+	}
+	integWantPacked(t, e, KeyVersionImages, 1150711, integWantVersionImages, 48*time.Hour)
+	integWantPacked(t, e, KeyVersionImages, 1150712, integWantVersionImagesMarker, time.Minute)
+}
