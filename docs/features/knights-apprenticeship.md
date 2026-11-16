@@ -12,9 +12,9 @@ Replaces the old Trial (a 12-item run with a pass mark and a cooldown). Code: `a
 
 ## Smites
 
-- When `APPRENTICE.smiteWrong` (6) of an Acolyte's last `APPRENTICE.smiteWindow` (20) answers are wrong, the answer that makes it so issues a smite (`issueSmite`, the system giver, reason `Acolyte - Too many wrong answers`), in the same transaction and under the player row lock. Only answers given since the player's last such smite, and since `startAt`, are counted, so the count starts over after each smite and a career reset clears it.
-- A level-up clears every active smite (`cleanseSmites`, reason `Acolyte - Level up!`), as the original game does.
-- Three active smites (`SMITES.max`) make the career reset due through the shared reset path (`resetPendingPlayers` on the tick). Until it lands the apprenticeship serves nothing and refuses answers (`reset-pending`), and `/play` says the career is being reset. Smites still lapse after `SMITES.expireAfterDays`.
+- When `APPRENTICE.smiteWrong` (6) of an Acolyte's last `APPRENTICE.smiteWindow` (20) answers are wrong, the answer that makes it so issues a smite (`issueSmite`, the system giver, reason `ACOLYTE_WRONG_ANSWER_SMITE`, size `BASE_SMITE_SIZE` (10) as in the original game), in the same transaction and under the player row lock. Only answers given since the player's last such smite, and since `startAt`, are counted, so the count starts over after each smite and a career reset clears it.
+- A level-up clears every active smite (`cleanseSmites`, reason `Acolyte - Level up!`), as the original game does, and so does knighthood, which can come on a right answer with no level gained.
+- Three active smites (`SMITES.max`) make the career reset due: the answer that issues the third starts it once its transaction commits (`resetNow`, as hidden-check settlement does), and the tick (`resetPendingPlayers`) retries it if the main app could not. Until it lands the apprenticeship serves nothing and refuses answers (`reset-pending`), and `/play` says the career is being reset. Smites still lapse after `SMITES.expireAfterDays`.
 - The window tracks the Knight bar rather than v1's per-level count (more than 5 wrong since the last level-up): levels need 3 right answers at the start and 49 near level 20, so a fixed count per level grew stricter as an Acolyte advanced.
 
 ## Data

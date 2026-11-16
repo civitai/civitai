@@ -7,6 +7,7 @@ import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { expForLevel } from '../progression/levels';
+import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE } from '../smites/config';
 import { playersDueForReset } from '../smites/smites.service';
 import {
   acknowledgeCheckpoint,
@@ -26,7 +27,8 @@ let pg: PGlite;
 let db: Kysely<DB>;
 let now = T0;
 const mirrorXp = vi.fn(async () => undefined);
-const deps = (): ApprenticeDeps => ({ now: () => now, mirrorXp });
+const resetPlayer = vi.fn<(id: number) => Promise<void>>(async () => undefined);
+const deps = (): ApprenticeDeps => ({ now: () => now, mirrorXp, resetPlayer });
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
@@ -43,6 +45,7 @@ beforeEach(async () => {
   );
   now = T0;
   mirrorXp.mockClear();
+  resetPlayer.mockClear();
 });
 
 async function player(userId: number, o: { rank?: string; exp?: number; startAt?: string } = {}) {
@@ -448,8 +451,14 @@ describe('grading and XP', () => {
 describe('smites', () => {
   const smitesOf = async (userId: number) =>
     (
-      await pg.query<{ cleansedAt: Date | null; cleansedReason: string | null; givenById: number }>(
-        `SELECT "cleansedAt","cleansedReason","givenById" FROM "NewOrderSmite" WHERE "targetPlayerId"=$1 ORDER BY "id"`,
+      await pg.query<{
+        cleansedAt: Date | null;
+        cleansedReason: string | null;
+        givenById: number;
+        size: number;
+        reason: string;
+      }>(
+        `SELECT "cleansedAt","cleansedReason","givenById","size","reason" FROM "NewOrderSmite" WHERE "targetPlayerId"=$1 ORDER BY "id"`,
         [userId]
       )
     ).rows;
@@ -463,7 +472,9 @@ describe('smites', () => {
     await play(1, 5, false);
     expect(await smitesOf(1)).toHaveLength(0);
     await play(1, 1, false);
-    expect(await smitesOf(1)).toMatchObject([{ givenById: -1, cleansedAt: null }]);
+    expect(await smitesOf(1)).toMatchObject([
+      { givenById: -1, cleansedAt: null, size: BASE_SMITE_SIZE, reason: ACOLYTE_WRONG_ANSWER_SMITE },
+    ]);
     // The window restarts after a smite: five more wrong answers are not a second one, the sixth is.
     await play(1, 5, false);
     expect(await activeOf(1)).toBe(1);
@@ -490,6 +501,31 @@ describe('smites', () => {
 
     expect(await activeOf(1)).toBe(0);
     expect((await smitesOf(1))[0].cleansedReason).toMatch(/level up/i);
+  });
+
+  it('clears active smites when the Acolyte is knighted without gaining a level', async () => {
+    await player(1, { exp: expForLevel(20) });
+    await history(1, rows(99, 80));
+    await rating(1);
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","givenById","reason","size","remaining","createdAt") VALUES (1,-1,$1,10,10,$2)`,
+      [ACOLYTE_WRONG_ANSWER_SMITE, new Date(T0.getTime() - 1000)]
+    );
+
+    const { result } = await answerNext(1, true);
+
+    expect(result).toMatchObject({ status: 'recorded', promoted: true });
+    expect(await activeOf(1)).toBe(0);
+  });
+
+  it('starts the career reset on the answer that issues the third smite, without waiting for the tick', async () => {
+    await player(1);
+    for (let i = 0; i < 20; i++) await rating(i + 1);
+    await play(1, 17, false);
+    expect(resetPlayer).not.toHaveBeenCalled();
+    await play(1, 1, false);
+    expect(resetPlayer).toHaveBeenCalledTimes(1);
+    expect(resetPlayer).toHaveBeenCalledWith(1);
   });
 
   it('three smites make the career reset due, and the Acolyte can answer no more until it lands', async () => {

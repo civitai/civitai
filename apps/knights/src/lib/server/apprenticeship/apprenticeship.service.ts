@@ -10,8 +10,14 @@ import { grantRankBadges } from '../progression/badges';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
 import { servableReferences } from '../reference';
-import { SMITES } from '../smites/config';
-import { activeSmiteCount, cleanseSmites, issueSmite } from '../smites/smites.service';
+import { ACOLYTE_WRONG_ANSWER_SMITE, BASE_SMITE_SIZE, SMITES } from '../smites/config';
+import {
+  activeSmiteCount,
+  cleanseSmites,
+  issueSmite,
+  resetNow,
+  type ResetDeps,
+} from '../smites/smites.service';
 import { YESNO_ANSWERS } from '../yesno/keys';
 import { answerImageJoin, answerQuestionKey, pairPrompt } from './answer-snapshot';
 import { APPRENTICE } from './config';
@@ -27,7 +33,12 @@ import {
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
-export type ApprenticeDeps = { now: () => Date; mirrorXp?: XpMirror };
+export type ApprenticeDeps = {
+  now: () => Date;
+  mirrorXp?: XpMirror;
+  /** Starts the career reset an answer's third smite makes due; without it the tick does. */
+  resetPlayer?: ResetDeps['resetPlayer'];
+};
 
 export type ItemKind = 'rating' | 'yesno';
 
@@ -152,10 +163,10 @@ const seenBy = (
   column: 'referenceId' | 'yesNoReferenceId',
   refs: { id: string; imageId: string; questionKey: string }
 ) =>
-  sql<SqlBool>`NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId} AND (
-    (s."imageId" = ${sql.ref(refs.imageId)} AND s."questionKey" = ${sql.ref(refs.questionKey)})
-    OR s.${sql.ref(column)} = ${sql.ref(refs.id)}
-  ))`;
+  sql<SqlBool>`NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId}
+    AND s."imageId" = ${sql.ref(refs.imageId)} AND s."questionKey" = ${sql.ref(refs.questionKey)})
+  AND NOT EXISTS (SELECT 1 FROM "KnightsApprenticeAnswer" s WHERE s."playerId" = ${playerId}
+    AND s.${sql.ref(column)} = ${sql.ref(refs.id)})`;
 
 /** Re-dealt after every answer, yet the same until then, so a reload cannot reroll the item on screen. */
 const shuffled = (playerId: number, position: number, idRef: string) =>
@@ -373,7 +384,7 @@ export async function answerApprentice(
   const { userId, kind, referenceId, version, answer } = input;
   const now = deps.now();
 
-  const result = await db.transaction().execute(async (trx): Promise<AnswerResult> => {
+  const result = await db.transaction().execute(async (trx): Promise<TxResult> => {
     // The player row lock serialises one player's answers, so the item check below and the insert cannot interleave.
     const player = await trx
       .selectFrom('NewOrderPlayer')
@@ -458,8 +469,15 @@ export async function answerApprentice(
         await cleanseSmites(trx, { playerId: userId, reason: LEVEL_UP_CLEANSE, now });
       }
     }
+    let resetDue = false;
     if (!correct && (await wrongSinceLastSmite(trx, userId)) >= APPRENTICE.smiteWrong) {
-      await issueSmite(trx, { playerId: userId, reason: WRONG_ANSWER_SMITE, now });
+      const active = await issueSmite(trx, {
+        playerId: userId,
+        reason: ACOLYTE_WRONG_ANSWER_SMITE,
+        size: BASE_SMITE_SIZE,
+        now,
+      });
+      resetDue = active >= SMITES.max;
     }
     const after = await progressOf(trx, userId);
     const promoted = earnsKnighthood({
@@ -467,24 +485,28 @@ export async function answerApprentice(
       correct: after.correct,
       graded: after.graded,
     });
-    if (promoted) await promoteToKnight(trx, userId);
-    return { status: 'recorded', correct, xp, gold, promoted };
+    if (promoted) {
+      await promoteToKnight(trx, userId);
+      await cleanseSmites(trx, { playerId: userId, reason: PROMOTION_CLEANSE, now });
+    }
+    return { status: 'recorded', correct, xp, gold, promoted, resetDue };
   });
 
-  if (result.status === 'recorded') {
-    await mirrorXp(deps.mirrorXp, result.xp > 0 ? [{ playerId: userId, xp: result.xp }] : []);
-  }
-  return result;
+  if (result.status !== 'recorded') return result;
+  const { resetDue, ...recorded } = result;
+  await mirrorXp(deps.mirrorXp, recorded.xp > 0 ? [{ playerId: userId, xp: recorded.xp }] : []);
+  if (resetDue && deps.resetPlayer) await resetNow(userId, { resetPlayer: deps.resetPlayer });
+  return recorded;
 }
 
-const WRONG_ANSWER_SMITE = 'Acolyte - Too many wrong answers';
 const LEVEL_UP_CLEANSE = 'Acolyte - Level up!';
+const PROMOTION_CLEANSE = 'Acolyte - Knighted';
 
 /** Wrong answers among the player's last `smiteWindow`, counting only answers given after their last such smite. */
 async function wrongSinceLastSmite(trx: Executor, playerId: number): Promise<number> {
   const recent = answersOf(trx, playerId)
     .where(
-      sql<SqlBool>`a."createdAt" > COALESCE((SELECT max(s."createdAt") FROM "NewOrderSmite" s WHERE s."targetPlayerId" = a."playerId" AND s."reason" = ${WRONG_ANSWER_SMITE}), 'epoch')`
+      sql<SqlBool>`a."createdAt" > COALESCE((SELECT max(s."createdAt") FROM "NewOrderSmite" s WHERE s."targetPlayerId" = a."playerId" AND s."reason" = ${ACOLYTE_WRONG_ANSWER_SMITE}), 'epoch')`
     )
     .select('a.correct')
     .orderBy('a.id', 'desc')
@@ -496,6 +518,10 @@ async function wrongSinceLastSmite(trx: Executor, playerId: number): Promise<num
     .executeTakeFirstOrThrow();
   return Number(row.wrong);
 }
+
+type TxResult =
+  | Extract<AnswerResult, { status: 'rejected' }>
+  | (Extract<AnswerResult, { status: 'recorded' }> & { resetDue: boolean });
 
 /** Moves a player past the recap they are looking at. Safe to repeat; does nothing when no checkpoint is waiting. */
 export async function acknowledgeCheckpoint(
