@@ -148,7 +148,7 @@ async function assertKeysUsable({
   for (const row of rows)
     for (const key of new Set([row.url, ...keysIn(row.url)])) rowsByKey.get(key)?.push(row);
   for (const keyRows of rowsByKey.values()) {
-    const own = keyRows.length > 0;
+    const own = keyRows.some((r) => r.userId === userId);
     if (appBlock && keyRows.some((r) => r.held || !r.scanComplete)) {
       // Only the owner learns why: to anyone else the image is just unavailable.
       if (!own) throw generationImageUnavailableError();
