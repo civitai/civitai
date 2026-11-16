@@ -9,11 +9,13 @@ import { MatureAckRequiredError } from '$lib/mature-charge';
 /** A request to one of the Studio's /api routes: `path` is the route's path and query. */
 export type StudioServerFetch = (path: string, init?: RequestInit) => Promise<Response>;
 
-/** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
+/** Pull the reason out of an error body (a SvelteKit `message`, or a host route's `error`), falling
+ *  back to a status-tagged default. A 401's `error` is a code (the session prompt), not a reason. */
 export async function messageOf(res: Response, fallback: string): Promise<string> {
   try {
-    const body = (await res.json()) as { message?: string };
+    const body = (await res.json()) as { message?: string; error?: string };
     if (body.message) return body.message;
+    if (res.status !== 401 && typeof body.error === 'string' && body.error) return body.error;
   } catch {
     // non-JSON body
   }
@@ -25,13 +27,15 @@ export async function messageOf(res: Response, fallback: string): Promise<string
 async function startFailure(res: Response, fallback: string): Promise<Error> {
   const body = (await res.json().catch(() => null)) as {
     message?: string;
+    error?: unknown;
     matureCount?: unknown;
     code?: unknown;
   } | null;
   if (body?.code === FILES_PROCESSING_CODE) return new FilesProcessingError();
   if (res.status === 409 && typeof body?.matureCount === 'number' && body.matureCount > 0)
     return new MatureAckRequiredError(body.matureCount);
-  return new Error(body?.message || fallback);
+  const reason = res.status !== 401 && typeof body?.error === 'string' ? body.error : undefined;
+  return new Error(body?.message || reason || fallback);
 }
 
 const postJson = (body: unknown): RequestInit => ({

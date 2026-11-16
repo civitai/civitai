@@ -161,6 +161,15 @@ describe('/api/training-studio/studio/[route]', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('answers a Studio reply that is not its JSON as unconfirmed, whatever its status', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('<html>ok</html>', { status: 200, headers: { 'content-type': 'text/html' } })
+    );
+    const res = await call({ route: 'train' });
+    expect(res.statusCode).toBe(502);
+    expect(res.body).toEqual({ message: expect.stringMatching(/check your runs/) });
+  });
+
   it('reads a Studio redirect as a session it did not accept', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(null, { status: 302, headers: { location: 'https://hub.example/login' } })

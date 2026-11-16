@@ -128,6 +128,18 @@ describe('elementBackend keep training', () => {
     ).rejects.toMatchObject({ matureCount: 3 });
   });
 
+  it("shows the host's reason for a refusal it made before forwarding", async () => {
+    const studioServer = async () =>
+      Response.json({ error: 'Verify your email address to do this' }, { status: 403 });
+    const backend = elementBackend(host(undefined, studioServer));
+    await expect(backend.continueRun('wf', 1, 2, ['green'], false)).rejects.toThrow(
+      'Verify your email address to do this'
+    );
+    await expect(backend.continueQuote('wf', 1, 2, ['green'])).rejects.toThrow(
+      'Verify your email address to do this'
+    );
+  });
+
   it('prices and starts nothing on a host page without the Studio server', async () => {
     const backend = elementBackend(host(async () => ({ ok: true })));
     await expect(backend.continueQuote('wf', 1, 2, ['green'])).rejects.toThrow(/unavailable/);

@@ -40,7 +40,7 @@ interface TrainingStudioHost {
    *  Starting a run, pricing and starting a continuation, and Review's mature count go here; the
    *  Studio server counts the dataset's mature images and runs the trigger word check. Without it
    *  the component refuses to start training. On civitai.com: `/api/training-studio/studio/*`. */
-  studioServer(path: string, init?: RequestInit): Promise<Response>;
+  studioServer?(path: string, init?: RequestInit): Promise<Response>;
 
   /** The main app's prompt check for an edit the component is about to generate
    *  (`POST /api/training-studio/check-text`). Resolves { ok: false, error } on a refusal and

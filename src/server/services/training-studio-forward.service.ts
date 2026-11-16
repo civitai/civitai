@@ -39,6 +39,14 @@ export function sessionCookiesOf(cookieHeader: string | undefined): string {
 
 export type StudioForwardResult = { status: number; body: unknown };
 
+const UNCONFIRMED: StudioForwardResult = {
+  status: 502,
+  body: {
+    message:
+      "We couldn't reach Training. If you were starting a run, check your runs before starting it again.",
+  },
+};
+
 /**
  * Send one request to a Studio route as this user (their session cookies, nothing else) and return
  * its status and JSON body. A redirect means the Studio did not accept the session.
@@ -71,18 +79,13 @@ export async function forwardToStudio({
       signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
     });
   } catch {
-    return {
-      status: 502,
-      body: {
-        message:
-          "We couldn't reach Training. If you were starting a run, check your runs before starting it again.",
-      },
-    };
+    return UNCONFIRMED;
   }
-  if (res.status >= 300 && res.status < 400)
+  // A redirect, or the Studio's own 401, means it did not accept the session.
+  if ((res.status >= 300 && res.status < 400) || res.status === 401)
     return { status: 401, body: { message: 'Sign in again to continue.' } };
   const json = await res.json().catch(() => null);
-  if (json === null && !res.ok)
-    return { status: res.status, body: { message: `Training is unavailable (${res.status}).` } };
+  // Not the Studio's JSON answer (a proxy's page, say), whatever the status: a submit may have landed.
+  if (json === null) return UNCONFIRMED;
   return { status: res.status, body: json };
 }
