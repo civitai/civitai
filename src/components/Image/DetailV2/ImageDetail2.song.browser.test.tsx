@@ -290,6 +290,7 @@ const { ClientOnlySectionsProvider } = await import(
   '~/components/ClientOnlySection/ClientOnlySection'
 );
 const { ContainerProvider } = await import('~/components/ContainerProvider/ContainerProvider');
+const { PageModal } = await import('~/components/Dialog/Templates/PageModal');
 
 function renderDetail(size = { width: 1280, height: 900 }) {
   return render(
@@ -459,4 +460,53 @@ describe('the sidebar toggle', () => {
     await show.click();
     await expect.element(page.getByRole('button', { name: 'Hide details' })).toBeInTheDocument();
   });
+});
+
+describe('the detail view over the site with the player bar open', () => {
+  const BAR = 72;
+  // The site's column as BaseLayout builds it: the page row, then the player bar as the last row.
+  // The detail view opens as a routed dialog inside `#main` (`ImageDetailModal`: a full-screen
+  // PageModal, not portalled).
+  function renderUnderBar(withBar: boolean) {
+    return render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MantineProvider theme={{ colors: { accent: DEFAULT_THEME.colors.orange } }}>
+          <div className="flex h-screen flex-col">
+            <div className="flex flex-1 overflow-hidden">
+              <ContainerProvider id="main" containerName="main" className="flex-1">
+                <PageModal
+                  opened
+                  onClose={() => undefined}
+                  withCloseButton={false}
+                  withinPortal={false}
+                  withOverlay={false}
+                  lockScroll={false}
+                  padding={0}
+                  fullScreen
+                >
+                  <ClientOnlySectionsProvider enabled={false}>
+                    <ImageDetail2 />
+                  </ClientOnlySectionsProvider>
+                </PageModal>
+              </ContainerProvider>
+            </div>
+            {withBar && <div data-music-player-bar="" className="shrink-0" style={{ height: BAR }} />}
+          </div>
+        </MantineProvider>
+      </QueryClientProvider>
+    );
+  }
+
+  for (const withBar of [true, false])
+    test(`ends ${withBar ? 'above the bar' : 'at the window’s bottom'}, its last card reachable`, async () => {
+      await page.viewport(1860, 1080);
+      await renderUnderBar(withBar);
+      await expect.element(page.getByTestId('song-more-from')).toBeInTheDocument();
+      const bottom = withBar ? 1080 - BAR : 1080;
+      const sheet = page.getByTestId('image-detail-sheet').element();
+      expect(sheet.getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
+      const last = page.getByTestId('song-more-from').element();
+      last.scrollIntoView({ block: 'end' });
+      await expect.poll(() => last.getBoundingClientRect().bottom).toBeLessThanOrEqual(bottom);
+    });
 });
