@@ -5,6 +5,8 @@ import { Tooltip } from '~/components/MantineOverlays';
 /** Pencil `q5eud`: "Mini Player (top) > modals and overlays > page content". */
 export const MUSIC_PLAYER_Z_INDEX = ABOVE_DIALOGS_Z_INDEX;
 export const MUSIC_UP_NEXT_Z_INDEX = MUSIC_PLAYER_Z_INDEX + 1;
+/** What floats above the bar from it: a timed comment's label, a comment cluster's list. */
+export const MUSIC_PLAYER_FLOAT_Z_INDEX = MUSIC_PLAYER_Z_INDEX + 1;
 const MUSIC_PLAYER_TOOLTIP_Z_INDEX = MUSIC_PLAYER_Z_INDEX + 2;
 
 /** The desktop bar's height, above the safe-area inset. */

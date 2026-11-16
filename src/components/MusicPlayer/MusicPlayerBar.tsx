@@ -233,7 +233,7 @@ function Bar({ track }: { track: MusicTrack }) {
         <CreatorLine track={track} error={error} className={clsx('text-xs', dimmed)} />
       </div>
       <Transport playing={playing} />
-      <Timeline track={track} playing={playing} />
+      <Timeline track={track} playing={playing} accent={accent} />
       <Controls track={track} accent={accent} />
     </div>
   );
@@ -384,7 +384,15 @@ function Transport({ playing }: { playing: boolean }) {
 }
 
 /** Elapsed time, waveform and length: the only part of the bar that follows the playhead. */
-function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
+function Timeline({
+  track,
+  playing,
+  accent,
+}: {
+  track: MusicTrack;
+  playing: boolean;
+  accent: MusicAccent | null;
+}) {
   const currentTime = useMusicPlayheadStore((s) => s.currentTime);
   const duration = useMusicPlayheadStore((s) => s.duration) || track.durationSec;
   const [barCount, setBarCount] = useState(100);
@@ -416,9 +424,11 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
         {withStrip &&
           (timedComments.show ? (
             <TimedCommentStrip
+              songId={track.id}
               comments={timedComments.comments}
               duration={duration}
               currentTime={currentTime}
+              accent={accent}
             />
           ) : (
             // Hidden, the strip keeps its row so the waveform does not jump.
