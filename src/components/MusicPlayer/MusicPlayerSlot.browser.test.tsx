@@ -4,14 +4,25 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type { MusicTrack } from '~/store/music-player.store';
 import type * as Trpc from '~/utils/trpc';
 
-const mocks = vi.hoisted(() => ({ getImage: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  getImage: vi.fn(),
+  sendPlay: vi.fn(async () => ({})),
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
   const { withSongCoversStub } = await import('./__tests__/song-covers-trpc-stub');
+  const stubbed = withSongCoversStub(actual.trpc);
+  // The play counter's mutations, so the file needs no tRPC provider of its own.
+  const track = {
+    songPlayStart: { useMutation: () => ({ mutateAsync: mocks.sendPlay }) },
+    songPlay: { useMutation: () => ({ mutateAsync: mocks.sendPlay }) },
+  };
   return {
     ...actual,
-    trpc: withSongCoversStub(actual.trpc),
+    trpc: new Proxy(stubbed, {
+      get: (target, key) => (key === 'track' ? track : Reflect.get(target, key)),
+    }),
     trpcVanilla: { image: { get: { query: mocks.getImage } } },
   };
 });

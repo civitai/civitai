@@ -13,7 +13,7 @@ import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import { ACCENT_TEXT, accentTextVars } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
 import { MUSIC_PLAYER_FLOAT_Z_INDEX } from '~/components/MusicPlayer/MusicPlayerLayers';
-import { ACCENT } from '~/components/MusicPlayer/MusicPlayerParts';
+import { ACCENT, dimmed } from '~/components/MusicPlayer/MusicPlayerParts';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useMusicPlayerStore } from '~/store/music-player.store';
@@ -477,7 +477,7 @@ function ClusterList({
     >
       <div className="flex items-center justify-between gap-3">
         <span className="text-base font-bold text-black dark:text-white">{title}</span>
-        <span className="shrink-0 text-xs text-gray-6 dark:text-dark-2">
+        <span className={clsx('shrink-0 text-xs', dimmed)}>
           {cluster.comments.length} total
         </span>
       </div>

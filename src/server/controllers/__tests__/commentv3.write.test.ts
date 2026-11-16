@@ -5,6 +5,7 @@ import type * as Surfaces from '~/server/services/commentv3/surfaces';
 import type * as TimedComments from '~/server/services/commentv3/timed-comments.service';
 import type * as WriteService from '~/server/services/commentv3/write.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
+import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 
 // Who may write what through the commentv3 router, and what each write checks and triggers. The SQL
 // these call is covered against real Postgres in services/commentv3/__tests__/write.sql.behavior.test.ts,
@@ -489,25 +490,52 @@ describe('commentv3 create with a time on a song', () => {
     expect(insertedMetadata()).toBeUndefined();
   });
 
+  // Each refusal names its own reason: the composer shows it to the writer.
   it.each([
-    ['past the end of the song', { timestampSec: 181 }, 'BAD_REQUEST'],
-    ['on an image that is not a song', { entityId: 21, timestampSec: 3 }, 'BAD_REQUEST'],
-    ['on another surface', { entityType: 'article', entityId: 10, timestampSec: 3 }, 'BAD_REQUEST'],
-    ['on a reply', { parentId: 200, timestampSec: 3 }, 'BAD_REQUEST'],
-  ])('refuses a time %s and writes nothing', async (_, input, code) => {
+    [
+      'past the end of the song',
+      { timestampSec: 181 },
+      'BAD_REQUEST',
+      'That time is past the end of the song.',
+    ],
+    [
+      'on an image that is not a song',
+      { entityId: 21, timestampSec: 3 },
+      'BAD_REQUEST',
+      'Only a comment on a song can be pinned to a time.',
+    ],
+    [
+      'on another surface',
+      { entityType: 'article', entityId: 10, timestampSec: 3 },
+      'BAD_REQUEST',
+      'Only a comment on a song can be pinned to a time.',
+    ],
+    [
+      'on a reply',
+      { parentId: 200, timestampSec: 3 },
+      'BAD_REQUEST',
+      'A reply cannot be pinned to a time in the song.',
+    ],
+  ])('refuses a time %s and writes nothing', async (_, input, code, message) => {
     m.stored.set(200, row(200, { entityType: 'image', entityId: SONG }));
-    await expect(onSong(input)).rejects.toMatchObject({ code });
+    await expect(onSong(input)).rejects.toMatchObject({ code, message });
     expect(m.insertComment).not.toHaveBeenCalled();
   });
 
   it('refuses a time on a song with no stored length, which it cannot check', async () => {
     m.song.mockResolvedValueOnce({ durationSec: null });
-    await expect(onSong({ timestampSec: 3 })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(onSong({ timestampSec: 3 })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This song cannot take comments at a time.',
+    });
     expect(m.insertComment).not.toHaveBeenCalled();
   });
 
   it('refuses a time while songs are off for the writer', async () => {
-    await expect(onSong({ timestampSec: 3 }, {})).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(onSong({ timestampSec: 3 }, {})).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: SONGS_UNAVAILABLE_MESSAGE,
+    });
     expect(m.insertComment).not.toHaveBeenCalled();
   });
 

@@ -164,11 +164,14 @@ describe('a timed comment’s time in the list', () => {
         // After the render: the provider sets the scheme on mount.
         document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
         const chip = page.getByRole('button', { name: 'Play from 0:42' }).element();
-        const style = getComputedStyle(chip);
-        const text = lum(rgb(style.color));
-        const background = lum(over(rgb(style.backgroundColor), [...card]));
-        const ratio = (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
-        expect(ratio).toBeGreaterThanOrEqual(4.5);
+        // Polled: the button's colours transition after the scheme flips.
+        const ratio = () => {
+          const style = getComputedStyle(chip);
+          const text = lum(rgb(style.color));
+          const background = lum(over(rgb(style.backgroundColor), [...card]));
+          return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+        };
+        await expect.poll(ratio).toBeGreaterThanOrEqual(4.5);
       });
 
     // A highlighted comment tints the card behind the chip; an opaque chip keeps its own contrast.
@@ -177,13 +180,16 @@ describe('a timed comment’s time in the list', () => {
         await renderChip();
         document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
         const chip = page.getByRole('button', { name: 'Play from 0:42' }).element();
-        const style = getComputedStyle(chip);
-        const [, , , alpha = 1] = rgb(style.backgroundColor);
-        expect(alpha).toBe(1);
-        const text = lum(rgb(style.color));
-        const background = lum(rgb(style.backgroundColor));
-        const ratio = (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
-        expect(ratio).toBeGreaterThanOrEqual(4.5);
+        // Polled: the button's colours transition after the scheme flips.
+        const ratio = () => {
+          const style = getComputedStyle(chip);
+          const [, , , alpha = 1] = rgb(style.backgroundColor);
+          if (alpha !== 1) return 0;
+          const text = lum(rgb(style.color));
+          const background = lum(rgb(style.backgroundColor));
+          return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+        };
+        await expect.poll(ratio).toBeGreaterThanOrEqual(4.5);
       });
   });
 

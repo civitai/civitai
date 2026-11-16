@@ -8,7 +8,9 @@ export const ACCENT = 'var(--music-accent, var(--mantine-primary-color-filled))'
 export const accentAt = (percent: number) =>
   `color-mix(in srgb, ${ACCENT} ${percent}%, transparent)`;
 
-export const dimmed = 'text-gray-6 dark:text-dark-2';
+// Secondary text (times, creator names) at WCAG AA on every player surface: gray-7 on the light
+// ones (gray-6 was 3.2:1), dark-1 on the dark ones (dark-2 was 4.25:1 on the Up next panel's dark-5).
+export const dimmed = 'text-gray-7 dark:text-dark-1';
 
 /** Where a song's creator name leads: their profile, until profiles have a music section. */
 export const songCreatorHref = (username: string) => `/user/${username}`;
