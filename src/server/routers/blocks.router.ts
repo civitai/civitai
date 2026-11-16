@@ -104,6 +104,7 @@ import {
   checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
   checkBlockGenerationSourceUserRateLimit,
+  checkBlockUploadedGenerationSourceUserRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import { withInFlightLimit } from '~/server/utils/in-flight-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -2303,14 +2304,28 @@ const GENERATION_SOURCE_IN_FLIGHT = {
 };
 
 /**
- * The bounds of every generation-source save, keyed on the token subject and SHARED by
- * `persistGenerationSource` and `persistUploadedGenerationSource`, so the two together draw on
- * one budget: at most {@link GENERATION_SOURCE_IN_FLIGHT} in flight (checked first, so a call it
- * refuses spends nothing), then the per-user hourly bucket (no exemption), then `run`.
+ * `blocks.persistUploadedGenerationSource`'s concurrency cap: the same size and TTL as
+ * {@link GENERATION_SOURCE_IN_FLIGHT}, in a pool of its own, so an app saving its outputs and a
+ * viewer picking sources cannot hold each other's slots.
  */
-async function withGenerationSourceBounds<T>(userId: number, run: () => Promise<T>): Promise<T> {
-  return withInFlightLimit({ ...GENERATION_SOURCE_IN_FLIGHT, userId }, async () => {
-    const rate = await checkBlockGenerationSourceUserRateLimit(userId);
+const UPLOADED_GENERATION_SOURCE_IN_FLIGHT = {
+  ...GENERATION_SOURCE_IN_FLIGHT,
+  bucket: 'block-uploaded-generation-source',
+};
+
+/**
+ * One generation-source save's bounds, keyed on the token subject: at most `inFlight` calls in
+ * flight (checked first, so a call it refuses spends nothing), then `charge` (an hourly bucket
+ * with no exemption), then `run`.
+ */
+async function withSourceSaveBounds<T>(
+  inFlight: typeof GENERATION_SOURCE_IN_FLIGHT,
+  userId: number,
+  charge: () => Promise<{ allowed: boolean }>,
+  run: () => Promise<T>
+): Promise<T> {
+  return withInFlightLimit({ ...inFlight, userId }, async () => {
+    const rate = await charge();
     if (!rate.allowed) {
       throw new TRPCError({
         code: 'TOO_MANY_REQUESTS',
@@ -2319,6 +2334,32 @@ async function withGenerationSourceBounds<T>(userId: number, run: () => Promise<
     }
     return run();
   });
+}
+
+/** `persistGenerationSource`'s bounds: its in-flight pool and its hourly bucket. */
+async function withGenerationSourceBounds<T>(userId: number, run: () => Promise<T>): Promise<T> {
+  return withSourceSaveBounds(
+    GENERATION_SOURCE_IN_FLIGHT,
+    userId,
+    () => checkBlockGenerationSourceUserRateLimit(userId),
+    run
+  );
+}
+
+/**
+ * `persistUploadedGenerationSource`'s bounds: a pool and an hourly bucket of its own, the same
+ * sizes as `persistGenerationSource`'s and separate from them.
+ */
+async function withUploadedGenerationSourceBounds<T>(
+  userId: number,
+  run: () => Promise<T>
+): Promise<T> {
+  return withSourceSaveBounds(
+    UPLOADED_GENERATION_SOURCE_IN_FLIGHT,
+    userId,
+    () => checkBlockUploadedGenerationSourceUserRateLimit(userId),
+    run
+  );
 }
 
 export const blocksRouter = router({
@@ -6365,8 +6406,9 @@ export const blocksRouter = router({
    * runtime flag. Identity comes from the token, never the body; the url is the only thing the
    * caller supplies, and the service accepts only a consumer blob on a trusted orchestrator host.
    *
-   * BOUNDS: the per-user 60/h `rateLimit`, then `withGenerationSourceBounds`, shared with
-   * `persistGenerationSource`.
+   * BOUNDS: the per-user 60/h `rateLimit` (keyed on this path), then
+   * `withUploadedGenerationSourceBounds`: an in-flight pool and an hourly bucket of its own, the
+   * same sizes as `persistGenerationSource`'s and not shared with it.
    */
   persistUploadedGenerationSource: protectedProcedure
     .meta({ blockApiKeys: true })
@@ -6397,7 +6439,7 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
-      return withGenerationSourceBounds(userId, async () => {
+      return withUploadedGenerationSourceBounds(userId, async () => {
         const { persistUploadedGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
         );

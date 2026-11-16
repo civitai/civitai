@@ -104,11 +104,11 @@ export async function uploadGenerationMedia(
     const image = await uploadGenerationSourceImage(file, isCurrent);
     if (!image) return null;
     const { url, width, height, sizeBytes } = image;
-    const source = await toGenerationSource(
+    return toGenerationSource(
       { url, kind, mimeType: 'image/jpeg', sizeBytes, width, height },
-      scannedRows
+      scannedRows,
+      isCurrent
     );
-    return source;
   }
   const probed = await probeMedia(kind, file);
   const body = file.type === contentType ? file : new Blob([file], { type: contentType });

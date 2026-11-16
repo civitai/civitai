@@ -39,11 +39,16 @@ export type ScannedRowsPath = {
  *   the flag is ON is refused at submit, as it was before scanned rows existed, never admitted;
  * - the flag ON: the server's scanned copy, with the caller's other fields kept. A failed copy
  *   THROWS: the blob is exactly what the gate refuses while the flag is on.
+ *
+ * `isCurrent`: whether the caller still wants this pick. Read after the path query, so a pick the
+ * viewer abandoned meanwhile (re-picked, closed) resolves `null` without asking for a copy, and
+ * holds none of the copy's in-flight slots.
  */
 export async function toGenerationSource<T extends UploadedSourceBlob>(
   blob: T,
-  path: ScannedRowsPath | null | undefined
-): Promise<T | (T & ScannedGenerationSource)> {
+  path: ScannedRowsPath | null | undefined,
+  isCurrent: () => boolean = () => true
+): Promise<T | (T & ScannedGenerationSource) | null> {
   if (!path) return blob;
   let scannedRows: boolean;
   try {
@@ -52,6 +57,7 @@ export async function toGenerationSource<T extends UploadedSourceBlob>(
     scannedRows = false;
   }
   if (!scannedRows) return blob;
+  if (!isCurrent()) return null;
   const persisted = await path.persist(blob.url);
   return {
     ...blob,

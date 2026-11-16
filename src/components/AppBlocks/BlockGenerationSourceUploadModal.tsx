@@ -129,8 +129,12 @@ export default function BlockGenerationSourceUploadModal({
       if (!uploaded || epoch !== epochRef.current) return;
       const { url, width, height } = uploaded;
       // Scanned rows on: the server's private scanned copy of that blob instead.
-      const source = await toGenerationSource({ url, width, height }, scannedRows);
-      if (epoch !== epochRef.current) return;
+      const source = await toGenerationSource(
+        { url, width, height },
+        scannedRows,
+        () => epoch === epochRef.current
+      );
+      if (!source || epoch !== epochRef.current) return;
       setStatus('ready');
       setMessage(null);
       onResolved(source);
