@@ -51,7 +51,7 @@ func TestServeHTTPHandsABlockedRegionToTheApp(t *testing.T) {
 		calls := 0
 		s := serveServer(reg, func(ctx context.Context, r *http.Request) (*computed, error) {
 			calls++
-			return served(`{"json":{"items":[]}}`, nil)(ctx, r)
+			return served(nil)(ctx, r)
 		}, fb)
 		s.RegionBlockRules = blockRules(t)
 		r := publicRequest()
@@ -77,7 +77,7 @@ func TestServeHTTPHandsABlockedRegionToTheApp(t *testing.T) {
 func TestServeHTTPRegionBlockComesBeforeTheOriginCheck(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	fb := &proxyRecorder{}
-	s := serveServer(reg, served(`{}`, nil), fb)
+	s := serveServer(reg, served(nil), fb)
 	s.RegionBlockRules = blockRules(t)
 	r := publicRequest()
 	r.Header.Del("Origin")
@@ -103,7 +103,7 @@ func TestServeHTTPDefaultBlockListBlocksGB(t *testing.T) {
 	}
 	reg := prometheus.NewRegistry()
 	fb := &proxyRecorder{}
-	s := serveServer(reg, served(`{}`, nil), fb)
+	s := serveServer(reg, served(nil), fb)
 	s.RegionBlockRules = rules
 	r := publicRequest()
 	r.Header.Set("x-isuk", "true")
@@ -130,7 +130,7 @@ func TestServeHTTPHandsACrawlerUserAgentToTheApp(t *testing.T) {
 	for _, c := range cases {
 		reg := prometheus.NewRegistry()
 		fb := &proxyRecorder{}
-		s := serveServer(reg, served(`{}`, nil), fb)
+		s := serveServer(reg, served(nil), fb)
 		r := publicRequest()
 		if c.ua != "" {
 			r.Header.Set("User-Agent", c.ua)
@@ -154,7 +154,7 @@ func TestServeHTTPCacheControlByAnswer(t *testing.T) {
 		{"session user (not cacheable)", nil, "max-age=0, private, no-cache"},
 		{"zero edge TTL", &trpc.CacheTTL{Browser: 60}, "max-age=0, private, no-cache"},
 	} {
-		s := serveServer(prometheus.NewRegistry(), served(`{}`, c.ttl), &proxyRecorder{})
+		s := serveServer(prometheus.NewRegistry(), served(c.ttl), &proxyRecorder{})
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, publicRequest())
 		if got := w.Header().Get("Cache-Control"); got != c.want {
