@@ -611,6 +611,8 @@
       bar={data.apprentice.progress.bar}
       knightLevel={data.apprentice.progress.knightLevel}
       answerWindow={data.apprentice.progress.window}
+      {hearts}
+      maxHearts={data.status.maxSmites}
     />
   {/if}
 

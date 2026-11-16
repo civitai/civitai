@@ -176,7 +176,20 @@ describe('play load', () => {
     expect((await run()).apprentice.kind).toBe('exhausted');
   });
 
-  it('celebrates levels 5, 10 and 15 for an Acolyte and quietly records every other level', async () => {
+  it('shows a level-up card on every Acolyte level, with the gold for the levels since the last one seen', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 10, guide: true, whatsNew: true });
+    acolyteLevelGoldSince.mockResolvedValue(2000);
+
+    const page = await run();
+    expect(page.progress).toMatchObject({ kind: 'level', level: 11, levelGold: 2000 });
+    expect(page.progress).not.toHaveProperty('milestone');
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 10, 11);
+    expect(seenStore.set).not.toHaveBeenCalled();
+  });
+
+  it('keeps the milestone words for levels 5, 10 and 15', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 10 });
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
     seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true, whatsNew: true });
@@ -189,19 +202,7 @@ describe('play load', () => {
       milestone: expect.stringMatching(/halfway/),
       levelGold: 100,
     });
-    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 5, 10);
-    expect(seenStore.set).not.toHaveBeenCalled();
-
-    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
-    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 10, guide: true, whatsNew: true });
-    const quiet = await run();
-    expect(quiet.progress).toBeNull();
-    expect(seenStore.set).toHaveBeenCalledWith(7, {
-      rank: 'Acolyte',
-      level: 11,
-      guide: true,
-      whatsNew: true,
-    });
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 9, 10);
   });
 
   it('still celebrates a milestone the player jumped past between loads', async () => {
@@ -217,15 +218,15 @@ describe('play load', () => {
     });
     expect(seenStore.set).not.toHaveBeenCalled();
     // The card's gold stops at the milestone it celebrates, not the level the player has since reached.
-    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 5, 10);
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 9, 10);
   });
 
-  it('prices a milestone card for the levels since the previous milestone, however long ago the player last looked', async () => {
+  it('prices a card for every level since the player last looked', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 15 });
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
     seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 2, guide: true, whatsNew: true });
     await run();
-    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 10, 15);
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 2, 15);
   });
 
   it('tells a newly knighted player about the rank, not a summary', async () => {
@@ -416,6 +417,15 @@ describe('play load feed', () => {
     const page = await run();
     expect(page.item).toBeNull();
     expect(page.resetPending).toBe(true);
+  });
+
+  it('serves an Acolyte no apprenticeship item while their career reset is due', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 4, smites: 3, maxSmites: 3 });
+    const page = await run();
+    expect(page.mode).toBe('queue');
+    expect(page.item).toBeNull();
+    expect(page.resetPending).toBe(true);
+    expect(getApprentice).not.toHaveBeenCalled();
   });
 
   it('carries the reset notice and the notices from hidden checks', async () => {
