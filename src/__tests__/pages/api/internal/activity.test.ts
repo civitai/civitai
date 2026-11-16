@@ -93,6 +93,16 @@ describe('/api/internal/activity', () => {
     expect(mocks.activity).not.toHaveBeenCalled();
   });
 
+  it('accepts an entry of exactly 100 characters (the cap)', async () => {
+    const name = `tool-click:${'x'.repeat(89)}`;
+    expect(name).toHaveLength(100);
+
+    const res = await post({ activities: [name] });
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(mocks.activity.mock.calls).toEqual([[name]]);
+  });
+
   it('rejects an entry longer than 100 characters with 400 and writes nothing', async () => {
     const res = await post({ activities: ['remix:image', `tool-click:${'x'.repeat(90)}`] });
 
