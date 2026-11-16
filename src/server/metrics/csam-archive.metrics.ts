@@ -254,7 +254,7 @@ export function ensureRegisterCsamArchiveEvidenceMetrics(reg: Registry = client.
       reg,
       'civitai_csam_archive_incomplete',
       'Sent CSAM reports whose evidence archive is not complete and verified, by reason, as of the last evidence check. ' +
-        'skipped = the archive recorded archiveSkipped; stale = not archived some hours after sending; ' +
+        'skipped = the archive recorded archiveSkipped; stale = not archived 6 hours after sending, counting a report in the separate archiver queue only once its row is 6 hours old; ' +
         'unsupported = a generator-evidence report or a generated-image report naming no URL, which the archive job leaves out; ' +
         'queue_failing = a report whose row in the separate archiver queue records an error or a repeated claim; ' +
         'images_missing = the archive could not store an item the report names; object_missing = a stored object is absent or changed; ' +

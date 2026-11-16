@@ -226,7 +226,6 @@ async function archiveTick(tick: Tick) {
   }
 
   const reports = await getCsamsToArchive();
-  // wait for each process to finish before going to the next
   for (const report of reports) {
     try {
       // OFF: the archiver archives every report with a user; this job still stamps the rest.

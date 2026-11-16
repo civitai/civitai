@@ -50,6 +50,8 @@ const UNSUPPORTED_SQL = sql<boolean>`(
 
 /** A sent report not archived after this long is stale, and so is a queue row this old. */
 const STALE_HOURS = 6;
+// Inlined, never bound: a bound JS number reaches make_interval as int8 (42883).
+const STALE_INTERVAL = sql.raw(`make_interval(hours => ${STALE_HOURS})`);
 
 const MEDIA_KIND: Partial<Record<string, CsamArchiveObjectKind>> = {
   Image: 'images',
@@ -161,11 +163,8 @@ export async function checkCsamArchiveEvidence({
     check_error: 0,
   };
 
-  // The archive job leaves skipped and unsupported reports out, so they are counted apart rather
-  // than read as stale. A report waiting in the separate archiver's queue is not stale either, but
-  // only while its row is younger than the stale window: an archiver that never claims it (stopped,
-  // or wedged on another row) is then alarmed at the same age as before. A failing row counts on its
-  // own whatever the report's archivedAt says, so a failed archiver run is never hidden.
+  // A queued report waits out the stale window on its row's age, so an archiver that never claims
+  // the row (stopped, or wedged on another row) still shows as stale.
   const queueState = archiveQueueState('r', STALE_HOURS * 60);
   const unarchived = sql<boolean>`(r."archivedAt" IS NULL AND r.details ->> 'archiveSkipped' IS NULL)`;
   const {
@@ -176,7 +175,7 @@ export async function checkCsamArchiveEvidence({
       count(*) FILTER (WHERE ${unarchived} AND ${UNSUPPORTED_SQL})::int AS unsupported,
       count(*) FILTER (
         WHERE ${unarchived} AND NOT ${UNSUPPORTED_SQL}
-          AND r."reportSentAt" < now() - make_interval(hours => ${STALE_HOURS})
+          AND r."reportSentAt" < now() - ${STALE_INTERVAL}
           AND s.state IS DISTINCT FROM 'queued'
       )::int AS stale,
       count(*) FILTER (WHERE s.state = 'failing')::int AS queue_failing

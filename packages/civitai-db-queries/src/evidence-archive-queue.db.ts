@@ -19,13 +19,17 @@ export type ArchiveQueueState = 'queued' | 'failing' | 'overdue';
  * A malformed row lists nothing, and the poll would not run it either.
  */
 export function archiveQueueState(report: string, overdueMinutes: number) {
+  if (!Number.isInteger(overdueMinutes) || overdueMinutes < 0)
+    throw new Error('archiveQueueState: overdueMinutes must be a whole number of minutes');
   const col = (name: string) => sql.ref(`${report}.${name}`);
+  // Inlined, never bound: a bound JS number can reach make_interval as int8 (42883).
+  const overdue = sql.raw(`make_interval(mins => ${overdueMinutes})`);
   return sql<ArchiveQueueState | null>`(
     select case
       when q.data ->> 'lastError' is not null
         or (jsonb_typeof(q.data -> 'attempts') = 'number' and (q.data ->> 'attempts')::numeric > 1)
         then 'failing'
-      when q."createdAt" < now() - make_interval(mins => ${overdueMinutes}) then 'overdue'
+      when q."createdAt" < now() - ${overdue} then 'overdue'
       else 'queued'
     end
     from "JobQueue" q
