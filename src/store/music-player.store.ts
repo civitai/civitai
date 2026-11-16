@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
 
 export type MusicTrackCover = { id: number; url: string; hash: string | null; nsfwLevel: number };
 
@@ -166,9 +167,13 @@ function restoreOrder(original: MusicTrack[], current: MusicTrack[]) {
   ];
 }
 
-export const TIMED_COMMENTS_KEY = 'music-player:timed-comments';
+/** The listener's player preferences, kept per browser (`zustand` `persist`). */
+export const MUSIC_PLAYER_PREFERENCES_KEY = 'music-player:preferences';
+/** Where the timed-comments choice lived before the preferences: read once, then removed. */
+const LEGACY_TIMED_COMMENTS_KEY = 'music-player:timed-comments';
+const PREFERENCES_VERSION = 1;
 
-type PreferenceStorage = Pick<Storage, 'getItem' | 'setItem'>;
+type PreferenceStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 function defaultStorage(): PreferenceStorage | null {
   try {
@@ -178,12 +183,55 @@ function defaultStorage(): PreferenceStorage | null {
   }
 }
 
-function readShowTimedComments(storage: PreferenceStorage | null) {
+/**
+ * The old key's choice, moved into the preferences once (unless they already hold one) and
+ * removed; on when there is none.
+ */
+function takeLegacyShowTimedComments(storage: PreferenceStorage | null) {
   try {
-    return storage?.getItem(TIMED_COMMENTS_KEY) !== 'off';
+    const legacy = storage?.getItem(LEGACY_TIMED_COMMENTS_KEY);
+    if (legacy == null) return true;
+    const showTimedComments = legacy !== 'off';
+    if (storage?.getItem(MUSIC_PLAYER_PREFERENCES_KEY) == null)
+      storage?.setItem(
+        MUSIC_PLAYER_PREFERENCES_KEY,
+        JSON.stringify({ state: { showTimedComments }, version: PREFERENCES_VERSION })
+      );
+    storage?.removeItem(LEGACY_TIMED_COMMENTS_KEY);
+    return showTimedComments;
   } catch {
     return true;
   }
+}
+
+/**
+ * `storage` for `persist`, which writes on every state change: the player changes many times a
+ * second while it plays, so a write that would store the same value is skipped. Blocked storage
+ * reads as empty and drops writes.
+ */
+function preferenceStorage(storage: PreferenceStorage | null) {
+  let last: string | null = null;
+  return createJSONStorage(() => ({
+    getItem: (key: string) => {
+      try {
+        return (last = storage?.getItem(key) ?? null);
+      } catch {
+        return null;
+      }
+    },
+    setItem: (key: string, value: string) => {
+      if (value === last) return;
+      last = value;
+      try {
+        storage?.setItem(key, value);
+      } catch {}
+    },
+    removeItem: (key: string) => {
+      try {
+        storage?.removeItem(key);
+      } catch {}
+    },
+  }));
 }
 
 export function createMusicPlayerStore({
@@ -217,263 +265,274 @@ export function createMusicPlayerStore({
     };
   };
 
-  return create<MusicPlayerState>()((set, get) => {
-    /** Makes `track` the current song from its start, the one before it going into history. */
-    const switchTo = (
-      track: MusicTrack,
-      from: MusicUpNextSection,
-      patch: Partial<PlayerData>,
-      startAtSec = 0
-    ) => {
-      const { current, currentFrom, history } = get();
-      set({
-        history: current ? [...history, { track: current, from: currentFrom }] : history,
-        ...patch,
-        current: track,
-        currentFrom: from,
-        playing: true,
-        error: false,
-        playback: newPlayback(track, startAtSec),
-      });
-    };
-
-    const restart = (playing: boolean) => {
-      const { current } = get();
-      if (current) set({ playing, error: false, playback: newPlayback(current) });
-    };
-
-    const advance = (auto: boolean) => {
-      const s = get();
-      if (!s.current) return;
-      if (auto && s.repeat === 'one') return restart(true);
-      if (s.queued.length) return switchTo(s.queued[0], 'queued', { queued: s.queued.slice(1) });
-      if (s.list.length) return switchTo(s.list[0], 'list', { list: s.list.slice(1) });
-      if (s.repeat === 'all') {
-        const sequence = [...s.history.slice(s.sequenceStart).map((h) => h.track), s.current];
-        const rest = sequence.slice(1);
-        set({
-          history: s.history.slice(0, s.sequenceStart),
-          current: sequence[0],
-          currentFrom: 'list',
-          list: s.shuffle ? shuffled(rest) : rest,
-          unshuffled: s.shuffle ? { queued: [], list: rest } : null,
-          playing: true,
-          error: false,
-          playback: newPlayback(sequence[0]),
-        });
-        return;
-      }
-      restart(false);
-    };
-
-    /** Plays `track` now; the songs `after` it in a list, if any, become the list section. */
-    const startFrom = (
-      track: MusicTrack,
-      from: { name: string; after: MusicTrack[] } | null,
-      startAtSec = 0
-    ) => {
-      const s = get();
-      const queued = without(s.queued, track.id);
-      const list: MusicTrack[] = [];
-      for (const t of from?.after ?? [])
-        if (t.id !== track.id && !has(queued, t.id) && !has(list, t.id)) list.push(t);
-      const isRestart = s.current?.id === track.id;
-      switchTo(
-        track,
-        'list',
-        {
-          queued,
-          list: s.shuffle ? shuffled(list) : list,
-          listName: from?.name ?? null,
-          unshuffled: s.shuffle
-            ? { queued: restoreOrder(s.unshuffled?.queued ?? [], queued), list }
-            : null,
-          view: s.view === 'closed' ? 'bar' : s.view,
-        },
-        Math.max(0, Math.min(startAtSec, track.durationSec || startAtSec))
-      );
-      // Playing the current song again restarts it rather than putting it in its own history.
-      if (isRestart) set({ history: s.history });
-      set({ sequenceStart: get().history.length });
-    };
-
-    const loadIfIdle = (track: MusicTrack) => {
-      if (get().current) return false;
-      set({ current: track, currentFrom: 'list', playing: false, playback: newPlayback(track) });
-      if (get().view === 'closed') set({ view: 'bar' });
-      return true;
-    };
-
-    return {
-      ...emptySession,
-      volume: 1,
-      muted: false,
-      shuffle: false,
-      repeat: 'off',
-      showTimedComments: readShowTimedComments(storage),
-
-      playTrack: (track, options) => {
-        if (!options?.list) return startFrom(track, null);
-        const { name, tracks } = options.list;
-        const index = tracks.findIndex((t) => t.id === track.id);
-        startFrom(track, {
-          name,
-          after: index >= 0 ? tracks.slice(index + 1) : without(tracks, track.id),
-        });
-      },
-      playFromList: ({ name, tracks, index, startAtSec }) => {
-        const track = tracks[index];
-        if (track) startFrom(track, { name, after: tracks.slice(index + 1) }, startAtSec);
-      },
-      restore: ({ track, positionSec }) => {
-        if (get().current) return;
-        const startAt = Math.max(0, Math.min(positionSec, track.durationSec || positionSec));
-        set({
-          current: track,
-          currentFrom: 'list',
-          playing: false,
-          error: false,
-          view: 'bar',
-          playback: newPlayback(track, startAt),
-        });
-      },
-
-      resume: () => {
-        if (!get().current) return;
-        lastSample = null;
-        set({ playing: true, error: false });
-      },
-      pause: () => {
-        lastSample = null;
-        set({ playing: false });
-      },
-      togglePlay: () => (get().playing ? get().pause() : get().resume()),
-
-      next: () => advance(false),
-      ended: () => advance(true),
-      previous: () => {
-        const s = get();
-        if (!s.current) return;
-        const before = s.history[s.history.length - 1];
-        if (position > RESTART_THRESHOLD_SEC || !before) return restart(true);
-        const history = s.history.slice(0, -1);
-        set({
-          ...sectionPatch(s.currentFrom, [s.current, ...s[s.currentFrom]]),
-          history,
-          sequenceStart: Math.min(s.sequenceStart, history.length),
-          current: before.track,
-          currentFrom: before.from,
-          playing: true,
-          error: false,
-          playback: newPlayback(before.track),
-        });
-      },
-
-      addToUpNext: (track) => {
-        const s = get();
-        if (loadIfIdle(track) || has(s.queued, track.id) || has(s.list, track.id)) return;
-        set({ queued: [...s.queued, track] });
-      },
-      playNext: (track) => {
-        const s = get();
-        if (loadIfIdle(track) || has(s.queued, track.id) || has(s.list, track.id)) return;
-        set({ queued: [track, ...s.queued] });
-      },
-      removeFromUpNext: (id) => {
-        const s = get();
-        set({ queued: without(s.queued, id), list: without(s.list, id) });
-      },
-      clearUpNext: () =>
-        set((s) => ({
-          queued: [],
-          list: [],
-          listName: null,
-          unshuffled: s.shuffle ? { queued: [], list: [] } : null,
-        })),
-      playFromUpNext: (id) => {
-        const s = get();
-        const section = sectionOf(s, id);
-        if (!section) return;
-        const track = s[section].find((t) => t.id === id) as MusicTrack;
-        switchTo(track, section, sectionPatch(section, without(s[section], id)));
-      },
-      moveInUpNext: (id, section, index) => {
-        const s = get();
-        const from = sectionOf(s, id);
-        if (!from || (from === 'queued' && section === 'list')) return;
-        const track = s[from].find((t) => t.id === id) as MusicTrack;
-        const lists = {
-          queued: s.queued,
-          list: s.list,
-          ...sectionPatch(from, without(s[from], id)),
+  return create<MusicPlayerState>()(
+    persist(
+      (set, get) => {
+        /** Makes `track` the current song from its start, the one before it going into history. */
+        const switchTo = (
+          track: MusicTrack,
+          from: MusicUpNextSection,
+          patch: Partial<PlayerData>,
+          startAtSec = 0
+        ) => {
+          const { current, currentFrom, history } = get();
+          set({
+            history: current ? [...history, { track: current, from: currentFrom }] : history,
+            ...patch,
+            current: track,
+            currentFrom: from,
+            playing: true,
+            error: false,
+            playback: newPlayback(track, startAtSec),
+          });
         };
-        const target = [...(lists[section] ?? [])];
-        target.splice(Math.max(0, Math.min(target.length, index)), 0, track);
-        set({ ...lists, ...sectionPatch(section, target) });
-      },
 
-      toggleShuffle: () =>
-        set((s) =>
-          s.shuffle
-            ? {
-                shuffle: false,
-                queued: restoreOrder(s.unshuffled?.queued ?? [], s.queued),
-                list: restoreOrder(s.unshuffled?.list ?? [], s.list),
-                unshuffled: null,
-              }
-            : {
-                shuffle: true,
-                unshuffled: { queued: s.queued, list: s.list },
-                queued: shuffled(s.queued),
-                list: shuffled(s.list),
-              }
-        ),
-      cycleRepeat: () => set((s) => ({ repeat: REPEAT_CYCLE[s.repeat] })),
+        const restart = (playing: boolean) => {
+          const { current } = get();
+          if (current) set({ playing, error: false, playback: newPlayback(current) });
+        };
 
-      setVolume: (volume) => set({ volume: Math.max(0, Math.min(1, volume)) }),
-      toggleMute: () => set((s) => ({ muted: !s.muted })),
+        const advance = (auto: boolean) => {
+          const s = get();
+          if (!s.current) return;
+          if (auto && s.repeat === 'one') return restart(true);
+          if (s.queued.length)
+            return switchTo(s.queued[0], 'queued', { queued: s.queued.slice(1) });
+          if (s.list.length) return switchTo(s.list[0], 'list', { list: s.list.slice(1) });
+          if (s.repeat === 'all') {
+            const sequence = [...s.history.slice(s.sequenceStart).map((h) => h.track), s.current];
+            const rest = sequence.slice(1);
+            set({
+              history: s.history.slice(0, s.sequenceStart),
+              current: sequence[0],
+              currentFrom: 'list',
+              list: s.shuffle ? shuffled(rest) : rest,
+              unshuffled: s.shuffle ? { queued: [], list: rest } : null,
+              playing: true,
+              error: false,
+              playback: newPlayback(sequence[0]),
+            });
+            return;
+          }
+          restart(false);
+        };
 
-      minimize: () => set((s) => (s.view === 'bar' ? { view: 'minimized' } : {})),
-      expand: () => set((s) => (s.view === 'minimized' ? { view: 'bar' } : {})),
-      setMinimizedPosition: (minimizedPosition) => set({ minimizedPosition }),
+        /** Plays `track` now; the songs `after` it in a list, if any, become the list section. */
+        const startFrom = (
+          track: MusicTrack,
+          from: { name: string; after: MusicTrack[] } | null,
+          startAtSec = 0
+        ) => {
+          const s = get();
+          const queued = without(s.queued, track.id);
+          const list: MusicTrack[] = [];
+          for (const t of from?.after ?? [])
+            if (t.id !== track.id && !has(queued, t.id) && !has(list, t.id)) list.push(t);
+          const isRestart = s.current?.id === track.id;
+          switchTo(
+            track,
+            'list',
+            {
+              queued,
+              list: s.shuffle ? shuffled(list) : list,
+              listName: from?.name ?? null,
+              unshuffled: s.shuffle
+                ? { queued: restoreOrder(s.unshuffled?.queued ?? [], queued), list }
+                : null,
+              view: s.view === 'closed' ? 'bar' : s.view,
+            },
+            Math.max(0, Math.min(startAtSec, track.durationSec || startAtSec))
+          );
+          // Playing the current song again restarts it rather than putting it in its own history.
+          if (isRestart) set({ history: s.history });
+          set({ sequenceStart: get().history.length });
+        };
 
-      close: () => {
-        position = 0;
-        lastSample = null;
-        set(emptySession);
-      },
-      markError: () => set({ error: true, playing: false }),
+        const loadIfIdle = (track: MusicTrack) => {
+          if (get().current) return false;
+          set({
+            current: track,
+            currentFrom: 'list',
+            playing: false,
+            playback: newPlayback(track),
+          });
+          if (get().view === 'closed') set({ view: 'bar' });
+          return true;
+        };
 
-      reportTime: (currentTime) => {
-        position = currentTime;
-        const { playing, playback } = get();
-        if (!playing || !playback) {
-          lastSample = null;
-          return;
-        }
-        const at = now();
-        const sample = lastSample;
-        lastSample = { time: currentTime, at };
-        if (!sample) return;
-        // Media time counts only as fast as the clock runs, so a forward seek adds nothing.
-        const played = Math.min(currentTime - sample.time, (at - sample.at) / 1000);
-        if (played > 0)
-          set({ playback: { ...playback, listenedSec: playback.listenedSec + played } });
+        return {
+          ...emptySession,
+          volume: 1,
+          muted: false,
+          shuffle: false,
+          repeat: 'off',
+          showTimedComments: takeLegacyShowTimedComments(storage),
+
+          playTrack: (track, options) => {
+            if (!options?.list) return startFrom(track, null);
+            const { name, tracks } = options.list;
+            const index = tracks.findIndex((t) => t.id === track.id);
+            startFrom(track, {
+              name,
+              after: index >= 0 ? tracks.slice(index + 1) : without(tracks, track.id),
+            });
+          },
+          playFromList: ({ name, tracks, index, startAtSec }) => {
+            const track = tracks[index];
+            if (track) startFrom(track, { name, after: tracks.slice(index + 1) }, startAtSec);
+          },
+          restore: ({ track, positionSec }) => {
+            if (get().current) return;
+            const startAt = Math.max(0, Math.min(positionSec, track.durationSec || positionSec));
+            set({
+              current: track,
+              currentFrom: 'list',
+              playing: false,
+              error: false,
+              view: 'bar',
+              playback: newPlayback(track, startAt),
+            });
+          },
+
+          resume: () => {
+            if (!get().current) return;
+            lastSample = null;
+            set({ playing: true, error: false });
+          },
+          pause: () => {
+            lastSample = null;
+            set({ playing: false });
+          },
+          togglePlay: () => (get().playing ? get().pause() : get().resume()),
+
+          next: () => advance(false),
+          ended: () => advance(true),
+          previous: () => {
+            const s = get();
+            if (!s.current) return;
+            const before = s.history[s.history.length - 1];
+            if (position > RESTART_THRESHOLD_SEC || !before) return restart(true);
+            const history = s.history.slice(0, -1);
+            set({
+              ...sectionPatch(s.currentFrom, [s.current, ...s[s.currentFrom]]),
+              history,
+              sequenceStart: Math.min(s.sequenceStart, history.length),
+              current: before.track,
+              currentFrom: before.from,
+              playing: true,
+              error: false,
+              playback: newPlayback(before.track),
+            });
+          },
+
+          addToUpNext: (track) => {
+            const s = get();
+            if (loadIfIdle(track) || has(s.queued, track.id) || has(s.list, track.id)) return;
+            set({ queued: [...s.queued, track] });
+          },
+          playNext: (track) => {
+            const s = get();
+            if (loadIfIdle(track) || has(s.queued, track.id) || has(s.list, track.id)) return;
+            set({ queued: [track, ...s.queued] });
+          },
+          removeFromUpNext: (id) => {
+            const s = get();
+            set({ queued: without(s.queued, id), list: without(s.list, id) });
+          },
+          clearUpNext: () =>
+            set((s) => ({
+              queued: [],
+              list: [],
+              listName: null,
+              unshuffled: s.shuffle ? { queued: [], list: [] } : null,
+            })),
+          playFromUpNext: (id) => {
+            const s = get();
+            const section = sectionOf(s, id);
+            if (!section) return;
+            const track = s[section].find((t) => t.id === id) as MusicTrack;
+            switchTo(track, section, sectionPatch(section, without(s[section], id)));
+          },
+          moveInUpNext: (id, section, index) => {
+            const s = get();
+            const from = sectionOf(s, id);
+            if (!from || (from === 'queued' && section === 'list')) return;
+            const track = s[from].find((t) => t.id === id) as MusicTrack;
+            const lists = {
+              queued: s.queued,
+              list: s.list,
+              ...sectionPatch(from, without(s[from], id)),
+            };
+            const target = [...(lists[section] ?? [])];
+            target.splice(Math.max(0, Math.min(target.length, index)), 0, track);
+            set({ ...lists, ...sectionPatch(section, target) });
+          },
+
+          toggleShuffle: () =>
+            set((s) =>
+              s.shuffle
+                ? {
+                    shuffle: false,
+                    queued: restoreOrder(s.unshuffled?.queued ?? [], s.queued),
+                    list: restoreOrder(s.unshuffled?.list ?? [], s.list),
+                    unshuffled: null,
+                  }
+                : {
+                    shuffle: true,
+                    unshuffled: { queued: s.queued, list: s.list },
+                    queued: shuffled(s.queued),
+                    list: shuffled(s.list),
+                  }
+            ),
+          cycleRepeat: () => set((s) => ({ repeat: REPEAT_CYCLE[s.repeat] })),
+
+          setVolume: (volume) => set({ volume: Math.max(0, Math.min(1, volume)) }),
+          toggleMute: () => set((s) => ({ muted: !s.muted })),
+
+          minimize: () => set((s) => (s.view === 'bar' ? { view: 'minimized' } : {})),
+          expand: () => set((s) => (s.view === 'minimized' ? { view: 'bar' } : {})),
+          setMinimizedPosition: (minimizedPosition) => set({ minimizedPosition }),
+
+          close: () => {
+            position = 0;
+            lastSample = null;
+            set(emptySession);
+          },
+          markError: () => set({ error: true, playing: false }),
+
+          reportTime: (currentTime) => {
+            position = currentTime;
+            const { playing, playback } = get();
+            if (!playing || !playback) {
+              lastSample = null;
+              return;
+            }
+            const at = now();
+            const sample = lastSample;
+            lastSample = { time: currentTime, at };
+            if (!sample) return;
+            // Media time counts only as fast as the clock runs, so a forward seek adds nothing.
+            const played = Math.min(currentTime - sample.time, (at - sample.at) / 1000);
+            if (played > 0)
+              set({ playback: { ...playback, listenedSec: playback.listenedSec + played } });
+          },
+          toggleTimedComments: () => set((s) => ({ showTimedComments: !s.showTimedComments })),
+          reportDuration: (durationSec) => {
+            const { playback } = get();
+            if (playback && isFinite(durationSec) && durationSec > 0)
+              set({ playback: { ...playback, durationSec } });
+          },
+        };
       },
-      toggleTimedComments: () => {
-        const showTimedComments = !get().showTimedComments;
-        set({ showTimedComments });
-        try {
-          storage?.setItem(TIMED_COMMENTS_KEY, showTimedComments ? 'on' : 'off');
-        } catch {}
-      },
-      reportDuration: (durationSec) => {
-        const { playback } = get();
-        if (playback && isFinite(durationSec) && durationSec > 0)
-          set({ playback: { ...playback, durationSec } });
-      },
-    };
-  });
+      {
+        name: MUSIC_PLAYER_PREFERENCES_KEY,
+        storage: preferenceStorage(storage),
+        // Preferences only: the session (song, list, playback) is the resume module's.
+        partialize: (s) => ({ showTimedComments: s.showTimedComments }),
+        version: PREFERENCES_VERSION,
+      }
+    )
+  );
 }
 
 /** The global player's state. Exactly one `<audio>` element plays it: `MusicPlayerAudio`. */
