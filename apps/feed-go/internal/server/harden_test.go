@@ -544,46 +544,45 @@ func TestPprofCaptureOutlivesTheInternalWriteTimeout(t *testing.T) {
 	}
 }
 
-func TestFailOpenReporterRateLimitsTheLogNotTheCounter(t *testing.T) {
+func TestRevocationDegradedReporterRateLimitsTheLogNotTheCounter(t *testing.T) {
 	var logs bytes.Buffer
-	counter := prometheus.NewCounter(prometheus.CounterOpts{Name: "x"})
+	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "x"}, []string{"verdict"})
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	f := &FailOpenReporter{Log: slog.New(slog.NewJSONHandler(&logs, nil)), Counter: counter, Every: 10 * time.Second,
+	f := &RevocationDegradedReporter{Log: slog.New(slog.NewJSONHandler(&logs, nil)), Counter: counter, Every: 10 * time.Second,
 		Now: func() time.Time { return now }}
 	for i := 0; i < 5; i++ {
-		f.Report(errors.New("sysredis timeout"))
+		f.Report(errors.New("sysredis timeout"), "allow_unknown")
 	}
 	now = now.Add(9 * time.Second)
-	f.Report(errors.New("sysredis timeout"))
+	f.Report(errors.New("sysredis timeout"), "deny_cached")
 	now = now.Add(time.Second) // 10 s after the first line
-	f.Report(errors.New("sysredis timeout"))
+	f.Report(errors.New("sysredis timeout"), "deny_cached")
 
 	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
 	if len(lines) != 2 {
-		t.Fatalf("%d log lines for 7 fail-opens over 10 s, want 2:\n%s", len(lines), logs.String())
+		t.Fatalf("%d log lines for 7 failed reads over 10 s, want 2:\n%s", len(lines), logs.String())
 	}
 	var second struct {
 		Msg        string `json:"msg"`
 		Suppressed int    `json:"suppressed"`
 		Err        string `json:"err"`
+		Verdict    string `json:"verdict"`
 	}
 	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.Msg != "revocation read failed open" || second.Suppressed != 5 || second.Err != "sysredis timeout" {
-		t.Fatalf("second line = %+v, want 5 suppressed", second)
+	if second.Msg != "revocation read failed; answered from the markers already read" || second.Suppressed != 5 ||
+		second.Err != "sysredis timeout" || second.Verdict != "deny_cached" {
+		t.Fatalf("second line = %+v, want 5 suppressed and verdict deny_cached", second)
 	}
-	if v := testCounterValue(t, counter); v != 7 {
-		t.Fatalf("counter = %v, want 7 (every fail-open counted)", v)
-	}
-}
-
-func testCounterValue(t *testing.T, c prometheus.Counter) float64 {
-	t.Helper()
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(c)
-	v, _ := metricValue(t, reg, "x", map[string]string{})
-	return v
+	reg.MustRegister(counter)
+	if v, _ := metricValue(t, reg, "x", map[string]string{"verdict": "allow_unknown"}); v != 5 {
+		t.Fatalf("allow_unknown = %v, want 5 (every failed read counted)", v)
+	}
+	if v, _ := metricValue(t, reg, "x", map[string]string{"verdict": "deny_cached"}); v != 2 {
+		t.Fatalf("deny_cached = %v, want 2", v)
+	}
 }
 
 // The cache-miss counter is seeded for every cache and result, and ObserveCacheMiss adds ids.
@@ -649,7 +648,7 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_degraded_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
 		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
 		"feed_go_cache_miss_total": true}
 	checked := 0

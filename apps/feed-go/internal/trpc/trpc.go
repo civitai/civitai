@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -140,7 +141,7 @@ func ResultCacheControl(ttl *CacheTTL) string {
 		return "public, max-age=" + strconv.Itoa(ttl.Browser) + ", s-maxage=" + strconv.Itoa(ttl.Edge) +
 			", stale-while-revalidate=" + strconv.Itoa(ttl.StaleWhileRevalidate)
 	}
-	return "max-age=0, private, no-cache"
+	return apipolicy.PrivateCacheControl() // PRIVATE_CACHE_CONTROL
 }
 
 // ResultHeaders are the headers of shadow.ComparedHeaders WriteResult sends (only Cache-Control: it

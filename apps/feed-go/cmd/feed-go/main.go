@@ -140,7 +140,12 @@ func run(log *slog.Logger) error {
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
 		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative)
-	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
+	degraded := &server.RevocationDegradedReporter{Log: log, Counter: metrics.RevocationDegraded}
+	// SESSION_REVOCATION_CACHE=off|0|false turns the marker record off (the plain fail-open), as in the app.
+	var markers *auth.MarkerCache
+	if cfg.RevocationMarkerCache {
+		markers = auth.NewMarkerCache(auth.MarkerCacheMaxEntries)
+	}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
 		RefreshInterval: cfg.JWKSRefresh,
@@ -164,7 +169,7 @@ func run(log *slog.Logger) error {
 	go verifier.Run(ctx)
 	resolver := &auth.Resolver{
 		Verifier:            verifier,
-		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnFailOpen: failOpen.Report},
+		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
 		CookieNames:         cfg.CookieNames(),
 		ModerationAccountID: cfg.ModerationAccountID,
@@ -255,9 +260,11 @@ func run(log *slog.Logger) error {
 		Models:      models,
 		Hosts:       cfg.Hosts,
 		RegionRules: cfg.RegionRules,
-		Metrics:     metrics,
-		Log:         log,
-		ShadowQueue: make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
+		RegionBlockRules: cfg.RegionBlockRules,
+		Metrics:          metrics,
+		Log:              log,
+		ShadowQueue:      make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
