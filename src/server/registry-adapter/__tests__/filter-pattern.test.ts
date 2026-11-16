@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   FILTER_PATTERN_MAX_LENGTH,
+  FILTER_PATTERN_MAX_SIZE,
   FilterPatternError,
   compileFilterPattern,
 } from '~/server/registry-adapter/filter-pattern';
-import { createFilterCompiler } from '~/server/registry-adapter/json-schema';
+import {
+  FILTER_MAX_PATTERNS,
+  FILTER_PATTERNS_MAX_TOTAL_SIZE,
+  createFilterCompiler,
+} from '~/server/registry-adapter/json-schema';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
 /**
@@ -37,10 +42,6 @@ const PATTERNS = [
   '^[]$',
   'x[]?y',
   '(?<n>a)b',
-  '\\p{L}',
-  '\\P{L}',
-  '[\\p{Lu}\\d]',
-  '\\p{Script=Greek}',
   'a/b',
   '\\/',
   '[a-z]+',
@@ -52,6 +53,10 @@ const PATTERNS = [
   '[\\b]',
   'a{2,3}',
   'a{2,}?',
+  '^a{01}$',
+  '^a{1,02}$',
+  '^a{00,}$',
+  '^a{0002}$',
   '(a|b)*c',
   '^(?:ab)+$',
   '[.]',
@@ -137,6 +142,13 @@ describe('🔴 a filter pattern means what ECMA-262 says it means', () => {
     ['^\\S$', '\u00a0', false],
     ['^[]$', '', false],
     ['^[^]$', '\n', true],
+    // RE2 reads a count with a leading zero as literal text; ECMA reads the number.
+    ['^a{01}$', 'a', true],
+    ['^a{01}$', 'a{01}', false],
+    ['^a{1,02}$', 'aa', true],
+    ['^a{1,02}$', 'a{1,02}', false],
+    ['^a{00,}$', 'aaa', true],
+    ['^a{00,}$', 'a{00,}', false],
   ])('%j on %j is %s', (p, s, expected) => {
     expect(compileFilterPattern(p).test(s)).toBe(expected);
   });
@@ -157,10 +169,15 @@ describe('🔴 a pattern the linear-time engine cannot run with its meaning is r
     ['a named backreference', '(?<n>a)\\k<n>', 'a backreference'],
     ['a pattern modifier', '(?i:a)', 'a pattern modifier'],
     ['\\S in a class', '[\\S]', '\\S inside a character class'],
-    ['a binary property', '\\p{Alphabetic}', 'the Unicode property escape'],
+    // re2js's Unicode tables and names can differ from the platform's: refused, not guessed at.
+    ['a Unicode property', '\\p{L}', 'a Unicode property escape'],
+    ['a negated Unicode property', '\\P{L}', 'a Unicode property escape'],
+    ['a Unicode property in a class', '[\\p{Lu}\\d]', 'a Unicode property escape'],
+    ['a script property', '\\p{Script=Greek}', 'a Unicode property escape'],
+    ['a binary property', '\\p{Alphabetic}', 'a Unicode property escape'],
     ['a lone surrogate', '\\uD800', 'a lone surrogate'],
-    ['a repeat count RE2 refuses', 'a{1001}', 'cannot be compiled'],
-    ['nested counts RE2 refuses', '(a{100}){100}', 'cannot be compiled'],
+    ['a repeat count over the size bound', 'a{1100}', 'is larger than 1024 once'],
+    ['nested counts over the size bound', '(a{100}){100}', 'is larger than 1024 once'],
     ['an invalid ECMA-262 pattern', '[', 'not a valid ECMA-262 regular expression'],
     ['RE2-only syntax', '(?i)a', 'not a valid ECMA-262 regular expression'],
   ])('%s: refused, saying why', (_name, p, why) => {
@@ -174,6 +191,43 @@ describe('🔴 a pattern the linear-time engine cannot run with its meaning is r
       'is longer than 1024 characters, which this registry does not apply'
     );
     expect(compileFilterPattern('a'.repeat(1024)).test('a'.repeat(1024))).toBe(true);
+  });
+});
+
+/** `unit` repeated for as long as the result fits in `max` characters. */
+const fill = (unit: string, max = FILTER_PATTERN_MAX_LENGTH) =>
+  unit.repeat(Math.floor(max / unit.length));
+
+describe('🔴 a pattern whose counted repetitions multiply out too large is refused', () => {
+  it('the bound is the length bound: a literal pattern of the longest length fits', () => {
+    expect(FILTER_PATTERN_MAX_SIZE).toBe(1024);
+    expect(compileFilterPattern('a'.repeat(1024)).size).toBe(1024);
+  });
+
+  // Each fits the length bound and every single count RE2 accepts, so only the size refuses them.
+  // Measured at the PR head, the first took ~0.7 s against 10 000 `é` then a newline.
+  it.each([
+    ['.{1000} side by side', fill('.{1000}')],
+    ['(?:.{1000}){1} side by side', fill('(?:.{1000}){1}')],
+    ['.{0,1000} side by side', fill('.{0,1000}')],
+    ['two .{1000}', '.{1000}.{1000}'],
+    ['nested counts multiplying past the bound', '(?:a{40}){40}'],
+    ['empty groups repeated', '(){1000}(){1000}'],
+  ])('%s: refused before it is compiled', (_name, p) => {
+    expect(p.length).toBeLessThanOrEqual(FILTER_PATTERN_MAX_LENGTH);
+    expect(() => compileFilterPattern(p)).toThrow(FilterPatternError);
+    expect(() => compileFilterPattern(p)).toThrow(
+      'is larger than 1024 once its counted repetitions are multiplied out'
+    );
+  });
+
+  it.each([
+    ['.{900}', 900],
+    ['(?:a{30}){30}', 930],
+    ['^[a-z0-9-]{1,64}$', 66],
+    ['a{01}', 1],
+  ])('%s is under the bound, with size %i, and is compiled', (p, size) => {
+    expect(compileFilterPattern(p).size).toBe(size);
   });
 });
 
@@ -224,6 +278,30 @@ describe('createFilterCompiler with patterns', () => {
       'a backreference',
     ],
     ['an over-long pattern', { pattern: 'x'.repeat(1025) }, 'longer than 1024 characters'],
+    ['a pattern over the size bound', { pattern: fill('.{1000}') }, 'is larger than 1024 once'],
+    ['a Unicode property', { pattern: '\\p{L}' }, 'a Unicode property escape'],
+    ['a negated Unicode property', { pattern: '\\P{L}' }, 'a Unicode property escape'],
+    // Each is under the per-pattern bound (size 401); together they are 1203.
+    [
+      'three patterns over the total size',
+      { allOf: ['x', 'y', 'z'].map((e) => ({ properties: { d: { pattern: `[ab]{400}${e}` } } })) },
+      'larger than 1024 in total',
+    ],
+    // One pattern of size 600, applied in two places: counted in each.
+    [
+      'one pattern applied in two places, over the total size',
+      { properties: { a: { pattern: 'a{600}' }, b: { pattern: 'a{600}' } } },
+      'larger than 1024 in total',
+    ],
+    [
+      'more distinct patterns than the bound',
+      {
+        properties: Object.fromEntries(
+          [...Array(9).keys()].map((k) => [`p${k}`, { pattern: `^${k}` }])
+        ),
+      },
+      'more than 8 distinct patterns',
+    ],
   ])('%s: bad_request, naming the reason', (_name, filter, why) => {
     let err: unknown;
     try {
@@ -234,5 +312,47 @@ describe('createFilterCompiler with patterns', () => {
     expect(err).toBeInstanceOf(ProtocolError);
     expect((err as ProtocolError).code).toBe('bad_request');
     expect((err as Error).message).toContain(why);
+  });
+
+  it('the filter bounds: the total is one largest pattern, and 8 distinct patterns', () => {
+    expect([FILTER_PATTERNS_MAX_TOTAL_SIZE, FILTER_MAX_PATTERNS]).toEqual([1024, 8]);
+  });
+
+  // Positive controls for the filter bounds: just under each, the filter is applied.
+  it('patterns under the total size (two of size 401) are applied', () => {
+    const f = compile({
+      allOf: ['x', 'y'].map((e) => ({ properties: { d: { pattern: `[ab]{400}${e}` } } })),
+    })!;
+    expect([f({ d: `${'a'.repeat(400)}x${'b'.repeat(400)}y` }), f({ d: 'a'.repeat(400) })]).toEqual(
+      [true, false]
+    );
+  });
+
+  // ajv's meta-schema holds patterns of its own; they must not count against the filter's bound.
+  it('8 distinct patterns, with a $id, are applied', () => {
+    const f = compile({
+      $id: 'urn:example:filter',
+      properties: Object.fromEntries(
+        [...Array(8).keys()].map((k) => [`p${k}`, { pattern: `^${k}` }])
+      ),
+    })!;
+    expect([f({ p3: '3' }), f({ p3: '4' })]).toEqual([true, false]);
+  });
+});
+
+describe('the filter cache counts patterns, not only filters', () => {
+  // A cached pattern can keep megabytes of DFA, so the cache is emptied by its pattern count.
+  it('is emptied once its filters hold more than maxCachedPatterns patterns', () => {
+    const compile = createFilterCompiler(100, 16);
+    const first = compile({ pattern: '^a' });
+    for (let k = 0; k < 16; k++) compile({ pattern: `^b${k}` });
+    expect(compile({ pattern: '^a' })).not.toBe(first);
+  });
+
+  it('positive control: under the count, a filter is served from the cache', () => {
+    const compile = createFilterCompiler(100, 16);
+    const first = compile({ pattern: '^a' });
+    for (let k = 0; k < 10; k++) compile({ pattern: `^b${k}` });
+    expect(compile({ pattern: '^a' })).toBe(first);
   });
 });

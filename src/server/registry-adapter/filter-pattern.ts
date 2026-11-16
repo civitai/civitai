@@ -21,24 +21,39 @@ import { RE2JS } from 're2js';
  *   - pattern modifiers (`(?i:...)`);
  *   - `\S` inside a character class (ECMA's `\s` is Unicode-aware, RE2's is ASCII, and the
  *     complement cannot be written inside a class);
- *   - a `\p{...}` other than a General_Category short name (`\p{L}`, `\p{Lu}`, `gc=Lu`) or a
- *     script (`sc=Greek`, `Script=Greek`); a binary property or a long category name is refused;
+ *   - a Unicode property escape (`\p{...}`, `\P{...}`): re2js's Unicode tables can be of another
+ *     Unicode version than the platform's, and spell some property names differently, so the
+ *     same escape can mean another set of code points;
  *   - a lone surrogate (`\uD800` not followed by its low half);
- *   - a counted repetition RE2 refuses (a count over 1000, or nested counts whose product is).
+ *   - a pattern whose size, with its counted repetitions multiplied out, is over
+ *     {@link FILTER_PATTERN_MAX_SIZE} ({@link translateFilterPattern} says how it is counted).
  * Bridged, so the meaning is ECMA's:
  *   - `.` excludes ECMA's line terminators (`\n`, `\r`, U+2028, U+2029), where RE2's excludes
  *     only `\n`;
  *   - `\s` and `\S` are ECMA's WhiteSpace and LineTerminator set (including `\v`, U+00A0, U+FEFF
  *     and the Zs spaces), where RE2's `\s` is ASCII;
  *   - escapes (`\uXXXX`, a surrogate pair, `\u{...}`, `\xXX`, `\cX`, `\0`) and every literal are
- *     written as code points, `[]` (matches nothing) and `[^]` (matches anything) as ranges.
- * Not bridged: `\p{...}` uses re2js's Unicode tables, which can be of another Unicode version
- * than the platform's, so a code point assigned in only one of them can match differently.
+ *     written as code points, `[]` (matches nothing) and `[^]` (matches anything) as ranges;
+ *   - a count is written without leading zeros: ECMA reads `a{01}` as `a{1}`, RE2 as the literal
+ *     text `a{01}`.
  * `\d`, `\w` and `\b` are ASCII in both (ECMA without the `i` flag).
+ * Known gap, not bridged: `\B` at a position between the two halves of a surrogate pair in the
+ * input. V8 can find `\B` there, where RE2 steps by code point and never stops between the
+ * halves, so a pattern whose match depends on that position can differ.
  */
 
 /** Longest `pattern` (or `patternProperties` key) a filter may hold, in UTF-16 code units. */
 export const FILTER_PATTERN_MAX_LENGTH = 1024;
+
+/**
+ * Largest size a pattern may have, counted as {@link translateFilterPattern} says: the size of
+ * the longest literal pattern {@link FILTER_PATTERN_MAX_LENGTH} admits, so counted repetitions
+ * never make a pattern larger than a literal one of the allowed length. Matching is linear in the
+ * input with a factor of the size (the NFA can hold one thread per instruction), so the size, not
+ * the length, is what a match costs: `.{1000}` written 146 times fits in 1022 characters, is size
+ * 146 000, and took ~0.7 s against a 10 000-character string.
+ */
+export const FILTER_PATTERN_MAX_SIZE = FILTER_PATTERN_MAX_LENGTH;
 
 /** A pattern this source will not evaluate. Its message is the `bad_request` sent. */
 export class FilterPatternError extends Error {}
@@ -52,14 +67,6 @@ const DOT = '[^\\x{A}\\x{D}\\x{2028}\\x{2029}]';
 
 const ANYTHING = '\\x{0}-\\x{10FFFF}';
 
-/** General_Category short names, as both ECMA and RE2 spell them. */
-const GENERAL_CATEGORIES: ReadonlySet<string> = new Set(
-  (
-    'L Lu Ll Lt Lm Lo M Mn Mc Me N Nd Nl No P Pc Pd Ps Pe Pi Pf Po ' +
-    'S Sm Sc Sk So Z Zs Zl Zp C Cc Cf Cs Co'
-  ).split(' ')
-);
-
 const SYNTAX_CHARACTERS = '^$\\.*+?()[]{}|/';
 
 /** An escape: one code point, or a class (`out` outside a class, `inside` within one). */
@@ -70,12 +77,27 @@ type Escape =
 
 /**
  * `pattern`, an ECMA-262 regular expression with the `u` flag, as an RE2 expression of the same
- * meaning; throws {@link FilterPatternError} for one that is not valid ECMA-262 or that has no
- * RE2 equivalent here. The input is validated by the platform parser first (parsing does no
- * matching, so it is not where backtracking costs), so the walk below only sees well-formed
- * syntax; anything it does not recognise is refused rather than passed through.
+ * meaning; throws {@link FilterPatternError} for one that is not valid ECMA-262, that has no RE2
+ * equivalent here, or whose size is over {@link FILTER_PATTERN_MAX_SIZE}. The input is validated
+ * by the platform parser first (parsing does no matching, so it is not where backtracking costs),
+ * so the walk below only sees well-formed syntax; anything it does not recognise is refused rather
+ * than passed through.
  */
 export function translateFilterPattern(pattern: string): string {
+  return translate(pattern).re2;
+}
+
+/**
+ * {@link translateFilterPattern}, with the pattern's size: each atom (a code point, a class, `.`,
+ * an escape, an assertion) and each `|` is 1, a group is 1 plus the sum of what it holds (so an
+ * empty group repeated still counts), and a count multiplies the atom or group before it by its
+ * largest repeat (`{n}` and `{n,m}` by the larger of n and m, `{n,}` by n, at least 1). `*`, `+`
+ * and `?` multiply by 1, as RE2 compiles them to a loop. Nested counts multiply through, so
+ * `(?:a{10}){10}` is 110 and `.{1000}` written twice is 2000. A literal pattern's size is its
+ * length. RE2 compiles a pattern to about twice its size in instructions (measured: size 1001 to
+ * 2003, 23 to 26), and the size is checked as it is counted, before anything is compiled.
+ */
+function translate(pattern: string): { re2: string; size: number } {
   const quoted = JSON.stringify(pattern.length > 80 ? `${pattern.slice(0, 80)}…` : pattern);
   const refuse = (what: string): never => {
     throw new FilterPatternError(
@@ -109,22 +131,6 @@ export function translateFilterPattern(pattern: string): string {
   const readHex = (from: number, count: number) => {
     const text = cps.slice(from, from + count).join('');
     return /^[0-9A-Fa-f]+$/.test(text) && text.length === count ? parseInt(text, 16) : null;
-  };
-
-  const propertyClass = (body: string, negated: boolean) => {
-    const eq = body.indexOf('=');
-    const [name, value] = eq < 0 ? [null, body] : [body.slice(0, eq), body.slice(eq + 1)];
-    let re2Name: string | null = null;
-    if (
-      (name === null || name === 'gc' || name === 'General_Category') &&
-      GENERAL_CATEGORIES.has(value)
-    ) {
-      re2Name = value;
-    } else if ((name === 'sc' || name === 'Script') && /^[A-Za-z_]+$/.test(value)) {
-      re2Name = value;
-    }
-    if (re2Name === null) return refuse(`the Unicode property escape \\p{${body}}`);
-    return `\\${negated ? 'P' : 'p'}{${re2Name}}`;
   };
 
   /** The escape at `i` (a backslash), consumed. */
@@ -196,13 +202,8 @@ export function translateFilterPattern(pattern: string): string {
         return { kind: 'char', codePoint: value };
       }
       case 'p':
-      case 'P': {
-        const close = cps.indexOf('}', i);
-        const body = cps.slice(i + 1, close).join('');
-        i = close + 1;
-        const re2 = propertyClass(body, c === 'P');
-        return { kind: 'class', out: re2, inside: re2 };
-      }
+      case 'P':
+        return refuse('a Unicode property escape');
       case 'k':
       case '1':
       case '2':
@@ -261,21 +262,46 @@ export function translateFilterPattern(pattern: string): string {
     return `[${negated ? '^' : ''}${members}]`;
   };
 
+  /**
+   * The size counted so far, one entry per open group (the outermost is the pattern): `sum` is
+   * what the group holds, `last` the size of its latest atom, which a following count multiplies.
+   */
+  const sizes: Array<{ sum: number; last: number }> = [{ sum: 0, last: 0 }];
+  const top = () => sizes[sizes.length - 1];
+  const tooBig = () =>
+    new FilterPatternError(
+      `filter pattern ${quoted} is larger than ${FILTER_PATTERN_MAX_SIZE} once its counted ` +
+        'repetitions are multiplied out (a{n} counts as n copies of a), which this registry does not apply'
+    );
+  // Checked at every step, so no size ever grows past the bound (nor to Infinity, which a later
+  // `{0}` would turn into NaN).
+  const grow = (sum: number, last: number) => {
+    if (sum > FILTER_PATTERN_MAX_SIZE || last > FILTER_PATTERN_MAX_SIZE) throw tooBig();
+    top().sum = sum;
+    top().last = last;
+  };
+  const atom = (size: number) => grow(top().sum + size, size);
+  const openGroup = () => sizes.push({ sum: 0, last: 0 });
+
   let out = '';
   while (i < cps.length) {
     const c = at(0);
     if (c === '\\') {
       const e = readEscape(false);
       out += e.kind === 'char' ? hex(e.codePoint) : e.out;
+      atom(1);
     } else if (c === '[') {
       out += readClass();
+      atom(1);
     } else if (c === '(') {
       if (at(1) !== '?') {
         out += '(';
         i += 1;
+        openGroup();
       } else if (at(2) === ':') {
         out += '(?:';
         i += 3;
+        openGroup();
       } else if (at(2) === '=' || at(2) === '!') {
         refuse('a lookahead');
       } else if (at(2) === '<' && (at(3) === '=' || at(3) === '!')) {
@@ -287,31 +313,63 @@ export function translateFilterPattern(pattern: string): string {
           refuse(`the group name ${JSON.stringify(name)}`);
         out += `(?P<${name}>`;
         i = close + 1;
+        openGroup();
       } else {
         refuse('a pattern modifier');
       }
     } else if (c === '{') {
-      // A quantifier: the `u` flag makes any other brace a syntax error.
+      // A quantifier: the `u` flag makes any other brace a syntax error, so this is `{n}`, `{n,}`
+      // or `{n,m}`. Its counts are written back as plain integers: RE2 reads a count with a
+      // leading zero (`{01}`) as literal text, where ECMA reads it as the number.
       const close = cps.indexOf('}', i);
-      out += cps.slice(i, close + 1).join('');
+      const counts = /^(\d+)(,(\d*))?$/.exec(cps.slice(i + 1, close).join(''));
+      if (!counts) return refuse('a quantifier it does not recognise');
+      const min = Number(counts[1]);
+      const max = counts[3] ? Number(counts[3]) : null;
+      const times = counts[2] === undefined ? min : max === null ? Math.max(min, 1) : max;
+      const { sum, last } = top();
+      // The latest atom is now `times` copies of itself. A count over the bound is refused on its
+      // own, so `last * times` is never 0 * Infinity.
+      if (times > FILTER_PATTERN_MAX_SIZE || last * times > FILTER_PATTERN_MAX_SIZE) throw tooBig();
+      grow(sum - last + last * times, last * times);
+      out += counts[2] === undefined ? `{${min}}` : max === null ? `{${min},}` : `{${min},${max}}`;
       i = close + 1;
+    } else if (c === ')') {
+      const group = sizes.pop()!;
+      out += c;
+      i += 1;
+      atom(group.sum + 1);
     } else if (c === '.') {
       out += DOT;
       i += 1;
-    } else if ('^$|*+?)'.includes(c)) {
+      atom(1);
+    } else if ('^$'.includes(c)) {
+      out += c;
+      i += 1;
+      atom(1);
+    } else if (c === '|') {
+      out += c;
+      i += 1;
+      grow(top().sum + 1, 0);
+    } else if ('*+?'.includes(c)) {
+      // `*`, `+` and `?` (also the lazy mark after a count) multiply by 1.
       out += c;
       i += 1;
     } else {
       out += hex(c.codePointAt(0)!);
       i += 1;
+      atom(1);
     }
   }
-  return out;
+  return { re2: out, size: sizes[0].sum };
 }
 
+/** A compiled pattern, with its size as {@link translateFilterPattern} counts it. */
+export type CompiledFilterPattern = RegExpLike & { readonly size: number };
+
 /** `pattern` compiled for unanchored, linear-time matching; throws {@link FilterPatternError}. */
-export function compileFilterPattern(pattern: string): RegExpLike {
-  const re2 = translateFilterPattern(pattern);
+export function compileFilterPattern(pattern: string): CompiledFilterPattern {
+  const { re2, size } = translate(pattern);
   let compiled: RE2JS;
   try {
     compiled = RE2JS.compile(re2);
@@ -328,24 +386,71 @@ export function compileFilterPattern(pattern: string): RegExpLike {
     test: (s: string) => compiled.test(s),
     // ajv keys a compiled pattern by `toString()` within one schema, so it must name the pattern.
     toString: () => `/${pattern}/u (re2)`,
-  } as RegExpLike;
+    size,
+  } as CompiledFilterPattern;
 }
 
 /**
- * An ajv `code.regExp` engine compiling with {@link compileFilterPattern}, each distinct pattern
- * once per engine (ajv asks again for each place a pattern appears). One engine serves one ajv
- * instance, which compiles one filter.
+ * An ajv `code.regExp` engine that counts only once armed, and says how many distinct patterns
+ * it counted.
  */
-export function filterRegExpEngine(): RegExpEngine {
-  const compiled = new Map<string, RegExpLike>();
+export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () => number };
+
+/**
+ * An ajv `code.regExp` engine compiling with {@link compileFilterPattern}, each distinct pattern
+ * once per engine. One engine serves one ajv instance, which compiles one filter.
+ *
+ * ajv asks for a pattern once for each place it is applied (a `pattern`, a `patternProperties`
+ * key, and that key again under `additionalProperties`), and each place runs it once per value
+ * it applies to. So the sizes are summed over every ask, a repeated pattern counted each time,
+ * and a filter whose sum exceeds `maxTotalSize` throws {@link FilterPatternError}: the matching
+ * work per body is then bounded by `maxTotalSize` times the body's length. A filter with more
+ * than `maxPatterns` distinct patterns throws too: each compiled pattern keeps a lazily built DFA
+ * that re2js lets grow to ~8 MB, whatever the pattern's size.
+ *
+ * Nothing is counted before {@link FilterRegExpEngine.arm}: ajv compiles its meta-schema's own
+ * patterns (for `$id`, `$anchor` and the like) through the same engine, the first time it
+ * validates a schema, and those are not the filter's.
+ */
+export function filterRegExpEngine({
+  maxTotalSize,
+  maxPatterns,
+}: {
+  maxTotalSize: number;
+  maxPatterns: number;
+}): FilterRegExpEngine {
+  const compiled = new Map<string, CompiledFilterPattern>();
+  const counted = new Set<string>();
+  let armed = false;
+  let total = 0;
   const engine = (pattern: string) => {
+    if (armed && !counted.has(pattern)) {
+      if (counted.size >= maxPatterns) {
+        throw new FilterPatternError(
+          `filter has more than ${maxPatterns} distinct patterns, which this registry does not apply`
+        );
+      }
+      counted.add(pattern);
+    }
     let rx = compiled.get(pattern);
     if (!rx) {
       rx = compileFilterPattern(pattern);
       compiled.set(pattern, rx);
     }
+    if (!armed) return rx;
+    total += rx.size;
+    if (total > maxTotalSize) {
+      throw new FilterPatternError(
+        `filter's patterns are larger than ${maxTotalSize} in total, counting each place a ` +
+          'pattern is applied and its counted repetitions multiplied out, which this registry does not apply'
+      );
+    }
     return rx;
   };
+  engine.arm = () => {
+    armed = true;
+  };
+  engine.distinct = () => counted.size;
   // ajv writes `code` into a validator's source only when generating standalone code, which a
   // filter never is.
   engine.code = 'filterRegExp';

@@ -1,6 +1,11 @@
 import type { ValidateFunction } from 'ajv';
 import Ajv2020 from 'ajv/dist/2020';
-import { FilterPatternError, filterRegExpEngine } from '~/server/registry-adapter/filter-pattern';
+import type { FilterRegExpEngine } from '~/server/registry-adapter/filter-pattern';
+import {
+  FILTER_PATTERN_MAX_SIZE,
+  FilterPatternError,
+  filterRegExpEngine,
+} from '~/server/registry-adapter/filter-pattern';
 import type { JsonSchema } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 
@@ -13,18 +18,38 @@ export function newValidator() {
 }
 
 /**
+ * Largest total size of a filter's patterns, each counted once per place it is applied and as
+ * {@link FILTER_PATTERN_MAX_SIZE} counts it: all of a filter's patterns together may be no larger
+ * than one of the largest. A pattern runs on re2js's DFA where its states fit the DFA's memory,
+ * and on its NFA, which takes time in its size times the input's length, where they do not.
+ * Measured against 20 000 characters of random `a`/`b`, through ajv: `[ab]*a[ab]{500}$` (size
+ * 503) ~110 ms on every match (~640 ms against 200 000), `[ab]*a[ab]{1000}$` (1003) ~165 ms, two
+ * patterns of 1007 in all that both run ~220 ms, `^x` 0 ms; the 146-fold `.{1000}` the size bound
+ * refuses took ~2.4 s. That is the worst case found, for text that keeps the DFA from fitting; a
+ * pattern whose DFA fits runs at ~0.1 ms per 20 000 characters once it is built.
+ */
+export const FILTER_PATTERNS_MAX_TOTAL_SIZE = FILTER_PATTERN_MAX_SIZE;
+
+/**
+ * Most distinct patterns a filter may hold. Each keeps a DFA re2js lets grow to ~8 MB as bodies
+ * are matched (measured: ~8.7 MB of heap for `.{0,1000}[xy]` after one 20 000-character match,
+ * ~4 MB for the 23-sized `[ab]*a[ab]{20}$`), so this bounds what one filter can retain.
+ */
+export const FILTER_MAX_PATTERNS = 8;
+
+/**
  * {@link newValidator} for a request filter: its `pattern` and `patternProperties` run on a
  * linear-time engine (`filter-pattern.ts`), since a filter's patterns are the consumer's. The
  * other validators keep the platform RegExp: their schemas are this source's own. With `strict`
  * off ajv never runs a pattern at compile time either (its `allowMatchingProperties` check, the
  * one place it calls `new RegExp` directly, is a strict-mode check).
  */
-function newFilterValidator() {
+function newFilterValidator(regExp: FilterRegExpEngine) {
   return new Ajv2020({
     strict: false,
     validateFormats: false,
     allErrors: false,
-    code: { regExp: filterRegExpEngine() },
+    code: { regExp },
   });
 }
 
@@ -39,11 +64,15 @@ export const FILTER_MAX_DEPTH = 32;
  * `$ref`, `$dynamicRef`, `$recursiveRef`, `$defs`, `definitions`. A reference lets a small filter
  * reuse a subschema, so definitions that each hold two references to the next form a DAG whose
  * evaluation doubles at every level. Without them every subschema is evaluated once per value it
- * applies to, so the work is bounded by the filter's size times the body's.
+ * applies to, so the work outside patterns is bounded by the filter's size times the body's.
  *
  * `pattern` and `patternProperties` are applied, not refused: they run on a linear-time engine
- * (`filter-pattern.ts`), and a pattern it cannot run with ECMA-262's meaning (a lookaround, a
- * backreference) or one over its length bound is `bad_request` when the filter is compiled.
+ * (`filter-pattern.ts`), whose cost per character is the pattern's size (its counted repetitions
+ * multiplied out), not its length. So a pattern's size is bounded ({@link FILTER_PATTERN_MAX_SIZE})
+ * and so is the sum over every place a filter applies one ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE}),
+ * and the pattern work is bounded by that sum times the body's length. A pattern it cannot run
+ * with ECMA-262's meaning (a lookaround, a backreference), one over its length or size bound, or a
+ * filter over the total or {@link FILTER_MAX_PATTERNS}, is `bad_request` when it is compiled.
  */
 const REFUSED_FILTER_KEYS = [
   '$ref',
@@ -87,7 +116,9 @@ const NAME_MAP_KEYWORDS: ReadonlySet<string> = new Set([
  * for filtered.
  *
  * ajv validation is synchronous and runs per entity, per poll, on the one event loop that serves
- * every stream, so a costly filter would stall every consumer, not just its sender.
+ * every stream, so a costly filter would stall every consumer, not just its sender. The work
+ * outside patterns is bounded by the filter's size times the body's; pattern work by
+ * {@link FILTER_PATTERNS_MAX_TOTAL_SIZE} times the body's length.
  */
 export function filterRefusal(filter: unknown): string | null {
   // `names`: the node is a NAME_MAP_KEYWORDS map, whose keys are names rather than keywords.
@@ -127,13 +158,16 @@ export function filterRefusal(filter: unknown): string | null {
  * ({@link FilterPatternError}) — is `bad_request`, as is one that is not a JSON Schema: a
  * registry that accepts a filter applies it in full, and never ignores one (spec rule 6).
  *
- * Compiled filters are cached by their text, at most `maxCached` of them (the cache is emptied
- * when full), so many distinct filters cost compile time, never unbounded memory.
+ * Compiled filters are cached by their text, at most `maxCached` of them holding at most
+ * `maxCachedPatterns` patterns in all (the cache is emptied when either is full), so many distinct
+ * filters cost compile time, never unbounded memory: a cached pattern can keep ~8 MB of DFA
+ * ({@link FILTER_MAX_PATTERNS}), so the patterns, not the filters, are what the cache must count.
  */
 export type BodyPredicate = (body: unknown) => boolean;
 
-export function createFilterCompiler(maxCached = 100) {
+export function createFilterCompiler(maxCached = 100, maxCachedPatterns = 16) {
   const cache = new Map<string, BodyPredicate>();
+  let cachedPatterns = 0;
   return (filter: JsonSchema | undefined): BodyPredicate | undefined => {
     if (filter === undefined) return undefined;
     const text = JSON.stringify(filter);
@@ -148,16 +182,30 @@ export function createFilterCompiler(maxCached = 100) {
     const hit = cache.get(text);
     if (hit) return hit;
     let validate: ValidateFunction;
+    const regExp = filterRegExpEngine({
+      maxTotalSize: FILTER_PATTERNS_MAX_TOTAL_SIZE,
+      maxPatterns: FILTER_MAX_PATTERNS,
+    });
     try {
+      const ajv = newFilterValidator(regExp);
+      // ajv's meta-schema has patterns of its own, compiled through `regExp` the first time a
+      // schema is validated; they are compiled now, before the engine counts the filter's.
+      ajv.validateSchema({});
+      regExp.arm();
       // Each pattern is compiled here, once per distinct pattern, never per entity.
-      validate = newFilterValidator().compile(filter);
+      validate = ajv.compile(filter);
     } catch (err) {
       if (err instanceof FilterPatternError) throw new ProtocolError('bad_request', err.message);
       throw new ProtocolError('bad_request', 'filter is not a valid JSON Schema');
     }
     const predicate = (body: unknown) => validate(body) === true;
-    if (cache.size >= maxCached) cache.clear();
+    const patterns = regExp.distinct();
+    if (cache.size >= maxCached || cachedPatterns + patterns > maxCachedPatterns) {
+      cache.clear();
+      cachedPatterns = 0;
+    }
     cache.set(text, predicate);
+    cachedPatterns += patterns;
     return predicate;
   };
 }
