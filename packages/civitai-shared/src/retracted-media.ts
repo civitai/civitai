@@ -6,7 +6,7 @@ import { heldImageSql } from './held-media';
  * same rules.
  */
 
-/** The block reasons this path serves. Any other reason is not served. */
+/** The block reasons this path serves. Any other reason is not served, nor is a block with none. */
 export const RETRACTED_MEDIA_REASONS = ['tos', 'moderated', 'Moderated', 'AiNotVerified'] as const;
 
 /** Browsing levels at which a minor-flagged image is still served: PG and PG-13. */
@@ -40,7 +40,7 @@ export function retractedImageSql(image: string): string {
   const levels = MINOR_SERVABLE_LEVELS.join(', ');
   return `(
     ${i}.ingestion = 'Blocked'
-    AND (${i}."blockedFor" IS NULL OR ${i}."blockedFor" IN (${reasons}))
+    AND ${i}."blockedFor" IS NOT NULL AND ${i}."blockedFor" IN (${reasons})
     AND ((${i}."needsReview" IS DISTINCT FROM 'minor' AND ${i}.minor IS NOT TRUE)
       OR ${i}."nsfwLevel" IN (${levels}))
     AND NOT EXISTS (SELECT 1 FROM "EvidenceHoldImage" rh WHERE rh."imageId" = ${i}.id)

@@ -104,14 +104,20 @@ const { getRetractedMedia } = await import('~/server/services/retracted-media.se
 const served = async (id: number) => (await getRetractedMedia(id)) !== null;
 
 describe('getRetractedMedia', () => {
-  it('serves a blocked image for each listed reason, and with no reason', async () => {
-    for (const id of [1, 2, 3, 4, 5])
+  it('serves a blocked image for each listed reason', async () => {
+    for (const id of [1, 2, 3, 5])
       expect({ id, served: await served(id) }).toEqual({ id, served: true });
     expect(await getRetractedMedia(1)).toEqual({ url: 'key-1', type: 'image', mimeType: null });
   });
 
   it('survives a report with a malformed secondary user or image list', async () => {
     expect(await served(1)).toBe(true);
+  });
+
+  // Deliberate: a block with no reason is refused. Do not re-admit it without a review of every
+  // path that blocks an image.
+  it('refuses a block with no reason', async () => {
+    expect(await served(4)).toBe(false);
   });
 
   it('refuses any other block reason', async () => {
