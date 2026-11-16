@@ -2738,7 +2738,10 @@ export const REDIS_SYS_KEYS = {
       the reversal is unrecoverable.
      */
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
-    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days).
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days). Written to
+    // the cluster now (REDIS_KEYS.SYSTEM.UPLOAD_KEY_OWNER); read here only as the fallback for
+    // records written before the move. Remove with that fallback, after
+    // UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL in src/server/services/image-url-ownership.ts.
     UPLOAD_KEY_OWNER: 'system:upload-key-owner',
     // `<prefix>:<YYYY-MM-DD>:<caller>:<host bucket>` = a HyperLogLog of the users who sent a
     // generation input url on that external host bucket that UTC day (TTL 2 days).
@@ -3235,6 +3238,10 @@ const REDIS_KEYS_UNPREFIXED = {
     PUSH_QUOTA: 'system:push-quota',
     CATEGORIES: 'system:categories',
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days). A cache: the
+    // cache cluster can evict a record before its TTL under memory pressure, so 30 days is a
+    // maximum. A miss falls back to the upload request log, then the caller's own Image rows.
+    UPLOAD_KEY_OWNER: 'system:upload-key-owner',
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',

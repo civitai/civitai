@@ -121,11 +121,11 @@ beforeEach(async () => {
   holder.scannedRows = false;
   holder.refuseExternalApp = true;
   holder.clickhouseDown = false;
-  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+  redisMock.redis.set.mockImplementation((async (key: string, value: string) => {
     redis.set(key, value);
     return 'OK';
   }) as never);
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
 });
 
@@ -510,7 +510,7 @@ describe('an App Blocks generation source', () => {
 
     it('refuses a row-less key while an issue store is unreadable', async () => {
       await recordUploadKeyOwner(OWN, CALLER);
-      redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+      redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       loggingMock.logToAxiom.mockClear();
       expect(await check([OWN], 'appBlocksInlineComfy', true)).toBe(unusable);
       logged('store-unreadable');
@@ -537,7 +537,7 @@ describe('an App Blocks generation source', () => {
     await recordUploadKeyOwner(own, CALLER);
     const unusable = `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`;
 
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
     loggingMock.logToAxiom.mockClear();
     expect(await check([own], 'appBlocksPassThrough', true)).toBe(unusable);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
@@ -547,7 +547,7 @@ describe('an App Blocks generation source', () => {
     expect(logged).not.toContain(own);
     expect(logged).not.toContain(own.replace(/-/g, ''));
 
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
     expect(await check([CDN(own)], 'appBlocksPassThrough')).toMatch(/^refused: /);
 
     holder.clickhouseDown = true;
@@ -1264,11 +1264,11 @@ describe('assertGenerationInputsUsable', () => {
   it('refuses a key in an allowed external url when neither issue record store can be read', async () => {
     const foreign = `https://replicate.example/pbxt/${KEY}/out.png`;
     // Either store alone being unreadable is not enough.
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
     expect(await gate([foreign], 'generateFromGraph')).toBe('accepted');
     holder.clickhouseDown = true;
     expect(await gate([foreign], 'generateFromGraph')).toBe('accepted');
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
     expect(await gate([foreign], 'generateFromGraph')).toBe('refused');
   });
 

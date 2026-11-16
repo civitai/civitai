@@ -50,7 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.image.create.mockResolvedValue({ id: 4242 } as never);
   // The fixture key was issued to user 1, who saves every image here.
-  redisMock.sysRedis.mGet.mockResolvedValue(['1'] as never);
+  redisMock.redis.mGet.mockResolvedValue(['1'] as never);
 });
 
 describe('block provenance metadata keys', () => {
