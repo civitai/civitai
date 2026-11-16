@@ -62,7 +62,7 @@ export type CasesTables = {
     is_test: Generated<boolean>;
     related_case_id: string | null;
     submitter_user_id: number | null;
-    /** Personal data. Read only behind the `cases.pii` grant, and every read is recorded. */
+    /** Personal data: `case_record` is one of the four tables the read-only role cannot read. */
     submitter: JsonWithDefault;
     statements: JsonWithDefault;
     details: JsonWithDefault;
