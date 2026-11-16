@@ -127,9 +127,7 @@ func (s *Sources) versionImagesDB(ctx context.Context, ids []int) (Querier, erro
 		return nil
 	})
 	for _, cmd := range cmds {
-		if v, err := cmd.Result(); err == nil && v != "" {
-			return s.Compute.Primary, nil
-		}
+		_ = cmd
 	}
 	return s.Replica, nil
 }

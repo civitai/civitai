@@ -280,7 +280,7 @@ const versionImagesTTL = ttlDay
 // keep the model out of feeds for long.
 const (
 	versionImagesEX         = 2 * versionImagesTTL
-	versionImagesNotFoundEX = time.Minute
+	versionImagesNotFoundEX = time.Hour
 )
 
 var (
@@ -296,7 +296,7 @@ var (
 	tagIDsSpec = lookupSpec{cache: MissTagIDs, reason: "tag-ids-miss", key: KeyTagIDs, idKey: "imageId", ttl: tagIDsEX, notFoundTTL: tagIDsEX}
 	// imagesForModelVersionsCache: see versionImagesEX; cacheNotFound (default) on.
 	versionImagesSpec = lookupSpec{cache: MissVersionImages, reason: "model-images-miss", key: KeyVersionImages, idKey: "modelVersionId",
-		ttl: versionImagesEX, notFoundTTL: versionImagesNotFoundEX, probeLooksUp: true}
+		ttl: versionImagesEX, notFoundTTL: versionImagesNotFoundEX, probeLooksUp: false}
 )
 
 // missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
