@@ -92,6 +92,8 @@ import {
   reserveSharedWrite,
 } from '~/server/utils/shared-storage-rate-limit';
 import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
+import { recordAppBlockRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
+import type { AppBlockRefusalBucket } from '~/server/metrics/app-block-runtime.metrics';
 import {
   tagSharedStorageOutcome,
   withSharedStorageMetrics,
@@ -801,6 +803,30 @@ export interface SharedValueInput {
 type SharedWriteContext = SharedContext & { uid: number };
 
 /**
+ * The refusal of every limiter on this surface: counts it per app
+ * (`civitai_app_block_rate_limit_refusals_total{surface="shared_storage"}`, plus a throttled log
+ * line), then throws the house TOO_MANY_REQUESTS. Recorded HERE rather than at the REST twins,
+ * so a refusal is counted once whichever transport reached the function.
+ */
+function refuseSharedRateLimited(
+  rl: { retryAfterSeconds: number },
+  message: string,
+  bucket: AppBlockRefusalBucket,
+  who: { appBlockId: string; uid: number; endpoint: string }
+): never {
+  recordAppBlockRateLimitRefusal({
+    appBlockId: who.appBlockId,
+    surface: 'shared_storage',
+    bucket,
+    endpoint: who.endpoint,
+    retryAfterSeconds: rl.retryAfterSeconds,
+    userId: who.uid,
+    status: 429,
+  });
+  throwSharedRateLimited(rl, message);
+}
+
+/**
  * Runs an append/update against the (user, app) write budget: a token is reserved before
  * moderation and given back unless the write calls `markLanded` — so only landed writes spend
  * the budget, while moderation stays bounded per landed write.
@@ -827,8 +853,14 @@ async function withSharedWriteBudget<T>(
   write: (markLanded: () => void) => Promise<T>
 ): Promise<T> {
   const budget = await reserveSharedWrite(ctx.uid, ctx.appBlockId);
-  if (!budget.allowed)
-    throwSharedRateLimited(budget, `Too many submissions — retry in ${budget.retryAfterSeconds}s`);
+  if (!budget.allowed) {
+    refuseSharedRateLimited(
+      budget,
+      `Too many submissions — retry in ${budget.retryAfterSeconds}s`,
+      budget.binding === 'rejections' ? 'shared-write-rejections' : 'shared-write',
+      { appBlockId: ctx.appBlockId, uid: ctx.uid, endpoint: 'withSharedWriteBudget' }
+    );
+  }
   let landed = false;
   try {
     return await write(() => {
@@ -1247,7 +1279,13 @@ async function voteSharedRowUnmetered(blockToken: string, key: string): Promise<
   const uid = userId as number;
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) throwSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed) {
+    refuseSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`, 'vote', {
+      appBlockId,
+      uid,
+      endpoint: 'vote',
+    });
+  }
 
   const pool = requireAppsDb();
   // Visibility/existence pre-check → NOT_FOUND for hidden OR missing (H2). The
@@ -1304,7 +1342,13 @@ async function unvoteSharedRowUnmetered(
   const uid = userId as number;
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed) throwSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed) {
+    refuseSharedRateLimited(rl, `Too many votes — retry in ${rl.retryAfterSeconds}s`, 'vote', {
+      appBlockId,
+      uid,
+      endpoint: 'unvote',
+    });
+  }
 
   const pool = requireAppsDb();
   const rows = (
@@ -1342,8 +1386,14 @@ async function withdrawSharedRowUnmetered(
   // Own per-minute bucket; why it is neither the report daily bucket nor the vote
   // bucket lives beside the constants in shared-storage-rate-limit.ts.
   const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
-  if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed) {
+    refuseSharedRateLimited(
+      rl,
+      `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`,
+      'withdraw',
+      { appBlockId, uid, endpoint: 'withdraw' }
+    );
+  }
 
   const pool = requireAppsDb();
   const client = await pool.connect();
@@ -1395,8 +1445,13 @@ async function reportSharedRowUnmetered(
   // the per-(user, app) report velocity on its own daily bucket (fail-open, like the
   // other buckets — the containment is defence-in-depth, not the auth boundary).
   const rl = await checkSharedReportRateLimit(uid, appBlockId);
-  if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many reports — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed) {
+    refuseSharedRateLimited(rl, `Too many reports — retry in ${rl.retryAfterSeconds}s`, 'report', {
+      appBlockId,
+      uid,
+      endpoint: 'report',
+    });
+  }
 
   const pool = requireAppsDb();
   const exists = (await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [key]))
@@ -1597,8 +1652,13 @@ async function incrementSharedCounterUnmetered(
   const uid = userId as number; // non-null (write path ran the trust gate)
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
-  if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many increments — retry in ${rl.retryAfterSeconds}s`);
+  if (!rl.allowed) {
+    refuseSharedRateLimited(rl, `Too many increments — retry in ${rl.retryAfterSeconds}s`, 'vote', {
+      appBlockId,
+      uid,
+      endpoint: 'increment',
+    });
+  }
 
   // The key is app-chosen text that `getTop` hands to every reader, so it is moderated as one
   // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`).

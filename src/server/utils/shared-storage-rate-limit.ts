@@ -290,7 +290,9 @@ export const DOC_STORE_SHARED_WRITE_BUDGET: SharedWriteBudgetParams = {
  *
  * ARGV: op ('reserve' | 'release'), then capacity + interval for burst, daily, rejections,
  * then for 'release' whether to charge a rejection ('1').
- * Returns { 1, 0 } on success, { 0, waitMs } when a reserve is refused (state untouched).
+ * Returns { 1, 0 } on success, { 0, waitMs, bound } when a reserve is refused (state untouched),
+ * where `bound` is the bucket whose wait is longest — the one that refused it (1 burst, 2 daily,
+ * 3 rejections).
  */
 const SHARED_WRITE_BUDGET_SCRIPT = `
 local caps = { tonumber(ARGV[2]), tonumber(ARGV[4]), tonumber(ARGV[6]) }
@@ -305,11 +307,15 @@ end
 
 if ARGV[1] == 'reserve' then
   local wait = 0
+  local bound = 0
   for i = 1, 3 do
     local w = full[i] - now - (caps[i] - 1) * ivs[i]
-    if w > wait then wait = w end
+    if w > wait then
+      wait = w
+      bound = i
+    end
   end
-  if wait > 0 then return { 0, wait } end
+  if wait > 0 then return { 0, wait, bound } end
   full[1] = full[1] + ivs[1]
   full[2] = full[2] + ivs[2]
 else
@@ -341,7 +347,22 @@ export type SharedWriteReservation =
       /** Give the write token back; `rejected` also charges the rejection bucket. Never throws. */
       release: (opts: { rejected: boolean }) => Promise<void>;
     }
-  | { allowed: false; retryAfterSeconds: number };
+  | {
+      allowed: false;
+      retryAfterSeconds: number;
+      /**
+       * Which allowance refused it: `burst` or `daily` (writes that landed), or `rejections`
+       * (writes refused after the reserve). Absent only on a reply this code cannot read.
+       */
+      binding?: SharedWriteBinding;
+    };
+
+export type SharedWriteBinding = 'burst' | 'daily' | 'rejections';
+const SHARED_WRITE_BINDINGS: Record<number, SharedWriteBinding> = {
+  1: 'burst',
+  2: 'daily',
+  3: 'rejections',
+};
 
 function sharedWriteBudgetKey(keyspace: string, userId: number, appBlockId: string) {
   return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:${keyspace}:${appBlockId}:${userId}`;
@@ -376,12 +397,14 @@ export async function reserveSharedWrite(
   } catch {
     return { allowed: true, release: async () => undefined };
   }
-  const [ok, waitMs] = Array.isArray(reply) ? reply.map(Number) : [1, 0];
+  const [ok, waitMs, bound] = Array.isArray(reply) ? reply.map(Number) : [1, 0];
   if (ok !== 1) {
     const seconds = Math.ceil(waitMs / 1000);
+    const binding = SHARED_WRITE_BINDINGS[bound];
     return {
       allowed: false,
       retryAfterSeconds: Number.isFinite(seconds) ? Math.max(1, seconds) : 1,
+      ...(binding ? { binding } : {}),
     };
   }
   return {

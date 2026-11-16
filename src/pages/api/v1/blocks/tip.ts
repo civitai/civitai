@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -165,10 +166,21 @@ export const baseHandler = withAxiom(async function handler(
     // Per-instance rate limit (fail-CLOSED on redis error — money path).
     const rateLimit = await checkBlockTipRateLimit(claims.blockInstanceId);
     if (!rateLimit.allowed) {
+      recordBlockClaimsRateLimitRefusal({
+        claims,
+        surface: 'rest',
+        bucket: 'tip',
+        endpoint: 'tip',
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      });
       // TRANSIENT: a rate-limited attempt moved no money — a retry once the window
       // clears must be allowed to execute, so this is NOT cached under the idem key.
       res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
-      return { status: 429, body: { error: 'Too many tips — please retry shortly.' }, transient: true };
+      return {
+        status: 429,
+        body: { error: 'Too many tips — please retry shortly.' },
+        transient: true,
+      };
     }
 
     const subjectUser = await hydrateBlockSubject(subjectId);
@@ -202,7 +214,11 @@ export const baseHandler = withAxiom(async function handler(
     } catch {
       // TRANSIENT: the limiter is unavailable — a retry once redis recovers must be
       // allowed to execute, so this 503 is NOT cached under the idem key.
-      return { status: 503, body: { error: 'Tip limiter unavailable; please retry' }, transient: true };
+      return {
+        status: 503,
+        body: { error: 'Tip limiter unavailable; please retry' },
+        transient: true,
+      };
     }
 
     // Build a minimal ProtectedContext for the controller (it reads ctx.user +

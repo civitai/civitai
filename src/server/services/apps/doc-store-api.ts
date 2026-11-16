@@ -52,12 +52,19 @@ import type {
   BlockScopeRefusalKind,
 } from '~/server/middleware/block-scope.middleware';
 import {
+  blockClaimsAppLabel,
   markBlockRequestReadMiss,
   recordDocStoreError,
+  recordDocStoreVersionConflict,
   recordStorageTallyOp,
+  type AppBlockRefusalBucket,
   type DocStoreEndpoint,
   type StorageTallyOp,
 } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  blockSubjectUserId,
+  recordAppBlockRateLimitRefusal,
+} from '~/server/services/blocks/rate-limit-refusal.service';
 import {
   hasLinkedOAuthAccount,
   sharedWriteTrustRefusal,
@@ -124,6 +131,7 @@ import {
   DOC_STORE_TALLY_RATE_LIMIT_MAX,
   reserveSharedWrite,
   type DocStoreRateBucket,
+  type SharedWriteReservation,
 } from '~/server/utils/shared-storage-rate-limit';
 import {
   APP_STORAGE_COLLECTION_NAME_RE,
@@ -333,11 +341,71 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
   if (isDocumentReadMiss(req, err.code)) markBlockRequestReadMiss(res);
   // Every refusal that names a retry delay (a 429, or a retryable 503) says so in the header.
   const retryAfter = err.details?.retryAfter;
+  // Per-app attribution of the two refusals an app can loop on: a 429 (which limit) and a 409
+  // version conflict. Every document-store refusal leaves through here, so this is the one place.
+  if (err.code === 'rate_limited') recordRateLimited(req, err, retryAfter);
+  if (err.code === 'version_conflict') recordDocStoreVersionConflict(requestAppLabel(req));
   if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
     if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
   sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
+}
+
+/** The `app_block_id` label of the request's verified block claims (`other` without any). */
+function requestAppLabel(req: NextApiRequest): string {
+  const claims = (req as BlockScopedNextApiRequest).blockClaims;
+  return claims ? blockClaimsAppLabel(claims) : 'other';
+}
+
+/**
+ * The metric bucket of each limiter refusal this route raises, keyed on the error itself so the
+ * bucket the CLIENT is told (`details.bucket`) stays exactly as before while the metric can say
+ * more — which allowance of a token-bucket budget bound. Every `rate_limited` this module raises is
+ * built by `rateLimited` below (pinned by the ledger test); the store's own lock-timeout
+ * refusals carry `reason: 'contention'` instead.
+ */
+const REFUSAL_BUCKET = new WeakMap<DocStoreError, AppBlockRefusalBucket>();
+
+function rateLimited(
+  message: string,
+  bucket: DocStoreRateBucket | 'shared-write' | 'publish',
+  retryAfter: number,
+  metricBucket: AppBlockRefusalBucket = bucket
+): DocStoreError {
+  const err = new DocStoreError('rate_limited', message, { bucket, retryAfter });
+  REFUSAL_BUCKET.set(err, metricBucket);
+  return err;
+}
+
+/** A token-bucket budget's refusal: `<budget>-rejections` when the rejection allowance bound. */
+function budgetRefusal(
+  message: string,
+  budget: 'shared-write' | 'publish',
+  reservation: Extract<SharedWriteReservation, { allowed: false }>
+): DocStoreError {
+  return rateLimited(
+    message,
+    budget,
+    reservation.retryAfterSeconds,
+    reservation.binding === 'rejections' ? (`${budget}-rejections` as const) : budget
+  );
+}
+
+function recordRateLimited(req: NextApiRequest, err: DocStoreError, retryAfter: unknown): void {
+  const claims = (req as BlockScopedNextApiRequest).blockClaims;
+  const bucket: AppBlockRefusalBucket =
+    REFUSAL_BUCKET.get(err) ??
+    (err.details?.reason === 'contention' ? 'contention' : 'unattributed');
+  recordAppBlockRateLimitRefusal({
+    appBlockId: requestAppLabel(req),
+    surface: 'doc_store',
+    bucket,
+    endpoint: storageEndpointLabel(req),
+    retryAfterSeconds: typeof retryAfter === 'number' ? retryAfter : undefined,
+    userId: claims ? blockSubjectUserId(claims.sub) : null,
+    status: STORAGE_ERROR_STATUS.rate_limited,
+  });
 }
 
 /**
@@ -807,12 +875,7 @@ async function charge(
   const uid = access.ctx.viewerUid;
   const principal = uid === null ? `ip:${resolveClientIp(req)}` : `u:${uid}`;
   const rl = await checkDocStoreRateLimit(bucket, access.ctx.appId, principal);
-  if (!rl.allowed) {
-    throw new DocStoreError('rate_limited', 'rate limit exceeded', {
-      bucket,
-      retryAfter: rl.retryAfterSeconds,
-    });
-  }
+  if (!rl.allowed) throw rateLimited('rate limit exceeded', bucket, rl.retryAfterSeconds);
 }
 
 const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<string, string>;
@@ -964,10 +1027,7 @@ async function withSharedWriteBudget<T>(
     DOC_STORE_SHARED_WRITE_BUDGET
   );
   if (!reservation.allowed) {
-    throw new DocStoreError('rate_limited', 'shared write budget exhausted', {
-      bucket: 'shared-write',
-      retryAfter: reservation.retryAfterSeconds,
-    });
+    throw budgetRefusal('shared write budget exhausted', 'shared-write', reservation);
   }
   let hasLanded = false;
   try {
@@ -1268,12 +1328,7 @@ async function runPublish(
   }
 
   const reservation = await reserveSharedWrite(uid, ctx.appId, DOC_STORE_PUBLISH_BUDGET);
-  if (!reservation.allowed) {
-    throw new DocStoreError('rate_limited', 'publish budget exhausted', {
-      bucket: 'publish',
-      retryAfter: reservation.retryAfterSeconds,
-    });
-  }
+  if (!reservation.allowed) throw budgetRefusal('publish budget exhausted', 'publish', reservation);
   let landed = false;
   try {
     const afterCommit = new Map<string, AfterCommit>();

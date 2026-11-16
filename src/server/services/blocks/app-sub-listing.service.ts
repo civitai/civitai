@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { recordAppBlockRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 
@@ -521,6 +522,15 @@ export async function upsertSubListing(args: {
 
   const rate = await checkSubListingWriteRateLimit(user.id, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: args.appBlockId,
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'upsertSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: user.id,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',
@@ -758,6 +768,15 @@ export async function withdrawSubListing(args: {
   if (!parent) return { ok: true, withdrawn: false };
   const rate = await checkSubListingWriteRateLimit(args.userId, parent.id);
   if (!rate.allowed) {
+    recordAppBlockRateLimitRefusal({
+      appBlockId: args.appBlockId,
+      surface: 'sub_listings',
+      bucket: 'sub-listing-write',
+      endpoint: 'withdrawSubListing',
+      retryAfterSeconds: rate.retryAfterSeconds,
+      userId: args.userId,
+      status: 429,
+    });
     throw new SubListingError(
       429,
       'rate_limited',
