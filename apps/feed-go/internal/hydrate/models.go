@@ -107,7 +107,9 @@ func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPa
 			return nil
 		}
 		got, writable := events.read()
-		_ = writable
+		if err := s.fillModelEvents(gctx, models, got, writable); err != nil {
+			return err
+		}
 		out.Decorations, err = modelDecorations(models, got, req.VisibleEvents)
 		return
 	}))
