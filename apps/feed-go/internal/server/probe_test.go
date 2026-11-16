@@ -711,7 +711,7 @@ func goldenShowcaseRows(t *testing.T, e goldenRedisEntry) [][]any {
 	}
 	entry, _ := v.(map[string]any)
 	images, _ := entry["images"].([]any)
-	var rows [][]any
+	rows := make([][]any, 0, len(images))
 	for _, raw := range images {
 		img, _ := raw.(map[string]any)
 		row := make([]any, len(goldenShowcaseColumns))

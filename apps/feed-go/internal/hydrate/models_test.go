@@ -2,6 +2,7 @@ package hydrate
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -631,7 +632,7 @@ func TestVersionImagesComputesMiss(t *testing.T) {
 			if remix, _ := Int(got[6001][1]["remixOfId"]); id != 8102 || remix != 123 || got[6001][1]["name"] != nil || got[6003][0]["remixOfId"] != nil {
 				t.Fatalf("6001's second image %v", got[6001][1])
 			}
-			if !reflect.DeepEqual(got[6001][0]["tags"], []any{int64(101)}) || !reflect.DeepEqual(got[6003][0]["tags"], []any{int64(301)}) {
+			if fmt.Sprint(got[6001][0]["tags"]) != "[101]" || fmt.Sprint(got[6003][0]["tags"]) != "[301]" {
 				t.Fatalf("tags %v %v, want the image-tag cache's", got[6001][0]["tags"], got[6003][0]["tags"])
 			}
 			if o := obs.get(); o["version-images/computed"] != 3 {
