@@ -95,7 +95,7 @@ const asUser = (over: Record<string, unknown>) => {
 
 const spokeAnswers = (result: unknown) => triage.mockResolvedValue({ ok: true, result });
 
-const REQUEST = { id: 258, status: 'reviewed', expectedStatus: 'new' };
+const REQUEST = { id: 990000258, status: 'reviewed', expectedStatus: 'new' };
 
 beforeEach(() => {
   resetSharedMocks();
@@ -120,10 +120,10 @@ describe('who may call it', () => {
       hqTaskUrl: HQ_URL,
     });
     expect(status).toBe(200);
-    expect(body).toEqual({ id: 258, status: 'reviewed', changed: true });
+    expect(body).toEqual({ id: 990000258, status: 'reviewed', changed: true });
     expect(triage).toHaveBeenCalledTimes(1);
     expect(triage).toHaveBeenCalledWith({
-      id: 258,
+      id: 990000258,
       status: 'reviewed',
       expectedStatus: 'new',
       noteAppend: 'tracked in HQ',

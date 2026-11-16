@@ -122,55 +122,55 @@ describe('resolveTaskTarget: the mapping table', () => {
 describe('runFeedbackHqSync: forward only', () => {
   it('moves a new row to reviewed for an open task, recording the link', async () => {
     const { d, calls, counted } = deps({
-      links: [{ feedbackId: 258, taskId: 't_open' }],
-      rows: [{ id: 258, status: 'new', handledById: null, hqTaskId: null }],
+      links: [{ feedbackId: 990000258, taskId: 't_open' }],
+      rows: [{ id: 990000258, status: 'new', handledById: null, hqTaskId: null }],
       tasks: { t_open: open },
     });
     await runFeedbackHqSync(d);
     expect(calls).toEqual([
-      { id: 258, status: 'reviewed', expectedStatus: 'new', hqTaskUrl: url('t_open') },
+      { id: 990000258, status: 'reviewed', expectedStatus: 'new', hqTaskUrl: url('t_open') },
     ]);
     expect(counted).toMatchObject({ moved_reviewed: 1 });
   });
 
   it('moves a new row straight to actioned for a completed task', async () => {
     const { d, calls } = deps({
-      links: [{ feedbackId: 250, taskId: 't_done' }],
-      rows: [{ id: 250, status: 'new', handledById: null, hqTaskId: null }],
+      links: [{ feedbackId: 990000250, taskId: 't_done' }],
+      rows: [{ id: 990000250, status: 'new', handledById: null, hqTaskId: null }],
       tasks: { t_done: complete },
     });
     await runFeedbackHqSync(d);
     expect(calls).toEqual([
-      { id: 250, status: 'actioned', expectedStatus: 'new', hqTaskUrl: url('t_done') },
+      { id: 990000250, status: 'actioned', expectedStatus: 'new', hqTaskUrl: url('t_done') },
     ]);
   });
 
   it('advances a row IT reviewed when the task completes, and does not re-send the link', async () => {
     const { d, calls, counted } = deps({
-      links: [{ feedbackId: 251, taskId: 't_done' }],
-      rows: [{ id: 251, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_done' }],
+      links: [{ feedbackId: 990000251, taskId: 't_done' }],
+      rows: [{ id: 990000251, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_done' }],
       tasks: { t_done: complete },
     });
     await runFeedbackHqSync(d);
-    expect(calls).toEqual([{ id: 251, status: 'actioned', expectedStatus: 'reviewed' }]);
+    expect(calls).toEqual([{ id: 990000251, status: 'actioned', expectedStatus: 'reviewed' }]);
     expect(counted).toMatchObject({ moved_actioned: 1 });
   });
 
   it('dismisses a row it reviewed when the task is a real wontfix', async () => {
     const { d, calls, counted } = deps({
-      links: [{ feedbackId: 252, taskId: 't_no' }],
-      rows: [{ id: 252, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_no' }],
+      links: [{ feedbackId: 990000252, taskId: 't_no' }],
+      rows: [{ id: 990000252, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_no' }],
       tasks: { t_no: wontfix },
     });
     await runFeedbackHqSync(d);
-    expect(calls).toEqual([{ id: 252, status: 'dismissed', expectedStatus: 'reviewed' }]);
+    expect(calls).toEqual([{ id: 990000252, status: 'dismissed', expectedStatus: 'reviewed' }]);
     expect(counted).toMatchObject({ moved_dismissed: 1 });
   });
 
   it('never moves a row backwards: an open task leaves a row it reviewed alone', async () => {
     const { d, calls } = deps({
-      links: [{ feedbackId: 253, taskId: 't_open' }],
-      rows: [{ id: 253, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_open' }],
+      links: [{ feedbackId: 990000253, taskId: 't_open' }],
+      rows: [{ id: 990000253, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_open' }],
       tasks: { t_open: open },
     });
     await runFeedbackHqSync(d);
@@ -181,8 +181,8 @@ describe('runFeedbackHqSync: forward only', () => {
     'never touches a %s row, even when its task reopened, and does not read the task',
     async (status) => {
       const { d, calls, reads } = deps({
-        links: [{ feedbackId: 254, taskId: 't_open' }],
-        rows: [{ id: 254, status, handledById: ACTOR, hqTaskId: 't_open' }],
+        links: [{ feedbackId: 990000254, taskId: 't_open' }],
+        rows: [{ id: 990000254, status, handledById: ACTOR, hqTaskId: 't_open' }],
         tasks: { t_open: open },
       });
       await runFeedbackHqSync(d);
@@ -195,8 +195,8 @@ describe('runFeedbackHqSync: forward only', () => {
 describe('runFeedbackHqSync: a status a human set', () => {
   it('leaves a row a moderator reviewed at reviewed, whatever its task says', async () => {
     const { d, calls, counted, reads } = deps({
-      links: [{ feedbackId: 255, taskId: 't_no' }],
-      rows: [{ id: 255, status: 'reviewed', handledById: HUMAN, hqTaskId: 't_no' }],
+      links: [{ feedbackId: 990000255, taskId: 't_no' }],
+      rows: [{ id: 990000255, status: 'reviewed', handledById: HUMAN, hqTaskId: 't_no' }],
       tasks: { t_no: wontfix },
     });
     await runFeedbackHqSync(d);
@@ -207,40 +207,40 @@ describe('runFeedbackHqSync: a status a human set', () => {
 
   it('still records the link on a human-set row that lacks one, without changing its status', async () => {
     const { d, calls } = deps({
-      links: [{ feedbackId: 256, taskId: 't_open' }],
-      rows: [{ id: 256, status: 'actioned', handledById: HUMAN, hqTaskId: null }],
+      links: [{ feedbackId: 990000256, taskId: 't_open' }],
+      rows: [{ id: 990000256, status: 'actioned', handledById: HUMAN, hqTaskId: null }],
     });
     await runFeedbackHqSync(d);
     expect(calls).toEqual([
-      { id: 256, status: 'actioned', expectedStatus: 'actioned', hqTaskUrl: url('t_open') },
+      { id: 990000256, status: 'actioned', expectedStatus: 'actioned', hqTaskUrl: url('t_open') },
     ]);
   });
 
   it('never replaces a link the row already holds for a different task', async () => {
     const { d, calls } = deps({
-      links: [{ feedbackId: 257, taskId: 't_cluster' }],
-      rows: [{ id: 257, status: 'new', handledById: null, hqTaskId: 't_intake' }],
+      links: [{ feedbackId: 990000257, taskId: 't_cluster' }],
+      rows: [{ id: 990000257, status: 'new', handledById: null, hqTaskId: 't_intake' }],
       tasks: { t_cluster: open },
     });
     await runFeedbackHqSync(d);
-    expect(calls).toEqual([{ id: 257, status: 'reviewed', expectedStatus: 'new' }]);
+    expect(calls).toEqual([{ id: 990000257, status: 'reviewed', expectedStatus: 'new' }]);
   });
 
   it('counts a compare-and-set refusal as a conflict and moves on', async () => {
     const { d, calls, counted } = deps({
       links: [
-        { feedbackId: 260, taskId: 't_open' },
-        { feedbackId: 261, taskId: 't_open' },
+        { feedbackId: 990000260, taskId: 't_open' },
+        { feedbackId: 990000261, taskId: 't_open' },
       ],
       rows: [
-        { id: 260, status: 'new', handledById: null, hqTaskId: null },
-        { id: 261, status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000260, status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000261, status: 'new', handledById: null, hqTaskId: null },
       ],
       tasks: { t_open: open },
-      triage: (call) => (call.id === 260 ? 'conflict' : 'changed'),
+      triage: (call) => (call.id === 990000260 ? 'conflict' : 'changed'),
     });
     const summary = await runFeedbackHqSync(d);
-    expect(calls.map((c) => c.id)).toEqual([260, 261]);
+    expect(calls.map((c) => c.id)).toEqual([990000260, 990000261]);
     expect(counted).toMatchObject({ conflict: 1, moved_reviewed: 1 });
     expect(summary).toMatchObject({ conflicts: 1, moved: { reviewed: 1 } });
   });
@@ -250,18 +250,18 @@ describe('runFeedbackHqSync: HQ failures', () => {
   it('skips the rows whose task could not be read and carries on with the rest', async () => {
     const { d, calls, counted } = deps({
       links: [
-        { feedbackId: 270, taskId: 't_broken' },
-        { feedbackId: 271, taskId: 't_open' },
+        { feedbackId: 990000270, taskId: 't_broken' },
+        { feedbackId: 990000271, taskId: 't_open' },
       ],
       rows: [
-        { id: 270, status: 'new', handledById: null, hqTaskId: null },
-        { id: 271, status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000270, status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000271, status: 'new', handledById: null, hqTaskId: null },
       ],
       tasks: { t_broken: new Error('HQ answered 502'), t_open: open },
     });
     const summary = await runFeedbackHqSync(d);
     expect(calls).toEqual([
-      { id: 271, status: 'reviewed', expectedStatus: 'new', hqTaskUrl: url('t_open') },
+      { id: 990000271, status: 'reviewed', expectedStatus: 'new', hqTaskUrl: url('t_open') },
     ]);
     expect(counted).toMatchObject({ hq_read_failed: 1, moved_reviewed: 1 });
     expect(summary.hqReadFailures).toBe(1);
@@ -282,12 +282,12 @@ describe('runFeedbackHqSync: HQ failures', () => {
   it('reads each task once however many rows it covers', async () => {
     const { d, reads } = deps({
       links: [
-        { feedbackId: 280, taskId: 't_open' },
-        { feedbackId: 281, taskId: 't_open' },
+        { feedbackId: 990000280, taskId: 't_open' },
+        { feedbackId: 990000281, taskId: 't_open' },
       ],
       rows: [
-        { id: 280, status: 'new', handledById: null, hqTaskId: null },
-        { id: 281, status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000280, status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000281, status: 'new', handledById: null, hqTaskId: null },
       ],
       tasks: { t_open: open },
     });
@@ -297,13 +297,13 @@ describe('runFeedbackHqSync: HQ failures', () => {
 
   it('leaves the status alone when a merge cannot be followed, and still records the link', async () => {
     const { d, calls, counted } = deps({
-      links: [{ feedbackId: 290, taskId: 't_dup' }],
-      rows: [{ id: 290, status: 'new', handledById: null, hqTaskId: null }],
+      links: [{ feedbackId: 990000290, taskId: 't_dup' }],
+      rows: [{ id: 990000290, status: 'new', handledById: null, hqTaskId: null }],
       tasks: { t_dup: { ...wontfix, merged_into: 't_hidden' } },
     });
     await runFeedbackHqSync(d);
     expect(calls).toEqual([
-      { id: 290, status: 'new', expectedStatus: 'new', hqTaskUrl: url('t_dup') },
+      { id: 990000290, status: 'new', expectedStatus: 'new', hqTaskUrl: url('t_dup') },
     ]);
     expect(counted).toMatchObject({ unresolved: 1 });
   });

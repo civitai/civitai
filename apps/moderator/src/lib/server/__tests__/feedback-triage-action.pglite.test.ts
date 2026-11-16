@@ -142,7 +142,7 @@ describe('feedback-triage: the status write', () => {
   });
 
   it('answers gone for a row that does not exist', async () => {
-    expect(await run({ id: 987654, status: 'reviewed', expectedStatus: 'new' })).toEqual({
+    expect(await run({ id: 990000101, status: 'reviewed', expectedStatus: 'new' })).toEqual({
       ok: false,
       reason: 'gone',
     });

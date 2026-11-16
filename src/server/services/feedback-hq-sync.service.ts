@@ -3,6 +3,7 @@ import { HQ_TASK_URL_PREFIX, hqTaskFromUrl } from '@civitai/shared/clickup-url';
 import type { FeedbackTriageStatus } from '@civitai/shared/feedback.constants';
 import type { FeedbackHqSyncEvent } from '~/server/prom/feedback-hq-sync.metrics';
 import type { FeedbackTriageOutcome } from '~/server/services/feedback-triage.service';
+import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 
 /**
  * The feedback ↔ HQ status sync: a feedback row's moderator triage status follows the HQ task it
@@ -325,7 +326,7 @@ export function createHqFeedbackReader({
       headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
       // A redirect would replay the token to wherever it points.
       redirect: 'error',
-      signal: AbortSignal.timeout(HQ_TIMEOUT_MS),
+      signal: fetchTimeoutSignal(HQ_TIMEOUT_MS),
     });
 
   return {
