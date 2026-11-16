@@ -15,7 +15,6 @@
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
-  import WatchHairline from '$lib/WatchHairline.svelte';
   import WatchMeta from '$lib/WatchMeta.svelte';
   import { heartsLeft, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
@@ -594,7 +593,6 @@
       answerWindow={data.apprenticeMeter.window}
     />
   {:else if strip && data.mode === 'queue'}
-    <WatchHairline label={strip.label} value={strip.value} max={strip.max} />
     <WatchMeta
       value={strip.value}
       max={strip.max}
@@ -641,7 +639,7 @@
     {#if data.apprentice.kind === 'question'}
       <div class="column">
         <p class="question" title={data.apprentice.prompt}>
-          <span class="eyebrow">Question ·</span>
+          <span class="eyebrow">Question</span>
           <span class="text">{data.apprentice.prompt}</span>
         </p>
         <div class="stagewrap">
@@ -713,15 +711,17 @@
   {:else if view}
     <div class="column">
       <p class="question" title={view.question.prompt}>
-        <span class="eyebrow">Question ·</span>
-        {#if view.category}
-          <!-- A new chip (and its one-time glow) only when the category changes; the text is part of the question for screen readers. -->
-          {#key view.category.heading}
-            <span class="chip" class:glow={view.banner !== null}>
-              <span class="vh">Category: </span>{view.category.heading}
-            </span>
-          {/key}
-        {/if}
+        <span class="eyebrow">
+          Question
+          {#if view.category}
+            <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
+            {#key view.category.heading}
+              <span class="category" class:glow={view.banner !== null}>
+                <span aria-hidden="true">·</span><span class="vh">Category: </span>{view.category.heading}
+              </span>
+            {/key}
+          {/if}
+        </span>
         <span class="text">{view.question.prompt}</span>
       </p>
       <span class="vh" role="status" aria-live="polite"
@@ -918,20 +918,28 @@
     text-align: center;
   }
 
+  /* The eyebrow (and category) sits on its own line so the question keeps the full width. */
   .question {
     display: flex;
     flex: none;
-    align-items: baseline;
-    gap: 10px;
+    flex-direction: column;
+    gap: 6px;
     min-width: 0;
     margin: 0;
   }
   .eyebrow {
-    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 8px;
     color: var(--io-gold);
-    font: 600 11px/1 var(--io-font-ui);
+    font: 600 11px/1.4 var(--io-font-ui);
     letter-spacing: 2px;
     text-transform: uppercase;
+  }
+  .category {
+    display: inline-flex;
+    gap: 8px;
+    color: var(--io-parchment-muted);
   }
   .text {
     min-width: 0;
@@ -940,28 +948,20 @@
     font: 700 16px/1.25 var(--io-font-display);
     /* Wraps in full: phones can't hover for the title. */
   }
-  .chip {
-    flex: none;
-    padding: 3px 8px;
-    border: 1px solid color-mix(in srgb, var(--io-gold) 45%, transparent);
-    border-radius: 999px;
-    color: var(--io-gold);
-    font: 600 11px/1 var(--io-font-ui);
-    letter-spacing: 2px;
-    text-transform: uppercase;
+  .category.glow {
+    animation: category-glow 1.8s ease-out 1;
   }
-  .chip.glow {
-    animation: chip-glow 1.8s ease-out 1;
-  }
-  @keyframes chip-glow {
+  @keyframes category-glow {
     0% {
-      box-shadow: 0 0 0 0 color-mix(in srgb, var(--io-gold) 70%, transparent);
+      color: var(--io-gold);
+      text-shadow: 0 0 0 transparent;
     }
     40% {
-      box-shadow: 0 0 12px 3px color-mix(in srgb, var(--io-gold) 55%, transparent);
+      color: var(--io-gold);
+      text-shadow: 0 0 10px color-mix(in srgb, var(--io-gold) 70%, transparent);
     }
     100% {
-      box-shadow: 0 0 0 0 transparent;
+      text-shadow: 0 0 0 transparent;
     }
   }
   .vh {
@@ -1028,7 +1028,7 @@
       0 0 14px rgb(224 138 130 / 0.35);
   }
   @media (prefers-reduced-motion: reduce) {
-    .chip.glow {
+    .category.glow {
       animation: none;
     }
     .pill,
