@@ -30,6 +30,8 @@ const h = vi.hoisted(() => ({
   quoteAuthorFee: vi.fn(),
   createBuzzTransactionMany: vi.fn(),
   catalogRate: vi.fn(async () => ({ allowed: true })),
+  reserveAppSpend: vi.fn(),
+  refundAppSpend: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
@@ -73,6 +75,12 @@ vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzTransactions: vi.fn(),
   getDailyCompensationRewardByUser: vi.fn(),
 }));
+// The app's own aggregate cap: its reservation and refund are what these tests watch.
+vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
+  reserveAppSpend: (...a: unknown[]) => h.reserveAppSpend(...(a as [])),
+  refundAppSpend: (...a: unknown[]) => h.refundAppSpend(...(a as [])),
+  chargeAppSpendOverage: vi.fn(),
+}));
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimitModule>()),
   checkBlockCatalogRateLimit: (...a: unknown[]) => h.catalogRate(...(a as [])),
@@ -88,6 +96,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { appBlockTag } from '~/server/services/blocks/workflow.service';
+
+/** The submit paths' own refusal for an app at its aggregate daily cap. */
+/** Spelled out, not imported: a missing constant must not make the assertion vacuous. */
+const NOT_RELEASED_MESSAGE =
+  'The unlock went through, but this output is rated above your browsing level, so it stays hidden. Nothing was counted against your daily limit.';
+const APP_CAP_DAILY_MESSAGE =
+  'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later';
 
 // ── An in-memory sysRedis: get/set (NX)/del/incrBy/decrBy. ──────────────────
 const store = new Map<string, string>();
@@ -126,6 +141,7 @@ const WF = `${VIEWER}-20261115120000000`;
 /** The orchestrator's yellow price: 157 Blue debited, 20 credited back. */
 const UNLOCK_PRICE = 137;
 const ALL = 1 | 2 | 4 | 8 | 16;
+const APP_DAILY_KEY = 'system:blocks:app-spend-daily:apb_test:2026-11-15';
 
 function claims() {
   return {
@@ -220,6 +236,7 @@ beforeEach(() => {
   installRedis();
   unlocked = false;
   h.authorize.mockImplementation(async () => claims());
+  h.reserveAppSpend.mockImplementation(async () => ({ allowed: true, dailyKey: APP_DAILY_KEY }));
   // A WORKING fee path, so an implementation that charged one would get through and be seen
   // doing it, rather than dying on an undefined quote.
   h.quoteAuthorFee.mockImplementation(async () => ({ charge: true, feeBuzz: 8 }));
@@ -289,6 +306,49 @@ describe('blocks.unlockOutput — the seam', () => {
     expect(result.outcome).toBe('not-restricted');
     expect(h.updateWorkflow).toHaveBeenCalledTimes(1);
     expect(counter(CONSENT_PREFIX)).toBe(UNLOCK_PRICE);
+    expectNoAuthorFee();
+  });
+});
+
+describe("blocks.unlockOutput — the app's own aggregate spend cap", () => {
+  it('counts the unlock against the app cap, with the unlock price', async () => {
+    await unlock();
+    expect(h.reserveAppSpend).toHaveBeenCalledTimes(1);
+    expect(h.reserveAppSpend).toHaveBeenCalledWith('apb_test', UNLOCK_PRICE);
+    expect(h.refundAppSpend).not.toHaveBeenCalled();
+  });
+
+  it('an exhausted app cap refuses the unlock with the cap error, before any orchestrator call', async () => {
+    h.reserveAppSpend.mockImplementation(async () => ({ allowed: false, reason: 'daily' }));
+    const result = await unlock();
+    expect(result.outcome).toBe('refused');
+    expect(result.message).toBe(APP_CAP_DAILY_MESSAGE);
+    expect(h.updateWorkflow).not.toHaveBeenCalled();
+    expect(h.assertUnlockReleasesOutput).toHaveBeenCalledTimes(1);
+    // The viewer's own reservation, taken first, is returned.
+    expect(counter(CONSENT_PREFIX)).toBe(0);
+    expect(keysWith(LOCK_PREFIX)).toEqual([]);
+    expectNoAuthorFee();
+  });
+
+  it('the app-cap reservation is refunded when the orchestrator refuses', async () => {
+    h.updateWorkflow.mockImplementation(async () => {
+      throw new Error('orchestrator refused the unlock');
+    });
+    await expect(unlock()).rejects.toThrow('orchestrator refused the unlock');
+    expect(h.refundAppSpend).toHaveBeenCalledWith(APP_DAILY_KEY, UNLOCK_PRICE);
+    expect(counter(CONSENT_PREFIX)).toBe(0);
+  });
+
+  it('🔴 not-released: the swap stands, the viewer is told why, and both reservations are refunded', async () => {
+    // The orchestrator accepts the unlock, but its read-back still withholds the output.
+    h.updateWorkflow.mockImplementation(async () => workflow());
+    const result = await unlock();
+    expect(result.outcome).toBe('not-released');
+    expect(result.message).toBe(NOT_RELEASED_MESSAGE);
+    expect(JSON.stringify(result)).not.toContain('r1.png');
+    expect(h.refundAppSpend).toHaveBeenCalledWith(APP_DAILY_KEY, UNLOCK_PRICE);
+    expect(counter(CONSENT_PREFIX)).toBe(0);
     expectNoAuthorFee();
   });
 });

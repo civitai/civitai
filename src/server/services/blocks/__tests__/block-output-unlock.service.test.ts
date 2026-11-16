@@ -351,6 +351,10 @@ describe('refund paths: the reservation is returned', () => {
     ]);
     const result = await unlockBlockOutput({ ...request(claims), expectedTotal: TOTAL }, f);
     expect(result.outcome).toBe('not-released');
+    // The viewer is told why the output is still withheld.
+    expect(result.message).toBe(
+      'The unlock went through, but this output is rated above your browsing level, so it stays hidden. Nothing was counted against your daily limit.'
+    );
     expect(result.snapshot.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'ceiling' });
     expect(JSON.stringify(result)).not.toContain('r1.png');
     expect(f.refund).toHaveBeenCalledWith(TOTAL);
