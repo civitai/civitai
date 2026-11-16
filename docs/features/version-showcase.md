@@ -13,8 +13,10 @@ images other people made with the version. Behind the `model-version-showcase` f
 - `source = 'Community'`: a featured image by someone else
 - `removed`: the image's author or a moderator removed it; kept so it can't be added again
 
-A version and site with no rows shows exactly what it showed before: the creator's images in post
-order. The table has no foreign keys; a row whose image or version is gone matches nothing.
+A version with no rows on either site shows exactly what it showed before: the creator's images in
+post order. A creator who curates only one site gets that showcase on both, filtered to each site's
+levels (on civitai.com, only PG and PG-13 community images). The table has no foreign keys; a row
+whose image or version is gone matches nothing.
 
 ## Slot 1 is the cover
 
@@ -40,8 +42,13 @@ galleries, the model's own gallery rules and held level, and on civitai.com a PG
 It must be made with the version or posted to its gallery. At most 20 per version per site.
 
 Community images never feed a model's `nsfwLevel`, so they can't move a model between sites. They
-reach the carousel, a cover and its search card; the public API keeps returning the creator's
-images.
+reach the carousel, a cover, its link preview and search card, and the public API:
+`/api/v1/models` and `/api/v1/model-versions` serve a curated showcase in place of the default list
+(`withCuratedShowcases`), the civitai.com one to a caller served only safe levels.
+
+A minor or SFW-only model's showcase, community images and covers included, stays within its held
+gallery level on every reader: the carousel, model cards, link previews, the search document and
+the public API.
 
 ## Authors
 

@@ -1,3 +1,5 @@
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+
 export const versionShowcaseSites = ['com', 'red'] as const;
 export type VersionShowcaseSite = (typeof versionShowcaseSites)[number];
 
@@ -7,6 +9,10 @@ export const VERSION_SHOWCASE_LIMIT = 20;
 /** civitai.com serves the green domain; every other domain gets the .red showcase. */
 export const showcaseSiteForDomain = (domain: string | undefined): VersionShowcaseSite =>
   domain === 'green' ? 'com' : 'red';
+
+/** A caller served only safe levels gets the .com showcase, as civitai.com does. */
+export const showcaseSiteForBrowsingLevel = (browsingLevel: number): VersionShowcaseSite =>
+  (browsingLevel & ~sfwBrowsingLevelsFlag) === 0 ? 'com' : 'red';
 
 /** The model column that is slot 1 (the cover) of a site's showcase. */
 export const coverColumnForSite = (site: VersionShowcaseSite) =>

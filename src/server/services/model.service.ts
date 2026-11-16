@@ -347,6 +347,7 @@ import {
   updateModelVersionNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
 import { assertCoverImagesValid, getCoverImages } from '~/server/services/model-cover.service';
+import { showcaseSiteForBrowsingLevel } from '~/shared/constants/version-showcase.constants';
 import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import {
   queueComFaceRecheck,
@@ -6920,8 +6921,12 @@ export async function getModelsWithVersions({
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
   const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
+  const { withCuratedShowcases } = await import('~/server/services/version-showcase.service');
   const images = await holdShowcaseImages(
-    await getImagesForModelVersionCache(modelVersionIds),
+    await withCuratedShowcases(
+      await getImagesForModelVersionCache(modelVersionIds),
+      showcaseSiteForBrowsingLevel(input.browsingLevel ?? sfwBrowsingLevelsFlag)
+    ),
     new Map(
       items.flatMap((model) =>
         model.modelVersions.map(

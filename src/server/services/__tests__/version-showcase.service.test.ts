@@ -86,6 +86,36 @@ beforeEach(() => {
   mocks.communityCovers = new Map();
 });
 
+describe('withCuratedShowcases: the public API list', () => {
+  const owner = (id: number) => ({ id, nsfwLevel: 1 } as never);
+
+  it('replaces a curated version’s list with its showcase, community images included', async () => {
+    mocks.entry = {
+      modelVersionId: VERSION,
+      rows: [
+        row(9, 'red', { source: 'Community', position: 0 }),
+        row(2, 'red', { excluded: true }),
+      ],
+      community: [{ id: 9, site: 'red', nsfwLevel: 1 }],
+    };
+    const result = await showcase.withCuratedShowcases(
+      { [VERSION]: { images: [owner(1), owner(2)] } },
+      'red'
+    );
+    expect(result[VERSION].images.map((image) => image.id)).toEqual([9, 1]);
+  });
+
+  it('keeps an uncurated version’s list, and every list when the showcase can’t be read', async () => {
+    const byVersion = { [VERSION]: { images: [owner(1)] } };
+    mocks.entry = { modelVersionId: VERSION, rows: [], community: [] };
+    expect((await showcase.withCuratedShowcases(byVersion, 'red'))[VERSION]).toBe(
+      byVersion[VERSION]
+    );
+    mocks.fetchError = new Error('redis down');
+    expect(await showcase.withCuratedShowcases(byVersion, 'red')).toBe(byVersion);
+  });
+});
+
 describe('getVersionShowcaseImageIds: the carousel order of a curated list', () => {
   it('puts the cover first, then positioned items, then the rest of the owner images, without hidden ones', async () => {
     mocks.entry = {
@@ -106,8 +136,8 @@ describe('getVersionShowcaseImageIds: the carousel order of a curated list', () 
     expect(ids).toEqual([4, 9, 3, 1]);
   });
 
-  it('is null for a site the creator never curated, so the carousel keeps today’s list', async () => {
-    mocks.entry = { modelVersionId: VERSION, rows: [row(1, 'red')], community: [] };
+  it('is null when the creator curated neither site, so the carousel keeps today’s list', async () => {
+    mocks.entry = { modelVersionId: VERSION, rows: [], community: [] };
     const ids = await showcase.getVersionShowcaseImageIds({
       modelVersionId: VERSION,
       site: 'com',
@@ -115,6 +145,45 @@ describe('getVersionShowcaseImageIds: the carousel order of a curated list', () 
       coverImageId: null,
     });
     expect(ids).toBeNull();
+  });
+
+  it('serves the only curated showcase on both sites, with only PG and PG-13 community images on .com', async () => {
+    mocks.entry = {
+      modelVersionId: VERSION,
+      rows: [
+        row(2, 'red', { position: 0 }),
+        row(8, 'red', { source: 'Community', position: 1 }),
+        row(9, 'red', { source: 'Community', position: 2 }),
+      ],
+      community: [
+        { id: 8, site: 'red', nsfwLevel: 1 },
+        { id: 9, site: 'red', nsfwLevel: 4 },
+      ],
+    };
+    const on = (site: 'com' | 'red') =>
+      showcase.getVersionShowcaseImageIds({
+        modelVersionId: VERSION,
+        site,
+        ownerImageIds: [1, 2],
+        coverImageId: null,
+      });
+    expect(await on('red')).toEqual([2, 8, 9, 1]);
+    expect(await on('com')).toEqual([2, 8, 1]);
+  });
+
+  it('keeps a site’s own curation when both are curated', async () => {
+    mocks.entry = {
+      modelVersionId: VERSION,
+      rows: [row(2, 'red', { position: 0 }), row(1, 'com', { position: 0 })],
+      community: [],
+    };
+    const ids = await showcase.getVersionShowcaseImageIds({
+      modelVersionId: VERSION,
+      site: 'com',
+      ownerImageIds: [1, 2],
+      coverImageId: null,
+    });
+    expect(ids).toEqual([1, 2]);
   });
 
   it('leaves out a community row that no longer passes the filters', async () => {

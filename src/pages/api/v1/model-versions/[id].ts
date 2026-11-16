@@ -37,6 +37,8 @@ import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { withCuratedShowcases } from '~/server/services/version-showcase.service';
+import { showcaseSiteForBrowsingLevel } from '~/shared/constants/version-showcase.constants';
 import {
   getShowcaseImageFilter,
   resolveShowcaseExclusions,
@@ -272,6 +274,12 @@ export async function prepareModelVersionResponse(
   if (!primaryFile) return null;
 
   images ??= await getVersionShowcaseImages([version.id], browsingLevel);
+  images = (
+    await withCuratedShowcases(
+      { [version.id]: { images } },
+      showcaseSiteForBrowsingLevel(browsingLevel)
+    )
+  )[version.id].images;
   const shows = await getShowcaseImageFilter({ browsingLevel });
   images = images.filter((image) => (image.nsfwLevel & browsingLevel) !== 0 && shows(image));
   images = (

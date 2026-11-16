@@ -26,6 +26,7 @@ import {
   type VersionShowcaseSite,
 } from '~/shared/constants/version-showcase.constants';
 import { Flags } from '~/shared/utils/flags';
+import { isComSafeLevel } from '~/shared/utils/model-sfw-face';
 
 export type VersionShowcaseRow = {
   imageId: number;
@@ -192,12 +193,63 @@ export async function getVersionShowcases(modelVersionIds: number[]) {
 }
 
 /**
- * The carousel's image ids for one version and site when the creator has curated it, or null when
- * they haven't (or the showcase can't be read), in which case the carousel keeps today's list.
- *
+ * The site whose curation a version serves on `site`: its own, or, when the creator curated only
+ * the other site, that one (filtered to this site's levels by the caller). Null when uncurated.
+ */
+function curatedSiteFor(entry: CachedVersionShowcase | undefined, site: VersionShowcaseSite) {
+  if (entry?.rows.some((row) => row.site === site)) return site;
+  const other: VersionShowcaseSite = site === 'com' ? 'red' : 'com';
+  return entry?.rows.some((row) => row.site === other) ? other : null;
+}
+
+/** The community images a version serves on `site`, from the curation it uses there. */
+function communityFor(entry: CachedVersionShowcase, site: VersionShowcaseSite) {
+  const curated = curatedSiteFor(entry, site);
+  return entry.community.filter(
+    (image) => image.site === curated && (site !== 'com' || isComSafeLevel(image.nsfwLevel))
+  );
+}
+
+/**
  * Order: the model's cover for that site when it is in this list, then positioned items, then the
  * owner's remaining images in their usual order. Excluded owner images are left out. Capped at the
- * carousel's limit.
+ * carousel's limit. Null when the version is curated on neither site.
+ */
+function orderVersionShowcase(
+  entry: CachedVersionShowcase | undefined,
+  site: VersionShowcaseSite,
+  ownerImageIds: number[],
+  coverImageId: number | null
+): number[] | null {
+  const curated = curatedSiteFor(entry, site);
+  if (!entry || !curated) return null;
+  const rows = entry.rows.filter((row) => row.site === curated);
+
+  const excluded = new Set(rows.filter((row) => row.excluded).map((row) => row.imageId));
+  const community = new Set(communityFor(entry, site).map((image) => image.id));
+  // The owner cache holds only the first page; an owner image positioned beyond it comes from its
+  // row (the carousel's hydrate re-checks every id against the viewer's filters).
+  const ownerRows = rows.filter((row) => row.source === 'Owner').map((row) => row.imageId);
+  const owner = [...new Set([...ownerImageIds, ...ownerRows])].filter((id) => !excluded.has(id));
+  const available = new Set([...owner, ...community]);
+  const position = new Map(
+    rows
+      .filter((row) => row.position !== null && available.has(row.imageId))
+      .map((row) => [row.imageId, row.position as number])
+  );
+
+  const ordered = [
+    ...(coverImageId && available.has(coverImageId) ? [coverImageId] : []),
+    ...[...position.entries()].sort((a, b) => a[1] - b[1]).map(([imageId]) => imageId),
+    ...owner.filter((id) => !position.has(id)),
+  ];
+  return [...new Set(ordered)].slice(0, VERSION_SHOWCASE_LIMIT);
+}
+
+/**
+ * The carousel's image ids for one version and site when the creator has curated it (on either
+ * site), or null when they haven't (or the showcase can't be read), in which case the carousel
+ * keeps today's list.
  */
 export async function getVersionShowcaseImageIds({
   modelVersionId,
@@ -212,30 +264,7 @@ export async function getVersionShowcaseImageIds({
 }): Promise<number[] | null> {
   try {
     const entry = (await getVersionShowcases([modelVersionId]))[modelVersionId];
-    const rows = entry?.rows.filter((row) => row.site === site) ?? [];
-    if (!rows.length) return null;
-
-    const excluded = new Set(rows.filter((row) => row.excluded).map((row) => row.imageId));
-    const community = new Set(
-      entry.community.filter((image) => image.site === site).map((image) => image.id)
-    );
-    // The owner cache holds only the first page; an owner image positioned beyond it comes from its
-    // row (the carousel's hydrate re-checks every id against the viewer's filters).
-    const ownerRows = rows.filter((row) => row.source === 'Owner').map((row) => row.imageId);
-    const owner = [...new Set([...ownerImageIds, ...ownerRows])].filter((id) => !excluded.has(id));
-    const available = new Set([...owner, ...community]);
-    const position = new Map(
-      rows
-        .filter((row) => row.position !== null && available.has(row.imageId))
-        .map((row) => [row.imageId, row.position as number])
-    );
-
-    const ordered = [
-      ...(coverImageId && available.has(coverImageId) ? [coverImageId] : []),
-      ...[...position.entries()].sort((a, b) => a[1] - b[1]).map(([imageId]) => imageId),
-      ...owner.filter((id) => !position.has(id)),
-    ];
-    return [...new Set(ordered)].slice(0, VERSION_SHOWCASE_LIMIT);
+    return orderVersionShowcase(entry, site, ownerImageIds, coverImageId);
   } catch (error) {
     logShowcaseError('version-showcase-read-failed', error, { modelVersionId });
     return null;
@@ -256,7 +285,7 @@ export async function getCarouselShowcaseIds({
 }) {
   try {
     const entry = (await getVersionShowcases([modelVersionId]))[modelVersionId];
-    if (!entry?.rows.some((row) => row.site === site)) return null;
+    if (!curatedSiteFor(entry, site)) return null;
     const { imagesForModelVersionsCache } = await import('~/server/services/image.service');
     const [owner, version] = await Promise.all([
       imagesForModelVersionsCache.fetch([modelVersionId]),
@@ -274,6 +303,44 @@ export async function getCarouselShowcaseIds({
   } catch (error) {
     logShowcaseError('version-showcase-read-failed', error, { modelVersionId });
     return null;
+  }
+}
+
+/**
+ * Images by version as the public API serves them: a curated showcase in place of the default list,
+ * in its order, with the community images it features. Uncurated versions keep their list, and a
+ * failed read keeps every list. Never mutates `byVersion`: its entries can be the shared cache's.
+ */
+export async function withCuratedShowcases<E extends { images: ImagesForModelVersions[] }>(
+  byVersion: Record<number, E>,
+  site: VersionShowcaseSite
+): Promise<Record<number, E>> {
+  const versionIds = Object.keys(byVersion).map(Number);
+  if (!versionIds.length) return byVersion;
+  try {
+    const showcases = await getVersionShowcases(versionIds);
+    const result: Record<number, E> = { ...byVersion };
+    for (const versionId of versionIds) {
+      const entry = showcases[versionId];
+      const owner = byVersion[versionId].images;
+      const ids = orderVersionShowcase(
+        entry,
+        site,
+        owner.map((image) => image.id),
+        null
+      );
+      if (!ids) continue;
+      const byId = new Map<number, ImagesForModelVersions>(owner.map((image) => [image.id, image]));
+      for (const image of communityFor(entry, site)) byId.set(image.id, image);
+      result[versionId] = {
+        ...byVersion[versionId],
+        images: ids.flatMap((id) => byId.get(id) ?? []),
+      };
+    }
+    return result;
+  } catch (error) {
+    logShowcaseError('version-showcase-read-failed', error);
+    return byVersion;
   }
 }
 
