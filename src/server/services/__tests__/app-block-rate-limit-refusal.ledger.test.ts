@@ -64,13 +64,10 @@ const PRIMITIVE_BUCKETS: Readonly<Record<string, readonly string[]>> = {
   checkBlockLLMRateLimit: ['llm'],
   checkBlockSubmitRateLimit: ['submit'],
   checkBlockSubmitUserRateLimit: ['submit-user'],
-  checkSharedVoteRateLimit: ['vote'],
-  checkSharedWithdrawRateLimit: ['withdraw'],
-  checkSharedReportRateLimit: ['report'],
   checkDocStoreRateLimit: [BUCKET_PARAM],
   checkSubListingWriteRateLimit: ['sub-listing-write'],
   checkSubListingSyncRateLimit: ['sub-listing-sync'],
-  // The legacy shared-KV budget (shared-write) and the document store's two budgets.
+  // The document store's two budgets (its legacy shared-KV caller is in UNRECORDED).
   reserveSharedWrite: ['shared-write', 'publish'],
   checkBlockTipRateLimit: ['tip'],
   checkBlockGoodRateLimit: ['goods'],
@@ -82,18 +79,30 @@ const RECORDERS = new Set([
   'recordBridgeRateLimitRefusal',
   'recordBlockClaimsRateLimitRefusal',
   'recordAppBlockRateLimitRefusal',
-  // apps-shared.router.ts: records, then throws.
-  'refuseSharedRateLimited',
   // doc-store-api.ts: build the refusal whose bucket `sendError` records (asserted below).
   'rateLimited',
-  'budgetRefusal',
 ]);
+
+/**
+ * Primitives of the limiter modules that are OUT of the population, with why. They belong to the
+ * legacy shared-KV store (apps-shared.router.ts), which is removed: fail-closed, and gated ahead
+ * of these limiters, so none of them can refuse a request. Closing condition: the PR that deletes
+ * them from shared-storage-rate-limit.ts (this list then names a primitive that no longer exists,
+ * and the pinned-set assertion fails until the entry is removed).
+ */
+const EXCLUDED_PRIMITIVES: Readonly<Record<string, string>> = {
+  checkSharedVoteRateLimit: 'legacy shared-KV store, removed and gated before its limiter',
+  checkSharedWithdrawRateLimit: 'legacy shared-KV store, removed and gated before its limiter',
+  checkSharedReportRateLimit: 'legacy shared-KV store, removed and gated before its limiter',
+};
 
 /**
  * Call sites deliberately NOT attributed per app, keyed `file :: function :: primitive`.
  * Closing condition for each: a PR that records it (this entry then fails as stale) or deletes it.
  */
 const UNRECORDED: Readonly<Record<string, string>> = {
+  'src/server/routers/apps-shared.router.ts :: withSharedWriteBudget :: reserveSharedWrite':
+    'The legacy shared-KV write budget: that store is removed (fail-closed, gated before this limiter), so it cannot refuse a request.',
   'src/server/services/blocks/app-sub-listing.service.ts :: upsertCatalogSubListing :: checkSubListingSyncRateLimit':
     'An OFF-SITE parent platform syncing its catalog through /api/v1/catalog/items: no App Block and no app_block_id, keyed per parent listing. Not an App Blocks runtime limit.',
   'src/server/services/blocks/app-sub-listing.service.ts :: withdrawCatalogSubListing :: checkSubListingSyncRateLimit':
@@ -271,7 +280,8 @@ function derivePrimitives(): string[] {
   return names.sort();
 }
 
-const PRIMITIVES = new Set(derivePrimitives());
+const ALL_PRIMITIVES = derivePrimitives();
+const PRIMITIVES = new Set(ALL_PRIMITIVES.filter((n) => !(n in EXCLUDED_PRIMITIVES)));
 /**
  * A cheap TEXT prefilter before the AST walk: a file that does not spell any primitive name cannot
  * call one. It only skips files; every file it keeps is classified by the AST.
@@ -292,11 +302,14 @@ const SITES = allSites();
 
 describe('the App Blocks limiter population', () => {
   it('the primitive set is pinned: a new limiter primitive needs a bucket decision here', () => {
+    expect(ALL_PRIMITIVES).toEqual(
+      [...Object.keys(PRIMITIVE_BUCKETS), ...Object.keys(EXCLUDED_PRIMITIVES)].sort()
+    );
     expect([...PRIMITIVES]).toEqual(Object.keys(PRIMITIVE_BUCKETS).sort());
   });
 
   it('MAGNITUDE CONTROL — the walk finds the call sites it claims to cover', () => {
-    expect(SITES.length).toBeGreaterThan(50);
+    expect(SITES.length).toBeGreaterThan(45);
     const files = new Set(SITES.map((s) => s.file));
     for (const f of [
       'src/server/routers/blocks.router.ts',
@@ -336,22 +349,6 @@ describe('every App Blocks limiter refusal is recorded per app', () => {
     });
     expect(recordsOnRefusal).toBe(true);
     expect(SITES.filter((s) => s.verdict === 'viewer-middleware').length).toBeGreaterThan(0);
-  });
-
-  it('no production code calls the metric-level bridge recorder directly (it would skip the per-app series)', () => {
-    const direct = sourceFiles().filter((f) => {
-      if (f === 'src/server/services/blocks/rate-limit-refusal.service.ts') return false;
-      const text = read(f);
-      if (!text.includes('recordBlockBridgeRateLimitRefusal')) return false;
-      let found = false;
-      walk(parse(f, text), (n) => {
-        if (ts.isCallExpression(n) && calleeName(n) === 'recordBlockBridgeRateLimitRefusal') {
-          found = true;
-        }
-      });
-      return found;
-    });
-    expect(direct).toEqual([]);
   });
 
   it('the document store builds every rate_limited refusal through `rateLimited`, and sendError records it', () => {

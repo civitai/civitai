@@ -82,8 +82,9 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 //      app, and this card's blast radius is explicitly asymmetric in that direction.
 //
 // **Closing condition for revisiting this ceiling and this key:
-// `civitai_app_block_bridge_rate_limit_refusals_total` (added alongside this, in
-// `~/server/metrics/app-block-runtime.metrics`) shows refusals on this bucket, or a GA
+// `civitai_app_block_rate_limit_refusals_total{bucket="catalog"}` (the per-app series in
+// `~/server/metrics/app-block-runtime.metrics`, which replaced the procedure-only bridge
+// counter this sentence first named) shows refusals on this bucket, or a GA
 // week passes with none.** That series is what makes the sentence above checkable rather
 // than merely reasonable.
 export const BLOCK_CATALOG_RATE_LIMIT_MAX = 150;

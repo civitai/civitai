@@ -145,9 +145,8 @@ export type AppBlockEndpoint =
   // per-endpoint ATTRIBUTION and latency, which it does give.
   //
   // The throttle's own signal is `civitai_app_block_rate_limit_refusals_total{surface=
-  // "bridge", bucket="catalog"}` (per app), and `..._bridge_rate_limit_refusals_total
-  // {procedure="queryAppWorkflows"}`. Until that per-app counter, `queryAppWorkflows`
-  // and most other `catalog` procedures shed a refusal with no signal at all (the gap
+  // "bridge", bucket="catalog"}` (per app; the log line names the procedure). Until that
+  // per-app counter, `queryAppWorkflows` and most other `catalog` procedures shed a refusal with no signal at all (the gap
   // civitai/civitai#5095 tracked); every bridge limiter now records, and
   // `services/__tests__/app-block-rate-limit-refusal.ledger.test.ts` fails when a limiter
   // call site does not. The rate-limited POPULATION is still owned by
@@ -752,10 +751,8 @@ type Bundle = {
   docStoreErrorsTotal: Counter<string>;
   storageOpsTotal: Counter<string>;
   docStoreEnabled: Gauge<string>;
-  bridgeRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   rateLimitRefusalsTotal: Counter<string>;
-  docStoreVersionConflictsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   submitFailuresTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
@@ -1329,39 +1326,20 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     []
   );
 
-  // 🔴 THE ONLY SERIES ON THIS PLATFORM THAT COUNTS A BRIDGE RATE-LIMIT REFUSAL, and it
-  // exists because every ceiling on the tRPC bridge was previously UNGRADEABLE. The one
-  // App Blocks request counter, `civitai_app_block_requests_total` above, is incremented
-  // solely by the REST `withBlockScope` wrapper — it never counts a bridge call — so
-  // before this there was no way to answer "has any of these limits ever fired?" for any
-  // bucket, old or new. Three separate comments in `block-catalog-rate-limit.ts` name a
-  // closing condition that depends on this series existing.
-  //
-  // REFUSALS ONLY, NOT A DENOMINATOR, and that asymmetry is deliberate. The question a
-  // ceiling has to answer is "is it biting?", and the blast radius on this surface is
-  // asymmetric: too tight throttles a paid generation and presents as a broken block.
-  // A refusal count answers that directly and costs one in-heap increment on a path that
-  // should be empty; a total-calls counter would add an increment to EVERY bridge call
-  // including the poll loop, for a number nothing currently acts on. Add the denominator
-  // when someone needs a RATE rather than an alarm.
-  //
-  // Cardinality: procedure (≤ ~20 bridge procs) × bucket (5 buckets) ≈ 100 worst case,
-  // and in practice far less — each procedure charges exactly one bucket. Both labels are
-  // SERVER-CHOSEN constants from the call site, never request input, so a hostile block
-  // cannot inflate the label set.
-  const bridgeRateLimitRefusalsTotal = getOrCreateCounter(
-    reg,
-    'civitai_app_block_bridge_rate_limit_refusals_total',
-    'App Block tRPC bridge rate-limit refusals by procedure and bucket. Every increment here is mirrored, from the same call, in civitai_app_block_rate_limit_refusals_total{surface="bridge"}, which also carries app_block_id',
-    ['procedure', 'bucket']
-  );
-
   // ── PER-APP RATE-LIMIT REFUSALS, EVERY APP BLOCKS LIMITER ────────────────────
   // The one series that answers "which limit is THIS app hitting" without its author telling us.
   // Before it, a 429 on the REST surface was `civitai_app_block_requests_total{result=
   // "client_error"}` (indistinguishable from a 400), a document-store 429 was
   // `doc_store_errors_total{code="rate_limited"}` (no app, no bucket), and a bridge refusal was
-  // `bridge_rate_limit_refusals_total` (no app) — or, for most bridge buckets, nothing at all.
+  // the procedure-only `civitai_app_block_bridge_rate_limit_refusals_total` (no app; retired in
+  // favour of this one) — or, for most bridge buckets, nothing at all.
+  //
+  // 🔴 ONE BUCKET IS NOT A RATE LIMIT: `{surface="doc_store", bucket="version_conflict"}` is the
+  // store's 409 (a write whose `ifVersion` no longer matched). It is here so one query answers
+  // "what is this app being refused, and is it looping", which is the question both serve. The
+  // name is kept rather than widened: every other bucket IS a limiter, a broader name
+  // (`…_refusals_total`) would collide in meaning with the revocation/consent refusal counters
+  // above, and the bucket value names itself. Exclude it from anything that means "throttled".
   //
   // ONE recorder writes it (`recordAppBlockRateLimitRefusal` in
   // `services/blocks/rate-limit-refusal.service.ts`), called from the refusal branch of every
@@ -1374,19 +1352,8 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const rateLimitRefusalsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_rate_limit_refusals_total',
-    'App Blocks server-side rate-limit refusals, by app, surface (rest = a block REST route\'s own limiter; doc_store = the document store /api/v1/blocks/storage; bridge = a blocks.* bridge procedure, reached over the postMessage bridge or its REST twin; shared_storage = the legacy shared-KV surface; sub_listings = App Store store items) and bucket (the limiter that refused, from a closed set; on doc_store it is the details.bucket the app receives in its 429 body, plus shared-write-rejections/publish-rejections when the rejection allowance is what binds, and contention for the store\'s own lock-timeout 429). One increment per refused request. bridge poll/cancel refusals are answered 200 with a throttled snapshot, not 429, and are counted here too. app_block_id="dev" is every dev token. A series appears at its first occurrence, so read it with increase()/rate() over a range that includes the first refusal, or with a > 0 test',
+    "App Blocks server-side rate-limit refusals, by app, surface (rest = a block REST route's own limiter; doc_store = the document store /api/v1/blocks/storage; bridge = a blocks.* bridge procedure, reached over the postMessage bridge or its REST twin; sub_listings = App Store store items) and bucket (the limiter that refused, from a closed set; on doc_store it is the details.bucket the app receives in its 429 body, plus contention for the store's own lock-timeout 429). ALSO counts one non-rate-limit refusal: surface=doc_store bucket=version_conflict is the store's 409 (a write whose ifVersion no longer matched), expected in small numbers from optimistic writers; exclude it when you mean throttling. One increment per refused request. bridge poll/cancel refusals are answered 200 with a throttled snapshot, not 429, and are counted here too. app_block_id=\"dev\" is every dev token. A series appears at its first occurrence, so read it with increase()/rate() over a range that includes the first refusal, or with a > 0 test",
     ['app_block_id', 'surface', 'bucket']
-  );
-
-  // Per-app document-store version conflicts (409 `version_conflict`: a PUT or DELETE whose
-  // `ifVersion` no longer matches). Not a rate limit, so not a bucket above; its own series so an
-  // app looping on stale writes is visible per app without changing the `result` values every
-  // existing query over `civitai_app_block_requests_total` reads.
-  const docStoreVersionConflictsTotal = getOrCreateCounter(
-    reg,
-    'civitai_app_block_doc_store_version_conflicts_total',
-    'App Blocks document-store 409 version_conflict responses (a write whose ifVersion no longer matched the stored document) by app. Expected in small numbers from any app doing optimistic concurrency; a sustained rate means an app is retrying stale writes. Also counted in civitai_app_block_doc_store_errors_total{code="version_conflict"} (no app label) and as result="client_error" in civitai_app_block_requests_total. Appears at its first occurrence, so read it with increase() or a > 0 test',
-    ['app_block_id']
   );
 
   // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
@@ -1627,10 +1594,8 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     docStoreErrorsTotal,
     storageOpsTotal,
     docStoreEnabled,
-    bridgeRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     rateLimitRefusalsTotal,
-    docStoreVersionConflictsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -2171,47 +2136,16 @@ export type AppBlockRateLimitBucket =
   | 'gen-source-user';
 
 /**
- * Fail-soft emit of ONE bridge rate-limit refusal, on the procedure-only series.
- *
- * Called ONLY through `recordBridgeRateLimitRefusal` (`services/blocks/rate-limit-refusal.service.ts`),
- * which moves the per-app series from the same call, so the two cannot disagree; the ledger test
- * fails on a direct call. That wrapper is called from the refusal branch of each limiter site in
- * `blocks.router.ts` (and in `authorizeBlockBridgeViewer`) — the branch
- * that either throws `TOO_MANY_REQUESTS` or (for `pollWorkflow` and `cancelWorkflow`)
- * returns a non-terminal snapshot. Both are refusals; the difference is how the client is
- * told, and the ceiling is equally worth grading either way.
- *
- * 🔴 TOTAL, like every emitter in this module: a metrics error must never convert a
- * refusal the limiter has already decided into a 500, and on the two returning paths it
- * must never convert one into a thrown error at all — which is precisely the failure the
- * returning paths exist to avoid.
- *
- * COST: one in-heap counter increment, only on the refusal path. A fleet under its
- * ceilings emits zero, which is also the reading that says the ceilings are not biting.
- */
-export function recordBlockBridgeRateLimitRefusal(
-  procedure: string,
-  bucket: AppBlockRateLimitBucket
-): void {
-  try {
-    const { bridgeRateLimitRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
-    bridgeRateLimitRefusalsTotal.inc({ procedure, bucket });
-  } catch {
-    /* instrument-only — never let a metrics error change a refusal into a 500 */
-  }
-}
-
-/**
  * Where an App Blocks limiter lives (`civitai_app_block_rate_limit_refusals_total{surface}`). Named
  * by the code that holds the limiter, not by the transport: a bridge procedure reached through its
- * REST twin (`/api/v1/blocks/workflows/*`) is still `bridge`, and the legacy shared-KV functions
- * are `shared_storage` whether tRPC or REST called them, so a refusal is counted exactly once.
+ * REST twin (`/api/v1/blocks/workflows/*`) is still `bridge`, so a refusal is counted exactly once.
+ * The legacy shared-KV store has no surface: it is removed (fail-closed, gated ahead of its
+ * limiters), so none of its limiters is reachable.
  */
 export const APP_BLOCK_RATE_LIMIT_SURFACES = [
   'rest',
   'doc_store',
   'bridge',
-  'shared_storage',
   'sub_listings',
 ] as const;
 export type AppBlockRateLimitSurface = (typeof APP_BLOCK_RATE_LIMIT_SURFACES)[number];
@@ -2219,8 +2153,7 @@ export type AppBlockRateLimitSurface = (typeof APP_BLOCK_RATE_LIMIT_SURFACES)[nu
 /**
  * Every bucket an App Blocks limiter can refuse from — the closed `bucket` label set. A bucket
  * name is only meaningful together with its surface: `publish` on `bridge` is the per-install
- * image publish, on `doc_store` the server-side document publish; `report` is a different budget
- * on `doc_store` and on `shared_storage`.
+ * image publish, on `doc_store` the server-side document publish.
  */
 export const APP_BLOCK_RATE_LIMIT_BUCKETS = [
   // block-catalog-rate-limit.ts — bridge procedures and REST routes
@@ -2239,19 +2172,16 @@ export const APP_BLOCK_RATE_LIMIT_BUCKETS = [
   'tip',
   'goods',
   'goods-read',
-  // the document store: `details.bucket` of its 429 (shared-storage-rate-limit.ts), plus which
-  // allowance of a token-bucket budget bound, plus the store's own lock-timeout refusal
+  // the document store: `details.bucket` of its 429 (shared-storage-rate-limit.ts), plus the
+  // store's own lock-timeout refusal
   'read',
   'write',
   'tally',
   'report',
   'shared-write',
-  'shared-write-rejections',
-  'publish-rejections',
   'contention',
-  // the legacy shared-KV surface (apps-shared.router.ts)
-  'vote',
-  'withdraw',
+  // the document store's 409 — NOT a rate limit (see the counter's comment)
+  'version_conflict',
   // App Store store items (app-sub-listing.service.ts)
   'sub-listing-write',
   'sub-listing-sync',
@@ -2291,17 +2221,6 @@ export function incAppBlockRateLimitRefusal(
     });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
-  }
-}
-
-/** One document-store 409 `version_conflict`, by app. Total. */
-export function recordDocStoreVersionConflict(appBlockIdLabel: string): void {
-  try {
-    ensureRegisterAppBlockRuntimeMetrics().docStoreVersionConflictsTotal.inc({
-      app_block_id: appBlockIdLabel,
-    });
-  } catch {
-    /* instrument-only */
   }
 }
 

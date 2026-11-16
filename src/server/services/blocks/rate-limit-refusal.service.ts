@@ -17,7 +17,6 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   blockClaimsAppLabel,
   incAppBlockRateLimitRefusal,
-  recordBlockBridgeRateLimitRefusal,
   type AppBlockRateLimitBucket,
   type AppBlockRateLimitSurface,
   type AppBlockRefusalBucket,
@@ -144,11 +143,9 @@ export function recordBlockClaimsRateLimitRefusal(args: {
 }
 
 /**
- * A refusal at a `blocks.*` bridge procedure. Moves BOTH bridge series from one call —
- * `civitai_app_block_bridge_rate_limit_refusals_total{procedure, bucket}` (kept: its `procedure`
- * label is the finer split) and the per-app `civitai_app_block_rate_limit_refusals_total{surface=
- * "bridge"}` — so the two can never disagree. The router calls only this, never the metric-level
- * `recordBlockBridgeRateLimitRefusal` (pinned by the ledger test).
+ * A refusal at a `blocks.*` bridge procedure (or `authorizeBlockBridgeViewer`), on the per-app
+ * counter `{surface="bridge"}`. The procedure is the log line's `endpoint`; it is not a label
+ * (the procedure-only bridge counter this replaced is retired).
  *
  * `status`: 429 for a thrown TOO_MANY_REQUESTS (the default); 200 for the poll/cancel paths that
  * answer a shed request with a non-terminal snapshot.
@@ -160,11 +157,6 @@ export function recordBridgeRateLimitRefusal(
   retryAfterSeconds?: number,
   status = 429
 ): void {
-  try {
-    recordBlockBridgeRateLimitRefusal(procedure, bucket);
-  } catch {
-    /* instrument-only */
-  }
   recordBlockClaimsRateLimitRefusal({
     claims,
     surface: 'bridge',

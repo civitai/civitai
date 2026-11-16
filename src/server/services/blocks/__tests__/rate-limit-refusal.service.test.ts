@@ -17,7 +17,7 @@ import {
  */
 
 const METRIC = 'civitai_app_block_rate_limit_refusals_total';
-const BRIDGE_METRIC = 'civitai_app_block_bridge_rate_limit_refusals_total';
+const RETIRED_BRIDGE_METRIC = 'civitai_app_block_bridge_rate_limit_refusals_total';
 
 type Series = { labels: Record<string, string>; value: number };
 async function values(name: string): Promise<Series[]> {
@@ -78,7 +78,7 @@ describe(METRIC, () => {
     recordAppBlockRateLimitRefusal(BASE);
     recordAppBlockRateLimitRefusal({ ...BASE, appBlockId: 'apb_other_fixture' });
     recordAppBlockRateLimitRefusal({ ...BASE, bucket: 'read' });
-    recordAppBlockRateLimitRefusal({ ...BASE, surface: 'shared_storage' });
+    recordAppBlockRateLimitRefusal({ ...BASE, surface: 'sub_listings' });
 
     expect(
       await value(METRIC, {
@@ -89,7 +89,7 @@ describe(METRIC, () => {
     ).toBe(1);
     expect(await value(METRIC, { app_block_id: 'apb_other_fixture', bucket: 'write' })).toBe(1);
     expect(await value(METRIC, { app_block_id: 'apb_recorder_fixture', bucket: 'read' })).toBe(1);
-    expect(await value(METRIC, { surface: 'shared_storage' })).toBe(1);
+    expect(await value(METRIC, { surface: 'sub_listings' })).toBe(1);
   });
 
   it('CLAMPS a surface or bucket outside the closed sets to "other"', async () => {
@@ -162,6 +162,28 @@ describe('the log line', () => {
   });
 });
 
+describe('a document-store version conflict', () => {
+  it('is a {doc_store, version_conflict} refusal with a 409 log line', async () => {
+    recordAppBlockRateLimitRefusal({
+      ...BASE,
+      bucket: 'version_conflict',
+      status: 409,
+      retryAfterSeconds: undefined,
+    });
+    expect(await values(METRIC)).toEqual([
+      {
+        labels: {
+          app_block_id: 'apb_recorder_fixture',
+          surface: 'doc_store',
+          bucket: 'version_conflict',
+        },
+        value: 1,
+      },
+    ]);
+    expect(lines()[0]).toMatchObject({ bucket: 'version_conflict', status: 409, retryAfter: null });
+  });
+});
+
 describe('recordBlockClaimsRateLimitRefusal', () => {
   it('labels a dev token "dev" and reads the viewer from the verified subject', async () => {
     recordBlockClaimsRateLimitRefusal({
@@ -188,17 +210,15 @@ describe('recordBlockClaimsRateLimitRefusal', () => {
   });
 });
 
-describe('recordBridgeRateLimitRefusal — the two bridge series cannot disagree', () => {
-  it('moves the procedure counter AND the per-app counter from one call', async () => {
+describe('recordBridgeRateLimitRefusal', () => {
+  it('moves the per-app counter only; the procedure-only bridge counter is retired', async () => {
     recordBridgeRateLimitRefusal(
       'queryAppWorkflows',
       'catalog',
       { appBlockId: 'apb_recorder_fixture', sub: 'user:9031' },
       5
     );
-    expect(await value(BRIDGE_METRIC, { procedure: 'queryAppWorkflows', bucket: 'catalog' })).toBe(
-      1
-    );
+    expect(client.register.getSingleMetric(RETIRED_BRIDGE_METRIC)).toBeUndefined();
     expect(
       await value(METRIC, {
         app_block_id: 'apb_recorder_fixture',

@@ -4167,7 +4167,6 @@ describe('per-app refusal attribution: which limit, for which app', () => {
     const before = {
       write: await refusals(A.id, 'write'),
       shared: await refusals(A.id, 'shared-write'),
-      rejections: await refusals(A.id, 'shared-write-rejections'),
     };
     for (let i = 0; i < 30; i++) {
       await call({ token: v1, method: 'PUT', path: `/posts/s${i}`, body: { data: {} } });
@@ -4184,10 +4183,9 @@ describe('per-app refusal attribution: which limit, for which app', () => {
 
     expect((await refusals(A.id, 'shared-write')) - before.shared).toBe(1);
     expect((await refusals(A.id, 'write')) - before.write).toBe(1);
-    expect((await refusals(A.id, 'shared-write-rejections')) - before.rejections).toBe(0);
   });
 
-  it('a shared write refused because the REJECTION allowance is spent is {doc_store, shared-write-rejections}, though the body still says shared-write', async () => {
+  it('a shared write refused by the rejection allowance is labelled with the bucket the app is told: shared-write', async () => {
     const { A } = freshApps();
     const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes: contract.defaultScopes });
@@ -4198,10 +4196,7 @@ describe('per-app refusal attribution: which limit, for which app', () => {
     for (let i = 0; i < 10; i++) {
       await call({ token: v2, method: 'PUT', path: '/posts/owned', body: { data: {} } });
     }
-    const before = {
-      shared: await refusals(A.id, 'shared-write'),
-      rejections: await refusals(A.id, 'shared-write-rejections'),
-    };
+    const before = await refusals(A.id, 'shared-write');
     const refused = await call({
       token: v2,
       method: 'PUT',
@@ -4212,9 +4207,7 @@ describe('per-app refusal attribution: which limit, for which app', () => {
       code: 'rate_limited',
       details: { bucket: 'shared-write' },
     });
-
-    expect((await refusals(A.id, 'shared-write-rejections')) - before.rejections).toBe(1);
-    expect((await refusals(A.id, 'shared-write')) - before.shared).toBe(0);
+    expect((await refusals(A.id, 'shared-write')) - before).toBe(1);
   });
 
   it('a 409 version_conflict is one {app, doc_store, version_conflict} refusal, with its log line', async () => {

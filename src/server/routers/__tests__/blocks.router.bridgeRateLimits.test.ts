@@ -594,17 +594,22 @@ describe('blocks.getMyBuzzBalance', () => {
 });
 
 describe('blocks.submitWorkflow — its own submit bucket, above every kind branch', () => {
+  // The per-app series (the procedure-only bridge counter is retired); `validClaims().appBlockId`.
   async function refusals(bucket = 'submit'): Promise<number> {
     const metric = promClient.register.getSingleMetric(
-      'civitai_app_block_bridge_rate_limit_refusals_total'
+      'civitai_app_block_rate_limit_refusals_total'
     ) as
       | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
       | undefined;
     if (!metric) return 0;
     const { values } = await metric.get();
     return (
-      values.find((v) => v.labels.procedure === 'submitWorkflow' && v.labels.bucket === bucket)
-        ?.value ?? 0
+      values.find(
+        (v) =>
+          v.labels.app_block_id === 'apb_01JQ8XG7YV2K4M6P8R0T2W4Y6A' &&
+          v.labels.surface === 'bridge' &&
+          v.labels.bucket === bucket
+      )?.value ?? 0
     );
   }
 

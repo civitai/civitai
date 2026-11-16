@@ -55,7 +55,6 @@ import {
   blockClaimsAppLabel,
   markBlockRequestReadMiss,
   recordDocStoreError,
-  recordDocStoreVersionConflict,
   recordStorageTallyOp,
   type AppBlockRefusalBucket,
   type DocStoreEndpoint,
@@ -131,7 +130,6 @@ import {
   DOC_STORE_TALLY_RATE_LIMIT_MAX,
   reserveSharedWrite,
   type DocStoreRateBucket,
-  type SharedWriteReservation,
 } from '~/server/utils/shared-storage-rate-limit';
 import {
   APP_STORAGE_COLLECTION_NAME_RE,
@@ -342,9 +340,12 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
   // Every refusal that names a retry delay (a 429, or a retryable 503) says so in the header.
   const retryAfter = err.details?.retryAfter;
   // Per-app attribution of the two refusals an app can loop on: a 429 (which limit) and a 409
-  // version conflict. Every document-store refusal leaves through here, so this is the one place.
-  if (err.code === 'rate_limited') recordRateLimited(req, err, retryAfter);
-  if (err.code === 'version_conflict') recordDocStoreVersionConflict(requestAppLabel(req));
+  // version conflict (bucket `version_conflict` — not a rate limit, on the same counter so one
+  // query answers "what is this app being refused"). Every document-store refusal leaves through
+  // here, so this is the one place.
+  if (err.code === 'rate_limited' || err.code === 'version_conflict') {
+    recordRefusal(req, err, retryAfter);
+  }
   if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
     if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
@@ -358,53 +359,46 @@ function requestAppLabel(req: NextApiRequest): string {
   return claims ? blockClaimsAppLabel(claims) : 'other';
 }
 
+/** The `details.bucket` of every limiter refusal this route raises. */
+type DocStoreRefusalBucket = DocStoreRateBucket | 'shared-write' | 'publish';
+const DOC_STORE_REFUSAL_BUCKETS: ReadonlySet<string> = new Set<DocStoreRefusalBucket>([
+  'read',
+  'write',
+  'tally',
+  'report',
+  'shared-write',
+  'publish',
+]);
+
 /**
- * The metric bucket of each limiter refusal this route raises, keyed on the error itself so the
- * bucket the CLIENT is told (`details.bucket`) stays exactly as before while the metric can say
- * more — which allowance of a token-bucket budget bound. Every `rate_limited` this module raises is
- * built by `rateLimited` below (pinned by the ledger test); the store's own lock-timeout
- * refusals carry `reason: 'contention'` instead.
+ * Every `rate_limited` this module raises is built here (pinned by the ledger test), so its
+ * `details.bucket` — what the app receives in its 429, and the metric's `bucket` label — is always
+ * one of `DocStoreRefusalBucket`. The store's own lock-timeout refusals carry `reason:
+ * 'contention'` instead.
  */
-const REFUSAL_BUCKET = new WeakMap<DocStoreError, AppBlockRefusalBucket>();
-
-function rateLimited(
-  message: string,
-  bucket: DocStoreRateBucket | 'shared-write' | 'publish',
-  retryAfter: number,
-  metricBucket: AppBlockRefusalBucket = bucket
-): DocStoreError {
-  const err = new DocStoreError('rate_limited', message, { bucket, retryAfter });
-  REFUSAL_BUCKET.set(err, metricBucket);
-  return err;
+function rateLimited(message: string, bucket: DocStoreRefusalBucket, retryAfter: number) {
+  return new DocStoreError('rate_limited', message, { bucket, retryAfter });
 }
 
-/** A token-bucket budget's refusal: `<budget>-rejections` when the rejection allowance bound. */
-function budgetRefusal(
-  message: string,
-  budget: 'shared-write' | 'publish',
-  reservation: Extract<SharedWriteReservation, { allowed: false }>
-): DocStoreError {
-  return rateLimited(
-    message,
-    budget,
-    reservation.retryAfterSeconds,
-    reservation.binding === 'rejections' ? (`${budget}-rejections` as const) : budget
-  );
+function refusalBucket(err: DocStoreError): AppBlockRefusalBucket {
+  if (err.code === 'version_conflict') return 'version_conflict';
+  const bucket = err.details?.bucket;
+  if (typeof bucket === 'string' && DOC_STORE_REFUSAL_BUCKETS.has(bucket)) {
+    return bucket as DocStoreRefusalBucket;
+  }
+  return err.details?.reason === 'contention' ? 'contention' : 'unattributed';
 }
 
-function recordRateLimited(req: NextApiRequest, err: DocStoreError, retryAfter: unknown): void {
+function recordRefusal(req: NextApiRequest, err: DocStoreError, retryAfter: unknown): void {
   const claims = (req as BlockScopedNextApiRequest).blockClaims;
-  const bucket: AppBlockRefusalBucket =
-    REFUSAL_BUCKET.get(err) ??
-    (err.details?.reason === 'contention' ? 'contention' : 'unattributed');
   recordAppBlockRateLimitRefusal({
     appBlockId: requestAppLabel(req),
     surface: 'doc_store',
-    bucket,
+    bucket: refusalBucket(err),
     endpoint: storageEndpointLabel(req),
     retryAfterSeconds: typeof retryAfter === 'number' ? retryAfter : undefined,
     userId: claims ? blockSubjectUserId(claims.sub) : null,
-    status: STORAGE_ERROR_STATUS.rate_limited,
+    status: STORAGE_ERROR_STATUS[err.code],
   });
 }
 
@@ -1027,7 +1021,11 @@ async function withSharedWriteBudget<T>(
     DOC_STORE_SHARED_WRITE_BUDGET
   );
   if (!reservation.allowed) {
-    throw budgetRefusal('shared write budget exhausted', 'shared-write', reservation);
+    throw rateLimited(
+      'shared write budget exhausted',
+      'shared-write',
+      reservation.retryAfterSeconds
+    );
   }
   let hasLanded = false;
   try {
@@ -1328,7 +1326,9 @@ async function runPublish(
   }
 
   const reservation = await reserveSharedWrite(uid, ctx.appId, DOC_STORE_PUBLISH_BUDGET);
-  if (!reservation.allowed) throw budgetRefusal('publish budget exhausted', 'publish', reservation);
+  if (!reservation.allowed) {
+    throw rateLimited('publish budget exhausted', 'publish', reservation.retryAfterSeconds);
+  }
   let landed = false;
   try {
     const afterCommit = new Map<string, AfterCommit>();

@@ -65,7 +65,6 @@ describe('write budget: burst bucket boundaries (capacity 7, one token per 137s)
     await expect(reserveSharedWrite(USER, APP, P)).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 137,
-      binding: 'burst',
     });
   });
 
@@ -75,7 +74,6 @@ describe('write budget: burst bucket boundaries (capacity 7, one token per 137s)
     await expect(reserveSharedWrite(USER, APP, P)).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 1,
-      binding: 'burst',
     });
     lua.nowMs = T0 + 137_600;
     const later = await reserveSharedWrite(USER, APP, P);
@@ -132,7 +130,6 @@ describe('write budget: the daily bucket', () => {
     await expect(reserveSharedWrite(USER, APP, P)).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 911,
-      binding: 'daily',
     });
   });
 });
@@ -166,7 +163,6 @@ describe('write budget: release', () => {
     await expect(reserveSharedWrite(USER, APP, P)).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 1_009,
-      binding: 'rejections',
     });
     // The write tokens were all refunded: only the rejection bucket is drawn down.
     expect(lua.hash(KEY)).toEqual({
@@ -185,7 +181,6 @@ describe('write budget: release', () => {
     await expect(reserveSharedWrite(USER, APP, P)).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 3 * 1_009,
-      binding: 'rejections',
     });
   });
 });
@@ -240,7 +235,6 @@ describe('write budget: the legacy shared-KV budget (the default)', () => {
     await expect(reserveSharedWrite(USER, APP)).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 360,
-      binding: 'burst',
     });
     expect(lua.hash(KEY)).toBeDefined();
     expect(lua.hash(DOC_KEY)).toBeUndefined();
@@ -255,7 +249,6 @@ describe('write budget: the document store budget', () => {
     await expect(reserveSharedWrite(USER, APP, D)).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 60,
-      binding: 'burst',
     });
     lua.nowMs = T0 + 59_400;
     expect((await reserveSharedWrite(USER, APP, D)).allowed).toBe(false);
@@ -283,7 +276,7 @@ describe('write budget: the document store budget', () => {
       allowed += 1;
     }
     expect(allowed).toBe(380);
-    expect(refusal).toEqual({ allowed: false, retryAfterSeconds: 148, binding: 'daily' });
+    expect(refusal).toEqual({ allowed: false, retryAfterSeconds: 148 });
   });
 
   it('keys the hash under its own namespace, never the legacy one', async () => {
