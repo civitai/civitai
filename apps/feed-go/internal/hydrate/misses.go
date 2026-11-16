@@ -30,8 +30,8 @@ const (
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
-// Node lookup's own query, batched once per page and cache, instead of falling back. A Sources without one falls back on
-// those misses (FEED_GO_COMPUTE_MISSES=false).
+// Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
+// without one falls back on those misses (FEED_GO_COMPUTE_MISSES=false).
 //
 // Each computed entry is built as the Node lookup builds it, packed exactly as Node's cache writer
 // packs `{...result, cachedAt}` (or the `{[idKey]: id, notFound: true, cachedAt}` marker), and read

@@ -74,12 +74,10 @@ func emptyGate() superjson.Object {
 type V1Answer struct {
 	// Body is what Node writes with `res.status(200).json(...)`.
 	Body superjson.Object
-	// Trivial marks an answer computed without loading any image or running a page query: a withheld
-	// or fully held gallery, `limit=0` on the feed path, a shape the feed cannot express, a feed page
-	// with no ids, a legacy page of unselectable levels only. A legacy page whose query ran is not
-	// trivial, even when it found nothing. Such answers cost
-	// almost nothing on either side, so they are kept out of the CPU-per-served-call and match series
-	// (outcome `served_empty`, result `match_empty`).
+	// Trivial marks an answer computed without loading any image or running a page query (a legacy
+	// page whose query ran is not trivial, even when empty). Such answers cost almost nothing on
+	// either side, so they are kept out of the CPU-per-served-call and match series (outcome
+	// `served_empty`, result `match_empty`).
 	Trivial bool
 }
 
