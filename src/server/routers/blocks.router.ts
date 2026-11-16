@@ -6361,11 +6361,9 @@ export const blocksRouter = router({
    * generationSourceUsesScannedRows`): the gate then refuses the blob, and accepts this row once it
    * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
    *
-   * GATES: `persistGenerationSource`'s preamble (subject = session user, the runtime flag) WITHOUT
-   * its scope check: the upload picker never required a scope, and the source still needs
-   * `ai:write:budgeted` to be generated from. Identity comes from the token, never the body; the
-   * url is the only thing the caller supplies, and the service accepts only a consumer blob on a
-   * trusted orchestrator host.
+   * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
+   * runtime flag. Identity comes from the token, never the body; the url is the only thing the
+   * caller supplies, and the service accepts only a consumer blob on a trusted orchestrator host.
    *
    * BOUNDS: the per-user 60/h `rateLimit`, then `withGenerationSourceBounds`, shared with
    * `persistGenerationSource`.
@@ -6387,6 +6385,9 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
       const userId = parseSubjectUserId(claims.sub);
       if (userId == null) {
         throw new TRPCError({

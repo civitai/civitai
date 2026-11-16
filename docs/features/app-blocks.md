@@ -889,9 +889,9 @@ the same writer as `PERSIST_GENERATION_SOURCE`, and replies with that row instea
 - **Which path.** The host asks `blockImageUpload.generationSourceUsesScannedRows`, which reads
   the gate's own flag, after the upload. If that query fails it replies with the blob: the gate
   stays the only authority, so this never admits an unscanned source while the flag is on.
-- **Gates.** The signed-in viewer must be the token's subject and Apps must be on for them. No
-  scope is required: the picker never needed one, and generating from the source still does.
-  The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
+- **Gates.** The app needs `ai:write:budgeted`, the signed-in viewer must be the token's subject
+  and Apps must be on for them, as for `PERSIST_GENERATION_SOURCE`. With the flag on, an app
+  without the scope gets an upload error (never the blob). The url must be a consumer blob on the orchestrator host, as the upload returns it. The row
   is the viewer's own, at a fresh key, not on the shared grid and not postable.
 - **Limits.** Shared with `PERSIST_GENERATION_SOURCE`: 60 per hour per viewer across both, at
   most 2 in flight, plus the per-user 60/h request limit.
