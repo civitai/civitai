@@ -119,6 +119,7 @@ import { createDocStore } from '~/server/services/apps/doc-store';
 import { OnboardingSteps } from '~/server/common/enums';
 import { parseManifestStorage } from '~/shared/constants/block-storage.constants';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
+import promClient from 'prom-client';
 
 void loggingMock;
 
@@ -138,7 +139,11 @@ const MANIFEST = {
   storage: {
     collections: {
       drafts: { visibility: 'private' },
-      clips: { visibility: 'shared', write: 'own', indexes: { char: 'string' } },
+      clips: {
+        visibility: 'shared',
+        write: 'own',
+        indexes: { char: 'string', score: 'number' },
+      },
     },
   },
 };
@@ -353,6 +358,27 @@ const writesIn = (from: number) =>
     .map((st) => st.sql)
     .filter((sql) => /^\s*(?:INSERT|UPDATE|DELETE|WITH)\b/i.test(sql));
 
+/** The stored index rows of the shared document at `key`, by name. */
+async function indexRows(app: AppRow, key: string) {
+  return harness.raw(
+    `SELECT name, v_text, v_num, v_type FROM appdata.doc_index
+       WHERE app_id = $1 AND ns = 'prod' AND coll = 'clips' AND scope_uid = 0 AND key = $2
+       ORDER BY name`,
+    [app.id, key]
+  );
+}
+
+/** `civitai_app_block_doc_store_unchanged_writes_total` for one app (0 when never counted). */
+async function freeWrites(app: AppRow): Promise<number> {
+  const metric = promClient.register.getSingleMetric(
+    'civitai_app_block_doc_store_unchanged_writes_total'
+  ) as
+    | { get(): Promise<{ values: { labels: Record<string, string>; value: number }[] }> }
+    | undefined;
+  const values = metric ? (await metric.get()).values : [];
+  return values.find((v) => v.labels.app_block_id === app.id)?.value ?? 0;
+}
+
 const sharedBudget = (app: AppRow, uid = V1) =>
   lua.hash(`${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-shared-write:v1:${app.id}:${uid}`);
 
@@ -420,11 +446,11 @@ describe('flag on: a shared put that changes nothing', () => {
 
     const atAgain = harness.statements.length;
     const again = await expectOk(put(t, 'k1', { char: 'A', n: 1 }));
-    // Not one write statement reached the store, and the comparison read the row under lock.
+    // Not one write statement reached the store: ONE read, unlocked, answered the put.
     expect(writesIn(atAgain)).toEqual([]);
-    expect(
-      harness.statements.slice(atAgain).filter((st) => /\bFOR UPDATE\b/.test(st.sql))
-    ).toHaveLength(1);
+    const issued = harness.statements.slice(atAgain).map((st) => st.sql);
+    expect(issued).toHaveLength(1);
+    expect(issued[0]).not.toMatch(/\bFOR (?:NO KEY )?UPDATE\b|\bFOR (?:KEY )?SHARE\b/);
     // The same success shape, and the same document: no version bump.
     expect(again.body).toEqual(first.body);
     expect((again.body as { version: number }).version).toBe(1);
@@ -536,6 +562,114 @@ describe('flag on: a shared put that changes something behaves as today', () => 
       ...off,
       stored: clockless(off.stored),
     });
+  });
+});
+
+describe('flag on: unchanged means the write would change NO stored row', () => {
+  it('a document with number and string index values compares its index rows equal: free', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(put(t, 'k1', { char: 'A', score: 0.1 }));
+    await expectOk(put(t, 'k1', { char: 'A', score: 0.1 }));
+    expect(sharedBudget(A)).toEqual(SHARED_AFTER_ONE_WRITE);
+    expect(h.scans).toBe(1);
+  });
+
+  it('stored index rows missing one the declaration derives (an index declared since): written, rows restored', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(put(t, 'k1', { char: 'A', score: 3 }));
+    const derived = await indexRows(A, 'k1');
+    expect(derived.map((r) => r.name)).toEqual(['char', 'score']);
+    // The document as it would stand had `score` been declared after it was written.
+    await harness.raw(
+      `DELETE FROM appdata.doc_index WHERE app_id = $1 AND ns = 'prod' AND coll = 'clips'
+         AND key = 'k1' AND name = 'score'`,
+      [A.id]
+    );
+    const r = await expectOk(put(t, 'k1', { char: 'A', score: 3 }));
+    expect((r.body as { version: number }).version).toBe(2);
+    expect(await indexRows(A, 'k1')).toEqual(derived);
+    expect(sharedBudget(A)).toEqual(SHARED_AFTER_TWO_WRITES);
+    expect(h.scans).toBe(2);
+  });
+
+  it('a stored index row the declaration no longer derives (an index dropped since): written, row removed', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(put(t, 'k1', { char: 'A' }));
+    const derived = await indexRows(A, 'k1');
+    await harness.raw(
+      `INSERT INTO appdata.doc_index (app_id, ns, coll, scope_uid, key, name, v_text, v_num, v_type)
+         VALUES ($1, 'prod', 'clips', 0, 'k1', 'dropped', 'x', NULL, 'string')`,
+      [A.id]
+    );
+    const r = await expectOk(put(t, 'k1', { char: 'A' }));
+    expect((r.body as { version: number }).version).toBe(2);
+    expect(await indexRows(A, 'k1')).toEqual(derived);
+    expect(sharedBudget(A)).toEqual(SHARED_AFTER_TWO_WRITES);
+    expect(h.scans).toBe(2);
+  });
+
+  it('a stored body the declaration now refuses (wrong type for a declared index): refused as with the flag off', async () => {
+    const outcome = async (flag: boolean) => {
+      h.unchangedFlag = flag;
+      h.scans = 0;
+      const A = freshApp();
+      const t = await mint(A, V1);
+      await expectOk(put(t, 'k1', { char: 'A' }));
+      // Written before `char` was declared a string index: the stored body holds a number there.
+      await harness.raw(
+        `UPDATE appdata.doc d SET data = '{"char": 5}'::jsonb
+           WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'clips' AND d.key = 'k1'`,
+        [A.id]
+      );
+      await harness.raw(
+        `DELETE FROM appdata.doc_index WHERE app_id = $1 AND ns = 'prod' AND coll = 'clips'
+           AND key = 'k1'`,
+        [A.id]
+      );
+      const r = await put(t, 'k1', { char: 5 });
+      return { status: r.status, body: r.body, budget: sharedBudget(A), scans: h.scans };
+    };
+    const off = await outcome(false);
+    const on = await outcome(true);
+    expect(off.status).toBe(400);
+    expect(on).toEqual(off);
+  });
+});
+
+describe('flag on: the free path is throttled and counted', () => {
+  it('a loop of identical puts is refused 429 by the per-viewer write bucket', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(put(t, 'k1', { n: 1 }));
+    let refused: Reply | null = null;
+    let served = 1;
+    for (let i = 0; i < 200 && !refused; i++) {
+      const r = await put(t, 'k1', { n: 1 });
+      if (r.status === 200) served += 1;
+      else refused = r;
+    }
+    // 120 a minute: the first write and 119 free puts are served, the next is refused.
+    expect(served).toBe(120);
+    expect(refused?.status).toBe(429);
+    expect(refused?.body).toMatchObject({ code: 'rate_limited', details: { bucket: 'write' } });
+    // None of the free puts spent the shared-write budget.
+    expect(sharedBudget(A)).toEqual(SHARED_AFTER_ONE_WRITE);
+  });
+
+  it('every free put is counted for its app, and nothing else is', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    const start = await freeWrites(A);
+    await expectOk(put(t, 'k1', { n: 1 }));
+    expect(await freeWrites(A)).toBe(start);
+    await expectOk(put(t, 'k1', { n: 1 }));
+    await expectOk(put(t, 'k1', { n: 1 }));
+    expect(await freeWrites(A)).toBe(start + 2);
+    await expectOk(put(t, 'k1', { n: 2 }));
+    expect(await freeWrites(A)).toBe(start + 2);
   });
 });
 
