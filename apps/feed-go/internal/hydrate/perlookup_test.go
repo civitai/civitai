@@ -2,6 +2,7 @@ package hydrate
 
 import (
 	"context"
+	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -19,10 +20,22 @@ func (s *Sources) BasicUsers(ctx context.Context, ids []int) (map[int]BasicUser,
 	return s.basicUsersFrom(ctx, ids, s.Packed.Get(ctx, KeyBasicUsers, ids, ttlDay))
 }
 
+// read is one lookup's own pipeline: PackedReader.Get with the per-id miss states fill needs.
+func (s *Sources) read(ctx context.Context, key string, ids []int, ttl time.Duration) (map[int]Entry, map[int]bool) {
+	b := NewBatch()
+	r := s.Packed.Queue(b, key, ids, ttl)
+	b.Exec(ctx)
+	return r.read()
+}
+
 // UserCosmetics is getCosmeticsForUsers, with its own Cosmetics read.
 func (s *Sources) UserCosmetics(ctx context.Context, ids []int) (map[int][]any, error) {
 	ids = Unique(ids)
-	perUser, cosmeticIDs, err := userCosmeticsFrom(ids, s.Packed.Get(ctx, KeyUserCosmetics, ids, 0))
+	got, writable := s.read(ctx, KeyUserCosmetics, ids, 0)
+	if err := s.fillUserCosmetics(ctx, ids, got, writable); err != nil {
+		return nil, err
+	}
+	perUser, cosmeticIDs, err := userCosmeticsFrom(ids, got)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +64,10 @@ func (s *Sources) ProfilePictures(ctx context.Context, ids []int) (map[int]super
 // ImageFrames is getCosmeticsForEntity({entity: 'Image'}), with its own Cosmetics read.
 func (s *Sources) ImageFrames(ctx context.Context, imageIDs []int) (map[int]superjson.Object, error) {
 	imageIDs = Unique(imageIDs)
-	got := s.Packed.Get(ctx, KeyImageFrames, imageIDs, 0)
+	got, writable := s.read(ctx, KeyImageFrames, imageIDs, 0)
+	if err := s.fillFrames(ctx, imageIDs, got, writable); err != nil {
+		return nil, err
+	}
 	cosmeticIDs, err := frameCosmeticIDs(imageIDs, got)
 	if err != nil {
 		return nil, err
@@ -69,7 +85,11 @@ func (s *Sources) EventDecorations(ctx context.Context, imageIDs []int, visibleE
 	if len(imageIDs) == 0 || len(visibleEvents) == 0 {
 		return map[int]superjson.Object{}, nil
 	}
-	return VisibleEventDecorations(imageIDs, s.Packed.Get(ctx, KeyImageEvents, imageIDs, 0), visibleEvents)
+	got, writable := s.read(ctx, KeyImageEvents, imageIDs, 0)
+	if err := s.fillEvents(ctx, imageIDs, got, writable); err != nil {
+		return nil, err
+	}
+	return VisibleEventDecorations(imageIDs, got, visibleEvents)
 }
 
 // Thumbnails is getThumbnailsForImages(videoIds).
@@ -92,7 +112,11 @@ func (s *Sources) ImageMetrics(ctx context.Context, imageIDs []int) (map[int]Met
 // TagIDs is tagIdsForImagesCache.fetch.
 func (s *Sources) TagIDs(ctx context.Context, imageIDs []int) (map[int]any, error) {
 	imageIDs = Unique(imageIDs)
-	return tagIDsFrom(imageIDs, s.Packed.Get(ctx, KeyTagIDs, imageIDs, 0))
+	got, writable := s.read(ctx, KeyTagIDs, imageIDs, tagIDsTTL)
+	if err := s.fillTagIDs(ctx, imageIDs, got, writable); err != nil {
+		return nil, err
+	}
+	return tagIDsFrom(imageIDs, got)
 }
 
 // ImageResources is imageResourcesCache.fetch for the public images endpoint.

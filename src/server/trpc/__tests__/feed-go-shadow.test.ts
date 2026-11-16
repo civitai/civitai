@@ -12,8 +12,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createFeedGoShadow,
   feedGoV1ShapeClass,
+  FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
-  pickSessionCookies,
   pickShadowHeaders,
   readFeedGoShadowConfig,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
@@ -21,19 +21,33 @@ import {
   SHADOW_DEFAULT_TIMEOUT_MS,
   type FeedGoShadowConfig,
 } from '~/server/trpc/feed-go-shadow';
+import { pickSessionCookies } from '~/server/utils/session-cookies';
 
 const URL_ = 'http://feed-go.test:9090/internal/shadow/image.getImagesAsPostsInfinite';
 const V1_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/images';
+const PROBE_URL = 'http://feed-go.test:9090/internal/probe/image.getImagesAsPostsInfinite';
+const INF_URL = 'http://feed-go.test:9090/internal/shadow/image.getInfinite';
+const MODELS_URL = 'http://feed-go.test:9090/internal/shadow/model.getAll';
+const V1_MODELS_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/models';
+const V1_MODEL_ID_URL = 'http://feed-go.test:9090/internal/shadow/api/v1/models/id';
 const INPUT = '{"json":{"modelId":7,"limit":50},"meta":{"values":{"cursor":["undefined"]}}}';
 
 function config(overrides: Partial<FeedGoShadowConfig> = {}): FeedGoShadowConfig {
   return {
     url: URL_,
     v1ImagesUrl: V1_URL,
+    infiniteUrl: INF_URL,
+    modelGetAllUrl: MODELS_URL,
+    v1ModelsUrl: V1_MODELS_URL,
+    v1ModelsIdUrl: V1_MODEL_ID_URL,
     rate: 1,
     timeoutMs: 500,
     maxInFlight: 4,
     maxPerSecond: 1000,
+    probeUrl: PROBE_URL,
+    probeInfiniteUrl: undefined,
+    probeModelGetAllUrl: undefined,
+    probeRate: 0,
     ...overrides,
   };
 }
@@ -58,6 +72,12 @@ function harness(
     enabled?: boolean;
     /** The `feed-go-shadow-v1-images` flag (default on here, as `enabled` is). */
     v1?: boolean;
+    /** The `feed-go-shadow-infinite` flag (default OFF here, as in production). */
+    infinite?: boolean;
+    /** The `feed-go-shadow-model-getall` flag (default OFF here, as in production). */
+    models?: boolean;
+    /** The `feed-go-shadow-v1-models` flag (default on here, as `v1` is). */
+    v1Models?: boolean;
     random?: number;
     fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
     now?: () => number;
@@ -74,6 +94,9 @@ function harness(
     config: config(opts.config),
     enabled: () => opts.enabled ?? true,
     enabledV1Images: () => opts.v1 ?? true,
+    enabledInfinite: () => opts.infinite ?? false,
+    enabledModelGetAll: () => opts.models ?? false,
+    enabledV1Models: () => opts.v1Models ?? true,
     random: () => opts.random ?? 0,
     fetch: fetchMock as unknown as typeof fetch,
     record: (o, endpoint) => {
@@ -120,10 +143,18 @@ describe('readFeedGoShadowConfig', () => {
     expect(readFeedGoShadowConfig({})).toEqual({
       url: undefined,
       v1ImagesUrl: undefined,
+      infiniteUrl: undefined,
+      modelGetAllUrl: undefined,
+      v1ModelsUrl: undefined,
+      v1ModelsIdUrl: undefined,
       rate: 0,
       timeoutMs: SHADOW_DEFAULT_TIMEOUT_MS,
       maxInFlight: SHADOW_DEFAULT_MAX_IN_FLIGHT,
       maxPerSecond: SHADOW_DEFAULT_MAX_PER_SECOND,
+      probeUrl: undefined,
+      probeInfiniteUrl: undefined,
+      probeModelGetAllUrl: undefined,
+      probeRate: 0,
     });
   });
 
@@ -134,14 +165,23 @@ describe('readFeedGoShadowConfig', () => {
       FEED_GO_SHADOW_TIMEOUT_MS: '750',
       FEED_GO_SHADOW_MAX_IN_FLIGHT: '3',
       FEED_GO_SHADOW_MAX_PER_SECOND: '2.5',
+      FEED_GO_GOFIRST_PROBE_SAMPLE_RATE: '0.5',
     });
     expect(c).toEqual({
       url: `http://feed-go.internal.test:9090${FEED_GO_SHADOW_PATH}`,
       v1ImagesUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/images',
+      infiniteUrl: 'http://feed-go.internal.test:9090/internal/shadow/image.getInfinite',
+      modelGetAllUrl: 'http://feed-go.internal.test:9090/internal/shadow/model.getAll',
+      v1ModelsUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models',
+      v1ModelsIdUrl: 'http://feed-go.internal.test:9090/internal/shadow/api/v1/models/id',
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,
       maxPerSecond: 2.5,
+      probeUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getImagesAsPostsInfinite',
+      probeInfiniteUrl: 'http://feed-go.internal.test:9090/internal/probe/image.getInfinite',
+      probeModelGetAllUrl: 'http://feed-go.internal.test:9090/internal/probe/model.getAll',
+      probeRate: 0.5,
     });
   });
 
@@ -155,12 +195,18 @@ describe('readFeedGoShadowConfig', () => {
     });
     expect(c.url).toBeUndefined();
     expect(c.v1ImagesUrl).toBeUndefined();
+    expect(c.probeUrl).toBeUndefined();
+    expect(c.infiniteUrl).toBeUndefined();
+    expect(c.modelGetAllUrl).toBeUndefined();
+    expect(c.v1ModelsUrl).toBeUndefined();
+    expect(c.v1ModelsIdUrl).toBeUndefined();
     expect(c.rate).toBe(1);
     expect(c.timeoutMs).toBe(10_000);
     expect(c.maxInFlight).toBe(1);
     expect(c.maxPerSecond).toBe(0.1);
     expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_URL: 'not a url' }).url).toBeUndefined();
     expect(readFeedGoShadowConfig({ FEED_GO_SHADOW_SAMPLE_RATE: 'abc' }).rate).toBe(0);
+    expect(readFeedGoShadowConfig({ FEED_GO_GOFIRST_PROBE_SAMPLE_RATE: '3' }).probeRate).toBe(1);
   });
 });
 
@@ -250,7 +296,25 @@ describe('createFeedGoShadow — sampling decision', () => {
     ['rate 0', { config: { rate: 0 } }, request()],
     ['not sampled (random >= rate)', { config: { rate: 0.3 }, random: 0.3 }, request()],
     ['POST (methodOverride)', {}, request({ method: 'POST' })],
+    // image.getInfinite with its own flag off (the gallery flag does not sample it).
     ['another procedure', {}, request({ query: { trpc: 'image.getInfinite', input: INPUT } })],
+    // model.getAll with its own flag off (the gallery flag does not sample it).
+    ['model.getAll, its flag off', {}, request({ query: { trpc: 'model.getAll', input: INPUT } })],
+    [
+      'model.getAll with no URL',
+      { models: true, config: { modelGetAllUrl: undefined } },
+      request({ query: { trpc: 'model.getAll', input: INPUT } }),
+    ],
+    [
+      'an unmirrored procedure',
+      { infinite: true },
+      request({ query: { trpc: 'image.get', input: INPUT } }),
+    ],
+    [
+      'image.getInfinite with no URL',
+      { infinite: true, config: { infiniteUrl: undefined } },
+      request({ query: { trpc: 'image.getInfinite', input: INPUT } }),
+    ],
     [
       'a batch',
       {},
@@ -267,6 +331,26 @@ describe('createFeedGoShadow — sampling decision', () => {
     await h.flush();
     expect(h.fetchMock).not.toHaveBeenCalled();
     expect(h.outcomes).toEqual([]);
+  });
+
+  // A procedure name is attacker-chosen: a route must be an own key of the route table, never one
+  // inherited through a (polluted) prototype. The inherited route here is complete (URL, flag on),
+  // so only the own-key check stands between it and a sample.
+  it('does not sample a route inherited through the prototype', async () => {
+    const key = 'polluted.procedure';
+    Object.defineProperty(Object.prototype, key, {
+      value: { endpoint: 'infinite', url: INF_URL, enabled: () => true },
+      configurable: true,
+    });
+    try {
+      const h = harness({ infinite: true, models: true });
+      expect(serve(h, request({ query: { trpc: key, input: INPUT } }))).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual([]);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)[key];
+    }
   });
 
   it('samples a fraction: random below the rate is sampled, at the rate is not', () => {
@@ -689,18 +773,225 @@ describe('createFeedGoShadow — GET /api/v1/images', () => {
   });
 });
 
+/** A model-route request as the Next route receives it (`/api/v1/models` or `/api/v1/models/[id]`). */
+function modelsRequest(url: string, overrides: Record<string, unknown> = {}) {
+  return restRequest({ url, query: {}, ...overrides });
+}
+
+describe('createFeedGoShadow — GET /api/v1/models and /api/v1/models/[id]', () => {
+  function serveModels(
+    h: ReturnType<typeof harness>,
+    endpoint: 'v1-models' | 'v1-models-id',
+    req: ReturnType<typeof restRequest>,
+    { status = 200, body = { items: [], metadata: {} } as unknown } = {}
+  ) {
+    const sample = h.shadow.beginRest(endpoint, req);
+    if (sample) {
+      if (status === 200) h.shadow.captureRest(sample, body);
+      h.shadow.finish(sample, status);
+    }
+    return sample;
+  }
+
+  it('the list: POSTs its query string, path, headers and JSON body to the models compare path', async () => {
+    const h = harness();
+    const body = {
+      items: [{ id: 5001, name: 'A', mode: undefined, stats: { downloadCount: null } }],
+      metadata: { nextCursor: '7|5001', nextPage: undefined },
+    };
+    serveModels(h, 'v1-models', modelsRequest('/api/v1/models?limit=1&sort=Newest'), { body });
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(V1_MODELS_URL);
+    expect(init.body).toBe(
+      '{"input":"limit=1&sort=Newest","path":"/api/v1/models",' +
+        '"headers":{"host":"civitai.com","cf-ipcountry":"GB","cookie":"__Secure-civ-token=t"},' +
+        '"node":{"items":[{"id":5001,"name":"A","stats":{"downloadCount":null}}],' +
+        '"metadata":{"nextCursor":"7|5001"}}}'
+    );
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['v1-models']);
+  });
+
+  it('one model: POSTs the path (the id) with an empty input to the id compare path', async () => {
+    const h = harness();
+    serveModels(h, 'v1-models-id', modelsRequest('/api/v1/models/42'), { body: { id: 42 } });
+    await h.flush();
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(V1_MODEL_ID_URL);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input: '',
+      path: '/api/v1/models/42',
+      headers: { host: 'civitai.com', 'cf-ipcountry': 'GB', cookie: '__Secure-civ-token=t' },
+      node: { id: 42 },
+    });
+    expect(h.endpoints).toEqual(['v1-models-id']);
+  });
+
+  it('one flag covers both model routes, and neither the images nor the gallery flag does', () => {
+    const off = harness({ v1Models: false });
+    expect(off.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'))).toBeUndefined();
+    expect(off.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/1'))).toBeUndefined();
+    expect(off.shadow.beginV1Images(restRequest())).toBeDefined();
+    expect(off.shadow.begin(request())).toBeDefined();
+    const on = harness({ enabled: false, v1: false, v1Models: true });
+    expect(on.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'))).toBeDefined();
+    expect(on.shadow.beginRest('v1-models-id', modelsRequest('/api/v1/models/1'))).toBeDefined();
+    expect(on.shadow.beginV1Images(restRequest())).toBeUndefined();
+    expect(on.shadow.begin(request())).toBeUndefined();
+  });
+
+  it.each([
+    ['the list', 'v1-models', { config: { v1ModelsUrl: undefined } }],
+    ['one model', 'v1-models-id', { config: { v1ModelsIdUrl: undefined } }],
+  ] as const)('%s is not sampled without its compare URL', (_name, endpoint, opts) => {
+    const h = harness(opts as Parameters<typeof harness>[0]);
+    expect(h.shadow.beginRest(endpoint, modelsRequest('/api/v1/models/1'))).toBeUndefined();
+  });
+
+  it.each(['v1-models', 'v1-models-id'] as const)(
+    '%s never mirrors an API credential: counted under its own endpoint',
+    async (endpoint) => {
+      const h = harness();
+      const req = modelsRequest('/api/v1/models?token=KEY-2', { query: { token: 'KEY-2' } });
+      expect(serveModels(h, endpoint, req)).toBeUndefined();
+      await h.flush();
+      expect(h.fetchMock).not.toHaveBeenCalled();
+      expect(h.outcomes).toEqual(['skipped_credential']);
+      expect(h.endpoints).toEqual([endpoint]);
+    }
+  );
+
+  it('each model route has its own per-second bucket', async () => {
+    const h = harness({ config: { maxPerSecond: 1 }, now: () => 0 });
+    serveModels(h, 'v1-models', modelsRequest('/api/v1/models'));
+    await h.flush();
+    serveModels(h, 'v1-models', modelsRequest('/api/v1/models'));
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+    // The id route's bucket and the images route's are untouched.
+    serveModels(h, 'v1-models-id', modelsRequest('/api/v1/models/1'));
+    serveRest(h);
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit', 'sent', 'sent']);
+    expect(h.endpoints).toEqual(['v1-models', 'v1-models', 'v1-models-id', 'v1-images']);
+  });
+
+  it('a model sample ignores the tRPC capture, and a gallery sample the REST capture', async () => {
+    const h = harness();
+    const g = h.shadow.begin(request())!;
+    const m = h.shadow.beginRest('v1-models', modelsRequest('/api/v1/models'))!;
+    h.shadow.run(m, () => h.shadow.capture({ a: 1 }, superjson.serialize({ a: 1 }), false));
+    expect(m.captured).toBeUndefined();
+    h.shadow.captureRest(g, { items: [] });
+    expect(g.captured).toBeUndefined();
+  });
+});
+
+describe('createFeedGoShadow — image.getInfinite', () => {
+  const infiniteRequest = (overrides: Record<string, unknown> = {}) =>
+    request({ query: { trpc: 'image.getInfinite', input: INPUT }, ...overrides });
+
+  it('POSTs the raw input, the forwarded headers and the written envelope to its own path', async () => {
+    const h = harness({ enabled: false, infinite: true });
+    const data = {
+      items: [{ id: 8001, createdAt: new Date('2026-01-02T00:00:00.000Z') }],
+      source: 'feed',
+    };
+    const written = superjson.serialize(data);
+    const sample = serve(
+      h,
+      infiniteRequest({ headers: { host: 'civitai.com', cookie: 'a=b; __Secure-civ-token=t' } }),
+      { data, written }
+    );
+    expect(sample?.endpoint).toBe('infinite');
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(INF_URL);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input: INPUT,
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      node: JSON.parse(JSON.stringify(written)),
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['infinite']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('has its own flag: the gallery flag does not sample it, nor its flag the gallery', () => {
+    const gallery = harness({ enabled: true, infinite: false });
+    expect(gallery.shadow.begin(infiniteRequest())).toBeUndefined();
+    expect(gallery.shadow.begin(request())?.endpoint).toBe('as-posts');
+    const infinite = harness({ enabled: false, infinite: true });
+    expect(infinite.shadow.begin(request())).toBeUndefined();
+    expect(infinite.shadow.begin(infiniteRequest())?.endpoint).toBe('infinite');
+  });
+
+  it('shares the in-flight cap with the gallery procedure', async () => {
+    const h = harness({ infinite: true, config: { maxInFlight: 1 } });
+    expect(h.shadow.begin(request())).toBeDefined();
+    expect(h.shadow.begin(infiniteRequest())).toBeUndefined();
+    expect(h.outcomes).toEqual(['dropped_overload']);
+    expect(h.endpoints).toEqual(['infinite']);
+  });
+
+  it('has its own per-second bucket, so it cannot starve the gallery', async () => {
+    const h = harness({ infinite: true, config: { maxPerSecond: 1 }, now: () => 0 });
+    serve(h, infiniteRequest());
+    await h.flush();
+    serve(h, infiniteRequest());
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+    expect(h.endpoints).toEqual(['infinite', 'infinite']);
+    // The gallery procedure's bucket is untouched.
+    expect(h.shadow.begin(request())?.endpoint).toBe('as-posts');
+  });
+
+  it('a non-200 answer is skipped and frees the slot', async () => {
+    const h = harness({ infinite: true });
+    serve(h, infiniteRequest(), { status: 400 });
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.endpoints).toEqual(['infinite']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('ignores the REST capture (a tRPC sample is captured by the transformer)', async () => {
+    const h = harness({ infinite: true });
+    const sample = h.shadow.begin(infiniteRequest())!;
+    h.shadow.captureV1Images(sample, { items: [] });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_no_capture']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('feedGoV1ShapeClass', () => {
   const req = restRequest();
   it.each([
     ['a plain gallery page', { modelVersionId: 9 }, 200, 'ported'],
     ['modelId with a version', { modelId: 3, modelVersionId: 9 }, 200, 'ported'],
-    ['an id batch', { ids: [1, 2] }, 200, 'unported_ids'],
+    ['an id batch', { ids: [1, 2] }, 200, 'ported'],
+    ['an id batch with meta', { ids: [1, 2], withMeta: true }, 200, 'ported'],
+    ['an id batch for one image', { ids: [1], imageId: 5 }, 200, 'unported_imageId'],
+    [
+      'an id batch under a model without a version',
+      { ids: [1], modelId: 3 },
+      200,
+      'unported_modelId_only',
+    ],
     ['one image', { imageId: 5 }, 200, 'unported_imageId'],
     ['a model without a version', { modelId: 3 }, 200, 'unported_modelId_only'],
     ['tags', { tags: [5] }, 200, 'unported_tags'],
     ['base models', { baseModels: ['SDXL 1.0'] }, 200, 'unported_baseModels'],
-    ['meta', { withMeta: true }, 200, 'unported_withMeta'],
+    ['meta', { withMeta: true }, 200, 'ported'],
     ['tags on images', { withTags: true }, 200, 'unported_withTags'],
+    ['tags on images with meta', { withTags: true, withMeta: true }, 200, 'unported_withTags'],
     ['a 503', { modelVersionId: 9 }, 503, 'non200'],
   ] as const)('%s is %s', (_name, data, status, want) => {
     expect(feedGoV1ShapeClass(req, data, status)).toBe(want);
@@ -714,5 +1005,98 @@ describe('feedGoV1ShapeClass', () => {
     expect(feedGoV1ShapeClass(restRequest({ query: { token: 'K' } }), { ids: [1] }, 200)).toBe(
       'api_key'
     );
+  });
+});
+
+describe('createFeedGoShadow — model.getAll', () => {
+  const modelsRequest = (overrides: Record<string, unknown> = {}) =>
+    request({ query: { trpc: 'model.getAll', input: INPUT }, ...overrides });
+
+  it('POSTs the raw input, the forwarded headers and the written envelope to its own path', async () => {
+    const h = harness({ enabled: false, models: true });
+    const data = {
+      items: [{ id: 5001, createdAt: new Date('2026-01-02T00:00:00.000Z') }],
+      nextCursor: '12|5001',
+    };
+    const written = superjson.serialize(data);
+    const sample = serve(
+      h,
+      modelsRequest({ headers: { host: 'civitai.com', cookie: 'a=b; __Secure-civ-token=t' } }),
+      { data, written }
+    );
+    expect(sample?.endpoint).toBe('model-getall');
+    await h.flush();
+    expect(h.fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = h.fetchMock.mock.calls[0];
+    expect(url).toBe(MODELS_URL);
+    expect(url.endsWith(FEED_GO_SHADOW_MODEL_GET_ALL_PATH)).toBe(true);
+    expect(JSON.parse(init.body as string)).toEqual({
+      input: INPUT,
+      headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
+      node: JSON.parse(JSON.stringify(written)),
+    });
+    expect(h.outcomes).toEqual(['sent']);
+    expect(h.endpoints).toEqual(['model-getall']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('a devalue response is superjson-encoded at send time', async () => {
+    const h = harness({ enabled: false, models: true });
+    const data = { items: [{ id: 5001, lastVersionAt: new Date('2026-01-03T00:00:00.000Z') }] };
+    serve(h, modelsRequest(), { data, written: 'devalue-string', devalue: true });
+    await h.flush();
+    const [, init] = h.fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string).node).toEqual(
+      JSON.parse(JSON.stringify(superjson.serialize(data)))
+    );
+  });
+
+  it('has its own flag: the gallery flag does not sample it, nor its flag the gallery', () => {
+    const gallery = harness({ enabled: true, models: false });
+    expect(gallery.shadow.begin(modelsRequest())).toBeUndefined();
+    expect(gallery.shadow.begin(request())?.endpoint).toBe('as-posts');
+    const models = harness({ enabled: false, models: true });
+    expect(models.shadow.begin(request())).toBeUndefined();
+    expect(models.shadow.begin(modelsRequest())?.endpoint).toBe('model-getall');
+  });
+
+  it('shares the in-flight cap with the gallery procedure', () => {
+    const h = harness({ models: true, config: { maxInFlight: 1 } });
+    expect(h.shadow.begin(request())).toBeDefined();
+    expect(h.shadow.begin(modelsRequest())).toBeUndefined();
+    expect(h.outcomes).toEqual(['dropped_overload']);
+    expect(h.endpoints).toEqual(['model-getall']);
+  });
+
+  it('has its own per-second bucket, so it cannot starve the gallery', async () => {
+    const h = harness({ models: true, config: { maxPerSecond: 1 }, now: () => 0 });
+    serve(h, modelsRequest());
+    await h.flush();
+    serve(h, modelsRequest());
+    await h.flush();
+    expect(h.outcomes).toEqual(['sent', 'dropped_rate_limit']);
+    expect(h.endpoints).toEqual(['model-getall', 'model-getall']);
+    // The gallery procedure's bucket is untouched.
+    expect(h.shadow.begin(request())?.endpoint).toBe('as-posts');
+  });
+
+  it('a non-200 answer is skipped and frees the slot', async () => {
+    const h = harness({ models: true });
+    serve(h, modelsRequest(), { status: 400 });
+    await h.flush();
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.outcomes).toEqual(['skipped_status']);
+    expect(h.endpoints).toEqual(['model-getall']);
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('ignores the REST capture (a tRPC sample is captured by the transformer)', async () => {
+    const h = harness({ models: true });
+    const sample = h.shadow.begin(modelsRequest())!;
+    h.shadow.captureV1Images(sample, { items: [] });
+    h.shadow.finish(sample, 200);
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_no_capture']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
   });
 });

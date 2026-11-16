@@ -83,7 +83,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     res.setHeader('Cache-Control', 'no-store');
     res.status(400).json({ error: 'Missing or invalid bucket, key or uploadId' });
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-abort-invalid',
         userId,
         type,
@@ -116,7 +116,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     // uncontained throw would unwind into the catch below and re-answer a request that
     // already succeeded. Not silent — @civitai/axiom reports its own ingest failures.
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-abort',
         userId,
         type,
@@ -169,7 +169,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       }
     } finally {
       try {
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-abort-error',
           userId,
           type,

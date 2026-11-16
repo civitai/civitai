@@ -137,7 +137,7 @@ async function rule({
         name: 'text-scan',
         message: 'minor flag lifted but the moderator ruling was not recorded',
         modelId,
-      }).catch(() => null);
+      });
       throw throwBadRequestError(
         'The flag was lifted but the ruling was not recorded: the text changed meanwhile. Reload to review it.'
       );

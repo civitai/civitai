@@ -1,0 +1,6 @@
+go test fuzz v1
+string(" ")
+string("0")
+string("\xc2\x7f\x89")
+string("Checkpoint")
+string("\x11\x11d\xe5\xfd")

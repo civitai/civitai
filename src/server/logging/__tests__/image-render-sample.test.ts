@@ -185,14 +185,6 @@ describe('sampleImageRender', () => {
     expect(logToAxiom.mock.calls[0][0]).not.toHaveProperty('droppedSinceLastLog');
   });
 
-  it('never throws, even when the log write rejects', async () => {
-    flagOn();
-    logToAxiom.mockRejectedValueOnce(new Error('sink down'));
-    await expect(
-      sampleImageRender(ROUTE, { imageId: IMAGE_ID }, signedInReq(), NOW)
-    ).resolves.toBeUndefined();
-  });
-
   it('logs nothing in the browser', async () => {
     flagOn();
     vi.stubGlobal('window', {});

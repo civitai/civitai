@@ -38,18 +38,21 @@ function getClient(): Transporter | null {
 
 export interface SendEmailInput {
   to: string | string[] | null;
+  cc?: string | string[] | null;
   from?: string;
   subject: string;
   text?: string;
   html: string;
+  headers?: Record<string, string>;
 }
 
-export async function sendEmail({ to, from, text, ...data }: SendEmailInput): Promise<void> {
+export async function sendEmail({ to, cc, from, text, ...data }: SendEmailInput): Promise<void> {
   const client = getClient();
   if (!client || !to) return;
   const env = loadEmailEnv();
   const info = await client.sendMail({
     to: Array.isArray(to) ? to.join(', ') : to,
+    ...(cc ? { cc: Array.isArray(cc) ? cc.join(', ') : cc } : {}),
     from: from ?? env.EMAIL_FROM,
     text: text ?? removeTags(data.html),
     ...data,

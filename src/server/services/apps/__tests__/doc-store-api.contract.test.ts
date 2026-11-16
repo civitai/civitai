@@ -59,6 +59,8 @@ const h = vi.hoisted(() => ({
    * moderation cases describe ENFORCE, so that is every test's default (reset in `beforeEach`).
    */
   moderationMode: 'enforce' as 'off' | 'shadow' | 'enforce',
+  /** `app-blocks-shared-doc-levels` for every app; off unless a case turns it on. */
+  docLevels: false,
   isFlipt: undefined as unknown as ReturnType<
     typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
   >,
@@ -68,11 +70,13 @@ const h = vi.hoisted(() => ({
 
 const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
+const DOC_LEVELS_FLAG = 'app-blocks-shared-doc-levels';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   h.isFlipt = vi.fn(async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return h.moderationMode === 'shadow';
     if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
+    if (flag === DOC_LEVELS_FLAG) return h.docLevels;
     return real.isFlipt(flag, entityId, context as never);
   });
   return {
@@ -117,29 +121,47 @@ vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOrigina
     if (cardSync.fail) throw new Error('store card sync unavailable');
   }),
 }));
-// The scanner is replaced; `enforcedBlockingHit` (which hit refuses) stays real.
+// The scanner's VERDICT is replaced; the leaf walk (`collectSharedDataLeaves`, so every hit carries
+// its real path) and `enforcedBlockingHit` (which hit refuses) stay real.
 vi.mock('~/server/services/apps/shared-data-moderation', async (importOriginal) => {
   const real = await importOriginal<typeof Moderation>();
+  const { collectSharedDataLeaves } = await import('~/server/services/apps/shared-data-leaves');
   // Distinctive, so a response that leaked either would be visible.
   const SECRET_MATCH = 'scanner-matched-text-zq81';
   const SECRET_LABEL = 'scanner-label-zq82';
-  const verdict = (text: string): SharedTextScan => {
-    if (text.includes('contract-scanner-down')) throw new Error('scanner outage');
-    // The leaf is the scanned text, so a shadow record's `leafText` can be checked.
-    const leaf = { raw: text, path: 't', segments: ['t'], kind: 'value' as const };
-    const hit = (category: 'audit_regex' | 'link') => ({
-      leafCount: 1,
-      overflow: null,
-      hits: [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf }],
+  // A `minor` hit outranks the others (`CATEGORY_PRIORITY`), so a case can choose WHICH leaf
+  // refuses a write that holds two hits. Its `matched` is the term itself, as a real detector's is.
+  const MINOR_TERM = 'contract-minor-term';
+  type Leaf = Moderation.SharedTextInput;
+  const verdict = (leaves: Leaf[]): SharedTextScan => {
+    if (leaves.some((l) => l.raw.includes('contract-scanner-down'))) {
+      throw new Error('scanner outage');
+    }
+    const hits = leaves.flatMap((leaf): SharedTextScan['hits'] => {
+      const category = leaf.raw.includes('https://contract-blocked.example')
+        ? ('link' as const)
+        : leaf.raw.includes('contract-blocked-term')
+        ? ('audit_regex' as const)
+        : leaf.raw.includes(MINOR_TERM)
+        ? ('minor' as const)
+        : null;
+      if (!category) return [];
+      return category === 'minor'
+        ? [{ category, matched: MINOR_TERM, label: 'minor', leaf }]
+        : [{ category, matched: SECRET_MATCH, label: SECRET_LABEL, leaf }];
     });
-    if (text.includes('https://contract-blocked.example')) return hit('link');
-    if (text.includes('contract-blocked-term')) return hit('audit_regex');
-    return { leafCount: 1, overflow: null, hits: [] };
+    return { leafCount: leaves.length, overflow: null, hits };
   };
   return {
     ...real,
-    scanSharedData: vi.fn(async (data: unknown) => verdict(JSON.stringify(data))),
-    scanCounterKey: vi.fn(async (key: string) => verdict(key)),
+    scanSharedData: vi.fn(async (data: unknown) => {
+      const walked = collectSharedDataLeaves(data);
+      if ('overflow' in walked) return { leafCount: 0, overflow: null, hits: [] };
+      return verdict(walked.leaves);
+    }),
+    scanCounterKey: vi.fn(async (key: string) =>
+      verdict([{ raw: key, path: '', segments: [], kind: 'key' }])
+    ),
     recordSharedDataScan: vi.fn(async () => undefined),
   };
 });
@@ -376,6 +398,8 @@ async function mint(opts: {
   reviewRunForReal?: boolean;
   /** The token's maturity ceiling; SFW (1) unless a test mints a red-host token. */
   maxBrowsingLevel?: number;
+  /** The viewer's own browsing level claim; absent unless a test sets it. */
+  viewerBrowsingLevel?: number;
 }): Promise<string> {
   const { token } = await BlockTokenService.sign({
     userId: opts.uid,
@@ -386,6 +410,9 @@ async function mint(opts: {
     scopes: opts.scopes,
     ctx: {},
     maxBrowsingLevel: opts.maxBrowsingLevel ?? 1,
+    ...(opts.viewerBrowsingLevel !== undefined
+      ? { viewerBrowsingLevel: opts.viewerBrowsingLevel }
+      : {}),
     domain: 'green',
     ...(opts.dev ? { dev: true } : {}),
     ...(opts.reviewRunForReal ? { reviewRunForReal: true } : {}),
@@ -672,7 +699,7 @@ let liveStore: DocStore;
 beforeAll(async () => {
   // With the manual `schema_major` migration applied, so the route's stamping is observable (the
   // column-absent path is `doc-store.schema-major.pglite.test.ts`).
-  harness = await createPgliteHarness({ rls: true, schemaMajor: true });
+  harness = await createPgliteHarness({ rls: true, schemaMajor: true, docLevels: true });
   liveStore = createDocStore({
     db: harness.db,
     limits: { ...DEFAULT_DOC_STORE_LIMITS, userDocs: contract.limits.viewerDocs },
@@ -690,6 +717,7 @@ beforeEach(() => {
   h.runEnabled = true;
   h.authorEnabled = true;
   h.moderationMode = 'enforce';
+  h.docLevels = false;
   h.ch.capture = false;
   h.ch.inserts = [];
   h.users.clear();
@@ -1486,7 +1514,7 @@ describe('route faults and CORS', () => {
 });
 
 describe('review findings: refusal detail, usage, budget refunds, review gates, CORS', () => {
-  it('a moderation refusal carries only the coarse category — never the matched text or label', async () => {
+  it('a moderation refusal carries the coarse category and the field — never the matched text or label', async () => {
     const { A } = freshApps();
     const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
     const r = await call({
@@ -1496,8 +1524,78 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       body: { data: { t: 'contract-blocked-term' } },
     });
     expect(r.status).toBe(422);
-    expect((r.body as { details: unknown }).details).toEqual({ category: 'blocked' });
+    expect((r.body as { details: unknown }).details).toEqual({
+      category: 'blocked',
+      field: 'data.t',
+      fieldKind: 'value',
+    });
     expect(JSON.stringify(r.body)).not.toMatch(/scanner-matched-text-zq81|scanner-label-zq82/);
+  });
+
+  describe('🔴 REGRESSION: a content_rejected refusal names the field as a JSON path', () => {
+    // Every case: the refused text sits somewhere other than a top-level value, and the refusal
+    // must say where — without the term, and without the text it sat in.
+    const TERM = 'contract-minor-term';
+    const FULL_TEXT = `the wizard says ${TERM} twice`;
+    it.each([
+      [
+        'a nested string',
+        { actions: [{ text: 'hello' }, { text: 'still fine' }, { text: FULL_TEXT }] },
+        { field: 'data.actions[2].text', fieldKind: 'value' },
+      ],
+      [
+        'an array element',
+        { tags: ['calm', 'lake', FULL_TEXT] },
+        { field: 'data.tags[2]', fieldKind: 'value' },
+      ],
+      [
+        // The key IS the refused text: the refusal names the object that holds it.
+        'an object key',
+        { meta: { [FULL_TEXT]: 1, other: 2 } },
+        { field: 'data.meta', fieldKind: 'key' },
+      ],
+      [
+        // A key on the path that is itself refused text (a lower-priority hit, so the value below
+        // it is the one the write is refused for) is replaced, not echoed.
+        'a value under a refused key',
+        { outer: { 'contract-blocked-term parent': { note: FULL_TEXT } } },
+        { field: 'data.outer[*].note', fieldKind: 'value' },
+      ],
+      [
+        'a key that is not a plain identifier',
+        { 'my list': [FULL_TEXT] },
+        { field: 'data["my list"][0]', fieldKind: 'value' },
+      ],
+    ])('%s', async (_name, data, named) => {
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const r = await call({ token: t, method: 'PUT', path: '/posts/p1', body: { data } });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect((r.body as { details: unknown }).details).toEqual({ category: 'blocked', ...named });
+      const body = JSON.stringify(r.body);
+      expect(body).not.toContain(TERM);
+      expect(body).not.toContain(FULL_TEXT);
+      expect(body).not.toContain('contract-blocked-term');
+    });
+
+    it('the document key → `key`, and the key text is not echoed', async () => {
+      const { A } = freshApps();
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const r = await call({
+        token: t,
+        method: 'PUT',
+        path: `/posts/a-${TERM}-b`,
+        body: { data: { note: 'clean' } },
+      });
+      expect(r.status).toBe(422);
+      expect((r.body as { details: unknown }).details).toEqual({
+        category: 'blocked',
+        field: 'key',
+        fieldKind: 'value',
+      });
+      expect(JSON.stringify(r.body)).not.toContain(TERM);
+    });
   });
 
   it("info: the viewer's usage is their own, distinct from the app's and another viewer's", async () => {
@@ -2459,7 +2557,7 @@ describe('shared-data moderation follows the per-app shadow / enforce flags', ()
           blocked: 0,
           category: 'audit_regex',
           matched: 'scanner-matched-text-zq81',
-          leafText: JSON.stringify({ t: 'contract-blocked-term' }),
+          leafText: 'contract-blocked-term',
         }),
       ]);
       // One denominator row per scan: the data blob, and the app-chosen key.
@@ -3833,5 +3931,165 @@ describe('collection schemas: a violating write is refused before anything is sp
     });
     expect(gated.status).toBe(403);
     expect(gated.body).toMatchObject({ code: 'not_eligible' });
+  });
+});
+
+describe('content levels (app-blocks-shared-doc-levels): read gate and read-only metadata', () => {
+  /** Set a document's rating directly: the rater (build 3) does not exist yet. */
+  async function rate(appId: string, key: string, level: number, status: string) {
+    await harness.raw(
+      `UPDATE appdata.doc d SET level = $3, rating_status = $4, rated_at = now(),
+         rated_version = d.version
+       WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'posts' AND d.key = $2`,
+      [appId, key, level, status]
+    );
+  }
+  async function stored(appId: string, key: string) {
+    const [row] = await harness.raw(
+      `SELECT d.level, d.rating_status FROM appdata.doc d
+       WHERE d.app_id = $1 AND d.ns = 'prod' AND d.coll = 'posts' AND d.key = $2`,
+      [appId, key]
+    );
+    return row;
+  }
+  const scopes = contract.defaultScopes;
+
+  it('INVARIANT GUARD: flag off, a document read has exactly the fields it had before', async () => {
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    expect(
+      (await call({ token: v1, method: 'PUT', path: '/posts/p1', body: { data: { t: 1 } } })).status
+    ).toBe(200);
+    const v2 = await mint({ app: A, uid: VIEWER_IDS.v2, scopes });
+    const got = await call({ token: v2, method: 'GET', path: '/posts/p1' });
+    expect(got.status).toBe(200);
+    expect(Object.keys(got.body as object).sort()).toEqual([
+      'author',
+      'counters',
+      'createdAt',
+      'data',
+      'key',
+      'marks',
+      'updatedAt',
+      'version',
+      'viewer',
+    ]);
+    expect(await stored(A.id, 'p1')).toEqual({ level: null, rating_status: null });
+  });
+
+  it('🔴 flag on: a write is pending, hidden from another viewer and shown to its author with read-only metadata', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    const put = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/p1',
+      body: { data: { t: 1 } },
+    });
+    expect(put.status).toBe(200);
+    expect(put.body).toMatchObject({ key: 'p1', version: 1, level: null, ratingStatus: 'pending' });
+    const v2 = await mint({
+      app: A,
+      uid: VIEWER_IDS.v2,
+      scopes,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: 31,
+    });
+    expect((await call({ token: v2, method: 'GET', path: '/posts/p1' })).status).toBe(404);
+    expect((await call({ token: v2, method: 'GET', path: '/posts' })).body).toMatchObject({
+      items: [],
+    });
+    const own = await call({ token: v1, method: 'GET', path: '/posts/p1' });
+    expect(own.body).toMatchObject({ key: 'p1', level: null, ratingStatus: 'pending' });
+  });
+
+  it('🔴 flag on: the reader’s level is the token’s domain ceiling AND the viewer’s own level', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    await call({ token: v1, method: 'PUT', path: '/posts/p13', body: { data: { t: 1 } } });
+    await rate(A.id, 'p13', 2, 'rated'); // PG-13
+    const read = async (maxBrowsingLevel: number, viewerBrowsingLevel?: number) =>
+      call({
+        token: await mint({
+          app: A,
+          uid: VIEWER_IDS.v2,
+          scopes,
+          maxBrowsingLevel,
+          ...(viewerBrowsingLevel !== undefined ? { viewerBrowsingLevel } : {}),
+        }),
+        method: 'GET',
+        path: '/posts/p13',
+      });
+    // A ceiling that admits PG-13 but a viewer who browses PG only: hidden.
+    expect((await read(31, 1)).status).toBe(404);
+    // No viewer claim: fails closed to PG.
+    expect((await read(31)).status).toBe(404);
+    // Both admit PG-13.
+    const shown = await read(7, 3);
+    expect(shown.status).toBe(200);
+    expect(shown.body).toMatchObject({ level: 2, ratingStatus: 'rated' });
+  });
+
+  it('🔴 flag on: an author’s own rated document is capped by the token’s domain, not their setting', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const author = (maxBrowsingLevel: number, viewerBrowsingLevel: number) =>
+      mint({ app: A, uid: VIEWER_IDS.v1, scopes, maxBrowsingLevel, viewerBrowsingLevel });
+    await call({
+      token: await author(31, 1),
+      method: 'PUT',
+      path: '/posts/mine-r',
+      body: { data: { t: 1 } },
+    });
+    await rate(A.id, 'mine-r', 4, 'rated'); // R
+    const read = async (max: number, own: number) =>
+      (await call({ token: await author(max, own), method: 'GET', path: '/posts/mine-r' })).status;
+    // Red domain, own setting PG only: shown.
+    expect(await read(31, 1)).toBe(200);
+    // SFW domain, own setting everything: hidden.
+    expect(await read(3, 31)).toBe(404);
+  });
+
+  it('🔴 flag on: an app cannot write level or ratingStatus', async () => {
+    h.docLevels = true;
+    const { A } = freshApps();
+    const v1 = await mint({ app: A, uid: VIEWER_IDS.v1, scopes });
+    // Inside `data` they are the app's own fields: stored as data, never read as the rating.
+    const put = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/m1',
+      body: { data: { level: 1, ratingStatus: 'rated' } },
+    });
+    expect(put.status).toBe(200);
+    expect(put.body).toMatchObject({
+      data: { level: 1, ratingStatus: 'rated' },
+      level: null,
+      ratingStatus: 'pending',
+    });
+    expect(await stored(A.id, 'm1')).toEqual({ level: null, rating_status: 'pending' });
+    // Beside `data` they are refused.
+    for (const extra of [{ level: 1 }, { ratingStatus: 'rated' }]) {
+      const r = await call({
+        token: v1,
+        method: 'PUT',
+        path: '/posts/m1',
+        body: { data: {}, ...extra },
+      });
+      expect(r.status).toBe(400);
+      expect(r.body).toMatchObject({ code: 'invalid_request' });
+    }
+    expect(await stored(A.id, 'm1')).toEqual({ level: null, rating_status: 'pending' });
+    // And another viewer does not see it as rated.
+    const v2 = await mint({
+      app: A,
+      uid: VIEWER_IDS.v2,
+      scopes,
+      maxBrowsingLevel: 31,
+      viewerBrowsingLevel: 31,
+    });
+    expect((await call({ token: v2, method: 'GET', path: '/posts/m1' })).status).toBe(404);
   });
 });

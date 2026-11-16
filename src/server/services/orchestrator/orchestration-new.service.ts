@@ -2362,6 +2362,7 @@ import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
+import { getModel3DPreviewNsfwLevel } from '~/shared/orchestrator/model3d-output';
 import {
   exceedsNsfwLevel,
   isMature,
@@ -2857,22 +2858,9 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
   }
 }
 
-/**
- * Max rating across a workflow's `model3DPreview` render images. The
- * orchestrator never rates the mesh blob itself (`nsfwLevel: null`) — the
- * chained 2D preview render carries the result's effective rating, so it must
- * be propagated onto the `model3d` output for the client's NSFW gates
- * (yellow-Buzz unlock, enableNsfw, siteRestricted) to apply.
- */
-export function getModel3DPreviewNsfwLevel(
-  steps: WorkflowStep[] | null | undefined
-): NsfwLevel | undefined {
-  const previews = (steps ?? []).filter((s) => s.$type === 'model3DPreview') as Array<{
-    output?: { images?: ImageBlob[] };
-  }>;
-  if (!previews.length) return undefined;
-  return maxNsfwLevel(previews.flatMap((s) => (s.output?.images ?? []).map((i) => i?.nsfwLevel)));
-}
+// `getModel3DPreviewNsfwLevel` lives in `~/shared/orchestrator/model3d-output` so the App
+// Blocks producers apply the same propagation; re-exported for existing importers.
+export { getModel3DPreviewNsfwLevel };
 
 /**
  * Formats step outputs into normalized images array

@@ -240,6 +240,6 @@ export async function getWindowedCollectionRanking({
     since,
     attempts,
     elapsedMs: Date.now() - startedAt,
-  }).catch(() => null);
+  });
   return { ids: null, source: 'unavailable', reason: 'clickhouse-error' };
 }

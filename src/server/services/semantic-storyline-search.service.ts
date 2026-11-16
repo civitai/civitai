@@ -189,7 +189,7 @@ export async function searchSemanticStorylines({
     returned: search.state.returned,
     hydrated,
     shown: page.items.length,
-  }).catch(() => undefined);
+  });
 
   audit.candidates(search.state.first);
   if (search.state.refused)

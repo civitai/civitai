@@ -49,6 +49,7 @@ const {
   recordUploadKeyOwner,
   UNFINISHED_UPLOAD_MESSAGE,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
+  UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL,
 } = await import('~/server/services/image-url-ownership');
 
 const CALLER = 7;
@@ -57,7 +58,9 @@ const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
 const BEFORE = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() - 60_000);
 const AFTER = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() + 60_000);
 
+/** The cluster's issue records, and sysRedis's: the store they were written to before the move. */
 const redis = new Map<string, string>();
+const sys = new Map<string, string>();
 
 // The setup file stubs every registered metric; this is the stub the module built for its counter.
 const counterAt = vi
@@ -84,12 +87,15 @@ beforeEach(async () => {
   holder.logHangs = false;
   holder.sql = [];
   redis.clear();
-  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+  sys.clear();
+  redisMock.redis.set.mockImplementation((async (key: string, value: string) => {
     redis.set(key, value);
     return 'OK';
   }) as never);
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
+  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+    keys.map((k) => sys.get(k) ?? null)) as never);
 });
 
 const outcome = (url: string, now = AFTER) =>
@@ -102,10 +108,10 @@ const outcome = (url: string, now = AFTER) =>
   );
 
 describe('assertClientKeysIssuedToCaller', () => {
-  it('accepts a key with no record and no row through 2026-11-18 15:59Z, and refuses it from 16:00Z', async () => {
-    expect(await outcome(KEY, new Date('2026-11-18T15:59:59.999Z'))).toBe('accepted');
+  it('accepts a key with no record and no row through 2026-12-09 15:59Z, and refuses it from 16:00Z', async () => {
+    expect(await outcome(KEY, new Date('2026-12-09T15:59:59.999Z'))).toBe('accepted');
     const refused = outcomeCount('unrecorded_refused');
-    expect(await outcome(KEY, new Date('2026-11-18T16:00:00Z'))).toBe('refused');
+    expect(await outcome(KEY, new Date('2026-12-09T16:00:00Z'))).toBe('refused');
     expect(outcomeCount('unrecorded_refused')).toBe(refused + 1);
   });
 
@@ -223,7 +229,7 @@ describe('assertClientKeysIssuedToCaller', () => {
 
   it('refuses a key before the cutoff when neither the issue record nor the request log can be read', async () => {
     holder.logDown = true;
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('down'));
     const accepted = outcomeCount('request_log_unavailable_accepted');
     const refused = outcomeCount('request_log_unavailable');
 
@@ -253,7 +259,7 @@ describe('assertClientKeysIssuedToCaller', () => {
     const before = outcomeCount('request_log_unavailable');
     expect(await outcome(KEY, AFTER)).toBe('refused');
     expect(outcomeCount('request_log_unavailable')).toBe(before + 1);
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('down'));
     expect(await outcome(KEY, AFTER)).toBe('refused');
   });
 
@@ -317,7 +323,7 @@ describe('assertClientKeysIssuedToCaller', () => {
   });
 
   it('treats a key as unrecorded when the issue record store cannot be read', async () => {
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('down'));
     expect(await outcome(KEY, BEFORE)).toBe('accepted');
     expect(await outcome(KEY, AFTER)).toBe('refused');
   });
@@ -348,7 +354,7 @@ describe('assertClientKeysIssuedToCaller', () => {
   });
 
   it('refuses a key the upload request log issued to another user when the record read fails', async () => {
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('down'));
     holder.issued = [{ key: KEY, userId: OTHER }];
     expect(await outcome(KEY)).toBe('refused');
   });
@@ -466,17 +472,17 @@ describe('keyIssueRecords', () => {
     holder.logDown = true;
     expect((await keyIssueRecords([KEY])).failed).toBe(true);
     holder.logDown = false;
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('down'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('down'));
     expect((await keyIssueRecords([KEY])).failed).toBe(true);
   });
 });
 
 describe('recordUploadKeyOwner', () => {
-  const writes = () => redisMock.sysRedis.set.mock.calls.length;
+  const writes = () => redisMock.redis.set.mock.calls.length;
 
   it('keeps a record through a write that fails twice, so the save after the cutover accepts it', async () => {
     const before = writes();
-    redisMock.sysRedis.set
+    redisMock.redis.set
       .mockRejectedValueOnce(new Error('blip'))
       .mockRejectedValueOnce(new Error('blip'));
     expect(await recordUploadKeyOwner(KEY, CALLER)).toBe(true);
@@ -488,7 +494,7 @@ describe('recordUploadKeyOwner', () => {
   it('says the record was not written when every attempt fails, and stops after three', async () => {
     const before = writes();
     const failed = outcomeCount('record_failed');
-    redisMock.sysRedis.set.mockRejectedValue(new Error('down'));
+    redisMock.redis.set.mockRejectedValue(new Error('down'));
     await expect(recordUploadKeyOwner(KEY, CALLER)).resolves.toBe(false);
     expect(writes() - before).toBe(3);
     expect(outcomeCount('record_failed')).toBe(failed + 1);
@@ -498,7 +504,7 @@ describe('recordUploadKeyOwner', () => {
     const before = writes();
     vi.useFakeTimers();
     try {
-      redisMock.sysRedis.set.mockImplementation((() => new Promise(() => undefined)) as never);
+      redisMock.redis.set.mockImplementation((() => new Promise(() => undefined)) as never);
       let settled: boolean | undefined;
       void recordUploadKeyOwner(KEY, CALLER).then((v) => (settled = v));
       await vi.advanceTimersByTimeAsync(3 * 2_000 + 1_000);
@@ -507,5 +513,131 @@ describe('recordUploadKeyOwner', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('the issue record, moved from sysRedis to the cluster', () => {
+  // Each distinct from KEY, from each other, and from every key another case records.
+  const WRITTEN = '3c0ffee1-aaaa-4bbb-8ccc-1d2e3f405162';
+  const SYS_ONLY = '5a5a5a5a-1111-4222-8333-444455556666';
+  const SYS_OTHERS = '6b6b6b6b-7777-4888-9999-aaaabbbbcccc';
+  const CLUSTER_ONLY = '7c7c7c7c-dddd-4eee-8fff-000011112222';
+  /** Inside the fallback window and after the unrecorded-key cutover. */
+  const WINDOW = new Date('2026-12-15T12:00:00Z');
+
+  // Hand-written wire values, so a key renamed in either table is caught here.
+  const clusterKey = (key: string) => `system:upload-key-owner:${key}`;
+  const sysKey = (key: string) => `system:upload-key-owner:${key}`;
+
+  it('pins the fallback window after the cutover', () => {
+    expect(UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL.toISOString()).toBe('2027-01-01T00:00:00.000Z');
+    expect(WINDOW > UNRECORDED_KEYS_ACCEPTED_UNTIL).toBe(true);
+    expect(WINDOW < UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL).toBe(true);
+  });
+
+  it('writes the record to the cluster, never to sysRedis', async () => {
+    redisMock.sysRedis.set.mockClear();
+    expect(await recordUploadKeyOwner(WRITTEN, OTHER)).toBe(true);
+    expect(redisMock.redis.set).toHaveBeenLastCalledWith(clusterKey(WRITTEN), String(OTHER), {
+      EX: 30 * 24 * 60 * 60,
+    });
+    expect(redis.get(clusterKey(WRITTEN))).toBe(String(OTHER));
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+    // And the save reads it back from there.
+    expect(await outcome(WRITTEN, WINDOW)).toBe('refused');
+  });
+
+  it('reads a cluster record without reading sysRedis', async () => {
+    redis.set(clusterKey(CLUSTER_ONLY), String(CALLER));
+    redisMock.sysRedis.mGet.mockClear();
+    const hits = outcomeCount('record_sys_fallback_hit');
+    expect(await outcome(CLUSTER_ONLY, WINDOW)).toBe('accepted');
+    expect(redisMock.sysRedis.mGet).not.toHaveBeenCalled();
+    expect(outcomeCount('record_sys_fallback_hit')).toBe(hits);
+  });
+
+  it('accepts after the cutover, inside the window, a key recorded only in sysRedis', async () => {
+    sys.set(sysKey(SYS_ONLY), String(CALLER));
+    expect(await outcome(SYS_ONLY, WINDOW)).toBe('accepted');
+    // The owner comes from that record: one naming another user is refused.
+    sys.set(sysKey(SYS_OTHERS), String(OTHER));
+    expect(await outcome(SYS_OTHERS, WINDOW)).toBe('refused');
+    expect(redisMock.sysRedis.mGet).toHaveBeenLastCalledWith([sysKey(SYS_OTHERS)]);
+  });
+
+  it('reads sysRedis only for the keys the cluster lacks', async () => {
+    redis.set(clusterKey(CLUSTER_ONLY), String(CALLER));
+    sys.set(sysKey(SYS_ONLY), String(CALLER));
+    redisMock.sysRedis.mGet.mockClear();
+    const hits = outcomeCount('record_sys_fallback_hit');
+    await expect(
+      keyIssuers({ urls: [CLUSTER_ONLY, SYS_ONLY], userId: CALLER, now: WINDOW })
+    ).resolves.toMatchObject({ unrecorded: [], recordReadFailed: false });
+    expect(redisMock.sysRedis.mGet).toHaveBeenCalledExactlyOnceWith([sysKey(SYS_ONLY)]);
+    // Counted once per read the fallback answered, and not when it finds nothing.
+    expect(outcomeCount('record_sys_fallback_hit')).toBe(hits + 1);
+    await keyIssuers({ urls: [WRITTEN], userId: CALLER, now: WINDOW });
+    expect(outcomeCount('record_sys_fallback_hit')).toBe(hits + 1);
+  });
+
+  it('reads no sysRedis record from UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL', async () => {
+    sys.set(sysKey(SYS_ONLY), String(CALLER));
+    const last = new Date(UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL.getTime() - 1);
+    expect(await outcome(SYS_ONLY, last)).toBe('accepted');
+
+    redisMock.sysRedis.mGet.mockClear();
+    expect(await outcome(SYS_ONLY, UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL)).toBe('refused');
+    expect(await outcome(SYS_ONLY, new Date('2027-02-01T00:00:00Z'))).toBe('refused');
+    expect(redisMock.sysRedis.mGet).not.toHaveBeenCalled();
+  });
+
+  describe('a sysRedis fallback read that fails counts as an unreadable issue record', () => {
+    const failFallback = () => redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
+    const failCluster = () => redisMock.redis.mGet.mockRejectedValue(new Error('down'));
+
+    it.each([
+      ['the fallback', failFallback],
+      ['the cluster', failCluster],
+    ])('with %s down, as today: flagged, counted once, and decided the same', async (_, fail) => {
+      fail();
+      const failed = outcomeCount('record_read_failed');
+      await expect(keyIssuers({ urls: [SYS_ONLY], userId: CALLER, now: WINDOW })).resolves.toEqual({
+        tooMany: false,
+        issuedToOthers: [],
+        unrecorded: [SYS_ONLY],
+        recordReadFailed: true,
+        requestLogReadFailed: false,
+      });
+      expect(outcomeCount('record_read_failed')).toBe(failed + 1);
+
+      // The decisions an unreadable record store has always got.
+      expect(await outcome(SYS_ONLY, BEFORE)).toBe('accepted');
+      expect(await outcome(SYS_ONLY, WINDOW)).toBe('refused');
+      holder.logDown = true;
+      expect(await outcome(SYS_ONLY, BEFORE)).toBe('refused');
+      holder.issued = [{ key: SYS_ONLY, userId: OTHER }];
+      holder.logDown = false;
+      expect(await outcome(SYS_ONLY, BEFORE)).toBe('refused');
+      expect((await keyIssueRecords([SYS_ONLY], undefined, WINDOW)).failed).toBe(true);
+    });
+
+    it('keeps the cluster records it read', async () => {
+      redis.set(clusterKey(CLUSTER_ONLY), String(OTHER));
+      failFallback();
+      await expect(
+        keyIssuers({ urls: [CLUSTER_ONLY, SYS_ONLY], userId: CALLER, now: WINDOW })
+      ).resolves.toMatchObject({
+        issuedToOthers: [CLUSTER_ONLY],
+        unrecorded: [SYS_ONLY],
+        recordReadFailed: true,
+      });
+    });
+
+    it('is not read, so cannot fail, from UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL', async () => {
+      failFallback();
+      await expect(
+        keyIssuers({ urls: [SYS_ONLY], userId: CALLER, now: UPLOAD_KEY_OWNER_SYS_FALLBACK_UNTIL })
+      ).resolves.toMatchObject({ recordReadFailed: false, unrecorded: [SYS_ONLY] });
+    });
   });
 });

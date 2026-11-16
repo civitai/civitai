@@ -25,10 +25,13 @@ import (
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// served is a computeFn that answers at once with a fixed payload.
-func served(payload string, ttl *trpc.CacheTTL) func(context.Context, *http.Request) (*computed, error) {
+// servedPayload is the page served() answers.
+const servedPayload = `{"json":{"items":[]}}`
+
+// served is a computeFn that answers at once with servedPayload.
+func served(ttl *trpc.CacheTTL) func(context.Context, *http.Request) (*computed, error) {
 	return func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(payload), ttl: ttl}, nil
+		return &computed{payload: []byte(servedPayload), ttl: ttl}, nil
 	}
 }
 
@@ -72,16 +75,17 @@ func serveServer(reg *prometheus.Registry, fn func(context.Context, *http.Reques
 	}
 }
 
-func requests(t *testing.T, reg *prometheus.Registry, mode, outcome string) float64 {
+// requests reads feed_go_requests_total{feed_endpoint="as-posts",mode="serve",outcome=<outcome>}.
+func requests(t *testing.T, reg *prometheus.Registry, outcome string) float64 {
 	t.Helper()
-	v, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": EndpointAsPosts, "mode": mode, "outcome": outcome})
+	v, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": EndpointAsPosts, "mode": "serve", "outcome": outcome})
 	return v
 }
 
 func TestServeHTTPServedPath(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	fb := &proxyRecorder{}
-	s := serveServer(reg, served(`{"json":{"items":[]}}`, &trpc.SignedOutTTL), fb)
+	s := serveServer(reg, served(&trpc.SignedOutTTL), fb)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, publicRequest())
 	if w.Code != 200 || fb.calls != 0 {
@@ -93,11 +97,11 @@ func TestServeHTTPServedPath(t *testing.T) {
 	if got := w.Header().Get("Cache-Control"); got != "public, max-age=60, s-maxage=60, stale-while-revalidate=30" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
-	if requests(t, reg, "serve", "served") != 1 {
+	if requests(t, reg, "served") != 1 {
 		t.Fatal("served request not counted")
 	}
 	// Signed in (no TTL): private.
-	s.computeFn = served(`{"json":{"items":[]}}`, nil)
+	s.computeFn = served(nil)
 	w = httptest.NewRecorder()
 	s.ServeHTTP(w, publicRequest())
 	if got := w.Header().Get("Cache-Control"); got != "max-age=0, private, no-cache" {
@@ -116,8 +120,8 @@ func TestServeHTTPErrorFallsBack(t *testing.T) {
 	if w.Code != http.StatusTeapot || fb.calls != 1 {
 		t.Fatalf("code=%d proxied=%d, want the proxy's 418 and 1", w.Code, fb.calls)
 	}
-	if fallbackCount(t, reg, "error") != 1 || requests(t, reg, "serve", "error") != 1 {
-		t.Fatalf("error fallback not recorded: reason=%v outcome=%v", fallbackCount(t, reg, "error"), requests(t, reg, "serve", "error"))
+	if fallbackCount(t, reg, "error") != 1 || requests(t, reg, "error") != 1 {
+		t.Fatalf("error fallback not recorded: reason=%v outcome=%v", fallbackCount(t, reg, "error"), requests(t, reg, "error"))
 	}
 }
 
@@ -315,11 +319,11 @@ func TestShadowComputeRunsUnderTheBudget(t *testing.T) {
 	}
 }
 
-// The deadline result is exported at 0 for both endpoints before any sample.
+// The deadline result is exported at 0 for every endpoint before any sample.
 func TestShadowDeadlineResultIsSeeded(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	NewMetrics(reg)
-	for _, e := range []string{"as-posts", "v1-images"} {
+	for _, e := range []string{"as-posts", "v1-images", "infinite", "model-getall"} {
 		v, found := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": e, "result": "deadline"})
 		if !found || v != 0 {
 			t.Fatalf("feed_go_shadow_compare_total{feed_endpoint=%q,result=\"deadline\"} = %v (found %v), want a seeded 0", e, v, found)
@@ -582,6 +586,45 @@ func testCounterValue(t *testing.T, c prometheus.Counter) float64 {
 	return v
 }
 
+// The cache-miss counter is seeded for every cache and result, and ObserveCacheMiss adds ids.
+func TestCacheMissCounter(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	m.ObserveCacheMiss("image-frames", "computed", 3)
+	m.ObserveCacheMiss("image-frames", "computed", 2)
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, mf := range mfs {
+		if mf.GetName() != "feed_go_cache_miss_total" {
+			continue
+		}
+		for _, metric := range mf.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range metric.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			got[labels["cache"]+"/"+labels["result"]] = metric.GetCounter().GetValue()
+		}
+	}
+	want := map[string]float64{
+		"user-cosmetics/computed": 0, "user-cosmetics/error": 0, "image-frames/computed": 5, "image-frames/error": 0,
+		"event-decorations/computed": 0, "event-decorations/error": 0,
+		"image-meta/computed": 0, "image-meta/error": 0,
+		"tag-ids/computed": 0, "tag-ids/error": 0, "model-frames/computed": 0, "model-frames/error": 0,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("series %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
 // The endpoint label is `feed_endpoint` on every per-endpoint family. `endpoint` is a reserved scrape
 // target label: the scraper's own value overwrites it, so a query on endpoint="as-posts" would match
 // nothing. Each family is touched once so Gather shows its label names.
@@ -600,11 +643,15 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	m.ShadowPhaseCPU.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSolo.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
 	m.ShadowPhaseSoloWall.WithLabelValues(EndpointAsPosts, "compute", "served").Inc()
+	m.GoFirstDBReads.WithLabelValues(EndpointAsPosts, "basic-users").Inc()
+	m.GoFirstCheckLag.WithLabelValues(EndpointAsPosts).Observe(1)
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true}
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
+		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
+		"feed_go_cache_miss_total": true}
 	checked := 0
 	for _, mf := range mfs {
 		if !strings.HasPrefix(mf.GetName(), "feed_go_") || unlabelled[mf.GetName()] {
@@ -626,8 +673,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 10 {
-		t.Fatalf("checked %d per-endpoint families, want 10 (a family was renamed or lost)", checked)
+	if checked != 18 {
+		t.Fatalf("checked %d per-endpoint families, want 18 (a family was renamed or lost)", checked)
 	}
 }
 

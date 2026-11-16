@@ -740,9 +740,7 @@ export async function getReactionEarns(
     })(),
     deadlineMs
   ).catch((error) => {
-    void logToAxiom({ type: 'error', name: 'event-turf', fn: 'getReactionEarns', error }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'event-turf', fn: 'getReactionEarns', error });
     return false;
   });
 }
@@ -1274,9 +1272,7 @@ async function swapFlagDayFor(event: TurfEvent, now: Date) {
         now
       );
   } catch (error) {
-    void logToAxiom({ type: 'error', name: 'flag-race-swap', event: event.name, error }).catch(
-      () => null
-    );
+    void logToAxiom({ type: 'error', name: 'flag-race-swap', event: event.name, error });
   }
 }
 
@@ -1580,7 +1576,5 @@ export async function getMyStickerHats(eventName: string, userId: number) {
 // #endregion
 
 function logSyncError(error: unknown) {
-  void logToAxiom({ type: 'error', name: 'event-turf', fn: 'syncTurfImages', error }).catch(
-    () => undefined
-  );
+  void logToAxiom({ type: 'error', name: 'event-turf', fn: 'syncTurfImages', error });
 }

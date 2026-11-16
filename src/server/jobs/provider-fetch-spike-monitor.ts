@@ -117,14 +117,14 @@ export const providerFetchSpikeMonitorJob = createJob(
 
     const spikes = observations.filter((o) => o.spike);
     if (spikes.length > 0) {
-      await logToAxiom({
+      logToAxiom({
         type: 'error',
         name: 'provider-fetch-spike',
         message: `distinct versions fetched spiked for: ${spikes
           .map((o) => o.provider)
           .join(', ')}`,
         spikes: JSON.stringify(spikes),
-      }).catch(() => undefined);
+      });
     }
 
     return { providers: observations.length, spikes: spikes.map((o) => o.provider) };

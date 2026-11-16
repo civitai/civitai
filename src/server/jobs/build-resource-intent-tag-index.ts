@@ -39,7 +39,7 @@ export const buildResourceIntentTagIndexJob = createJob(
           logToAxiom({
             type: 'resource-intent-tag-index-retention-failed',
             error: e instanceof Error ? e.message : String(e),
-          }).catch(() => undefined);
+          });
           throw e;
         }
       },

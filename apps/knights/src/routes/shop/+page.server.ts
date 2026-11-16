@@ -79,7 +79,7 @@ export const actions: Actions = {
     const open = buzzPacksOpen();
     if (!open && conversionEnabled() && !warnedNoEndpoint) {
       warnedNoEndpoint = true;
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'knights-conversion-unavailable',
         message: 'BUZZ_ENDPOINT is not configured; Buzz packs are not sold',

@@ -281,7 +281,7 @@ async function completeSession(
     trackImageUpload(req, res, key, userId);
     res.status(200).json({ id: key });
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 'image-upload-relayed',
         userId,
         bytes: session.size,

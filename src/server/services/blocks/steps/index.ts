@@ -540,12 +540,15 @@ export function containsAirReference(value: unknown, depth = 0): boolean {
 export type {
   OrchestratorBlobLike,
   StepOutputMedia,
+  StepOutputSlot,
   TrainedEpoch,
   TrainingStepType,
 } from './output';
 export {
   isTrainingStepType,
   mediaFromBlobs,
+  mediaSlotsFromBlobs,
+  slotFromMedia,
   splitPassThroughStep,
   splitPassThroughStepOutput,
   withEveryBlobSurfaceable,
