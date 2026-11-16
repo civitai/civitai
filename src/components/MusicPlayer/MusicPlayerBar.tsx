@@ -410,7 +410,6 @@ function Timeline({
   const progress = playbackProgress(currentTime, duration);
   const played = playing ? ACCENT : accentAt(50);
   const timedComments = usePlayerTimedComments(track.id);
-  const withStrip = timedComments.comments.length > 0;
 
   const seekFromPointer = (e: PointerEvent<HTMLElement>) =>
     seekMusicPlayer(timeFromPointer(e.clientX, e.currentTarget.getBoundingClientRect(), duration));
@@ -420,20 +419,18 @@ function Timeline({
       <span className={clsx('w-[34px] shrink-0 text-xs', dimmed)}>
         {formatPlaybackTime(currentTime)}
       </span>
-      <div className="flex min-w-0 flex-1 flex-col">
-        {withStrip &&
-          (timedComments.show ? (
-            <TimedCommentStrip
-              songId={track.id}
-              comments={timedComments.comments}
-              duration={duration}
-              currentTime={currentTime}
-              accent={accent}
-            />
-          ) : (
-            // Hidden, the strip keeps its row so the waveform does not jump.
-            <div aria-hidden className="h-6 shrink-0" />
-          ))}
+      {/* The waveform alone sets this column's height, centred in the bar like the controls; the
+          comment avatars float over its top edge, so showing or hiding them moves nothing. */}
+      <div className="relative min-w-0 flex-1">
+        {timedComments.show && timedComments.comments.length > 0 && (
+          <TimedCommentStrip
+            songId={track.id}
+            comments={timedComments.comments}
+            duration={duration}
+            currentTime={currentTime}
+            accent={accent}
+          />
+        )}
         <div
           ref={sliderRef}
           role="slider"
@@ -443,10 +440,7 @@ function Timeline({
           aria-valuemax={Math.round(duration)}
           aria-valuenow={Math.round(currentTime)}
           aria-valuetext={`${formatPlaybackTime(currentTime)} of ${formatPlaybackTime(duration)}`}
-          className={clsx(
-            'relative flex w-full min-w-0 cursor-pointer touch-none items-center',
-            withStrip ? 'h-10' : 'h-12'
-          )}
+          className="relative flex h-12 w-full min-w-0 cursor-pointer touch-none items-center"
           style={{ '--waveform-played': played } as CSSProperties}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId);

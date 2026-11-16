@@ -93,6 +93,14 @@ const openedDetail = (commentId: number) => {
   });
   expect(seekMusicPlayer).not.toHaveBeenCalled();
 };
+// Once, and without opening anything.
+const seeked = (sec: number) => {
+  expect(seekMusicPlayer).toHaveBeenCalledTimes(1);
+  expect(seekMusicPlayer).toHaveBeenCalledWith(sec);
+  expect(triggerRoutedDialog).not.toHaveBeenCalled();
+};
+const slider = () => document.querySelector('[role="slider"]')!.getBoundingClientRect();
+const middle = (r: DOMRect) => r.top + r.height / 2;
 const listOpen = () => document.querySelector('[role="dialog"][aria-label^="Comments around"]');
 const at = (currentTime: number) =>
   act(() => useMusicPlayheadStore.setState({ currentTime, duration: DURATION }));
@@ -128,8 +136,22 @@ describe('timed comments on the bar’s waveform', () => {
     const first = cluster(1).querySelector('[data-avatar]')!.parentElement!.getBoundingClientRect();
     expect((first.left + first.width / 2 - box.left) / box.width).toBeCloseTo(0.25, 2);
     expect(centre(3)).toBeCloseTo(0.75, 2);
-    const slider = document.querySelector('[role="slider"]')!.getBoundingClientRect();
-    expect(box.bottom).toBeLessThanOrEqual(slider.top + 1);
+    // Over the waveform's top edge, inside the bar.
+    expect(middle(box)).toBeCloseTo(slider().top, 0);
+    expect(box.top).toBeGreaterThanOrEqual(bar().top);
+  });
+
+  test('leave the waveform centred in the bar, where toggling them does not move it', async () => {
+    await renderBar();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+    const playTop = () =>
+      page.getByRole('button', { name: 'Pause', exact: true }).element().getBoundingClientRect().top;
+    const before = { waveform: slider().top, play: playTop() };
+    expect(Math.abs(middle(slider()) - middle(bar()))).toBeLessThanOrEqual(1);
+    await userEvent.click(page.getByRole('button', { name: 'Hide timed comments', exact: true }));
+    await expect.poll(strip).toBeNull();
+    expect({ waveform: slider().top, play: playTop() }).toEqual(before);
+    expect(Math.abs(middle(slider()) - middle(bar()))).toBeLessThanOrEqual(1);
   });
 
   test('show one label at a time, for 4 s from its time', async () => {
@@ -142,11 +164,31 @@ describe('timed comments on the bar’s waveform', () => {
     await expect.poll(labels).toEqual([]);
   });
 
-  test('a click on an avatar opens the song with that comment highlighted, without seeking', async () => {
+  test('a click on an avatar seeks there, without opening anything', async () => {
     await renderBar();
     await expect.poll(() => avatar(3)).toBeTruthy();
     await userEvent.click(avatar(3));
-    openedDetail(3);
+    seeked(150);
+  });
+
+  test('Enter on an avatar seeks there', async () => {
+    await renderBar();
+    await expect.poll(() => avatar(3)).toBeTruthy();
+    avatar(3).focus();
+    await userEvent.keyboard('{Enter}');
+    seeked(150);
+  });
+
+  test('focusing an avatar shows its comment; ArrowDown reaches it; Escape returns', async () => {
+    await renderBar();
+    await expect.poll(() => avatar(3)).toBeTruthy();
+    avatar(3).focus();
+    await expect.poll(labels).toEqual(['jo: the outro']);
+    await userEvent.keyboard('{ArrowDown}');
+    await expect.poll(() => document.activeElement).toBe(label());
+    await userEvent.keyboard('{Escape}');
+    await expect.poll(labels).toEqual([]);
+    expect(document.activeElement).toBe(avatar(3));
   });
 
   test('the toggle hides them without moving the waveform; it shows them again', async () => {
@@ -175,7 +217,8 @@ describe('timed comments on the bar’s waveform', () => {
     await renderBar();
     await expect.element(page.getByRole('slider', { name: 'Song progress' })).toBeInTheDocument();
     expect(strip()).toBeNull();
-    expect(document.querySelector('[role="slider"]')!.getBoundingClientRect().height).toBe(48);
+    expect(slider().height).toBe(48);
+    expect(Math.abs(middle(slider()) - middle(bar()))).toBeLessThanOrEqual(1);
   });
 });
 
@@ -268,11 +311,19 @@ describe('a cluster of nearby comments', () => {
     openedDetail(5);
   });
 
-  test('a click on it opens the song at its first comment, without seeking', async () => {
+  test('a click on it seeks to its first comment, without opening anything', async () => {
     await renderBar();
     await expect.poll(() => cluster(1)).toBeTruthy();
     await userEvent.click(cluster(1));
-    openedDetail(1);
+    seeked(50);
+  });
+
+  test('Enter on it seeks to its first comment', async () => {
+    await renderBar();
+    await expect.poll(() => cluster(1)).toBeTruthy();
+    cluster(1).focus();
+    await userEvent.keyboard('{Enter}');
+    seeked(50);
   });
 
   test('its list hides the floating label while it is open', async () => {

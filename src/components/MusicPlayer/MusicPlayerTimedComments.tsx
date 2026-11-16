@@ -9,6 +9,7 @@ import {
   clusterTimedComments,
 } from '~/components/Music/TimedComments/timed-comments';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
+import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
 import { MUSIC_PLAYER_FLOAT_Z_INDEX } from '~/components/MusicPlayer/MusicPlayerLayers';
 import { ACCENT } from '~/components/MusicPlayer/MusicPlayerParts';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -78,9 +79,11 @@ function useHoverIntent<T>() {
  * Pencil `C81HVQ` "Comment strip": the timed comments' avatars above the bar's waveform, each at its
  * time; avatars that would overlap merge into a stack with a "+N" count (`ugFe7`). When the playhead
  * reaches one its text floats above the bar as one label (`fii8A`), and a reached stack shows its
- * comments one after another; hovering an avatar shows its label too. Hovering or focusing a stack
- * lists its comments (`iPQmn`); Arrow keys move into the list, Escape closes it. An avatar, a stack
- * (its first comment), the label and a listed comment open the song's detail view at that comment.
+ * comments one after another; hovering or focusing an avatar shows its label too. Hovering or
+ * focusing a stack lists its comments (`iPQmn`). Arrow keys move from an avatar into its label and
+ * from a stack into its list, Escape closes them. Clicking an avatar or a stack seeks to it (a stack
+ * to its first comment); clicking the label or a listed comment opens the song's detail view with
+ * that comment highlighted.
  */
 export function TimedCommentStrip({
   songId,
@@ -113,8 +116,10 @@ export function TimedCommentStrip({
   // By its first comment: the clusters are rebuilt when the waveform's width changes.
   const list = useHoverIntent<number>();
   const listCluster = clusters.find((cluster) => cluster.comments[0].id === list.value);
-  const [focusList, setFocusList] = useState(false);
-  // Focus handed back to a stack on Escape must not open its list again.
+  // Set by an Arrow key on an avatar or stack: its label or list takes focus once it shows.
+  const [focusFloat, setFocusFloat] = useState(false);
+  const clearFocusFloat = useCallback(() => setFocusFloat(false), []);
+  // Focus handed back to an avatar or stack on Escape must not open what floats from it again.
   const refocusing = useRef(false);
 
   const label = listCluster
@@ -125,97 +130,132 @@ export function TimedCommentStrip({
     ? ({ '--music-accent': accent.accent, '--music-accent-2': accent.accent2 } as CSSProperties)
     : undefined;
 
+  const refocus = (selector: string) => {
+    refocusing.current = true;
+    stripRef.current?.querySelector<HTMLElement>(selector)?.focus();
+    refocusing.current = false;
+  };
   const closeList = (firstId: number) => {
     list.close();
-    refocusing.current = true;
-    stripRef.current?.querySelector<HTMLElement>(`[data-timed-cluster="${firstId}"]`)?.focus();
-    refocusing.current = false;
+    refocus(`[data-timed-cluster="${firstId}"]`);
+  };
+  const intoFloat = (event: KeyboardEvent) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return false;
+    event.preventDefault();
+    setFocusFloat(true);
+    return true;
   };
 
   return (
-    <div ref={stripRef} data-testid="timed-comment-strip" className="relative h-6 w-full shrink-0">
-      {clusters.map((cluster) => {
-        const [first] = cluster.comments;
-        const isList = cluster === listCluster;
-        const labelHere = label && cluster.comments.includes(label) ? label : undefined;
-        // The same hold on the stack and on its list: moving between them keeps the list open.
-        const hold = {
-          onPointerEnter: () => list.enter(first.id),
-          onPointerLeave: list.leave,
-          onFocus: () => {
-            if (!refocusing.current) list.enter(first.id);
-          },
-          onBlur: list.leave,
-        };
-        const onListKey = (event: KeyboardEvent) => {
-          if (event.key === 'Escape' && isList) {
-            // Kept from the page's Escape (which closes the detail view): this Escape is the list's.
-            event.preventDefault();
-            event.stopPropagation();
-            closeList(first.id);
-          }
-        };
-        return (
-          <FloatAbove
-            // Remounted when the lift is measured: a mounted Popover keeps the offset it began with.
-            key={`${first.id}:${layout.lift}`}
-            opened={!!labelHere || isList}
-            lift={layout.lift}
-            style={accentVars}
-            target={
-              cluster.comments.length === 1 ? (
-                <button
-                  type="button"
-                  aria-label={commentName(first)}
-                  data-timed-comment={first.id}
-                  onClick={() => openTimedComment(songId, first.id)}
-                  onPointerEnter={() => hovered.enter(first.id)}
-                  onPointerLeave={hovered.leave}
-                  className="group/avatar absolute top-0 flex size-6 -translate-x-1/2 items-center justify-center rounded-full hover:z-10"
-                  style={{ left: `${share(first.timestampSec, duration) * 100}%` }}
-                >
-                  <StripAvatar comment={first} className="group-hover/avatar:scale-110" />
-                </button>
-              ) : (
-                <StackButton
+    // Over the top of the waveform: the avatars take no height of their own (S16).
+    <div
+      ref={stripRef}
+      data-testid="timed-comment-strip"
+      className="pointer-events-none absolute inset-x-0 -top-3 z-10 h-6 [&_button]:pointer-events-auto"
+    >
+      {/* Not before the strip is measured: a mounted Popover keeps the offset it began with. */}
+      {layout.lift > 0 &&
+        clusters.map((cluster) => {
+          const [first] = cluster.comments;
+          const isList = cluster === listCluster;
+          const labelHere = label && cluster.comments.includes(label) ? label : undefined;
+          // The same hold on the stack and on its list: moving between them keeps the list open.
+          const hold = {
+            onPointerEnter: () => list.enter(first.id),
+            onPointerLeave: list.leave,
+            onFocus: () => {
+              if (!refocusing.current) list.enter(first.id);
+            },
+            onBlur: list.leave,
+          };
+          const onListKey = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && isList) {
+              // Kept from the page's Escape (which closes the detail view): this Escape is the list's.
+              event.preventDefault();
+              event.stopPropagation();
+              closeList(first.id);
+            }
+          };
+          return (
+            <FloatAbove
+              key={first.id}
+              opened={!!labelHere || isList}
+              lift={layout.lift}
+              style={accentVars}
+              target={
+                cluster.comments.length === 1 ? (
+                  <button
+                    type="button"
+                    aria-label={commentName(first)}
+                    data-timed-comment={first.id}
+                    onClick={() => seekMusicPlayer(first.timestampSec)}
+                    onPointerEnter={() => hovered.enter(first.id)}
+                    onPointerLeave={hovered.leave}
+                    onFocus={() => {
+                      if (!refocusing.current) hovered.enter(first.id);
+                    }}
+                    onBlur={hovered.leave}
+                    onKeyDown={(event) => {
+                      if (intoFloat(event)) hovered.enter(first.id);
+                      else if (event.key === 'Escape' && hovered.value === first.id) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        hovered.close();
+                      }
+                    }}
+                    className="group/avatar absolute top-0 flex size-6 -translate-x-1/2 items-center justify-center rounded-full hover:z-10"
+                    style={{ left: `${share(first.timestampSec, duration) * 100}%` }}
+                  >
+                    <StripAvatar comment={first} className="group-hover/avatar:scale-110" />
+                  </button>
+                ) : (
+                  <StackButton
+                    cluster={cluster}
+                    left={share(cluster.timestampSec, duration)}
+                    expanded={isList}
+                    onClick={() => seekMusicPlayer(cluster.timestampSec)}
+                    onKeyDown={(event) => {
+                      if (intoFloat(event)) list.enter(first.id);
+                      else onListKey(event);
+                    }}
+                    {...hold}
+                  />
+                )
+              }
+            >
+              {isList ? (
+                <ClusterList
                   cluster={cluster}
-                  left={share(cluster.timestampSec, duration)}
-                  expanded={isList}
-                  onClick={() => openTimedComment(songId, first.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                      event.preventDefault();
-                      list.enter(first.id);
-                      setFocusList(true);
-                    } else onListKey(event);
-                  }}
+                  focusFirst={focusFloat}
+                  onFocused={clearFocusFloat}
+                  onOpen={(comment) => openTimedComment(songId, comment.id)}
+                  onKeyDown={onListKey}
                   {...hold}
                 />
-              )
-            }
-          >
-            {isList ? (
-              <ClusterList
-                cluster={cluster}
-                focusFirst={focusList}
-                onFocused={() => setFocusList(false)}
-                onOpen={(comment) => openTimedComment(songId, comment.id)}
-                onKeyDown={onListKey}
-                {...hold}
-              />
-            ) : (
-              labelHere && (
-                <TimedCommentLabel
-                  comment={labelHere}
-                  onClick={() => openTimedComment(songId, labelHere.id)}
-                  onPointerEnter={() => hovered.value && hovered.enter(labelHere.id)}
-                  onPointerLeave={hovered.leave}
-                />
-              )
-            )}
-          </FloatAbove>
-        );
-      })}
+              ) : (
+                labelHere && (
+                  <TimedCommentLabel
+                    comment={labelHere}
+                    focusSelf={focusFloat}
+                    onFocused={clearFocusFloat}
+                    onClick={() => openTimedComment(songId, labelHere.id)}
+                    onPointerEnter={() => hovered.value && hovered.enter(labelHere.id)}
+                    onPointerLeave={hovered.leave}
+                    onFocus={() => hovered.enter(labelHere.id)}
+                    onBlur={hovered.leave}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Escape') return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      hovered.close();
+                      refocus(`[data-timed-comment="${labelHere.id}"]`);
+                    }}
+                  />
+                )
+              )}
+            </FloatAbove>
+          );
+        })}
     </div>
   );
 }
@@ -329,24 +369,34 @@ function StripAvatar({ comment, className }: { comment: PlayerTimedComment; clas
 /** Pencil `fii8A` "Active comment" with `oiINd`'s type: the name, then the comment, dimmed. */
 function TimedCommentLabel({
   comment,
-  onClick,
-  onPointerEnter,
-  onPointerLeave,
+  focusSelf,
+  onFocused,
+  ...handlers
 }: {
   comment: PlayerTimedComment;
+  focusSelf: boolean;
+  onFocused: () => void;
   onClick: () => void;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  onKeyDown: (event: KeyboardEvent) => void;
 }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!focusSelf) return;
+    ref.current?.focus();
+    onFocused();
+  }, [focusSelf, onFocused]);
   return (
     <button
+      ref={ref}
       type="button"
       data-testid="timed-comment-label"
       aria-live="polite"
       aria-label={`Open ${commentName(comment)}`}
-      onClick={onClick}
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
+      {...handlers}
       className="flex h-6 max-w-[280px] items-center gap-1.5 rounded-xl border bg-[#0B0B0D] py-0 pl-[3px] pr-2.5 text-xs"
       style={{ borderColor: ACCENT }}
     >
