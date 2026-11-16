@@ -222,12 +222,10 @@ export function recordFeedGoShadowEncode(
 
 export const FEED_GO_V1_SHAPE_CLASSES = [
   'ported',
-  'unported_ids',
   'unported_imageId',
   'unported_modelId_only',
   'unported_tags',
   'unported_baseModels',
-  'unported_withMeta',
   'unported_withTags',
   'api_key',
   'non200',

@@ -9,7 +9,17 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import type { ModelQueryParams } from '~/components/Model/model.utils';
-import { useModelFilters, useQueryModels } from '~/components/Model/model.utils';
+import {
+  useModelFilters,
+  useQueryModels,
+  useSemanticModelFeed,
+} from '~/components/Model/model.utils';
+import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-search';
+import { ModelFeedSearchSummary } from '~/components/Model/Infinite/ModelFeedSearchSummary';
+import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
+import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelsPrefetch } from '~/hooks/useEngagedModelMembership';
@@ -22,20 +32,28 @@ type InfiniteModelsProps = {
   showEof?: boolean;
   showAds?: boolean;
   showEmptyCta?: boolean;
+  /** The models page: with `modelFeedSearch`, its `?query=` is answered by the semantic search. */
+  searchable?: boolean;
 };
 
-export function ModelsInfinite({
+export function ModelsInfinite(props: InfiniteModelsProps) {
+  const features = useFeatureFlags();
+  // Only the models page with the flag pays for the query checks and the search.
+  return props.searchable && features.modelFeedSearch ? (
+    <SearchableModelsFeed {...props} />
+  ) : (
+    <ModelsFeed {...props} />
+  );
+}
+
+/** The feed's filters: the saved ones under the caller's, stable while their content is. */
+function useInfiniteModelFilters({
   filters: filterOverrides = {},
-  showEof = false,
   disableStoreFilters = false,
-  showAds,
-  showEmptyCta,
 }: InfiniteModelsProps) {
   const modelFilters = useModelFilters();
   const currentUser = useCurrentUser();
-
   const pending = currentUser !== null && filterOverrides.username === currentUser.username;
-
   const computedFilters = removeEmpty({
     ...(disableStoreFilters ? filterOverrides : { ...modelFilters, ...filterOverrides }),
     pending,
@@ -43,13 +61,39 @@ export function ModelsInfinite({
   // Stabilize identity so query keys only update on real content change.
   const filtersRef = useRef(computedFilters);
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
-  const filters = filtersRef.current;
+  return filtersRef.current;
+}
 
+function SearchableModelsFeed(props: InfiniteModelsProps) {
+  const filters = useInfiniteModelFilters(props);
   const browsingLevel = useBrowsingLevelDebounced();
-  const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryModels({
-    ...filters,
-    browsingLevel,
-  });
+  const text = normalizeFeedQuery(filters.query);
+  // A ?query= can arrive by link or redirect, past the search bar's own checks.
+  const { refusal, profanityMatches } = useSearchRefusal(text, 'models_semantic');
+  const search = useSemanticModelFeed({ ...filters, browsingLevel }, refusal ? undefined : text);
+  useScrollToTopOnChange(search.searchKey);
+  if (refusal) return <SearchRefusalNotice refusal={refusal} profanityMatches={profanityMatches} />;
+  return <ModelsFeed {...props} feedSearch={text ? { text, search } : undefined} />;
+}
+
+type FeedSearch = { text: string; search: ReturnType<typeof useSemanticModelFeed> };
+
+function ModelsFeed({
+  showEof = false,
+  showAds,
+  showEmptyCta,
+  feedSearch,
+  ...props
+}: InfiniteModelsProps & { feedSearch?: FeedSearch }) {
+  const filters = useInfiniteModelFilters(props);
+  const browsingLevel = useBrowsingLevelDebounced();
+  const search = feedSearch?.search;
+  // A search that fails falls back to the keyword search with a banner, never an empty page.
+  const searchFailed = !!search?.isError;
+  const searching = !!search && !searchFailed;
+  const feed = useQueryModels({ ...filters, browsingLevel }, { enabled: !searching });
+  const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } =
+    search && searching ? search : feed;
   const modelIds = models.map((m) => m.id);
   const salesByModelId = useModelSaleBadges(modelIds);
   useEngagedModelsPrefetch(modelIds);
@@ -61,6 +105,14 @@ export function ModelsInfinite({
       salesByModelId={salesByModelId}
       hasSaleProvider
     >
+      {feedSearch && (
+        <ModelFeedSearchSummary
+          query={feedSearch.text}
+          correctedQuery={searching ? feedSearch.search.correctedQuery : undefined}
+          failed={searchFailed}
+          onRetry={() => feedSearch.search.refetch()}
+        />
+      )}
       {!models.length && isFetching ? (
         <Center p="xl">
           <Loader size="xl" />

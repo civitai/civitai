@@ -27,17 +27,17 @@ const (
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter.
-var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations}
+var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta}
 
-// MissCompute is how hydration answers a miss on the per-entity caches Node fills on read (user
-// cosmetics, image frames, event decorations): with the Node lookup's own query,
-// batched once per page and cache, instead of falling back. A Sources without one falls back on
-// those misses (FEED_GO_COMPUTE_MISSES=false).
+// MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
+// Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
+// without one falls back on those misses (FEED_GO_COMPUTE_MISSES=false).
 //
 // Each computed entry is built as the Node lookup builds it, packed exactly as Node's cache writer
 // packs `{...result, cachedAt}` (or the `{[idKey]: id, notFound: true, cachedAt}` marker), and read
 // back through the same decoder as a cache hit, so a computed miss and a later hit of what Node
-// wrote for it hydrate identically.
+// wrote for it hydrate identically. The image meta (meta.go) is the exception: its misses are
+// neither written back nor kept in process (see memoized).
 type MissCompute struct {
 	// WriteBack (FEED_GO_CACHE_WRITEBACK, default off) writes each computed entry where, and as, the
 	// Node lookup writes it: same key, same msgpackr bytes, same expiry. Only for a miss Node would
@@ -98,14 +98,16 @@ type recentEntry struct {
 //     caller's context runs it, so a joiner sees that caller's cancellation as its own error);
 //   - with write-back off, each answer (a record or "no row") is kept for recentTTL and answers the
 //     next miss of that id without a query. With write-back on nothing is kept: the written cache
-//     entry answers repeats, and a kept answer could outlive the bust that should replace it.
+//     entry answers repeats, and a kept answer could outlive the bust that should replace it. The
+//     image meta is never kept either (memoized): Node keeps no per-pod copy of it, so a meta its
+//     owner just hid is never served again, and its multi-KB values would crowd the cap.
 //
 // The records are shared between callers and must be treated as read-only.
 func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) (map[int]jspack.Obj, error) {
 	out := make(map[int]jspack.Obj, len(ids))
 	todo := ids
-	if !c.WriteBack {
+	if c.memoized(cache) {
 		todo = c.fromRecent(cache, ids, out)
 	}
 	if len(todo) == 0 {
@@ -130,10 +132,17 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 			out[id] = rec
 		}
 	}
-	if !c.WriteBack {
+	if c.memoized(cache) {
 		c.remember(cache, todo, records)
 	}
 	return out, nil
+}
+
+// memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every
+// cache but the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
+// must not leave the old prompt served from a process's copy).
+func (c *MissCompute) memoized(cache string) bool {
+	return !c.WriteBack && cache != MissImageMeta
 }
 
 // fromRecent adds the kept, unexpired answers of ids to out and returns the ids it could not answer.

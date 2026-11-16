@@ -303,6 +303,7 @@ jobs:
         internal/auth:FuzzVerify:95000
         internal/feed:FuzzParse:180000
         internal/feed:FuzzParseInfinite:140000
+        internal/hydrate:FuzzMetaEntry:150000
         internal/hydrate:FuzzUnpack:230000
         internal/modelfeed:FuzzParse:210000
         internal/shadow:FuzzCompare:420000

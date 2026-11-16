@@ -778,12 +778,10 @@ export function feedGoV1ShapeClass(
   try {
     if (statusCode !== 200 || !data) return 'non200';
     if (hasApiCredential(req)) return 'api_key';
-    if (data.ids !== undefined) return 'unported_ids';
     if (data.imageId !== undefined) return 'unported_imageId';
     if (data.tags !== undefined) return 'unported_tags';
     if (data.baseModels !== undefined) return 'unported_baseModels';
     if (data.modelId && !data.modelVersionId) return 'unported_modelId_only';
-    if (data.withMeta) return 'unported_withMeta';
     if (data.withTags) return 'unported_withTags';
     return 'ported';
   } catch {
