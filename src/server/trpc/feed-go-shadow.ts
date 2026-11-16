@@ -134,7 +134,8 @@ export function pickShadowResponseHeaders(headers: ShadowResponseHeaders): Recor
       const v = lower[name];
       if (v === undefined) continue;
       const value = Array.isArray(v) ? v.join(', ') : String(v);
-      if (value === '' && name !== 'set-cookie') continue;
+      // An empty value is absent, Set-Cookie included: `[]` (no cookie) must not read as present.
+      if (value === '') continue;
       out[name] = name === 'set-cookie' ? 'present' : value.slice(0, RESPONSE_HEADER_MAX_CHARS);
     }
   } catch {
@@ -301,8 +302,7 @@ export type FeedGoShadowSample = {
   /** Whether the Go-first probe was already started for this sample (at most once). */
   probed?: boolean;
   captured?: Captured;
-  /** Node's response status and compared headers, set in `finish`. */
-  status?: number;
+  /** Node's compared response headers, set in `finish`. */
   responseHeaders?: Record<string, string>;
   done: boolean;
 };
@@ -610,10 +610,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       const started = now();
       const captured = sample.captured!;
       const node = 'envelope' in captured ? captured.envelope : superjson.serialize(captured.data);
-      const response = {
-        status: sample.status,
-        ...(sample.responseHeaders ? { responseHeaders: sample.responseHeaders } : {}),
-      };
+      // No status: only 200s are posted, and feed-go does not compare it.
+      const response = sample.responseHeaders ? { responseHeaders: sample.responseHeaders } : {};
       body = JSON.stringify(
         isRestEndpoint(endpoint)
           ? { input: sample.input, path: sample.path, headers: sample.headers, node, ...response }
@@ -658,8 +656,9 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   }
 
   /**
-   * After the handler: queue the POST if Node answered 200 and a body was captured, with the status
-   * and the compared response headers (when the route passes them). Synchronous, returns nothing to
+   * After the handler: queue the POST if Node answered 200 and a body was captured, with the compared
+   * response headers (when the route passes them). A response whose headers cannot be read is not
+   * sent (`skipped_headers`), so its comparison is not silently lost. Synchronous, returns nothing to
    * await, never throws.
    */
   function finish(
@@ -669,10 +668,6 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   ): void {
     try {
       if (sample.done) return;
-      sample.status = statusCode;
-      const headers =
-        typeof response?.getHeaders === 'function' ? response.getHeaders() : undefined;
-      if (headers) sample.responseHeaders = pickShadowResponseHeaders(headers);
       if (statusCode !== 200) {
         record('skipped_status', sample.endpoint);
         release(sample);
@@ -682,6 +677,18 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         record('skipped_no_capture', sample.endpoint);
         release(sample);
         return;
+      }
+      if (typeof response?.getHeaders === 'function') {
+        let headers: ShadowResponseHeaders;
+        try {
+          headers = response.getHeaders();
+        } catch {
+          record('skipped_headers', sample.endpoint);
+          sample.captured = undefined;
+          release(sample);
+          return;
+        }
+        sample.responseHeaders = pickShadowResponseHeaders(headers);
       }
       if (!sample.holdsSlot) {
         // A REST sample is bounded here, after the handler: it held nothing while it ran.

@@ -36,6 +36,9 @@ export const FEED_GO_SHADOW_OUTCOMES = [
   'skipped_no_capture',
   // Building the payload threw.
   'skipped_encode',
+  // Reading the response's headers (res.getHeaders) threw: not sent, since the header comparison
+  // would be lost without a trace.
+  'skipped_headers',
   // Sampled, but the request carried an API credential (REST only): not mirrored, because Node's
   // response can echo it (`metadata.nextPage` keeps `?token=`), and feed-go falls back on any
   // credential anyway. Counted so that share of the traffic is still visible.

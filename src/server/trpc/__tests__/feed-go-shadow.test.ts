@@ -289,10 +289,18 @@ describe('pickShadowResponseHeaders', () => {
     );
     expect(pickShadowResponseHeaders({})).toEqual({});
   });
+
+  it('an empty Set-Cookie (no cookie) is absent, not present', () => {
+    expect(pickShadowResponseHeaders({ 'set-cookie': [] })).toEqual({});
+    expect(pickShadowResponseHeaders({ 'set-cookie': '' })).toEqual({});
+    expect(pickShadowResponseHeaders({ 'set-cookie': ['a=1'], vary: [] })).toEqual({
+      'set-cookie': 'present',
+    });
+  });
 });
 
-describe('createFeedGoShadow — response status and headers', () => {
-  it('posts the status and the compared response headers the route passes to finish', async () => {
+describe('createFeedGoShadow — response headers', () => {
+  it('posts the compared response headers the route passes to finish, and no status', async () => {
     const h = harness();
     const sample = h.shadow.begin(request())!;
     const data = { items: [] };
@@ -306,7 +314,7 @@ describe('createFeedGoShadow — response status and headers', () => {
     });
     await h.flush();
     const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
-    expect(body.status).toBe(200);
+    expect(body).not.toHaveProperty('status');
     expect(body.responseHeaders).toEqual({
       'cache-control': 'max-age=0, private, no-cache',
       'set-cookie': 'present',
@@ -323,8 +331,25 @@ describe('createFeedGoShadow — response status and headers', () => {
     h.shadow.finish(sample, 200, {});
     await h.flush();
     const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
-    expect(body.status).toBe(200);
     expect(body).not.toHaveProperty('responseHeaders');
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it('records skipped_headers, sends nothing and frees the slot when getHeaders throws', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    expect(h.shadow.inFlight()).toBe(1);
+    h.shadow.finish(sample, 200, {
+      getHeaders: () => {
+        throw new Error('headers gone');
+      },
+    });
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_headers']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
   });
 
   it('omits responseHeaders when the route passes none', async () => {
@@ -332,7 +357,6 @@ describe('createFeedGoShadow — response status and headers', () => {
     serve(h);
     await h.flush();
     const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
-    expect(body.status).toBe(200);
     expect(body).not.toHaveProperty('responseHeaders');
   });
 });
@@ -359,7 +383,6 @@ describe('createFeedGoShadow — sampling decision', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
-      status: 200,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.shadow.inFlight()).toBe(0);
@@ -990,7 +1013,6 @@ describe('createFeedGoShadow — image.getInfinite', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
-      status: 200,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['infinite']);
@@ -1110,7 +1132,6 @@ describe('createFeedGoShadow — model.getAll', () => {
       input: INPUT,
       headers: { host: 'civitai.com', cookie: '__Secure-civ-token=t' },
       node: JSON.parse(JSON.stringify(written)),
-      status: 200,
     });
     expect(h.outcomes).toEqual(['sent']);
     expect(h.endpoints).toEqual(['model-getall']);
