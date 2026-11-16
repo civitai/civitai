@@ -15,42 +15,20 @@
  * (`user:{id}/client:{clientId}`), so cursors and per-token caps treat both alike, and its user is
  * read and refused the same way (`getBearerTokenUser`).
  */
-import { decodeProtectedHeader } from 'jose';
-import { createAccessTokenJwtVerifier } from '@civitai/auth';
+import { createAccessTokenJwtVerifier, isAccessTokenJwt } from '@civitai/auth';
 import { ALL_SCOPES, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
-
-export const ACCESS_TOKEN_JWT_TYP = 'at+jwt';
 
 /** The hub's issuer identifier, when none is configured. */
 export const DEFAULT_HUB_ISSUER = 'https://auth.civitai.com';
 
-/** Leeway on `exp` and `nbf`. `authenticate` and `watchPrincipal` still end a session at its `exp`. */
-export const HUB_JWT_CLOCK_TOLERANCE_S = 30;
-
-/**
- * Whether a bearer is a JWS whose protected header says `typ: at+jwt` (RFC 9068 2.1; the
- * `application/` prefix is optional, and media types compare case-insensitively). Decides the
- * path only: it verifies nothing.
- */
-export function isAccessTokenJwt(token: string): boolean {
-  if (token.split('.').length !== 3) return false;
-  let typ: unknown;
-  try {
-    typ = decodeProtectedHeader(token).typ;
-  } catch {
-    return false;
-  }
-  if (typeof typ !== 'string') return false;
-  return typ.toLowerCase().replace(/^application\//, '') === ACCESS_TOKEN_JWT_TYP;
-}
-
 /**
  * The token's scope names as the site's bitmask. A name the site does not know counts as every
- * scope, so a check that refuses write scopes (a system account's) refuses it rather than missing it.
+ * scope, and so does a missing or non-string `scope` claim, so a check that refuses write scopes
+ * (a system account's) refuses it rather than missing it.
  */
 export function scopeBits(scope: unknown): number {
-  if (typeof scope !== 'string') return 0;
+  if (typeof scope !== 'string') return ALL_SCOPES;
   let bits = 0;
   for (const name of scope.split(' ').filter(Boolean)) {
     if (name !== 'None' && Object.hasOwn(TokenScope, name)) {
@@ -72,7 +50,6 @@ export type HubJwtConfig = {
    * resource identifier, no token can have been issued for it, and every JWT is refused.
    */
   audience: string | undefined;
-  clock?: () => number;
 };
 
 export type HubJwtDeps = {
@@ -84,10 +61,14 @@ const USER_ID_RE = /^[1-9][0-9]{0,15}$/;
 
 /**
  * Verifies a hub access token for this source: signature against the hub's JWKS (cached, refetched
- * on an unknown `kid`), ES256 only, `typ: at+jwt`, `iss` and `aud` exactly, `exp`/`nbf` with
- * {@link HUB_JWT_CLOCK_TOLERANCE_S} of leeway, then the user. Null for a token that fails any
- * check; throws when the hub's keys cannot be read, so a re-check during a hub outage is not
- * taken for a revocation.
+ * on an unknown `kid`), ES256 only, `typ: at+jwt`, `iss` and `aud` exactly, `exp`/`nbf` with no
+ * leeway, then the user. Null for a token that fails any check; throws when the hub's keys cannot
+ * be read, so a re-check during a hub outage is not taken for a revocation.
+ *
+ * Exchanged tokens are checked locally, never introspected at the hub: the signature, `iss`,
+ * `aud` and `exp` here, and the user's ban/delete state (`loadUser`) on every re-check. Revoking
+ * the subject token or the consent, disabling the app, or delisting the relay at the hub reaches a
+ * live stream only when the exchanged token expires (the hub caps exchanged tokens at 15 minutes).
  */
 export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): VerifyToken {
   const { audience } = config;
@@ -95,8 +76,6 @@ export function createHubJwtVerifier(config: HubJwtConfig, deps: HubJwtDeps): Ve
   const verifyJwt = createAccessTokenJwtVerifier({
     jwksUri: config.jwksUri,
     audience,
-    clockToleranceS: HUB_JWT_CLOCK_TOLERANCE_S,
-    clock: config.clock,
   });
   return async (token) => {
     const payload = await verifyJwt(token, config.issuer);

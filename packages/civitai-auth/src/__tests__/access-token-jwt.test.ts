@@ -113,6 +113,25 @@ describe('createAccessTokenJwtVerifier', () => {
     await expect(verifierAt(NOW_S)(token, '')).rejects.toThrow(/issuer/);
   });
 
+  it('throws, on every call, when no public key is configured or it cannot be imported', async () => {
+    const token = await signer.mintAccessTokenJwt(claims());
+    const unconfigured = createAccessTokenJwtVerifier({
+      publicKeyPem: '',
+      clock: () => NOW_S * 1000,
+    });
+    await expect(unconfigured(token, issuer)).rejects.toThrow(/no AUTH_JWT_PUBLIC_KEY configured/);
+    await expect(unconfigured(token, issuer)).rejects.toThrow(/no AUTH_JWT_PUBLIC_KEY configured/);
+    const garbled = createAccessTokenJwtVerifier({
+      publicKeyPem: '-----BEGIN PUBLIC KEY-----\nbm90IGEga2V5\n-----END PUBLIC KEY-----',
+      clock: () => NOW_S * 1000,
+    });
+    await expect(garbled(token, issuer)).rejects.toThrow();
+    // The failed import is cached, and still throws rather than reading as a bad token.
+    await expect(garbled(token, issuer)).rejects.toThrow();
+    // Control: the same token against the configured key verifies.
+    expect(await verifierAt(NOW_S)(token, issuer)).not.toBeNull();
+  });
+
   it('refuses a session token (typ JWT) signed by the same key', async () => {
     const session = await signer.mintSessionToken({ user: { id: 42 } }, { expiresIn: 3600 });
     const verify = createAccessTokenJwtVerifier({ publicKeyPem });
@@ -168,15 +187,6 @@ describe('createAccessTokenJwtVerifier with an audience and a JWKS', () => {
     await expect(verify(await signer.mintAccessTokenJwt(liveClaims()), issuer)).rejects.toThrow(
       /200 OK/
     );
-  });
-
-  it('applies clockToleranceS to exp', async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const token = await signer.mintAccessTokenJwt(claims({ iat: now - 100, exp: now - 10 }));
-    expect(await createAccessTokenJwtVerifier({ publicKeyPem })(token, issuer)).toBeNull();
-    expect(
-      await createAccessTokenJwtVerifier({ publicKeyPem, clockToleranceS: 30 })(token, issuer)
-    ).not.toBeNull();
   });
 });
 

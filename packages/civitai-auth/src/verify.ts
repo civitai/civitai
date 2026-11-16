@@ -283,9 +283,22 @@ export interface AccessTokenJwtVerifierConfig {
    * every resource).
    */
   audience?: string;
-  /** Leeway on `exp` and `nbf`, in seconds. Default 0. */
-  clockToleranceS?: number;
   clock?: () => number;
+}
+
+/**
+ * Whether a bearer is a compact JWS whose protected header says `typ: at+jwt` (RFC 9068 2.1; the
+ * `application/` prefix is optional, and media types compare case-insensitively). Decides which
+ * path a token takes only: it verifies nothing.
+ */
+export function isAccessTokenJwt(token: string): boolean {
+  if (token.split('.').length !== 3) return false;
+  try {
+    const typ = decodeProtectedHeader(token).typ;
+    return typeof typ === 'string' && /^(application\/)?at\+jwt$/i.test(typ);
+  } catch {
+    return false;
+  }
 }
 
 /** jose error codes that are about the key fetch, not the token: a failed or slow JWKS read. */
@@ -297,11 +310,12 @@ const isKeyFetchError = (err: unknown) => {
 
 /**
  * Verifies the hub's own RFC 9068 access tokens (`typ: at+jwt`): ES256 only, the given issuer exactly,
- * the configured audience exactly, `exp` with the configured leeway (none by default), and `iat` at
- * most 30 s ahead. Returns the payload, or null for a token that fails any check.
- * Throws when no key is configured, or when `issuer` is empty. With `jwksUri`, a failure to read the
- * JWKS (unreachable, non-200, timeout, unparseable) also throws rather than returning null, so a
- * caller can tell "the hub's keys are unavailable" from "this token is not valid".
+ * the configured audience exactly, `exp` with no leeway, and `iat` at most 30 s ahead. Returns the
+ * payload, or null for a token that fails any check.
+ * Throws, on every call, when `issuer` is empty or (without `jwksUri`) when no public key is
+ * configured or it cannot be imported. With `jwksUri`, a failure to read the JWKS (unreachable,
+ * non-200, timeout, unparseable) also throws rather than returning null, so a caller can tell "the
+ * hub's keys are unavailable" from "this token is not valid".
  */
 export function createAccessTokenJwtVerifier(config: AccessTokenJwtVerifierConfig = {}) {
   const jwks = config.jwksUri
@@ -309,7 +323,6 @@ export function createAccessTokenJwtVerifier(config: AccessTokenJwtVerifierConfi
     : undefined;
   const publicKeyPem = jwks ? undefined : config.publicKeyPem ?? loadAuthEnv().AUTH_JWT_PUBLIC_KEY;
   const clock = config.clock ?? (() => Date.now());
-  const clockTolerance = config.clockToleranceS ?? 0;
   let _key: ReturnType<typeof importSPKI> | undefined;
   const key = () => {
     if (!publicKeyPem) throw new Error('[@civitai/auth] no AUTH_JWT_PUBLIC_KEY configured');
@@ -321,20 +334,23 @@ export function createAccessTokenJwtVerifier(config: AccessTokenJwtVerifierConfi
     issuer: string
   ): Promise<JWTPayload | null> {
     if (!issuer) throw new Error('[@civitai/auth] an access token is verified against an issuer');
+    // Outside the try: a missing or unimportable public key is a misconfiguration and throws; it
+    // is never read as "this token is not valid".
+    const pemKey = jwks ? undefined : await key();
     const nowMs = clock();
     const opts = {
       algorithms: [ALG],
       issuer,
       ...(config.audience !== undefined ? { audience: config.audience } : {}),
       typ: 'at+jwt',
-      clockTolerance,
+      clockTolerance: 0,
       currentDate: new Date(nowMs),
       requiredClaims: ['exp', 'iat', 'jti', 'sub', 'aud', 'client_id'],
     };
     try {
-      const { payload } = jwks
-        ? await jwtVerify(token, jwks, opts)
-        : await jwtVerify(token, await key(), opts);
+      const { payload } = pemKey
+        ? await jwtVerify(token, pemKey, opts)
+        : await jwtVerify(token, jwks as NonNullable<typeof jwks>, opts);
       if (typeof payload.iat !== 'number') return null;
       if (payload.iat > Math.floor(nowMs / 1000) + ACCESS_TOKEN_IAT_LEEWAY_S) return null;
       return payload;

@@ -1,7 +1,12 @@
 import { generateKeyPairSync, randomUUID } from 'crypto';
 import { SignJWT, base64url, importPKCS8 } from 'jose';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { createSessionSigner, type AccessTokenJwtClaims, type SessionSigner } from '@civitai/auth';
+import {
+  createSessionSigner,
+  isAccessTokenJwt,
+  type AccessTokenJwtClaims,
+  type SessionSigner,
+} from '@civitai/auth';
 
 /**
  * The auth hub's exchanged access tokens (`at+jwt`) at this source, beside the opaque tokens it
@@ -22,14 +27,13 @@ import { authenticate } from '~/server/registry-adapter/auth';
 import type { VerifiedToken, VerifyToken } from '~/server/registry-adapter/auth';
 import {
   createHubJwtVerifier,
-  isAccessTokenJwt,
   routeVerifyToken,
   scopeBits,
 } from '~/server/registry-adapter/auth.jwt';
 import { createCivitaiTokenVerifier } from '~/server/registry-adapter/auth.live';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ALL_SCOPES, TokenScope } from '~/shared/constants/token-scope.constants';
 
 const ISSUER = 'https://auth.test';
 const RESOURCE = 'https://apps.test';
@@ -233,15 +237,16 @@ describe('createHubJwtVerifier', () => {
     expect(await hubVerifier()(await signRaw({ typ: 'JWT', kid: KID }, payload))).toBeNull();
   });
 
-  it('refuses an expired token, and one not yet valid beyond the clock leeway', async () => {
+  it('refuses a token expired by any amount, and one not yet valid, with no clock leeway', async () => {
     const verify = hubVerifier();
-    const expired = await mint({ iat: nowS() - 1000, exp: nowS() - 31 });
-    expect(await verify(expired)).toBeNull();
-    const notYet = await signRaw({ typ: 'at+jwt', kid: KID }, { ...claims(), nbf: nowS() + 120 });
+    expect(await verify(await mint({ iat: nowS() - 1000, exp: nowS() - 1 }))).toBeNull();
+    expect(await verify(await mint({ iat: nowS() - 1000, exp: nowS() }))).toBeNull();
+    const notYet = await signRaw({ typ: 'at+jwt', kid: KID }, { ...claims(), nbf: nowS() + 1 });
     expect(await verify(notYet)).toBeNull();
-    // Control: inside the leeway, a small skew passes.
-    const skewed = await signRaw({ typ: 'at+jwt', kid: KID }, { ...claims(), nbf: nowS() + 10 });
-    expect(await verify(skewed)).not.toBeNull();
+    // Controls: a second before exp, and nbf now, pass.
+    expect(await verify(await mint({ iat: nowS() - 1000, exp: nowS() + 1 }))).not.toBeNull();
+    const nbfNow = await signRaw({ typ: 'at+jwt', kid: KID }, { ...claims(), nbf: nowS() });
+    expect(await verify(nbfNow)).not.toBeNull();
   });
 
   it('refetches the JWKS once on an unknown kid, then refuses the token', async () => {
@@ -278,6 +283,15 @@ describe('createHubJwtVerifier', () => {
     expect(getBearerTokenUserMock).toHaveBeenCalledTimes(1);
   });
 
+  it('reads a token with no scope claim as every scope for the user check', async () => {
+    const { scope: _scope, ...unscoped } = claims();
+    expect(
+      await hubVerifier()(await signRaw({ typ: 'at+jwt', kid: KID }, unscoped))
+    ).not.toBeNull();
+    expect(getBearerTokenUserMock).toHaveBeenCalledWith(USER_ID, ALL_SCOPES);
+    expect(ALL_SCOPES & TokenScope.ModelsWrite).toBe(TokenScope.ModelsWrite);
+  });
+
   it('refuses a sub that is not a user id', async () => {
     expect(await hubVerifier()(await mint({ sub: 'svc:feed' }))).toBeNull();
     expect(await hubVerifier()(await mint({ sub: '0' }))).toBeNull();
@@ -294,8 +308,14 @@ describe('createHubJwtVerifier', () => {
 describe('scopeBits', () => {
   it('maps scope names to the site bits, and an unknown name to every scope', () => {
     expect(scopeBits('ModelsRead MediaRead')).toBe(TokenScope.ModelsRead | TokenScope.MediaRead);
-    expect(scopeBits(undefined)).toBe(0);
     expect(scopeBits('ModelsRead NotAScope') & TokenScope.ModelsWrite).toBe(TokenScope.ModelsWrite);
+  });
+
+  it('fails safe on a missing or non-string scope claim: every scope, like an unknown name', () => {
+    for (const scope of [undefined, null, 7, ['ModelsRead'], { ModelsRead: true }]) {
+      expect(scopeBits(scope)).toBe(ALL_SCOPES);
+      expect(scopeBits(scope) & TokenScope.ModelsWrite).toBe(TokenScope.ModelsWrite);
+    }
   });
 });
 
