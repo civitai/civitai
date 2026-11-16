@@ -274,6 +274,24 @@ export enum FLIPT_FEATURE_FLAGS {
   // per 5s per process; shares FEED_GO_SHADOW_URL and the rate / in-flight / per-second knobs with
   // FEED_GO_SHADOW. See `src/server/trpc/feed-go-shadow.ts`.
   FEED_GO_SHADOW_V1_IMAGES = 'feed-go-shadow-v1-images',
+  // Mirror sampled `image.getInfinite` requests (raw input, the headers the answer depends on,
+  // Node's superjson envelope) to feed-go's `/internal/shadow/image.getInfinite`. Its own flag so
+  // this procedure is enabled separately; shares FEED_GO_SHADOW_URL, the sample rate and the
+  // in-flight cap with FEED_GO_SHADOW, with its own per-second bucket. Default OFF.
+  // See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_INFINITE = 'feed-go-shadow-infinite',
+  // Mirror sampled `model.getAll` requests (raw input, the headers the answer depends on, Node's
+  // superjson envelope) to feed-go's `/internal/shadow/model.getAll`. Its own flag so this procedure
+  // is enabled separately; shares FEED_GO_SHADOW_URL, the sample rate and the in-flight cap with
+  // FEED_GO_SHADOW, with its own per-second bucket. Default OFF. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_MODEL_GET_ALL = 'feed-go-shadow-model-getall',
+  // The Go-first cache-presence probe: for a request the feed-go shadow sampler sampled, a POST at
+  // the START of the request (before the handler fills the caches) to feed-go's
+  // `/internal/probe/image.getImagesAsPostsInfinite`, which records the serve-time cache misses a
+  // Go-first serve would meet. DEFAULT-OFF. Global boolean, read at most once per 5s per process;
+  // also needs FEED_GO_SHADOW_URL and FEED_GO_GOFIRST_PROBE_SAMPLE_RATE > 0 (a fraction of the shadow
+  // samples). See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_GOFIRST_PROBE = 'feed-go-gofirst-probe',
   // Mirrors a sampled fraction of the /api/internal/ping and /api/internal/pulse beacons (the
   // request, Node's response AND the tracker rows it wrote) to the beacon-go shadow comparator,
   // after the response is written. DEFAULT-OFF. Global boolean, read at most once per 5s per
@@ -365,6 +383,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // store: the refusal and the block alert, no Report). Implies the scan — with
   // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
   APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
+  // CONTENT LEVELS of App Blocks shared documents: while on for an app, a shared write marks its
+  // document `pending`, and every read of that app's shared documents by anyone but their author
+  // leaves out the unrated ones and those above the viewer's level (`doc-levels.ts`). Needs the
+  // manual migration `20261116120000_appdata_doc_levels.sql` first. Same evaluation as the two
+  // above (entityId = the app block id, NO context). DEFAULT-OFF.
+  APP_BLOCKS_SHARED_DOC_LEVELS = 'app-blocks-shared-doc-levels',
   // OPERATOR HOLD on App Storage schema-migration runs: while on for an app, its reserved runs stay
   // `pending` (the start at approve and the resume job both skip them) and keep counting as open for
   // the approve gate. Turning it off lets the job's next run take them. EVALUATED PER APP like the

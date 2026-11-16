@@ -1,0 +1,254 @@
+import { describe, expect, it } from 'vitest';
+import { join } from 'path';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { scanSource } from '../../../../../test/source-scan';
+
+/**
+ * 🔴 SEAM GUARD: every producer of an App Block snapshot or workflow listing passes the
+ * CALLING TOKEN's output ceiling.
+ *
+ * `snapshotFromWorkflow` and `projectAppWorkflow` are the only two places an output url
+ * becomes something a block can read, and both take the ceiling as a REQUIRED argument
+ * (`classifyBlockOutput` decides what is restricted with it). The type makes a call
+ * without one fail to compile; it does not stop a call passing the WRONG one — an
+ * all-levels constant would type-check and hand a restricted url to every app. So this
+ * ledger names every production call site with the exact ceiling it passes, and FAILS
+ * when the set GROWS (a new producer, whose ceiling nobody decided) or SHRINKS (a site
+ * moved or was renamed, and the entry here went stale), or when a ceiling changes.
+ *
+ * Behaviour is pinned elsewhere: `block-output-restriction.test.ts` (the rule, per
+ * producer function) and the router suites (each procedure, with a restricted
+ * fixture). This pins the POPULATION.
+ */
+
+const ROOT = join(__dirname, '../../../../..');
+
+const PRODUCERS = [
+  'snapshotFromWorkflow',
+  'projectAppWorkflow',
+  'projectAppWorkflowWithPositions',
+] as const;
+const HOME = 'src/server/services/blocks/workflow.service.ts';
+
+/** The token's ceiling, from the verified claims in scope at that site. */
+const TOKEN = 'blockOutputCeilingFromClaims(claims)';
+
+const LEDGER: Record<string, string> = {
+  // The block's own reads and writes of one workflow.
+  'src/server/routers/blocks.router.ts::pollWorkflow::snapshotFromWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::cancelWorkflow::snapshotFromWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::submitWorkflow::snapshotFromWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::estimateBlockWorkflowCell::snapshotFromWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::submitCustomComfyWorkflow::snapshotFromWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::submitStepWorkflow::snapshotFromWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::submitPassThroughStepWorkflow::snapshotFromWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::submitMultiStepWorkflow::snapshotFromWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::submitConfirmedQuoteWorkflow::snapshotFromWorkflow': TOKEN,
+  // The subqueue listing and its cancel.
+  'src/server/routers/blocks.router.ts::queryAppWorkflows::projectAppWorkflow': TOKEN,
+  'src/server/routers/blocks.router.ts::cancelAppWorkflow::projectAppWorkflow': TOKEN,
+  // Publish, post and persist resolve `imageIndexes` / `imageIndex` against the STABLE
+  // output positions; the ceiling decides which positions are restricted (refused).
+  'src/server/routers/blocks.router.ts::publishGenerationOutputs::projectAppWorkflowWithPositions':
+    TOKEN,
+  // Post and persist: `BlockPostActor.outputCeiling` / the persist input's `ceiling`.
+  'src/server/services/blocks/block-post.service.ts::resolveOwnedWorkflowOutputs::projectAppWorkflowWithPositions':
+    'input.ceiling',
+  // `projectAppWorkflow` is the positions projection's `workflow` half.
+  'src/server/services/blocks/workflow.service.ts::projectAppWorkflow::projectAppWorkflowWithPositions':
+    'ceiling',
+  // The output UNLOCK (`block-output-unlock.service`): its one snapshot call, at the ceiling
+  // `outputAt` is handed. Only the TOKEN ceiling's snapshot (`blockOutputCeilingFromClaims`)
+  // ever leaves that module; the domain-only and all-ratings calls in
+  // `planBlockOutputUnlock` decide between link-out and a settings pointer and are discarded.
+  'src/server/services/blocks/block-output-unlock.service.ts::outputAt::snapshotFromWorkflow':
+    'ceiling',
+  // The author's activity view: reads only a COUNT of every output (restricted ones
+  // included), never a url, so the fail-closed (PG) ceiling is passed.
+  'src/server/services/app-assistant/app-activity.service.ts::generationOf::projectAppWorkflow':
+    'blockOutputCeilingFromClaims({})',
+};
+
+/**
+ * The OBJECT-argument callers that carry a ceiling down to `resolveOwnedWorkflowOutputs`:
+ * the `ceiling:` property each passes, by call site. Same grow-or-shrink rule.
+ */
+const OBJECT_CALLEES = ['resolveOwnedWorkflowOutputs', 'persistBlockGenerationSource'] as const;
+const OBJECT_LEDGER: Record<string, string> = {
+  'src/server/services/blocks/block-post.service.ts::resolveBlockPostSources::resolveOwnedWorkflowOutputs':
+    'input.actor.outputCeiling',
+  'src/server/services/blocks/block-generation-source.service.ts::persistWithin::resolveOwnedWorkflowOutputs':
+    'input.ceiling',
+  'src/server/routers/blocks.router.ts::persistGenerationSource::persistBlockGenerationSource':
+    TOKEN,
+};
+
+/**
+ * Every production `outputCeiling:` VALUE (the post actor's field, F5): the
+ * `ceiling:`-property scan above cannot see it, because the property is spelled
+ * differently and sits in an object literal rather than a call argument. A type
+ * annotation (`outputCeiling: BlockOutputCeiling;`) is a declaration, not a value.
+ */
+const OUTPUT_CEILING_LEDGER: Record<string, string> = {
+  'src/server/routers/blocks.router.ts::previewPostFromApp': TOKEN,
+  'src/server/routers/blocks.router.ts::createPostFromApp': TOKEN,
+};
+
+function scanOutputCeilingValues() {
+  const source = scanSource(ROOT);
+  const found: Record<string, string> = {};
+  for (const file of source.files) {
+    const code = source.code.get(file)!;
+    for (const m of code.matchAll(/\boutputCeiling\s*:\s*([^,\n}]+)/g)) {
+      const value = m[1].replace(/\s+/g, '');
+      if (/^[A-Z][\w.]*;?$/.test(value)) continue;
+      const key = `${file}::${enclosing(code, m.index!)}`;
+      if (key in found) throw new Error(`two outputCeiling values in one declaration: ${key}`);
+      found[key] = value;
+    }
+  }
+  return found;
+}
+
+/** The `ceiling:` property of the call opening at `open`, or null. */
+function ceilingProperty(code: string, open: number): string | null {
+  let depth = 0;
+  for (let i = open; i < code.length; i += 1) {
+    const c = code[i];
+    if (c === '(' || c === '[' || c === '{') depth += 1;
+    else if (c === ')' || c === ']' || c === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const m = /\bceiling:\s*([^,\n}]+)/.exec(code.slice(open, i));
+        return m ? m[1].replace(/\s+/g, '') : null;
+      }
+    }
+  }
+  return null;
+}
+
+function scanObjectCallers() {
+  const source = scanSource(ROOT);
+  const found: Record<string, string | null> = {};
+  for (const file of source.files) {
+    const code = source.code.get(file)!;
+    for (const name of OBJECT_CALLEES) {
+      for (const m of code.matchAll(new RegExp(`\\b${name}\\s*\\(`, 'g'))) {
+        const at = m.index!;
+        if (/function\s+$/.test(code.slice(Math.max(0, at - 40), at))) continue;
+        const key = `${file}::${enclosing(code, at)}::${name}`;
+        if (key in found) throw new Error(`two ${name} calls in one declaration: ${key}`);
+        found[key] = ceilingProperty(code, at + m[0].length - 1);
+      }
+    }
+  }
+  return found;
+}
+
+const DECL = /^(?:export )?(?:async )?function (\w+)|^ {2}(\w+): \w*[pP]rocedure/gm;
+
+function enclosing(code: string, offset: number): string {
+  let name = '<module scope>';
+  DECL.lastIndex = 0;
+  for (;;) {
+    const m = DECL.exec(code);
+    if (!m || m.index >= offset) break;
+    name = m[1] ?? m[2];
+  }
+  return name;
+}
+
+/** The text of the call's SECOND top-level argument, whitespace-normalised. */
+function secondArgument(code: string, open: number): string | null {
+  let depth = 0;
+  let start = -1;
+  for (let i = open + 1; i < code.length; i += 1) {
+    const c = code[i];
+    if (c === '(' || c === '[' || c === '{') depth += 1;
+    else if (c === ')' || c === ']' || c === '}') {
+      if (depth === 0) return start === -1 ? null : code.slice(start, i).replace(/\s+/g, '');
+      depth -= 1;
+    } else if (c === ',' && depth === 0) {
+      if (start !== -1) return code.slice(start, i).replace(/\s+/g, '');
+      start = i + 1;
+    }
+  }
+  return null;
+}
+
+function scan() {
+  const source = scanSource(ROOT);
+  const found: Record<string, string | null> = {};
+  const bareReferences: string[] = [];
+  for (const file of source.files) {
+    const code = source.code.get(file)!;
+    for (const name of PRODUCERS) {
+      const re = new RegExp(`\\b${name}\\b`, 'g');
+      for (const m of code.matchAll(re)) {
+        const at = m.index!;
+        const before = code.slice(Math.max(0, at - 40), at);
+        const after = code.slice(at + name.length);
+        // The definition, an import or re-export list entry, or a `typeof`.
+        if (/function\s+$/.test(before) || /typeof\s+$/.test(before)) continue;
+        if (
+          /^\s*[,}]/.test(after) &&
+          /(import|export)\s*(type\s*)?\{[^}]*$/.test(code.slice(Math.max(0, at - 4000), at))
+        )
+          continue;
+        if (!/^\s*\(/.test(after)) {
+          bareReferences.push(`${file}::${enclosing(code, at)}`);
+          continue;
+        }
+        const open = at + name.length + after.indexOf('(');
+        const key = `${file}::${enclosing(code, at)}::${name}`;
+        if (key in found) throw new Error(`two ${name} calls in one declaration: ${key}`);
+        found[key] = secondArgument(code, open);
+      }
+    }
+  }
+  return { found, bareReferences, home: source.code.get(HOME) };
+}
+
+describe('snapshot and listing producers — the ceiling each one passes', () => {
+  const { found, bareReferences, home } = scan();
+
+  it('POSITIVE CONTROL: the scan sees the producers and their definitions', () => {
+    expect(home).toBeDefined();
+    expect(home).toMatch(/export function snapshotFromWorkflow\(/);
+    expect(home).toMatch(/export function projectAppWorkflow\(/);
+    expect(Object.keys(found).length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('the set of production call sites, and each ceiling, is exactly the ledger', () => {
+    const normalisedLedger = Object.fromEntries(
+      Object.entries(LEDGER).map(([k, v]) => [k, v.replace(/\s+/g, '')])
+    );
+    expect(found).toStrictEqual(normalisedLedger);
+  });
+
+  it('every caller that resolves an output position passes the token ceiling', () => {
+    const objectCallers = scanObjectCallers();
+    // POSITIVE CONTROL: the scan found the callers at all.
+    expect(Object.keys(objectCallers).length).toBeGreaterThanOrEqual(3);
+    expect(objectCallers).toStrictEqual(
+      Object.fromEntries(Object.entries(OBJECT_LEDGER).map(([k, v]) => [k, v.replace(/\s+/g, '')]))
+    );
+  });
+
+  it('F5: the post actor outputCeiling is the token ceiling at every site', () => {
+    const values = scanOutputCeilingValues();
+    // POSITIVE CONTROL: both actor sites were found.
+    expect(Object.keys(values).length).toBeGreaterThanOrEqual(2);
+    expect(values).toStrictEqual(
+      Object.fromEntries(
+        Object.entries(OUTPUT_CEILING_LEDGER).map(([k, v]) => [k, v.replace(/\s+/g, '')])
+      )
+    );
+  });
+
+  it('no producer is passed around as a bare value (e.g. `.map(projectAppWorkflow)`)', () => {
+    // A bare reference loses the ceiling argument at the type level only if the callee
+    // checks it; `Array.map` passes the INDEX as the second argument.
+    expect(bareReferences).toStrictEqual([]);
+  });
+});

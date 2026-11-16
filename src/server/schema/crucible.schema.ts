@@ -328,6 +328,16 @@ export const submitVoteSchema = z
 
 // Schema for getting a judging pair
 export type GetJudgingPairSchema = z.infer<typeof getJudgingPairSchema>;
+export type DismissJudgingPairSchema = z.infer<typeof dismissJudgingPairSchema>;
+export const dismissJudgingPairSchema = z
+  .object({
+    crucibleId: z.number(),
+    entryIds: z.tuple([z.number().int(), z.number().int()]),
+  })
+  .refine(({ entryIds: [a, b] }) => a !== b, {
+    message: 'A pair needs two different entries',
+    path: ['entryIds'],
+  });
 export type GetJudgingProgressSchema = z.infer<typeof getJudgingProgressSchema>;
 export const getJudgingProgressSchema = z.object({
   crucibleId: z.number(),

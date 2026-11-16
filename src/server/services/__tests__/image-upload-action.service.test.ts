@@ -108,7 +108,7 @@ describe('recordMintedUploadKey', () => {
   it('records the key for the user in the issue record and in the upload request log', async () => {
     await recordMintedUploadKey('Server-Key', OWNER);
 
-    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+    expect(redisMock.redis.set).toHaveBeenCalledWith(
       expect.stringContaining('server-key'),
       String(OWNER),
       expect.anything()

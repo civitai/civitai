@@ -379,6 +379,44 @@ func classifyOrder(g, n []string) string {
 	return "membership"
 }
 
+// flatItemIDs returns the `json.items[].id` sequence of a superjson envelope whose items are keyed by
+// their own `id` (a flat page: image.getInfinite's images, model.getAll's models), not posts.
+func flatItemIDs(env []byte) ([]string, error) {
+	var e struct {
+		JSON struct {
+			Items []struct {
+				ID json.Number `json:"id"`
+			} `json:"items"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal(env, &e); err != nil {
+		return nil, err
+	}
+	out := make([]string, len(e.JSON.Items))
+	for i, it := range e.JSON.Items {
+		out[i] = it.ID.String()
+	}
+	return out, nil
+}
+
+// ClassifyFlat is Classify for a superjson envelope of a flat page (image.getInfinite's images,
+// model.getAll's models): its items are keyed by their own `id`, so match, order (same items,
+// different order), membership (different items), fields (same items in the same order, field
+// differences). The report itself is Compare's: the same annotation handling, and categories over the
+// flat shape (`items.*.<field>`, `items.*.user.<field>`, `nextCursor`, `source`), truncated at the same
+// opaque keys.
+func ClassifyFlat(r *Report, goEnv, nodeEnv []byte) string {
+	if r.Match {
+		return "match"
+	}
+	g, errG := flatItemIDs(goEnv)
+	n, errN := flatItemIDs(nodeEnv)
+	if errG != nil || errN != nil {
+		return "fields"
+	}
+	return classifyOrder(g, n)
+}
+
 // CompareJSON compares two plain-JSON response bodies (Go's, Node's): the public REST endpoints answer
 // with `res.json`, so there is no envelope and no annotation — a Date is its ISO string on both sides,
 // and an undefined member is absent on both (JSON.stringify drops it). The same structural walk as

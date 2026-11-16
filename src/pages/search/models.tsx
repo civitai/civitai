@@ -18,6 +18,8 @@ import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { modelFeedUrlFromLegacySearch } from '~/components/Model/Infinite/model-feed-search';
 import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { useRouter } from 'next/router';
@@ -287,3 +289,13 @@ ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
     </SearchLayout>
   );
 };
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ features, ctx }) => {
+    if (features?.modelFeedSearch)
+      return {
+        redirect: { destination: modelFeedUrlFromLegacySearch(ctx.query), permanent: false },
+      };
+  },
+});

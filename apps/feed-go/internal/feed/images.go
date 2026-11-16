@@ -52,6 +52,9 @@ type RawImage struct {
 	Poi               bool            `json:"poi"`
 	AcceptableMinor   bool            `json:"acceptableMinor"`
 	CursorID          int             `json:"cursorId"`
+	// CursorNull: the cursor column was NULL (only an index-ordered query's, ImagesQuery.IndexOrder,
+	// can be: `i."index"` is nullable).
+	CursorNull bool `json:"cursorNull,omitempty"`
 }
 
 // Querier runs the page query.
@@ -67,6 +70,8 @@ type QueryCache struct {
 	Redis   redis.UniversalClient
 	Prefix  string // CACHE_KEY_NAMESPACE prefix; empty in production
 	Enabled bool   // IMAGE_QUERY_CACHING
+	// ReadOnly reads entries but never writes one (the Go-first probe: it makes no writes).
+	ReadOnly bool
 }
 
 // Key is the cache key for a built query: sha256 over the SQL text and its bound values.
@@ -116,7 +121,7 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 		}
 		return nil, err
 	}
-	if useCache {
+	if useCache && !cache.ReadOnly {
 		if raw, err := json.Marshal(out); err == nil {
 			// One pipelined round trip for the entry and its bust-tag memberships (a cluster client
 			// splits it per node). Fail open: a cache write error never fails the request.
@@ -138,14 +143,20 @@ func scanRows(rows pgx.Rows) ([]RawImage, error) {
 	for rows.Next() {
 		var r RawImage
 		var remix, meta []byte
+		var cursorID *int
 		if err := rows.Scan(
 			&r.ID, &r.Name, &r.URL, &r.NsfwLevel, &r.Width, &r.Height, &r.Hash, &r.HideMeta, &r.HasMeta,
 			&r.HasPositivePrompt, &r.OnSite, &remix, &r.CreatedAt, &r.SortAt, &r.MimeType, &r.Type, &meta,
 			&r.Ingestion, &r.BlockedFor, &r.ScannedAt, &r.NeedsReview, &r.UserID, &r.PostID, &r.PostTitle,
 			&r.Index, &r.PublishedAt, &r.UnpublishedAt, &r.ModelVersionID, &r.Model3DID, &r.Availability,
-			&r.Minor, &r.Poi, &r.AcceptableMinor, &r.CursorID,
+			&r.Minor, &r.Poi, &r.AcceptableMinor, &cursorID,
 		); err != nil {
 			return nil, err
+		}
+		if cursorID != nil {
+			r.CursorID = *cursorID
+		} else {
+			r.CursorNull = true
 		}
 		if remix != nil {
 			r.RemixOfID = json.RawMessage(remix)
@@ -209,11 +220,18 @@ type Hydrated struct {
 // profilePictures] (what the gallery handler always passes): every lookup of the page in one
 // Hydrator.Page call, then the Model3D visibility of the linked models.
 func Hydrate(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool) (*Hydrated, error) {
+	return hydrateRows(ctx, h, rows, viewer, visibleEvents, true)
+}
+
+// hydrateRows is Hydrate; profilePictures is whether the include list holds 'profilePictures'
+// (without it every creator's profilePicture is null, and its cache is not read).
+func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, profilePictures bool) (*Hydrated, error) {
 	req := hydrate.PageRequest{
-		UserIDs:       make([]int, 0, len(rows)),
-		ImageIDs:      make([]int, 0, len(rows)),
-		VisibleEvents: visibleEvents,
-		ViewerID:      viewer.ID,
+		UserIDs:           make([]int, 0, len(rows)),
+		ImageIDs:          make([]int, 0, len(rows)),
+		VisibleEvents:     visibleEvents,
+		ViewerID:          viewer.ID,
+		NoProfilePictures: !profilePictures,
 	}
 	var model3dIDs []int
 	for _, r := range rows {

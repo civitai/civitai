@@ -75,11 +75,11 @@ beforeEach(async () => {
   holder.issued = [];
   holder.logDown = false;
   redis.clear();
-  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+  redisMock.redis.set.mockImplementation((async (key: string, value: string) => {
     redis.set(key, value);
     return 'OK';
   }) as never);
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
 });
 
@@ -166,7 +166,7 @@ describe('assertShopArtworkKeysIssued', () => {
   it('refuses a logged key when neither the record nor the log can be read', async () => {
     holder.issued = [{ key: KEY, userId: CREATOR }];
     holder.logDown = true;
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('unavailable'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('unavailable'));
     const [shop, client] = [
       outcomeCount('shop_request_log_unavailable'),
       outcomeCount('request_log_unavailable'),
@@ -180,7 +180,7 @@ describe('assertShopArtworkKeysIssued', () => {
 
   it('accepts a logged key when the issue record cannot be read', async () => {
     holder.issued = [{ key: KEY, userId: CREATOR }];
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('unavailable'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('unavailable'));
     expect(await outcome({ userId: CREATOR })).toBe('accepted');
   });
 

@@ -1,13 +1,13 @@
 name: feed-go
 
-# apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`; see
-# apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
+# apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`, and in
+# shadow only of `image.getInfinite`, `model.getAll` and `GET /api/v1/images`; see apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
 # Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
 # This workflow is its only gate: gofmt, vet, the unit tests with coverage floors, the integration
 # tests and a build of the binary (job `test`); golangci-lint (`lint`); govulncheck (`vuln`); go.mod
-# tidiness and module checksums (`mod`); a short run of every fuzz target (`fuzz`); and an allocs/op
-# regression gate on the benchmarks against the merge-base (`bench`). The gate scripts live in
-# apps/feed-go/ci.
+# tidiness and module checksums (`mod`); a run of every fuzz target for a fixed number of
+# executions (`fuzz`); and an allocs/op regression gate on the benchmarks against the merge-base
+# (`bench`). The gate scripts live in apps/feed-go/ci.
 #
 # The integration tier (`-tags integration`, files under that build tag only) runs against a real
 # Redis Cluster (3 masters) and a real Postgres 16 started in this job; the plain unit run never
@@ -181,13 +181,15 @@ jobs:
           failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' integration.json | wc -l)
           hydrate=$(jq -r "$top | select(.Package|endswith(\"/internal/hydrate\")) | .Test" integration.json | wc -l)
           feed=$(jq -r "$top | select(.Package|endswith(\"/internal/feed\")) | .Test" integration.json | wc -l)
+          models=$(jq -r "$top | select(.Package|endswith(\"/internal/modelfeed\")) | .Test" integration.json | wc -l)
           passed=$(jq -r "$top | .Test" integration.json | wc -l)
-          echo "passed integration tests: $passed (hydrate $hydrate, feed $feed), failed: $failed"
+          echo "passed integration tests: $passed (hydrate $hydrate, feed $feed, modelfeed $models), failed: $failed"
           # Positive control: below these floors (the TestIntegration* functions per package) the tests
           # stopped being discovered — a wrong tag or -run filter runs zero tests and exits 0.
           [ "$failed" -eq 0 ]
           [ "$hydrate" -ge 18 ]
           [ "$feed" -ge 12 ]
+          [ "$models" -ge 5 ]
 
       - name: go build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go
@@ -272,10 +274,12 @@ jobs:
       - name: go mod verify
         run: go mod verify
 
-  # Each fuzz target for a short fixed time, one at a time (`-fuzz` takes one target in one package).
-  # Their seed corpora (testdata/fuzz/<Target> in each package, plus the f.Add seeds) also run in the
-  # plain `go test` of job `test`. A crasher is written to the package's testdata/fuzz/<Target>/ and
-  # uploaded; commit it as a regression seed with the fix.
+  # Each fuzz target for a fixed number of executions, one at a time (`-fuzz` takes one target in one
+  # package). A fixed count, not a time budget: -fuzztime in seconds can end in a "context deadline
+  # exceeded" failure with no crasher, and makes coverage depend on runner speed. Their seed corpora (testdata/fuzz/<Target>
+  # in each package, plus the f.Add seeds) also run in the plain `go test` of job `test`. A crasher is
+  # written to the package's testdata/fuzz/<Target>/ and uploaded; commit it as a regression seed with
+  # the fix.
   fuzz:
     name: feed-go fuzz
     runs-on: ubuntu-latest
@@ -285,31 +289,28 @@ jobs:
       run:
         working-directory: apps/feed-go
     env:
-      FUZZ_TIME: 20s
       # Minimization of each new interesting input, as a count of executions (`Nx`). The default is
       # 60s per input, and a worker minimizing reports no executions until it returns (internal/fuzz
-      # worker.minimize; an interrupted one reports none), so within FUZZ_TIME the exec count would
-      # stall at 0/sec once workers begin minimizing.
+      # worker.minimize), so a long minimization would stall the run.
       FUZZ_MINIMIZE: 100x
-      # <package dir>:<target>:<min execs>. The first step fails when this list and the Fuzz functions
+      # <package dir>:<target>:<executions>. The first step fails when this list and the Fuzz functions
       # in the module differ in either direction, so a new target cannot go unfuzzed and a renamed
-      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). The Fuzz step fails a
-      # target whose final `execs: N` is below its floor (or missing): a run that fuzzed nothing, or
-      # stalled, is not a pass.
-      # Floors: about half the LOWEST final count observed over a few green runs at FUZZ_TIME with
-      # FUZZ_MINIMIZE=100x. Counts vary between runs on shared runners, so a floor from one run would
-      # flake. To change one: read the "execs" summary line the Fuzz step prints for each target over
-      # a few runs, and set the floor to about half the lowest; scale all floors with FUZZ_TIME.
+      # one cannot silently fuzz nothing (`-fuzz` matching no target exits 0). Counts are sized for
+      # roughly 20 s per target on a shared runner; re-measure from the log of a green run before
+      # changing one.
       FUZZ_TARGETS: >-
-        internal/auth:FuzzTokenFromCookieHeader:120000
-        internal/auth:FuzzVerify:67000
+        internal/auth:FuzzTokenFromCookieHeader:170000
+        internal/auth:FuzzVerify:95000
         internal/feed:FuzzParse:180000
-        internal/hydrate:FuzzUnpack:180000
-        internal/shadow:FuzzCompare:280000
-        internal/shadow:FuzzCompareJSON:390000
-        internal/superjson:FuzzAppendString:440000
-        internal/superjson:FuzzSerialize:170000
-        internal/trpc:FuzzDecodeEnvelope:150000
+        internal/feed:FuzzParseInfinite:140000
+        internal/hydrate:FuzzMetaEntry:150000
+        internal/hydrate:FuzzUnpack:230000
+        internal/modelfeed:FuzzParse:210000
+        internal/shadow:FuzzCompare:420000
+        internal/shadow:FuzzCompareJSON:620000
+        internal/superjson:FuzzAppendString:570000
+        internal/superjson:FuzzSerialize:260000
+        internal/trpc:FuzzDecodeEnvelope:210000
     steps:
       - uses: actions/checkout@v7
 
@@ -337,18 +338,21 @@ jobs:
           set -o pipefail # the go test status must survive the tee
           status=0
           for t in $FUZZ_TARGETS; do
-            IFS=: read -r pkg name floor <<< "$t"
-            echo "::group::$pkg:$name"
-            out="$RUNNER_TEMP/fuzz-$name.log"
-            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "$FUZZ_TIME" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$out"; then
-              echo "::error::$pkg:$name failed; the crasher is in the uploaded artifact ($pkg/testdata/fuzz/$name/)"
+            IFS=: read -r pkg name count <<< "$t"
+            echo "::group::$pkg:$name ($count executions)"
+            corpus="$pkg/testdata/fuzz/$name"
+            before=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            if ! go test -run '^$' -fuzz "^${name}\$" -fuzztime "${count}x" -fuzzminimizetime "$FUZZ_MINIMIZE" "./$pkg" 2>&1 | tee "$RUNNER_TEMP/fuzz-$name.log"; then
               status=1
             fi
             echo "::endgroup::"
-            execs=$(grep -o 'execs: [0-9]*' "$out" | tail -n 1 | cut -d' ' -f2 || true)
-            echo "$pkg:$name execs ${execs:-none} (floor $floor)"
-            if [ -z "$execs" ] || [ "$execs" -lt "$floor" ]; then
-              echo "::error::$pkg:$name ran ${execs:-no} fuzz executions, below its floor of $floor"
+            after=$(find "$corpus" -type f 2>/dev/null | sort || true)
+            new=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | sed '/^$/d')
+            if [ -n "$new" ]; then
+              echo "::error::$pkg:$name found a crasher, uploaded as feed-go-fuzz-crashers: $new"
+              status=1
+            elif ! grep -q "^ok " "$RUNNER_TEMP/fuzz-$name.log"; then
+              echo "::error::$pkg:$name failed without writing a crasher (see its log above)"
               status=1
             fi
           done
