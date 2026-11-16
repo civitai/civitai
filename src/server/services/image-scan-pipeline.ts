@@ -193,7 +193,7 @@ export async function sendIngestionSignal({
           source: log.source,
         },
         'webhooks'
-      ).catch(() => null)
+      )
     );
 }
 
@@ -222,7 +222,7 @@ export async function logPerceptualHashMatch({
         source: log.source,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return false;
   });
   if (!pHashBlocked) return;
@@ -238,7 +238,7 @@ export async function logPerceptualHashMatch({
       source: log.source,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 }
 
 /**
@@ -791,7 +791,7 @@ export async function resolveScanOutcome({
         name: 'scan-judge-floor',
         imageId: image.id,
         message: (error as Error).message,
-      }).catch(() => null);
+      });
       await dbWrite.$executeRaw`
         UPDATE "Image" SET ingestion = ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
         WHERE id = ${image.id}
@@ -854,6 +854,8 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
 
 /** Log event for an unrated scan that would take the newer minor review routing. */
 export const UNRATED_MINOR_REVIEW_EVENT = 'unrated-minor-review-candidate';
+/** Log event for every scan that could be a candidate, so a zero count can be read against it. */
+export const MINOR_REVIEW_EVALUATED_EVENT = 'unrated-minor-review-evaluated';
 
 async function auditScanResults(args: {
   imageId: number;
@@ -916,19 +918,43 @@ async function auditScanResults(args: {
   if (associatedEntities.minor && minorRestrictedScan) minorReview = true;
 
   // Log, without routing, when an unrated scan would take the newer minor review routing.
-  if (nsfwLevel === 0 && !minorReview && !poiReview) {
-    const arms = [
-      ...(associatedEntities.minor ? ['resource'] : []),
-      ...(minorTags.length > 0 && adultTags.length === 0 ? ['tag'] : []),
-    ];
-    for (const arm of arms)
-      logToAxiom({
-        name: UNRATED_MINOR_REVIEW_EVENT,
-        type: 'info',
-        imageId: args.imageId,
-        arm,
-        at: new Date().toISOString(),
-      }).catch(() => null);
+  // Minor-review tags carry a rating of their own, so they are left out of "unrated".
+  const contentLevel = Math.max(
+    ...tags.filter((tag) => !minorTags.includes(tag)).map((x) => x.nsfwLevel),
+    0,
+    args.floorLevel ?? 0
+  );
+  const tagPrecondition = minorTags.length > 0;
+  const resourcePrecondition = !!associatedEntities.minor;
+  if (tagPrecondition || resourcePrecondition) {
+    const unrated = contentLevel === 0;
+    const routed = minorReview || poiReview;
+    const at = new Date().toISOString();
+    logToAxiom({
+      name: MINOR_REVIEW_EVALUATED_EVENT,
+      type: 'info',
+      imageId: args.imageId,
+      precondition:
+        tagPrecondition && resourcePrecondition ? 'both' : tagPrecondition ? 'tag' : 'resource',
+      unrated,
+      routed,
+      adultTag: adultTags.length > 0,
+      at,
+    });
+    if (unrated && !routed) {
+      const arms = [
+        ...(resourcePrecondition ? ['resource'] : []),
+        ...(tagPrecondition && adultTags.length === 0 ? ['tag'] : []),
+      ];
+      for (const arm of arms)
+        logToAxiom({
+          name: UNRATED_MINOR_REVIEW_EVENT,
+          type: 'info',
+          imageId: args.imageId,
+          arm,
+          at,
+        });
+    }
   }
 
   // The capture account is no one's new account: its captures get only the content keys.
@@ -973,7 +999,7 @@ async function auditScanResults(args: {
             matchedWord: word,
           })),
         },
-      }).catch(() => null);
+      });
   }
 
   return {

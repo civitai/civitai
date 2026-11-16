@@ -194,8 +194,8 @@ export type ServeOptions = {
    */
   limiter?: SubscriptionLimiter;
   /**
-   * Whether a request comes from a region the site restricts to SFW content: the site's own rule
-   * (`request-origin.ts`) unless replaced.
+   * Whether a request is held to SFW content (a region the site restricts or blocks, or no
+   * region at all): the site's own rule (`request-origin.ts`) unless replaced.
    */
   regionRestricted?: (origin: RequestOrigin) => boolean;
 };

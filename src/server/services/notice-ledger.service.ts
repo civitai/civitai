@@ -123,7 +123,7 @@ export async function sendLedgeredNotice<R extends { id: number }>({
             name: logName,
             message: 'send failed',
             details: { userId: recipient.id, error: (e as Error).name },
-          }).catch(() => undefined);
+          });
           failedUserIds.push(recipient.id);
           await sysRedis
             .hDel(key, String(recipient.id))

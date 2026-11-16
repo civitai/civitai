@@ -685,7 +685,7 @@ export async function purchaseBlockGood(
           error: messageOf(error),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
       // The claim never landed, so NOTHING was charged and the key is still
       // free — an identical retry is the right thing for the caller to allow.
       return {
@@ -840,7 +840,7 @@ export async function purchaseBlockGood(
         detail: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
 
     if (knownPreMoney) {
       // The claim is DELETED rather than tombstoned, because THIS attempt put
@@ -924,7 +924,7 @@ export async function purchaseBlockGood(
         totalLegs: transaction.transactionIds.length,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return {
       ok: false,
       status: 409,
@@ -958,7 +958,7 @@ export async function purchaseBlockGood(
         legsWithoutDuplicateFlag,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     // Safe to reverse the whole prefix: this attempt is the exclusive holder of
     // the key, so no other attempt's money can be under it. A reversal whose
     // own outcome is not established leaves the row `pending` and reports
@@ -1033,7 +1033,7 @@ export async function purchaseBlockGood(
         error: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     // The charge landed and the grant did not. Reverse the charge — unambiguous,
     // because this attempt holds the key exclusively — and RETIRE the key, so
     // the retry is keyed to a new generation instead of colliding with the
@@ -1104,7 +1104,7 @@ async function rollbackCharge(transactionId: string, title: string): Promise<boo
         error: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return false;
   }
 }
@@ -1161,7 +1161,7 @@ async function releaseUnsettledClaim(purchaseId: string): Promise<void> {
           error: messageOf(error),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     });
 }
 
@@ -1210,7 +1210,7 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
           error: messageOf(error),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     });
 }
 
@@ -1372,7 +1372,7 @@ async function payBlockGoodOwner(args: {
         error: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
 
     // Persist whatever DID land even though the payout as a whole failed: a
     // recorded leg is what a refund reverses, and an unrecorded one is Buzz the
@@ -1398,7 +1398,7 @@ async function payBlockGoodOwner(args: {
             error: messageOf(writeError),
           },
           'civitai-prod'
-        ).catch(() => undefined);
+        );
       });
   }
 }
@@ -1520,7 +1520,7 @@ export async function refundBlockGoodPurchase(args: {
         error: messageOf(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { refunded: false, reason: 'buyer_refund_failed' };
   }
 
@@ -1570,7 +1570,7 @@ export async function refundBlockGoodPurchase(args: {
         failures,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
   }
 
   return { refunded: true, buyerRefundedBuzz, clawedBackBuzz, failures };

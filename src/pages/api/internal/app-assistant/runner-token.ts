@@ -65,7 +65,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         purpose,
         grantId: grant.grantId,
         reason: refusal.error,
-      }).catch(() => undefined);
+      });
       return res.status(refusal.status).json({ error: refusal.error, code: 'refused' });
     }
     const minted = await mintAppAssistantToken(grant.userId, purpose);
@@ -79,7 +79,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       userId: grant.userId,
       purpose,
       grantId: grant.grantId,
-    }).catch(() => undefined);
+    });
     return res.json(minted);
   } catch (err) {
     logToAxiom({
@@ -88,7 +88,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       purpose,
       grantId: grant.grantId,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res.status(503).json({ error: 'Could not mint a token right now' });
   }
 });

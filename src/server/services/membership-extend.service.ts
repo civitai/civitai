@@ -49,7 +49,7 @@ export const notFoundAsNull = (e: { statusCode?: number }) => {
 };
 
 const log = (data: MixedObject) =>
-  logToAxiom({ name: 'mod-membership-extend', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'mod-membership-extend', ...data }, 'webhooks');
 
 type CancelMode = 'renewing' | 'cancelling';
 

@@ -13,7 +13,7 @@ import { swapAllFlagDays } from '~/server/events/turf/turf.service';
 const log = createLogger('finalize-crucibles', 'yellow');
 
 const logJob = (data: MixedObject) => {
-  logToAxiom({ name: 'finalize-crucibles', type: 'error', ...data }, 'webhooks').catch();
+  logToAxiom({ name: 'finalize-crucibles', type: 'error', ...data }, 'webhooks');
 };
 
 /**

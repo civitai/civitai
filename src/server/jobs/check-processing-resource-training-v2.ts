@@ -20,7 +20,7 @@ const logWebhook = (data: MixedObject) => {
       ...data,
     },
     'webhooks'
-  ).catch();
+  );
 };
 
 export const checkProcessingResourceTrainingV2 = createJob(

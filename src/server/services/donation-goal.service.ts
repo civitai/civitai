@@ -411,7 +411,7 @@ async function finishDonation<
       name: 'donation-goal-complete-after-donate',
       error: completionError,
       donationGoalId,
-    }).catch(() => undefined);
+    });
     return goal;
   }
 }
@@ -466,7 +466,7 @@ export const checkDonationGoalComplete = async ({
       error,
       entityType,
       entityId,
-    }).catch(() => undefined);
+    });
   }
 
   return goal;

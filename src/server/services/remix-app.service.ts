@@ -443,7 +443,7 @@ async function quoteBuiltRun(
       type: 'error',
       message: (error as Error).message,
       key,
-    }).catch(() => undefined);
+    });
     return { refusal: PRICE_UNAVAILABLE };
   }
 }

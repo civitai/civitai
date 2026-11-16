@@ -4191,7 +4191,7 @@ export const mergeVersions = async ({
       name: 'model-version-merge',
       message: `Failed to bust file AIRs for merged versions of model ${modelId}`,
       error,
-    }).catch(() => undefined)
+    })
   );
   scanModelAndRules(modelId);
 

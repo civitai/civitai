@@ -93,17 +93,4 @@ describe('logScanVerdict', () => {
       expect.objectContaining({ name: 'scan-verdict', system: 'xguard', tags: 'A,B' })
     );
   });
-
-  it('never throws when the log write fails', async () => {
-    vi.mocked(loggingMock.logToAxiom).mockRejectedValueOnce(new Error('axiom down'));
-    await expect(
-      logScanVerdict({
-        system: 'text-scan',
-        entityType: 'Post',
-        entityId: 1,
-        flagged: false,
-        acted: false,
-      })
-    ).resolves.toBeUndefined();
-  });
 });

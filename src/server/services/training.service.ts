@@ -595,7 +595,7 @@ export async function updateTrainingWorkflowRecords(
         },
       },
       'webhooks'
-    ).catch();
+    );
   }
 
   // The run was priced and debited at submit, so its net charge should never grow afterwards. The
@@ -623,7 +623,7 @@ export async function updateTrainingWorkflowRecords(
         },
       },
       'webhooks'
-    ).catch();
+    );
   }
 
   const newTrainingResults: TrainingResultsV2 = {

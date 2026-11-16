@@ -150,9 +150,7 @@ export function logMissingBudgetColumn(site: string, err: unknown): void {
       code: (err as { code?: unknown } | null)?.code,
     },
     'webhooks'
-  ).catch(() => {
-    /* logging must never break a spend path */
-  });
+  );
 }
 
 /**
@@ -183,9 +181,7 @@ export function logMissingRevokedScopesColumn(site: string, err: unknown): void 
       code: (err as { code?: unknown } | null)?.code,
     },
     'webhooks'
-  ).catch(() => {
-    /* logging must never break a consent path */
-  });
+  );
 }
 
 /**
@@ -904,9 +900,7 @@ export async function recordScopeGrant(opts: {
             residualCount: residual.length,
           },
           'webhooks'
-        ).catch(() => {
-          /* logging must never break a consent path */
-        });
+        );
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
           message: CONSENT_RECONSENT_UNAVAILABLE_MESSAGE,

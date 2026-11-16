@@ -141,7 +141,7 @@ export async function createHeadlessPost({
     surface,
     postId: result.postId,
     gallery: result.gallery ? result.gallery.submitted : undefined,
-  }).catch(() => undefined);
+  });
   return { ...result, deduped: false };
 }
 
@@ -164,7 +164,7 @@ async function storeResult(
     type: 'error',
     message: 'the result for repeats could not be stored',
     postId: result.postId,
-  }).catch(() => undefined);
+  });
   return false;
 }
 
@@ -199,7 +199,7 @@ async function submitToGallery(
       message: `remix gallery submit failed: ${message}`,
       hostImageId,
       imageId,
-    }).catch(() => undefined);
+    });
     return { submitted: false, reason: GALLERY_NOT_SENT };
   }
 }

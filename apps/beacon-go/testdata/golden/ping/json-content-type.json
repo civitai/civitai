@@ -1,0 +1,34 @@
+{
+  "name": "json-content-type",
+  "endpoint": "ping",
+  "request": {
+    "method": "POST",
+    "target": "/api/internal/ping",
+    "headers": {
+      "host": "www.example.test",
+      "referer": "https://www.example.test/models/123/some-slug",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7",
+      "cf-ipcountry": "US",
+      "content-type": "application/json"
+    },
+    "body": "{\"ads\":true,\"duration\":12345.9,\"path\":\"/models/123/some-slug\",\"windowWidth\":1920,\"windowHeight\":1080}"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 400,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150",
+      "etag": "\"weftv9g98bf\""
+    },
+    "body": "invalid request",
+    "writes": []
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/ping\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"referer\":\"https://www.example.test/models/123/some-slug\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"content-type\":\"application/json\",\"cf-ipcountry\":\"US\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"{\\\"ads\\\":true,\\\"duration\\\":12345.9,\\\"path\\\":\\\"/models/123/some-slug\\\",\\\"windowWidth\\\":1920,\\\"windowHeight\\\":1080}\",\"bodyIsString\":false,\"node\":{\"status\":400,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\",\"etag\":\"\\\"weftv9g98bf\\\"\"},\"body\":\"invalid request\",\"writes\":[]}}"
+}

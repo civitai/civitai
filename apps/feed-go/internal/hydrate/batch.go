@@ -78,17 +78,50 @@ func (p *PackedReader) Queue(b *Batch, key string, ids []int, ttl time.Duration)
 
 // Entries decodes the lookup's answer by id, after the batch's Exec (see Get).
 func (r *PackedRead) Entries() map[int]Entry {
+	out, _ := r.read()
+	return out
+}
+
+// read is Entries plus writable: the ids it does not answer whose entry Node's fetch would write
+// once its lookup computes it (no key, or an undecodable value); a debounce marker or a failed read
+// is not writable. With no client queued, every id is absent. writable is nil when every id is an
+// entry (a hit costs no allocation).
+func (r *PackedRead) read() (map[int]Entry, map[int]bool) {
 	out := make(map[int]Entry, len(r.ids))
+	var writable map[int]bool
 	if len(r.cmds) == 0 {
-		return out
+		writable = make(map[int]bool, len(r.ids))
+		for _, id := range r.ids {
+			writable[id] = true
+		}
+		return out, writable
 	}
 	now := time.Now()
 	if r.p.Now != nil {
 		now = r.p.Now()
 	}
 	for i, cmd := range r.cmds {
-		if e, ok := decodeEntry(cmd, r.ttl, now); ok {
+		e, st := entryState(cmd, r.ttl, now)
+		if st == stateEntry {
 			out[r.ids[i]] = e
+			continue
+		}
+		if st == stateAbsent {
+			if writable == nil {
+				writable = map[int]bool{}
+			}
+			writable[r.ids[i]] = true
+		}
+	}
+	return out, writable
+}
+
+// raw is each id's cached bytes, after the batch's Exec, for the ids whose GET answered a value.
+func (r *PackedRead) raw() map[int][]byte {
+	out := map[int][]byte{}
+	for i, cmd := range r.cmds {
+		if b, err := cmd.Bytes(); err == nil {
+			out[r.ids[i]] = b
 		}
 	}
 	return out
@@ -125,6 +158,8 @@ func (s *Sources) queueMetrics(b *Batch, ids []int) *metricsRead {
 
 // result is the metrics lookup's answer after Exec. The first command error in command order is the read
 // failure (an HGETALL answers an absent key with an empty hash, never redis.Nil, so every error here is real).
+// An id with no hash falls back (`metrics-miss`, counted like every fallback reason): Node populates it
+// from ClickHouse, which this service does not read.
 func (r *metricsRead) result() (map[int]Metrics, error) {
 	if len(r.ids) == 0 {
 		return map[int]Metrics{}, nil

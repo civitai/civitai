@@ -35,7 +35,7 @@ function ModelsPage() {
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         <div className="flex flex-col gap-2">
           <CategoryTags />
-          <ModelsInfinite filters={queryFilters} showEof showAds />
+          <ModelsInfinite filters={queryFilters} showEof showAds searchable />
         </div>
       </MasonryContainer>
     </>

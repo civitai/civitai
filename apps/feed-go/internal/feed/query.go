@@ -16,8 +16,10 @@ const challengeTagID = 676575
 // ImagesQuery is one getAllImages call for the supported subset, after the handler and the blocked-
 // browsing-tags enforcement have shaped it.
 type ImagesQuery struct {
-	Limit          int
-	Cursor         int
+	Limit  int
+	Cursor int
+	// Skip is the offset-paging skip (the REST endpoint's `page`): `OFFSET <skip>`; 0 adds nothing.
+	Skip           int
 	Sort           string
 	Period         string
 	PeriodMode     string
@@ -44,6 +46,13 @@ type ImagesQuery struct {
 	// TargetUserID is the creator filter (`userId`, or the id a `username` resolved to):
 	// `i."userId" = <targetUserId>`. getAllImages marks that query personalized, so it is never cached.
 	TargetUserID int
+	// TagIDs is the input's own `tags` inclusion filter (image.getInfinite): images carrying any of
+	// them. getAllImages marks that query personalized, so it is never cached.
+	TagIDs []int
+	// IndexOrder is a post's own media (`postId` without `modelId`): ordered by `i."index"`, then
+	// `i."id"`, and paged on the index (getAllImagesUncaptured's post branch). The cursor column is
+	// then the nullable index (RawImage.CursorNull).
+	IndexOrder bool
 	// ThrowOnStatementTimeout makes a statement timeout an error instead of an empty page (the
 	// feed-service hydrate sets it, so a slow hydrate is not read as a page the filters emptied).
 	ThrowOnStatementTimeout bool
@@ -160,6 +169,13 @@ func (q *ImagesQuery) Build() Built {
 	if q.TargetUserID != 0 {
 		and = append(and, `i."userId" = `+a.add(q.TargetUserID))
 	}
+	if len(q.TagIDs) > 0 {
+		and = append(and, `i.id IN (
+      SELECT "imageId"
+      FROM "TagsOnImageDetails"
+      WHERE "tagId" = ANY(`+a.add(q.TagIDs)+`::int[]) AND "disabled" = FALSE
+    )`)
+	}
 	if len(q.Generation) > 0 {
 		and = append(and, `i."generationProcess" = ANY(`+a.add(q.Generation)+`::text[]::"ImageGenerationProcess"[])`)
 	}
@@ -173,13 +189,17 @@ func (q *ImagesQuery) Build() Built {
 		and = append(and, `i."userId" != ALL(`+a.add(q.ExcludedUsers)+`::int[])`)
 	}
 
-	if q.TargetUserID != 0 {
-		// isPersonalized (the user-gallery path): never cached.
+	if q.TargetUserID != 0 || len(q.TagIDs) > 0 {
+		// isPersonalized (the user-gallery path, a tag combination): never cached.
 		cacheTTL, tags = 0, nil
 	}
 
 	var orderBy, cursorCol, cursorOp string
 	switch {
+	case q.IndexOrder:
+		// getCursor('i."index"'): ascending, inclusive on its only field; the id tie-break is
+		// appended after the cursor clause, so the cursor stays the index.
+		orderBy, cursorCol, cursorOp = `i."index"`, `i."index"`, ">="
 	case q.Sort == SortOldest:
 		orderBy, cursorCol, cursorOp = `i."id" ASC`, `i."id"`, ">="
 	case strings.Contains(from, "irr"):
@@ -198,10 +218,21 @@ func (q *ImagesQuery) Build() Built {
 	if q.Cursor != 0 {
 		and = append(and, `((`+cursorCol+` `+cursorOp+` `+a.add(q.Cursor)+`))`)
 	}
+	if q.IndexOrder {
+		// A post's images can share an index.
+		orderBy += `, i."id"`
+	}
 
 	and = append(and, `i."needsReview" IS NULL`, `i."acceptableMinor" = FALSE`)
 	and = append(and, `(i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 AND i."nsfwLevel" != 0`)
 	and = append(and, hydrate.ImageReviewedSQL("i"))
+
+	offset := ""
+	if q.Skip > 0 {
+		// Inlined, as Node does: an int, never request text.
+		offset = `
+    OFFSET ` + strconv.Itoa(q.Skip)
+	}
 
 	sql := `
     SELECT
@@ -260,7 +291,7 @@ func (q *ImagesQuery) Build() Built {
         (i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0
         OR NOT i."modelRestricted"
       )
-    ORDER BY ` + orderBy + `
+    ORDER BY ` + orderBy + offset + `
     LIMIT ` + a.add(q.Limit+1)
 
 	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout}

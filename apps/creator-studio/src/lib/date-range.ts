@@ -4,13 +4,6 @@
 
 export type DateRange = { from: string; to: string };
 
-// Short presets only; historical periods are chosen via the month picker (which gives a natural month-over-month
-// comparison, rather than a 90-day window that predates most accounts' earning history).
-export const RANGE_PRESETS = [
-  { key: '7d', label: '7d', days: 7 },
-  { key: '30d', label: '30d', days: 30 },
-] as const;
-
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (d: Date, n: number) => {
@@ -22,6 +15,17 @@ const addDays = (d: Date, n: number) => {
 /** Last `days` calendar days ending today (inclusive), e.g. 30d → [today-29, today]. */
 export function presetRange(days: number, today = new Date()): DateRange {
   return { from: iso(addDays(today, -(days - 1))), to: iso(today) };
+}
+
+/** Lifetime window from `floor` (the creator's first version) to today. The comparison window ends the day before
+ *  it starts, so it is empty: every prior-period sum is 0 and no delta chip renders against a lifetime total. */
+export function allTimeWindow(floor: string, today = new Date()) {
+  return {
+    from: floor,
+    to: iso(today),
+    compareFrom: floor,
+    compareTo: iso(addDays(new Date(`${floor}T00:00:00Z`), -1)),
+  };
 }
 
 /** Calendar month by 0-based month index → [first, last] of that month. */

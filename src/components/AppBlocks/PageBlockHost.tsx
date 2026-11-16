@@ -10,6 +10,7 @@ import { AppBlockChrome } from './IframeHost';
 import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
 import { AppBuzzCapNotice } from './AppBuzzCapNotice';
 import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
+import { useOutputUnlockBridge, type OutputUnlockBridgeResult } from './useOutputUnlockBridge';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   APP_STORAGE_BASE_SCOPE,
@@ -111,6 +112,7 @@ import { projectSafeGenerationResource } from '~/server/schema/blocks/generation
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
+import type { ScannedRowsPath } from './generationSourceScannedRows';
 import type { TrainingDataUpload } from './trainingDataUpload';
 import { trainingBlobKeyIdentity } from '~/server/schema/blocks/training-dataset.schema';
 import {
@@ -2483,6 +2485,11 @@ export function PageBlockHost({
     if (showBuzzCapNotice) buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
   }, [showBuzzCapNotice, buzzCapUtils]);
   const dailyLimitRaise = useDailyLimitRaiseBridge({ appBlockId, appName, disabled: reviewMode });
+  const outputUnlock = useOutputUnlockBridge({
+    appName,
+    disabled: reviewMode,
+    linkOut: slug ? { slug, subPath } : null,
+  });
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
@@ -2638,6 +2645,41 @@ export function PageBlockHost({
     );
     return off;
   }, [onMessage, send, dailyLimitRaise]);
+
+  // REQUEST_OUTPUT_UNLOCK → OUTPUT_UNLOCK_RESULT { result }. The app names one restricted output
+  // by workflow and position; the server decides what may be offered and the host's own dialog
+  // (`useOutputUnlockBridge`) draws it. The app's word never sets a price or a url.
+  useEffect(() => {
+    const off = onMessage<
+      { requestId?: unknown; workflowId?: unknown; position?: unknown } | undefined
+    >('REQUEST_OUTPUT_UNLOCK', (raw) => {
+      const requestId = raw?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      const reply = (result: OutputUnlockBridgeResult) =>
+        send('OUTPUT_UNLOCK_RESULT', { requestId, result });
+      const workflowId = raw?.workflowId;
+      const position = raw?.position;
+      if (
+        typeof workflowId !== 'string' ||
+        workflowId.length === 0 ||
+        typeof position !== 'number' ||
+        !Number.isInteger(position) ||
+        position < 0
+      ) {
+        reply({
+          outcome: 'unavailable',
+          message: 'workflowId and a non-negative integer position are required',
+        });
+        return;
+      }
+      if (!token) {
+        reply({ outcome: 'unavailable', message: 'The app session is not ready yet.' });
+        return;
+      }
+      void outputUnlock.onUnlockRequest({ blockToken: token, workflowId, position }, reply);
+    });
+    return off;
+  }, [onMessage, send, token, outputUnlock]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
@@ -4080,6 +4122,26 @@ export function PageBlockHost({
     blockTokenRef.current = token;
   }, [token]);
 
+  // A generation source the viewer uploads (the `generationSource` picker, a single
+  // OPEN_MEDIA_UPLOAD image) lands as a consumer blob. While `app-block-source-scanned-rows` is on
+  // the generation gate refuses that blob for an app, so the server copies it into a private
+  // scanned row and the app gets that instead (`toGenerationSource`). The token is read when the
+  // copy is made, as a batch reads it.
+  const scannedSourcePath = useMemo<ScannedRowsPath>(
+    () => ({
+      usesScannedRows: async () =>
+        (await trpcUtils.client.blockImageUpload.generationSourceUsesScannedRows.query())
+          ?.scannedRows === true,
+      persist: (url) =>
+        callWithCurrentToken(
+          () => blockTokenRef.current,
+          (blockToken) =>
+            trpcUtils.client.blocks.persistUploadedGenerationSource.mutate({ blockToken, url })
+        ),
+    }),
+    [trpcUtils]
+  );
+
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
   // has no allow-downloads). THREE variants, each with its own security gate:
@@ -4633,6 +4695,7 @@ export function PageBlockHost({
           id: `block-generation-source-upload-${requestId}`,
           component: BlockGenerationSourceUploadModal,
           props: {
+            scannedRows: scannedSourcePath,
             onResolved: (result: BlockSourceImageInfo) => {
               resolvedSource = result;
             },
@@ -4722,7 +4785,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken, scannedSourcePath]);
 
   // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered: a
   // silent return strands the block until its picker timeout.
@@ -4810,7 +4873,13 @@ export function PageBlockHost({
             const run = await import('./mediaUploadRun');
             try {
               const blob = new Blob([bytes], { type: contentType });
-              const selected = await run.uploadGenerationMedia(kind, blob, contentType);
+              const selected = await run.uploadGenerationMedia(
+                kind,
+                blob,
+                contentType,
+                undefined,
+                scannedSourcePath
+              );
               send(
                 'MEDIA_UPLOAD_RESULT',
                 selected ? { requestId, selected } : { requestId, error: MEDIA_UPLOAD_FAILED_ERROR }
@@ -4833,6 +4902,7 @@ export function PageBlockHost({
         component: BlockMediaUploadModal,
         props: {
           kind,
+          scannedRows: scannedSourcePath,
           onResolved: (result: BlockMediaUploadInfo) => {
             uploaded = result;
           },
@@ -4848,7 +4918,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken, scannedSourcePath]);
 
   // OPEN_MEDIA_UPLOAD_BATCH → MEDIA_UPLOAD_BATCH_RESULT: many files the block holds, uploaded as
   // PRIVATE generation inputs behind ONE host-chrome confirm (`mediaUploadBatchLogic.ts`). Every

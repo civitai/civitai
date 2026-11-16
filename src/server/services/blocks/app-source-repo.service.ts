@@ -60,9 +60,7 @@ export type SourceRepoRow = {
 export type SourceRepoRead = { available: boolean; row: SourceRepoRow | null };
 
 const log = (type: 'info' | 'warning' | 'error', message: string, data: Record<string, unknown>) =>
-  logToAxiom({ name: 'app-source-repo', type, message, ...data }, 'webhooks').catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'app-source-repo', type, message, ...data }, 'webhooks');
 
 /**
  * Read a slug's source-repo row. A missing table reads as `{ available: false }` (the feature is

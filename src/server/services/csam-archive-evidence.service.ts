@@ -224,7 +224,7 @@ export async function checkCsamArchiveEvidence({
       reportType: report.type,
       verified: !failure,
       reason: failure ?? undefined,
-    }).catch(() => undefined);
+    });
   }
 
   setCsamArchiveIncomplete(counts, now);

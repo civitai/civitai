@@ -270,7 +270,7 @@ export async function applyCsamHold({
     created: write === 'created',
     ...(coveredBy !== null ? { coveredBy } : {}),
     ...(priorHoldId !== null ? { priorHoldId } : {}),
-  }).catch(() => null);
+  });
 }
 
 /** Hold first: a failed write throws before the entity action, so the retry cron's rescan redoes both. */
@@ -292,7 +292,7 @@ export function withCsamHold(
         workflowId: args.workflowId,
         errorName: error instanceof Error ? error.name : typeof error,
         errorCode: (error as { code?: unknown } | null | undefined)?.code,
-      }).catch(() => null);
+      });
       throw error;
     }
     await apply(args);

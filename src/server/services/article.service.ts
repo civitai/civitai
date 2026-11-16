@@ -49,7 +49,11 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   articleOwnImageIds,
   deriveArticleIngestionState,
+  articleModerationText,
+  articleTextScanFields,
 } from '~/server/services/article-ingestion.helpers';
+import { hashContent } from '~/server/services/entity-moderation.service';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
@@ -201,7 +205,7 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
         cause: error.cause,
       },
       'article-stats'
-    ).catch();
+    );
     return {};
   }
 };
@@ -1025,6 +1029,7 @@ export const upsertArticle = async ({
       lockedProperties: string[];
       metadata: Prisma.JsonValue;
       content: string | null;
+      scheduledAt: Date | null;
     } | null = null;
     if (id) {
       article = await dbWrite.article.findUnique({
@@ -1044,6 +1049,7 @@ export const upsertArticle = async ({
           lockedProperties: true,
           metadata: true,
           content: true,
+          scheduledAt: true,
         },
       });
       if (!article) throw throwNotFoundError();
@@ -1292,15 +1298,13 @@ export const upsertArticle = async ({
             cause: error.cause,
             stack: error.stack,
             articleId: result.id,
-          }).catch();
+          });
         }
       }
 
       // Submit for text moderation (non-blocking, fire-and-forget)
       if (result.content && isPublicArticle(result)) {
-        const textForModeration = [data.title, removeTags(result.content)]
-          .filter(Boolean)
-          .join(' ');
+        const textForModeration = articleModerationText(data.title, result.content);
         submitTextModerationOrScan({
           entityType: 'Article',
           entityId: result.id,
@@ -1319,7 +1323,7 @@ export const upsertArticle = async ({
             name: 'article-text-moderation',
             message: (e as Error).message,
             articleId: result.id,
-          }).catch();
+          });
         });
       }
 
@@ -1481,16 +1485,19 @@ export const upsertArticle = async ({
         ));
       if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
       sharedTextChanged = sharedSave;
-      // A live article leaves Scanned with its new text too, so no failure before the recompute
-      // can leave that text public without its own verdict.
-      const liveSave =
+      // A live or scheduled article leaves Scanned with its new text too, so no failure before the
+      // recompute can leave that text counted on an older verdict.
+      const publicSave =
         textChanged &&
-        ((data.status as ArticleStatus | undefined) ?? article.status) === ArticleStatus.Published;
+        isPublicArticle({
+          status: ((data.status as ArticleStatus | undefined) ?? article.status) as ArticleStatus,
+          scheduledAt: scheduledAtWrite === undefined ? article.scheduledAt : scheduledAtWrite,
+        });
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
-          ...(sharedSave || liveSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
+          ...(sharedSave || publicSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           // The locked read: a block may have written its own keys since the first read.
           metadata: {
@@ -1774,13 +1781,12 @@ export async function applyArticleContentChange({
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
     // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
-    // draft, or a live article, leaves Scanned in the same statement that changes its text.
+    // draft, or a live or scheduled article, leaves Scanned in the same statement that changes its text.
     const affected = await dbWrite.$transaction(async (tx) => {
       await lockAccessTokens(tx, id);
       const shared = await isSharedArticle(id, publication.status, tx);
-      const live = publication.status === ArticleStatus.Published;
       const locked =
-        shared || live
+        shared || isPublicArticle(publication)
           ? await tx.article.findUnique({ where: { id }, select: { content: true } })
           : null;
       const changed = !!locked && locked.content !== content;
@@ -1857,7 +1863,7 @@ export async function applyArticleContentChange({
           cause: error.cause,
           stack: error.stack,
           articleId: id,
-        }).catch();
+        });
       }
     }
   }
@@ -1916,7 +1922,7 @@ export async function applyArticleContentChange({
           name: 'article-text-moderation',
           message: (e as Error).message,
           articleId: id,
-        }).catch();
+        });
         return null;
       });
       // The orchestrator client sets no timeout, so a hung submit would hold the save open.
@@ -1941,9 +1947,6 @@ export async function applyArticleContentChange({
 }
 
 const ARTICLE_TEXT_SUBMIT_TIMEOUT_MS = 10_000;
-
-const articleModerationText = (title: string, content: string | null) =>
-  [title, removeTags(content ?? '')].filter(Boolean).join(' ');
 
 /**
  * Whether the row now holds this text's scan or its verdict. Neither path throws on every miss: the
@@ -2994,7 +2997,7 @@ export async function submitSharedArticleText(id: number): Promise<boolean> {
         submitTextModeration({
           entityType: 'Article',
           entityId: id,
-          content: [text.title, removeTags(text.content ?? '')].filter(Boolean).join(' '),
+          content: articleModerationText(text.title, text.content),
           labels: ['nsfw'],
           recordForReview: true,
           forceRescan: true,
@@ -3038,6 +3041,45 @@ export function articleHasText(title: string | null, content: string | null): bo
   const titleText = title?.trim() ?? '';
   const contentText = removeTags(content ?? '').trim();
   return titleText.length > 0 || contentText.length > 0;
+}
+
+/** Text verdicts older than this may not store a hash of the text they judged. */
+export const ARTICLE_TEXT_VERDICT_HASHED_SINCE = new Date('2026-11-11T00:00:00Z');
+
+/**
+ * Whether a stored text verdict covers this title and content. A text-scan verdict carries the
+ * scanned text's `textHash` in its result; an XGuard verdict carries `contentHash`.
+ */
+export function articleTextVerdictMatch(
+  row: { contentHash: string | null; result: Prisma.JsonValue | null; updatedAt: Date },
+  article: { title: string | null; content: string | null }
+): 'current' | 'other' | 'legacy' | 'partial' {
+  const result = row.result as {
+    version?: unknown;
+    textHash?: unknown;
+    meta?: { inputCut?: unknown };
+  } | null;
+  // It did not judge all of the text; a resubmit would judge the same part.
+  const cut = result?.version != null && result.meta?.inputCut === true;
+  const stored =
+    result?.version != null
+      ? typeof result.textHash === 'string'
+        ? result.textHash
+        : null
+      : row.contentHash;
+  if (!stored) {
+    if (row.updatedAt >= ARTICLE_TEXT_VERDICT_HASHED_SINCE) return 'other';
+    return cut ? 'partial' : 'legacy';
+  }
+  const current =
+    result?.version != null
+      ? textScanTextHash({
+          fields: articleTextScanFields(article.title, article.content),
+          declared: {},
+        })
+      : hashContent(articleModerationText(article.title, article.content));
+  if (stored !== current) return 'other';
+  return cut ? 'partial' : 'current';
 }
 
 /**
@@ -3156,7 +3198,7 @@ export async function recomputeArticleIngestionInTx(
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
-    select: { status: true, blocked: true },
+    select: { status: true, blocked: true, contentHash: true, result: true, updatedAt: true },
   });
 
   // Articles with no text to scan (empty/null title AND content) can never
@@ -3169,13 +3211,27 @@ export async function recomputeArticleIngestionInTx(
     EntityModerationStatus.Expired,
     EntityModerationStatus.Canceled,
   ];
+  const textSucceeded = hasText && textModeration?.status === EntityModerationStatus.Succeeded;
+  // Only on the way into Scanned: an article already there keeps what it has, so rows from before
+  // verdicts carried a hash do not take it down on its next recompute.
+  const verdictMatch =
+    textSucceeded && textModeration && current.ingestion !== ArticleIngestionStatus.Scanned
+      ? articleTextVerdictMatch(textModeration, current)
+      : 'current';
+  if (verdictMatch === 'legacy')
+    logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' });
+  // A verdict for other text neither clears nor blocks it. One for part of this text blocks on a
+  // hit in the part it judged, but cannot clear the rest.
+  const verdictForThisText = verdictMatch === 'current' || verdictMatch === 'legacy';
   const textBlocked =
-    hasText &&
-    textModeration?.status === EntityModerationStatus.Succeeded &&
-    textModeration.blocked === true;
+    textSucceeded &&
+    (verdictForThisText || verdictMatch === 'partial') &&
+    textModeration?.blocked === true;
+  if (verdictMatch === 'partial' && !textBlocked)
+    logToAxiom({ type: 'warning', name: 'article-verdict-input-cut', articleId });
   const textError =
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
-  const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
+  const textDone = !hasText || (textSucceeded && verdictForThisText);
 
   // --- Derive ingestion state (precedence documented on deriveArticleIngestionState) ---
   const hasModeratorOverride = current.moderatorNsfwLevel != null;
@@ -3538,9 +3594,7 @@ export async function rescanArticle({
     article.content &&
     (isPublicArticle(article) || (await isSharedArticle(id, article.status)))
   ) {
-    const textForModeration = [article.title, removeTags(article.content)]
-      .filter(Boolean)
-      .join(' ');
+    const textForModeration = articleModerationText(article.title, article.content);
 
     await submitTextModerationOrScan({
       entityType: 'Article',
@@ -3562,7 +3616,7 @@ export async function rescanArticle({
         name: 'article-rescan-text-moderation',
         message: (e as Error).message,
         articleId: id,
-      }).catch();
+      });
     });
   }
 
@@ -3590,7 +3644,7 @@ export async function rescanArticle({
     articleId: id,
     imageCount: connections.length,
     isModerator,
-  }).catch();
+  });
 }
 
 /**
@@ -3688,7 +3742,7 @@ export async function rescanArticleImage({
     articleId,
     imageId,
     isModerator,
-  }).catch();
+  });
 }
 
 /** The seeded `civitai official` tag, or undefined until the row exists. */

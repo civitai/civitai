@@ -82,7 +82,7 @@ export function createSampledRowBuffer<Row>(
         message: e.message,
       },
       'clickhouse'
-    ).catch(() => undefined);
+    );
   }
 
   // One insert at a time: a slow ClickHouse holds one batch plus the bounded buffer,

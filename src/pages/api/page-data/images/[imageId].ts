@@ -200,7 +200,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // After the flush the client sees a 200 with no body; this is the only place that says so.
       afterFlush: res.headersSent,
       message: e instanceof Error ? e.message : String(e),
-    }).catch(() => undefined);
+    });
     if (!res.headersSent) send(500, { error: 'Page data unavailable' });
     else if (!res.writableEnded) res.end();
   }

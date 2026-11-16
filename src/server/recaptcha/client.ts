@@ -240,7 +240,7 @@ export async function verifyCaptchaToken({
         },
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     throw upstreamFaultError('No response from captcha service');
   }
   const verifyLatencyMs = Date.now() - startedAt;
@@ -263,7 +263,7 @@ export async function verifyCaptchaToken({
         },
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     throw upstreamFaultError('No response from captcha service');
   }
 
@@ -298,7 +298,7 @@ export async function verifyCaptchaToken({
         },
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     // Fail CLOSED. An unidentifiable response must not be able to authorise a
     // purchase, and the caller-visible error is the existing one, so this does
     // not introduce a new failure class for callers to handle.
@@ -323,7 +323,7 @@ export async function verifyCaptchaToken({
           },
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     }
     return true;
   }
@@ -355,6 +355,6 @@ export async function verifyCaptchaToken({
       },
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
   throw throwBadRequestError('Unable to verify captcha token');
 }

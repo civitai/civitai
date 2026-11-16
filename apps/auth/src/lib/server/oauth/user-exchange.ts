@@ -78,9 +78,7 @@ interface LogContext {
 }
 
 function log(result: 'issued' | 'refused', ctx: LogContext, error?: string, reason?: string) {
-  void logToAxiom({ event: 'token_exchange', result, error, reason, ...ctx }).catch(
-    () => undefined
-  );
+  void logToAxiom({ event: 'token_exchange', result, error, reason, ...ctx });
 }
 
 export interface UserExchangeInput {
@@ -212,9 +210,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     const issuer = env.AUTH_JWT_ISSUER;
     const tokenSigner = getSigner();
     if (!issuer || !tokenSigner) {
-      void logToAxiom({ type: 'error', name: 'token-exchange-not-configured' }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'error', name: 'token-exchange-not-configured' });
       return refuse('server_error', 'issuer or signing key not configured');
     }
 
@@ -245,7 +241,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
         type: 'error',
         name: 'token-exchange-sign-failed',
         message: String(err),
-      }).catch(() => undefined);
+      });
       return refuse('server_error', 'signing failed');
     }
 
@@ -269,7 +265,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
         type: 'error',
         name: 'token-exchange-record-failed',
         message: String(err),
-      }).catch(() => undefined);
+      });
       return refuse('server_error', 'exchange record not stored');
     }
 
@@ -285,9 +281,7 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
       { headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache' } }
     );
   } catch (err) {
-    void logToAxiom({ type: 'error', name: 'token-exchange-error', message: String(err) }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'token-exchange-error', message: String(err) });
     return refuse('temporarily_unavailable', 'lookup failed', { 'Retry-After': '5' });
   }
 }

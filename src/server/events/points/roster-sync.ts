@@ -534,5 +534,5 @@ async function markRankPass(event: RosterEvent, deps: RosterSyncDeps) {
 }
 
 function logRoster(type: 'warning' | 'error', fn: string, extra: object) {
-  void logToAxiom({ type, name: 'event-roster', fn, ...extra }).catch(() => undefined);
+  void logToAxiom({ type, name: 'event-roster', fn, ...extra });
 }

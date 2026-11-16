@@ -219,7 +219,7 @@ function logLabelModeReadFailure(
       message,
       label,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
   } catch {
     // Logging must not undo the fallback.
   }

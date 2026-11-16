@@ -1442,7 +1442,7 @@ function noteSubListingTableMissing(err: unknown): void {
     name: 'app-sub-listing-table-missing',
     type: 'warning',
     message: err instanceof Error ? err.message : String(err),
-  }).catch(() => null);
+  });
 }
 
 /**

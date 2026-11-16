@@ -58,7 +58,7 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
           reportChoice: input.reportChoice,
           outcome: r.ok ? 'ok' : r.stale ? 'stale' : 'error',
           moderatorId: ctx.actor.id,
-        }).catch(() => null);
+        });
       }
       return {
         decision: input.decision,
@@ -110,7 +110,7 @@ export default defineModeratorEndpoint('textScan.resolveCsamHold', {
       reportChoice: input.reportChoice,
       outcome: 'ok',
       moderatorId: ctx.actor.id,
-    }).catch(() => null);
+    });
 
     return {
       holdId: input.holdId,

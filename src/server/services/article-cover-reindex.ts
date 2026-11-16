@@ -36,6 +36,6 @@ export async function queueModelArticlesReindex(modelId: number) {
       name: 'model-articles-index-enqueue-failed',
       message: error instanceof Error ? error.message : 'unknown',
       modelId,
-    }).catch(() => undefined);
+    });
   }
 }

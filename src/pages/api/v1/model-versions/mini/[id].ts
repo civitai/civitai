@@ -771,7 +771,7 @@ export default MixedAuthEndpoint(async function handler(
         modelVersionId: modelVersion.id,
         fileId: targetFile.id,
         blobId,
-      }).catch(() => undefined);
+      });
   }
 
   const downloadLink =
@@ -878,7 +878,7 @@ function logMiniModerationCaller(
     resolvedAs,
     principal,
     moderationIncluded,
-  }).catch(() => undefined);
+  });
 }
 
 const RESIGN_TIMEOUT_MS = 3000;
