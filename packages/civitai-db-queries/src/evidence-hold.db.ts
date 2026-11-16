@@ -112,10 +112,10 @@ export async function listEvidenceHeldOwners(
 }
 
 /**
- * Places a manual hold unless an open one with the same reason exists, so a repeat does not stack
- * rows. Only `manual`: `subject` and `secondary` holds belong to a CSAM report and the table's role
- * check refuses them without one. A null `releaseAt` holds until released; a date ends the hold in
- * the "EvidenceHeldUser" view, with no job.
+ * Places a manual hold unless one in force with the same reason already lasts as long as the one
+ * asked for, so a repeat does not stack rows. Only `manual`: `subject` and `secondary` holds belong
+ * to a CSAM report and the table's role check refuses them without one. A null `releaseAt` holds
+ * until released; a date ends the hold in the "EvidenceHeldUser" view, with no job.
  */
 export async function placeEvidenceHold(
   db: Kysely<DB>,
@@ -164,8 +164,8 @@ export async function placeEvidenceHold(
 
 /**
  * Releases one open manual hold. False when there is no such hold: unknown, already released, a
- * report hold, the generator-evidence hold, or a hold under an extension still in force. Those preserve for a CSAM report and are not a
- * moderator's to end, and a release purges what the hold kept.
+ * report hold, the generator-evidence hold, or a hold under an extension still in force. Those are
+ * not a moderator's to end, and a release purges what the hold kept.
  */
 export async function releaseEvidenceHold(
   db: Kysely<DB>,

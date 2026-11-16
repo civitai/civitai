@@ -34,6 +34,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   softDeleteUser,
 }));
 
+import { GENERATOR_EVIDENCE_HOLD_REASON } from '@civitai/db-queries/evidence-hold';
 import {
   approveGeneratorEvidenceReport,
   excludeGeneratorEvidenceFile,
@@ -158,7 +159,12 @@ describe('preserveGeneratorEvidence', () => {
     expect(blobs[1].derivedOutputIds).toEqual([OUTPUT]);
     expect(placeEvidenceHold).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: USER, role: 'manual', createdById: 1 })
+      expect.objectContaining({
+        userId: USER,
+        role: 'manual',
+        reason: GENERATOR_EVIDENCE_HOLD_REASON,
+        createdById: 1,
+      })
     );
     expect(placeEvidenceHold).toHaveBeenCalledTimes(1);
     expect(reviewConsumerStrikes).not.toHaveBeenCalled();
