@@ -201,6 +201,36 @@ describe('PageBlockHost REQUEST_OUTPUT_UNLOCK', () => {
     expectReplyKeys('REQUEST_OUTPUT_UNLOCK', 'success', ['result'], payload);
   });
 
+  test("not-released: the reply carries the server's message about why it stays hidden", async () => {
+    const message =
+      'The unlock went through, but this output is rated above your browsing level, so it stays hidden.';
+    const stillRestricted = {
+      workflowId: WF,
+      status: 'succeeded',
+      outputs: [
+        { url: 'https://cdn/pg0.png', nsfwLevel: 'pg' },
+        { restricted: true, reason: 'ceiling' },
+      ],
+    };
+    mocks.preview.mockResolvedValue(PAY);
+    mocks.unlock.mockResolvedValue({
+      outcome: 'not-released',
+      snapshot: stillRestricted,
+      charged: { unlockBuzz: 0 },
+      message,
+    });
+    const replies = await mount();
+    postFromBlock('REQUEST_OUTPUT_UNLOCK', { requestId: 'rq_nr', workflowId: WF, position: 1 });
+    const dialog = await openDialog();
+    dialog.props.onResult(await dialog.props.unlock(137));
+    dialog.options?.onClose?.();
+    expect((await resultFor(replies, 'rq_nr')).result).toEqual({
+      outcome: 'not-released',
+      snapshot: stillRestricted,
+      message,
+    });
+  });
+
   test('link-out: never charged; the reply says the viewer went to civitai.red', async () => {
     mocks.preview.mockResolvedValue({
       kind: 'link-out',

@@ -110,7 +110,7 @@ function fakes(reads: Array<() => Wf>, over: Partial<Fakes> = {}): Fakes {
     }),
     assertUnlockAllowed: vi.fn<D['assertUnlockAllowed']>(() => undefined),
     assertUnlockReleasesOutput: vi.fn<D['assertUnlockReleasesOutput']>(async () => undefined),
-    liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ insufficientFunds: false })),
+    liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ outcome: 'lifted' })),
     acquireLock: vi.fn<D['acquireLock']>(async () => release),
     release,
     ...over,
@@ -223,7 +223,7 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
 
   it("the orchestrator's insufficient-Yellow refusal is 'refused', with a message", async () => {
     const f = fakes([LOCKED], {
-      liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ insufficientFunds: true })),
+      liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ outcome: 'insufficient-funds' })),
     });
     const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
     expect(result).toStrictEqual({
@@ -410,6 +410,59 @@ describe("'ceiling' and 'unrated': never charged", () => {
     const preview = await previewBlockOutputUnlock(request(SFW_DOMAIN, 0), f);
     expect(preview.kind).toBe('link-out');
     expect(preview).not.toHaveProperty('unlockBuzz');
+  });
+});
+
+describe('the orchestrator write got no response (our timeout)', () => {
+  it('🔴 returns the non-retryable outcome and KEEPS the lock until its TTL', async () => {
+    const f = fakes([LOCKED], {
+      liftRestriction: vi.fn<D['liftRestriction']>(async () => ({ outcome: 'no-response' })),
+    });
+    const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
+    expect(result.outcome).toBe('unavailable');
+    expect(result.message).toBe(
+      'Your unlock may still be going through. Check again in a few minutes.'
+    );
+    expect(result.charged).toStrictEqual({ unlockBuzz: 0 });
+    expect(JSON.stringify(result)).not.toContain('r1.png');
+    // The write may still land: the lock is not released, so a retry is refused as in progress.
+    expect(f.release).not.toHaveBeenCalled();
+  });
+});
+
+describe('🔴 no price, no offer', () => {
+  it('missing transactions: unavailable, never pay, and the unlock asks the orchestrator nothing', async () => {
+    const noTransactions = () =>
+      workflow([image('pg0', 'pg'), image('r1', 'r')], { transactions: undefined });
+    expect(planBlockOutputUnlock(noTransactions(), RED_MATURE, 1)).toStrictEqual({
+      kind: 'unavailable',
+      position: 1,
+      message: "We couldn't work out the price for this unlock. Try again shortly.",
+    });
+    const f = fakes([noTransactions]);
+    const error = await rejection(unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f));
+    expect(error.message).toBe(
+      "We couldn't work out the price for this unlock. Try again shortly."
+    );
+    expectNothingSpent(f);
+  });
+
+  it('an empty transaction list: unavailable', () => {
+    const empty = workflow([image('pg0', 'pg'), image('r1', 'r')], { transactions: { list: [] } });
+    expect(planBlockOutputUnlock(empty, RED_MATURE, 1)).toStrictEqual({
+      kind: 'unavailable',
+      position: 1,
+      message: "We couldn't work out the price for this unlock. Try again shortly.",
+    });
+  });
+
+  it('only yellow spent (nothing to swap): unavailable', () => {
+    const yellowOnly = workflow([image('pg0', 'pg'), image('r1', 'r')], {
+      transactions: { list: [{ type: 'debit', amount: 157, accountType: 'yellow' }] },
+    });
+    expect(planBlockOutputUnlock(yellowOnly, RED_MATURE, 1)).toMatchObject({
+      kind: 'unavailable',
+    });
   });
 });
 

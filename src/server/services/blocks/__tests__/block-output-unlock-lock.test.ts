@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ delIfValue: vi.fn(async () => true) }));
+vi.mock('~/server/redis/atomic', () => ({ delIfValue: mocks.delIfValue }));
+
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   acquireOutputUnlockLock,
@@ -13,6 +17,7 @@ beforeEach(() => {
   sysRedis.set.mockReset();
   sysRedis.get.mockReset();
   sysRedis.del.mockReset();
+  mocks.delIfValue.mockClear();
 });
 
 describe('the per-workflow output unlock lock', () => {
@@ -32,20 +37,23 @@ describe('the per-workflow output unlock lock', () => {
     expect(await acquireOutputUnlockLock(WF)).toBeNull();
   });
 
-  it('release deletes the key while it still holds this caller token', async () => {
+  it('🔴 release is an atomic compare-and-delete on THIS holder token, never a plain DEL', async () => {
     sysRedis.set.mockResolvedValue('OK');
     const release = await acquireOutputUnlockLock(WF);
     const owner = sysRedis.set.mock.calls[0][1];
-    sysRedis.get.mockResolvedValue(owner);
     await release!();
-    expect(sysRedis.del).toHaveBeenCalledWith(outputUnlockLockKey(WF));
+    expect(mocks.delIfValue).toHaveBeenCalledTimes(1);
+    expect(mocks.delIfValue).toHaveBeenCalledWith(sysRedis, outputUnlockLockKey(WF), owner);
+    // Not a read-then-delete, which a lapse between the two could turn into deleting another
+    // holder's lock.
+    expect(sysRedis.del).not.toHaveBeenCalled();
+    expect(sysRedis.get).not.toHaveBeenCalled();
   });
 
-  it('release after the lock lapsed and was re-taken leaves the new holder alone', async () => {
+  it('a release that fails leaves the lock to its TTL and does not throw', async () => {
     sysRedis.set.mockResolvedValue('OK');
     const release = await acquireOutputUnlockLock(WF);
-    sysRedis.get.mockResolvedValue('someone-else');
-    await release!();
-    expect(sysRedis.del).not.toHaveBeenCalled();
+    mocks.delIfValue.mockRejectedValueOnce(new Error('redis down'));
+    await expect(release!()).resolves.toBeUndefined();
   });
 });

@@ -123,6 +123,15 @@ function installRedis() {
   });
   r.expire.mockImplementation(async () => true);
   r.ttl.mockImplementation(async () => 3600);
+  // `delIfValue`'s compare-and-delete, the only script on this path.
+  r.eval.mockImplementation(
+    async (_script: string, opts: { keys: string[]; arguments: string[] }) => {
+      const [k] = opts.keys;
+      if (store.get(k) !== opts.arguments[0]) return 0;
+      store.delete(k);
+      return 1;
+    }
+  );
 }
 const keysWith = (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix));
 const LOCK_PREFIX = 'system:blocks:output-unlock-lock';
@@ -258,7 +267,7 @@ beforeEach(() => {
   });
   h.lift.mockImplementation(async () => {
     unlocked = true;
-    return { insufficientFunds: false };
+    return { outcome: 'lifted' };
   });
   seedCounters(400);
   // The viewer's own daily limit for this app: 1000, so a reservation would have room to land.
@@ -314,7 +323,7 @@ describe('blocks.unlockOutput — the seam', () => {
   });
 
   it("the orchestrator's insufficient-Yellow refusal is 'refused', with its message, and counts nothing", async () => {
-    h.lift.mockImplementation(async () => ({ insufficientFunds: true }));
+    h.lift.mockImplementation(async () => ({ outcome: 'insufficient-funds' }));
     const result = await unlock();
     expect(result.outcome).toBe('refused');
     expect(result.message).toBe(INSUFFICIENT_FUNDS_MESSAGE);
@@ -336,7 +345,7 @@ describe('blocks.unlockOutput — the seam', () => {
 
   it('🔴 not-released: the swap stands, the viewer is told why, nothing is counted', async () => {
     // The orchestrator accepts the unlock, but its read-back still withholds the output.
-    h.lift.mockImplementation(async () => ({ insufficientFunds: false }));
+    h.lift.mockImplementation(async () => ({ outcome: 'lifted' }));
     const result = await unlock();
     expect(result.outcome).toBe('not-released');
     expect(result.message).toBe(NOT_RELEASED_MESSAGE);
@@ -352,5 +361,19 @@ describe('blocks.unlockOutput — the seam', () => {
     expect(result.outcome).toBe('not-restricted');
     expect(orchestratorWrites()).toBe(1);
     expectNoAuthorFee();
+  });
+
+  it('🔴 a write that times out keeps the lock: the outcome says check back, a retry is refused as in progress', async () => {
+    h.lift.mockImplementation(async () => ({ outcome: 'no-response' }));
+    const result = await unlock();
+    expect(result.outcome).toBe('unavailable');
+    expect(result.message).toBe(
+      'Your unlock may still be going through. Check again in a few minutes.'
+    );
+    expect(keysWith(LOCK_PREFIX)).toHaveLength(1);
+    // The orchestrator write may still land; a second unlock must not race it.
+    await expect(unlock()).rejects.toThrow('This output is already being unlocked.');
+    expect(orchestratorWrites()).toBe(1);
+    expect(store.get(consentKey())).toBe('400');
   });
 });
