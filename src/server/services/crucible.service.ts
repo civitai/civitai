@@ -2881,7 +2881,7 @@ function warnVoteOutcomes(message: string, error: unknown, crucibleId: number, u
     error: error instanceof Error ? error.message : String(error),
     crucibleId,
     userId,
-  }).catch();
+  });
 }
 
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
