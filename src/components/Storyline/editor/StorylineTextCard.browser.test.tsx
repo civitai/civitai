@@ -4,7 +4,8 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import type * as PostEditProviderMod from '~/components/Post/EditV2/PostEditProvider';
 import type * as TrpcModule from '~/utils/trpc';
 
-const { setText, addText, deleteText, setTexts, held, failure } = vi.hoisted(() => ({
+const { setText, addText, deleteText, setTexts, held, failure, inFlight } = vi.hoisted(() => ({
+  inFlight: { never: 'resolves later' },
   failure: { data: { code: 'INTERNAL_SERVER_ERROR' }, message: 'boom' },
   setText: vi.fn(),
   addText: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     return {
       mutate: (input: unknown) => {
         const result = spy(input);
+        if (result === inFlight) return setStatus('pending');
         if (result === held || result === failure) {
           setStatus('error');
           opts.onError?.(result);
@@ -145,6 +147,14 @@ describe('StorylineTextCard', () => {
       await box.fill('<p>Once</p>');
       expect(addText).toHaveBeenCalledTimes(2);
       expect(setText).toHaveBeenCalledWith({ id: 32, content: '<p>Once</p>' });
+    });
+
+    test('Delete is off while the create is in flight, so the row cannot land after the card is gone', async () => {
+      addText.mockReset();
+      addText.mockReturnValue(inFlight);
+      renderWithProviders(draft());
+      await page.getByLabelText('Text', { exact: true }).fill('<p>Once</p>');
+      await expect.element(page.getByRole('button', { name: 'Delete text' })).toBeDisabled();
     });
 
     test('Delete on an untouched draft dismisses it without a server call', async () => {

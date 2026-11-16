@@ -6,7 +6,8 @@ import type * as TrpcModule from '~/utils/trpc';
 
 // The real StorylineTextCard and PostImageCards, over a store that really holds the texts: the
 // draft-to-row handoff is what is under test.
-const { store, addText, setText } = vi.hoisted(() => ({
+const { store, ui, addText, setText } = vi.hoisted(() => ({
+  ui: { showPreview: false },
   store: {
     texts: [] as { id: number; index: number; content: string }[],
     listeners: new Set<() => void>(),
@@ -73,17 +74,18 @@ vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => {
         },
         () => {
           const next = selector(state());
+          const prev = last.current;
           const same =
-            Array.isArray(next) && Array.isArray(last.current)
-              ? next.length === last.current.length && next.every((x, i) => x === last.current[i])
-              : Object.is(next, last.current);
+            Array.isArray(next) && Array.isArray(prev)
+              ? next.length === prev.length && next.every((x, i) => x === prev[i])
+              : Object.is(next, prev);
           if (!same) last.current = next;
           return last.current;
         }
       );
     },
     usePendingSave: vi.fn(),
-    usePostPreviewContext: () => ({ showPreview: false, toggleShowPreview: vi.fn() }),
+    usePostPreviewContext: () => ({ showPreview: ui.showPreview, toggleShowPreview: vi.fn() }),
   };
 });
 vi.mock('~/components/MediaUploadSettings/MediaUploadSettingsProvider', () => ({
@@ -127,7 +129,7 @@ describe('PostImageCards: an Add text draft becoming its row', () => {
     expect(store.texts).toHaveLength(1);
     // The store's row is the draft's own card: one card, the same editor node, still holding the words.
     expect(page.getByLabelText('Text', { exact: true }).elements()).toEqual([node]);
-    expect(node.value).toBe('Once');
+    expect((node as HTMLTextAreaElement).value).toBe('Once');
   });
 
   test('a second Add text leaves the first card mounted', async () => {
@@ -143,5 +145,43 @@ describe('PostImageCards: an Add text draft becoming its row', () => {
     await page.getByRole('button', { name: 'Add text' }).first().click();
     await expect.poll(() => page.getByLabelText('Text', { exact: true }).elements().length).toBe(2);
     expect(page.getByLabelText('Text', { exact: true }).elements()).toContain(first);
+  });
+
+  test('the Preview tab does not hide a text created in this session', async () => {
+    store.texts = [];
+    ui.showPreview = false;
+    addText.mockReset();
+    addText.mockReturnValue({ id: 51, index: 4, content: '' });
+    setText.mockImplementation(({ id, content }) => ({ id, content }));
+    const view = await renderWithProviders(<PostImageCards />);
+    await page.getByRole('button', { name: 'Add text' }).first().click();
+    await page.getByLabelText('Text', { exact: true }).fill('Typed');
+    expect(store.texts).toHaveLength(1);
+
+    ui.showPreview = true;
+    await view.rerender(<PostImageCards />);
+    await expect.element(page.getByLabelText('Text', { exact: true })).toHaveValue('Typed');
+    ui.showPreview = false;
+  });
+
+  test('creating the last allowed text keeps the card the author is typing in', async () => {
+    // 19 existing texts, after the image: one more is the post's limit.
+    store.texts = Array.from({ length: 19 }, (_, i) => ({
+      id: 100 + i,
+      index: 10 + i,
+      content: `<p>t${i}</p>`,
+    }));
+    addText.mockReset();
+    addText.mockReturnValue({ id: 61, index: 4, content: '' });
+    setText.mockImplementation(({ id, content }) => ({ id, content }));
+    renderWithProviders(<PostImageCards />);
+
+    await page.getByRole('button', { name: 'Add text' }).first().click();
+    const draftBox = page.getByLabelText('Text', { exact: true }).first();
+    const node = draftBox.element() as HTMLTextAreaElement;
+    await draftBox.fill('Last one');
+    expect(store.texts).toHaveLength(20);
+    expect(node.isConnected).toBe(true);
+    expect(node.value).toBe('Last one');
   });
 });

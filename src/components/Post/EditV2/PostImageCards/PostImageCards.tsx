@@ -50,7 +50,12 @@ export function PostImageCards() {
   let textNumber = 0;
   const slotAt = (index: number) => {
     const draft = drafts[index];
-    if (!draft) return <AddTextSlot onAdd={() => setDrafts((all) => ({ ...all, [index]: {} }))} />;
+    // A draft is a card the author is writing in, so it outlives the Preview tab and the post
+    // reaching its text limit; only the empty button is gated on `addSlots`.
+    if (!draft)
+      return addSlots ? (
+        <AddTextSlot onAdd={() => setDrafts((all) => ({ ...all, [index]: {} }))} />
+      ) : null;
     return (
       <div key={`draft-${index}`} data-text-id={draft.textId}>
         <StorylineTextCard
@@ -85,7 +90,7 @@ export function PostImageCards() {
         </Tabs.List>
       </Tabs>
       <div className="flex flex-col gap-3">
-        {addSlots && slotAt(textIndexAfter(undefined, items[0]?.key))}
+        {slotAt(textIndexAfter(undefined, items[0]?.key))}
         {items.map((item) => {
           const slotIndex = textIndexAfter(item.key, undefined);
           if (item.type === 'text')
@@ -97,7 +102,7 @@ export function PostImageCards() {
                     label={`Text ${++textNumber} / ${STORYLINE_TEXT_MAX_PER_POST}`}
                   />
                 </div>
-                {addSlots && slotAt(slotIndex)}
+                {slotAt(slotIndex)}
               </React.Fragment>
             );
           const { image } = item;
@@ -113,7 +118,7 @@ export function PostImageCards() {
                 </Text>
                 <PostImageCard image={image} />
               </div>
-              {image.type === 'added' && addSlots && slotAt(slotIndex)}
+              {image.type === 'added' && slotAt(slotIndex)}
             </React.Fragment>
           );
         })}

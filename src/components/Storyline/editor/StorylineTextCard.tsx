@@ -150,6 +150,9 @@ export function StorylineTextCard({
               color="red"
               aria-label="Delete text"
               loading={deleting}
+              // Deleting while the create is in flight would dismiss the card, then the row
+              // would still land in the list.
+              disabled={add.isPending}
               onClick={() => {
                 debounce.cancel();
                 if (id === null) onDismiss?.();
