@@ -92,7 +92,7 @@ describe('How it works', () => {
     const tiles = render().querySelector('[data-testid="event-points"]')!;
     expect([...tiles.children].map((t) => t.textContent)).toEqual([
       '1per view in a feed',
-      '10per reaction',
+      '10per person who reacts',
       '0for your own views and reactions',
     ]);
   });
@@ -111,7 +111,7 @@ describe('How it works', () => {
     });
     expect(shape).toEqual([
       [true, '1', 'per view in a feed'],
-      [true, '10', 'per reaction'],
+      [true, '10', 'per person who reacts'],
       [true, '0', 'for your own views and reactions'],
     ]);
   });
@@ -123,8 +123,8 @@ describe('How it works', () => {
     }).querySelector('[data-testid="event-points"]')!;
     expect([...tiles.children].map((t) => t.textContent)).toEqual([
       '1per view in a feed',
-      '5per reaction',
-      '5per comment',
+      '5per person who reacts',
+      '5per person who comments',
       '10per sticker',
       '25per remix',
       '0for your own views and reactions',

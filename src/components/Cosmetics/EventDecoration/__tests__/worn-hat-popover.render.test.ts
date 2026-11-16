@@ -560,12 +560,41 @@ describe('the popover layout', () => {
     ]);
   });
 
+  // Discord report: a video with 8 reactions whose hat showed 6. The hat counts one per person and
+  // skips the creator's own, so the popover says so beside the figure.
+  it('says the reactions are scored ones, one per person', () => {
+    renderCard();
+    clickHat();
+    expect(popover()!.querySelector('[data-testid="hat-stats-note"]')?.textContent).toMatch(
+      /one per person/
+    );
+  });
+
+  // A model hat's hearts are thumbs-up reviews: a note about reactions would misdescribe them.
+  it('leaves the reactions note off a hat worn on a model', () => {
+    render(
+      React.createElement(
+        FeedCard,
+        {
+          href: '/models/5',
+          eventDecoration: HAT,
+          eventDecorationOn: { entityType: 'Model', entityId: 5 },
+        } as React.ComponentProps<typeof FeedCard>,
+        React.createElement('span', null, 'card body')
+      )
+    );
+    clickHat();
+    expect(popover()!.querySelector('[data-testid="hat-stats"]')).not.toBeNull();
+    expect(popover()!.querySelector('[data-testid="hat-stats-note"]')).toBeNull();
+  });
+
   // Two copies of one design on one owner, and the hat map no longer says which: no points to show.
   it('shows the hat and its wearer but no stats when the server cannot tell which copy it is', () => {
     wornHat.result = { data: { ...WORN, topicId: null }, isLoading: false, isError: false };
     renderCard();
     clickHat();
     expect(popover()!.querySelector('[data-testid="hat-stats"]')).toBeNull();
+    expect(popover()!.querySelector('[data-testid="hat-stats-note"]')).toBeNull();
     expect(popover()!.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
     expect(livePoints).not.toHaveBeenCalled();
   });
