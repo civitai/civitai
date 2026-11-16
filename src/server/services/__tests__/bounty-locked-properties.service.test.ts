@@ -274,6 +274,36 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     expect(data.details).toEqual(expect.objectContaining({ profanityMatches: ['bad'] }));
   });
 
+  describe("the text scan's record on an edit", () => {
+    const scan = { workflowId: 'w', level: 4, at: '2026-11-16' };
+    beforeEach(() => mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false }));
+
+    it('keeps the stored record over one the editor sends', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      for (const isModerator of [false, true]) {
+        await upsert({
+          isModerator,
+          details: { baseModel: 'SDXL 1.0', textScanNsfw: { level: 1 } },
+        });
+        expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0', textScanNsfw: scan });
+      }
+    });
+
+    it('keeps it when the edit drops it or sends no details', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      await upsert({ details: { baseModel: 'SDXL 1.0' } });
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0', textScanNsfw: scan });
+      await upsert({ details: undefined });
+      expect(updateData().details).toEqual({ textScanNsfw: scan });
+    });
+
+    it('takes none from an editor when the scan wrote none', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5' } });
+      await upsert({ details: { baseModel: 'SDXL 1.0', textScanNsfw: scan } });
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0' });
+    });
+  });
+
   describe('the stored detection on an edit', () => {
     const storedDetails = {
       baseModel: 'SD 1.5',
@@ -457,6 +487,14 @@ describe('upsertBounty — create path', () => {
 
     expect(chargedAccountTypes()).toEqual(['yellow']);
     expect(createData().lockedProperties).toBeUndefined();
+  });
+
+  it("takes no text scan record from the creator's details", async () => {
+    await create({
+      buzzType: 'yellow',
+      details: { baseModel: 'SDXL 1.0', textScanNsfw: { level: 4 } },
+    });
+    expect(createData().details).toEqual({ baseModel: 'SDXL 1.0' });
   });
 
   it('carries the profanity filter nsfw lock into the new row', async () => {

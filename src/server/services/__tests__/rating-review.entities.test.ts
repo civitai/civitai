@@ -310,6 +310,9 @@ describe('loadRatingReviewSubject', () => {
       expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
       scanned(1, 'pg');
       expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
+      // A rescan below R does not lift the flag the first scan set.
+      scanned(2, 'pg13');
+      expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
     });
 
     it('stays XXX when the flag was not set by the scan (owner or legacy filter)', async () => {

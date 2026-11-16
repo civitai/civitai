@@ -1,4 +1,4 @@
-import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit } from '@civitai/shared';
+import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit, NsfwLevel } from '@civitai/shared';
 import {
   collectionRatingLevel,
   modelRatingLevel,
@@ -101,8 +101,8 @@ const setByTextScan = (details: unknown) =>
   !!details && typeof details === 'object' && 'textScanNsfw' in details;
 
 // The nsfw flag pins a bounty's stored level to every NSFW bit, which names no level. When the text
-// scan set the flag, its own moderation row holds the level it rated (details is owner-writable, so
-// it only says who set the flag); images can still rate the bounty higher.
+// scan set the flag, its moderation row holds the level it rated; images can still rate the bounty
+// higher.
 async function bountyRatedLevel(
   id: number,
   b: {
@@ -125,7 +125,8 @@ async function bountyRatedLevel(
   )
     return pinned;
   const scanned = ratedLevel(em.nsfwLevel ?? 0);
-  if (!scanned) return pinned;
+  // The scan flags a bounty at R or above; a later, lower verdict does not lift the flag.
+  if (scanned < NsfwLevel.R) return pinned;
   const rows = await db.$queryRaw<{ level: number | null }[]>`
     SELECT ${ratedEntityContentNsfwLevelSql(
       'Bounty',

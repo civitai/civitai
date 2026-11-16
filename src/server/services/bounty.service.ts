@@ -107,6 +107,7 @@ import {
   filterSensitiveProfanityData,
   keepStoredProfanityData,
 } from '~/libs/profanity-simple/helpers';
+import { withStoredScanDetails } from '~/server/utils/bounty-details';
 import { logToAxiom } from '~/server/logging/client';
 
 // Unique per request: a refund by prefix must never reach another request's charge. The
@@ -341,7 +342,8 @@ export const createBounty = async ({
         expiresAt,
         // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
         entryMode: BountyEntryMode.BenefactorsOnly,
-        details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
+        details:
+          (withStoredScanDetails(data.details, null) as Prisma.JsonObject) ?? Prisma.JsonNull,
         tags: tags
           ? {
               create: tags.map((tag) => {
@@ -652,6 +654,8 @@ export const updateBountyById = async ({
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
+      // A text scan flagging this bounty mid-edit waits, so the edit keeps the flag and record it set.
+      await tx.$queryRaw`SELECT 1 FROM "Bounty" WHERE id = ${id} FOR UPDATE`;
       const existing = await tx.bounty.findUniqueOrThrow({
         where: { id },
         select: {
@@ -727,10 +731,10 @@ export const updateBountyById = async ({
           startsAt,
           expiresAt,
           details:
-            ((isModerator
-              ? details
-              : keepStoredProfanityData(details, existing.details)) as Prisma.JsonObject) ??
-            Prisma.JsonNull,
+            (withStoredScanDetails(
+              isModerator ? details : keepStoredProfanityData(details, existing.details),
+              existing.details
+            ) as Prisma.JsonObject) ?? Prisma.JsonNull,
           tags: tags
             ? {
                 deleteMany: {
