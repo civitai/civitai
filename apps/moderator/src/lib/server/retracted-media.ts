@@ -7,8 +7,9 @@ import {
   type RetractedTier,
 } from '@civitai/shared/retracted-media-tier';
 import { blockedForPatterns } from './blocked-for-patterns';
-import { dbRead } from './db';
+import { dbWrite } from './db';
 import { insertModActivity } from './mod-activity';
+import { scannerHoldsImage } from './review-batch';
 
 export type RetractedMedia = {
   url: string;
@@ -20,13 +21,14 @@ export type RetractedMedia = {
 /**
  * The image's storage key and type while this moderator may see it on `/api/retracted-media`;
  * `null` otherwise, so an image they may not see is answered exactly as a missing one. A `suspect`
- * image needs `csamReview`. The same rules as the main app's `/api/mod/retracted-media`.
+ * image needs `csamReview`. The same rules as the main app's `/api/mod/retracted-media`, read on the
+ * primary for the same reason: a flag or hold the replica has not seen would serve as `plain`.
  */
 export async function getRetractedMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean }
 ): Promise<RetractedMedia | null> {
-  const row = await dbRead
+  const row = await dbWrite
     .selectFrom('Image as i')
     .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor'])
     .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
@@ -35,7 +37,11 @@ export async function getRetractedMedia(
     .executeTakeFirst();
   if (!row) return null;
   const tier = retractedTier(row, blockedForPatterns());
-  if (tier === 'suspect' && !csamReview) return null;
+  if (!csamReview) {
+    if (tier === 'suspect') return null;
+    // Refused when the scanner marks it, has no verdict for it, or cannot be read.
+    if (await scannerHoldsImage(imageId)) return null;
+  }
   return { url: row.url, type: row.type, mimeType: row.mimeType, tier };
 }
 

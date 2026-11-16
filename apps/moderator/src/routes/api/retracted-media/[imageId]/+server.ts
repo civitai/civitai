@@ -1,4 +1,4 @@
-import { error } from '@sveltejs/kit';
+import { error, isHttpError, json } from '@sveltejs/kit';
 import { RETRACTED_MEDIA_MAX_BYTES } from '@civitai/shared/retracted-media';
 import type { RequestHandler } from './$types';
 import { canAccess } from '$lib/server/access';
@@ -14,7 +14,19 @@ const MAX_INT = 2_147_483_647;
  * the row, and only for an image `getRetractedMedia` allows this moderator. One with a CSAM or minor
  * signal needs the CSAM page's grant; held media is `/api/held-media`'s.
  */
-export const GET: RequestHandler = async ({ params, locals, request }) => {
+const NO_STORE = { 'cache-control': 'private, no-store' };
+
+/** Refusals carry no-store too, so no shared cache keeps one and refuses another moderator. */
+export const GET: RequestHandler = async (event) => {
+  try {
+    return await serve(event);
+  } catch (e) {
+    if (!isHttpError(e)) throw e;
+    return json(e.body, { status: e.status, headers: NO_STORE });
+  }
+};
+
+const serve: RequestHandler = async ({ params, locals, request }) => {
   if (!locals.user) error(403, 'Not signed in.');
   const imageId = Number(params.imageId);
   if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_INT) error(400, 'Bad image id.');

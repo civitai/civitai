@@ -5,8 +5,9 @@ import {
   retractedTier,
   type RetractedTier,
 } from '@civitai/shared/retracted-media-tier';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
+import { readScannerHits } from '~/server/services/review-batch/review-batch.service';
 
 export type RetractedMedia = {
   url: string;
@@ -18,11 +19,14 @@ export type RetractedMedia = {
 /**
  * The image's storage key and type while this moderator may see it here; `null` otherwise, so an
  * image they may not see is answered exactly as a missing one. A `suspect` image needs `csamReview`.
+ * Read on the primary: a flag or hold the replica has not seen yet would otherwise serve as `plain`.
+ * For a moderator without `csamReview`, a `plain` image is also checked against the scanner's labels,
+ * and is refused when they mark it, have none for it, or cannot be read.
  */
 export async function getRetractedMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean },
-  db = dbRead
+  db = dbWrite
 ): Promise<RetractedMedia | null> {
   const [row] = await db.$queryRaw<
     (Omit<RetractedMedia, 'tier'> & { blockedFor: string | null; suspect: boolean })[]
@@ -34,6 +38,10 @@ export async function getRetractedMedia(
   `;
   if (!row) return null;
   const tier = retractedTier(row, blockedForPatterns());
-  if (tier === 'suspect' && !csamReview) return null;
+  if (!csamReview) {
+    if (tier === 'suspect') return null;
+    const hits = await readScannerHits([imageId]);
+    if (!hits || hits.has(imageId)) return null;
+  }
   return { url: row.url, type: row.type, mimeType: row.mimeType, tier };
 }

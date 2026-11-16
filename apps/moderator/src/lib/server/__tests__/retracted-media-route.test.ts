@@ -72,6 +72,15 @@ describe('/api/retracted-media', () => {
     expect(getRetractedMedia).not.toHaveBeenCalled();
   });
 
+  it('answers every refusal no-store', async () => {
+    getRetractedMedia.mockResolvedValue(null);
+    for (const opts of [{ user: null }, { imageId: 'x' }, {}]) {
+      const { status, res } = await call(opts);
+      expect(status).toBeGreaterThanOrEqual(400);
+      expect(res?.headers.get('cache-control')).toBe('private, no-store');
+    }
+  });
+
   it('refuses a bad id', async () => {
     expect((await call({ imageId: 'x' })).status).toBe(400);
     expect((await call({ imageId: String(2 ** 31) })).status).toBe(400);

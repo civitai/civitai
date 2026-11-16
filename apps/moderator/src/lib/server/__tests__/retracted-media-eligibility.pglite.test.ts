@@ -16,16 +16,21 @@ const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } 
 
 vi.mock('../db', () => ({
   get dbRead() {
+    throw new Error('eligibility reads the primary');
+  },
+  // Read only: the primary, so a hold the replica has not seen yet still counts.
+  get dbWrite() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
     return dbHandle.current;
-  },
-  get dbWrite() {
-    throw new Error('eligibility must not write');
   },
 }));
 vi.mock('../blocked-for-patterns', () => ({ blockedForPatterns: () => null }));
 const insertModActivity = vi.hoisted(() => vi.fn(async (_row: Record<string, unknown>) => {}));
 vi.mock('../mod-activity', () => ({ insertModActivity }));
+const scanner = vi.hoisted(() => ({ holds: new Set<number>() }));
+vi.mock('../review-batch', () => ({
+  scannerHoldsImage: async (id: number) => scanner.holds.has(id),
+}));
 
 const { getRetractedMedia, recordRetractedView } = await import('../retracted-media');
 
@@ -77,6 +82,12 @@ const tierOf = async (id: number) => {
 };
 
 describe('retracted media eligibility', () => {
+  it('keeps an image the scanner holds to moderators cleared for CSAM review', async () => {
+    scanner.holds = new Set([1]);
+    expect(await tierOf(1)).toBe('suspect');
+    scanner.holds = new Set();
+  });
+
   it('serves a blocked image with a known non-minor reason to any moderator', async () => {
     expect(await tierOf(1)).toBe('plain');
     expect(await getRetractedMedia(1, { csamReview: false })).toEqual({

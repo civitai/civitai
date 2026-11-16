@@ -20,6 +20,10 @@ const patterns = vi.hoisted(() => ({
 vi.mock('~/server/services/blocked-for-patterns', () => ({
   blockedForPatterns: () => patterns.current,
 }));
+/** The scanner's ClickHouse verdicts: the ids it marks, or null when it cannot be read. */
+const scanner = vi.hoisted(() => ({ hits: new Set<number>() as Set<number> | null }));
+const readScannerHits = vi.hoisted(() => vi.fn(async () => scanner.hits));
+vi.mock('~/server/services/review-batch/review-batch.service', () => ({ readScannerHits }));
 
 type Row = {
   id: number;
@@ -126,7 +130,8 @@ beforeAll(async () => {
 
 beforeEach(() => {
   patterns.current = null;
-  dbMock.dbRead.$queryRaw.mockImplementation((async (
+  scanner.hits = new Set();
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
   ) => {
@@ -162,6 +167,18 @@ describe('getRetractedMedia', () => {
       mimeType: null,
       tier: 'plain',
     });
+  });
+
+  it('keeps an image the scanner marks, or has no verdict for, to cleared moderators', async () => {
+    scanner.hits = new Set([1]);
+    await expectTiers('suspect', [1]);
+    await expectTiers('plain', [2]);
+    expect(readScannerHits).toHaveBeenCalledWith([2]);
+  });
+
+  it('refuses a plain image to an uncleared moderator when the scanner cannot be read', async () => {
+    scanner.hits = null;
+    await expectTiers('suspect', [1]);
   });
 
   it('survives a report with a malformed secondary user or image list', async () => {
