@@ -3206,7 +3206,6 @@ function buildDocStore(deps: DocStoreDeps) {
           } else if (action === 'unchanged') {
             result.unchanged.push(key);
           } else if (action === 'create') {
-            // Unreachable: a row the re-lock found is never absent.
             throw new Error('doc-store: publish re-lock classified a present copy as absent');
           } else if (!(action === 'missing' && pruneSet.has(key))) {
             // A requested key the prune below deletes is reported there, not as missing.
