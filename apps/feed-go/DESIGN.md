@@ -496,12 +496,11 @@ to the service's internal port with:
   "headers": { "cookie": "…", "host": "…", "cf-ipcountry": "…", "cf-region-code": "…",
                "x-isuk": "…", "authorization": "<present?>", "x-civitai-verified-bot": "…" },
   "node": { "json": …, "meta": … },
-  "status": 200,
   "responseHeaders": { "cache-control": "…", "vary": "…", "cache-tag": "…", "set-cookie": "present",
                        "x-update-required": "…" } }
 ```
 
-`status` is Node's response status. `responseHeaders` holds only the compared headers Node's
+`responseHeaders` holds only the compared headers Node's
 response carried (`FEED_GO_COMPARED_RESPONSE_HEADERS`): lowercased, each value cut at 1024
 characters, and Set-Cookie as the literal `present`, never its value. So the sample grows by a few
 hundred bytes at most.
@@ -540,28 +539,34 @@ path as serving, and compares decoded values:
 - numbers compare numerically, except that two integer literals compare **exactly** (int64, else as
   big integers). As float64, an integer above 2^53 cannot be told from its neighbour, and the
   relative tolerance would also equate large integers that differ by one;
-- **status and response headers** compare as their own result,
+- **response headers** compare as their own result,
   `feed_go_shadow_response_total{result="match|mismatch|uncompared"}`. They are kept apart from the
   body's `feed_go_shadow_compare_total`, so the match-rate queries keep their meaning; the go/no-go
   needs both. Each difference is counted in `feed_go_shadow_field_diffs_total` under category
-  `status` or `header:<name>`, with kind `value`, `missing-in-go` or `missing-in-node`. The Go side is
-  what the public route writes: an answer computed here is a 200, and its Cache-Control is
-  `trpc.ResultCacheControl`. Noise rules (`shadow.CompareResponse`):
+  `header:<name>`, with kind `value`, `missing-in-go` or `missing-in-node`. The Go side is what the
+  public route writes: its Cache-Control is `trpc.ResultCacheControl`, the one function
+  `trpc.WriteResult` also calls. Noise rules (`shadow.CompareResponse`):
   - Cache-Control and Vary compare as sets of lowercased directives or names (`max-age=060` reads as
     `max-age=60`); Cache-Tag as a set of tags; Set-Cookie by presence.
   - An empty value is absent.
   - A sample without the fields (a sampler that predates them) is `uncompared`.
   - X-Handled-By (the pod), Content-Type/Length and Date (transport), and the rate-limit,
     Retry-After and site-alerts headers (per caller or per moment) are never compared.
-  - On the REST endpoints (`v1-images`, `v1-models`, `v1-models-id`) only the status is compared:
-    their ports write no headers of their own yet.
+  - On the REST endpoints (`v1-images`, `v1-models`, `v1-models-id`) the response is `uncompared`:
+    their ports write no headers of their own yet, so a comparison would only count Node's as
+    missing here.
+  - **The status is not compared.** Node posts only the samples it answered 200, and an answer
+    computed here is a 200 by construction (a constant, not a status this service decided), so a
+    status compare could never fire. Comparing a status needs a sampler that posts its non-200
+    answers and a Go side that can answer one.
 
   Expected differences until ported: `header:x-update-required/missing-in-go` (Node tells an
-  outdated web bundle to reload; this service does not), and on `model-getall`
-  `header:cache-control/value` for signed-out samples (its compute records no edge TTL yet, §15).
-  Node posts only the samples it answered 200, and an answer computed here is a 200, so `status`
-  cannot differ today. It is compared so that a sampler that also posts its non-200 answers is read
-  correctly.
+  outdated web bundle to reload; this service does not), and on `model-getall` a public
+  `header:cache-control/value` from Node for signed-out samples (its compute records no edge TTL yet,
+  §15). They are still counted (as `mismatch`), but a sample whose only differences are these is
+  logged at Debug; a body difference or any other header difference is logged at Info.
+  `image.getInfinite` is not on the list: a signed-out unbatched call is cacheable in Node
+  (createContext), and its compute carries the same signed-out TTL as the gallery procedure's.
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
 a newly published image can differ without a bug. These show up as `stats.*` value diffs and rare
@@ -1276,7 +1281,10 @@ domain cap.
 ### 14.1 What the Node path does
 
 1. **Middleware.** The same `applyDomainFeature` cap as §1 (every public procedure runs it). The
-   procedure is in `NEVER_BATCH_PROCEDURES`, so the client sends it alone.
+   procedure is in `NEVER_BATCH_PROCEDURES`, so the client sends it alone. Its cache policy is
+   createContext's (nothing in the chain lowers it): a signed-out, unbatched call that is not a
+   verified crawler is `public, max-age=60, s-maxage=60, stale-while-revalidate=30`, as for §1. The
+   compute here records the same signed-out TTL, so the shadow header compare reads it as expected.
 2. **Hat Turf.** `hatSort`, `hatTurfMine`, `hideTurfHats`, `hideWornHats` are acted on only with the
    `hatTurfFeedCard` and `hatTurfFeedSorts` features on, on an unscoped feed, and when
    `getHatTurfFeedEvent` finds a live event; then the page comes from the turf rank

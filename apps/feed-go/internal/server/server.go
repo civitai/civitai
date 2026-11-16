@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -249,10 +250,10 @@ func (s *Server) prepare(ctx context.Context, r *http.Request) (feed.Request, bo
 
 // computeInfinite answers an `image.getInfinite` request (getInfiniteImagesHandler), or returns a
 // fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
-// procedure (the same middleware runs on both). The answer is never edge-cacheable: Node does not
-// cache this procedure (its event decorations are the viewer's own), and it is only shadowed here.
+// procedure (the same middleware runs on both), and so is the cache policy: a signed-out answer
+// carries createContext's public TTL. It is only shadowed here.
 func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*computed, error) {
-	req, err := s.prepareInfinite(ctx, r)
+	req, signedOut, err := s.prepareInfinite(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -264,31 +265,38 @@ func (s *Server) computeInfinite(ctx context.Context, r *http.Request) (*compute
 	if err != nil {
 		return nil, err
 	}
-	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}, nil
+	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}
+	if signedOut {
+		// createContext: cacheable without a session user, as for the gallery procedure. Nothing in
+		// this procedure's chain lowers it, so Node answers a signed-out unbatched call public.
+		out.ttl = &trpc.SignedOutTTL
+	}
+	return out, nil
 }
 
-// prepareInfinite is computeInfinite up to the handler call; the Go-first probe runs the same steps.
-func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, error) {
+// prepareInfinite is computeInfinite up to the handler call, and whether there is no session user at
+// all; the Go-first probe runs the same steps.
+func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.InfiniteRequest, bool, error) {
 	if s.Infinite == nil {
-		return feed.InfiniteRequest{}, fallback.New("infinite-unconfigured")
+		return feed.InfiniteRequest{}, false, fallback.New("infinite-unconfigured")
 	}
 	if r.Method != http.MethodGet {
-		return feed.InfiniteRequest{}, fallback.New("method")
+		return feed.InfiniteRequest{}, false, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return feed.InfiniteRequest{}, fallback.Newf("input-envelope", "%v", err)
+		return feed.InfiniteRequest{}, false, fallback.Newf("input-envelope", "%v", err)
 	}
 	in, err := feed.ParseInfinite(raw)
 	if err != nil {
-		return feed.InfiniteRequest{}, err
+		return feed.InfiniteRequest{}, false, err
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
-		return feed.InfiniteRequest{}, fallback.New("verified-bot")
+		return feed.InfiniteRequest{}, false, fallback.New("verified-bot")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return feed.InfiniteRequest{}, err
+		return feed.InfiniteRequest{}, false, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
@@ -299,7 +307,7 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 		req.ViewerUsername = user.Username
 	}
-	return req, nil
+	return req, user == nil, nil
 }
 
 // computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
@@ -659,8 +667,6 @@ type ShadowRequest struct {
 	Headers map[string]string `json:"headers"`
 	// Node is Node's response: the superjson envelope (`{json, meta}`) for tRPC, the JSON body for REST.
 	Node json.RawMessage `json:"node"`
-	// Status is Node's response status (0 = a sampler that predates it: not compared).
-	Status int `json:"status,omitempty"`
 	// ResponseHeaders are Node's response headers of shadow.ComparedHeaders, lowercased, Set-Cookie as
 	// `present` (nil = a sampler that predates them: not compared).
 	ResponseHeaders map[string]string `json:"responseHeaders,omitempty"`
@@ -898,25 +904,21 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	if c.cached && result == "match" {
 		result = "match_cached"
 	}
-	// The status and the compared headers, a separate result from the body's: the body's match rate
-	// keeps its meaning, and the response's is its own figure. An answer computed here is a 200.
-	nodeHeaders := req.ResponseHeaders
-	var goHeaders map[string]string
-	switch endpoint {
-	case EndpointV1Images, EndpointV1Models, EndpointV1ModelsID:
-		// The REST ports write no headers of their own yet: only the status is compared.
-		nodeHeaders = nil
-	default:
-		goHeaders = trpc.ResultHeaders(c.ttl)
-	}
-	respDiffs := shadow.CompareResponse(http.StatusOK, goHeaders, req.Status, nodeHeaders)
+	// The compared headers, a separate result from the body's: the body's match rate keeps its
+	// meaning, and the response's is its own figure. The status is not compared (DESIGN.md §7).
+	var respDiffs []shadow.Diff
 	switch {
-	case req.Status == 0 && req.ResponseHeaders == nil:
+	case isRESTEndpoint(endpoint) || req.ResponseHeaders == nil:
+		// The REST ports write no headers of their own yet, and a sampler that predates the field sends
+		// none: nothing to compare.
 		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "uncompared").Inc()
-	case len(respDiffs) > 0:
-		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "mismatch").Inc()
 	default:
-		s.Metrics.ShadowResponse.WithLabelValues(endpoint, "match").Inc()
+		respDiffs = shadow.CompareResponse(trpc.ResultHeaders(c.ttl), req.ResponseHeaders)
+		if len(respDiffs) > 0 {
+			s.Metrics.ShadowResponse.WithLabelValues(endpoint, "mismatch").Inc()
+		} else {
+			s.Metrics.ShadowResponse.WithLabelValues(endpoint, "match").Inc()
+		}
 	}
 	s.endPhase(phase, endpoint, "compare", "ok")
 	s.Metrics.ShadowResults.WithLabelValues(endpoint, result).Inc()
@@ -926,12 +928,56 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	for _, d := range diffs {
 		s.Metrics.ShadowDiffs.WithLabelValues(endpoint, d.Category, d.Kind).Inc()
 	}
+	unexpected := 0
+	for _, d := range respDiffs {
+		if !expectedResponseDiff(endpoint, d, c.ttl, req.ResponseHeaders) {
+			unexpected++
+		}
+	}
 	if result != "match" || len(respDiffs) > 0 {
 		// Paths only (no values): enough to find the field, and never user data in logs.
 		paths := make([]string, 0, len(diffs))
 		for _, d := range diffs {
 			paths = append(paths, d.Kind+":"+d.Path)
 		}
-		s.Log.Info("shadow diff", "endpoint", endpoint, "result", result, "paths", paths, "truncated", report.Truncated)
+		// Info for a body difference or a header difference not yet explained; a known one is Debug,
+		// so the log is not filled with differences already on the list (DESIGN.md §7).
+		level := slog.LevelDebug
+		if bodyDiffers(result) || unexpected > 0 {
+			level = slog.LevelInfo
+		}
+		s.Log.Log(ctx, level, "shadow diff", "endpoint", endpoint, "result", result, "paths", paths,
+			"truncated", report.Truncated)
 	}
+}
+
+// isRESTEndpoint: the REST ports (v1-images, v1-models, v1-models-id).
+func isRESTEndpoint(endpoint string) bool {
+	switch endpoint {
+	case EndpointV1Images, EndpointV1Models, EndpointV1ModelsID:
+		return true
+	}
+	return false
+}
+
+// bodyDiffers: the body's result is not one of the match results.
+func bodyDiffers(result string) bool {
+	switch result {
+	case "match", "match_empty", "match_cached":
+		return false
+	}
+	return true
+}
+
+// expectedResponseDiff reports whether a header difference is one of the expected differences DESIGN.md
+// §7 lists: x-update-required only from Node (this service never tells a bundle to reload), and on
+// model.getAll a public Cache-Control from Node where this compute recorded no edge TTL (§15).
+func expectedResponseDiff(endpoint string, d shadow.Diff, ttl *trpc.CacheTTL, nodeHeaders map[string]string) bool {
+	switch {
+	case d.Category == "header:x-update-required" && d.Kind == "missing-in-go":
+		return true
+	case endpoint == EndpointModelGetAll && d.Category == "header:cache-control" && d.Kind == "value" && ttl == nil:
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(nodeHeaders["cache-control"])), "public")
+	}
+	return false
 }

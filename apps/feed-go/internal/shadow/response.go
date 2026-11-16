@@ -21,19 +21,13 @@ import (
 // are transport, and the rate-limit, Retry-After and site-alerts headers are per caller or per moment.
 var ComparedHeaders = []string{"cache-control", "vary", "cache-tag", "set-cookie", "x-update-required"}
 
-// CompareResponse compares the status and ComparedHeaders of the two answers. A nil nodeHeaders (a
-// sampler that predates them) compares nothing but the status, and a nodeStatus of 0 not even that.
+// CompareResponse compares the ComparedHeaders of the two answers. The status is not compared: Node
+// posts only the samples it answered 200, and an answer computed here is a 200, so it cannot differ.
 // Noise rules: values are trimmed; Cache-Control and Vary compare as sets of lowercased directives or
 // header names (order and case do not matter to a cache); Cache-Tag as a set of tags; Set-Cookie by
-// presence. Diffs carry categories `status` and `header:<name>`, never a value.
-func CompareResponse(goStatus int, goHeaders map[string]string, nodeStatus int, nodeHeaders map[string]string) []Diff {
-	out := make([]Diff, 0, len(ComparedHeaders)+1)
-	if nodeStatus != 0 && goStatus != nodeStatus {
-		out = append(out, Diff{Path: "status", Category: "status", Kind: "value"})
-	}
-	if nodeHeaders == nil {
-		return out
-	}
+// presence. Diffs carry category `header:<name>`, never a value.
+func CompareResponse(goHeaders, nodeHeaders map[string]string) []Diff {
+	out := make([]Diff, 0, len(ComparedHeaders))
 	for _, name := range ComparedHeaders {
 		g, gok := lookup(goHeaders, name)
 		n, nok := lookup(nodeHeaders, name)

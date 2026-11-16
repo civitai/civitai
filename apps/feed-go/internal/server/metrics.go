@@ -24,7 +24,7 @@ type Metrics struct {
 	ShadowDiffs   *prometheus.CounterVec   // endpoint, category, kind
 	ShadowDropped *prometheus.CounterVec   // endpoint
 
-	// ShadowResponse counts the status + header comparison of each compared sample, beside the body's
+	// ShadowResponse counts the header comparison of each compared sample, beside the body's
 	// ShadowResults (endpoint, result: match|mismatch|uncompared).
 	ShadowResponse *prometheus.CounterVec
 
@@ -106,7 +106,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{EndpointLabel, "category", "kind"}),
 		ShadowResponse: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_response_total",
-			Help: "Shadow comparisons of the response status and the compared headers (shadow.ComparedHeaders), by result: match, mismatch (the diffs are in feed_go_shadow_field_diffs_total as status / header:<name>), uncompared (the sample carried no status or headers). Separate from feed_go_shadow_compare_total, which is the body's.",
+			Help: "Shadow comparisons of the compared response headers (shadow.ComparedHeaders), by result: match, mismatch (the diffs are in feed_go_shadow_field_diffs_total as header:<name>), uncompared (a REST endpoint, whose port writes no headers yet, or a sample that carried none). Separate from feed_go_shadow_compare_total, which is the body's.",
 		}, []string{EndpointLabel, "result"}),
 		ShadowDropped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_shadow_dropped_total",

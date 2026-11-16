@@ -37,6 +37,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
+	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
 const (
@@ -1291,8 +1292,15 @@ func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
 		t.Error(p)
 	}
-	if c.ttl != nil {
-		t.Errorf("image.getInfinite is never edge-cacheable here, got %+v", *c.ttl)
+	// createContext's policy, as for the gallery procedure: the public TTL exactly when signed out.
+	if fx.Expect.Cacheable == nil {
+		t.Fatal("an image.getInfinite fixture without expect.cacheable")
+	}
+	if *fx.Expect.Cacheable && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
+	}
+	if !*fx.Expect.Cacheable && c.ttl != nil {
+		t.Errorf("a session user: want no cache TTL, got %+v", *c.ttl)
 	}
 	env.feed.check(t, true)
 }
