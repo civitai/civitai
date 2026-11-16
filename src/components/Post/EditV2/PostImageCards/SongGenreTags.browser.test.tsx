@@ -24,7 +24,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       'post.setSongGenre': { useMutation: () => ({ mutate: mocks.setGenre, isPending: false }) },
       'post.addSongTag': { useMutation: () => ({ mutate: mocks.addTag, isPending: false }) },
       'post.removeSongTag': { useMutation: () => ({ mutate: mocks.removeTag, isPending: false }) },
-      'post.getTags': {
+      'post.searchSongTags': {
         useQuery: () => ({
           data: [
             { id: 3, name: 'night drive' },
@@ -73,6 +73,16 @@ describe('the song card genre select', () => {
     await genreSelect().fill('hou');
     await expect.element(page.getByRole('option', { name: 'House' })).toBeVisible();
     await expect.element(page.getByRole('option', { name: 'Jazz' })).not.toBeInTheDocument();
+  });
+
+  test('without a genre, typed search text keeps the normal colour while the message is red', async () => {
+    await renderWithProviders(<SongGenreTags image={song({})} />);
+    await genreSelect().fill('ja');
+
+    const message = page.getByText('Pick a genre to publish').element();
+    const input = genreSelect().element();
+    expect(getComputedStyle(input).color).not.toBe(getComputedStyle(message).color);
+    expect(getComputedStyle(input).borderColor).toBe(getComputedStyle(message).color);
   });
 
   test('shows the error state without a genre, and none with one', async () => {

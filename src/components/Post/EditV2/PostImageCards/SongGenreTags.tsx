@@ -5,7 +5,6 @@ import { useState } from 'react';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { withMetadata } from '~/components/Post/EditV2/PostImageCards/song-metadata';
 import type { PostEditImageDetail } from '~/server/services/post.service';
-import { NsfwLevel } from '~/server/common/enums';
 import {
   readSongGenre,
   SONG_GENRE_REQUIRED_MESSAGE,
@@ -13,6 +12,7 @@ import {
   SONG_TAG_LIMIT,
   SONG_TAG_LIMIT_MESSAGE,
   SONG_TAG_MAX_LENGTH,
+  songGenreTagName,
 } from '~/shared/constants/song-genres';
 import type { SongGenre } from '~/shared/constants/song-genres';
 import { showErrorNotification } from '~/utils/notifications';
@@ -73,6 +73,9 @@ export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
         w={200}
         radius={4}
         classNames={{ input: 'h-[34px] min-h-[34px] text-[13px]', error: 'text-xs' }}
+        // The error state colours the border, placeholder and message; typed search text stays
+        // the normal text colour.
+        styles={{ input: { color: 'var(--mantine-color-text)' } }}
       />
       <div className="flex min-h-[34px] flex-wrap items-center gap-1.5">
         {songTags.map((tag) => (
@@ -94,7 +97,10 @@ export function SongGenreTags({ image }: { image: PostEditImageDetail }) {
         ))}
         {songTags.length < SONG_TAG_LIMIT ? (
           <SongTagInput
-            taken={songTags.map((tag) => tag.name)}
+            taken={[
+              ...songTags.map((tag) => tag.name),
+              ...(genre ? [songGenreTagName(genre)] : []),
+            ]}
             disabled={addTag.isPending}
             onAdd={(name) => addTag.mutate({ id, name })}
           />
@@ -120,15 +126,15 @@ function SongTagInput({
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query.trim(), 300);
   const combobox = useCombobox({ onDropdownClose: () => combobox.resetSelectedOption() });
-  // Only plain PG tags can go on a song, so only those are suggested.
-  const { data } = trpc.post.getTags.useQuery(
-    { query: debounced, nsfwLevel: NsfwLevel.PG },
+  // Only tags an owner may attach come back, so every suggestion can be added.
+  const { data } = trpc.post.searchSongTags.useQuery(
+    { query: debounced },
     { enabled: debounced.length > 1 }
   );
   const typed = query.trim().toLowerCase();
-  const suggestions = [...new Set((data ?? []).map((tag) => tag.name))]
-    .filter((name) => !taken.includes(name) && (!typed || name.includes(typed)))
-    .slice(0, 8);
+  const suggestions = (data ?? [])
+    .map((tag) => tag.name)
+    .filter((name) => !taken.includes(name) && (!typed || name.startsWith(typed)));
 
   const submit = (value: string) => {
     const name = value.trim().toLowerCase();
