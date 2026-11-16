@@ -86,8 +86,12 @@ describe('manifest schema', () => {
   });
 });
 
-let root: string;
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+// Not every test builds a fixture.
+let root = '';
+afterEach(() => {
+  if (root) rmSync(root, { recursive: true, force: true });
+  root = '';
+});
 function fixture() {
   root = mkdtempSync(join(tmpdir(), 'ports-manifest-'));
   const put = (rel: string, text: string) => {

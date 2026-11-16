@@ -10,8 +10,12 @@ import { computeNodeDeps } from '../ports/node-deps.mjs';
 // The generated halves of ports/manifest.json (scripts/ports/{node,go}-deps.mjs), on fixtures whose
 // file names are all distinct, so a list holding the wrong file cannot pass.
 
-let root: string;
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+// Not every test builds a fixture.
+let root = '';
+afterEach(() => {
+  if (root) rmSync(root, { recursive: true, force: true });
+  root = '';
+});
 
 function fixture(files: Record<string, string>) {
   root = mkdtempSync(join(tmpdir(), 'ports-deps-'));

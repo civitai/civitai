@@ -98,8 +98,12 @@ describe('applyMarkers', () => {
 
 // A fixture repo with the real schema, a fake `go list`, and git (the generator finds stray
 // markers with `git grep`).
-let root: string;
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+// Not every test builds a fixture.
+let root = '';
+afterEach(() => {
+  if (root) rmSync(root, { recursive: true, force: true });
+  root = '';
+});
 
 const SCHEMA = resolve(__dirname, '../../ports/manifest.schema.json');
 const put = (rel: string, text: string) => {
