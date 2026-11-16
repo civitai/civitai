@@ -973,7 +973,7 @@ async function applyCollectionAutoTag(
         message: 'autoTagId resolves to a moderated tag',
         tagId,
         resolvedTagId: offending.tagId,
-      }).catch();
+      });
       return;
     }
 
@@ -993,7 +993,7 @@ async function applyCollectionAutoTag(
       message: (error as Error).message,
       tagId,
       imageIds: imageIds.slice(0, 20),
-    }).catch();
+    });
   }
 }
 
@@ -1050,8 +1050,6 @@ async function notifyCollectionSubmissionReceived({
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
       collectionIds,
-    }).catch(() => {
-      // swallow — best-effort logging must never break the submit it is observing
     });
   }
 }
@@ -1821,7 +1819,7 @@ export const upsertCollection = async ({
           name: 'collection-nsfw-recompute-enqueue-failed',
           message: error instanceof Error ? error.message : String(error),
           collectionId: updated.id,
-        }).catch(() => null)
+        })
       );
 
     if (shouldScanCollection(currentCollection, updated))
@@ -4399,7 +4397,7 @@ export const setCollectionItemNsfwLevel = async ({
     judgeLevel: nsfwLevel,
     scanLevel: image.nsfwLevel,
     finalLevel: updated.nsfwLevel,
-  }).catch();
+  });
 
   // `rescanning`: the judge's level applies once the rescan's checks have run at it.
   return {
@@ -4508,7 +4506,7 @@ export async function setCollectionItemsTag({
       name: 'collection-set-items-tag-cache-bust',
       message: (error as Error).message,
       collectionId,
-    }).catch(() => undefined)
+    })
   );
 
   return { count, collectionItemIds };

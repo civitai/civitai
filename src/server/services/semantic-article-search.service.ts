@@ -197,7 +197,7 @@ export async function searchSemanticArticles({
     returned: search.state.returned,
     hydrated,
     shown: page.items.length,
-  }).catch(() => undefined);
+  });
 
   audit.candidates(search.state.first);
   if (search.state.refused)

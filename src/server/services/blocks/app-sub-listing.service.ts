@@ -167,7 +167,7 @@ export async function syncSubListingRatingFromDoc(args: {
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
       appBlockId: args.appBlockId,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -412,7 +412,7 @@ export async function readSharedItemForSubListing(
         name: 'app-sub-listing-shared-key-ambiguous',
         type: 'warning',
         appBlockId,
-      }).catch(() => null);
+      });
     }
     return item.kind === 'found'
       ? {
@@ -427,7 +427,7 @@ export async function readSharedItemForSubListing(
       name: 'app-sub-listing-shared-read-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
   }
 }
@@ -705,7 +705,7 @@ async function writeSubListing(
       parentListingId: parent.id,
       fromImageId: existing.imageId,
       toImageId: content.imageId,
-    }).catch(() => null);
+    });
     return { id: existing.id, status, pendingEdit: false, catalogAffected: true };
   }
   const written = await casUpdate({
@@ -1429,7 +1429,8 @@ export async function listCatalogSubListings(args: {
 
 export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
-  itemKey: string;
+  /** One item key, or several (a publish's prune or an unpublish): one lookup, batched updates. */
+  itemKey: string | readonly string[];
   change: 'withdrawn' | 'hidden';
   /**
    * Only this author's card follows. Required for `withdrawn`; for `hidden`, given when the key
@@ -1456,9 +1457,10 @@ export async function syncSubListingForSharedRow(
       select: { id: true },
     });
     if (!parent) return;
+    if (typeof args.itemKey !== 'string' && args.itemKey.length === 0) return;
     const where: Prisma.AppSubListingWhereInput = {
       parentListingId: parent.id,
-      itemKey: args.itemKey,
+      itemKey: typeof args.itemKey === 'string' ? args.itemKey : { in: [...args.itemKey] },
       ...(args.authorUserId != null ? { authorUserId: args.authorUserId } : {}),
     };
     // Moves a store-hidden row's version so a restore that read the shared row as live fails
@@ -1473,7 +1475,7 @@ export async function syncSubListingForSharedRow(
           message: err instanceof Error ? err.message : String(err),
           appBlockId: args.appBlockId,
           change: args.change,
-        }).catch(() => null);
+        });
       });
     await transitionActive({
       where,
@@ -1497,7 +1499,7 @@ export async function syncSubListingForSharedRow(
       message: err instanceof Error ? err.message : String(err),
       appBlockId: args.appBlockId,
       change: args.change,
-    }).catch(() => null);
+    });
   }
 }
 

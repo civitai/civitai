@@ -343,7 +343,7 @@ async function autoApproveContinuation(placementId: number) {
       message: 'auto-approval refused; left pending for the owner',
       placementId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined)
+    })
   );
 }
 
@@ -368,7 +368,7 @@ async function holdOrUnwind({
         message: 'compensating settle failed; escrow may be held for a rejected continuation',
         placementId,
         error: settleError instanceof Error ? settleError.message : String(settleError),
-      }).catch(() => undefined)
+      })
     );
     throw error;
   }
@@ -699,7 +699,7 @@ export async function startReadyStorylineContinuations({ limit = 200 }: { limit?
         message: 'readiness refund failed',
         placementId,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
       return null;
     });
     if (result?.settled) refunded++;
@@ -1242,13 +1242,13 @@ export async function settleStaleUnfundedContinuations({ limit = 200 }: { limit?
       const result = await settlePlacement({ placementId: row.id, action: 'expire' });
       if (result.settled) settled++;
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'storyline-placement',
         type: 'error',
         message: 'unfunded continuation settle failed',
         placementId: row.id,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
     }
   }
 
@@ -1311,13 +1311,13 @@ export async function settleOrphanedContinuations({
       const result = await settlePlacement({ placementId: row.id, action: 'expire' });
       if (result.settled) settled++;
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: 'storyline-placement',
         type: 'error',
         message: 'orphaned continuation: settle failed',
         placementId: row.id,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
     }
   }
 

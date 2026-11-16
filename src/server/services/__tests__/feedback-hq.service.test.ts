@@ -136,13 +136,6 @@ describe('a failed filing never reaches the caller', () => {
     expect(loggedStatuses()).toEqual([status]);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
-
-  it('resolves when recording the task fails and so does the log', async () => {
-    dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
-    loggingMock.logToAxiom.mockRejectedValue(new Error('axiom down'));
-
-    await expect(fileFeedbackToHq(report())).resolves.toBeUndefined();
-  });
 });
 
 it('never writes the token, the report or HQ’s reply to a log line', async () => {

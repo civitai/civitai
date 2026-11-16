@@ -98,7 +98,7 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
       message: 'Skipped a remix app row that does not validate',
       blockId: row.blockId,
       issues: parsed.error?.issues.slice(0, 5),
-    }).catch(() => undefined);
+    });
     return null;
   }
   const manifest = parsed.data;
@@ -111,7 +111,7 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
       message: 'A remix app row names an engine no longer on the allowlist',
       blockId: row.blockId,
       issues: engineIssues,
-    }).catch(() => undefined);
+    });
   return register({
     slug: row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length),
     name: manifest.name,
@@ -327,12 +327,12 @@ export async function deleteRemixApp({ slug }: { slug: string }) {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Disable the app first' });
 
   // The only record of what was deleted.
-  await logToAxiom({
+  logToAxiom({
     name: 'remix-app-registry',
     type: 'info',
     message: 'Deleted a remix app row',
     row,
-  }).catch(() => undefined);
+  });
   let count: number;
   try {
     // Conditional on the status, so an enable that lands after the read above wins.

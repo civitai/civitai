@@ -188,7 +188,7 @@ function logDecision(
       ...details,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 }
 
 const logMessageFor = (decision: DuplicateDecision, acted: LogMessage): LogMessage => {

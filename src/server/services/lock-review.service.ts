@@ -405,7 +405,7 @@ export async function resolveLockReviewAppeal({
       autoReview: context?.autoReview ?? null,
       autoReviewAttempts: context?.autoReviewAttempts ?? null,
       firstPromptId: dispute.intentPromptId,
-    }).catch(() => undefined);
+    });
   }
 
   if (unlocked.length) await preventReplicationLag('model', modelId);

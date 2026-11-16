@@ -79,7 +79,7 @@ export async function createNotification(
       details: { key: data.key },
       message: error.message,
       stack: error.stack,
-    }).catch(() => {});
+    });
     throw e;
   }
 }

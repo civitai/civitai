@@ -50,7 +50,7 @@ async function claimToggleWindow({
         type: 'error',
         name: 'reaction-toggle-guard',
         message: (error as Error).message,
-      }).catch(() => undefined);
+      });
     toggleGuardErrorLogged = true;
     return true;
   } finally {

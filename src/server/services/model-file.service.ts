@@ -272,7 +272,7 @@ export async function updateFile({
       moderatorId: userId,
       from: (modelFile.metadata as { format?: string } | null)?.format ?? null,
       to: change.format,
-    }).catch(() => undefined);
+    });
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
 
@@ -359,7 +359,7 @@ export async function updateFile({
         name: 'model-file-type-change',
         message: `Failed to bust resource caches for file ${id}`,
         error,
-      }).catch(() => undefined)
+      })
     );
 
   // Merge committed updates back into the snapshot so the returned record
@@ -520,7 +520,7 @@ async function replaceFileContent({
       name: 'model-file-url-change',
       message: `Failed to bust the file list for file ${file.id}`,
       error,
-    }).catch(() => undefined)
+    })
   );
 
   // The orchestrator resolves a version's files by AIR and caches what it resolved, and
@@ -537,7 +537,7 @@ async function replaceFileContent({
       name: 'model-file-url-change',
       message: `Failed to bust resource caches for file ${file.id}`,
       error,
-    }).catch(() => undefined)
+    })
   );
 
   // Best-effort, after commit. The refcount check inside deleteModelFileObject skips the delete if

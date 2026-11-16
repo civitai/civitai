@@ -9,7 +9,7 @@ import { createJob } from '~/server/jobs/job';
 const GRACE_DAYS = 30;
 
 const logJob = (data: MixedObject) =>
-  logToAxiom({ name: 'purge-replaced-files', type: 'error', ...data }, 'webhooks').catch(() => {});
+  logToAxiom({ name: 'purge-replaced-files', type: 'error', ...data }, 'webhooks');
 
 type ReplacedRow = { id: number; url: string; held: boolean };
 

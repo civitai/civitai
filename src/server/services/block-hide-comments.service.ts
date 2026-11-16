@@ -81,14 +81,14 @@ export async function hideBlockedUserCommentsOnOwnContent({
     }
     return { status: 'hidden', count, capped: ids.length >= BLOCK_HIDE_MAX_COMMENTS };
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       name: 'block-hide-comments',
       type: 'error',
       message: 'bulk comment hide after block failed; the block stands',
       ownerId,
       blockedUserId,
       error: (error as Error).message,
-    }).catch(() => null);
+    });
     return { status: 'failed', count };
   }
 }
