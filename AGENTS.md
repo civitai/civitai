@@ -1,3 +1,9 @@
+# Agent instructions
+
+Read `CLAUDE.md` first; it is binding for all agents, including its security section (this repository is
+public). The block below is written by `next dev` and only covers the Next.js version; keep this header
+above it, since `next dev` rewrites only the text between its markers.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 ## This is NOT the Next.js you know

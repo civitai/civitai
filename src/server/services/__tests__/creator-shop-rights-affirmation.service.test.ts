@@ -64,7 +64,7 @@ dbMock.dbWrite.$transaction.mockImplementation((cb: (tx: unknown) => unknown) =>
 // Shop artwork is a bare upload key; this one's issue record names the caller.
 const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
 beforeEach(() => {
-  redisMock.sysRedis.mGet.mockResolvedValue(['11'] as never);
+  redisMock.redis.mGet.mockResolvedValue(['11'] as never);
 });
 
 const submitInput = {
@@ -301,11 +301,11 @@ describe('artwork key issued to someone else', () => {
     );
     // No row holds the key: only its issue record can refuse it.
     dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
-    redisMock.sysRedis.mGet.mockResolvedValue(['55'] as never);
+    redisMock.redis.mGet.mockResolvedValue(['55'] as never);
   });
   afterEach(() => {
     dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
-    redisMock.sysRedis.mGet.mockReset();
+    redisMock.redis.mGet.mockReset();
   });
 
   it('refuses a submission before charging the fee', async () => {
@@ -320,7 +320,7 @@ describe('artwork key issued to someone else', () => {
     ['refuses', 'a key issued to neither them nor the creator', '55'],
     ['accepts', "the creator's key", '11'],
   ])("%s a moderator's artwork swap to %s", async (verdict, _, issuedTo) => {
-    redisMock.sysRedis.mGet.mockResolvedValue([issuedTo] as never);
+    redisMock.redis.mGet.mockResolvedValue([issuedTo] as never);
     mocks.shopItemFindUnique.mockResolvedValue({
       id: 42,
       cosmeticId: 7,
