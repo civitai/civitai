@@ -71,7 +71,7 @@ export type SharedBlockedField = 'title' | 'body' | 'title and body';
  * Thrown by `assertSharedTextSafe` when the text is rejected. Carries the
  * `category` so the caller can decide whether to file a Report (minor/poi/audit)
  * before converting to a user-facing TRPCError. NEVER leak the raw matched word to
- * the client beyond the audit machinery's own message.
+ * the client: every verdict's message is a fixed string (an audit block's included).
  *
  * `unchecked` means a check could not run, not that one found something. Only metrics read it
  * (`moderation_unavailable` vs `moderation_blocked`); it must not change the refusal.
@@ -299,9 +299,9 @@ export async function assertSharedTextSafe(
           new SharedContentBlockedError('link', retryMessage, { unchecked: true })
         );
       }
-      // Any other throw is an `audit` block.
-      const message = e instanceof Error ? e.message : 'Content was flagged';
-      throw new SharedContentBlockedError('audit', message);
+      // Any other throw is an `audit` block, refused with a FIXED message: the audit's own
+      // ("Your prompt was flagged: <words>") names what it matched, and a refusal never does.
+      throw new SharedContentBlockedError('audit', 'Content flagged for review');
     }
 
     // Store RAW (Fix 2 / 2026-07 security review): escape-at-rest was removed — see
