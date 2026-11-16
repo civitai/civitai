@@ -12,7 +12,7 @@ export const RETRACTED_MEDIA_REASONS = ['tos', 'moderated', 'Moderated', 'AiNotV
 /** Browsing levels at which a minor-flagged image is still served: PG and PG-13. */
 const MINOR_SERVABLE_LEVELS = [1, 2];
 
-/** The flag both routes read; off, both answer 403. */
+/** The flag the route reads; off, it answers 403. */
 export const RETRACTED_MEDIA_FLIPT_KEY = 'mod-retracted-media';
 
 /** The mod-activity name of one served response from byte 0. */

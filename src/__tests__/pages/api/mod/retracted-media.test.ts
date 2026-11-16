@@ -298,7 +298,9 @@ describe('/api/mod/retracted-media serving', () => {
   it('stops streaming at the deadline', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
+      let signal: AbortSignal | undefined;
       fetchMock.mockImplementation(async (_url: string, init: { signal: AbortSignal }) => {
+        signal = init.signal;
         const body = new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode('b'));
@@ -310,10 +312,16 @@ describe('/api/mod/retracted-media serving', () => {
           headers: { 'content-type': 'image/png', 'content-length': '5' },
         });
       });
-      const pending = call();
-      await vi.advanceTimersByTimeAsync(RETRACTED_MEDIA_STREAM_MS);
-      const res = await pending;
-      expect(res.statusCode).toBe(200);
+      let settled = false;
+      const pending = call().then((res) => {
+        settled = true;
+        return res;
+      });
+      await vi.advanceTimersByTimeAsync(RETRACTED_MEDIA_STREAM_MS - 1);
+      expect({ aborted: signal?.aborted, settled }).toEqual({ aborted: false, settled: false });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signal?.aborted).toBe(true);
+      expect((await pending).statusCode).toBe(200);
     } finally {
       vi.useRealTimers();
     }
