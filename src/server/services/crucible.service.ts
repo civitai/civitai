@@ -2844,8 +2844,8 @@ async function loadVoteOutcomes(count: () => Promise<number>, members: () => Pro
 
 /**
  * Outcomes on sysRedis expire 30 days after a judge's last vote there, which was before the set
- * moved to the cache cluster. With the move deployed by early December 2026, the fallback finds
- * nothing after this date.
+ * moved to the cache cluster, so the fallback finds nothing once the move is 30 days deployed.
+ * This date must stay at least that far past the deploy.
  * 🔴 Delete after this date: this constant, `withSysVoteOutcomes` and its call in
  * `getJudgePairKeys`, `getSysVoteOutcomesKey`, and `REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES`.
  */
