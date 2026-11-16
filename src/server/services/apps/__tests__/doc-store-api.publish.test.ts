@@ -559,7 +559,9 @@ describe('publish', () => {
     const A = freshApp();
     const t = await mint(A, V1);
     // One ad-hoc shared write first, so the shared bucket holds literal state to compare.
-    await expectOk(call({ token: t, method: 'PUT', path: '/clips/adhoc', body: { data: { a: 1 } } }));
+    await expectOk(
+      call({ token: t, method: 'PUT', path: '/clips/adhoc', body: { data: { a: 1 } } })
+    );
     const SHARED_AFTER_ONE_WRITE = {
       b: '1930367227000', // T + 60 s: one burst token out of 30
       d: '1930367455000', // T + 288 s: one daily token out of 300
@@ -604,9 +606,15 @@ describe('publish', () => {
     const evals = lua.calls.length;
     const over = Array.from({ length: 501 }, (_, i) => `k${i}`);
     const cases: [unknown, Record<string, unknown>][] = [
-      [{ from: 'drafts', keys: over }, { reason: 'too_many_keys', max: 500 }],
+      [
+        { from: 'drafts', keys: over },
+        { reason: 'too_many_keys', max: 500 },
+      ],
       [{ from: 'drafts', keys: [] }, { reason: 'empty_keys' }],
-      [{ from: 'drafts', keys: ['a', 'b', 'a'] }, { reason: 'duplicate_key', key: 'a' }],
+      [
+        { from: 'drafts', keys: ['a', 'b', 'a'] },
+        { reason: 'duplicate_key', key: 'a' },
+      ],
     ];
     for (const [body, details] of cases) {
       const r = await publish(t, body);
@@ -665,7 +673,7 @@ describe('publish', () => {
     expect(JSON.stringify(rows)).not.toContain('v2-');
   });
 
-  it("skips a key whose shared copy another user authored, and leaves that copy as it was", async () => {
+  it('skips a key whose shared copy another user authored, and leaves that copy as it was', async () => {
     const A = freshApp();
     const t1 = await mint(A, V1);
     const t2 = await mint(A, V2);
@@ -812,6 +820,67 @@ describe('publish', () => {
       details: { reason: 'source_changed', key: 'sc2' },
     });
     expect(await sharedRows(A)).toEqual([]);
+  });
+
+  it("a key that was another author's at the check and is free under lock refuses 409 target_changed, with no rejection token", async () => {
+    const A = freshApp();
+    const t1 = await mint(A, V1);
+    const t2 = await mint(A, V2);
+    await expectOk(putPrivate(t2, 'taken', { by: 'v2' }));
+    await expectOk(publish(t2, { from: 'drafts', keys: ['taken'] }));
+    await expectOk(putPrivate(t1, 'mine', { by: 'v1' }));
+    await expectOk(putPrivate(t1, 'taken', { by: 'v1' }));
+    const clips = {
+      name: 'clips',
+      config: parseManifestStorage(MANIFEST).collections.get('clips')!,
+    };
+    // Inside the scan of `mine`: the other author withdraws `taken`, which the check saw as theirs.
+    h.onScan = async () => {
+      await liveStore.delete({ appId: A.id, ns: 'prod', viewerUid: V2 }, clips, 'taken');
+    };
+    const r = await publish(t1, { from: 'drafts', keys: ['mine', 'taken'] });
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({
+      code: 'version_conflict',
+      details: { reason: 'target_changed', key: 'taken' },
+    });
+    expect(await sharedRows(A)).toEqual([]);
+    // The publish token went back and no rejection token was charged: the bucket is full again.
+    expect(publishBudget(A, V1)).toBeUndefined();
+  });
+
+  it('every publish call spends one write-bucket token before any read, even one that changes nothing', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(putPrivate(t, 'w1', { w: 1 }));
+    await expectOk(publish(t, { from: 'drafts', keys: ['w1'] }));
+    const writeKey = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-write:${A.id}:u:${V1}`;
+    // One private put and one publish so far.
+    expect(kv.get(writeKey)?.value).toBe('2');
+    const r = await expectOk(publish(t, { from: 'drafts', keys: ['w1'] }));
+    expect(r.body).toEqual({ ...EMPTY, unchanged: ['w1'], pruneIncomplete: false });
+    expect(kv.get(writeKey)?.value).toBe('3');
+  });
+
+  it('a loop of publishes that change nothing is refused 429 by the write bucket', async () => {
+    const A = freshApp();
+    const t = await mint(A, V1);
+    await expectOk(putPrivate(t, 'l1', { l: 1 }));
+    await expectOk(publish(t, { from: 'drafts', keys: ['l1'] }));
+    const writeKey = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-write:${A.id}:u:${V1}`;
+    // 118 of the 120 a minute already spent.
+    kv.set(writeKey, { value: '118', ttl: 60 });
+    const statuses: number[] = [];
+    let last: Reply | undefined;
+    for (let i = 0; i < 3; i++) {
+      last = await publish(t, { from: 'drafts', keys: ['l1'] });
+      statuses.push(last.status);
+    }
+    expect(statuses).toEqual([200, 200, 429]);
+    expect(last?.body).toMatchObject({
+      code: 'rate_limited',
+      details: { bucket: 'write', retryAfter: 60 },
+    });
   });
 
   it('refuses a private target, a shared source, an undeclared source and a counter-only target', async () => {
@@ -978,7 +1047,10 @@ describe('unpublish', () => {
       ([e]) => (e as { name?: string } | undefined)?.name === 'app-sub-listing-shared-sync-failed'
     );
     expect(failedSyncs).toEqual([]);
-    expect(cardSync.calls.map((c) => (c as { itemKey: string }).itemKey).sort()).toEqual(['x1', 'x2']);
+    // One sync for the whole unpublish: one parent lookup, the keys batched.
+    expect(cardSync.calls).toEqual([
+      { appBlockId: A.id, itemKey: ['x1', 'x2'], change: 'withdrawn', authorUserId: V1 },
+    ]);
   });
 });
 

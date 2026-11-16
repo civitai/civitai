@@ -20,6 +20,7 @@ const CLIPS: DocCollection = {
   config: decl({ visibility: 'shared', write: 'own', indexes: { char: 'string' } }),
 };
 const OWNER = 9301;
+const OTHER = 9302;
 
 describe.skipIf(!REAL_PG_URL)('concurrent publishes of the same set (Postgres)', () => {
   let h: Harness;
@@ -58,5 +59,51 @@ describe.skipIf(!REAL_PG_URL)('concurrent publishes of the same set (Postgres)',
     );
     expect(Number(usage[0].docs)).toBe(12);
     await assertUsageConsistent(h, app, NS_PROD);
+  });
+
+  it("never waits on another author's row: publishing past a key someone else holds locked completes", async () => {
+    const store = createDocStore({ db: h.db });
+    const app = freshApp('publishnolock');
+    const other = ctx(app, NS_PROD, OTHER);
+    const c = ctx(app, NS_PROD, OWNER);
+    await store.put(other, DRAFTS, 'taken', { by: 'other' });
+    const otherPreview = await store.previewPublish(other, DRAFTS, CLIPS, ['taken']);
+    await store.publishCopies(other, DRAFTS, CLIPS, {
+      keys: ['taken'],
+      checked: new Map(otherPreview.map((e) => [e.key, e.source?.hash ?? ''])),
+    });
+    await store.put(c, DRAFTS, 'taken', { by: 'owner' });
+    await store.put(c, DRAFTS, 'mine', { by: 'owner' });
+    const preview = await store.previewPublish(c, DRAFTS, CLIPS, ['mine', 'taken']);
+    const checked = new Map(preview.flatMap((e) => (e.source ? [[e.key, e.source.hash]] : [])));
+
+    // The other author's copy stays locked by an open transaction for the whole publish.
+    const holder = await h.rawAsRole();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(
+        `SELECT set_config('appdata.app_id', $1, true), set_config('appdata.ns', $2, true)`,
+        [app, NS_PROD]
+      );
+      const held = await holder.query(
+        `SELECT d.key FROM appdata.doc d WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = 'clips'
+           AND d.scope_uid = 0 AND d.key = 'taken' FOR UPDATE`,
+        [app, NS_PROD]
+      );
+      expect(held).toHaveLength(1);
+      // Locking it would wait out the store's 3 s lock timeout and fail as `contention`.
+      const r = await store.publishCopies(c, DRAFTS, CLIPS, { keys: ['mine', 'taken'], checked });
+      expect(r).toEqual({
+        created: ['mine'],
+        updated: [],
+        unchanged: [],
+        pruned: [],
+        skipped: [{ key: 'taken', reason: 'not_author' }],
+        pruneIncomplete: false,
+      });
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      await holder.close();
+    }
   });
 });
