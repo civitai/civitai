@@ -102,3 +102,66 @@ export async function listEvidenceHeldOwners(
     hasMore: owners.length > limit,
   };
 }
+
+export type EvidenceHoldRole = 'subject' | 'secondary' | 'manual';
+
+/**
+ * Places a hold on an owner unless an open one with the same role and reason already exists, so a
+ * repeated request does not stack rows. `releaseAt` NULL holds until released; a date ends the hold
+ * through "EvidenceHeldUser" with no job.
+ */
+export async function placeEvidenceHold(
+  db: Kysely<DB>,
+  input: {
+    userId: number;
+    role: EvidenceHoldRole;
+    reason: string;
+    createdById: number | null;
+    releaseAt?: Date | null;
+  }
+): Promise<{ id: number; created: boolean }> {
+  const open = await db
+    .selectFrom('EvidenceHold')
+    .select('id')
+    .where('userId', '=', input.userId)
+    .where('role', '=', input.role)
+    .where('reason', '=', input.reason)
+    .where('releasedAt', 'is', null)
+    .executeTakeFirst();
+  if (open) return { id: open.id, created: false };
+
+  const { id } = await db
+    .insertInto('EvidenceHold')
+    .values({
+      userId: input.userId,
+      role: input.role,
+      reason: input.reason,
+      createdById: input.createdById,
+      releaseAt: input.releaseAt ? toUtcTimestamp(input.releaseAt) : null,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  return { id, created: true };
+}
+
+/** Releases one open hold. False when it does not exist or was already released. */
+export async function releaseEvidenceHold(
+  db: Kysely<DB>,
+  input: { id: number; releasedById: number; releaseReason: string }
+): Promise<boolean> {
+  const result = await db
+    .updateTable('EvidenceHold')
+    .set({
+      releasedAt: sql`now() AT TIME ZONE 'UTC'`,
+      releasedById: input.releasedById,
+      releaseReason: input.releaseReason,
+    })
+    .where('id', '=', input.id)
+    .where('releasedAt', 'is', null)
+    .executeTakeFirst();
+  return Number(result.numUpdatedRows) > 0;
+}
+
+// The columns are zoneless and hold UTC, so a Date is written as its UTC wall time.
+const toUtcTimestamp = (date: Date) =>
+  sql<Date>`${date.toISOString()}::timestamptz AT TIME ZONE 'UTC'`;

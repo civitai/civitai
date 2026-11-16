@@ -1,14 +1,17 @@
-import { error } from '@sveltejs/kit';
+import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import {
   countEvidenceHoldsEnding,
   EVIDENCE_HOLD_ENDING_DAYS,
   listEvidenceHeldOwners,
+  placeEvidenceHold,
+  releaseEvidenceHold,
 } from '@civitai/db-queries/evidence-hold';
-import { denied } from '$lib/server/access';
-import { dbRead } from '$lib/server/db';
-import { parseQuery } from '$lib/server/query';
-import type { PageServerLoad } from './$types';
+import { denied, requiresGrant } from '$lib/server/access';
+import { dbRead, dbWrite } from '$lib/server/db';
+import { recordModActivity } from '$lib/server/mod-activity';
+import { int4Id, parseForm, parseQuery } from '$lib/server/query';
+import type { Actions, PageServerLoad } from './$types';
 
 const PER_PAGE = 50;
 
@@ -41,4 +44,62 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     // One timestamp for SSR and hydration, so days-left can't differ between them.
     asOf: Date.now(),
   };
+};
+
+const placeSchema = z.object({
+  userId: int4Id,
+  role: z.enum(['manual', 'subject', 'secondary']),
+  reason: z.string().trim().min(1, 'Give a reason.').max(500),
+  // A date only: the hold ends at the start of that day, UTC.
+  releaseAt: z
+    .union([z.literal(''), z.string().date('Use a date like 2026-12-31.')])
+    .optional()
+    .transform((v) => (v ? new Date(`${v}T00:00:00Z`) : null))
+    .refine((d) => d === null || d.getTime() > Date.now(), 'The end date must be in the future.'),
+});
+
+const releaseSchema = z.object({
+  holdId: int4Id,
+  releaseReason: z.string().trim().min(1, 'Give a reason for releasing.').max(500),
+});
+
+// Same grant as the page: placing or releasing a hold is a csam filer's call.
+export const actions: Actions = {
+  place: requiresGrant('csam.report.file', async ({ request, locals }) => {
+    const input = parseForm(placeSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { scope: 'place', error: input });
+    const { id, created } = await placeEvidenceHold(dbWrite, {
+      ...input,
+      createdById: locals.user.id,
+    });
+    if (created)
+      await recordModActivity({
+        userId: locals.user.id,
+        entityType: 'evidenceHold',
+        entityId: id,
+        activity: 'placeEvidenceHold',
+      });
+    return { scope: 'place', holdId: id, created };
+  }),
+  release: requiresGrant('csam.report.file', async ({ request, locals }) => {
+    const input = parseForm(releaseSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { scope: 'release', error: input });
+    const released = await releaseEvidenceHold(dbWrite, {
+      id: input.holdId,
+      releasedById: locals.user.id,
+      releaseReason: input.releaseReason,
+    });
+    if (!released)
+      return fail(409, {
+        scope: 'release',
+        error: 'That hold is already released or does not exist.',
+      });
+    await recordModActivity({
+      userId: locals.user.id,
+      entityType: 'evidenceHold',
+      entityId: input.holdId,
+      activity: 'releaseEvidenceHold',
+    });
+    return { scope: 'release', holdId: input.holdId };
+  }),
 };
