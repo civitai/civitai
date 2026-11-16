@@ -67,7 +67,8 @@ describe('bounty payload, against the real query', () => {
         "deletedAt" timestamp);
       CREATE TABLE "Bounty" (id int PRIMARY KEY, name text, description text, type text, mode text,
         "entryMode" text, details jsonb, "nsfwLevel" int, "startsAt" date, "expiresAt" date,
-        complete boolean, refunded boolean, poi boolean, availability text, "userId" int);
+        complete boolean, refunded boolean, poi boolean, availability text, "userId" int,
+        nsfw boolean DEFAULT false);
       CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
       CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
       CREATE TABLE "TagsOnBounty" ("bountyId" int, "tagId" int);
@@ -93,13 +94,18 @@ describe('bounty payload, against the real query', () => {
         (7, 'Blocked', '', 'Other', 'Individual', 'Open', NULL, 33, '2026-11-01', '2026-11-30',
           false, false, false, 'Public', 7),
         (8, 'Held owner', '', 'Other', 'Individual', 'Open', NULL, 1, '2026-11-01', '2026-11-30',
-          false, false, false, 'Public', 9);
+          false, false, false, 'Public', 9),
+        (9, 'Marked nsfw', '', 'Other', 'Individual', 'Open', NULL, 1, '2026-11-01', '2026-11-30',
+          false, false, false, 'Public', 7);
+      UPDATE "Bounty" SET nsfw = true WHERE id = 9;
       INSERT INTO "TagsOnBounty" VALUES (1, 1), (1, 2);
       INSERT INTO "BountyEntry" VALUES (100, 1);
     `);
     try {
-      const docs = await getBountyDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8]);
-      expect([...docs.keys()]).toEqual([1]);
+      const docs = await getBountyDocs(pg as unknown as Pg, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect([...docs.keys()]).toEqual([1, 9]);
+      // The feed serves a bounty marked nsfw at XXX, whatever its rated level.
+      expect(docs.get(9)?.nsfwLevel).toEqual([16]);
       expect(docs.get(1)).toMatchObject({
         title_normalized: 'anime lora',
         type: 'LoraCreation',

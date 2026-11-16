@@ -5,6 +5,8 @@ import { bountyDocument } from './document';
 
 /** NsfwLevel.Blocked: a level that blocks on its own. */
 const BLOCKED = 32;
+/** NsfwLevel.XXX: the level the bounty feed serves a bounty marked nsfw at. */
+const XXX = 16;
 
 /**
  * Which bounties get a point: the site's `bountySemanticEligibleText`
@@ -33,7 +35,7 @@ export type BountyPayload = {
   entryMode: string;
   /** details.baseModel, the feed's base-model filter. */
   baseModel: string | null;
-  /** The set bits of Bounty.nsfwLevel. */
+  /** The set bits of the level the feed serves it at: XXX when marked nsfw, else nsfwLevel. */
   nsfwLevel: number[];
   /** Midnight UTC of the bounty's dates. */
   startsAt: string;
@@ -58,6 +60,7 @@ type Row = {
   entryMode: string;
   baseModel: string | null;
   nsfwLevel: number;
+  nsfw: boolean;
   startsAt: Date;
   expiresAt: Date;
   complete: boolean;
@@ -77,7 +80,7 @@ export async function getBountyDocs(
   const { rows } = await pg.query<Row>(
     `SELECT b.id, b.name, left(b.description, 20000) AS description, b.type::text AS type,
        b.mode::text AS mode, b."entryMode"::text AS "entryMode",
-       b.details->>'baseModel' AS "baseModel", b."nsfwLevel",
+       b.details->>'baseModel' AS "baseModel", b."nsfwLevel", b.nsfw,
        b."startsAt"::timestamp AT TIME ZONE 'UTC' AS "startsAt",
        b."expiresAt"::timestamp AT TIME ZONE 'UTC' AS "expiresAt",
        b.complete, b.refunded,
@@ -101,7 +104,7 @@ export async function getBountyDocs(
       mode: row.mode,
       entryMode: row.entryMode,
       baseModel: row.baseModel,
-      nsfwLevel: nsfwLevels(row.nsfwLevel),
+      nsfwLevel: nsfwLevels(row.nsfw ? XXX : row.nsfwLevel),
       startsAt: new Date(row.startsAt).toISOString(),
       expiresAt: new Date(row.expiresAt).toISOString(),
       complete: row.complete,
