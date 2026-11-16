@@ -62,7 +62,7 @@ describe('viewerDocLevel — a block token reader’s level', () => {
 });
 
 describe('domainDocLevel — the cap on an author’s own rated documents', () => {
-  it.each([
+  it.each<[{ maxBrowsingLevel?: number; viewerBrowsingLevel?: number }, number]>([
     // The domain ceiling alone: the viewer's own setting is not read.
     [{ maxBrowsingLevel: 31, viewerBrowsingLevel: 1 }, 31],
     [{ maxBrowsingLevel: 3, viewerBrowsingLevel: 31 }, 3],
