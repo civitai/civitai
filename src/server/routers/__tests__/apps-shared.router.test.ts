@@ -767,6 +767,54 @@ describe('H1/H2 vote counter integrity (SQL shape + FK)', () => {
 });
 
 describe('C3 content safety (blocking on append)', () => {
+  describe('🔴 REGRESSION: a title/body refusal names the field, never the term or the text', () => {
+    const appendValue = (value: { title: string; body?: string }) => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      return caller()
+        .append({ blockToken: 't', value })
+        .catch((e: unknown) => e as TRPCError);
+    };
+
+    it.each([
+      ['the title', { title: '13 year old girl', body: 'a calm lake' }, 'title'],
+      ['the body', { title: 'A calm lake', body: 'then a 13 year old girl' }, 'body'],
+    ])('a minor term in %s → (field: %s)', async (_where, value, field) => {
+      const err = await appendValue(value);
+      expect(err).toBeInstanceOf(TRPCError);
+      expect(err).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: `Content flagged for review (field: ${field})`,
+      });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    });
+
+    it('a distinctive pattern term in the body → (field: body), and neither the term nor the text is told', async () => {
+      const TERM = 'zqvexterm9917';
+      const BODY = `the wizard whispers ${TERM} at dawn`;
+      mockThrowOnBlockedUserContent.mockImplementationOnce(
+        async (content: unknown, options?: unknown) => {
+          if ((content as Array<string | undefined>).some((v) => v?.includes(TERM))) {
+            (options as { onBlocked: (k: string) => never }).onBlocked('pattern');
+          }
+        }
+      );
+      mockFindBlocked.mockImplementation(async (values: unknown) =>
+        (values as Array<string | undefined>).flatMap((v, index) =>
+          v?.includes(TERM)
+            ? [{ kind: 'pattern', index, matched: TERM, patternId: 0, listId: null }]
+            : []
+        )
+      );
+      const err = await appendValue({ title: 'A calm lake', body: BODY });
+      expect(err).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content flagged for review (field: body)',
+      });
+      expect(JSON.stringify({ message: (err as TRPCError).message })).not.toContain(TERM);
+      expect((err as TRPCError).message).not.toContain(BODY);
+    });
+  });
+
   it('rejects minor content + files a Report', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     await expect(
