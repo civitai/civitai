@@ -1,3 +1,4 @@
+import * as z from 'zod';
 import { TRPCError } from '@trpc/server';
 import { feedbackTriageRequest } from '@civitai/moderation';
 import { FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH } from '~/shared/constants/feedback.constants';
@@ -13,11 +14,17 @@ export default defineModeratorEndpoint('feedback.triage', {
     'Requires the moderator app permission `feedback.status.set`, the one the queue requires.',
     'Pass the status you last read as `expectedStatus`: a report that has moved since is not changed (409). Read it again before retrying.',
     `\`noteAppend\` (at most ${FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH} characters) is added below the internal triage note; it never replaces it.`,
-    '`hqTaskUrl` (https://hq.civitai.com/t/<id> exactly) is recorded as the report’s HQ task link.',
-    'With `status` equal to `expectedStatus`, only the note and the link are written; who triaged it, and when, stay as they were.',
+    'No HQ task link is taken here: the HQ status sync records it. A request carrying `hqTaskUrl` is refused (400).',
+    'With `status` equal to `expectedStatus`, only the note is written; who triaged it, and when, stay as they were.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
-  input: feedbackTriageRequest,
+  // The link is the sync's to record. Refused rather than silently dropped, so a caller that sends
+  // one learns it did not land.
+  input: feedbackTriageRequest.omit({ hqTaskUrl: true }).extend({
+    hqTaskUrl: z
+      .undefined('hqTaskUrl is not accepted here; the HQ status sync records the link.')
+      .optional(),
+  }),
   async handler(input, ctx) {
     if (!(await hasModeratorGrant(ctx.actor, 'feedback.status.set')))
       throw new TRPCError({

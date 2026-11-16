@@ -13,14 +13,19 @@ import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
  *   task open (not closed)             → reviewed
  *   task complete                      → actioned
  *   task wontfix, not merged           → dismissed
- *   task wontfix, `merged_into` <id>   → whatever <id> maps to (at most MAX_MERGE_HOPS)
- *   anything else (a hidden or missing task, a done status this does not know, a merge chain too
- *   long or circular)                  → no status change, logged and counted as `unresolved`
+ *   task wontfix, `merged_into` <id>   → whatever <id> maps to (ONE hop)
+ *   anything else (a hidden or missing task, a done status this does not know, a merge target
+ *   that is itself merged)             → no status change, logged and counted as `unresolved`
  *
- * 🔴 FORWARD ONLY, AND ONLY OVER ITS OWN VERDICTS. A row moves new → reviewed → actioned/dismissed and
- * never back. A row a moderator set (`handledById` is not the sync's own account) is never moved:
- * the sync's job is to stop rows sitting at `new`, not to second-guess a person. A terminal row
- * (actioned/dismissed) is never moved either, whoever set it. Every write is the queue's own
+ * 🔴 FORWARD ONLY. A row moves new → reviewed → actioned/dismissed and never back, and a terminal row
+ * (actioned/dismissed) is never moved, whoever set it.
+ *
+ * 🔴 IT NEVER DISMISSES A PERSON'S VERDICT. A `reviewed` row moves to `actioned` when its task (or the
+ * task it was merged into) completes, whoever reviewed it: a completed task is a fact about the work.
+ * It moves to `dismissed` only when the sync's own account reviewed it; a row a moderator reviewed
+ * (`handledById` is anyone else) stays `reviewed` under a wontfix task, because a wontfix can mean
+ * "duplicate of something HQ cannot point at", which only the moderator can judge (counted as
+ * `human_set`). Every write is the queue's own
  * compare-and-set triage write, scoped on the status read a moment before, so a row that moved in
  * between is refused rather than overwritten.
  *
@@ -33,7 +38,7 @@ import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
  * to `reviewed` again. Nothing distinguishes that row from one never triaged.
  */
 
-export const MAX_MERGE_HOPS = 3;
+export const MAX_MERGE_HOPS = 1;
 
 export type HqTaskRow = { status: string; closed?: string | null; merged_into?: string | null };
 
@@ -223,13 +228,7 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
     }
     const stampable = row.hqTaskId === null;
 
-    const terminal = RANK[row.status] === 2;
-    const humanSet = row.status !== 'new' && row.handledById !== deps.actorId;
-    if (terminal || humanSet) {
-      if (humanSet) {
-        summary.humanSet++;
-        deps.count('human_set');
-      }
+    if (RANK[row.status] === 2) {
       if (stampable) await stamp(row, link.url);
       continue;
     }
@@ -251,7 +250,12 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
     }
     if (target.followed) deps.count('merge_followed');
 
-    if (RANK[target.status] > RANK[row.status]) {
+    const humanReviewed = row.status === 'reviewed' && row.handledById !== deps.actorId;
+    if (humanReviewed && target.status === 'dismissed') {
+      summary.humanSet++;
+      deps.count('human_set');
+      if (stampable) await stamp(row, link.url);
+    } else if (RANK[target.status] > RANK[row.status]) {
       const to = target.status;
       await write(
         row,
