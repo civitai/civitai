@@ -311,15 +311,87 @@ async function enqueue(
   return true;
 }
 
-export async function checkoutQueue(key: string, isMerge = false, readOnly = false) {
-  if (!isMerge) await waitForMerge(key);
+// How long a consumer's lease keeps mergeQueue off its key. Above the longest successful run of
+// any committing consumer over a week (a search-index sync, about 17 min); a lapsed lease costs
+// a duplicate pass, never an id.
+const CONSUMER_LEASE_TTL_MS = 60 * 60 * 1000;
 
+function leaseKey(key: string) {
+  return `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${key}:${REDIS_SUB_KEYS.QUEUES.CONSUMING}` as RedisKeyTemplateSys;
+}
+
+/**
+ * Registers a consumer on the key until it commits, so mergeQueue cannot copy the buckets it is
+ * still processing into a new one. Best-effort: a consumer whose lease did not land still runs.
+ */
+async function takeConsumerLease(key: string) {
+  const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  const lease = leaseKey(key);
+  await safeSysWrite(
+    () => sysRedis.zAdd(lease, { score: Date.now() + CONSUMER_LEASE_TTL_MS, value: token }),
+    'queues.checkoutQueue lease zAdd',
+    { key }
+  );
+  // The key outlives no lease in it, so one whose consumers all died does not linger.
+  await safeSysWrite(
+    () => sysRedis.expire(lease, Math.ceil(CONSUMER_LEASE_TTL_MS / 1000)),
+    'queues.checkoutQueue lease expire',
+    { key }
+  );
+  return async () => {
+    await safeSysWrite(() => sysRedis.zRem(lease, token), 'queues.checkoutQueue lease zRem', {
+      key,
+    });
+  };
+}
+
+/** Whether a consumer may still be processing the key's buckets. Unreadable counts as yes. */
+async function hasLiveConsumer(key: string) {
+  const lease = leaseKey(key);
+  const now = Date.now();
+  await safeSysWrite(
+    () => sysRedis.zRemRangeByScore(lease, '-inf', now),
+    'queues.mergeQueue lease prune',
+    { key }
+  );
+  const { value, degraded } = await safeSysRead(
+    () => sysRedis.zCount(lease, now, '+inf'),
+    0,
+    'queues.mergeQueue lease zCount',
+    { key }
+  );
+  return degraded || value > 0;
+}
+
+export async function checkoutQueue(key: string, isMerge = false, readOnly = false) {
+  // Taken before the merge check: mergeQueue sets its lock before reading leases, so a merge
+  // starting with this checkout either skips the key or is waited for (up to waitForMerge's cap).
+  const releaseLease = !isMerge && !readOnly ? await takeConsumerLease(key) : undefined;
+  if (!isMerge) await waitForMerge(key);
+  const result = await checkoutBuckets(key, isMerge, readOnly);
+  if (!releaseLease) return result;
+  // Nothing checked out, nothing to process twice. Released now because callers with an empty
+  // queue return without committing, and a lease held every minute would stop merges for good.
+  if (!result.content.length) await releaseLease();
+  return {
+    content: result.content,
+    commit: async () => {
+      try {
+        await result.commit();
+      } finally {
+        await releaseLease();
+      }
+    },
+  };
+}
+
+async function checkoutBuckets(key: string, isMerge: boolean, readOnly: boolean) {
   // Get the current buckets. If this read failed open we do NOT know the real
   // bucket list — abort the whole checkout: process nothing, write nothing,
   // delete nothing. Leaves the queue intact for the next run.
   const { buckets: currentBuckets, degraded: bucketsDegraded } = await getBucketNames(key);
   if (bucketsDegraded) {
-    return { content: [] as number[], commit: async () => {} };
+    return { content: [] as number[], commit: async () => undefined };
   }
 
   if (!readOnly) {
@@ -434,13 +506,15 @@ export async function mergeQueue(key: string) {
     { key }
   );
 
-  // Get the current queue
-  const queue = await checkoutQueue(key, true);
-  if (queue.content.length > 0) {
-    // If we have content, move it to the newest bucket
-    await addToQueue(key, queue.content);
+  // A consumer's buckets stay its own until it commits: merged now, they would be processed twice.
+  if (!(await hasLiveConsumer(key))) {
+    const queue = await checkoutQueue(key, true);
+    if (queue.content.length > 0) {
+      // If we have content, move it to the newest bucket
+      await addToQueue(key, queue.content);
+    }
+    await queue.commit();
   }
-  await queue.commit();
 
   // Remove the merging lock
   await safeSysWrite(
