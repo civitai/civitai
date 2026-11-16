@@ -123,6 +123,7 @@ const BASELINE: string[] = [
   'src/server/services/blocks/app-source-repo.service.ts',
   'src/server/services/blocks/app-spend-cap.service.ts',
   'src/server/services/blocks/block-buzz-cap.ts',
+  'src/server/services/blocks/block-output-unlock-lock.ts',
   'src/server/services/blocks/block-quote-grant.service.ts',
   'src/server/services/blocks/block-training-quote.service.ts',
   'src/server/services/blocks/custom-comfy-settle.service.ts',

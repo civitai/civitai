@@ -65,6 +65,7 @@ const BASELINE: Counts = {
   'src/server/services/blocks/app-source-repo.service.ts': 1,
   'src/server/services/blocks/app-spend-cap.service.ts': 4,
   'src/server/services/blocks/block-buzz-cap.ts': 2,
+  'src/server/services/blocks/block-output-unlock-lock.ts': 1,
   'src/server/services/blocks/block-quote-grant.service.ts': 1,
   'src/server/services/blocks/block-training-quote.service.ts': 1,
   'src/server/services/blocks/custom-comfy-settle.service.ts': 1,
