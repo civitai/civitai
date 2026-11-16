@@ -1317,7 +1317,7 @@ export const toggleMuteHandler = async ({
       type: 'error',
       message: (error as Error).message,
       details: { userId: id },
-    }).catch(() => undefined);
+    });
   }
 
   return updatedUser;

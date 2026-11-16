@@ -31,7 +31,7 @@ export function getDocStoreMaintenance(): DocStoreMaintenance {
           bypassRls: role.bypassRls,
         },
         'app-blocks'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

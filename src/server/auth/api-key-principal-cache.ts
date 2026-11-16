@@ -102,7 +102,7 @@ function report(error: unknown, operation: string) {
       error: error instanceof Error ? error.message : String(error),
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 export async function readCachedApiKey(hash: string, now: Date): Promise<ApiKeyCacheRead> {

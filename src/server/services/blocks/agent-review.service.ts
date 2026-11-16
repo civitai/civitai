@@ -337,7 +337,7 @@ export async function startAgentReview(
       sections: targeted ? requested : null,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return { reportId, agentName };
 }

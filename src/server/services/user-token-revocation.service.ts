@@ -33,7 +33,7 @@ export async function revokeUserTokens(
       userId,
       message: (error as Error).message,
       error: safeError(error),
-    }).catch(() => null);
+    });
   }
 
   for (const delay of retryDelaysMs) {
@@ -50,7 +50,7 @@ export async function revokeUserTokens(
         name: 'user-token-revocation-stamp-failed',
         userId,
         message: (error as Error).message,
-      }).catch(() => null)
+      })
     );
   }
   return confirmed;

@@ -22,7 +22,7 @@ export const searchIndexQueueDrainJob = createJob(
       message:
         `replayed ${result.replayed} id(s) across ${result.keys} key(s)` +
         (result.reparked > 0 ? `, ${result.reparked} re-parked (sysRedis still degraded)` : ''),
-    }).catch(() => undefined);
+    });
 
     return result;
   },

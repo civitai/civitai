@@ -134,7 +134,7 @@ export default HeaderTokenSecuredEndpoint(
           asserted_actor: input.actorUserId,
           auditRecorded,
         },
-      }).catch(() => null);
+      });
     }
 
     return res.status(200).json(

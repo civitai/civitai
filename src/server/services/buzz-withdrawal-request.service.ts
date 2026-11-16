@@ -696,7 +696,7 @@ export const updateBuzzWithdrawalRequest = async ({
         // escapes to Promise.all and the log never runs).
         return await processRequest(req);
       } catch (e) {
-        await logToAxiom({
+        logToAxiom({
           type: 'update-buzz-withdrawal-request-error',
           message: 'Failed to update withdrawal request',
           data: {

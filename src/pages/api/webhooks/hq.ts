@@ -19,7 +19,7 @@ export const config = {
 const DEDUPE_TTL_SECONDS = 3 * 24 * 60 * 60;
 
 const log = (data: MixedObject) =>
-  logToAxiom({ name: 'hq-webhook', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'hq-webhook', ...data }, 'webhooks');
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   instrumentApiResponse(req, res);

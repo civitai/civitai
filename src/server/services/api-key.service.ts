@@ -133,7 +133,7 @@ export async function setApiKeyBuzzLimit({
       type: 'oauth.bust-cache.failed',
       message: `bust-cache failed for apiKey ${updated.id} user ${updated.userId}`,
       error: safeError(err),
-    }).catch(() => {});
+    });
   }
 
   return updated;
@@ -183,7 +183,7 @@ export async function mintApiKey(
         name: logName,
         userId: args.userId,
         error: safeError(error),
-      }).catch(() => null)
+      })
     );
     throw refusal;
   }
@@ -310,7 +310,7 @@ export async function forgetGenerationToken(userId: number) {
       name: 'expire-user-api-keys-generation-token',
       userId,
       message: (error as Error).message,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -357,7 +357,7 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
         type: 'oauth.delete-subject.failed',
         message: `delete-subject failed for apiKey ${id} user ${userId}`,
         error: safeError(err),
-      }).catch(() => {});
+      });
     });
   }
 

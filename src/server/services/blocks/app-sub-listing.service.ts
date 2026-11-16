@@ -167,7 +167,7 @@ export async function syncSubListingRatingFromDoc(args: {
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
       appBlockId: args.appBlockId,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -412,7 +412,7 @@ export async function readSharedItemForSubListing(
         name: 'app-sub-listing-shared-key-ambiguous',
         type: 'warning',
         appBlockId,
-      }).catch(() => null);
+      });
     }
     return item.kind === 'found'
       ? {
@@ -427,7 +427,7 @@ export async function readSharedItemForSubListing(
       name: 'app-sub-listing-shared-read-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new SubListingError(503, 'unavailable', 'Item storage is unavailable, retry later');
   }
 }
@@ -705,7 +705,7 @@ async function writeSubListing(
       parentListingId: parent.id,
       fromImageId: existing.imageId,
       toImageId: content.imageId,
-    }).catch(() => null);
+    });
     return { id: existing.id, status, pendingEdit: false, catalogAffected: true };
   }
   const written = await casUpdate({
@@ -1473,7 +1473,7 @@ export async function syncSubListingForSharedRow(
           message: err instanceof Error ? err.message : String(err),
           appBlockId: args.appBlockId,
           change: args.change,
-        }).catch(() => null);
+        });
       });
     await transitionActive({
       where,
@@ -1497,7 +1497,7 @@ export async function syncSubListingForSharedRow(
       message: err instanceof Error ? err.message : String(err),
       appBlockId: args.appBlockId,
       change: args.change,
-    }).catch(() => null);
+    });
   }
 }
 

@@ -103,7 +103,7 @@ export async function notifyPostFloorRaises(
         postId: post.id,
         errorName: error instanceof Error ? error.name : typeof error,
         errorCode: (error as { code?: unknown } | null | undefined)?.code,
-      }).catch(() => undefined);
+      });
     }
   }
 }

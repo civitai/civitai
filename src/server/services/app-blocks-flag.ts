@@ -1592,7 +1592,7 @@ function reportSilentStoreGate(user: SessionUser): void {
       message: 'store read scope resolved `none` for a logged-in viewer who holds a store flag',
       userId: user.id,
       heldFlags: [...held],
-    }).catch(() => null);
+    });
   } catch {
     /* never throw from telemetry — a detection net must not break the read path */
   }

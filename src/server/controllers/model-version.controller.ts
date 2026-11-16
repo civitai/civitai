@@ -531,7 +531,7 @@ export const upsertModelVersionHandler = async ({
         appliedUsageControl: input.usageControl ?? null,
         sessionTier: ctx.user.tier ?? null,
         subscriptionTier: gate.outcome === 'denied' ? await actorTier() : null,
-      }).catch(() => null);
+      });
     }
 
     if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
@@ -739,7 +739,7 @@ export const upsertModelVersionHandler = async ({
           sourceModelType: source?.modelType ?? null,
           baseModel: input.baseModel ?? null,
           sourceBaseModel: source?.baseModel ?? null,
-        }).catch(() => null);
+        });
         input.licensingSourceVersionId = null;
         licensingSourceCoercedReason = rejectedReason;
       }

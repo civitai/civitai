@@ -168,5 +168,5 @@ function logNotRecorded(modelId: number, error: unknown) {
     entityType: 'Model',
     entityId: modelId,
     error: error instanceof Error ? error.message : String(error),
-  }).catch(() => null);
+  });
 }

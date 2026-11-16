@@ -22,7 +22,7 @@ const logAuth = (req: NextApiRequest, outcome: string, extra?: Record<string, un
   logToAxiom(
     { name: 'auth-flow', step: 'callback', outcome, host: req.headers.host, ...extra },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 
 // GET /api/auth/callback — RECEIVE the hub's authorization-code redirect. A THIN Next wrapper over the package
 // bridge: verify `state` against the bridge cookie + exchange the code for a civ-token SESSION at the hub's

@@ -254,14 +254,14 @@ export const processUserContentRemovalQueue = async () => {
       await index.deleteDocuments({ filter });
     } catch (error) {
       console.error(`processUserContentRemovalQueue :: Error on ${indexName}:`, error);
-      await logToAxiom({
+      logToAxiom({
         name: 'process-user-content-removal-error',
         type: 'error',
         indexName,
         filter,
         userIds,
         error: error instanceof Error ? error.message : String(error),
-      }).catch();
+      });
     }
   };
 
@@ -269,12 +269,12 @@ export const processUserContentRemovalQueue = async () => {
     ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
   ]);
 
-  await logToAxiom({
+  logToAxiom({
     name: 'process-user-content-removal-summary',
     type: 'info',
     userCount: entries.length,
     userIds,
-  }).catch();
+  });
 
   console.log(
     `processUserContentRemovalQueue :: Completed batch removal for ${entries.length} users`

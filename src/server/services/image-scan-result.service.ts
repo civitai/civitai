@@ -125,7 +125,7 @@ export async function processImageScanWorkflow({
         retryCount,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
@@ -163,7 +163,7 @@ export async function processImageScanWorkflow({
         retryCount,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
@@ -232,7 +232,7 @@ export async function processImageScanWorkflow({
           status,
         },
         'webhooks'
-      ).catch(() => null);
+      );
       await refreshProfilePicturesForImagesLazy([imageId]);
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
@@ -263,7 +263,7 @@ export async function processImageScanWorkflow({
         retryCount,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
@@ -306,7 +306,7 @@ export async function processImageScanWorkflow({
         ingestion: outcome.ingestion,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook

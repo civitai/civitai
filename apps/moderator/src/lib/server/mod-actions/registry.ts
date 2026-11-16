@@ -94,7 +94,7 @@ const relabelBuildBatch: ModAction<z.infer<typeof relabelBuildBatchInput>> = {
         replica: dbRead,
         moderator: getModeratorDb(),
       },
-      (data) => void logToAxiom(data).catch(() => undefined)
+      (data) => void logToAxiom(data)
     ),
 };
 

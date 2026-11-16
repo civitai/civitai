@@ -298,7 +298,7 @@ export async function docStoreDependency<T>(read: Promise<T>): Promise<T> {
         message: err instanceof Error ? err.message : String(err),
       },
       'app-blocks'
-    ).catch(() => undefined);
+    );
     throw docStoreUnavailable();
   }
 }

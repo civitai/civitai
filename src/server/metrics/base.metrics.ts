@@ -189,7 +189,7 @@ async function syncRankTable(rankTable: string, primaryKey: string) {
       name: 'metric-rank-sync-failed',
       message: `Rank table ${rankTable} failed to sync; it keeps its previous rows`,
       details: { table: rankTable, error: (error as Error)?.message },
-    }).catch();
+    });
     throw error;
   }
 }

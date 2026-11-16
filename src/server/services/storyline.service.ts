@@ -258,7 +258,7 @@ async function trackStorylineModEdit({
       storylineId,
       activity,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -1410,7 +1410,7 @@ export async function deleteStoryline({
         name: 'storyline-delete',
         message: (error as Error)?.message,
         storylineId: id,
-      }).catch(() => undefined);
+      });
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
         message: STORYLINE_DELETE_REFUSALS.failed,
@@ -4031,7 +4031,7 @@ export async function recordStorylineBranchChoice({
       message: 'fork counts not written through after a choice; marked stale',
       chapterId: fromChapterId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     await bustFetchThroughCache(key).catch(() => undefined);
   }
 }
@@ -4584,7 +4584,7 @@ export async function getStorylinesInfinite({
         type: 'warning',
         message: 'continue prices unavailable for a feed page',
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
       return new Map<number, { max: number }>();
     }),
   ]);

@@ -204,8 +204,6 @@ async function objectExistsInUploads(url: string): Promise<boolean | null> {
       message: 'cover image existence check could not consult the uploads bucket',
       reason: 'client-unavailable',
       error: safeError(e),
-    }).catch(() => {
-      // swallow — best-effort logging must never break the save it is observing
     });
     return null;
   }
@@ -218,8 +216,6 @@ function logExistenceUnknown({ userId }: { userId: number }) {
     message: 'cover image created without a verified object — existence check was indeterminate',
     reason: 'proceeded-unverified',
     userId,
-  }).catch(() => {
-    // swallow — best-effort logging must never break the save it is observing
   });
 }
 

@@ -3051,7 +3051,7 @@ function connectionUnavailable(err: unknown): unknown {
       message: cause,
     },
     'app-blocks'
-  ).catch(() => undefined);
+  );
   return new DocStoreError('service_unavailable', `storage is temporarily unavailable: ${cause}`, {
     retryAfter: 1,
   });
@@ -3073,7 +3073,7 @@ function connectConfigFault(err: unknown): unknown {
       message: err instanceof Error ? err.message : String(err),
     },
     'app-blocks'
-  ).catch(() => undefined);
+  );
   return err;
 }
 
