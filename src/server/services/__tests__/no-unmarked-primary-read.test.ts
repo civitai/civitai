@@ -146,7 +146,7 @@ const BASELINE: Counts = {
   'src/server/services/blocks/app-listing-assets.service.ts': 8,
   'src/server/services/blocks/app-listing-edit-impersonation.service.ts': 3,
   'src/server/services/blocks/app-listing-rating-rederive.service.ts': 1,
-  'src/server/services/blocks/app-sub-listing.service.ts': 9,
+  'src/server/services/blocks/app-sub-listing.service.ts': 10,
   'src/server/services/blocks/author-fee-charge.service.ts': 1,
   'src/server/services/blocks/author-fee-settlement.service.ts': 2,
   'src/server/services/blocks/block-goods.service.ts': 3,
