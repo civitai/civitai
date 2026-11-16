@@ -31,12 +31,14 @@ const recent = (n: number) => Array.from({ length: n }, (_, i) => Date.now() - i
 const routers = [
   {
     name: 'semanticChallengeSearch',
-    router: semanticChallengeSearchRouter,
+    search: (ctx: never) =>
+      createCallerFactory(semanticChallengeSearchRouter)(ctx).search({ query: 'neon' }),
     features: { challengePlatform: true, semanticChallengeSearch: true },
   },
   {
     name: 'semanticCrucibleSearch',
-    router: semanticCrucibleSearchRouter,
+    search: (ctx: never) =>
+      createCallerFactory(semanticCrucibleSearchRouter)(ctx).search({ query: 'neon' }),
     features: { crucible: true, semanticCrucibleSearch: true },
   },
 ];
@@ -45,9 +47,9 @@ beforeEach(() => {
   redisMock.redis.packed.hGet.mockReset().mockResolvedValue([]);
 });
 
-describe.each(routers)('$name.search rate limit', ({ router, features }) => {
+describe.each(routers)('$name.search rate limit', ({ search, features }) => {
   const call = (user?: { id: number }) =>
-    createCallerFactory(router)({
+    search({
       acceptableOrigin: true,
       tokenScope: TokenScope.Full,
       user: user && { ...user, isModerator: false },
@@ -57,7 +59,7 @@ describe.each(routers)('$name.search rate limit', ({ router, features }) => {
       cache: {},
       req: { headers: {}, socket: { remoteAddress: '127.0.0.1' } },
       res: { setHeader: () => undefined },
-    } as never).search({ query: 'neon' });
+    } as never);
 
   // Signed-out visitors share an IP bucket, so they get the lower limit.
   it.each([
