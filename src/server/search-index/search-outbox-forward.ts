@@ -47,6 +47,6 @@ export async function forwardSearchUpdate({
       name: 'search-outbox-forward',
       message: (error as Error).message,
       details: { entityType, reason, count: items.length },
-    }).catch(() => undefined);
+    });
   }
 }

@@ -193,7 +193,7 @@ export async function sendIngestionSignal({
           source: log.source,
         },
         'webhooks'
-      ).catch(() => null)
+      )
     );
 }
 
@@ -222,7 +222,7 @@ export async function logPerceptualHashMatch({
         source: log.source,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return false;
   });
   if (!pHashBlocked) return;
@@ -238,7 +238,7 @@ export async function logPerceptualHashMatch({
       source: log.source,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 }
 
 /**
@@ -791,7 +791,7 @@ export async function resolveScanOutcome({
         name: 'scan-judge-floor',
         imageId: image.id,
         message: (error as Error).message,
-      }).catch(() => null);
+      });
       await dbWrite.$executeRaw`
         UPDATE "Image" SET ingestion = ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
         WHERE id = ${image.id}
@@ -940,7 +940,7 @@ async function auditScanResults(args: {
       routed,
       adultTag: adultTags.length > 0,
       at,
-    }).catch(() => null);
+    });
     if (unrated && !routed) {
       const arms = [
         ...(resourcePrecondition ? ['resource'] : []),
@@ -953,7 +953,7 @@ async function auditScanResults(args: {
           imageId: args.imageId,
           arm,
           at,
-        }).catch(() => null);
+        });
     }
   }
 
@@ -999,7 +999,7 @@ async function auditScanResults(args: {
             matchedWord: word,
           })),
         },
-      }).catch(() => null);
+      });
   }
 
   return {

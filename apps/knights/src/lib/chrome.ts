@@ -53,6 +53,23 @@ export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
 }
 
 /**
+ * Votes to add on top of a page's daily: those still in flight, plus those that landed while that same daily object is on
+ * screen. The refreshed daily holds a landed vote, so keying it to the object means it is never counted twice in the frame
+ * where the new data replaces the old (which rang the Watch bell a vote early).
+ */
+export type PendingVotes = { count: number; landed: number; landedOn: object | null };
+
+export const pendingVotes = (sent: PendingVotes, daily: object | null | undefined): number =>
+  sent.count + (daily != null && sent.landedOn === daily ? sent.landed : 0);
+
+/** Moves one vote from in flight to landed on `daily`, in one step, so the total does not dip. */
+export function landVote(sent: PendingVotes, daily: object | null | undefined): void {
+  sent.landed = daily != null && sent.landedOn === daily ? sent.landed + 1 : 1;
+  sent.landedOn = daily ?? null;
+  sent.count = Math.max(0, sent.count - 1);
+}
+
+/**
  * The daily the header draws: a page's own daily (play, home) with the votes still in flight on top, the same reading the
  * rail gets, or else the layout's copy as it came.
  */

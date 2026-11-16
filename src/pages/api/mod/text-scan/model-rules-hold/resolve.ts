@@ -43,7 +43,7 @@ export default defineModeratorEndpoint('textScan.resolveModelRulesHold', {
         decision: input.decision,
         outcome,
         moderatorId: ctx.actor.id,
-      }).catch(() => null);
+      });
     const actor = { id: ctx.actor.id, isModerator: ctx.actor.isModerator };
 
     if (input.holds) {
@@ -113,7 +113,7 @@ export default defineModeratorEndpoint('textScan.resolveModelRulesHold', {
           holdId: input.holdId,
           errorName: error instanceof Error ? error.name : typeof error,
           errorCode: (error as { code?: unknown } | null | undefined)?.code,
-        }).catch(() => null);
+        });
       throw error;
     }
     log({ holdId: input.holdId, ...result }, 'ok');

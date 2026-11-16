@@ -16,6 +16,8 @@ import { env } from '~/env/client';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useSpotlight } from '~/hooks/useSpotlight';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -33,7 +35,14 @@ import {
   parseMilestoneShareToken,
 } from '~/shared/constants/creator-journey.constants';
 
-export function ProfileLayout2({ children }: { children: React.ReactNode }) {
+export function ProfileLayout2({
+  children,
+  deferredSsr,
+}: {
+  children: React.ReactNode;
+  /** The `ssrSignedInSkipPrefetchUser` `skip` arm, from `/user/[username]`'s page props. */
+  deferredSsr?: boolean;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const { username } = router.query as { username: string };
@@ -51,6 +60,11 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   );
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.some((x) => x.id === user?.id);
+  // `ssrSignedInSkipPrefetchUser`: getServerSideProps prefetched what the `<head>`, the NotFound
+  // and the blocked-by-them panel read, but not the creator card, so the server renders those with
+  // a loader in place of the sidebar, header and sections. The hydrating render matches it; the
+  // rest then renders as it does after a client-side navigation.
+  const deferredShell = useSsrDeferredShell(deferredSsr);
 
   const stats = user?.stats;
 
@@ -174,7 +188,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
         loading={isInitialLoading}
         notFound={!user || !user.username}
         left={
-          blockedByThem ? null : (
+          blockedByThem || deferredShell ? null : (
             <div className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6">
               <ProfileSidebar username={username} />
             </div>
@@ -190,6 +204,8 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
             <div className="mx-auto flex h-full items-center">
               <NoContent message="Unable to display content because you have blocked this user" />
             </div>
+          ) : deferredShell ? (
+            <PageLoader />
           ) : (
             <>
               <ProfileHeader username={username} />
@@ -297,6 +313,9 @@ function BlockedByThemPanel({ user }: { user: Partial<UserWithCosmetics> & { id:
   );
 }
 
+// `page` is the page with its props; only `/user/[username]` ever sets `deferredSsr`.
 export const UserProfileLayout = (page: React.ReactElement) => (
-  <ProfileLayout2>{page}</ProfileLayout2>
+  <ProfileLayout2 deferredSsr={(page.props as { deferredSsr?: boolean }).deferredSsr}>
+    {page}
+  </ProfileLayout2>
 );

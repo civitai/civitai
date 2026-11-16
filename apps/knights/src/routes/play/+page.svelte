@@ -5,6 +5,7 @@
   import type { SubmitFunction } from '@sveltejs/kit';
   import BlockReasons from './BlockReasons.svelte';
   import ApprenticeMeter from './ApprenticeMeter.svelte';
+  import RailSheet from './RailSheet.svelte';
   import CheckpointRecap from './CheckpointRecap.svelte';
   import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
@@ -15,9 +16,8 @@
   import Countdown from '$lib/Countdown.svelte';
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
-  import WatchHairline from '$lib/WatchHairline.svelte';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
@@ -87,6 +87,8 @@
   onDestroy(() => {
     alive = false;
     inFlight.count = 0;
+    inFlight.landed = 0;
+    inFlight.landedOn = null;
   });
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
@@ -148,6 +150,8 @@
   onMount(() => {
     void tick().then(() => (soundMuted = sound.muted));
   });
+  let railSheetOpen = $state(false);
+
   function toggleSound() {
     soundMuted = !soundMuted;
     sound.setMuted(soundMuted);
@@ -437,11 +441,12 @@
           refilling = false;
         }
       },
-      // The page's own data (status, rewards, level notices) is read again once the vote has landed.
+      // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
+      // against the data on screen until the refreshed data, which holds it, replaces it.
       onSettled: async () => {
+        if (counted && alive) landVote(inFlight, data.daily);
+        counted = false;
         await invalidate('app:play').catch(() => {});
-        // The page's data now holds the vote, so it stops being counted on top.
-        uncount();
       },
     });
   }
@@ -493,7 +498,7 @@
     void post(input.action, input.formData, key, isVote);
   };
 
-  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, inFlight.count)) : null);
+  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, pendingVotes(inFlight, data.daily))) : null);
   let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
@@ -561,6 +566,17 @@
   </button>
 {/snippet}
 
+{#snippet questionTools()}
+  <div class="qtools">
+    {#if !yesNo}
+      <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>
+        <Icon name="book-open" size={16} />Guide
+      </button>
+    {/if}
+    {@render soundToggle()}
+  </div>
+{/snippet}
+
 {#snippet levelToast(floating: boolean)}
   {#if levelNotice && levelToastShowing}
     <LevelToast
@@ -594,14 +610,14 @@
       answerWindow={data.apprenticeMeter.window}
     />
   {:else if strip && data.mode === 'queue'}
-    <WatchHairline label={strip.label} value={strip.value} max={strip.max} />
     <WatchMeta
       value={strip.value}
       max={strip.max}
       done={strip.done}
-      streak={withVotesSent(data.daily, inFlight.count).streak}
+      streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
+      onmore={() => (railSheetOpen = true)}
     />
   {:else if data.mode === 'apprentice'}
     <ApprenticeMeter
@@ -611,6 +627,8 @@
       bar={data.apprentice.progress.bar}
       knightLevel={data.apprentice.progress.knightLevel}
       answerWindow={data.apprentice.progress.window}
+      {hearts}
+      maxHearts={data.status.maxSmites}
     />
   {/if}
 
@@ -640,10 +658,13 @@
   {#if data.mode === 'apprentice'}
     {#if data.apprentice.kind === 'question'}
       <div class="column">
-        <p class="question" title={data.apprentice.prompt}>
-          <span class="eyebrow">Question ·</span>
-          <span class="text">{data.apprentice.prompt}</span>
-        </p>
+        <div class="qrow">
+          <p class="question" title={data.apprentice.prompt}>
+            <span class="eyebrow">Question</span>
+            <span class="text">{data.apprentice.prompt}</span>
+          </p>
+          {@render questionTools()}
+        </div>
         <div class="stagewrap">
           {#key `${data.apprentice.item.kind}:${data.apprentice.item.referenceId}`}
             <ImageStage
@@ -666,9 +687,9 @@
             {/each}
           </form>
           {#if !yesNo}
-            <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
+            <span class="rowtool"><button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button></span>
           {/if}
-          {@render soundToggle()}
+          <span class="rowtool">{@render soundToggle()}</span>
         </div>
         {#if formMessage}
           <p class="notice flat" role="alert">{formMessage}</p>
@@ -712,18 +733,23 @@
     </div>
   {:else if view}
     <div class="column">
+      <div class="qrow">
       <p class="question" title={view.question.prompt}>
-        <span class="eyebrow">Question ·</span>
-        {#if view.category}
-          <!-- A new chip (and its one-time glow) only when the category changes; the text is part of the question for screen readers. -->
-          {#key view.category.heading}
-            <span class="chip" class:glow={view.banner !== null}>
-              <span class="vh">Category: </span>{view.category.heading}
-            </span>
-          {/key}
-        {/if}
+        <span class="eyebrow">
+          Question
+          {#if view.category}
+            <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
+            {#key view.category.heading}
+              <span class="category" class:glow={view.banner !== null}>
+                <span aria-hidden="true">·</span><span class="vh">Category: </span>{view.category.heading}
+              </span>
+            {/key}
+          {/if}
+        </span>
         <span class="text">{view.question.prompt}</span>
       </p>
+      {@render questionTools()}
+      </div>
       <span class="vh" role="status" aria-live="polite"
         >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
       >
@@ -753,14 +779,14 @@
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
           <input type="hidden" name="item" value={view.item.id} />
-          <button type="submit" class="quiet" disabled={submitting}>
-            <Icon name="skip-forward" size={14} />Skip<span class="space">&nbsp;·&nbsp;Space</span>
+          <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
+            <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
         {#if !yesNo}
-          <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button>
+          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button></span>
         {/if}
-        {@render soundToggle()}
+        <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
         {/if}
@@ -775,11 +801,21 @@
   {/if}
   </div>
   {#if data.mode === 'queue' && !data.apprenticeMeter}
-    <PlayRail status={data.status} daily={withVotesSent(data.daily, inFlight.count)} rail={data.rail} ladder={data.ladder} />
+    <PlayRail status={data.status} daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily))} rail={data.rail} ladder={data.ladder} />
   {/if}
   </div>
   {/if}
 </div>
+
+{#if railSheetOpen && data.mode === 'queue' && !data.apprenticeMeter}
+  <RailSheet
+    status={data.status}
+    daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily))}
+    rail={data.rail}
+    ladder={data.ladder}
+    onclose={() => (railSheetOpen = false)}
+  />
+{/if}
 
 {#if guideOpen}
   <GuideDialog
@@ -918,20 +954,45 @@
     text-align: center;
   }
 
+  /* Phones carry the guide and sound toggle beside the question, so the answers keep one row. */
+  .qrow {
+    display: flex;
+    flex: none;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .qrow .question {
+    flex: 1 1 0;
+  }
+  .qtools {
+    display: none;
+  }
+  .rowtool {
+    display: contents;
+  }
+
+  /* The eyebrow (and category) sits on its own line so the question keeps the full width. */
   .question {
     display: flex;
     flex: none;
-    align-items: baseline;
-    gap: 10px;
+    flex-direction: column;
+    gap: 6px;
     min-width: 0;
     margin: 0;
   }
   .eyebrow {
-    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 8px;
     color: var(--io-gold);
-    font: 600 11px/1 var(--io-font-ui);
+    font: 600 11px/1.4 var(--io-font-ui);
     letter-spacing: 2px;
     text-transform: uppercase;
+  }
+  .category {
+    display: inline-flex;
+    gap: 8px;
+    color: var(--io-parchment-muted);
   }
   .text {
     min-width: 0;
@@ -940,28 +1001,20 @@
     font: 700 16px/1.25 var(--io-font-display);
     /* Wraps in full: phones can't hover for the title. */
   }
-  .chip {
-    flex: none;
-    padding: 3px 8px;
-    border: 1px solid color-mix(in srgb, var(--io-gold) 45%, transparent);
-    border-radius: 999px;
-    color: var(--io-gold);
-    font: 600 11px/1 var(--io-font-ui);
-    letter-spacing: 2px;
-    text-transform: uppercase;
+  .category.glow {
+    animation: category-glow 1.8s ease-out 1;
   }
-  .chip.glow {
-    animation: chip-glow 1.8s ease-out 1;
-  }
-  @keyframes chip-glow {
+  @keyframes category-glow {
     0% {
-      box-shadow: 0 0 0 0 color-mix(in srgb, var(--io-gold) 70%, transparent);
+      color: var(--io-gold);
+      text-shadow: 0 0 0 transparent;
     }
     40% {
-      box-shadow: 0 0 12px 3px color-mix(in srgb, var(--io-gold) 55%, transparent);
+      color: var(--io-gold);
+      text-shadow: 0 0 10px color-mix(in srgb, var(--io-gold) 70%, transparent);
     }
     100% {
-      box-shadow: 0 0 0 0 transparent;
+      text-shadow: 0 0 0 transparent;
     }
   }
   .vh {
@@ -994,10 +1047,10 @@
     flex: 1 1 0;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
     height: 40px;
-    padding: 0 10px;
+    padding: 0 8px;
     border: 1px solid var(--io-gold-muted);
     border-radius: 6px;
     background: var(--io-bg);
@@ -1028,7 +1081,7 @@
       0 0 14px rgb(224 138 130 / 0.35);
   }
   @media (prefers-reduced-motion: reduce) {
-    .chip.glow {
+    .category.glow {
       animation: none;
     }
     .pill,
@@ -1066,6 +1119,10 @@
   }
   .pill :global(svg) {
     flex: none;
+  }
+  /* A label never wraps: at mid widths the key chip gives way first (see below). */
+  .level {
+    white-space: nowrap;
   }
   .key {
     display: grid;
@@ -1138,7 +1195,14 @@
     opacity: 0.4;
   }
 
-  /* Touch and narrow screens: no key chips, 44px targets, the two quiet links on their own row. */
+  /* Up to 80rem the six pills share the row with Skip, the guide, sound (and from 64rem the rail): the chips go so every
+     label fits. */
+  @media (max-width: 80rem) {
+    .controls:not(.yesno) .key {
+      display: none;
+    }
+  }
+  /* Touch and narrow screens: no key chips. */
   @media (max-width: 40rem), (hover: none) {
     .key {
       display: none;
@@ -1160,17 +1224,45 @@
     .text {
       font-size: 14px;
     }
+    /* Pinned beside the eyebrow line only, so the question text keeps the full width below it. */
+    .qrow {
+      position: relative;
+    }
+    .qtools {
+      position: absolute;
+      top: -10px;
+      right: 0;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .qrow .eyebrow {
+      padding-right: 8rem;
+    }
+    .qtools .quiet {
+      gap: 6px;
+      min-width: 0;
+      min-height: 36px;
+      font-size: 13px;
+    }
+    .qtools .quiet.sound {
+      justify-content: center;
+      min-width: 36px;
+    }
+    .controls .rowtool {
+      display: none;
+    }
     .controls {
-      flex-wrap: wrap;
-      gap: 0 16px;
+      gap: 6px;
     }
     .answers {
-      flex-basis: 100%;
+      gap: 6px;
     }
     .pill {
-      height: 44px;
-      padding: 0 4px;
-      font-size: 13px;
+      min-height: 0;
+      height: 40px;
+      padding: 0 2px;
+      font-size: 12px;
     }
     .pill.blocked .level {
       display: none;
@@ -1183,22 +1275,38 @@
     }
     .skip {
       display: block;
+      flex: none;
     }
     .quiet {
       display: flex;
       align-items: center;
-      min-width: 56px;
-      min-height: 44px;
     }
-    .quiet.guide,
-    .controls.yesno .quiet.sound {
-      margin-left: auto;
+    /* Skip ends the answer row as a quiet bordered button: an icon beside the ratings, labelled beside yes/no. */
+    .skip .quiet {
+      justify-content: center;
+      min-width: 44px;
+      min-height: 0;
+      height: 40px;
+      padding: 0 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .skiplabel {
+      display: none;
+    }
+    .controls.yesno .skiplabel {
+      display: inline;
     }
     .space {
       display: none;
     }
     .panel {
       padding: 0.5rem 1rem 1.5rem;
+    }
+  }
+  @media (max-width: 22rem) {
+    .pill {
+      font-size: 11px;
     }
   }
 </style>

@@ -77,7 +77,7 @@ export const createNotification = async (
         cause: error.cause,
       },
       'notifications'
-    ).catch();
+    );
     if (throwOnError) throw e;
   }
 };
@@ -152,7 +152,7 @@ export const markNotificationsRead = async ({
         message: error.message,
       },
       'notifications'
-    ).catch();
+    );
   }
 };
 

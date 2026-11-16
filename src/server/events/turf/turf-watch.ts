@@ -52,7 +52,7 @@ export async function markTurfWatched(
       event: event.name,
       message: 'turf interest set at its cap, images refused',
       refused: ids.length - marked.length,
-    }).catch(() => undefined);
+    });
   if (!marked.length) return 0;
   const lapse = now + TURF_WATCH_TTL_MS;
   await Promise.all([
@@ -108,14 +108,10 @@ export async function pushTurfCounts(
       failed += results.filter((r) => r.status === 'rejected').length;
     }
     if (failed)
-      void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'warning', name: 'event-turf-watch', event, failed });
     return watched.length - failed;
   } catch (error) {
-    void logToAxiom({ type: 'error', name: 'event-turf-watch', fn: 'push', event, error }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'event-turf-watch', fn: 'push', event, error });
     return 0;
   }
 }

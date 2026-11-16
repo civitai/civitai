@@ -107,7 +107,7 @@ const warnedMultiCap = new Set<string>();
 let lastGoodConfig: RewardConfig | null = null;
 
 const warn = (message: string, data: MixedObject) => {
-  logToAxiom({ name: 'reward-config', type: 'warning', message, ...data }).catch(() => null);
+  logToAxiom({ name: 'reward-config', type: 'warning', message, ...data });
 };
 
 /**
@@ -422,7 +422,7 @@ export async function setRewardConfig(
     userId,
     previous: JSON.stringify(previous ?? null),
     value: JSON.stringify(written.value),
-  }).catch(() => null);
+  });
 
   invalidateRewardConfigCache();
   // Seed the fallback from what was just written. Clearing it and leaving it null

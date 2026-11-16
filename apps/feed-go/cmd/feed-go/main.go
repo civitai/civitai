@@ -1,6 +1,6 @@
 // Command feed-go serves `image.getImagesAsPostsInfinite` for the request shapes it has ported and
 // proxies everything else to the Node app, and shadow-compares that procedure and the REST
-// `GET /api/v1/images`. See apps/feed-go/DESIGN.md.
+// `GET /api/v1/images`, `GET /api/v1/models` and `GET /api/v1/models/[id]`. See apps/feed-go/DESIGN.md.
 package main
 
 import (
@@ -21,6 +21,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
+	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -29,6 +30,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
+	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
 func main() {
@@ -57,12 +59,15 @@ func redisClient(rawURL string, cluster bool) (redis.UniversalClient, error) {
 
 // missCompute is how hydration answers the misses of the caches Node fills on read
 // (hydrate.MissCompute): nil with FEED_GO_COMPUTE_MISSES off (those misses fall back). primary is the
-// primary database, used (and opened) only with write-back on.
-func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int)) *hydrate.MissCompute {
+// primary database, used (and opened) only with write-back on. The tag-ids lookup's browsing gate
+// reads blocked and addons, the blocked-tag list and addons the procedures read.
+func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache, result string, n int),
+	blocked *feed.BlockedTags, addons func(context.Context) []browsing.Addon) *hydrate.MissCompute {
 	if !cfg.ComputeMisses {
 		return nil
 	}
-	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe}
+	c := &hydrate.MissCompute{WriteBack: cfg.CacheWriteBack, FrameNegative: cfg.FrameCacheNegative, Observe: observe,
+		TagGate: feed.ImageTagGate(blocked, addons)}
 	if cfg.CacheWriteBack {
 		c.Primary = primary
 	}
@@ -127,12 +132,20 @@ func run(log *slog.Logger) error {
 		defer primaryPool.Close()
 		primary = primaryPool
 	}
-	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss)
+	// One blocked-tag list (one memo, as in Node) and one addon source for every reader.
+	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
+	addons := &feed.AddonSource{Sys: sys}
+	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
 		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative)
-	failOpen := &server.FailOpenReporter{Log: log, Counter: metrics.RevocationFailOpen}
+	degraded := &server.RevocationDegradedReporter{Log: log, Counter: metrics.RevocationDegraded}
+	// SESSION_REVOCATION_CACHE=off|0|false turns the marker record off (the plain fail-open), as in the app.
+	var markers *auth.MarkerCache
+	if cfg.RevocationMarkerCache {
+		markers = auth.NewMarkerCache(auth.MarkerCacheMaxEntries)
+	}
 	verifier := &auth.Verifier{
 		Issuer: cfg.AuthIssuer, JWKSURL: cfg.AuthJWKSURI, RequireIat0: cfg.AuthRequireIat0,
 		RefreshInterval: cfg.JWKSRefresh,
@@ -156,7 +169,7 @@ func run(log *slog.Logger) error {
 	go verifier.Run(ctx)
 	resolver := &auth.Resolver{
 		Verifier:            verifier,
-		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnFailOpen: failOpen.Report},
+		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
 		CookieNames:         cfg.CookieNames(),
 		ModerationAccountID: cfg.ModerationAccountID,
@@ -166,7 +179,7 @@ func run(log *slog.Logger) error {
 		Cache:    &feed.QueryCache{Redis: cache, Prefix: cfg.CacheKeyPrefix, Enabled: cfg.ImageQueryCache},
 		Hydrator: sources,
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
-		Addons:   &feed.AddonSource{Sys: sys},
+		Addons:   addons,
 		Config: feed.Config{
 			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
@@ -199,7 +212,6 @@ func run(log *slog.Logger) error {
 	}
 	// The image.getInfinite shadow shares all of the gallery's dependencies, plus the post→version /
 	// version→model caches and the username lookup the REST port reads, and the blocked tag list.
-	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	infinite := &feed.InfiniteDeps{
 		Deps:    deps,
 		Sources: sources,
@@ -221,21 +233,47 @@ func run(log *slog.Logger) error {
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
 	}
+	// The REST /api/v1/models shadows read the replica and the caches (read-only) the same way.
+	mc := config.LoadV1Models()
+	v1Models := &server.V1ModelsDeps{
+		Deps: &v1models.Deps{
+			DB:      pool,
+			Packed:  packed,
+			Sources: sources,
+			Gallery: deps.Gallery,
+			Addons:  deps.Addons.Addons,
+			Config: v1models.Config{
+				ImageLocation:        cfg.ImageLocation,
+				BaseURL:              mc.BaseURL,
+				CoverageNext:         cfg.CoverageNext,
+				BaseModelFeedMetrics: cfg.BaseModelFeedMetrics,
+				ComputeMisses:        cfg.ComputeMisses,
+				ResponseCacheTTL:     mc.ResponseCacheTTL,
+				Production:           true,
+			},
+		},
+		Users: sources,
+	}
 	srv := &server.Server{
 		Resolver:    resolver,
 		Deps:        deps,
 		Models:      models,
 		Hosts:       cfg.Hosts,
 		RegionRules: cfg.RegionRules,
-		Metrics:     metrics,
-		Log:         log,
-		ShadowQueue: make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
+		RegionBlockRules: cfg.RegionBlockRules,
+		Metrics:          metrics,
+		Log:              log,
+		ShadowQueue:      make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		// The Go-first probes get as many slots as the comparisons, in their own queue.
 		ProbeQueue:     make(chan struct{}, max(cfg.ShadowWorkers, 1)),
 		AllowedOrigins: cfg.AllowedOriginHosts,
 		V1:             v1,
 		Infinite:       infinite,
+		V1Models:       v1Models,
 		RequestBudget:  cfg.RequestBudget,
+		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
+		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
 	}
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)

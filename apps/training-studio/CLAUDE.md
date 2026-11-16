@@ -7,9 +7,13 @@ for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actio
 The Training Studio is the LoRA training UI — a slicker replacement for the in-app trainer
 (`src/components/Training/**`), built as a **separate app** that can be extracted later. Its training
 **data** comes from the orchestrator, not the repo DB. It follows the moderator app's spoke shape:
-`@civitai/auth` (session gate), `@civitai/brand` (favicon), plus `@civitai/db` + `@civitai/redis` used
-for ONE thing — minting the user's short-lived orchestrator token in-app (a `System` `ApiKey` row +
-a redis get-or-mint cache; see `src/lib/server/{db,redis,orchestrator-token}.ts`). No `@civitai/clickhouse`.
+`@civitai/auth` (session gate), `@civitai/brand` (favicon), plus `@civitai/db` + `@civitai/redis`. The
+redis shim (`src/lib/server/redis.ts`) builds only a sys client, and these key families are on it: the
+session revocation check (`auth.ts`), the orchestrator token get-or-mint cache (`orchestrator-token.ts`,
+`GENERATION.TOKENS` and `GENERATION.ORCHESTRATOR_TOKENS`), the from-price cache (`pricing.ts`,
+`TRAINING.STUDIO_FROM_PRICES`), and the dataset-rating cache and daily allowances (`dataset-rating.ts`,
+`TRAINING.STUDIO_DATASET_RATING*`). The caches among them predate the store rule and are not a pattern:
+new cached data goes on a cache client (`createCacheRedis`), never the sys client. No `@civitai/clickhouse`.
 
 ## The flow (build to this)
 

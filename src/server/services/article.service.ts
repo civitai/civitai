@@ -205,7 +205,7 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
         cause: error.cause,
       },
       'article-stats'
-    ).catch();
+    );
     return {};
   }
 };
@@ -1298,7 +1298,7 @@ export const upsertArticle = async ({
             cause: error.cause,
             stack: error.stack,
             articleId: result.id,
-          }).catch();
+          });
         }
       }
 
@@ -1323,7 +1323,7 @@ export const upsertArticle = async ({
             name: 'article-text-moderation',
             message: (e as Error).message,
             articleId: result.id,
-          }).catch();
+          });
         });
       }
 
@@ -1863,7 +1863,7 @@ export async function applyArticleContentChange({
           cause: error.cause,
           stack: error.stack,
           articleId: id,
-        }).catch();
+        });
       }
     }
   }
@@ -1922,7 +1922,7 @@ export async function applyArticleContentChange({
           name: 'article-text-moderation',
           message: (e as Error).message,
           articleId: id,
-        }).catch();
+        });
         return null;
       });
       // The orchestrator client sets no timeout, so a hung submit would hold the save open.
@@ -3219,7 +3219,7 @@ export async function recomputeArticleIngestionInTx(
       ? articleTextVerdictMatch(textModeration, current)
       : 'current';
   if (verdictMatch === 'legacy')
-    logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' }).catch();
+    logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' });
   // A verdict for other text neither clears nor blocks it. One for part of this text blocks on a
   // hit in the part it judged, but cannot clear the rest.
   const verdictForThisText = verdictMatch === 'current' || verdictMatch === 'legacy';
@@ -3228,7 +3228,7 @@ export async function recomputeArticleIngestionInTx(
     (verdictForThisText || verdictMatch === 'partial') &&
     textModeration?.blocked === true;
   if (verdictMatch === 'partial' && !textBlocked)
-    logToAxiom({ type: 'warning', name: 'article-verdict-input-cut', articleId }).catch();
+    logToAxiom({ type: 'warning', name: 'article-verdict-input-cut', articleId });
   const textError =
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
   const textDone = !hasText || (textSucceeded && verdictForThisText);
@@ -3616,7 +3616,7 @@ export async function rescanArticle({
         name: 'article-rescan-text-moderation',
         message: (e as Error).message,
         articleId: id,
-      }).catch();
+      });
     });
   }
 
@@ -3644,7 +3644,7 @@ export async function rescanArticle({
     articleId: id,
     imageCount: connections.length,
     isModerator,
-  }).catch();
+  });
 }
 
 /**
@@ -3742,7 +3742,7 @@ export async function rescanArticleImage({
     articleId,
     imageId,
     isModerator,
-  }).catch();
+  });
 }
 
 /** The seeded `civitai official` tag, or undefined until the row exists. */

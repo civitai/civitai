@@ -1,5 +1,5 @@
-import { env } from '$env/dynamic/private';
 import { playerBadge } from '$lib/player-badge';
+import { civitaiSiteUrl } from '$lib/server/site-url';
 import { imageUrl } from '$lib/server/image-url';
 import { CONVERSION } from '$lib/server/conversion/config';
 import { shopEnabled } from '$lib/server/conversion/runtime';
@@ -63,7 +63,7 @@ async function feedbackOpen(user: NonNullable<App.Locals['user']>): Promise<bool
 export const load: LayoutServerLoad = async ({ locals, depends }) => {
   depends('app:recap');
   depends('knights:header');
-  const civitaiUrl = (env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/+$/, '');
+  const civitaiUrl = civitaiSiteUrl();
   // Only a player has a career to restart, which the account menu offers.
   const player = locals.user
     ? await db

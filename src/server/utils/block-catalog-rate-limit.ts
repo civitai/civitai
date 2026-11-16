@@ -82,7 +82,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 //      app, and this card's blast radius is explicitly asymmetric in that direction.
 //
 // **Closing condition for revisiting this ceiling and this key:
-// `civitai_app_block_bridge_rate_limit_refusals_total` (added alongside this, in
+// `civitai_app_block_rate_limit_refusals_total{bucket="catalog"}` (the per-app series in
 // `~/server/metrics/app-block-runtime.metrics`) shows refusals on this bucket, or a GA
 // week passes with none.** That series is what makes the sentence above checkable rather
 // than merely reasonable.
@@ -640,6 +640,23 @@ export async function checkBlockGenerationSourceUserRateLimit(
 ): Promise<BlockCatalogRateLimitResult> {
   return checkFixedWindow(
     `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:gen-source-user:${userId}`,
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_MAX,
+    BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
+// UPLOADED-GENERATION-SOURCE bucket (blocks.persistUploadedGenerationSource): a picked
+// generation source copied into a private scanned row. Its own window, the same size as the
+// generation-source bucket above and keyed the same way (token subject, no exemption), so an app
+// saving its outputs and a viewer picking sources cannot use up each other's allowance.
+// FIXED window and FAILS OPEN on a Redis error, like every bucket in this file.
+
+/** Records ONE uploaded-source call against `userId`'s window. Own `:uploaded-gen-source-user:` key. */
+export async function checkBlockUploadedGenerationSourceUserRateLimit(
+  userId: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:uploaded-gen-source-user:${userId}`,
     BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_MAX,
     BLOCK_GENERATION_SOURCE_USER_RATE_LIMIT_WINDOW_SECONDS
   );

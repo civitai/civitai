@@ -2,6 +2,7 @@ import {
   gateBlockUploadImageSchema,
   persistBlockUploadImageSchema,
 } from '~/server/schema/blocks/block-image-upload.schema';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { rateLimit } from '~/server/middleware.trpc';
 import { protectedProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -19,6 +20,7 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
  *   - gate    — poll the scan; return the moderated id ONLY once scanned-clean,
  *     within the SFW ceiling, and unflagged (else throw). See the service + pure
  *     classifier.
+ *   - generationSourceUsesScannedRows — which path a `generationSource` upload takes.
  */
 export const blockImageUploadRouter = router({
   persist: protectedProcedure
@@ -47,4 +49,16 @@ export const blockImageUploadRouter = router({
       );
       return gateBlockUploadImage({ imageId: input.imageId, user: ctx.user });
     }),
+
+  /**
+   * Whether a PRIVATE generation source the host just uploaded as a consumer blob (the
+   * `generationSource` picker, a single `OPEN_MEDIA_UPLOAD` image) must be kept as a scanned row
+   * (`blocks.persistUploadedGenerationSource`) before an app can generate from it. It is the flag
+   * the generation gate reads to refuse an app's orchestrator urls, evaluated the same way (global,
+   * no entity), so the host copies the blob exactly when the gate would refuse it. Off, unknown or
+   * unreachable all answer false, as they do for the gate.
+   */
+  generationSourceUsesScannedRows: protectedProcedure.query(async () => ({
+    scannedRows: await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS),
+  })),
 });

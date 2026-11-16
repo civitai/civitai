@@ -52,7 +52,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     }
   }
 
-  await logToAxiom({
+  logToAxiom({
     name: 'csam-report',
     type: failed.length ? 'error' : 'info',
     subType: 'held-comments-archive',

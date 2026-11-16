@@ -14,7 +14,7 @@ const logWebhook = (data: MixedObject) => {
       ...data,
     },
     'webhooks'
-  ).catch();
+  );
 };
 
 const ATTEMPT_LIMIT = 3;

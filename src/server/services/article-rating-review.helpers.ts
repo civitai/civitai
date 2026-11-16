@@ -545,7 +545,7 @@ export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promi
         suggestedLevel: pending.suggestedLevel,
         derivedLevel: gate.derivedLevel,
         entryPoint: 'scan-completion' as AutoApproveEntryPoint,
-      }).catch();
+      });
     } catch (e) {
       if (e instanceof AutoResolveRaceLost) return;
       throw e;
@@ -622,7 +622,7 @@ export async function tryAutoApproveArticleDispute(args: {
       suggestedLevel: args.suggestedLevel,
       derivedLevel: gate.derivedLevel,
       entryPoint: 'submission' as AutoApproveEntryPoint,
-    }).catch();
+    });
     return auto.review;
   } catch (e) {
     if (e instanceof AutoResolveRaceLost)

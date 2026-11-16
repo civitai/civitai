@@ -1,3 +1,4 @@
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -9,6 +10,9 @@ import { describeSemanticAuditContract } from './semantic-audit.harness';
 const h = vi.hoisted(() => ({
   recordAudit: vi.fn(),
   fetched: [] as number[][],
+  // The feed filters each hydration was asked for.
+  fetchArgs: [] as Record<string, unknown>[],
+  follows: [] as number[],
   stripBenignPhrases: vi.fn(async (text: string) => text),
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
@@ -44,11 +48,15 @@ vi.mock('~/server/services/system-cache', () => ({
   getBrowsingSettingAddons: async () => h.addons,
 }));
 
+vi.mock('~/server/redis/caches', () => ({ getUserFollows: async () => h.follows }));
+
 // The feed's fetch path: every id it is asked for comes back, owned by `owner(id)`.
 const owner = (id: number) => (id >= 20 ? 7 : id);
 vi.mock('~/server/services/article.service', () => ({
-  getArticles: async ({ ids }: { ids: number[] }) => {
+  getArticles: async (args: { ids: number[] }) => {
+    const { ids } = args;
     h.fetched.push(ids);
+    h.fetchArgs.push(args);
     return {
       items: ids.map((id) => ({
         id,
@@ -117,6 +125,8 @@ beforeEach(() => {
   h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
   sent = [];
   h.fetched = [];
+  h.fetchArgs = [];
+  h.follows = [];
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
@@ -192,6 +202,62 @@ describe('semantic article search refinements', () => {
     dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 1 }] as never);
     await refined({ usernames: ['someone'], tagNames: ['anime'] });
     expect(sent[0]).toMatchObject({ userIds: [10], tagIds: [1] });
+  });
+});
+
+describe("the articles feed's filters", () => {
+  const feedSearch = (input: Partial<Parameters<typeof searchSemanticArticles>[0]['input']>) =>
+    searchSemanticArticles({
+      input: { query: 'guide', browsingLevel: 1, limit: 10, ...input },
+      user: { id: 5, isModerator: false } as SessionUser,
+      candidateSource: ranking([10, 11]),
+    });
+
+  it("narrows the index to the feed's tags, beside any named ones", async () => {
+    dbMock.dbRead.tag.findMany.mockResolvedValue([{ id: 1 }] as never);
+    await feedSearch({ tagIds: [4], tagNames: ['anime'] });
+    expect(sent[0].tagIds).toEqual([1, 4]);
+  });
+
+  it("bounds the published date by the feed's period, to the hour, and not for all time", async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-16T10:37:00Z'), toFake: ['Date'] });
+    try {
+      await feedSearch({ period: MetricTimeframe.Week });
+      expect(sent[0].range).toEqual({ key: 'publishedAt', gte: '2026-11-09T10:00:00.000Z' });
+      await feedSearch({ period: MetricTimeframe.AllTime });
+      expect(sent[1].range).toEqual({ key: 'publishedAt', gte: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('narrows the index to the creators the viewer follows', async () => {
+    h.follows = [7, 8];
+    await feedSearch({ followed: true });
+    expect(sent[0].userIds).toEqual([7, 8]);
+  });
+
+  it('finds nothing in Followed for a viewer who follows no one, without asking the service', async () => {
+    expect((await feedSearch({ followed: true })).items).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('leaves a very long follow list to hydration rather than the index filter', async () => {
+    h.follows = Array.from({ length: 1001 }, (_, i) => i + 1);
+    await feedSearch({ followed: true });
+    expect(sent[0].userIds).toBeUndefined();
+    expect(h.fetchArgs[0]).toMatchObject({ followed: true });
+  });
+
+  it("hydrates through the feed's views of the viewer's lists", async () => {
+    h.follows = [10];
+    await feedSearch({ followed: true, favorites: true, hidden: true, collectionId: 9 });
+    expect(h.fetchArgs[0]).toMatchObject({
+      followed: true,
+      favorites: true,
+      hidden: true,
+      collectionId: 9,
+    });
   });
 });
 

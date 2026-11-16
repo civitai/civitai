@@ -23,7 +23,7 @@ export async function revokeReviewBatchesOfKeys(keyIds: number[]) {
         type: 'error',
         keyId,
         message: (e as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 }

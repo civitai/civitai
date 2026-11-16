@@ -97,7 +97,7 @@ export async function sampleImageRender(
     if (dropped < 0) return;
 
     const { logToAxiom } = await import('~/server/logging/client');
-    await logToAxiom({
+    logToAxiom({
       name: IMAGE_RENDER_SAMPLE_LOG_NAME,
       type: 'info',
       imageId: Number(rawId),

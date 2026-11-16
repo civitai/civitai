@@ -240,7 +240,7 @@ export async function buildServer(): Promise<FastifyInstance> {
         status: 200,
         requested: result.requested,
         ...result.counts,
-      }).catch(() => undefined);
+      });
       return reply.send(result);
     } catch (err) {
       const known = err instanceof NoticeError;
@@ -256,7 +256,7 @@ export async function buildServer(): Promise<FastifyInstance> {
         message,
         ...(cause ? { cause: (cause as Error).message } : {}),
         ...extra,
-      }).catch(() => undefined);
+      });
       if (status >= 500) req.log.error({ err }, 'system notices failed');
       return reply.code(status).send({ error: message, ...extra });
     }

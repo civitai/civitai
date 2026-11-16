@@ -53,7 +53,7 @@ function registry(): SessionRegistry {
         userId,
         evicted,
         total,
-      }).catch(() => undefined);
+      });
     },
   }));
 }

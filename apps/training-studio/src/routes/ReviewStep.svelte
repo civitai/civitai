@@ -707,7 +707,7 @@
   {/if}
 {/snippet}
 
-<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-5">
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">Review &amp; start</h2>
@@ -731,7 +731,7 @@
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
       <!-- The Character/Style/Concept exposure targets are about subjects; an edit run has none. -->
-      <div class="flex items-center gap-1.5" class:hidden={trainsPairs}>
+      <div class="flex flex-wrap items-center gap-1.5" class:hidden={trainsPairs}>
         <span class="inline-flex items-center gap-1 font-mono text-xs text-dark-2">
           exposure guidance {@render help(GUIDANCE_HELP, 'exposure guidance')}
         </span>

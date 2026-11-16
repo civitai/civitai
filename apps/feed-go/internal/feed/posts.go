@@ -110,11 +110,7 @@ type AddonFilters struct {
 // ResolveAddonFilters is those two steps for one getAllImages call at browsingLevel: Node runs them
 // on a copy of the input for every call, so each call resolves the addons at its own level.
 func ResolveAddonFilters(in *Input, addons []browsing.Addon, browsingLevel int, isModerator bool) AddonFilters {
-	level := browsing.OnlySelectable(orInt(browsingLevel, browsing.PublicLevels))
-	if level == 0 {
-		level = browsing.PublicLevels
-	}
-	resolved := browsing.ResolveAddons(addons, level, isModerator, "")
+	resolved := browsing.ResolveAddons(addons, AddonLevel(browsingLevel), isModerator, "")
 	// In the order Node's input holds them: as sent, then (when any) the addons' tags unioned in by a
 	// Set, then the challenge tag unioned in. The feed-service query sends this list as is.
 	excluded := append([]int(nil), in.ExcludedTagIDs...)
@@ -443,11 +439,17 @@ func unionInts(a, b []int) []int {
 	return out
 }
 
-func orInt(v, def int) int {
-	if v == 0 {
-		return def
+// AddonLevel is the level the browsing addons resolve at
+// (`onlySelectableLevels(browsingLevel || public) || public`): a 0 level, or one of unselectable
+// bits only, resolves them at PG.
+func AddonLevel(browsingLevel int) int {
+	if browsingLevel == 0 {
+		browsingLevel = browsing.PublicLevels
 	}
-	return v
+	if l := browsing.OnlySelectable(browsingLevel); l != 0 {
+		return l
+	}
+	return browsing.PublicLevels
 }
 
 func userIDOf(img Image) int {

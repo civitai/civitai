@@ -48,7 +48,7 @@ export async function queueCollectionMembershipUpdate({
       message: error instanceof Error ? error.message : 'unknown',
       collectionIds,
       imageCount: imageIds.length,
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -87,7 +87,7 @@ export async function queueCollectionReadConfigChange({
       name: 'collection-read-change-enqueue-truncated',
       message: `Collection ${collectionId} exceeded ${limit} items; remaining membership is stale until a reindex.`,
       collectionId,
-    }).catch(() => undefined);
+    });
 
   return { queued: imageIds.length, truncated };
 }

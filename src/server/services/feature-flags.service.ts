@@ -222,6 +222,21 @@ const featureFlags = createFeatureFlags({
     availability: [],
     fliptKey: 'ssr-signed-in-skip-prefetch',
   },
+  // The same trial for `/images/[imageId]`, `/posts/[postId]` and `/user/[username]`, one flag per
+  // page (`SSR_SKIP_PREFETCH_FLAGS` in `~/server/utils/ssr-skip-prefetch` maps each route to its
+  // flag), so each page is rolled out and rolled back on its own. Dark and fail CLOSED, as above.
+  ssrSignedInSkipPrefetchImages: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-images',
+  },
+  ssrSignedInSkipPrefetchPosts: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-posts',
+  },
+  ssrSignedInSkipPrefetchUser: {
+    availability: [],
+    fliptKey: 'ssr-signed-in-skip-prefetch-user',
+  },
   // Closed-overlay SSR fast path; behaviour: see ~/components/MantineOverlays. `[]` fails CLOSED when
   // the key is absent or Flipt is down, so the `ssr-closed-overlay-fast-path` rollout is the only
   // on-switch.
@@ -471,10 +486,16 @@ const featureFlags = createFeatureFlags({
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
+  // Search v3 for articles: the header bar filters the articles feed (?query=) through the search
+  // service. Dark: Flipt is its only switch.
+  articleFeedSearch: { availability: [], fliptKey: 'search-v3-articles' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
   // Semantic search on the challenges feed. Dark: Flipt is its only switch.
   semanticChallengeSearch: { availability: [], fliptKey: 'semantic-challenge-search' },
+  // Search v3 for models: the header bar filters the models feed (?query=) through the search
+  // service. Dark: Flipt is its only switch, and off is today's in-feed Meilisearch search.
+  modelFeedSearch: { availability: [], fliptKey: 'search-v3-models' },
   // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
   // The semantic storyline search endpoint. Dark: Flipt is its only switch.
@@ -998,7 +1019,11 @@ const featureFlags = createFeatureFlags({
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
   // Storylines: text items between a chapter's images (PostText), their slides and threads.
-  storylineText: { availability: ['mod', 'granted'], fliptKey: 'storyline-text' },
+  storylineText: {
+    availability: ['mod', 'granted'],
+    fliptKey: 'storyline-text',
+    fliptKeyRequired: true,
+  },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.
@@ -1126,6 +1151,10 @@ type FliptModule = typeof FliptClient;
 let _fliptModule: FliptModule | null = null;
 let _fliptLoading: Promise<FliptModule | null> | null = null;
 
+/** Flipt has a client to answer with. Not live: it is down, or a stub module leaves the accessor out. */
+const fliptIsLive = (mod: FliptModule) =>
+  'getFliptClientSync' in mod && mod.getFliptClientSync() !== null;
+
 function loadFliptModule(): Promise<FliptModule | null> {
   if (_fliptModule) return Promise.resolve(_fliptModule);
   if (typeof window !== 'undefined') return Promise.resolve(null);
@@ -1220,6 +1249,8 @@ const hasFeature = (
       }
       return fliptResult;
     }
+    // A live client that cannot answer has no such key: a flag that requires one is off.
+    if (feature.fliptKeyRequired && fliptIsLive(_fliptModule)) return false;
     // Flipt unavailable — fall through to static evaluation below
   }
 
@@ -1679,9 +1710,11 @@ export async function isFliptDecisive(keys: FeatureFlagKey[], user: SessionUser)
   if (flipt) await flipt.ensureFliptInitialized();
   const context = buildFliptContext(user);
   return keys.every((key) => {
-    const fliptKey = featureFlags[key].fliptKey;
+    const { fliptKey, fliptKeyRequired } = featureFlags[key];
     if (!fliptKey || envOverriddenFlags.has(key)) return true;
-    return !!_fliptModule && _fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null;
+    if (!_fliptModule) return false;
+    if (_fliptModule.isFliptSync(fliptKey, String(user.id), context) !== null) return true;
+    return !!fliptKeyRequired && fliptIsLive(_fliptModule);
   });
 }
 
@@ -1816,6 +1849,11 @@ type FeatureFlag = {
   badge?: string;
   regions?: GeoRestrictions; // Optional geo restrictions
   fliptKey?: string; // Optional Flipt flag key for remote toggling
+  /**
+   * The flag is off while Flipt is up and has no `fliptKey` flag. Without it a missing key falls back
+   * to `availability`, as an outage does; an outage still does.
+   */
+  fliptKeyRequired?: boolean;
 };
 
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties

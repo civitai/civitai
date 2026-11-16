@@ -143,7 +143,7 @@ export async function validateBuzzPurchaseAttribution<
           sessionUserId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
       throw new Error('There was an error while creating your order. Please try again later.');
     }
   }
@@ -172,7 +172,7 @@ export async function validateBuzzPurchaseAttribution<
         sessionUserId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return stripBlockKeys(base);
   }
 
@@ -217,7 +217,7 @@ export async function validateBuzzPurchaseAttribution<
           error: (err as Error)?.message,
         },
         'webhooks'
-      ).catch(() => null);
+      );
       return stripBlockKeys(base);
     }
 
@@ -233,7 +233,7 @@ export async function validateBuzzPurchaseAttribution<
           clientScope: String(base[ATTRIBUTION_METADATA_KEYS.scope] ?? ''),
         },
         'webhooks'
-      ).catch(() => null);
+      );
       return stripBlockKeys(base);
     }
 
@@ -266,7 +266,7 @@ export async function validateBuzzPurchaseAttribution<
           derivedScope: pageScope,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
 
     return pageOut as T;
@@ -311,7 +311,7 @@ export async function validateBuzzPurchaseAttribution<
         hasSlotId: Boolean(slotId),
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return stripBlockKeys(base);
   }
 
@@ -336,7 +336,7 @@ export async function validateBuzzPurchaseAttribution<
         error: (err as Error)?.message,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return stripBlockKeys(base);
   }
 
@@ -355,7 +355,7 @@ export async function validateBuzzPurchaseAttribution<
         slotId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return stripBlockKeys(base);
   }
 
@@ -399,7 +399,7 @@ export async function validateBuzzPurchaseAttribution<
         source: resolved.source,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   return out as T;

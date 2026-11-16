@@ -119,7 +119,7 @@ export const notifyStuckCryptoDepositsJob = createJob(
         });
         emailedUser++;
       } catch (e) {
-        await logToAxiom({
+        logToAxiom({
           name: 'notify-stuck-crypto-deposits-job',
           type: 'error',
           message: 'Failed to email user about stuck deposit',
@@ -145,7 +145,7 @@ export const notifyStuckCryptoDepositsJob = createJob(
         });
         digestSent = digestItems.length;
       } catch (e) {
-        await logToAxiom({
+        logToAxiom({
           name: 'notify-stuck-crypto-deposits-job',
           type: 'error',
           message: 'Failed to send Cat 2 support digest',

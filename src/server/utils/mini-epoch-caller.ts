@@ -111,7 +111,7 @@ export async function evaluateMiniEpochCaller({
     callerClass,
     wouldRefuse,
     enforced: withhold,
-  }).catch(() => undefined);
+  });
 
   return { callerClass, withhold };
 }

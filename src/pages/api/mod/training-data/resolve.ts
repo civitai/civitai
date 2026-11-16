@@ -69,7 +69,7 @@ export default defineModeratorEndpoint('trainingData.resolve', {
         modelVersionId: input.modelVersionId,
         fileId: file.id,
         error: (e as Error)?.message,
-      }).catch(() => undefined);
+      });
       throw throwNotFoundError('Training data could not be resolved');
     }
   },

@@ -389,7 +389,7 @@ async function runRelay(
       // individual rescues behind a number that moved. Contained: the
       // bytes are already stored, so a telemetry failure must not fail the route.
       try {
-        await logToAxiom({
+        logToAxiom({
           name: 'image-upload-relayed',
           userId,
           bytes: body.length,

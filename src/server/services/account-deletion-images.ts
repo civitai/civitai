@@ -121,7 +121,7 @@ export async function unblockAccountDeletionImages(userId: number) {
   const skipped = audit?.count ?? 0;
 
   if (skipped > 0 || !drained)
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'account-deletion-image-restore',
       message: drained
@@ -133,7 +133,7 @@ export async function unblockAccountDeletionImages(userId: number) {
       skipped,
       drained,
       passes,
-    }).catch(() => undefined);
+    });
 
   return { unblocked, stillBlocked, skipped, drained };
 }
@@ -160,13 +160,13 @@ export async function recordPendingImageRestore(userId: number) {
     await sysRedis.sAdd(REDIS_SYS_KEYS.SYSTEM.PENDING_IMAGE_RESTORES, String(userId));
     return true;
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'account-deletion-image-restore',
       message: 'could not queue the account for image restore',
       error: (error as Error)?.message,
       userId,
-    }).catch(() => undefined);
+    });
     return false;
   }
 }

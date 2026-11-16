@@ -137,27 +137,14 @@ func cursorProp(fields []sortField) string {
 
 var numericToken = regexp.MustCompile(`^-?\d+$`)
 
-var cursorFraction = regexp.MustCompile(`\.(\d+)$`)
-
 // cursorTimestamp reads a timestamp token as the instant it names: what Postgres writes for a
 // `timestamp(3)` in CONCAT ("2006-01-02 15:04:05[.fff]", trailing zeros of the fraction trimmed),
-// the fraction read as a decimal fraction of a second and kept to the millisecond. Any other
+// the fraction read as a decimal fraction of a second and kept to the millisecond, so ".25" is
+// 250 ms and ".5" 500 ms, as Node reads it (the fraction padded to three digits). Any other
 // date-like token falls back as model-cursor.
-//
-// Node's dayjs.utc does NOT read every such token this way: it takes the fraction's digits as a
-// count of milliseconds, so ".25" (250 ms, as Postgres writes it) binds as 25 ms and ".5" as 5 ms,
-// and the next page starts at the wrong row. That is a Node bug, fixed on main by #9075 (the
-// fraction padded to three digits) but not yet deployed; a fraction of three digits reads the same
-// on both. Until the fix is deployed, a token with a 1- or 2-digit fraction is the
-// short-fraction-cursor fallback: serving it correctly would not match the deployed Node.
-//
-// TODO(short-fraction-cursor): remove this fallback once the Node cursor fix is deployed.
 func cursorTimestamp(tok string) (time.Time, error) {
 	for _, layout := range []string{"2006-01-02 15:04:05.999999999", "2006-01-02T15:04:05.999999999"} {
 		if t, err := time.Parse(layout, tok); err == nil {
-			if m := cursorFraction.FindStringSubmatch(tok); m != nil && len(m[1]) < 3 {
-				return time.Time{}, fallback.Newf("short-fraction-cursor", "%q", tok)
-			}
 			return t.Truncate(time.Millisecond), nil
 		}
 	}
@@ -199,8 +186,7 @@ const (
 // parseCursor is parseCursor for a string cursor: one token per sort field, each a timestamp (a
 // token with `-` that is not a plain integer) or an integer (parseInt) within [CURSOR_MIN, INT4_MAX].
 // Anything Node answers with a 400 — a wrong arity, an empty token (a NULL column in the CONCAT), an
-// unparseable date or number, a number out of range — falls back as model-cursor; a date Node
-// misreads (cursorTimestamp) is the short-fraction-cursor fallback.
+// unparseable date or number, a number out of range — falls back as model-cursor.
 func parseCursor(fields []sortField, cursor string) ([]any, error) {
 	toks := strings.Split(cursor, "|")
 	if len(toks) != len(fields) {

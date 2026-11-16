@@ -35,7 +35,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     moderatorId: user.id,
     userId,
     count: grid.count,
-  }).catch(() => null);
+  });
   res.status(204).end();
 }
 

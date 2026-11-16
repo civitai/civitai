@@ -838,6 +838,10 @@ describe('the moderation operations are reachable from the moderator service onl
         'put',
         'usage',
         'viewerLimits',
+        // Server-side publish: the viewer's OWN documents only, never a moderator operation.
+        'previewPublish',
+        'publishCopies',
+        'unpublishCopies',
       ].sort()
     );
   });

@@ -174,7 +174,7 @@ function source(world: { apps: CatalogApp[] }, features = SWITCH_ON) {
   });
   const docs = createDocFeed({
     source: fixtureDocSource(() => cat),
-    resolve: resolveFromCatalog(readApps, features),
+    resolve: resolveFromCatalog(readApps, features, { requireDocLevels: false }),
     store,
     pollMs: 5,
     sleep: abortableSleep,

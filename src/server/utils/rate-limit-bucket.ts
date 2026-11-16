@@ -113,6 +113,7 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'semanticCrucibleSearch',
   'semanticComicSearch',
   'semanticImageSearch',
+  'semanticModelSearch',
   'semanticModel3DSearch',
   'semanticStorylineSearch',
   'storyline',
