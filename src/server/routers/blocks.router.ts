@@ -2302,6 +2302,25 @@ const GENERATION_SOURCE_IN_FLIGHT = {
   errorMessage: 'A generation source is already being saved — wait for it to finish.',
 };
 
+/**
+ * The bounds of every generation-source save, keyed on the token subject and SHARED by
+ * `persistGenerationSource` and `persistUploadedGenerationSource`, so the two together draw on
+ * one budget: at most {@link GENERATION_SOURCE_IN_FLIGHT} in flight (checked first, so a call it
+ * refuses spends nothing), then the per-user hourly bucket (no exemption), then `run`.
+ */
+async function withGenerationSourceBounds<T>(userId: number, run: () => Promise<T>): Promise<T> {
+  return withInFlightLimit({ ...GENERATION_SOURCE_IN_FLIGHT, userId }, async () => {
+    const rate = await checkBlockGenerationSourceUserRateLimit(userId);
+    if (!rate.allowed) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: 'Too many generation sources saved — slow down.',
+      });
+    }
+    return run();
+  });
+}
+
 export const blocksRouter = router({
   /**
    * Lists enabled block installs for a (modelId, slotId). Public — anon users
@@ -6316,14 +6335,7 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
-      return withInFlightLimit({ ...GENERATION_SOURCE_IN_FLIGHT, userId }, async () => {
-        const rate = await checkBlockGenerationSourceUserRateLimit(userId);
-        if (!rate.allowed) {
-          throw new TRPCError({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'Too many generation sources saved — slow down.',
-          });
-        }
+      return withGenerationSourceBounds(userId, async () => {
         const { persistBlockGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
         );
@@ -6338,6 +6350,57 @@ export const blocksRouter = router({
           getWorkflow: async (workflowId) =>
             getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
         });
+      });
+    }),
+
+  /**
+   * A generation source the viewer PICKED (`OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`,
+   * or a single `OPEN_MEDIA_UPLOAD` image), already uploaded by the host as a consumer blob, kept
+   * as a PRIVATE, scanned row and returned as `persistGenerationSource` returns one. The host calls
+   * it only while `app-block-source-scanned-rows` is on (`blockImageUpload.
+   * generationSourceUsesScannedRows`): the gate then refuses the blob, and accepts this row once it
+   * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
+   *
+   * GATES: `persistGenerationSource`'s preamble (subject = session user, the runtime flag) WITHOUT
+   * its scope check: the upload picker never required a scope, and the source still needs
+   * `ai:write:budgeted` to be generated from. Identity comes from the token, never the body; the
+   * url is the only thing the caller supplies, and the service accepts only a consumer blob on a
+   * trusted orchestrator host.
+   *
+   * BOUNDS: the per-user 60/h `rateLimit`, then `withGenerationSourceBounds`, shared with
+   * `persistGenerationSource`.
+   */
+  persistUploadedGenerationSource: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many generation sources saved — slow down.',
+      })
+    )
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        url: z.string().min(1).max(2048),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'saving a generation source requires an authenticated viewer',
+        });
+      }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
+      await assertAppBlocksEnabledForTokenUser(userId);
+      return withGenerationSourceBounds(userId, async () => {
+        const { persistUploadedGenerationSource } = await import(
+          '~/server/services/blocks/block-generation-source.service'
+        );
+        return persistUploadedGenerationSource({ userId, appId: claims.appId, url: input.url });
       });
     }),
 
