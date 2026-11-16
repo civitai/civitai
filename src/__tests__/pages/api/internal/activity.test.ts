@@ -8,13 +8,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The limits are pinned as LITERALS, not imported from the constants module, so a change to the
 // contract has to be made here on purpose rather than flowing through silently.
 
-const mocks = vi.hoisted(() => ({ activity: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  activity: vi.fn(),
+  checkActivityRateLimit: vi.fn<(ip: string) => Promise<unknown>>(),
+}));
 
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: undefined,
   Tracker: class {
     activity = mocks.activity;
   },
+}));
+
+// The limiter's own suite (`src/server/utils/__tests__/activity-rate-limit.test.ts`) pins its store
+// and numbers; here only its verdict matters.
+vi.mock('~/server/utils/activity-rate-limit', () => ({
+  checkActivityRateLimit: mocks.checkActivityRateLimit,
 }));
 
 import handler from '~/pages/api/internal/activity';
@@ -44,6 +53,7 @@ async function post(body: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.activity.mockResolvedValue(true);
+  mocks.checkActivityRateLimit.mockResolvedValue({ allowed: true });
 });
 
 describe('/api/internal/activity', () => {
@@ -52,7 +62,11 @@ describe('/api/internal/activity', () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({ count: 3 });
-    expect(mocks.activity.mock.calls).toEqual([['remix:image'], ['copy:prompt'], ['tool-click:42']]);
+    expect(mocks.activity.mock.calls).toEqual([
+      ['remix:image'],
+      ['copy:prompt'],
+      ['tool-click:42'],
+    ]);
   });
 
   it('accepts a batch of exactly 200 entries (the cap)', async () => {
@@ -95,5 +109,35 @@ describe('/api/internal/activity', () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(mocks.activity).not.toHaveBeenCalled();
+  });
+
+  it('answers a refused batch with the shared REST error envelope', async () => {
+    const res = await post({ activities: Array.from({ length: 201 }, () => 'remix:image') });
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'BAD_REQUEST', message: 'Invalid activity batch' })
+    );
+  });
+
+  it('checks the rate limit for a valid batch, keyed on the caller address', async () => {
+    await post({ activities: ['remix:image'] });
+
+    expect(mocks.checkActivityRateLimit).toHaveBeenCalledWith('192.0.2.10');
+  });
+
+  it('answers 429 with Retry-After and writes nothing when the caller is over the limit', async () => {
+    mocks.checkActivityRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 17 });
+
+    const res = await post({ activities: ['remix:image', 'copy:prompt'] });
+
+    expect(res.status).toHaveBeenCalledWith(429);
+    expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '17');
+    expect(mocks.activity).not.toHaveBeenCalled();
+  });
+
+  it('does not spend rate-limit budget on a batch it refuses as malformed', async () => {
+    await post({ activities: [42] });
+
+    expect(mocks.checkActivityRateLimit).not.toHaveBeenCalled();
   });
 });
