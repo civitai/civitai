@@ -337,6 +337,13 @@ export async function withCuratedShowcases<E extends { images: ImagesForModelVer
           ).map((row) => row.id)
         : []
     );
+    const tagged = await withTagIds(
+      versionIds.flatMap((id) =>
+        showcases[id]
+          ? communityFor(showcases[id], site).filter((image) => servable.has(image.id))
+          : []
+      )
+    );
     const result: Record<number, E> = { ...byVersion };
     for (const versionId of versionIds) {
       const entry = showcases[versionId];
@@ -349,8 +356,10 @@ export async function withCuratedShowcases<E extends { images: ImagesForModelVer
       );
       if (!ids) continue;
       const byId = new Map<number, ImagesForModelVersions>(owner.map((image) => [image.id, image]));
-      for (const image of communityFor(entry, site))
-        if (servable.has(image.id)) byId.set(image.id, image);
+      for (const image of communityFor(entry, site)) {
+        const served = tagged.get(image.id);
+        if (served) byId.set(image.id, served);
+      }
       result[versionId] = {
         ...byVersion[versionId],
         images: ids.flatMap((id) => byId.get(id) ?? []),
@@ -435,7 +444,32 @@ async function findShowcaseCommunityCovers(
       found.set(key, entry);
     }
   }
+  // Validation needs no tags; readers drawing the cover do.
+  if (!primary) {
+    const tagged = await withTagIds([...found.values()].map((entry) => entry.image));
+    for (const entry of found.values()) entry.image = tagged.get(entry.image.id) ?? entry.image;
+  }
   return found;
+}
+
+/**
+ * Community images with their tag ids, as the creator's cached images carry them: the card feed and
+ * the public API drop an image with no tags when the viewer excludes any. Copies; the cache is
+ * never mutated.
+ */
+async function withTagIds<I extends ImagesForModelVersions>(images: I[]) {
+  const tagged = new Map<number, I>(images.map((image) => [image.id, image]));
+  if (!images.length) return tagged;
+  try {
+    const { tagIdsForImagesCache } = await import('~/server/redis/caches');
+    const tags = await tagIdsForImagesCache.fetch(images.map((image) => image.id));
+    for (const image of images)
+      tagged.set(image.id, { ...image, tags: tags[image.id]?.tags ?? [] });
+  } catch (error) {
+    // Untagged, a tag filter drops them: the default list or cover shows instead.
+    logShowcaseError('version-showcase-tags-read-failed', error);
+  }
+  return tagged;
 }
 
 function logShowcaseError(name: string, error: unknown, fields?: Record<string, unknown>) {

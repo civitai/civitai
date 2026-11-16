@@ -37,6 +37,14 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
     };
   },
 }));
+const imageTags = vi.hoisted(() => new Map<number, number[]>());
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  tagIdsForImagesCache: {
+    fetch: async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: imageTags.get(id) ?? [] }])),
+  },
+}));
 const saveModelCovers = vi.hoisted(() => vi.fn(async (_args: unknown) => true));
 vi.mock('~/server/services/model-cover.service', () => ({ saveModelCovers }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
@@ -331,6 +339,16 @@ describe('when a featured image stops qualifying', () => {
     expect(after.size).toBe(0);
   });
 
+  it('the public API serves a community image with its tags, so a tag filter judges it fairly', async () => {
+    const id = await featured();
+    await db.query(`UPDATE "ModelVersionShowcaseItem" SET position = 0 WHERE "imageId" = $1`, [id]);
+    imageTags.set(id, [7, 8]);
+    const images = (
+      await withCuratedShowcases({ [VERSION]: { images: [] as ImagesForModelVersions[] } }, 'red')
+    )[VERSION].images;
+    expect(images.map((image) => [image.id, image.tags])).toEqual([[id, [7, 8]]]);
+  });
+
   it('the public API stops serving a deleted image at once, though the cache still holds it', async () => {
     const id = await featured();
     await db.query(`UPDATE "ModelVersionShowcaseItem" SET position = 0 WHERE "imageId" = $1`, [id]);
@@ -342,6 +360,13 @@ describe('when a featured image stops qualifying', () => {
     await db.query(`DELETE FROM "Image" WHERE id = $1`, [id]);
     expect(await served()).toContain(id);
     expect(await api()).toEqual([]);
+  });
+
+  it('reads a community cover with its tags, for the card filters', async () => {
+    const id = await featured();
+    imageTags.set(id, [5]);
+    const covers = await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: id }]);
+    expect([...covers.values()][0].image.tags).toEqual([5]);
   });
 
   it("doesn't count a row featured on another model", async () => {

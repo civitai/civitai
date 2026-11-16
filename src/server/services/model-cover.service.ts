@@ -82,10 +82,10 @@ export async function assertCoverImagesValid({
 }
 
 /**
- * The chosen cover for each model, by model id. A cover counts only when it is the model owner's
- * image on one of the model's own versions; a cover already among the shown version's images comes
- * from there, and one on another version through the same cached, creator-only version-image read,
- * so it carries the same shape and filters. A dangling or foreign id is simply absent.
+ * The chosen cover for each model, by model id: the owner's image on one of the model's own
+ * versions (from the shown version's images, or the same cached creator-only read for another
+ * version), or a community image featured in the model's showcase for `site` (withCommunityCovers).
+ * A dangling or unfeatured id is simply absent.
  */
 export async function getCoverImages({
   covers,
