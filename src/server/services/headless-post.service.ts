@@ -197,8 +197,8 @@ async function submitToGallery(
       name: 'headless-post',
       type: 'error',
       message: `remix gallery submit failed: ${message}`,
-      hostImageId,
       imageId,
+      payload: { hostImageId },
     });
     return { submitted: false, reason: GALLERY_NOT_SENT };
   }

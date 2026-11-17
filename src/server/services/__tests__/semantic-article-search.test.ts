@@ -175,7 +175,11 @@ describe('semantic article search', () => {
   it('logs how many candidates came back and how many survived hydration', async () => {
     await search([11, 12, 10]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'semantic-article-search', returned: 3, hydrated: 1 })
+      expect.objectContaining({
+        name: 'semantic-article-search',
+        hydrated: 1,
+        payload: expect.objectContaining({ returned: 3 }),
+      })
     );
   });
 });
