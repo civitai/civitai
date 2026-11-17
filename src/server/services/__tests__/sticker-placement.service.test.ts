@@ -923,15 +923,18 @@ describe("a placement counts toward the image's Buzz counter", () => {
   });
 
   // The owner is waiting on the button; a slow Buzz call must not hold it.
-  it.each(['approve', 'decline'] as const)('does not wait for the payout to %s', async (action) => {
-    givenApprovable();
+  it.each(['approve', 'decline'] as const)(
+    'hands the payout to the background on %s',
+    async (action) => {
+      givenApprovable();
 
-    await actOnStickerPlacement({ placementId: PLACEMENT, action, userId: OWNER });
+      await actOnStickerPlacement({ placementId: PLACEMENT, action, userId: OWNER });
 
-    expect(settlePlacement).toHaveBeenCalledWith(
-      expect.objectContaining({ placementId: PLACEMENT, payout: 'background' })
-    );
-  });
+      expect(settlePlacement).toHaveBeenCalledWith(
+        expect.objectContaining({ placementId: PLACEMENT, payout: 'background' })
+      );
+    }
+  );
 });
 
 /**

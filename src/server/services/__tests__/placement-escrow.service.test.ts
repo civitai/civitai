@@ -58,12 +58,16 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
 // reaching the Buzz call after one has claimed the ledger row, so a double that
 // always grants it would hide the defect it exists to prevent.
 const heldLocks = new Set<string>();
+const refusedLocks = new Set<string>();
 const lockState = { available: true };
 vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: async (options: { key: string }, operation: () => Promise<unknown>) => {
     // Redis down, or the key contended past maxRetries: the real helper returns
     // null WITHOUT running the operation.
-    if (!lockState.available) return null;
+    if (!lockState.available) {
+      refusedLocks.add(options.key);
+      return null;
+    }
     if (heldLocks.has(options.key)) return null;
     heldLocks.add(options.key);
     try {
@@ -406,6 +410,7 @@ beforeEach(() => {
   db.placements.clear();
   db.legs.clear();
   heldLocks.clear();
+  refusedLocks.clear();
   queryRaw.mockResolvedValue([]);
   txCommits.length = 0;
   lockState.available = true;
@@ -3214,7 +3219,7 @@ describe('an owner approval that does not wait for the payout', () => {
     );
   });
 
-  it('leaves a payout that never started for the sweep, which pays it once', async () => {
+  it('leaves a payout that was refused the lock for the sweep, which pays it once', async () => {
     givenPlacement();
     await holdFor(1);
     lockState.available = false;
@@ -3225,7 +3230,8 @@ describe('an owner approval that does not wait for the payout', () => {
       actorId: OWNER,
       payout: 'background',
     });
-    await vi.waitFor(() => expect(db.legs.get('1:toOwner')).toBeDefined());
+    // The last leg of the plan, so the background payout has run to the end.
+    await vi.waitFor(() => expect(refusedLocks.has('placement:1:toPlatform')).toBe(true));
     expect(createBuzzTransaction).not.toHaveBeenCalled();
     expect(db.legs.get('1:toOwner')?.lastAttemptAt ?? null).toBeNull();
 
