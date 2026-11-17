@@ -292,9 +292,10 @@ export function stampPromptRevocations(note: string | undefined, writerIsHolder:
   return writerIsHolder ? unstamped.replace(/\brevokes:(\d+)\b/g, 'holder-revokes:$1') : unstamped;
 }
 
-/** True when `content` is exactly an earlier version of `key`, written by one of `authorIds`, that no
- *  later version's stamped note revokes (`holder-revokes:<id>`, see `stampPromptRevocations`). Saving
- *  it again restores that version. */
+/** True when `content` is exactly an earlier version of `key`, written by one of `authorIds`, and not
+ *  revoked. A stamped `holder-revokes:<id>` (see `stampPromptRevocations`) retires that version's text
+ *  in every version before the note, so an identical copy cannot restore it; a holder saving the text
+ *  again after the note lifts it. */
 export async function isRestorableTextScanPrompt({
   key,
   content,
@@ -309,16 +310,18 @@ export async function isRestorableTextScanPrompt({
     where: { key },
     select: { id: true, content: true, note: true, createdById: true },
   });
-  const revokedIds = new Set<number>();
+  const contentById = new Map(rows.map((row) => [row.id, row.content]));
+  // The newest note revoking this text: every copy saved before it is retired.
+  let revokedBefore = 0;
   for (const row of rows)
     for (const [, id] of row.note?.matchAll(/\bholder-revokes:(\d+)\b/g) ?? [])
-      if (Number(id) < row.id) revokedIds.add(Number(id));
+      if (contentById.get(Number(id)) === content) revokedBefore = Math.max(revokedBefore, row.id);
   return rows.some(
     (row) =>
       row.content === content &&
+      row.id > revokedBefore &&
       row.createdById !== null &&
-      authorIds.includes(row.createdById) &&
-      !revokedIds.has(row.id)
+      authorIds.includes(row.createdById)
   );
 }
 

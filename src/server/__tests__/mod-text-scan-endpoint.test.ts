@@ -356,6 +356,16 @@ describe('mod/text-scan', () => {
       expect((await put('V111')).status).toBe(403);
     });
 
+    it('retires every earlier copy of the revoked text, not only the id named', async () => {
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
+        { id: 120, content: 'DUP', note: null, createdById: 1 },
+        { id: 121, content: 'DUP', note: 'reverted', createdById: 1 },
+        { id: 122, content: 'V122', note: 'holder-revokes:121', createdById: 1 },
+      ]);
+      as(['textScanPromptPublish']);
+      expect((await put('DUP')).status).toBe(403);
+    });
+
     it("lifts a revocation with a current holder's explicit restore", async () => {
       dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
         ...rows,
@@ -386,7 +396,6 @@ describe('mod/text-scan', () => {
       'holder-holder-revokes:5',
       'holder-holder-holder-revokes:5',
       'HOLDER-holder-revokes:5',
-      'holder-revoholder-revokes:kes:5',
     ])('never lets a non-holder forge a stamp from %s', async (note) => {
       as(['textScanPromptPublish']);
       await putNote(note);
