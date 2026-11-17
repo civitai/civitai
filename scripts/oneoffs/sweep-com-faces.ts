@@ -8,16 +8,16 @@
  *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --limit 200
  *     Dry run on a random sample of that many candidates. Asks the classifier once per model and
  *     writes nothing to the database.
- *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --apply --limit <n> --list-out <new file>
- *     The next n candidates by id. Re-run it to continue: a model with a stored verdict is no
- *     longer a candidate.
+ *   pnpm run tsscript scripts/oneoffs/sweep-com-faces.ts --apply --limit <n> --max-locks <m> --list-out <new file>
+ *     The next n candidates by id, stopping before a lock past m. Re-run it to continue: a model
+ *     with a stored verdict is no longer a candidate.
  *   Both take --concurrency (default 4).
  *
  * Prints counts only, never model ids, text or reasons; it refuses to start with a `prisma*` entry in
  * LOGGING, which prints each query's parameters. A model with a logged moderator nsfw ruling is not
- * locked. Rulings from the model form before 2026-10-20 were never logged, so a would-lock model a
- * moderator acted on before then is not locked either: its id goes to the --list-out file, private,
- * for moderators (`moderator-list`).
+ * locked. Rulings from the model form before 2026-10-20 were never logged, so a would-lock model with
+ * any moderator ModActivity before then is not locked either: its id goes to the --list-out file,
+ * private, for moderators (`moderator-list`). A form ruling that left no ModActivity is not seen.
  */
 import { appendFileSync, existsSync, writeFileSync } from 'fs';
 import path from 'path';
@@ -49,7 +49,8 @@ export type NotLockedReason =
   | 'relock-suppressed'
   | 'moderator-ruled'
   | 'moderator-list'
-  | 'lock-refused';
+  | 'lock-refused'
+  | 'lock-error';
 export type Outcome = 'allowed' | 'unavailable' | 'locked' | NotLockedReason;
 
 /**
@@ -87,11 +88,22 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   // bulk lock would override it. So any logged moderator nsfw ruling keeps the sweep's lock off.
   // An unlogged ruling may sit behind an early moderator action: those go to a moderator list.
   let ruled: 'moderator-ruled' | 'moderator-list' | null = null;
+  // The resolver swallows a lock error into "not locked", after the verdict is stored. Kept apart
+  // from a refusal: the lock may have committed (the replication-lag flag runs after it), and the
+  // model is no longer a candidate, so it is found again by its stored detection without a lock.
+  let lockError = false;
   const lock: ComFaceIntentWrites['lock'] = async (modelId, hash) => {
-    if (await moderatorRuledNsfwSince(modelId, new Date(0))) ruled = 'moderator-ruled';
-    else if (face.touchedBeforeLogging) ruled = 'moderator-list';
-    if (ruled) return false;
-    return apply ? lockForComFaceIntent(modelId, hash) : notLockedReason(face, hash) === null;
+    try {
+      if (await moderatorRuledNsfwSince(modelId, new Date(0))) ruled = 'moderator-ruled';
+      else if (face.touchedBeforeLogging) ruled = 'moderator-list';
+      if (ruled) return false;
+      return apply
+        ? await lockForComFaceIntent(modelId, hash)
+        : notLockedReason(face, hash) === null;
+    } catch (error) {
+      lockError = true;
+      throw error;
+    }
   };
   const writes: ComFaceIntentWrites = {
     record: apply ? recordComFaceIntent : async () => undefined,
@@ -103,41 +115,61 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   );
   if (verdict.status !== 'detected') return verdict.status;
   if (verdict.disputable) return 'locked';
+  if (lockError) return 'lock-error';
   if (ruled) return ruled;
   return notLockedReason(face, textHash) ?? 'lock-refused';
 }
 
-export async function pool<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>) {
+export async function pool<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+  stop: () => boolean = () => false
+) {
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-      while (next < items.length) await fn(items[next++]);
+      while (next < items.length && !stop()) await fn(items[next++]);
     })
   );
+  return items.length - next;
 }
 
 export async function sweep(
   faces: Face[],
   apply: boolean,
   concurrency: number,
-  onListed: (modelId: number) => void = () => undefined
+  onListed: (modelId: number) => void = () => undefined,
+  maxLocks = Infinity
 ) {
   const outcomes: Partial<Record<Outcome, number>> = {};
   const owners = new Set<number>();
   // By error class only: a message can carry a model's text.
   const failed: Record<string, number> = {};
-  await pool(faces, concurrency, async (face) => {
-    const outcome = await sweepOne(face, apply).catch((error: unknown) => {
-      const kind = error instanceof Error ? error.constructor.name : typeof error;
-      failed[kind] = (failed[kind] ?? 0) + 1;
-      return null;
-    });
-    if (!outcome) return;
-    outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
-    if (outcome === 'locked') owners.add(face.userId);
-    if (outcome === 'moderator-list') onListed(face.id);
-  });
-  return { outcomes, ownersLocked: owners.size, failed };
+  let inFlight = 0;
+  // Stops starting faces while every one in flight could still lock and reach the cap, so locks
+  // never pass it. A lock error may have committed, so it counts. The rest stay candidates.
+  const atCap = () => (outcomes.locked ?? 0) + (outcomes['lock-error'] ?? 0) + inFlight >= maxLocks;
+  const unchecked = await pool(
+    faces,
+    concurrency,
+    async (face) => {
+      inFlight++;
+      const outcome = await sweepOne(face, apply).catch((error: unknown) => {
+        const kind = error instanceof Error ? error.constructor.name : typeof error;
+        failed[kind] = (failed[kind] ?? 0) + 1;
+        return null;
+      });
+      // Left in flight until its outcome is counted, or another worker could slip past the cap.
+      inFlight--;
+      if (!outcome) return;
+      outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+      if (outcome === 'locked') owners.add(face.userId);
+      if (outcome === 'moderator-list') onListed(face.id);
+    },
+    atCap
+  );
+  return { outcomes, ownersLocked: owners.size, failed, unchecked };
 }
 
 function arg(name: string) {
@@ -212,6 +244,10 @@ async function main() {
   // The apply's moderator list holds model ids: a private file, never an existing one.
   const listOut = arg('--list-out');
   if (apply && !listOut) throw new UsageError('--apply needs --list-out <new path>');
+  // The Mod Lead's ceiling on one apply's locks; a run that reaches it stops and goes back to her.
+  const maxLocks = Number(arg('--max-locks'));
+  if (apply && (!Number.isInteger(maxLocks) || maxLocks < 1))
+    throw new UsageError('--apply needs --max-locks <n>');
   if (listOut && existsSync(listOut)) throw new UsageError('--list-out exists; pass a new path');
   // Appended as each model is listed, since its verdict is already stored and a re-run skips it.
   // shortcut: a crash between that store and the append drops the id; re-read verdicts if one does.
@@ -220,13 +256,20 @@ async function main() {
 
   const { candidates, dangling, faces } = await readCandidates(limit, apply);
   const started = Date.now();
-  const { outcomes, ownersLocked, failed } = await sweep(faces, apply, concurrency, onListed);
+  const { outcomes, ownersLocked, failed, unchecked } = await sweep(
+    faces,
+    apply,
+    concurrency,
+    onListed,
+    apply ? maxLocks : Infinity
+  );
   console.log({
     mode: apply ? 'apply' : 'dry run (no writes; locked = would lock)',
     candidates,
     danglingCover: dangling,
-    checked: faces.length,
-    classifierCalls: faces.length,
+    checked: faces.length - unchecked,
+    classifierCalls: faces.length - unchecked,
+    ...(unchecked && { stoppedAtMaxLocks: maxLocks, unchecked }),
     ...outcomes,
     ownersLocked,
     failed,

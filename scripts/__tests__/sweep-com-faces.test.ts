@@ -146,6 +146,19 @@ describe('sweep-com-faces', () => {
     expect(mocks.lock).not.toHaveBeenCalled();
   });
 
+  // A lock that errors may have committed (the lag flag runs after the transaction), so it counts
+  // against --max-locks and is reported apart from a refusal. Concurrency 1: see the cap test below.
+  it('apply: a lock error is counted lock-error and against --max-locks', async () => {
+    mocks.read.mockImplementation(async (id: number) => face({ id }));
+    mocks.preview.mockResolvedValue(verdict(true));
+    mocks.lock.mockRejectedValueOnce(new Error('redis down'));
+    const faces = [1, 2, 3].map((id) => face({ id }));
+    await expect(sweep(faces, true, 1, undefined, 2)).resolves.toMatchObject({
+      outcomes: { 'lock-error': 1, locked: 1 },
+      unchecked: 1,
+    });
+  });
+
   it('apply: a lock the UPDATE refuses is counted lock-refused', async () => {
     mocks.read.mockResolvedValue(face());
     mocks.preview.mockResolvedValue(verdict(true));
@@ -187,7 +200,24 @@ describe('sweep-com-faces', () => {
       outcomes: { locked: 2, allowed: 1, unavailable: 1 },
       ownersLocked: 1,
       failed: {},
+      unchecked: 0,
     });
     expect(mocks.record).not.toHaveBeenCalled();
+  });
+
+  // Decision (Mod Lead ruling): an apply that would lock more than the ceiling stops and goes back
+  // to her. Faces in flight count against it, so concurrency never carries locks past it.
+  // Run as a dry run: concurrent `await import()`s of a vi.mock'd module sometimes resolve to the
+  // real one, so an apply here would hit the db mock. A would-lock counts against the cap the same.
+  it('stops before a lock past --max-locks, at any concurrency', async () => {
+    mocks.read.mockImplementation(async (id: number) => face({ id }));
+    mocks.preview.mockResolvedValue(verdict(true));
+    const faces = [1, 2, 3, 4, 5].map((id) => face({ id }));
+    await expect(sweep(faces, false, 4, undefined, 2)).resolves.toEqual({
+      outcomes: { locked: 2 },
+      ownersLocked: 1,
+      failed: {},
+      unchecked: 3,
+    });
   });
 });
