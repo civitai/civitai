@@ -2,12 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as IntentService from '~/server/services/model-com-face-intent.service';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
 
-const { mockPreviewComFaceIntent, mockRead, mockRecord, mockLock } = vi.hoisted(() => ({
-  mockPreviewComFaceIntent: vi.fn(),
-  mockRead: vi.fn(),
-  mockRecord: vi.fn(),
-  mockLock: vi.fn(),
-}));
+const { mockPreviewComFaceIntent, mockRead, mockRecord, mockLock, mockSuppress } = vi.hoisted(
+  () => ({
+    mockPreviewComFaceIntent: vi.fn(),
+    mockRead: vi.fn(),
+    mockRecord: vi.fn(),
+    mockLock: vi.fn(),
+    mockSuppress: vi.fn(),
+  })
+);
 
 vi.mock('@civitai/orchestration-client', () => ({
   createCivitaiClient: vi.fn(() => ({})),
@@ -23,6 +26,7 @@ vi.mock('~/server/services/model-com-face-intent.service', async (importOriginal
   readComFaceIntentModel: mockRead,
   recordComFaceIntent: mockRecord,
   lockForComFaceIntent: mockLock,
+  suppressComFaceIntentRelock: mockSuppress,
 }));
 
 import { comFaceIntentTextHash } from '~/server/services/model-com-face-intent.service';
@@ -141,6 +145,42 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
       promptId: 42,
     });
     expect(mockLock).toHaveBeenCalledWith(7, hash);
+  });
+
+  // Decision: a fresh verdict on edited text is not locked over a moderator's nsfw ruling made since
+  // the previous stored verdict (of any text). With no previous verdict there is nothing to count
+  // back to, so it locks as before. The face is refused either way.
+  it.each([
+    ['a ruling since the previous verdict: refused, not locked', true, true, false],
+    ['a ruling older than the previous verdict: refused and locked', true, false, true],
+    ['no previous verdict: refused and locked, no ruling read', false, false, true],
+  ] as const)('re-judged edited text with %s', async (_, previous, ruledSince, locks) => {
+    mockRead.mockResolvedValue(
+      model(
+        previous
+          ? { comFaceIntent: { detected: false, textHash: 'old', at: '2026-01-01T00:00:00Z' } }
+          : {}
+      )
+    );
+    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
+    const findRuling = dbMock.dbWrite.modActivity.findFirst;
+    if (ruledSince) findRuling.mockResolvedValueOnce({ id: 1 } as never);
+    await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).rejects.toThrow(
+      locks ? COM_FACE_REFUSED_MESSAGE : COM_FACE_REFUSED_EDIT_MESSAGE
+    );
+    expect(mockRecord).toHaveBeenCalledWith(7, expect.objectContaining({ detected: true }));
+    if (locks) expect(mockLock).toHaveBeenCalledWith(7, hash);
+    else expect(mockLock).not.toHaveBeenCalled();
+    // The fresh verdict outdates the ruling, so without this the next save of this text would lock.
+    if (locks) expect(mockSuppress).not.toHaveBeenCalled();
+    else expect(mockSuppress).toHaveBeenCalledWith(7, hash);
+    if (previous)
+      expect(findRuling).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ createdAt: { gt: new Date('2026-01-01T00:00:00Z') } }),
+        })
+      );
+    else expect(findRuling).not.toHaveBeenCalled();
   });
 
   // The stored verdict is the stored listing's: a draft's would replace one a moderator ruled on.

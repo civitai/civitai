@@ -121,7 +121,7 @@ describe('sweep-com-faces', () => {
         modelId: 7,
         userId: 1,
       },
-      { record: mocks.record, lock: expect.any(Function) }
+      { record: mocks.record, lock: expect.any(Function), suppressRelock: expect.any(Function) }
     );
   });
 

@@ -244,6 +244,9 @@ export const suppressComFaceIntentRelockSql = (modelId: number, textHash: string
   WHERE id = ${modelId}
 `;
 
+export const suppressComFaceIntentRelock = (modelId: number, textHash: string) =>
+  dbWrite.$executeRaw(suppressComFaceIntentRelockSql(modelId, textHash));
+
 /**
  * After a ruling lifted the intent lock: marks the stored detection overturned only when it was
  * read from `ruledTextHash`, the listing the ruling was made on. A detection of other text stands,
