@@ -247,6 +247,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD — share is opt-in per upload', () =>
           { requestId: 'rq_n', error: 'no block token', shared: false },
         ])
       );
+      expectReplyKeys('OPEN_IMAGE_UPLOAD', 'error', ['error', 'shared'], replies.received[0]);
       replies.stop();
     });
   });
