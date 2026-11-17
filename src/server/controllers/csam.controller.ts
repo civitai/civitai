@@ -151,11 +151,10 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     logToAxiom({
       name: 'csam-report',
       type: 'error',
-      important: true,
       message: 'removing the reported account failed',
       userId,
-      reportedById,
       error: (error as Error)?.message,
+      payload: { reportedById },
     });
   }
   // Written whether or not the removal succeeded, and throws on failure so the filing shows it.
