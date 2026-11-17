@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { notifyAppAccessDecision } from '~/server/services/app-access-request-notify';
 import { dbWrite } from '~/server/db/client';
 import type {
   DecideAppAccessRequestInput,
@@ -136,8 +137,10 @@ const DECIDABLE_FROM: Record<DecideAppAccessRequestInput['decision'], AppAccessR
  * approved → declined (a revoke). Anything else — a second approve, re-deciding a declined row —
  * is a CONFLICT, so two moderators acting on one row get one decision, not a silent overwrite.
  *
- * Then busts the requester's session, because the grant rides on it (see the file comment).
- * Best-effort: the decision has committed, and a failed bust is bounded by the session TTL.
+ * Then busts the requester's session, because the grant rides on it (see the file comment), and
+ * notifies the requester of the outcome. Both run only when THIS call moved the row, after the
+ * UPDATE has committed, and both are best-effort: a failed bust is bounded by the session TTL, and
+ * a failed notification is logged and never fails or undoes the decision.
  */
 export async function decideAppAccessRequest({
   moderatorId,
@@ -155,7 +158,9 @@ export async function decideAppAccessRequest({
   // (Chosen over a partial unique index on approved rows: that would make approving the stray row
   // a unique violation, and the migration is hand-applied with IF NOT EXISTS, so an environment
   // that already ran it would never get the index.)
-  const rows = await dbWrite.$queryRaw<(AppAccessRequestView & { userId: number })[]>(Prisma.sql`
+  const rows = await dbWrite.$queryRaw<
+    (AppAccessRequestView & { userId: number; prev: AppAccessRequestStatus })[]
+  >(Prisma.sql`
     WITH target AS (
       SELECT "id", "userId", "status" AS "prev" FROM "AppAccessRequest"
       WHERE "id" = ${input.id} AND "status" IN (${Prisma.join(from)})
@@ -168,12 +173,26 @@ export async function decideAppAccessRequest({
     FROM target t
     WHERE r."id" = t."id"
        OR (t."prev" = 'approved' AND r."userId" = t."userId" AND r."status" = 'approved')
-    RETURNING r."userId", r."id", r."whatToBuild", r."status", r."createdAt", r."reviewedAt"
+    RETURNING r."userId", r."id", r."whatToBuild", r."status", r."createdAt", r."reviewedAt",
+              t."prev"
   `);
   const row = rows.find((r) => r.id === input.id);
   if (row) {
-    const { userId, ...view } = row;
+    const { userId, prev, ...view } = row;
     await refreshSession(userId, { caller: 'moderation' }).catch(handleLogError);
+    // Once per decision, for the clicked row only — a revoke sweep that also declined a second
+    // approved row is still one decision to the person. try/catch rather than `.catch`: a
+    // synchronous throw must not escape either.
+    try {
+      await notifyAppAccessDecision({
+        userId,
+        requestId: view.id,
+        decision: input.decision,
+        revoked: prev === 'approved',
+      });
+    } catch (e) {
+      handleLogError(e as Error);
+    }
     return view;
   }
 
