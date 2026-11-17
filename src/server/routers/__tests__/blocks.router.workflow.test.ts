@@ -4899,7 +4899,9 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
       expect(stepArg.input.model.id).toBe(500);
       // The block's input urls go through the generation input check as App Blocks input.
-      expect(stepArg.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
+      expect(stepArg.inputGate).toEqual(
+        expect.objectContaining({ entry: 'appBlocks', isApiCaller: false })
+      );
     });
 
     it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
@@ -13383,6 +13385,7 @@ describe("blocks workflow — kind:'textToImage' source images and the scan gate
   };
   const pageClaims = () =>
     validClaims({
+      appBlockId: 'apb_page',
       blockInstanceId: 'page_apb_page',
       ctx: { slotId: 'app.page', entityType: 'none' },
     });
@@ -13415,7 +13418,12 @@ describe("blocks workflow — kind:'textToImage' source images and the scan gate
         input: { images?: Array<{ url: string }> };
         inputGate: unknown;
       };
-      expect(opts.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
+      // The token's app: the per-app source flags are read for it inside the step builder.
+      expect(opts.inputGate).toEqual({
+        entry: 'appBlocks',
+        isApiCaller: false,
+        appBlockLog: { appBlockId: 'apb_page', stepTypes: 'textToImage' },
+      });
       expect(opts.input.images?.map((i) => i.url)).toEqual([SOURCE.url]);
     }
   );

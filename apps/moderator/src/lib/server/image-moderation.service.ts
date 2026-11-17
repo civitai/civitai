@@ -33,6 +33,7 @@ import {
   setAsideState,
 } from './csam-queue-set-aside';
 import type { Kysely, Transaction } from 'kysely';
+import { queueModelsForImageChildTagChanges } from './image-models-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
@@ -69,6 +70,7 @@ const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
   await bustProfilePictures({ imageIds: [imageId] });
+  await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
 };
 
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
@@ -88,6 +90,13 @@ export class RemovedImageNotRestorableError extends Error {
   }
 }
 
+/** An explicit restore that left the image removed: it is lifted only through its own review. */
+export class ImageNotRestoredError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} was not restored`);
+  }
+}
+
 export async function acceptImage({
   imageId,
   removeMinorFlag = false,
@@ -100,7 +109,8 @@ export async function acceptImage({
   userId: number;
   deferAppealEmail?: boolean;
   /** An explicit unblock. Review queues leave it off, so an image removed with only the review flag
-   *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. */
+   *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. Not even
+   *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
   restoreRemoved?: boolean;
 }): Promise<ClosedAppeal | undefined> {
   const img = await dbRead
@@ -139,9 +149,8 @@ export async function acceptImage({
         : {}),
     })
     .where('id', '=', imageId)
-    .$if(!restoreRemoved, (qb) =>
-      qb.where(NOT_FLAG_ONLY_REMAINING).where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
-    )
+    .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+    .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
     // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
     // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
     .returning([
@@ -155,7 +164,7 @@ export async function acceptImage({
     ])
     .executeTakeFirst();
   if (!updated) {
-    if (restoreRemoved) return;
+    if (restoreRemoved) throw new ImageNotRestoredError(imageId);
     throw new RemovedImageNotRestorableError(imageId);
   }
   await dropBlockedImageDeleteQueue(imageId);

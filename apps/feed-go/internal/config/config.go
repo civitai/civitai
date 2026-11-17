@@ -58,6 +58,10 @@ type Config struct {
 	// Pprof is FEED_GO_PPROF (default off): serve net/http/pprof under /debug/pprof/ on the internal
 	// listener only (never the public one).
 	Pprof bool
+	// ServeModelGetAll is FEED_GO_SERVE_MODEL_GETALL (default off): compute `model.getAll` on the public
+	// route (`/api/trpc/model.getAll`). Off, every request there is the `model-getall-off` fallback,
+	// proxied to the Node app unchanged.
+	ServeModelGetAll bool
 
 	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
 	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
@@ -158,6 +162,7 @@ func Load() (*Config, error) {
 		CoverageNext:         boolEnv("FEED_GO_GENERATION_COVERAGE_NEXT", true),
 		LoadingOpenToAll:     boolEnv("FEED_GO_GENERATION_LOADING_OPEN_TO_ALL", true),
 		Pprof:                boolEnv("FEED_GO_PPROF", false),
+		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),

@@ -79,6 +79,17 @@ describe('buildSemanticAuditRow', () => {
     expect(row(entry({ guard: flag(['block:rule_b']) }), null).resultIds).toEqual([]);
   });
 
+  it.each([
+    ['flag', flag([])],
+    ['unknown', GUARD_UNKNOWN],
+  ])('stores no ids for a %s guard that names no rule', (_, guard) => {
+    expect(row(entry({ guard }), []).resultIds).toEqual([]);
+  });
+
+  it('keeps the ids for a passing guard that names no rule', () => {
+    expect(row(entry({ guard: PASS }), []).resultIds).toEqual(SERVED.slice(0, 20));
+  });
+
   describe('a refused search, run for review and never served', () => {
     const computed = (over: Partial<SemanticAuditEntry> = {}) =>
       entry({ resultsServed: false, withholdIds: true, ...over });
@@ -116,10 +127,6 @@ describe('buildSemanticAuditRow', () => {
 
     it('stores the ids past a known guard with no rule hit', () => {
       expect(row(computed({ wordVerdict: 'blocked' })).resultIds).toEqual(SERVED.slice(0, 20));
-    });
-
-    it('leaves a served row with an unknown guard as it was', () => {
-      expect(row(entry({ guard: GUARD_UNKNOWN })).resultIds).toEqual(SERVED.slice(0, 20));
     });
 
     it('sends no resultsServed key on a served row, so it works before the column exists', () => {

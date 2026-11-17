@@ -614,6 +614,9 @@ describe('the advisory locks have exactly one call site', () => {
   // text-scan/actions/csam-hold takes one per held entity (two-arg hashtext('csam-hold:<type>') form)
   // around the ruled-text check and the hold write; csam-hold-decision takes the same one, in its own
   // transaction, for a decision's final update. The only lock in either transaction.
+  // post-text-moderation takes that same csam-hold lock (csamHoldLockKey('PostText')) around a
+  // moderator's hold: the pending-hold check, the hold insert and csamHeld. The only lock in its
+  // transaction.
   // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
   // form) around the open-hold check and the hold write. The only lock in its transaction.
   // access-token takes one per resource (classed two-arg form, 0x41544b) around the active-token
@@ -645,6 +648,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/item-holder-lock.ts',
     'services/model-version-gift.service.ts',
     'services/platform-feedback.service.ts',
+    'services/post-text-moderation.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
     'services/storyline.service.ts',
