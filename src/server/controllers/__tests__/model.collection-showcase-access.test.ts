@@ -101,7 +101,12 @@ describe('the showcase collection shown on a model page', () => {
 });
 
 describe("the showcase collection's cover", () => {
-  const cover = (nsfwLevel: number) => ({ id: 70, userId: 6, nsfwLevel, tags: [] });
+  const cover = (nsfwLevel: number) => ({
+    id: 70,
+    userId: 6,
+    nsfwLevel,
+    tags: [{ tag: { id: 1 } }],
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -123,6 +128,15 @@ describe("the showcase collection's cover", () => {
     getCollectionById.mockResolvedValue({ id: SHOWCASE, image: cover(NsfwLevel.PG) });
     coverRulesAllow.mockResolvedValue(false);
     await expect(show()).resolves.toMatchObject({ image: null });
+    const viewerCtx = expect.objectContaining({ user: { id: 77 } });
+    expect(coverRulesAllow).toHaveBeenCalledWith(cover(NsfwLevel.PG), viewerCtx);
+    expect(viewerLevel).toHaveBeenCalledWith(viewerCtx, undefined);
+  });
+
+  it('does not pass on whether a cover was withheld', async () => {
+    getCollectionById.mockResolvedValue({ id: SHOWCASE, image: null, coverHidden: true });
+    const result = await show();
+    expect(result).not.toHaveProperty('coverHidden');
   });
 
   it("is shown when within the viewer's level and rules (control)", async () => {
