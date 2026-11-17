@@ -3222,6 +3222,11 @@ const REDIS_KEYS_UNPREFIXED = {
     CONSENT_REVOKED_SCOPES: 'blocks:consent-revoked-scopes',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
+    // One-use marker for a GitHub Actions OIDC token an App submit presented:
+    // `${ACTIONS_OIDC_JTI}:${jti}`, SET NX with a TTL that outlives the token's own expiry
+    // (capped). Present ⇒ the token was already used, so the submit is refused as a replay.
+    // See `src/server/services/blocks/github-actions-oidc.service.ts`.
+    ACTIONS_OIDC_JTI: 'blocks:actions-oidc-jti',
   },
   DOWNLOAD: {
     COUNT: 'download:count',
