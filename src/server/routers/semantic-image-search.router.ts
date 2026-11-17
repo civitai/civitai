@@ -75,8 +75,9 @@ export const semanticImageSearchRouter = router({
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const { ownImagesOf } = ctx;
+      const searched = ownImagesOf ? ownImagesInput(input, ownImagesOf) : input;
       const result = await searchSemanticImages({
-        input: ownImagesOf ? ownImagesInput(input, ownImagesOf) : input,
+        input: searched,
         user: ctx.user,
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
@@ -84,8 +85,9 @@ export const semanticImageSearchRouter = router({
       });
       const latencyMs = Date.now() - started;
 
+      // Logged as searched, so the row says what ran.
       if (!input.cursor) {
-        const { query, imageId, cursor, limit, ...filters } = input;
+        const { query, imageId, cursor, limit, ...filters } = searched;
         void ctx.track
           .search({
             query: query ?? '',

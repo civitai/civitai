@@ -197,9 +197,10 @@ export async function searchSemanticImages({
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
   const filter: CandidateFilter = {
+    // With refuseNarrowing, candidates come from every level; hydration keeps the viewer's.
     gate: {
       kind: 'level',
-      nsfwLevels: Flags.instanceToArray(level),
+      nsfwLevels: Flags.instanceToArray(refuseNarrowing ? allBrowsingLevelsFlag : level),
     },
     tagIds,
     anyOf: { baseModels: input.baseModels, type: input.types },

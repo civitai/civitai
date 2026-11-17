@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   feedOn: false,
   search: vi.fn(),
   createFeedback: vi.fn(),
+  trackSearch: vi.fn(),
 }));
 
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -45,13 +46,14 @@ const caller = (user: typeof VIEWER | null = VIEWER) =>
     tokenScope: TokenScope.Full,
     req: { headers: {} },
     features: {},
-    track: { search: vi.fn().mockResolvedValue(undefined) },
+    track: { search: h.trackSearch },
   } as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
   h.search.mockResolvedValue({ items: [], nextCursor: undefined });
   h.createFeedback.mockResolvedValue({ id: 1 });
+  h.trackSearch.mockResolvedValue(undefined);
 });
 
 describe('semanticImageSearch router', () => {
@@ -125,6 +127,14 @@ describe('semanticImageSearch router — own images without the flag', () => {
       userIds: [7],
     });
     expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(true);
+  });
+
+  it('logs the search as it ran, not as it was asked', async () => {
+    await caller().search({ query: 'kuro', usernames: ['fox'], tagNames: ['cat'] });
+    const { filters } = h.trackSearch.mock.calls[0][0];
+    expect(filters).toMatchObject({ userIds: [7] });
+    expect(filters.usernames).toBeUndefined();
+    expect(filters.tagNames).toBeUndefined();
   });
 
   it('caps the page size at the picker’s', async () => {

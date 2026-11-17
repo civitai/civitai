@@ -606,7 +606,30 @@ describe('the query audit and the browsing level', () => {
       candidateSource: source,
       refuseNarrowing: true,
     });
+
     expect(h.includesInappropriate).toHaveBeenCalledWith(expect.anything(), true);
+  });
+
+  it('asks every level for own-images candidates and keeps the viewer’s level on the page', async () => {
+    const levelOf: Record<number, number> = { 101: 1, 102: 16 };
+    h.fakeGetAllImages = async (args) => {
+      const { ids, browsingLevel } = args as { ids: number[]; browsingLevel: number };
+      return {
+        items: ids
+          .filter((id) => (levelOf[id] & browsingLevel) !== 0)
+          .map((id) => ({ id, nsfwLevel: levelOf[id] })),
+        nextCursor: undefined,
+      };
+    };
+    const { source, calls } = rankedSource([101, 102]);
+    const result = await searchSemanticImages({
+      input: textQuery({ browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+    expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
   it('recomputes the add-ons at the narrowed level', async () => {
