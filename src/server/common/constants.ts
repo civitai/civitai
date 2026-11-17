@@ -594,10 +594,13 @@ export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
 
+/** The hostname shape every orchestrator origin uses. */
+export const ORCHESTRATOR_HOSTNAME_PATTERN = 'orchestration[a-z0-9-]*\\.civitai\\.com';
+
 export function isOrchestratorUrl(url: string) {
   try {
     const { host } = new URL(url);
-    return /^orchestration[a-z0-9-]*\.civitai\.com$/i.test(host);
+    return new RegExp(`^${ORCHESTRATOR_HOSTNAME_PATTERN}$`, 'i').test(host);
   } catch {
     return false;
   }

@@ -206,6 +206,8 @@ export async function assertSharedTextSafe(
     if (includesPoi(combined)) {
       throw new SharedContentBlockedError('poi', 'Content flagged for review');
     }
+
+    // Orchestrator media links belong to the viewer who made them, not to other viewers.
     if (containsPrivateMediaUrl(combined)) {
       throw new SharedContentBlockedError('link', 'Content contains a blocked link');
     }

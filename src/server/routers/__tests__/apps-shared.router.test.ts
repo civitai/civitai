@@ -672,6 +672,33 @@ describe('C1 cross-user overwrite', () => {
     expect((insert![1] as unknown[])[0]).not.toBe('victim-key');
   });
 
+  it('append refuses an orchestrator media link in data, whatever the moderation mode', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id') && sql.includes('count(*)'))
+        return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().append({
+        blockToken: 't',
+        value: {
+          title: 'idea',
+          data: { img: 'https://orchestration.civitai.com/v2/consumer/blobs/LEG1.png?sig=s' },
+        },
+      } as never)
+    ).rejects.toThrow(/blocked link/);
+    const insert = (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('INSERT INTO "app_app_voting".shared_kv')
+    );
+    expect(insert).toBeUndefined();
+  });
+
   it('a key append generated is refused as a counter key, so a counter cannot share it', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
