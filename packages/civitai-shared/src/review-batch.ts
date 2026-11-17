@@ -51,6 +51,17 @@ export const SCANNER_HITS_SQL = `
   WHERE contentHash IN {hashes:Array(String)}
   GROUP BY contentHash
 `;
+/** One image's scanner verdict from `SCANNER_HITS_SQL` rows: marked CSAM or minor, cleared, or no
+ *  rows at all. A routing decision holds both `hit` and `none`. */
+export function scannerVerdict(
+  id: number,
+  rows: readonly { contentHash: string; hit: number | boolean | string }[]
+): 'hit' | 'clear' | 'none' {
+  const row = rows.find((r) => r.contentHash === imageAuditContentHash(id));
+  if (!row) return 'none';
+  return Number(row.hit) === 1 || row.hit === true ? 'hit' : 'clear';
+}
+
 export function scannerHeldIds(
   ids: readonly number[],
   rows: readonly { contentHash: string; hit: number | boolean | string }[],

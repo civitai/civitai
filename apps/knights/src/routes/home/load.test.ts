@@ -32,7 +32,13 @@ beforeEach(() => {
   getDailyStatus.mockResolvedValue({ streak: 12 });
   findRecap.mockResolvedValue({ cast: 30, confirmed: 18 });
   railFor.mockResolvedValue({ standing: { position: 14, total: 312 }, activity: 99 });
-  seenStore.get.mockResolvedValue({ rank: 'Knight', level: 12, guide: true, whatsNew: true });
+  seenStore.get.mockResolvedValue({
+    rank: 'Knight',
+    level: 12,
+    guide: true,
+    whatsNew: true,
+    consent: true,
+  });
 });
 
 describe('home load', () => {
@@ -85,7 +91,14 @@ describe('home load', () => {
 describe("home: what's new", () => {
   it("offers it to a member who has not seen it, with the newcomer's first item for a fresh Acolyte", async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
-    seenStore.get.mockResolvedValue(null);
+    // Joining records the accepted warning, so a newcomer reaches home with a record.
+    seenStore.get.mockResolvedValue({
+      rank: 'Acolyte',
+      level: 1,
+      guide: false,
+      whatsNew: false,
+      consent: true,
+    });
     const page = await run();
     expect(page.whatsNew.items[0].lead).toBe('You start as an Acolyte.');
     expect(page.whatsNew.items.at(-1).link).toEqual({ text: 'Codex', href: '/codex' });
@@ -93,7 +106,14 @@ describe("home: what's new", () => {
 
   it('welcomes a newcomer without talking about changes they never saw', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
-    seenStore.get.mockResolvedValue(null);
+    // Joining records the accepted warning, so a newcomer reaches home with a record.
+    seenStore.get.mockResolvedValue({
+      rank: 'Acolyte',
+      level: 1,
+      guide: false,
+      whatsNew: false,
+      consent: true,
+    });
     const { whatsNew } = await run();
     expect(whatsNew).toMatchObject({
       eyebrow: 'Before you begin',
@@ -104,7 +124,7 @@ describe("home: what's new", () => {
   });
 
   it('gives a returning player the first item about their kept rank and XP', async () => {
-    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 12, guide: true });
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 12, guide: true, consent: true });
     const { whatsNew } = await run();
     expect(whatsNew).toMatchObject({
       eyebrow: "What's new",
@@ -119,7 +139,15 @@ describe("home: what's new", () => {
     expect((await run()).whatsNew).toBeNull();
     playerRow.value = undefined;
     expect((await run()).whatsNew).toBeNull();
-    expect(seenStore.get).toHaveBeenCalledTimes(1);
+    // Once for the notices and once for the consent; nothing for someone who has not joined.
+    expect(seenStore.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks a v1 player who has not accepted the content warning first, holding what's new back", async () => {
+    seenStore.get.mockResolvedValue({ rank: 'Knight', level: 12, guide: true, whatsNew: false });
+    const page = await run();
+    expect(page.needsConsent).toBe(true);
+    expect(page.whatsNew).toBeNull();
   });
 
   it('records it as seen through the form action and leaves the player on /home', async () => {

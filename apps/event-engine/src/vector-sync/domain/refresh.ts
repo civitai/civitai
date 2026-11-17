@@ -29,13 +29,15 @@ type RefreshQueue = {
 /**
  * Every `everyMs`, walks the domain's whole table `batch` ids a read into its lane, flushing the
  * queue whenever it fills. A failed read or flush stops the pass, and the next tick resumes it from
- * the same cursor; a tick is skipped while the previous pass runs.
+ * the same cursor; a tick is skipped while the previous pass runs. With `startupDelayMs`, one more
+ * tick runs that long after start: the cursor lives in memory, so a process restarting more often
+ * than `everyMs` would otherwise never finish a pass.
  */
 export function startRefreshers(
   domains: Domain<any>[],
   queue: RefreshQueue,
   pg: Pick<Pool, 'query'>
-): ReturnType<typeof setInterval>[] {
+): ReturnType<typeof setTimeout>[] {
   return domains.flatMap((domain) => {
     const { refresh } = domain;
     const lane = queue.lanes.get(domain.name);
@@ -50,16 +52,18 @@ export function startRefreshers(
         cursor = next;
       } while (cursor !== 0);
     };
+    const tick = () => {
+      if (running) return;
+      running = true;
+      pass()
+        .catch((err) => logger.error({ err }, `${domain.name}-sync: refresh pass stopped`))
+        .finally(() => {
+          running = false;
+        });
+    };
     return [
-      setInterval(() => {
-        if (running) return;
-        running = true;
-        pass()
-          .catch((err) => logger.error({ err }, `${domain.name}-sync: refresh pass stopped`))
-          .finally(() => {
-            running = false;
-          });
-      }, refresh.everyMs),
+      setInterval(tick, refresh.everyMs),
+      ...(refresh.startupDelayMs === undefined ? [] : [setTimeout(tick, refresh.startupDelayMs)]),
     ];
   });
 }

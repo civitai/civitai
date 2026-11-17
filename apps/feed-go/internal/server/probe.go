@@ -64,13 +64,13 @@ const (
 )
 
 // model.getAll's caches (internal/hydrate/models.go). Its probe runs the serving path itself and
-// reports the cache its fallback names; a miss Go computes (the model frames, hydrate.MissCaches) is
-// recorded instead (hydrate.WithPresence).
+// reports the cache its fallback names; a miss Go computes (the model frames and decorations,
+// hydrate.MissCaches) is recorded instead (hydrate.WithPresence).
 const (
 	CacheModelData          = "model-data"
 	CacheModelTags          = "model-tags"
 	CacheModelFrames        = hydrate.MissModelFrames
-	CacheModelDecorations   = "model-decorations"
+	CacheModelDecorations   = hydrate.MissModelDecorations
 	CacheVersionImages      = "version-images"
 	CacheCreatorMemberships = "creator-memberships"
 )
@@ -82,8 +82,8 @@ var preHydrateMissReasons = map[string]string{
 	"gallery-settings-stale": CacheGallerySettings, // a key from before the SFW hold is rebuilt
 	"blocked-tags-miss":      CacheBlockedTags,     // the blocked-tag list is rebuilt from the database
 	"blocked-tags-stale":     CacheBlockedTags,     // a value Node would replace
-	// model.getAll's hydration falls back on each of these cache misses (on a frame miss only
-	// without the miss computation).
+	// model.getAll's hydration falls back on each of these cache misses (on a frame or decoration
+	// miss only without the miss computation).
 	"model-data-miss":       CacheModelData,
 	"model-tags-miss":       CacheModelTags,
 	"model-frame-miss":      CacheModelFrames,

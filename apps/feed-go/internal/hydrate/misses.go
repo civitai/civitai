@@ -26,12 +26,14 @@ const (
 	MissEventDecorations = "event-decorations" // eventDecorationEntityCaches.Image
 	MissTagIDs           = "tag-ids"           // tagIdsForImagesCache
 	MissModelFrames      = "model-frames"      // cosmeticEntityCaches.Model (model.getAll)
+	MissModelDecorations = "model-decorations" // eventDecorationEntityCaches.Model (model.getAll)
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
-var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames}
+var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
+	MissModelDecorations}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -47,7 +49,7 @@ type MissCompute struct {
 	// Node lookup writes it: same key, same msgpackr bytes, same expiry. Only for a miss Node would
 	// write too (no key, or an undecodable value; never inside a bust's debounce window or after a
 	// failed read), and as SET NX: a key another writer filled since the read is never overwritten.
-	// The frame (image and model) and event-decoration lookups then read Primary, as Node's do
+	// The frame and event-decoration lookups (image and model) then read Primary, as Node's do
 	// (entityDB); the user-cosmetics and tag-ids lookups read the replica either way, as Node's fetch
 	// does (dbRead).
 	WriteBack bool
@@ -153,9 +155,9 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 
 // memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every
 // cache but the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
-// must not leave the old prompt served from a process's copy). The tag ids and the model frames are
-// kept: neither depends on the viewer, Node keeps tag ids in a per-pod L1 far longer than recentTTL,
-// and a model frame is the same frame lookup the image frames keep.
+// must not leave the old prompt served from a process's copy). The tag ids, the model frames and the
+// model decorations are kept: none depends on the viewer, Node keeps tag ids in a per-pod L1 far
+// longer than recentTTL, and a model frame or decoration is the same lookup the image ones keep.
 func (c *MissCompute) memoized(cache string) bool {
 	return !c.WriteBack && cache != MissImageMeta
 }
@@ -226,7 +228,7 @@ func (c *MissCompute) observe(cache, result string, n int) {
 	}
 }
 
-// entityDB is the database the frame (image and model) and event-decoration lookups read. Node reads
+// entityDB is the database the frame and event-decoration lookups (image and model) read. Node reads
 // the primary (dbWrite, src/server/redis/caches.ts) and caches what it reads for a day. With
 // WriteBack on this service writes what it reads too, so it reads the primary as well; with it off
 // nothing it reads is cached, and the replica's lag only affects this one answer.
@@ -272,13 +274,15 @@ var (
 	modelFrameSpec = lookupSpec{cache: MissModelFrames, reason: "model-frame-miss", key: KeyModelFrames, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
 	// eventDecorationEntityCaches.Image: ttl a day, notFoundTtl an hour, cacheNotFound on.
 	eventSpec = lookupSpec{cache: MissEventDecorations, reason: "event-decoration-miss", key: KeyImageEvents, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
+	// eventDecorationEntityCaches.Model: the same createCachedObject options as the Image one.
+	modelEventSpec = lookupSpec{cache: MissModelDecorations, reason: "model-decoration-miss", key: KeyModelEvents, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
 	// tagIdsForImagesCache: see tagIDsEX; cacheNotFound (default) on.
 	tagIDsSpec = lookupSpec{cache: MissTagIDs, reason: "tag-ids-miss", key: KeyTagIDs, idKey: "imageId", ttl: tagIDsEX, notFoundTTL: tagIDsEX}
 )
 
 // missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
 // the fallbacks those misses raise without a computation (Sources.MissReason).
-var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, tagIDsSpec}
+var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec}
 
 // specReason is the fallback reason of the named cache's lookup spec ("" for none).
 func specReason(cache string) string {
@@ -484,6 +488,15 @@ func (s *Sources) fillEvents(ctx context.Context, images []int, got map[int]Entr
 		return nil
 	}
 	return s.fill(ctx, eventSpec, images, got, writable, true, nil, s.lookupImageEvents)
+}
+
+// fillModelEvents is fillEvents for the models' decorations (eventDecorationEntityCaches.Model.fetch's
+// lookup, model.getAll): the same lookup over `equippedToType = 'Model'`; a no-op without s.Compute.
+func (s *Sources) fillModelEvents(ctx context.Context, models []int, got map[int]Entry, writable map[int]bool) error {
+	if s.Compute == nil {
+		return nil
+	}
+	return s.fill(ctx, modelEventSpec, models, got, writable, true, nil, s.lookupModelEvents)
 }
 
 // writePacked sends writes in one pipeline, best effort: Node swallows a failed cache write too (the
@@ -786,25 +799,44 @@ func (s *Sources) tagRecords(ctx context.Context, ids []int) (map[int]tagRecord,
 	return out, nil
 }
 
-// sqlImageEvents is eventDecorationEntityCaches.Image's lookupFn query, on entityDB (Node: the
-// primary). Its cosmetic records come from cosmeticCache, which Node reads from the replica.
-const sqlImageEvents = `SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
+// sqlImageEvents and sqlModelEvents are eventDecorationEntityCaches.Image's and .Model's lookupFn
+// query (one query, `equippedToType` the entity), on entityDB (Node: the primary). Their cosmetic
+// records come from cosmeticCache, which Node reads from the replica.
+const (
+	sqlImageEvents = `SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
 		FROM "UserCosmetic" uc
 		JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
 		WHERE uc."equippedToId" = ANY($1::int[])
 		  AND uc."equippedToType" = 'Image'::"CosmeticEntity"
 		  AND jsonb_typeof(c.data->'event') = 'string'`
+	sqlModelEvents = `SELECT uc."cosmeticId", uc."equippedToId", uc."userId"
+		FROM "UserCosmetic" uc
+		JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+		WHERE uc."equippedToId" = ANY($1::int[])
+		  AND uc."equippedToType" = 'Model'::"CosmeticEntity"
+		  AND jsonb_typeof(c.data->'event') = 'string'`
+)
 
 // lookupImageEvents is eventDecorationEntityCaches.Image's lookupFn: per image, the event decoration
 // it wears `{id, name, type, source, data, equippedToId, equippedToType, userId}`, built from the
 // cosmetic record (cosmeticCache.fetch); a row whose cosmetic is found nowhere, or whose data is not
 // event decoration data, is skipped. The last row per image wins.
 func (s *Sources) lookupImageEvents(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
+	return s.lookupEntityEvents(ctx, sqlImageEvents, "Image", ids)
+}
+
+// lookupModelEvents is eventDecorationEntityCaches.Model's lookupFn: lookupImageEvents over the
+// models, `equippedToType` 'Model' (Node: `entity as CosmeticEntity`).
+func (s *Sources) lookupModelEvents(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
+	return s.lookupEntityEvents(ctx, sqlModelEvents, "Model", ids)
+}
+
+func (s *Sources) lookupEntityEvents(ctx context.Context, sql, entity string, ids []int) (map[int]jspack.Obj, error) {
 	db, err := s.entityDB()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, sqlImageEvents, ids)
+	rows, err := db.Query(ctx, sql, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -842,7 +874,7 @@ func (s *Sources) lookupImageEvents(ctx context.Context, ids []int) (map[int]jsp
 			return v
 		}
 		out[eid] = jspack.O("id", get("id"), "name", get("name"), "type", get("type"), "source", get("source"),
-			"data", data, "equippedToId", eid, "equippedToType", "Image", "userId", uid)
+			"data", data, "equippedToId", eid, "equippedToType", entity, "userId", uid)
 	}
 	return out, nil
 }

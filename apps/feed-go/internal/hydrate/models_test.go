@@ -12,6 +12,7 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
@@ -32,11 +33,16 @@ type modelFixture struct {
 	// rows it reads: [id, name, type].
 	tagRows    map[int][][]any
 	tagRecords map[int][]any
+	// events are the model decoration lookup's rows by model id: [cosmeticId, equippedToId, userId];
+	// eventSQL the last decoration query's text; failEvents makes that query fail.
+	events     map[int][][]any
+	eventSQL   string
+	failEvents bool
 }
 
 func newModelFixture() *modelFixture {
 	return &modelFixture{entries: map[string][]byte{}, tags: map[int]bool{}, users: map[int][]any{},
-		frames: map[int][][]any{}, tagRows: map[int][][]any{}, tagRecords: map[int][]any{}}
+		frames: map[int][][]any{}, tagRows: map[int][][]any{}, tagRecords: map[int][]any{}, events: map[int][][]any{}}
 }
 
 func (f *modelFixture) put(t *testing.T, key string, id int, v any) {
@@ -107,6 +113,20 @@ func (f *modelFixture) sources() *Sources {
 			out := testkit.NewRows([]string{"cosmeticId", "equippedToId", "userData", "createdById"})
 			for _, id := range args[0].([]int) {
 				out.Data = append(out.Data, f.frames[id]...)
+			}
+			return out, nil
+		}},
+		{Match: `jsonb_typeof(c.data->'event') = 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			f.record("events")
+			f.mu.Lock()
+			f.eventSQL = sql
+			f.mu.Unlock()
+			if f.failEvents {
+				return nil, errMissDB
+			}
+			out := testkit.NewRows([]string{"cosmeticId", "equippedToId", "userId"})
+			for _, id := range args[0].([]int) {
+				out.Data = append(out.Data, f.events[id]...)
 			}
 			return out, nil
 		}},
@@ -548,5 +568,134 @@ func TestVersionImagesComputesTagIDsMiss(t *testing.T) {
 func TestModelFrameSQLIsTheImageOnesForModels(t *testing.T) {
 	if got := strings.Replace(sqlModelFrames, `'Model'::"CosmeticEntity"`, `'Image'::"CosmeticEntity"`, 1); got != sqlImageFrames || sqlModelFrames == sqlImageFrames {
 		t.Fatalf("sqlModelFrames:\n%s\nis not sqlImageFrames over 'Model':\n%s", sqlModelFrames, sqlImageFrames)
+	}
+}
+
+// msgpackr 1.11.5's bytes (misses_test.go) for the values eventDecorationEntityCaches.Model's fetch
+// writes:
+const (
+	// {id:401, name:'Hat', type:'ContentDecoration', source:'Claim', data:{event:'ev', url:'h.png'},
+	//  equippedToId:5001, equippedToType:'Model', userId:1001, cachedAt:now}
+	wantModelEvent5001 = "de0009a26964cd0191a46e616d65a3486174a474797065b1436f6e74656e744465636f726174696f6ea6736f75726365a5436c61696da464617461de0002a56576656e74a26576a375726ca5682e706e67ac6571756970706564546f4964cd1389ae6571756970706564546f54797065a54d6f64656ca6757365724964cd03e9a86361636865644174d6ff6a2fe940"
+	// {equippedToId:5002, notFound:true, cachedAt:now}
+	wantModelEvent5002Marker = "de0003ac6571756970706564546f4964cd138aa86e6f74466f756e64c3a86361636865644174d6ff6a2fe940"
+)
+
+// decorationMissFixture is fullModelFixture with both models' decoration entries gone: 5001 wears
+// 401 (a cached event cosmetic), 5002 a row whose cosmetic 402 is found nowhere (skipped: no hat).
+func decorationMissFixture(t *testing.T) *modelFixture {
+	f := fullModelFixture(t)
+	f.del(KeyModelEvents, 5001)
+	f.del(KeyModelEvents, 5002)
+	f.events[5001] = [][]any{{int64(401), int64(5001), int64(1001)}}
+	f.events[5002] = [][]any{{int64(402), int64(5002), int64(1001)}}
+	f.entries[pageNS+missKey(KeyCosmetics, 401)] = jspack.Pack(jspack.O("id", 401, "name", "Hat", "type", "ContentDecoration",
+		"data", jspack.O("event", "ev", "url", "h.png"), "source", "Claim", "flags", 0, "cachedAt", pageNow))
+	return f
+}
+
+// A model decoration miss is the event decoration lookup over the models (equippedToType 'Model'),
+// built from the cosmetic record as the image one is; a model with no hat gets an hour's marker.
+// Written back only with WriteBack, as Node writes it.
+func TestModelPageComputesDecorationMiss(t *testing.T) {
+	for _, writeBack := range []bool{false, true} {
+		t.Run(strconv.FormatBool(writeBack), func(t *testing.T) {
+			f := decorationMissFixture(t)
+			obs := &observed{}
+			s, r := computedModelSources(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			p, err := s.ModelPage(context.Background(), modelPageRequest())
+			if err != nil {
+				t.Fatalf("ModelPage: %v (%q)", err, fallback.Reason(err))
+			}
+			b, err := superjson.Plain(p.Decorations[5001])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := `{"id":401,"name":"Hat","type":"ContentDecoration","source":"Claim","data":{"event":"ev","url":"h.png"},"equippedToId":5001,"equippedToType":"Model"}`; string(b) != want {
+				t.Fatalf("decoration 5001:\n got %s\nwant %s", b, want)
+			}
+			if _, ok := p.Decorations[5002]; ok || len(p.Decorations) != 1 {
+				t.Fatalf("decorations %v, want 5001 only (5002's cosmetic is found nowhere)", p.Decorations)
+			}
+			if !strings.Contains(f.eventSQL, `uc."equippedToType" = 'Model'::"CosmeticEntity"`) {
+				t.Fatalf("the decoration lookup is not the Model entity's:\n%s", f.eventSQL)
+			}
+			if o := obs.get(); o["model-decorations/computed"] != 2 {
+				t.Fatalf("observed %v, want 2 computed model-decorations ids", o)
+			}
+			if !writeBack {
+				wantAbsent(t, r, pageNS+missKey(KeyModelEvents, 5001), pageNS+missKey(KeyModelEvents, 5002))
+				return
+			}
+			wantPacked(t, r, missKey(KeyModelEvents, 5001), wantModelEvent5001, 24*time.Hour)
+			wantPacked(t, r, missKey(KeyModelEvents, 5002), wantModelEvent5002Marker, time.Hour)
+		})
+	}
+}
+
+// A failed model decoration lookup is model-decoration-miss-failed, nothing written; without a
+// computation the miss is model-decoration-miss (TestModelPageFallbacks).
+func TestModelDecorationLookupFailureFallsBack(t *testing.T) {
+	f := decorationMissFixture(t)
+	f.failEvents = true
+	obs := &observed{}
+	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+	_, err := s.ModelPage(context.Background(), modelPageRequest())
+	if got := fallback.Reason(err); got != "model-decoration-miss-failed" {
+		t.Fatalf("err %v (%q), want model-decoration-miss-failed", err, got)
+	}
+	if o := obs.get(); o["model-decorations/error"] != 2 {
+		t.Fatalf("observed %v, want 2 model-decorations error ids", o)
+	}
+	wantAbsent(t, r, pageNS+missKey(KeyModelEvents, 5001), pageNS+missKey(KeyModelEvents, 5002))
+}
+
+// Under a Go-first probe (WithPresence) a decoration miss is recorded, with its one lookup query, and
+// answered as no entry: no decoration query, no write.
+func TestModelPageDecorationsUnderPresence(t *testing.T) {
+	f := decorationMissFixture(t)
+	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true})
+	rec := &PresenceProbe{Now: func() time.Time { return pageNow }}
+	p, err := s.ModelPage(WithPresence(context.Background(), rec), modelPageRequest())
+	if err != nil {
+		t.Fatalf("ModelPage: %v", err)
+	}
+	if len(p.Decorations) != 0 {
+		t.Fatalf("decorations %v, want none (answered as no entry)", p.Decorations)
+	}
+	for _, q := range f.queries {
+		if q == "events" {
+			t.Fatal("the probe looked a decoration miss up")
+		}
+	}
+	wantAbsent(t, r, pageNS+missKey(KeyModelEvents, 5001), pageNS+missKey(KeyModelEvents, 5002))
+	if got, want := rec.Misses(), map[string]int{MissModelDecorations: 2}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("misses %v, want %v", got, want)
+	}
+	if got, want := rec.DBReads(), map[string]int{MissModelDecorations: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("db reads %v, want %v", got, want)
+	}
+}
+
+// No visible event: the decoration cache is not read, so nothing is computed either.
+func TestModelPageNoEventsComputesNoDecorations(t *testing.T) {
+	f := decorationMissFixture(t)
+	s, _ := computedModelSources(f, &MissCompute{FrameNegative: true})
+	req := modelPageRequest()
+	req.VisibleEvents = nil
+	if _, err := s.ModelPage(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range f.queries {
+		if q == "events" {
+			t.Fatal("a decoration lookup ran with no visible event")
+		}
+	}
+}
+
+// The model decoration query is the image one with the Model entity, nothing else changed.
+func TestModelEventSQLIsTheImageOnesForModels(t *testing.T) {
+	if got := strings.Replace(sqlModelEvents, `'Model'::"CosmeticEntity"`, `'Image'::"CosmeticEntity"`, 1); got != sqlImageEvents || sqlModelEvents == sqlImageEvents {
+		t.Fatalf("sqlModelEvents:\n%s\nis not sqlImageEvents over 'Model':\n%s", sqlModelEvents, sqlImageEvents)
 	}
 }
