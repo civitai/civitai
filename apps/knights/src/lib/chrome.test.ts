@@ -8,6 +8,9 @@ import {
   withVotesSent,
   withArticle,
   heartsLeft,
+  heartBackLine,
+  heartBackShort,
+  noticeTone,
   nextRankLine,
   rankPill,
   restartLosses,
@@ -27,6 +30,34 @@ describe('heartsLeft', () => {
   it('is what the smites leave, never below zero', () => {
     expect(heartsLeft({ smites: 1, maxSmites: 3 })).toBe(2);
     expect(heartsLeft({ smites: 5, maxSmites: 3 })).toBe(0);
+  });
+});
+
+describe('heartBackLine', () => {
+  it('says how many more right verdicts win back the next heart', () => {
+    expect(heartBackLine({ done: 12, needed: 25 })).toBe(
+      '12 of 25 right verdicts to win back a heart'
+    );
+  });
+
+  it('says nothing with no heart to win back', () => {
+    expect(heartBackLine(null)).toBeNull();
+  });
+});
+
+describe('heartBackShort', () => {
+  it('is the compact count for the rail and the mobile meta row', () => {
+    expect(heartBackShort({ done: 1, needed: 25 })).toBe('1/25');
+    expect(heartBackShort(null)).toBeNull();
+  });
+});
+
+describe('noticeTone', () => {
+  it('is calm only when every notice is a close call', () => {
+    expect(noticeTone([{ consequence: 'close' }, { consequence: 'close' }])).toBe('calm');
+    expect(noticeTone([{ consequence: 'close' }, { consequence: 'warning' }])).toBe('alarm');
+    expect(noticeTone([{ consequence: 'smite' }])).toBe('alarm');
+    expect(noticeTone([])).toBe('alarm');
   });
 });
 

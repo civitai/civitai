@@ -14,7 +14,7 @@ import {
 } from './progression/rating';
 import { RATING } from './progression/config';
 import { SMITES } from './smites/config';
-import { activeSmiteCount } from './smites/smites.service';
+import { activeSmiteCount, heartBackOf } from './smites/smites.service';
 
 export type PlayerStatus = {
   rank: string;
@@ -32,6 +32,8 @@ export type PlayerStatus = {
   /** Active smites, out of `maxSmites`; the player's hearts are what is left. */
   smites: number;
   maxSmites: number;
+  /** Right verdicts toward winning back the next heart (`done` of `needed`); null with no active smite. */
+  heartBack: { done: number; needed: number } | null;
   rating: Standing & { graded: number; minGraded: number };
   nextRank: {
     rank: string;
@@ -57,6 +59,7 @@ type Extras = {
   goldSpendable?: number;
   xpPending?: number;
   smites?: number;
+  heartBack?: { done: number; needed: number } | null;
   daysPlayed?: number;
 };
 
@@ -78,6 +81,7 @@ export function statusFrom(rank: string, exp: number, standing: Extras = {}): Pl
     goldSpendable: standing.goldSpendable ?? 0,
     smites: standing.smites ?? 0,
     maxSmites: SMITES.max,
+    heartBack: standing.heartBack ?? null,
     rating: {
       graded: ledger.graded,
       minGraded: RATING.minGraded,
@@ -114,6 +118,7 @@ export async function getPlayerStatus(
         xpPending: await pendingXpOf(db, userId),
         fervorLedger: await fervorLedgerOf(db, userId, now),
         smites: await activeSmiteCount(db, userId),
+        heartBack: await heartBackOf(db, userId),
       })
     : null;
 }
