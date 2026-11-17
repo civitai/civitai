@@ -132,19 +132,19 @@ type BlockableImage = {
 
 /**
  * Hashes among these with a live CSAM entry. The table keeps the newest row per hash when it
- * merges, so a later row of any other reason would replace that entry. Read FINAL so a CSAM row
- * that a newer, unmerged row has already replaced or disabled does not count as live. The reason
- * and disabled filters must run on the merged row: the optimizer moves them into the inner WHERE,
- * and the pinned setting keeps them out of PREWHERE, which would run before FINAL merges.
+ * merges, so a later row of any other reason would replace that entry. Only the newest row per
+ * hash (argMax on created_at, merged or not) decides, so a CSAM row that a newer row has replaced
+ * or disabled does not count as live. The filter runs on that row, outside the aggregate; this
+ * needs no FINAL and no query setting.
  * The main app has the same guard (src/server/services/image.service.ts); change both.
  */
 async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
   if (!hashes.length) return new Set();
   try {
     const resultSet = await getClickhouse().query({
-      query: `SELECT DISTINCT toString(hash) AS hash FROM (SELECT hash, reason, disabled FROM "blocked_images" FINAL WHERE hash IN (${hashes.join(
+      query: `SELECT toString(hash) AS hash FROM (SELECT hash, argMax(tuple(reason, disabled), created_at) AS newest FROM "blocked_images" WHERE hash IN (${hashes.join(
         ','
-      )})) WHERE reason = 'CSAM' AND disabled = false SETTINGS optimize_move_to_prewhere_if_final = 0`,
+      )}) GROUP BY hash) WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false`,
       format: 'JSONEachRow',
     });
     const rows = await resultSet.json<{ hash: string }>();

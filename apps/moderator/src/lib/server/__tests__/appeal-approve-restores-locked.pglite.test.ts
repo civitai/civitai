@@ -92,7 +92,7 @@ beforeEach(async () => {
   chQuery.mockReset();
   // The CSAM-entry lookup finds none; the live-row read finds the TOS entry.
   chQuery.mockImplementation(async ({ query }: { query: string }) => ({
-    json: async () => (query.includes("reason = 'CSAM'") ? [] : [{ hash: PHASH, reason: 'TOS' }]),
+    json: async () => (query.includes("= 'CSAM'") ? [] : [{ hash: PHASH, reason: 'TOS' }]),
   }));
   chInsert.mockClear();
   db = await freshPglite();
@@ -154,7 +154,7 @@ describe('approving an appeal on a rating-locked Blocked image', () => {
 
   it('still refunds and notifies when the blocklist check fails, leaving the entry in place', async () => {
     chQuery.mockImplementation(async ({ query }: { query: string }) => {
-      if (query.includes("reason = 'CSAM'")) throw new Error('Socket hang up');
+      if (query.includes("= 'CSAM'")) throw new Error('Socket hang up');
       return { json: async () => [{ hash: PHASH, reason: 'TOS' }] };
     });
     vi.mocked(refundAppealFee).mockClear();

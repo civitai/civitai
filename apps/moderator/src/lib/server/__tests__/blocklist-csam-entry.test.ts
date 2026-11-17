@@ -11,8 +11,8 @@ const ch = vi.hoisted(() => ({
   liveRows: [] as { hash: string; reason: string }[],
   csamHashes: [] as string[],
   lookupFails: false,
-  // Rows oldest first. FINAL reads what a merge keeps, the newest row per hash; without it every
-  // row is read, merged or not.
+  // Rows oldest first. An argMax-per-hash query reads only each hash's newest row; a plain filter
+  // reads every row.
   tableRows: undefined as { hash: string; reason: string; disabled: boolean }[] | undefined,
 }));
 
@@ -24,10 +24,10 @@ vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
     query: async ({ query }: { query: string }) => {
       ch.queries.push(query);
-      if (!query.includes("reason = 'CSAM'")) return { json: async () => ch.liveRows };
+      if (!query.includes("= 'CSAM'")) return { json: async () => ch.liveRows };
       if (ch.lookupFails) throw new Error('Socket hang up');
       if (ch.tableRows) {
-        const rows = query.includes(' FINAL ')
+        const rows = query.includes('argMax(')
           ? [...new Map(ch.tableRows.map((row) => [row.hash, row])).values()]
           : ch.tableRows;
         const live = rows.filter((row) => row.reason === 'CSAM' && !row.disabled);
@@ -61,17 +61,29 @@ beforeEach(() => {
   logToAxiom.mockClear();
 });
 
-// Deliberately a SQL-text assertion: a server setting's effect cannot be shown by the fake. With
-// the setting on, the reason/disabled filters may run in PREWHERE, before FINAL merges, and an
-// older live CSAM row would count again. Ruled to be pinned on the query; keep this.
-it('pins the setting that keeps the CSAM filters after the FINAL merge', async () => {
+// Deliberately a SQL-text assertion, ruled: the lookup takes each hash's newest row with argMax
+// and needs no FINAL and no query setting (the app's ClickHouse user may not be allowed one,
+// which would fail every lookup). Keep it unless that ruling changes.
+it('reads the newest row per hash with argMax, with no FINAL or query setting', async () => {
   await addImagesToBlocklist([tosImage(CSAM_HASH)]);
 
-  const lookup = ch.queries.find((query) => query.includes("reason = 'CSAM'"));
-  expect(lookup).toContain('SETTINGS optimize_move_to_prewhere_if_final = 0');
+  const lookup = ch.queries.find((query) => query.includes("= 'CSAM'"));
+  expect(lookup).toContain('argMax(tuple(reason, disabled), created_at)');
+  expect(lookup).not.toMatch(/\bFINAL\b|\bSETTINGS\b/);
 });
 
-it('a CSAM row a newer, unmerged row disabled is not live, so another block lands', async () => {
+it('a hash whose newest row is a live CSAM entry keeps it (control)', async () => {
+  ch.tableRows = [
+    { hash: CSAM_HASH, reason: 'TOS', disabled: false },
+    { hash: CSAM_HASH, reason: 'CSAM', disabled: false },
+  ];
+
+  await addImagesToBlocklist([tosImage(CSAM_HASH)]);
+
+  expect(ch.inserts).toEqual([]);
+});
+
+it('a CSAM row a newer row disabled is not live, so another block lands', async () => {
   ch.tableRows = [
     { hash: CSAM_HASH, reason: 'CSAM', disabled: false },
     { hash: CSAM_HASH, reason: 'CSAM', disabled: true },

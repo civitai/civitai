@@ -62,8 +62,8 @@ vi.mock('../clickhouse', () => ({
   getClickhouse: () => ({
     insert: clickhouseInsert,
     query: async ({ query }: { query: string }) => {
-      if (csamCheck.fails && query.includes("reason = 'CSAM'")) throw new Error('Socket hang up');
-      if (query.includes("reason = 'CSAM'")) return { json: async () => [] };
+      if (csamCheck.fails && query.includes("= 'CSAM'")) throw new Error('Socket hang up');
+      if (query.includes("= 'CSAM'")) return { json: async () => [] };
       return { json: async () => csamCheck.live };
     },
   }),
