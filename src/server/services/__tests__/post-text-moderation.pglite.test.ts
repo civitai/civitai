@@ -19,9 +19,8 @@ vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 const updatePostNsfwLevels = vi.hoisted(() => vi.fn(async () => []));
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updatePostNsfwLevels }));
 
-const { holdPostTextForCsam, refusePostText, restorePostText } = await import(
-  '~/server/services/post-text-moderation.service'
-);
+const { getPostTextReportReason, holdPostTextForCsam, refusePostText, restorePostText } =
+  await import('~/server/services/post-text-moderation.service');
 const { postTextGateRowSql } = await import('~/server/services/post-text-hold');
 vi.mock('~/server/services/text-scan/rated-entities', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -43,7 +42,7 @@ const migration = (dir: string) =>
 
 const SCHEMA = `
 CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "title" TEXT);
-CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "details" JSONB);
+CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "reason" TEXT, "details" JSONB);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER,
@@ -448,5 +447,29 @@ describe("a moderator's refusal and the scan, on the table", () => {
       refusedByScan: false,
     });
     expect(await hiddenFromReaders(reported)).toBe(false);
+  });
+});
+
+// The endpoint's hold gate: a report authorises a hold only on the text it is about.
+describe('getPostTextReportReason', () => {
+  beforeEach(async () => {
+    await pg.query(
+      `INSERT INTO "Report" (id, reason, details) VALUES (300, 'TOSViolation', '{"violation": "Child abuse and exploitation"}')`
+    );
+    await pg.query(
+      `INSERT INTO "PostTextReport" ("reportId", "postTextId", "postId") VALUES (300, $1, $2)`,
+      [reported, POST]
+    );
+  });
+
+  it('reads the report on this text', async () => {
+    expect(await getPostTextReportReason(300, reported)).toMatchObject({
+      reason: 'TOSViolation',
+      details: { violation: 'Child abuse and exploitation' },
+    });
+  });
+
+  it('is null for a report on another text, so it cannot authorise a hold there', async () => {
+    expect(await getPostTextReportReason(300, sibling)).toBeNull();
   });
 });
