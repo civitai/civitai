@@ -126,6 +126,18 @@ const contextText: CsamContextText[] = [
     capturedAt: '2026-10-08T14:05:00.000Z',
     capturedById: 10,
   },
+  {
+    source: 'postText',
+    id: 7,
+    postId: 100,
+    index: 1,
+    authorId: 20,
+    authorIsReportedUser: true,
+    postedAt: '2026-10-02T08:31:00.000Z',
+    text: 'held <i>words</i> & more',
+    capturedAt: '2026-10-08T14:05:00.000Z',
+    capturedById: 10,
+  },
 ];
 
 let filed: CsamReportProps | undefined;
@@ -217,6 +229,9 @@ describe('attached text on an image report', () => {
     const received = incidents.map((i) => ({ url: i.url[0], additionalInfo: i.additionalInfo[0] }));
     expect(received).toEqual(contextWebPageIncidents(contextText));
     expect(received[0].additionalInfo).toContain('R&D <b>bold</b> > less');
+    expect(received[0].additionalInfo).toContain(
+      'Text item 7 of this post, posted 10/02/2026 08:31 UTC by the reported account. Not reviewed by Civitai:\n"held <i>words</i> & more"'
+    );
     // XML cannot carry the NUL, bell or lone surrogate: they arrive as U+FFFD.
     expect(received[0].additionalInfo).toContain('nul\uFFFD bell\uFFFD lone\uFFFD surrogate');
     expect(incidents.every((i) => i.$.thirdPartyHostedContent === 'false')).toBe(true);

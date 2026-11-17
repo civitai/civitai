@@ -1244,7 +1244,7 @@ function ModelVersionDetailsContent({
                       </Link>
                       <Text size="xs" c="dimmed">
                         Collection
-                        {collection.itemCount > 0
+                        {collection.itemCount
                           ? ` - ${collection.itemCount.toLocaleString()} items`
                           : ''}
                       </Text>

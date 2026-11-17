@@ -266,9 +266,6 @@ describe('POST /api/v1/developer/block-manifests', () => {
     expect(upsertArgs.create.trustTier).toBe('unverified');
   });
 
-  // Trimmed store: the validator measures `tagline` (≤140) and `repository` (≤200) trimmed, so the
-  // row must hold the trimmed values, not the padding. Red at origin/main: the raw strings were
-  // stored, and the I11 byte-equal check compared the raw upload.
   describe('stores tagline/repository trimmed', () => {
     const TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
     const REPO = 'https://github.com/example-org/test-block';

@@ -1,6 +1,13 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { casesDb, noticesOfBatch, sendable, STALE_SENDING_MS, type CasesDb } from './cases.db';
+import {
+  casesDb,
+  DROPPED_ERRORS,
+  noticesOfBatch,
+  sendable,
+  STALE_SENDING_MS,
+  type CasesDb,
+} from './cases.db';
 import { CASE_TARGET_STATES } from './cases-tables';
 import { newPublicRef } from './public-ref';
 import { hashAddress } from './send-notice';
@@ -261,7 +268,12 @@ export type BatchCount = {
   failed: number;
   pending: number;
   sending: number;
-  /** Sent equals a stated, non-zero expected count, and nothing is failed, pending or sending. */
+  /** Retired or withdrawn by a person: never sent, and not owed. */
+  dropped: number;
+  /**
+   * Sent equals the stated, non-zero expected count less what was dropped, and nothing is failed,
+   * pending or sending.
+   */
   done: boolean;
 };
 
@@ -280,8 +292,14 @@ export async function batchCounts(batchId: string, { db = casesDb() }: { db?: Ca
     ?.expected ?? {}) as Record<string, number>;
 
   const rows = await noticesOfBatch(db, batchId)
-    .select(['n.notice_id', 'n.status', sql<number>`count(*)::int`.as('n')])
-    .groupBy(['n.notice_id', 'n.status'])
+    .select([
+      'n.notice_id',
+      sql<string>`CASE WHEN n.status = 'failed' AND n.error IN (${sql.join([
+        ...DROPPED_ERRORS,
+      ])}) THEN 'dropped' ELSE n.status END`.as('status'),
+      sql<number>`count(*)::int`.as('n'),
+    ])
+    .groupBy(['n.notice_id', sql`2`])
     .execute();
 
   const ids = new Set([...Object.keys(expected), ...rows.map((r) => r.notice_id)]);
@@ -294,12 +312,13 @@ export async function batchCounts(batchId: string, { db = casesDb() }: { db?: Ca
       failed: of('failed'),
       pending: of('pending'),
       sending: of('sending'),
+      dropped: of('dropped'),
     };
     return {
       noticeId,
       expected: exp,
       ...c,
-      done: !!exp && c.sent === exp && c.failed + c.pending + c.sending === 0,
+      done: !!exp && c.sent === exp - c.dropped && c.failed + c.pending + c.sending === 0,
     };
   });
 }
@@ -406,6 +425,56 @@ export async function retireNotice(
   });
 }
 
+/**
+ * A person withdraws a `pending` notice before it is sent (its target was restored, say): it leaves
+ * the sendable set for good and stops counting as owed. The row is locked, so a send claiming it at
+ * the same moment either got there first (the row is `sending` and this refuses) or finds it gone.
+ * Recorded as a `notice_withdrawn` event with the reason.
+ */
+export async function withdrawNotice(
+  batchId: string,
+  rowId: number,
+  reason: string,
+  { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
+) {
+  return db.transaction().execute(async (tx) => {
+    const row = await tx
+      .selectFrom('case_notice')
+      .select(['id', 'case_id'])
+      .where('id', '=', rowId)
+      .where('status', '=', 'pending')
+      .where(
+        'case_id',
+        'in',
+        tx.selectFrom('case_record').select('id').where('import_batch_id', '=', batchId)
+      )
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row)
+      throw new ImportRefusedError(`row ${rowId} is not a pending notice of batch ${batchId}`);
+    // An exported row still reads `pending` while the fallback sender holds it and may send it.
+    if ((await exportState(batchId, { db: tx as unknown as CasesDb })) === 'outstanding')
+      throw new ImportRefusedError(
+        `batch ${batchId} is out with the fallback sender; withdraw after its sent.jsonl is imported`
+      );
+    await tx
+      .updateTable('case_notice')
+      .set({ status: 'failed', error: 'Withdrawn' })
+      .where('id', '=', row.id)
+      .execute();
+    await tx
+      .insertInto('case_event')
+      .values({
+        case_id: row.case_id,
+        actor_id: actorId,
+        type: 'notice_withdrawn',
+        data: JSON.stringify({ noticeRowId: row.id, reason }),
+      })
+      .execute();
+    return { rowId: row.id };
+  });
+}
+
 export type ExportState = 'never' | 'outstanding' | 'closed';
 
 /**
@@ -478,6 +547,8 @@ export async function exportUnsent(
       ])
       .where(sendable('n'))
       .orderBy('n.id')
+      // Locked, so a withdraw that got there first is seen here, and one that comes after sees the export.
+      .forUpdate()
       .execute();
     // A lock that lapsed may let a send start, and it can't see this uncommitted export: roll back
     // rather than hand out rows that send may also claim.

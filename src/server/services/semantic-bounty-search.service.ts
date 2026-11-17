@@ -205,9 +205,8 @@ export async function searchSemanticBounties({
   logToAxiom({
     type: 'info',
     name: 'semantic-bounty-search',
-    returned: search.state.returned,
     hydrated,
-    shown: page.items.length,
+    payload: { returned: search.state.returned, shown: page.items.length },
   });
 
   audit.candidates(search.state.first);
