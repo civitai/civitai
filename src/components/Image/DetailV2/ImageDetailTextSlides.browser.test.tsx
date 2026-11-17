@@ -1,3 +1,4 @@
+import type * as EmblaReact from 'embla-carousel-react';
 import Router from 'next/router';
 import { useEffect, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -73,6 +74,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     },
   }),
 }));
+// REPRO MUTANT (reverted in a later commit): capture embla so the cold-load case can fire the
+// reInit its slide insertion causes at the worst moment the scheduler can leave it.
+const emblaHandle = vi.hoisted(() => ({ api: undefined as { reInit: () => void } | undefined }));
+vi.mock('embla-carousel-react', async (o) => {
+  const actual = (await o<object>()) as typeof EmblaReact;
+  const spied = (...args: Parameters<typeof actual.default>) => {
+    const result = actual.default(...args);
+    if (result[1]) emblaHandle.api = result[1];
+    return result;
+  };
+  return { ...actual, default: Object.assign(spied, actual.default) };
+});
 vi.mock('~/components/PageLoader/PageLoader', () => ({ PageLoader: () => null }));
 vi.mock('~/components/ImageGuard/ImageGuard2', async (o) => ({
   ...(await o<object>()),
@@ -146,7 +159,13 @@ function Detail() {
     items,
     index,
     navigate: navigateTo,
-    carouselNavigate: carouselNavigation.navigate,
+    // REPRO MUTANT: embla's slide watcher reInits after the text slide is inserted. Fire that
+    // reInit right after the URL sync asked the carousel for the text, before it re-renders: the
+    // order a scheduler yield between the two leaves on a slow run.
+    carouselNavigate: (i: number) => {
+      carouselNavigation.navigate(i);
+      if (postGetDelay.value) emblaHandle.api?.reInit();
+    },
   });
   return (
     <div style={{ width: 400, height: 300, display: 'flex' }}>
