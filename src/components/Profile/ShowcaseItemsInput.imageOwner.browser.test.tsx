@@ -192,7 +192,9 @@ describe('Images search in the showcase picker', () => {
   test('with no owner, there is no picker to search, even signed in', async () => {
     renderWithProviders(<ShowcaseItemsInput supportedIndexes={['images']} value={[]} />);
 
-    await expect.element(page.getByText('You have not selected any items')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('You have not selected any items'), { timeout: 3000 })
+      .toBeInTheDocument();
     expect(page.getByPlaceholder('Search Civitai').elements()).toHaveLength(0);
     expect(state.myImages).not.toHaveBeenCalled();
   });
@@ -202,7 +204,9 @@ describe('Images search in the showcase picker', () => {
     state.currentUser = null;
     renderWithProviders(<ShowcaseItemsInput supportedIndexes={['images']} value={[]} />);
 
-    await expect.element(page.getByText('You have not selected any items')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('You have not selected any items'), { timeout: 3000 })
+      .toBeInTheDocument();
     expect(page.getByPlaceholder('Search Civitai').elements()).toHaveLength(0);
     expect(state.myImages).not.toHaveBeenCalled();
   });

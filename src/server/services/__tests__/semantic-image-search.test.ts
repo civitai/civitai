@@ -116,11 +116,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ]),
 }));
 
-import {
-  OWN_REFUSAL_FLOOR_MS,
-  OWN_REFUSAL_JITTER_MS,
-  searchSemanticImages,
-} from '~/server/services/semantic-image-search.service';
+import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
 import { anchorBrowsingLevel } from '~/server/services/semantic-query-guard';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import type { CandidateSource } from '~/server/services/semantic-search-client';
@@ -910,58 +906,6 @@ describe('the query audit and the browsing level', () => {
   it("keeps a moderator's requested level", async () => {
     const { calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
-  });
-});
-
-describe('own-images refusal timing', () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
-    vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    h.fakeGetAllImages = visibleOnly(new Set([101]));
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.mocked(Math.random).mockRestore();
-  });
-
-  /** Starts a search and reports whether it has settled, without advancing time. */
-  const start = (refuseNarrowing: boolean) => {
-    const { source, calls } = rankedSource([101]);
-    let settled = false;
-    const done = searchSemanticImages({
-      input: input({ imageId: undefined, query: 'q', browsingLevel: 1 }),
-      user: VIEWER,
-      candidateSource: source,
-      refuseNarrowing,
-    }).finally(() => (settled = true));
-    return { done, calls, settled: () => settled };
-  };
-  const hold = OWN_REFUSAL_FLOOR_MS + OWN_REFUSAL_JITTER_MS * 0.5;
-
-  it('holds a refused own-images search until the jittered floor, without a search call', async () => {
-    h.includesInappropriate.mockReturnValue('minor');
-    const run = start(true);
-    await vi.advanceTimersByTimeAsync(hold - 1);
-    expect(run.settled()).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(run.settled()).toBe(true);
-    expect((await run.done).items).toEqual([]);
-    expect(run.calls).toHaveLength(0);
-  });
-
-  it('does not hold an own-images search that is allowed', async () => {
-    const run = start(true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(run.settled()).toBe(true);
-    expect((await run.done).items.map((i) => i.id)).toEqual([101]);
-  });
-
-  it('does not hold a refusal on the general search', async () => {
-    h.includesInappropriate.mockReturnValue('poi');
-    const run = start(false);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(run.settled()).toBe(true);
-    expect((await run.done).items).toEqual([]);
   });
 });
 
