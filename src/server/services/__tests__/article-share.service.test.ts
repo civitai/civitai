@@ -368,6 +368,51 @@ describe('getArticleByShareToken: cover and viewer', () => {
     expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
   });
 
+  // A minor-flagged image the minor content rule restricts: never to a link holder.
+  describe('a restricted minor cover or banner', () => {
+    // No image is one its model withholds, whatever an earlier test answered.
+    beforeEach(() => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    });
+
+    it('🔴 shows no cover, and not the banner, when the cover is a restricted minor image', async () => {
+      articles({ coverImage: cover({ minor: true, nsfwLevel: 4 }), bannerImage: cover({ id: 6 }) });
+      const result = await read();
+      expect(result.status).toBe('ok');
+      expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+    });
+
+    it('🔴 with no cover, shows no banner that is a restricted minor image', async () => {
+      articles({ coverImage: null, bannerImage: cover({ id: 6, minor: true, nsfwLevel: 4 }) });
+      const result = await read();
+      expect(result.status).toBe('ok');
+      expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+    });
+
+    it.each([
+      ['a minor-flagged cover rated PG-13', { minor: true, nsfwLevel: 2 }],
+      ['an unflagged cover rated R', { minor: false, nsfwLevel: 4 }],
+    ])('shows %s, without the flag (control)', async (_, over) => {
+      articles({ coverImage: cover(over) });
+      const result = await read();
+      const shown = result.status === 'ok' ? result.article.coverImage : undefined;
+      expect(shown?.id).toBe(5);
+      expect(shown).not.toHaveProperty('minor');
+    });
+
+    it('reads the flag for the cover and the banner', async () => {
+      articles({ coverImage: cover({}) });
+      await read();
+      const select = vi.mocked(dbMock.dbWrite.article.findUnique).mock.calls.at(-1)?.[0]
+        ?.select as {
+        coverImage: { select: { minor?: boolean } };
+        bannerImage: { select: { minor?: boolean } };
+      };
+      expect(select.coverImage.select.minor).toBe(true);
+      expect(select.bannerImage.select.minor).toBe(true);
+    });
+  });
+
   it('refuses a signed-in viewer the author has blocked', async () => {
     vi.mocked(amIBlockedByUser).mockResolvedValueOnce(true);
     expect(await read(STRANGER)).toEqual({ status: 'unavailable' });
@@ -429,7 +474,7 @@ describe('getArticleByShareToken: body images', () => {
         n
       ).repeat(12)}`;
     const content =
-      [1, 2, 3, 4, 5, 7]
+      [1, 2, 3, 4, 5, 7, 8, 9]
         .map(
           (n) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid(n)}/x.jpeg">`
         )
@@ -458,7 +503,10 @@ describe('getArticleByShareToken: body images', () => {
       row(3, { ingestion: 'Blocked' }),
       row(4, { needsReview: 'csam' }),
       row(5, { tosViolation: true }),
-      row(7, { nsfwLevel: 4, modelRestricted: true }),
+      // A minor-flagged image the minor content rule restricts; 8, rated the same unflagged, stays.
+      row(7, { minor: true, nsfwLevel: 4 }),
+      row(8, { minor: false, nsfwLevel: 4 }),
+      row(9, { nsfwLevel: 4, modelRestricted: true }),
     ];
     // Only the fields the service selects come back, as from Prisma.
     dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) => {
@@ -470,10 +518,13 @@ describe('getArticleByShareToken: body images', () => {
 
     const result = await read(STRANGER);
 
-    expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1]);
+    expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1, 8]);
     const sent = JSON.stringify(result);
     expect(sent).toContain(uuid(1));
-    for (const n of [2, 3, 4, 5, 6, 7]) expect(sent).not.toContain(uuid(n));
+    expect(sent).toContain(uuid(8));
+    for (const n of [2, 3, 4, 5, 6, 7, 9]) expect(sent).not.toContain(uuid(n));
+    expect(sent).not.toContain('"minor"');
+    expect(sent).not.toContain('"modelRestricted"');
     expect(sent).not.toContain('csam');
   });
 });

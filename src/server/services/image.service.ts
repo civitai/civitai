@@ -57,10 +57,12 @@ import {
   imageNotRestrictedSql,
   imageRestrictedSql,
   imageReviewedSql,
+  isMinorMatureImage,
   keepPermanentScanFailureSql,
   pendingLevelImageSql,
   pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+  minorMatureImageVisibleSql,
 } from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
@@ -1364,6 +1366,8 @@ export async function handleUnblockImages({
       resetBlockedNsfwLevel(ids),
       dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
+      // The unblock SQL above can rewrite "minor", which no trigger watches.
+      queueModelsForImageChildTagChanges({ minorImageIds: ids }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
@@ -2618,6 +2622,8 @@ const getAllImagesUncaptured = async (
         : Prisma.sql`(i."minor" != TRUE)`
     );
   }
+  // Whatever the viewer's settings; also the feed service's hydrate, which reads through here.
+  AND.push(minorMatureImageVisibleSql({ userId: ownerId, isModerator }));
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "TagsOnImageDetails" toi
@@ -4495,6 +4501,7 @@ export const getImagesForModelVersion = async ({
     );
     imageWhere.push(imageReviewedSql());
   }
+  imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   const query = Prisma.sql`
      WITH targets AS (
@@ -4656,6 +4663,7 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     return records;
   },
   appendFn: async (records, { bypassLocal }) => {
+    for (const entry of records) entry.images = entry.images.filter((i) => !isMinorMatureImage(i));
     const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
     // Passed on so the models search index, which fetches with bypassLocal, writes Redis-fresh tag
     // ids into its documents instead of ones this process's L1 may hold from before a tag edit.
@@ -4767,6 +4775,7 @@ export const getImagesForPosts = async ({
         : Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`
     );
   }
+  imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   if (isModerator) {
     if (poiOnly) {
@@ -5017,6 +5026,7 @@ export const getImagesByEntity = async ({
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
   AND.push(imageNotRestrictedSql({ viewerId: userId }));
+  AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -5587,7 +5597,10 @@ export const getEntityCoverImage = async ({
   // they apply it before DISTINCT ON and fall back to the next image.
   const imageNotFlagged = Prisma.sql`(
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
-  )`;
+  ) AND ${minorMatureImageVisibleSql({
+    userId: signedIn ? viewerId ?? undefined : undefined,
+    isModerator,
+  })}`;
 
   // An unrated image is never a cover for anyone but moderators, owner included.
   const coverRated = Prisma.sql`(i."nsfwLevel" != 0 OR ${isModerator}::boolean)`;
@@ -7708,6 +7721,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.refresh(id);
+  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: [id] });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7727,6 +7741,7 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.refresh(ids);
+  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: ids });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(
