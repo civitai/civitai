@@ -281,10 +281,8 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		targetUserID = id
 	}
 	if in.CollectionID != 0 {
-		// getModelsRaw checks the collection after the tag and creator lookups (so an unknown creator
-		// is still Node's 404) and before the cursor is parsed: a collection the viewer may not read
-		// is an empty page with no lookahead, whatever the cursor says. Read on every page, as Node
-		// reads it on every getModelsRaw call of its loop.
+		// Node checks the collection after the tag/creator lookups (an unknown creator stays a 404)
+		// and before parsing the cursor, on every page of its loop.
 		read, err := collectionReadable(ctx, d.DB, in.CollectionID, viewerID)
 		if err != nil {
 			return nil, err
