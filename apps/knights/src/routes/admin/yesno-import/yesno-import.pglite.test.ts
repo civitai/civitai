@@ -119,8 +119,7 @@ describe('POST /admin/yesno-import', () => {
       expect.objectContaining({
         name: 'knights-yesno-import',
         userId: 4,
-        inserted: 2,
-        payload: expect.objectContaining({ read: 2, toImport: 2 }),
+        payload: expect.objectContaining({ read: 2, toImport: 2, inserted: 2 }),
       })
     );
 

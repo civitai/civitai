@@ -958,7 +958,6 @@
     "apps/creator-studio/src/routes/api/auth/authorize/+server.ts": 1,
     "apps/creator-studio/src/routes/api/auth/callback/+server.ts": 1,
     "apps/creator-studio/src/routes/api/client-error/+server.ts": 1,
-    "apps/knights/src/routes/admin/yesno-import/+server.ts": 1,
     "apps/knights/src/routes/api/jobs/tick/+server.ts": 3,
     "apps/knights/src/routes/shop/+page.server.ts": 1,
     "apps/moderator/src/lib/server/axiom.ts": 1,
