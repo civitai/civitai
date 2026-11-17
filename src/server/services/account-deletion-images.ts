@@ -47,7 +47,8 @@ export function disarmAccountDeletionImagePurge(userId: number) {
  * off `blockedFor`: a moderator block is also `blockedFor = 'moderated'`, so anything scoped that
  * way would unblock content a moderator hid. Restoring the recorded values rather than forcing
  * `Scanned`/`NULL` keeps an image that was mid-scan (or blocked for `AiNotVerified`) in the state
- * it was actually in.
+ * it was actually in. The exception is a CSAM reason, current or recorded: it is kept, and the row
+ * stays `Blocked`.
  *
  * The largest account holds ~785K images, so the reversal claims a bounded batch per pass instead
  * of returning the whole gallery to Node in one statement. The breadcrumb check lives in the claim
