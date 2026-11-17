@@ -61,7 +61,11 @@ describe('collection payload, against the real query', () => {
 describe('bounty payload, against the real query', () => {
   test('keeps visible, rated, unblocked, non-poi bounties of active unheld owners, with their feed fields', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
-    const { citext } = await import('@electric-sql/pglite/contrib/citext');
+    // event-engine's node10 resolution can't see pglite's exports map, so the subpath is untyped.
+    const citextPath = '@electric-sql/pglite/contrib/citext';
+    const { citext } = (await import(citextPath)) as {
+      citext: import('@electric-sql/pglite').Extension;
+    };
     // Tag.name is citext in prod; node-pg-style clients return a citext[] unparsed.
     const pg = new PGlite({ extensions: { citext } });
     await pg.exec(`
