@@ -6,6 +6,8 @@ import {
 
 type Entry = { Key: string; VersionId: string; deleteMarker: boolean };
 
+const MAX_LISTS = 50;
+
 /**
  * A versioned bucket as S3 and B2 behave: a delete by key alone adds a delete marker and keeps every
  * version; only a delete naming a VersionId removes one. Listing pages by (KeyMarker, VersionIdMarker).
@@ -57,6 +59,10 @@ export function fakeVersionedBucket({ pageSize = 1000 }: { pageSize?: number } =
   async function send(command: unknown) {
     if (command instanceof ListObjectVersionsCommand) {
       calls.push('list');
+      // A caller that drops the paging markers would list page 1 forever, in microtasks no test
+      // timeout interrupts: fail instead.
+      if (calls.filter((c) => c === 'list').length > MAX_LISTS)
+        throw new Error(`fake bucket: more than ${MAX_LISTS} listings; are the markers passed on?`);
       return list(command.input);
     }
     if (command instanceof DeleteObjectCommand) {

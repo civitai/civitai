@@ -19,6 +19,8 @@ type DeletedImage = {
   url: string | null;
   postId: number | null;
   parentId: number | null;
+  /** Under CSAM review or blocked for CSAM: deleted by key alone, its prior versions kept. */
+  csamMarked: boolean;
 };
 
 export type DeletedImageRows = {
@@ -84,7 +86,14 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
       .deleteFrom('Image')
       .where('id', '=', id)
       .where(deletable)
-      .returning(['url', 'userId', 'postId', 'needsReview', thumbnailParentId.as('parentId')])
+      .returning([
+        'url',
+        'userId',
+        'postId',
+        'needsReview',
+        'blockedFor',
+        thumbnailParentId.as('parentId'),
+      ])
       .executeTakeFirst();
     // Only once the row is gone (no foreign key cascades these), so a kept image keeps its collections.
     await trx
@@ -104,7 +113,13 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
         userId: image.userId,
         csamReview: image.needsReview === 'csam',
       });
-    deleted.push({ id, url: image.url, postId: image.postId, parentId: image.parentId });
+    deleted.push({
+      id,
+      url: image.url,
+      postId: image.postId,
+      parentId: image.parentId,
+      csamMarked: image.needsReview === 'csam' || image.blockedFor === 'CSAM',
+    });
   }
   const heldLate = await heldImages(trx, notReturned);
   // An untouched image keeps its search entry; one the trigger blocked leaves search.
@@ -122,7 +137,7 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
 /**
  * Everything after the rows are gone: storage, caches, search, post levels. Best-effort; returns the
  * images whose stored file was not verified gone. Every delete here is a moderator's, so each stored
- * file goes with all its versions.
+ * file goes with all its versions, except a CSAM-marked image's (see `csamMarked`).
  */
 export async function finishImageDeletes({
   deleted,
@@ -144,13 +159,22 @@ export async function finishImageDeletes({
           .executeTakeFirst();
         if (!shared) {
           // Every image lives in the b2Image backend.
-          await getStorage()
-            .purgeObjectVersions({ backend: 'b2Image', key: image.url })
-            .catch(async (err) => {
-              storageFailed.push(image.id);
-              logImageDeletionError(err, 'storage purge', [image.id]);
-              await queueStorageRetry(image.id, image.url!);
-            });
+          const target = { backend: 'b2Image', key: image.url } as const;
+          if (image.csamMarked)
+            await getStorage()
+              .deleteObject(target)
+              .catch((err) => {
+                storageFailed.push(image.id);
+                logImageDeletionError(err, 'storage delete', [image.id]);
+              });
+          else
+            await getStorage()
+              .purgeObjectVersions(target)
+              .catch(async (err) => {
+                storageFailed.push(image.id);
+                logImageDeletionError(err, 'storage purge', [image.id]);
+                await queueStorageRetry(image.id, target.key);
+              });
         }
       }
 

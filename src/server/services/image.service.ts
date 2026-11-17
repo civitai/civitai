@@ -565,14 +565,15 @@ type DeleteImageFromS3Args = {
 } & PurgeResizeCacheRetraction;
 
 /**
- * Whether a delete removes every version of the stored object: a moderator's delete, or a blocked
- * image, or one under CSAM review.
+ * Whether a delete removes every version of the stored object: only a moderator's delete (or a
+ * moderation job's), and never for an image under CSAM review or blocked for CSAM, whose prior
+ * versions stay until a hold can cover them. Every other delete is by key alone.
  */
 export function purgesAllVersions(
-  image: Parameters<typeof hasBlockMarker>[0] & { needsReview: string | null },
-  moderatorDelete = false
+  image: { needsReview: string | null; blockedFor: string | null },
+  moderatorDelete: boolean
 ): boolean {
-  return moderatorDelete || hasBlockMarker(image) || image.needsReview === 'csam';
+  return moderatorDelete && image.needsReview !== 'csam' && image.blockedFor !== BlockedReason.CSAM;
 }
 
 /**
@@ -912,7 +913,7 @@ export const deleteImageById = async ({
 }: GetByIdInput & {
   updatePost?: boolean;
   deletedById?: number;
-  /** A moderator ordered it: every version of the stored object goes. */
+  /** A moderator ordered it: see {@link purgesAllVersions}. */
   moderatorDelete?: boolean;
 }) => {
   updatePost ??= true;
@@ -1086,7 +1087,7 @@ export async function deleteImages(
   }: PurgeResizeCacheRetraction & {
     /** Extra condition on the DELETE itself; ids it excludes are skipped and not returned. */
     onlyWhere?: Prisma.Sql;
-    /** A moderator ordered it: every version of each stored object goes. */
+    /** A moderator or moderation job ordered it: see {@link purgesAllVersions}. */
     moderatorDelete?: boolean;
     /** Once set (by a 429 or a timeout here or earlier in the caller's run), no retraction is sent;
      *  those rows come back `busy` so the caller can queue them. */
@@ -1115,7 +1116,6 @@ export async function deleteImages(
         parentId: number | null;
         blockedFor: string | null;
         needsReview: string | null;
-        ingestion: string;
       }[]
     >`
       WITH doomed AS (
@@ -1132,7 +1132,7 @@ export async function deleteImages(
         -- the DELETE's own WHERE, never the CTE's, and only on its own columns.
         ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId",
-        "blockedFor", "needsReview", ingestion::text
+        "blockedFor", "needsReview"
     `;
     const imageIds = results.map((x) => x.id);
     const returned = new Set(imageIds);
@@ -1189,7 +1189,6 @@ type DeletedImageRow = {
   parentId: number | null;
   blockedFor: string | null;
   needsReview: string | null;
-  ingestion: string;
   /** A retracting delete's outcome; absent when nothing was asked (another row still uses the url). */
   retraction?: ImageCacherOutcome;
 };

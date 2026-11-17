@@ -505,7 +505,7 @@ describe('purgeHoldGuard on the delete', () => {
       }
       setEnv({ DATABASE_IS_PROD: true });
       try {
-        await imageService.deleteImages([PLAIN, ...MARKED], true);
+        await imageService.deleteImages([PLAIN, ...MARKED], true, { moderatorDelete: true });
       } finally {
         setEnv({ DATABASE_IS_PROD: false });
       }

@@ -562,32 +562,28 @@ describe('an image whose key shop artwork uses', () => {
     expect(invalidateCalls()).toHaveLength(0);
   });
 
-  // A blocked or CSAM-review image goes with every version of its object: listed, then read back.
+  // None of these is a moderator's delete, so each is one delete by key, whatever marks the row.
   it.each([
-    ['a moderator deletes it', { deletedById: 99 }, {}, false],
-    ['the deleter is unknown', {}, {}, false],
-    ['it is blocked', { deletedById: OWNER }, { ingestion: 'Blocked' }, true],
+    ['a moderator deletes it', { deletedById: 99 }, {}],
+    ['the deleter is unknown', {}, {}],
+    ['it is blocked', { deletedById: OWNER }, { ingestion: 'Blocked' }],
     // A scan error or rescan moves ingestion off Blocked but keeps the other block markers.
+    ['it keeps a block reason', { deletedById: OWNER }, { ingestion: 'Error', blockedFor: 'tos' }],
+    ['it keeps the Blocked level', { deletedById: OWNER }, { nsfwLevel: NsfwLevel.Blocked }],
+    ['it is not scanned yet', { deletedById: OWNER }, { ingestion: 'Pending' }],
+    ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }],
     [
-      'it keeps a block reason',
+      'it is blocked for CSAM',
       { deletedById: OWNER },
-      { ingestion: 'Error', blockedFor: 'tos' },
-      true,
+      { ingestion: 'Blocked', blockedFor: 'CSAM' },
     ],
-    ['it keeps the Blocked level', { deletedById: OWNER }, { nsfwLevel: NsfwLevel.Blocked }, true],
-    ['it is not scanned yet', { deletedById: OWNER }, { ingestion: 'Pending' }, false],
-    ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }, true],
-  ])('deletes and purges its object when %s', async (_case, args, over, allVersions) => {
+  ])('deletes and purges its object when %s', async (_case, args, over) => {
     deleted(over);
 
     await deleteImageById({ id: 4242, ...args });
 
     const sent = mockB2Send.mock.calls.map(([command]) => command.constructor.name);
-    // The object is gone either way; an all-versions delete never deletes by key alone.
-    if (allVersions) {
-      expect(sent).toContain('ListObjectVersionsCommand');
-      expect(sent).not.toContain('DeleteObjectCommand');
-    } else expect(sent).toEqual(['DeleteObjectCommand']);
+    expect(sent).toEqual(['DeleteObjectCommand']);
     expect(invalidateCalls()).toHaveLength(1);
   });
 
@@ -664,7 +660,7 @@ describe('a moderator delete', () => {
   const MOD = 99;
   let bucket: ReturnType<typeof fakeVersionedBucket>;
   // `kept`: a hold marker's trigger kept the row, so the DELETE returns nothing.
-  const deleted = ({ kept = false } = {}) =>
+  const deleted = ({ kept = false, over = {} as Record<string, unknown> } = {}) =>
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
       const text = strings.join('');
       if (!text.includes('DELETE FROM "Image"') || kept) return [];
@@ -678,6 +674,7 @@ describe('a moderator delete', () => {
           ingestion: 'Scanned',
           needsReview: null,
           blockedFor: null,
+          ...over,
         },
       ];
     }) as never);
@@ -698,6 +695,17 @@ describe('a moderator delete', () => {
   it("leaves the versions of an owner's delete of the same image", async () => {
     deleted();
     await deleteImageById({ id: 4242, deletedById: OWNER });
+    expect(bucket.calls).toEqual(['delete-key']);
+    expect(bucket.entriesFor(KEY)).toHaveLength(4);
+  });
+
+  // Its earlier versions stay until a hold can cover the image; the current one still goes.
+  it.each([
+    ['under CSAM review', { needsReview: 'csam' }],
+    ['blocked for CSAM', { ingestion: 'Blocked', blockedFor: 'CSAM' }],
+  ])('deletes an image %s by key alone', async (_case, over) => {
+    deleted({ over });
+    await deleteImageById({ id: 4242, deletedById: MOD, moderatorDelete: true });
     expect(bucket.calls).toEqual(['delete-key']);
     expect(bucket.entriesFor(KEY)).toHaveLength(4);
   });
