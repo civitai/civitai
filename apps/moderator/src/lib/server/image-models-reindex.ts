@@ -16,9 +16,10 @@ type ImageChildTagChanges = {
 };
 
 /**
- * The main app's `queueModelsForImageChildTagChanges` for this app's writes: drops the cached tags and
- * showcase images of the models whose posts hold these images, then queues those models for a
- * models-index rewrite. Never throws: it runs after the tag or level write has committed. A failed
+ * For this app's tag and level writes: drops the cached tags and showcase images of the models whose
+ * posts hold these images, then queues those models for a models-index rewrite. The queue call itself
+ * is fire-and-forget (`syncSearchIndexBulk` logs and does not throw), so the retry covers the reads and
+ * the busts. Never throws: it runs after the tag or level write has committed. A failed
  * attempt is retried once.
  */
 export async function queueModelsForImageChildTagChanges(

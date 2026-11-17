@@ -42,12 +42,23 @@ INSERT INTO "Image" VALUES (1, 20), (2, 21), (3, NULL);
 `;
 
 let db: PGlite;
+let failNextQuery = false;
 
 beforeEach(async () => {
   vi.clearAllMocks();
   db = await freshPglite();
   await db.exec(SCHEMA);
-  dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+  failNextQuery = false;
+  const flaky = {
+    query: async (sql: string, params?: unknown[]) => {
+      if (failNextQuery) {
+        failNextQuery = false;
+        throw new Error('connection reset');
+      }
+      return db.query(sql, params);
+    },
+  } as unknown as PGlite;
+  dbHandle.current = new Kysely({ dialect: pgliteDialect(flaky) });
 });
 
 afterEach(async () => {
@@ -112,18 +123,18 @@ describe('spoke queueModelsForImageChildTagChanges', () => {
     expect(logAxiomError).toHaveBeenCalled();
   });
 
-  it('retries once, then logs rather than throws', async () => {
+  it('retries a failed read once, then queues', async () => {
     vi.useFakeTimers();
-    vi.mocked(syncSearchIndexBulk).mockRejectedValue(new Error('main app down'));
+    failNextQuery = true;
 
     const run = queueModelsForImageChildTagChanges({
       tagWrites: [{ imageId: 1, tagId: CHILD_TAG }],
     });
     await vi.runAllTimersAsync();
+    await run;
     vi.useRealTimers();
 
-    await expect(run).resolves.toBeUndefined();
-    expect(syncSearchIndexBulk).toHaveBeenCalledTimes(2);
-    expect(logAxiomError).toHaveBeenCalledTimes(2);
+    expect(logAxiomError).toHaveBeenCalledTimes(1);
+    expect(queuedModels()).toEqual([{ entityType: 'model', entityIds: [100], action: 'update' }]);
   });
 });

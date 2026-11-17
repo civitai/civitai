@@ -103,9 +103,9 @@ export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void
     await bustAfterWrite('tag-write-cache-bust', () => bustImageTagCaches(imageIds));
     await invalidateThumbnails(imageIds);
     await bustProfilePictures({ imageIds });
+    await queueModelsForImageChildTagChanges({ tagWrites: items, levelImageIds: imageIds });
   }
   await queueBlockedTagReviews(items);
-  await queueModelsForImageChildTagChanges({ tagWrites: items, levelImageIds: imageIds });
   void syncSearchIndexBulk({ entityType: 'image', entityIds: imageIds, action: 'update' });
 }
 

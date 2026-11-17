@@ -5,11 +5,20 @@ const h = vi.hoisted(() => ({
   params: [] as unknown[][],
   invalidatedAfter: [] as number[],
   bustedPictures: [] as { imageIds: number[]; after: number }[],
+  failRecompute: false,
 }));
 
 vi.mock('../db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
-  const db = capturingDb(h.sql, [], h.params);
+  const db = capturingDb(
+    h.sql,
+    (sql: string) => {
+      if (h.failRecompute && sql.includes('update_nsfw_levels_new'))
+        throw new Error('lock timeout');
+      return [];
+    },
+    h.params
+  );
   return { dbRead: db, dbWrite: db };
 });
 vi.mock('../redis', () => ({ getRedis: () => ({ get: async () => '[]' }) }));
@@ -98,6 +107,7 @@ describe('upsertTagsOnImageNew', () => {
 
 describe('upsertTagsOnImageNew: models index', () => {
   it('hands the written tags and the re-rated images over', async () => {
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
     await upsertTagsOnImageNew([
       { imageId: 1, tagId: 2 },
       { imageId: 3, tagId: 4 },
@@ -110,5 +120,17 @@ describe('upsertTagsOnImageNew: models index', () => {
       ],
       levelImageIds: [1, 3],
     });
+  });
+
+  it('still hands them over when the level recompute throws', async () => {
+    h.failRecompute = true;
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+
+    await expect(upsertTagsOnImageNew([{ imageId: 1, tagId: 2 }])).rejects.toThrow('lock timeout');
+    h.failRecompute = false;
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith(
+      expect.objectContaining({ levelImageIds: [1] })
+    );
   });
 });
