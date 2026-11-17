@@ -1138,12 +1138,19 @@ export const saveItemInCollections = async ({
   // Callers may send the item's whole desired membership rather than just the additions, and re-running
   // the contest gates on an existing entry fails the save to an UNRELATED collection as soon as one of
   // those entries sits in a contest whose submission window has closed (or whose per-user cap it already
-  // counts against). A tag CHANGE is a real write, so it still validates.
+  // counts against). A tag CHANGE is a real write, so it still validates. Only for an entry the caller
+  // added or a collection whose items they can read: skipping the gates otherwise would tell a
+  // submit-only caller whether someone else's item is already in.
   const unwrittenCollectionIds = new Set(
     upsertCollectionItems
       .filter((upsert) => {
         const item = existingItemsByCollection.get(upsert.collectionId);
-        return item && (upsert.tagId ?? null) === (item.tagId ?? null);
+        return (
+          item &&
+          (upsert.tagId ?? null) === (item.tagId ?? null) &&
+          (item.addedById === userId ||
+            canReadCollectionItems(permissionsMap.get(upsert.collectionId)))
+        );
       })
       .map((upsert) => upsert.collectionId)
   );
