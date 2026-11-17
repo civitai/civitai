@@ -184,6 +184,18 @@ export async function decideAppAccessRequest({
     // approved row is still one decision to the person. try/catch rather than `.catch`: a
     // synchronous throw must not escape either.
     try {
+      // Declining a stray PENDING row (the race above) leaves a standing grant in place, so a
+      // "not approved" notice would be false. Read after the commit, so it sees this decision.
+      if (input.decision === 'declined' && prev === 'pending') {
+        const [{ stillApproved }] = await dbWrite.$queryRaw<{ stillApproved: boolean }[]>(
+          Prisma.sql`
+            SELECT EXISTS (
+              SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'approved'
+            ) AS "stillApproved"
+          `
+        );
+        if (stillApproved) return view;
+      }
       await notifyAppAccessDecision({
         userId,
         requestId: view.id,

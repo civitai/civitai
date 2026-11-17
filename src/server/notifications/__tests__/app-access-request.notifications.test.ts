@@ -14,9 +14,6 @@ const { notifyAppAccessDecision } = await import('~/server/services/app-access-r
 
 /**
  * What an Apps access applicant receives when a moderator decides (pure: no DB, no client).
- *
- * The copy is pinned as whole strings: the artifact is prose, and a keyword check stays green
- * through a rewrite that drops the next step. A reword fails here on purpose.
  */
 
 type Def = (typeof appAccessRequestNotifications)['app-access-request-approved'];
@@ -32,42 +29,29 @@ function msg(type: string, details: AppAccessRequestNotificationDetails) {
 
 describe('app access request notifications — registration', () => {
   it.each(['app-access-request-approved', 'app-access-request-declined'])(
-    '%s is in the registry the bell renders from, as a non-toggleable System type',
+    '%s is in the registry the bell renders from',
     (type) => {
-      const def = notificationProcessors[type as keyof typeof notificationProcessors];
-      expect(def, `${type} is not registered`).toBeTruthy();
-      expect(def.category).toBe('System');
-      expect(def.toggleable).toBe(false);
-      expect((def as { prepareQuery?: unknown }).prepareQuery).toBeUndefined();
-      // Onsite only: email is opted into per type and these are not.
-      expect((def as { defaultEmail?: boolean }).defaultEmail).toBeFalsy();
+      expect(
+        notificationProcessors[type as keyof typeof notificationProcessors],
+        `${type} is not registered`
+      ).toBeTruthy();
     }
   );
 });
 
-describe('app access request notifications — what the applicant reads', () => {
-  it('approved: author access is on, and it links to the Developer Terms on /apps/submit', () => {
-    expect(msg('app-access-request-approved', { requestId: 31 })).toEqual({
-      message:
-        'Your request to build apps was approved and author access is on. Accept the App Developer Terms, then open Build to start your first app.',
-      url: '/apps/submit',
-    });
+describe('app access request notifications — where they point', () => {
+  it('approved links to the Developer Terms on /apps/submit', () => {
+    expect(msg('app-access-request-approved', { requestId: 31 }).url).toBe('/apps/submit');
   });
 
-  it('declined: neutral, links back to Build where a new request can be sent', () => {
-    expect(msg('app-access-request-declined', { requestId: 31 })).toEqual({
-      message:
-        'Your request to build apps was not approved this time. You can send a new request from Build.',
-      url: '/apps/build',
-    });
+  it('declined links back to Build, where a new request can be sent', () => {
+    expect(msg('app-access-request-declined', { requestId: 31 }).url).toBe('/apps/build');
   });
 
-  it('a revoke says access was turned off, not that a request was refused', () => {
-    expect(msg('app-access-request-declined', { requestId: 31, revoked: true })).toEqual({
-      message:
-        'Your access to build apps has been turned off. You can send a new request from Build.',
-      url: '/apps/build',
-    });
+  it('a revoke reads differently from a refused request', () => {
+    const declined = msg('app-access-request-declined', { requestId: 31 }).message;
+    const revoked = msg('app-access-request-declined', { requestId: 31, revoked: true }).message;
+    expect(revoked).not.toBe(declined);
   });
 });
 

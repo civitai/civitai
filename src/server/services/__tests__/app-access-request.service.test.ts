@@ -472,6 +472,30 @@ describe('decideAppAccessRequest — the applicant is told the outcome', () => {
     });
   });
 
+  it('🔴 declining a stray PENDING row while an approved one stands sends no "not approved" notice', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'approved');
+    const [{ id: strayId }] = (
+      await pg.query<{ id: number }>(
+        `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild") VALUES ($1, $2) RETURNING "id"`,
+        [mira, MIRA_IDEA_AGAIN]
+      )
+    ).rows;
+    notifyAppAccessDecision.mockClear();
+
+    await expect(decide(strayId, 'declined')).resolves.toMatchObject({ status: 'declined' });
+    expect(await isApproved(mira)).toBe(true);
+    expect(notifyAppAccessDecision).not.toHaveBeenCalled();
+
+    // Positive control: with no standing grant, the same decline does notify.
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'declined');
+    expect(notifyAppAccessDecision).toHaveBeenCalledTimes(1);
+    expect(notifyAppAccessDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: tomasz, decision: 'declined', revoked: false })
+    );
+  });
+
   it('a refused decide notifies nobody: second approve, re-deciding a declined row, unknown id', async () => {
     const a = await submit(mira, MIRA_IDEA);
     await decide(a.id, 'approved');
