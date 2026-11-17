@@ -40,6 +40,7 @@ const {
   getLastSourcesChange,
   getSourcesContext,
   getSourcesSettings,
+  saveGameSettings,
   saveSourcesConfig,
   SOURCES_AUDIT_ACTIVITY,
 } = await import('../sources-config.service');
@@ -277,6 +278,116 @@ describe('saveSourcesConfig', () => {
     await saveSourcesConfig(input, MOD);
     expect(await saveSourcesConfig(input, MOD)).toEqual({ ok: true, changed: false });
     expect(await activity()).toHaveLength(1);
+  });
+});
+
+describe('saveSourcesConfig and game settings', () => {
+  it('keeps every stored game setting when the sources are saved', async () => {
+    const game = { hiddenCheckRate: 0, shopDisabled: true };
+    redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, game }));
+    await saveSourcesConfig({ enabled: false, sfwRate: 0.5, nsfwRate: 0.3 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      enabled: false,
+      sfwRate: 0.5,
+      nsfwRate: 0.3,
+      game,
+    });
+  });
+});
+
+describe('saveGameSettings', () => {
+  const stored = {
+    enabled: true,
+    sfwRate: 0.4,
+    nsfwRate: 0.2,
+    maxOpen: 1200,
+    yesNoShare: 0.5,
+    game: { hiddenCheckRate: 0.1, yesNoStretch: 4 },
+  };
+  const audit = async () =>
+    (await activity()).map((r) => JSON.parse(r.activity.slice(SOURCES_AUDIT_ACTIVITY.length + 1)));
+
+  it('writes only the fields it changes and carries every other stored field over', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings({ yesNoMaxAgeDays: 21, apprenticeSmites: false }, MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      ...stored,
+      game: { hiddenCheckRate: 0.1, yesNoStretch: 4, yesNoMaxAgeDays: 21, apprenticeSmites: false },
+    });
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY)!).game?.yesNoMaxAgeDays).toBe(21);
+  });
+
+  it('clears one stored field on request, so Knights uses its default for it, and audits it', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    await saveGameSettings({ hiddenCheckRate: null }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual({ yesNoStretch: 4 });
+    const [row] = await audit();
+    expect(row.before.game).toEqual(stored.game);
+    expect(row.after.game).toEqual({ yesNoStretch: 4 });
+  });
+
+  it('leaves game out once its last field is cleared', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, game: { yesNoStretch: 4 } }));
+    await saveGameSettings({ yesNoStretch: null }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).not.toHaveProperty('game');
+  });
+
+  it.each([
+    ['a rate above 1', { hiddenCheckRate: 1.5 }],
+    ['a fractional distance', { hiddenCheckSevereDistance: 1.5 }],
+    ['a zero window', { hiddenCheckFailureWindowHours: 0 }],
+    ['a string number', { yesNoStretch: '4' }],
+    ['a string toggle', { apprenticeSmites: 'off' }],
+    ['an unknown setting', { yesNoShare: 0.2 }],
+    ['no object', 'x'],
+  ])('refuses %s and changes nothing', async (_label, input) => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings(input, MOD)).toMatchObject({ ok: false });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+    expect(await activity()).toEqual([]);
+  });
+
+  it('refuses a kill switch change that was not confirmed, and saves it once confirmed', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings({ shopDisabled: true, yesNoStretch: 2 }, MOD)).toMatchObject({
+      ok: false,
+    });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+    expect(
+      await saveGameSettings({ conversionDisabled: true }, MOD, { killSwitchesConfirmed: true })
+    ).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!).game.conversionDisabled).toBe(true);
+  });
+
+  it('needs no confirmation when a kill switch is posted at the value it already has', async () => {
+    redisStore.set(KEY, JSON.stringify({ ...stored, game: { shopDisabled: true } }));
+    expect(await saveGameSettings({ shopDisabled: true, yesNoStretch: 2 }, MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
+  });
+
+  it('records nothing when nothing changes', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings({ yesNoStretch: 4, yesNoMaxAgeDays: null }, MOD)).toEqual({
+      ok: true,
+      changed: false,
+    });
+    expect(await activity()).toEqual([]);
+  });
+
+  it('keeps the sources off when nothing was stored before', async () => {
+    await saveGameSettings({ yesNoStretch: 2 }, MOD);
+    expect(parseKnightsSourcesConfig(redisStore.get(KEY)!)).toEqual({
+      enabled: false,
+      sfwRate: 1,
+      nsfwRate: 0.3,
+      game: { yesNoStretch: 2 },
+    });
+    expect((await audit())[0].before).toBeNull();
   });
 });
 

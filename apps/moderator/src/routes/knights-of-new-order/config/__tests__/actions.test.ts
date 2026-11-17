@@ -1,17 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { save, requireAccess } = vi.hoisted(() => ({ save: vi.fn(), requireAccess: vi.fn() }));
+const { save, saveGame, requireAccess } = vi.hoisted(() => ({
+  save: vi.fn(),
+  saveGame: vi.fn(),
+  requireAccess: vi.fn(),
+}));
 
 vi.mock('$lib/server/knights/sources-config.service', () => ({
   getLastSourcesChange: vi.fn(),
   getSourcesContext: vi.fn(),
   getSourcesSettings: vi.fn(),
   saveSourcesConfig: save,
+  saveGameSettings: saveGame,
 }));
 vi.mock('$lib/server/access', () => ({ requireAccess }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { actions, load } from '../+page.server';
+import { gameChangeSummary } from '../game-form';
 import { percentToRate, rateToPercent } from '../rates';
 
 const formEvent = (fields: Record<string, string>) => {
@@ -132,6 +138,107 @@ describe('Knights of New Order sources config action', () => {
     expect(
       await actions.save(formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5' }))
     ).toMatchObject({ status: 500 });
+  });
+});
+
+describe('Knights of New Order game settings action', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('sends only the posted settings, as numbers and booleans, as the acting moderator', async () => {
+    saveGame.mockResolvedValueOnce({ ok: true, changed: true });
+    expect(
+      await actions.game(
+        formEvent({
+          hiddenCheckRate: '0',
+          hiddenCheckSettleDelayMinutes: ' 12.5 ',
+          yesNoStretch: '3',
+          apprenticeSmites: 'false',
+        })
+      )
+    ).toEqual({ success: true, changed: true });
+    expect(saveGame).toHaveBeenCalledWith(
+      {
+        hiddenCheckRate: 0,
+        hiddenCheckSettleDelayMinutes: 12.5,
+        yesNoStretch: 3,
+        apprenticeSmites: false,
+      },
+      77,
+      { killSwitchesConfirmed: false }
+    );
+  });
+
+  it('clears a setting when "use the Knights default" is posted, whatever its box holds', async () => {
+    saveGame.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.game(
+      formEvent({
+        yesNoMaxAgeDays: '9',
+        'default.yesNoMaxAgeDays': 'true',
+        'default.shopDisabled': 'true',
+      })
+    );
+    expect(saveGame).toHaveBeenCalledWith({ yesNoMaxAgeDays: null, shopDisabled: null }, 77, {
+      killSwitchesConfirmed: false,
+    });
+  });
+
+  it('passes the kill switch confirmation through', async () => {
+    saveGame.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.game(formEvent({ conversionDisabled: 'true', confirmKillSwitches: 'true' }));
+    expect(saveGame).toHaveBeenCalledWith({ conversionDisabled: true }, 77, {
+      killSwitchesConfirmed: true,
+    });
+  });
+
+  it.each([
+    ['a word for a number', { yesNoStretch: 'four' }],
+    ['a blank number', { yesNoStretch: '' }],
+    ['an exponent', { hiddenCheckFailureWindowHours: '1e3' }],
+    ['a toggle that is not true or false', { shopDisabled: 'on' }],
+    ['nothing to change', {}],
+  ])('refuses %s without saving', async (_label, fields) => {
+    expect(await actions.game(formEvent(fields))).toMatchObject({ status: 400 });
+    expect(saveGame).not.toHaveBeenCalled();
+  });
+
+  it('shows the service refusing (an out-of-range value, an unconfirmed kill switch) as a 400', async () => {
+    saveGame.mockResolvedValueOnce({ ok: false, error: 'Shop closed needs confirming' });
+    expect(await actions.game(formEvent({ shopDisabled: 'true' }))).toMatchObject({
+      status: 400,
+      data: { error: 'Shop closed needs confirming' },
+    });
+  });
+
+  it('fails the action, not the page, when the store is unreachable', async () => {
+    saveGame.mockRejectedValueOnce(new Error('redis down'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await actions.game(formEvent({ yesNoStretch: '3' }))).toMatchObject({ status: 500 });
+  });
+
+  it('refuses without access before anything is written', async () => {
+    requireAccess.mockImplementationOnce(() => {
+      throw new Error('forbidden');
+    });
+    await expect(actions.game(formEvent({ yesNoStretch: '3' }))).rejects.toThrow('forbidden');
+    expect(saveGame).not.toHaveBeenCalled();
+  });
+});
+
+describe('gameChangeSummary', () => {
+  it('names each moved setting with its value before and after', () => {
+    expect(
+      gameChangeSummary(
+        { yesNoStretch: 4, shopDisabled: false },
+        { yesNoStretch: 2, conversionDisabled: true }
+      )
+    ).toBe(
+      'Questions per axis in a row: 4 to 2; Shop closed: off to Knights default; Gold to Buzz conversion off: Knights default to on'
+    );
+  });
+
+  it('is null when no game setting moved', () => {
+    expect(gameChangeSummary(undefined, undefined)).toBeNull();
+    expect(gameChangeSummary({ yesNoStretch: 4 }, { yesNoStretch: 4 })).toBeNull();
   });
 });
 

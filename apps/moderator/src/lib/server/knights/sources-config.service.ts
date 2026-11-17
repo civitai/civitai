@@ -1,8 +1,13 @@
 import { utc } from '@civitai/db/kysely';
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import {
+  isValidKnightsGameSetting,
+  KNIGHTS_GAME_SETTING_KEYS,
+  KNIGHTS_GAME_SETTINGS,
   KNIGHTS_NSFW_LEVEL_QUESTION,
   readKnightsSourcesConfig,
+  type KnightsGameSettingKey,
+  type KnightsGameSettings,
   type KnightsSourcesConfig,
 } from '@civitai/shared/new-order';
 import { dbRead, dbWrite } from '../db';
@@ -67,34 +72,23 @@ export function validateSourcesInput(
   };
 }
 
+const sameGame = (a: KnightsGameSettings = {}, b: KnightsGameSettings = {}) =>
+  KNIGHTS_GAME_SETTING_KEYS.every((key) => a[key] === b[key]);
+
 const same = (a: KnightsSourcesConfig, b: KnightsSourcesConfig) =>
   a.enabled === b.enabled &&
   a.sfwRate === b.sfwRate &&
   a.nsfwRate === b.nsfwRate &&
-  a.yesNoShare === b.yesNoShare;
+  a.maxOpen === b.maxOpen &&
+  a.yesNoShare === b.yesNoShare &&
+  sameGame(a.game, b.game);
 
-/**
- * The switch and both rates are always written, so a later change to the reader's defaults cannot move a saved rate. A stored
- * `maxOpen` is carried over (the page does not edit it, and dropping it would reset the intake cap to the default), and so is a
- * stored `yesNoShare` when the input leaves it out, so saving the rates never turns yes/no questions back on; `yesNoShare: null`
- * removes it.
- */
-export async function saveSourcesConfig(input: unknown, moderatorId: number): Promise<SaveOutcome> {
-  const checked = validateSourcesInput(input);
-  if (!checked.ok) return checked;
-
-  const before = await getSourcesSettings();
-  const { maxOpen } = before.config;
-  const yesNoShare = checked.clearYesNoShare
-    ? undefined
-    : checked.config.yesNoShare ?? before.config.yesNoShare;
-  const config: KnightsSourcesConfig = {
-    enabled: checked.config.enabled,
-    sfwRate: checked.config.sfwRate,
-    nsfwRate: checked.config.nsfwRate,
-    ...(maxOpen === undefined ? {} : { maxOpen }),
-    ...(yesNoShare === undefined ? {} : { yesNoShare }),
-  };
+/** The one writer of the key: stores `config` and audits it, or does nothing when it equals what is stored. */
+async function writeSourcesConfig(
+  before: SourcesSettings,
+  config: KnightsSourcesConfig,
+  moderatorId: number
+): Promise<SaveOutcome> {
   if (before.stored && same(before.config, config)) return { ok: true, changed: false };
 
   await getSysRedis().set(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES, JSON.stringify(config));
@@ -108,6 +102,104 @@ export async function saveSourcesConfig(input: unknown, moderatorId: number): Pr
     })}`,
   });
   return { ok: true, changed: true };
+}
+
+/**
+ * The switch and both rates are always written, so a later change to the reader's defaults cannot move a saved rate. A stored
+ * `maxOpen` and the stored game settings are carried over (this form does not edit them, and dropping `maxOpen` would reset the
+ * intake cap to the default), and so is a stored `yesNoShare` when the input leaves it out, so saving the rates never turns
+ * yes/no questions back on; `yesNoShare: null` removes it.
+ */
+export async function saveSourcesConfig(input: unknown, moderatorId: number): Promise<SaveOutcome> {
+  const checked = validateSourcesInput(input);
+  if (!checked.ok) return checked;
+
+  const before = await getSourcesSettings();
+  const { maxOpen, game } = before.config;
+  const yesNoShare = checked.clearYesNoShare
+    ? undefined
+    : checked.config.yesNoShare ?? before.config.yesNoShare;
+  const config: KnightsSourcesConfig = {
+    enabled: checked.config.enabled,
+    sfwRate: checked.config.sfwRate,
+    nsfwRate: checked.config.nsfwRate,
+    ...(maxOpen === undefined ? {} : { maxOpen }),
+    ...(yesNoShare === undefined ? {} : { yesNoShare }),
+    ...(game === undefined ? {} : { game }),
+  };
+  return writeSourcesConfig(before, config, moderatorId);
+}
+
+/** A field set to a value stores it; `null` removes it, so Knights falls back to its environment; a field left out is untouched. */
+export type GameSettingsChanges = {
+  [K in KnightsGameSettingKey]?: KnightsGameSettings[K] | null;
+};
+
+const KILL_SWITCHES = [
+  'shopDisabled',
+  'conversionDisabled',
+] as const satisfies KnightsGameSettingKey[];
+
+const rangeError = (key: KnightsGameSettingKey) => {
+  const spec = KNIGHTS_GAME_SETTINGS[key];
+  return spec.kind === 'toggle'
+    ? `${spec.label} must be on or off.`
+    : `${spec.label} must be ${spec.range}.`;
+};
+
+/** Nothing is coerced, and a key that is not a game setting is refused rather than ignored. */
+export function validateGameSettingsInput(
+  input: unknown
+): { ok: true; changes: GameSettingsChanges } | { ok: false; error: string } {
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    return { ok: false, error: 'No settings were sent.' };
+  const changes: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!(KNIGHTS_GAME_SETTING_KEYS as string[]).includes(key))
+      return { ok: false, error: `${key} is not a Knights game setting.` };
+    const setting = key as KnightsGameSettingKey;
+    if (value !== null && !isValidKnightsGameSetting(setting, value))
+      return { ok: false, error: rangeError(setting) };
+    changes[setting] = value;
+  }
+  return { ok: true, changes: changes as GameSettingsChanges };
+}
+
+/**
+ * Applies only the fields in `input` on top of what is stored and carries every other stored field over (the switch, rates,
+ * `maxOpen`, `yesNoShare` and the other game settings). A change to the shop or conversion kill switch is refused unless the
+ * moderator confirmed it. Audited through the same writer as the sources form.
+ */
+export async function saveGameSettings(
+  input: unknown,
+  moderatorId: number,
+  { killSwitchesConfirmed = false }: { killSwitchesConfirmed?: boolean } = {}
+): Promise<SaveOutcome> {
+  const checked = validateGameSettingsInput(input);
+  if (!checked.ok) return checked;
+
+  const before = await getSourcesSettings();
+  const game: Record<string, number | boolean> = { ...before.config.game };
+  for (const [key, value] of Object.entries(checked.changes)) {
+    if (value === null) delete game[key];
+    else game[key] = value;
+  }
+  const next = game as KnightsGameSettings;
+  const flipped = KILL_SWITCHES.filter((key) => next[key] !== before.config.game?.[key]);
+  if (flipped.length && !killSwitchesConfirmed)
+    return {
+      ok: false,
+      error: `Confirm the change to ${flipped
+        .map((key) => KNIGHTS_GAME_SETTINGS[key].label)
+        .join(' and ')} before saving.`,
+    };
+
+  const { game: _previous, ...rest } = before.config;
+  const config: KnightsSourcesConfig = {
+    ...rest,
+    ...(Object.keys(next).length ? { game: next } : {}),
+  };
+  return writeSourcesConfig(before, config, moderatorId);
 }
 
 function parseChange(activity: string): Pick<SourcesChange, 'before' | 'after'> | null {

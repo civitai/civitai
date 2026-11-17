@@ -21,8 +21,9 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   most 500 ms for it and is not throttled when it is slower, and the count still fills the cache when it lands. A failed count does not
   throttle, is not cached, and pauses counting for 10 s. The moderator Config page edits the three fields above and the optional
   `yesNoShare` (0-1, Knights' yes/no question share, see [yes/no questions](knights-yesno-questions.md)); a save there keeps a stored
-  `maxOpen`, and keeps a stored `yesNoShare` when its box is left blank. Its "use the Knights default" checkbox removes a stored
-  `yesNoShare` (audited like any save), so Knights falls back to `KNIGHTS_YESNO_SHARE`.
+  `maxOpen` and the stored game settings, and keeps a stored `yesNoShare` when its box is left blank. Its "use the Knights default"
+  checkbox removes a stored `yesNoShare` (audited like any save), so Knights falls back to `KNIGHTS_YESNO_SHARE`. The same page edits
+  the [game settings](#game-settings).
 - Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
   `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
 - Dev queue: with the migration applied to your local database, `cd apps/knights && pnpm run dev:enqueue-recent [count]` enqueues the newest eligible
@@ -48,3 +49,11 @@ Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/
 - before any good read, the environment (then the built-in default) applies.
 
 The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
+
+The moderator Config page (`/knights-of-new-order/config`, "Game settings") groups them as Skill checks, Yes/no, Acolytes, and Shop
+and conversion. Each field says whether it is saved there or on the Knights default, and a saved field has a "Use the Knights
+default" checkbox that removes it. The form posts only the fields the moderator changed; `saveGameSettings`
+(`apps/moderator/src/lib/server/knights/sources-config.service.ts`) applies them over what is stored, carries every other field over
+(switch, rates, `maxOpen`, `yesNoShare`, other game settings), refuses an out-of-range or mistyped value without coercing it, and
+writes and audits through the same path as the sources form (`ModActivity`, `knights.sources.update`, with before and after). A
+change to either kill switch is refused unless confirmed; the page asks before saving one.

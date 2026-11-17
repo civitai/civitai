@@ -13,6 +13,7 @@
     SourcesChange,
     SourcesSettings,
   } from '$lib/server/knights/sources-config.service';
+  import { gameChangeSummary } from './game-form';
   import { rateToPercent } from './rates';
 
   let {
@@ -180,6 +181,8 @@
         {lastChange.moderatorUsername ?? (lastChange.moderatorId ? `#${lastChange.moderatorId}` : 'unknown')}.
       </p>
       <p>From {describe(lastChange.before)} to {describe(lastChange.after)}.</p>
+      {@const gameMoved = gameChangeSummary(lastChange.before?.game, lastChange.after?.game)}
+      {#if gameMoved}<p>Game settings: {gameMoved}.</p>{/if}
     {:else}
       <p>No change has been recorded yet.</p>
     {/if}
