@@ -69,6 +69,17 @@ describe('ticketTriageLoad', () => {
     expect(await load('')).toMatchObject({ canReply: false, canEscalate: false });
   });
 
+  it('shows the privacy hand-off only with its own grant, the hand-off and the reply grants, on the moderation view', async () => {
+    const all = { 'tickets.reply': true, 'tickets.escalate': true, 'tickets.privacy': true };
+    expect((await load('', all)).canPrivacy).toBe(true);
+    // Dark by default: the other hand-off grants alone do not show it.
+    expect((await load('', { 'tickets.reply': true, 'tickets.escalate': true })).canPrivacy).toBe(
+      false
+    );
+    expect((await load('', { ...all, 'tickets.reply': false })).canPrivacy).toBe(false);
+    expect((await load('', all, 'support')).canPrivacy).toBe(false);
+  });
+
   it('keeps the account actions on the grants User Lookup asks for, moderation view only', async () => {
     canAccess.mockImplementation((_u: unknown, path: string) => path === '/users');
     expect(await load('', { 'user.ban': true })).toMatchObject({

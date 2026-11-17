@@ -1,3 +1,4 @@
+import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -119,7 +120,8 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
-const { deleteImageFromS3 } = await import('../image.service');
+const { deleteImageFromS3, queueImageStorageDeleteRetry } = await import('../image.service');
+const { fakeVersionedBucket } = await import('~/__tests__/mocks/fake-versioned-bucket');
 const { imageStorageDeletePayloadSchema } = await import('~/server/schema/job-queue.schema');
 
 const invalidateCalls = () =>
@@ -347,7 +349,7 @@ describe('deleteImageFromS3', () => {
     // Anchored at the end: an extra SET (`"createdAt" = now()`) would reset the age the overdue
     // check reads, and a missing WHERE writes a dead row version on every failed retry.
     expect(insert.sql).toMatch(
-      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "data" = EXCLUDED\."data"\s+WHERE "JobQueue"\."data"->>'url' IS DISTINCT FROM EXCLUDED\."data"->>'url'\s*$/
+      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "data" = EXCLUDED\."data"\s+WHERE "JobQueue"\."data"->>'url' IS DISTINCT FROM EXCLUDED\."data"->>'url'\s+OR \(EXCLUDED\."data"->>'allVersions' IS NOT NULL AND "JobQueue"\."data"->>'allVersions' IS NULL\)\s*$/
     );
   });
 
@@ -439,5 +441,106 @@ describe('deleteImageFromS3', () => {
         imageId: 4242,
       })
     );
+  });
+
+  describe('allVersions', () => {
+    const KEY = 'abc-def/original.jpeg';
+    let bucket: ReturnType<typeof fakeVersionedBucket>;
+    beforeEach(() => {
+      bucket = fakeVersionedBucket();
+      bucket.putVersion(KEY);
+      bucket.putVersion(KEY);
+      bucket.putDeleteMarker(KEY);
+      mockGetB2ImageS3Client.mockReturnValue({ send: bucket.send });
+      mockFindFirst.mockResolvedValue(null);
+    });
+
+    it('a key-only delete leaves the versions in the bucket', async () => {
+      await expect(deleteImageFromS3({ id: 4242, url: KEY })).resolves.toBe('deleted');
+      expect(bucket.entriesFor(KEY)).toHaveLength(4);
+    });
+
+    it('deletes every version and reads back none', async () => {
+      await expect(deleteImageFromS3({ id: 4242, url: KEY, allVersions: true })).resolves.toBe(
+        'deleted'
+      );
+      expect(bucket.entriesFor(KEY)).toHaveLength(0);
+      expect(retryInserts()).toHaveLength(0);
+    });
+
+    it('fails, logs and queues an all-versions retry when versions remain', async () => {
+      bucket.pinVersions(KEY);
+      await expect(deleteImageFromS3({ id: 4242, url: KEY, allVersions: true })).resolves.toBe(
+        'failed'
+      );
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          name: 'delete-image-from-s3-failed',
+          imageId: 4242,
+          payload: { allVersions: true },
+        })
+      );
+      const [insert] = retryInserts();
+      expect(imageStorageDeletePayloadSchema.parse(JSON.parse(insert.values[3] as string))).toEqual(
+        {
+          url: KEY,
+          allVersions: true,
+        }
+      );
+    });
+
+    // A row that still holds the url (a hold marker kept it) stops the purge before storage.
+    it('purges nothing while a row still holds the url', async () => {
+      mockFindFirst.mockResolvedValue({ id: 4242 });
+      await expect(deleteImageFromS3({ id: 4242, url: KEY, allVersions: true })).resolves.toBe(
+        'skipped'
+      );
+      expect(bucket.entriesFor(KEY)).toHaveLength(3);
+      expect(bucket.calls).toEqual([]);
+    });
+  });
+
+  // The upsert's SQL, run for real: a key already queued for an all-versions purge stays one.
+  describe('retry queue upsert', () => {
+    const replay = async (db: PGlite) => {
+      for (const { sql, values } of retryInserts()) {
+        let n = 0;
+        await db.query(
+          sql.replace(/\?/g, () => `$${++n}`),
+          values
+        );
+      }
+      return (await db.query<{ data: unknown }>(`SELECT data FROM "JobQueue"`)).rows.map(
+        (row) => row.data
+      );
+    };
+    const freshDb = async () => {
+      const db = new PGlite();
+      await db.exec(`
+        CREATE TYPE "EntityType" AS ENUM ('Image');
+        CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete');
+        CREATE TABLE "JobQueue" (
+          "entityId" int, "entityType" "EntityType", type "JobQueueType", data jsonb,
+          PRIMARY KEY ("entityType", "entityId", type)
+        );`);
+      return db;
+    };
+
+    it('a key-only failure does not downgrade a queued all-versions purge', async () => {
+      const db = await freshDb();
+      await queueImageStorageDeleteRetry({ id: 7, url: 'k', allVersions: true });
+      await queueImageStorageDeleteRetry({ id: 7, url: 'k' });
+      expect(await replay(db)).toEqual([{ url: 'k', allVersions: true }]);
+      await db.close();
+    });
+
+    it('an all-versions failure upgrades a queued key-only delete', async () => {
+      const db = await freshDb();
+      await queueImageStorageDeleteRetry({ id: 7, url: 'k' });
+      await queueImageStorageDeleteRetry({ id: 7, url: 'k', allVersions: true });
+      expect(await replay(db)).toEqual([{ url: 'k', allVersions: true }]);
+      await db.close();
+    });
   });
 });

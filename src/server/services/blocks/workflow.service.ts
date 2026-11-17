@@ -9,7 +9,7 @@ import type {
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
   getStepByOrchestratorType,
-  isTrainingStepType,
+  canonicalTrainingStepType,
   NATIVE_STEP_OUTPUT_KEY,
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
@@ -783,9 +783,9 @@ function extractSnapshotStep(
     // are echoed back by the orchestrator. Anything else keeps the pre-existing
     // behaviour: dropped.
     //
-    // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
-    // image this arm produces on the one channel the publish path and the
-    // per-viewer gated read already own; see `stepOutputs` in
+    // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs` (an unapproved training
+    // run's go to neither). That keeps every image this arm produces on the one
+    // channel the publish path and the per-viewer gated read already own; see `stepOutputs` in
     // `schema/blocks/workflow.schema`. A training checkpoint goes to NEITHER —
     // `splitPassThroughStep` drops it.
     if (!bridgeSubmitted) return { media, trainedEpochs, model3d: [] };
@@ -889,7 +889,7 @@ export function classifySucceededWithoutMedia(
     if (step.status !== 'succeeded') continue;
     const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
     if (member && (member.suppressOutput || isRepeatStepType(step.$type))) continue;
-    if (isTrainingStepType(step.$type)) continue;
+    if (canonicalTrainingStepType(step.$type) !== null) continue;
     const registered = getStepByOrchestratorType(step.$type);
     let label: string;
     if (registered) {
@@ -932,7 +932,7 @@ function hasBlockTrainingStep(workflow: Workflow): boolean {
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   return (workflow.steps ?? []).some(
     (step) =>
-      isTrainingStepType(step.$type) &&
+      canonicalTrainingStepType(step.$type) !== null &&
       (step.name === BLOCK_STEP_NAME ||
         (submittedSteps !== null && resolveBlockWorkflowStep(submittedSteps, step.name) !== null))
   );
@@ -1094,7 +1094,7 @@ export function projectAppWorkflowWithPositions(
     if (member?.suppressOutput) {
       // Still report a suppressed training step's ready epochs: `suppressOutput`
       // hides images, and a checkpoint is never one.
-      if (isTrainingStepType(step.$type)) {
+      if (canonicalTrainingStepType(step.$type) !== null) {
         trainedEpochs.push(
           ...splitPassThroughStep(step.$type, (step as unknown as { output?: unknown }).output)
             .trainedEpochs

@@ -12,6 +12,13 @@ vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   refreshSession,
 }));
 
+// The applicant notification, mocked at the emit helper (its own suite covers what it sends), so
+// these tests see exactly which decisions notify, whom, and with what outcome.
+const { notifyAppAccessDecision } = vi.hoisted(() => ({
+  notifyAppAccessDecision: vi.fn(async (_opts: unknown) => undefined),
+}));
+vi.mock('~/server/services/app-access-request-notify', () => ({ notifyAppAccessDecision }));
+
 const {
   APP_ACCESS_ALREADY_APPROVED,
   APP_ACCESS_ALREADY_PENDING,
@@ -108,6 +115,8 @@ beforeEach(async () => {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw.mockImplementation(run as never);
   refreshSession.mockClear();
+  notifyAppAccessDecision.mockReset();
+  notifyAppAccessDecision.mockImplementation(async () => undefined);
 });
 
 describe('submitAppAccessRequest', () => {
@@ -411,5 +420,119 @@ describe('decideAppAccessRequest — approving GRANTS, declining an approved row
   it('is NOT_FOUND for an id that does not exist', async () => {
     await expect(decide(9_999, 'approved')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(refreshSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('decideAppAccessRequest — the applicant is told the outcome', () => {
+  it('🔴 approve notifies the REQUESTER once, as approved', async () => {
+    const req = await submit(mira, MIRA_IDEA);
+    await submit(tomasz, TOMASZ_IDEA);
+    await decide(req.id, 'approved');
+    expect(notifyAppAccessDecision).toHaveBeenCalledTimes(1);
+    expect(notifyAppAccessDecision).toHaveBeenCalledWith({
+      userId: mira,
+      requestId: req.id,
+      decision: 'approved',
+      revoked: false,
+    });
+  });
+
+  it('🔴 declining a pending request notifies once, as declined and not a revoke', async () => {
+    const req = await submit(mira, MIRA_IDEA);
+    await decide(req.id, 'declined');
+    expect(notifyAppAccessDecision).toHaveBeenCalledTimes(1);
+    expect(notifyAppAccessDecision).toHaveBeenCalledWith({
+      userId: mira,
+      requestId: req.id,
+      decision: 'declined',
+      revoked: false,
+    });
+  });
+
+  it('🔴 a revoke notifies ONCE as a revoke, even when the sweep declines two approved rows', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'approved');
+    const [{ id: secondId }] = (
+      await pg.query<{ id: number }>(
+        `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild") VALUES ($1, $2) RETURNING "id"`,
+        [mira, MIRA_IDEA_AGAIN]
+      )
+    ).rows;
+    await decide(secondId, 'approved');
+    notifyAppAccessDecision.mockClear();
+
+    await decide(first.id, 'declined');
+    expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['declined', 'declined']);
+    expect(notifyAppAccessDecision).toHaveBeenCalledTimes(1);
+    expect(notifyAppAccessDecision).toHaveBeenCalledWith({
+      userId: mira,
+      requestId: first.id,
+      decision: 'declined',
+      revoked: true,
+    });
+  });
+
+  it('🔴 declining a stray PENDING row while an approved one stands sends no "not approved" notice', async () => {
+    const first = await submit(mira, MIRA_IDEA);
+    await decide(first.id, 'approved');
+    const [{ id: strayId }] = (
+      await pg.query<{ id: number }>(
+        `INSERT INTO "AppAccessRequest" ("userId", "whatToBuild") VALUES ($1, $2) RETURNING "id"`,
+        [mira, MIRA_IDEA_AGAIN]
+      )
+    ).rows;
+    notifyAppAccessDecision.mockClear();
+
+    await expect(decide(strayId, 'declined')).resolves.toMatchObject({ status: 'declined' });
+    expect(await isApproved(mira)).toBe(true);
+    expect(notifyAppAccessDecision).not.toHaveBeenCalled();
+
+    // Positive control: with no standing grant, the same decline does notify.
+    const t = await submit(tomasz, TOMASZ_IDEA);
+    await decide(t.id, 'declined');
+    expect(notifyAppAccessDecision).toHaveBeenCalledTimes(1);
+    expect(notifyAppAccessDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: tomasz, decision: 'declined', revoked: false })
+    );
+  });
+
+  it('a refused decide notifies nobody: second approve, re-deciding a declined row, unknown id', async () => {
+    const a = await submit(mira, MIRA_IDEA);
+    await decide(a.id, 'approved');
+    const b = await submit(tomasz, TOMASZ_IDEA);
+    await decide(b.id, 'declined');
+    // Positive control: the two real transitions above did notify, so the spy is wired.
+    expect(notifyAppAccessDecision).toHaveBeenCalledTimes(2);
+    notifyAppAccessDecision.mockClear();
+
+    await expect(decide(a.id, 'approved')).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(decide(b.id, 'approved')).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(decide(b.id, 'declined')).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(decide(9_999, 'declined')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(notifyAppAccessDecision).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a REJECTED notification does not fail or undo the decision', async () => {
+    const req = await submit(mira, MIRA_IDEA);
+    notifyAppAccessDecision.mockRejectedValueOnce(new Error('notifications down'));
+    await expect(decide(req.id, 'approved')).resolves.toMatchObject({
+      id: req.id,
+      status: 'approved',
+    });
+    expect(notifyAppAccessDecision).toHaveBeenCalledTimes(1);
+    expect(await isApproved(mira)).toBe(true);
+    expect(refreshSession).toHaveBeenCalledWith(mira, { caller: 'moderation' });
+  });
+
+  it('🔴 a notification that throws SYNCHRONOUSLY does not fail the decision either', async () => {
+    const req = await submit(mira, MIRA_IDEA);
+    notifyAppAccessDecision.mockImplementationOnce(() => {
+      throw new Error('bad import');
+    });
+    await expect(decide(req.id, 'declined')).resolves.toMatchObject({
+      id: req.id,
+      status: 'declined',
+    });
+    expect((await rowsFor(mira)).map((r) => r.status)).toEqual(['declined']);
   });
 });
