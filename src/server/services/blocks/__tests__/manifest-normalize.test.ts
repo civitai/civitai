@@ -55,7 +55,6 @@ describe('manifest-normalize', () => {
     });
   });
 
-  // Red at origin/main: `trimManifestStringFields` does not exist there.
   describe('trimManifestStringFields', () => {
     const TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
     const REPO = 'https://github.com/example-org/example-app';
