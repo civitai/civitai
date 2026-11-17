@@ -1,4 +1,3 @@
-import { decodeProtectedHeader } from 'jose';
 import { env } from '$env/dynamic/private';
 import { createAccessTokenJwtVerifier } from '@civitai/auth';
 import { logToAxiom } from '$lib/server/axiom';
@@ -24,17 +23,6 @@ import {
 // client and its `services` entry, whose current roles and uid the answer carries. Any of those failing
 // reads as {active:false}; a lookup that cannot answer is `indeterminate` (503).
 
-/** Whether `token` is a compact JWS whose header says `typ: at+jwt`. */
-export function isAccessTokenJwt(token: string): boolean {
-  if (token.split('.').length !== 3) return false;
-  try {
-    const typ = decodeProtectedHeader(token).typ;
-    return typeof typ === 'string' && /^(application\/)?at\+jwt$/i.test(typ);
-  } catch {
-    return false;
-  }
-}
-
 /** Whether `clientId` may introspect the JWTs of some registered resource. */
 export async function isAnyIntrospector(clientId: string): Promise<boolean> {
   return (await getExchangeResources()).some((r) => r.introspectors.includes(clientId));
@@ -53,7 +41,7 @@ function inactive(reason: string, extra?: Record<string, unknown>): JwtIntrospec
     result: 'inactive',
     reason,
     ...extra,
-  }).catch(() => undefined);
+  });
   return { kind: 'inactive' };
 }
 
@@ -70,9 +58,7 @@ export async function introspectAccessTokenJwt(
     verifier ??= createAccessTokenJwtVerifier();
     payload = await verifier(token, issuer);
   } catch (err) {
-    void logToAxiom({ type: 'error', name: 'introspect-jwt-verifier', message: String(err) }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'introspect-jwt-verifier', message: String(err) });
     return inactive('verifier not configured');
   }
   if (!payload) return inactive('signature or claims');
@@ -150,7 +136,7 @@ export async function introspectAccessTokenJwt(
       name: 'introspect-jwt-indeterminate',
       message: String(err),
       ...log,
-    }).catch(() => undefined);
+    });
     return { kind: 'indeterminate' };
   }
 }

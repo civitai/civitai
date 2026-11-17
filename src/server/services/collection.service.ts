@@ -23,6 +23,7 @@ import {
 } from '~/server/common/enums';
 import { hasBlockMarker } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import {
   bustContestCollectionItemsCache,
   bustContestCollectionItemsCacheForItems,
@@ -973,7 +974,7 @@ async function applyCollectionAutoTag(
         message: 'autoTagId resolves to a moderated tag',
         tagId,
         resolvedTagId: offending.tagId,
-      }).catch();
+      });
       return;
     }
 
@@ -993,7 +994,7 @@ async function applyCollectionAutoTag(
       message: (error as Error).message,
       tagId,
       imageIds: imageIds.slice(0, 20),
-    }).catch();
+    });
   }
 }
 
@@ -1050,8 +1051,6 @@ async function notifyCollectionSubmissionReceived({
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
       collectionIds,
-    }).catch(() => {
-      // swallow — best-effort logging must never break the submit it is observing
     });
   }
 }
@@ -1821,7 +1820,7 @@ export const upsertCollection = async ({
           name: 'collection-nsfw-recompute-enqueue-failed',
           message: error instanceof Error ? error.message : String(error),
           collectionId: updated.id,
-        }).catch(() => null)
+        })
       );
 
     if (shouldScanCollection(currentCollection, updated))
@@ -3921,6 +3920,8 @@ type ImageProps = {
   mimeType: string | null;
   meta: Prisma.JsonObject | null;
   userId: number;
+  poi: boolean;
+  minor: boolean;
   tosViolation: boolean;
 } | null;
 
@@ -3934,10 +3935,18 @@ export const getCollectionCoverImages = async ({
   collectionIds,
   imagesPerCollection,
   browsingLevel,
+  showsImage,
 }: {
   collectionIds: number[];
   imagesPerCollection: number;
   browsingLevel: number;
+  /** The viewer's browsing-tag filter, from `getShowcaseImageFilter`. */
+  showsImage: (image: {
+    userId?: number;
+    poi?: boolean;
+    minor?: boolean;
+    tags?: number[];
+  }) => boolean;
 }) => {
   const imageSql = Prisma.sql`
     jsonb_build_object(
@@ -3956,6 +3965,8 @@ export const getCollectionCoverImages = async ({
         'type', i."type",
         'meta', i."meta",
         'userId', i."userId",
+        'poi', i."poi",
+        'minor', i."minor",
         'tosViolation', i."tosViolation"
       ) image
   `;
@@ -3970,33 +3981,41 @@ export const getCollectionCoverImages = async ({
           srcImageLevels: allBrowsingLevelsFlag,
         })}`
       : [];
+  const withinLevel = itemImages.filter(
+    ({ image }) => image && isCoverWithinBrowsingLevel(image, browsingLevel)
+  );
+  // Past the L1: these ids decide which images are served.
+  const imageIds = [...new Set(withinLevel.map(({ image }) => image?.id).filter(isDefined))];
+  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds, { bypassLocal: true });
+  const tagIdsByImage = new Map<number, number[]>(
+    Object.values(imageTagsCache).map(({ imageId, tags }) => [imageId, tags])
+  );
+  // The cache keeps no entry for an untagged image, so a miss is read from the tag table: an image
+  // it has no rows for is untagged.
+  const missed = imageIds.filter((imageId) => !tagIdsByImage.has(imageId));
+  if (missed.length) {
+    for (const imageId of missed) tagIdsByImage.set(imageId, []);
+    for (const row of await getImageTagRows(dbRead, missed))
+      tagIdsByImage.get(row.imageId)?.push(row.tagId);
+  }
+
   // An article's cover string carries no rating of its own: it is served only beside a cover
   // image that passed.
-  const shown = itemImages.map(({ id, image, src }) =>
-    image && isCoverWithinBrowsingLevel(image, browsingLevel)
-      ? { id, image, src }
-      : { id, image: null, src: null }
-  );
-
-  // Use Redis cache for tag lookups (much faster than direct DB query)
-  const imageIds = [...new Set(shown.map(({ image }) => image?.id).filter(isDefined))];
-  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
-  const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
-    cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
-  );
-
-  return shown
-    .map(({ id, image, src }) => ({
-      id,
-      image: image
-        ? {
-            ...omit(image, 'tosViolation'),
-            tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
-          }
-        : null,
-      src,
-    }))
-    .filter((itemImage) => !!(itemImage.image || itemImage.src));
+  return withinLevel.flatMap(({ id, image, src }) => {
+    if (!image) return [];
+    const tags = tagIdsByImage.get(image.id);
+    if (!showsImage({ ...image, tags })) return [];
+    return [
+      {
+        id,
+        image: {
+          ...omit(image, 'tosViolation'),
+          tags: (tags ?? []).map((tagId) => ({ id: tagId })),
+        },
+        src,
+      },
+    ];
+  });
 };
 
 type CollectionForMeta = { id: number; metadata: CollectionMetadataSchema | null };
@@ -4399,7 +4418,7 @@ export const setCollectionItemNsfwLevel = async ({
     judgeLevel: nsfwLevel,
     scanLevel: image.nsfwLevel,
     finalLevel: updated.nsfwLevel,
-  }).catch();
+  });
 
   // `rescanning`: the judge's level applies once the rescan's checks have run at it.
   return {
@@ -4508,7 +4527,7 @@ export async function setCollectionItemsTag({
       name: 'collection-set-items-tag-cache-bust',
       message: (error as Error).message,
       collectionId,
-    }).catch(() => undefined)
+    })
   );
 
   return { count, collectionItemIds };

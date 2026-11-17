@@ -617,8 +617,7 @@ in the same screen instead of having to click around a bunch."*
 - [x] 🔴 **It could WRITE, and our code says otherwise.** A screenshot shows **Toggle Minor ON** and
       **Toggle Poi ON** beside the image data. The export has no mutation query, so it is stale against
       that screen — and `+page.server.ts` asserted "Read-only. Every action … lived in other apps",
-      which would have stopped anyone noticing. Comment corrected 2026-08-09; the two actions are still
-      unported.
+      which would have stopped anyone noticing. Comment corrected 2026-08-09; both actions are now ported as Set minor / Set POI.
 - [x] Report `details` fetched and never rendered (Retool's reports table has an explicit **Details**
       column).
 - [x] `hasImageEvents` is an unguarded ClickHouse call in `load`, so ClickHouse being down turns "no

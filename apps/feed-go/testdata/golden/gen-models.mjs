@@ -1117,14 +1117,6 @@ const SPECS = [
     pages: [{ cursor: '2026-06-11 10:00:00.125|5002', ids: [5002, 5004] }],
   },
   {
-    name: 'fallback-short-fraction-cursor',
-    description:
-      'A cursor timestamp with a 1- or 2-digit fraction (250 ms written ".25"): the deployed Node binds it as 25 ms (fixed on main by #9075, not yet deployed), so feed-go falls back until that fix is deployed.',
-    host: HOST.blue,
-    input: { sort: 'Newest', limit: 1, browsingLevel: 31, cursor: '2026-06-12 10:00:00.25|5001' },
-    fallback: 'short-fraction-cursor',
-  },
-  {
     name: 'base-model-single-moderator',
     description:
       'One base model (the per-base-model table drives): the version filter selects the Pony version; a moderator sees held and mature images.',
@@ -1255,8 +1247,10 @@ const SPECS = [
   },
   {
     name: 'fallback-images-miss',
-    description: 'A version-images miss (Node reads it lag-aware) falls back.',
+    description:
+      'A version-images miss falls back with the miss computation off (FEED_GO_COMPUTE_MISSES=false; on, it is computed).',
     host: HOST.green,
+    config: { computeMissesOff: true },
     input: { sort: 'Highest Rated', limit: 1, browsingLevel: 1 },
     pages: [{ cursor: null, ids: [5009] }],
     dropKeys: [`${K.versionImages}:6012`],

@@ -36,6 +36,9 @@ export const FEED_GO_SHADOW_OUTCOMES = [
   'skipped_no_capture',
   // Building the payload threw.
   'skipped_encode',
+  // Reading the response's headers (res.getHeaders) threw: not sent, since the header comparison
+  // would be lost without a trace.
+  'skipped_headers',
   // Sampled, but the request carried an API credential (REST only): not mirrored, because Node's
   // response can echo it (`metadata.nextPage` keeps `?token=`), and feed-go falls back on any
   // credential anyway. Counted so that share of the traffic is still visible.
@@ -50,6 +53,8 @@ export const FEED_GO_SHADOW_ENDPOINTS = [
   'v1-images',
   'infinite',
   'model-getall',
+  'v1-models',
+  'v1-models-id',
 ] as const;
 export type FeedGoShadowEndpoint = (typeof FEED_GO_SHADOW_ENDPOINTS)[number];
 
@@ -64,8 +69,9 @@ const feedGoShadowCounter = registerInstrumentationMetric(
         'Sampled requests mirrored to the feed-go shadow comparator, by outcome and endpoint ' +
         '(as-posts: image.getImagesAsPostsInfinite, flag feed-go-shadow; v1-images: GET ' +
         '/api/v1/images, flag feed-go-shadow-v1-images; infinite: image.getInfinite, flag ' +
-        'feed-go-shadow-infinite; model-getall: model.getAll, flag feed-go-shadow-model-getall). ' +
-        'Only sampled requests are counted ' +
+        'feed-go-shadow-infinite; model-getall: model.getAll, flag feed-go-shadow-model-getall; ' +
+        'v1-models / v1-models-id: GET /api/v1/models and /api/v1/models/[id], flag ' +
+        'feed-go-shadow-v1-models). Only sampled requests are counted ' +
         '(FEED_GO_SHADOW_URL set, FEED_GO_SHADOW_SAMPLE_RATE > 0).',
       labelNames: ['outcome', 'feed_endpoint'],
       registers: [instrumentationRegistry],
@@ -214,8 +220,9 @@ export function recordFeedGoShadowEncode(
 // ---------------------------------------------------------------------------
 //
 // The share of the route feed-go's port can answer at all: `ported` over the total. A shape it
-// falls back on by construction (the legacy Postgres path, tags, ...), an API-key request, and a
-// non-200 answer each have their own class. Labels: `class` only, from the fixed set below.
+// falls back on by construction (the legacy Postgres path, tags, a query key outside the schema,
+// ...), an API-key request, and a non-200 answer each have their own class. Labels: `class` only,
+// from the fixed set below.
 
 export const FEED_GO_V1_SHAPE_CLASSES = [
   'ported',
@@ -224,6 +231,7 @@ export const FEED_GO_V1_SHAPE_CLASSES = [
   'unported_tags',
   'unported_baseModels',
   'unported_withTags',
+  'unported_unknownKey',
   'api_key',
   'non200',
 ] as const;
@@ -239,7 +247,8 @@ const v1ShapeCounter = registerInstrumentationMetric(
       name: SHAPE_NAME,
       help:
         'GET /api/v1/images requests by shape class: ported (a shape feed-go answers), the ' +
-        'unported_* shapes it falls back on by construction, api_key, and non200.',
+        'unported_* shapes it falls back on by construction (unported_unknownKey: a query key ' +
+        'outside the schema, which feed-go falls back on), api_key, and non200.',
       labelNames: ['class'],
       registers: [instrumentationRegistry],
     })

@@ -104,7 +104,7 @@ export function logShadowSexualPromptError(error: unknown, imageId?: number) {
     name: 'shadow-sexual-prompt',
     message: error instanceof Error ? error.message : String(error),
     imageId,
-  }).catch(() => undefined);
+  });
 }
 
 function toClickHouseDateTime(date: Date) {
@@ -224,7 +224,7 @@ async function recordPrediction(args: {
     message: 'prediction submitted',
     status: rows[0].status,
     workflowId: args.workflowId,
-  }).catch(() => undefined);
+  });
   if (rows[0].status === 'rejected')
     logShadowSexualPromptError(
       new Error(`prediction rejected: ${rows[0].error ?? 'unknown'}`),

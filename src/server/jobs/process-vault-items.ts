@@ -65,7 +65,7 @@ export const VAULT_UPLOAD_TIMEOUT_MS = 60 * 1000; // 60 seconds
 export const LEASE_STALENESS_MS = 45 * 60 * 1000; // 45 minutes (see worst-case math above)
 
 const logErrors = (data: MixedObject) => {
-  logToAxiom({ name: 'process-vault-items', type: 'error', ...data }, 'webhooks').catch();
+  logToAxiom({ name: 'process-vault-items', type: 'error', ...data }, 'webhooks');
 };
 
 // Eligible = Pending/Failed items that have not yet exhausted their retry budget.

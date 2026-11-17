@@ -43,6 +43,7 @@
 import type { ValidateFunction } from 'ajv';
 import type { Audience } from '~/server/registry-adapter/audience';
 import { audienceAdmits, contextAudience } from '~/server/registry-adapter/audience';
+import { audienceDocLevel } from '~/server/services/apps/doc-levels';
 import type { SnapshotStore } from '~/server/registry-adapter/cursor';
 import { newValidator } from '~/server/registry-adapter/json-schema';
 import type { AdapterContext, Change, Entity } from '~/server/registry-adapter/protocol';
@@ -57,7 +58,11 @@ export type FeedDocument = {
   seq: number;
 };
 
-/** The reads the feed makes, all of one app's production namespace, shared documents only. */
+/**
+ * The reads the feed makes, all of one app's production namespace, shared documents only. With
+ * `level` (content levels on for the app, {@link CollectionStream.docLevels}), a document the
+ * level gate leaves out reads as hidden in `changes` and is absent from `documents`.
+ */
 export type SharedDocSource = {
   head(appId: string): Promise<number>;
   changes(
@@ -65,7 +70,8 @@ export type SharedDocSource = {
     coll: string,
     after: number,
     upTo: number,
-    limit: number
+    limit: number,
+    level?: number
   ): Promise<{
     docs: Array<FeedDocument & { hidden: boolean }>;
     tombs: Array<{ key: string; seq: number }>;
@@ -75,7 +81,8 @@ export type SharedDocSource = {
     coll: string,
     afterKey: string,
     upTo: number,
-    limit: number
+    limit: number,
+    level?: number
   ): Promise<FeedDocument[]>;
   witness(
     appId: string,
@@ -93,6 +100,12 @@ export type CollectionStream = {
   contentRating: string | null;
   /** Every major's schema document, `@v1` first. */
   family: Array<{ urn: string; body: Record<string, unknown> }>;
+  /**
+   * Content levels are on for the app (`app-blocks-shared-doc-levels`): each document is also
+   * gated on its own rating, at the audience's level (`audienceDocLevel`), so an unrated, pending
+   * or above-level document is not sent.
+   */
+  docLevels?: boolean;
 };
 
 /** The published collection a stream schema names, or null when it is not published now. */
@@ -121,6 +134,11 @@ type FeedState = {
   family: string | null;
   witness: { key: string; seq: number } | null;
   served: Array<[urn: string, rev: string, seq: number]>;
+  /**
+   * Present (true) only on a state served with content levels on, so a state served with them off
+   * is byte-for-byte what it was before levels existed. A resume across a flip reads in full.
+   */
+  levels?: true;
 };
 
 // The claim set is part of the rev: a mint that makes a document claim one more major changes
@@ -231,11 +249,19 @@ export function createDocFeed(opts: DocFeedOptions) {
   };
 
   /** Every visible document of the collection at or below `upTo`, paged by key. */
-  async function readAll(appId: string, coll: string, upTo: number): Promise<FeedDocument[]> {
+  async function readAll(
+    appId: string,
+    coll: string,
+    upTo: number,
+    level: number | undefined
+  ): Promise<FeedDocument[]> {
     const out: FeedDocument[] = [];
     let after = '';
     for (;;) {
-      const page = await opts.source.documents(appId, coll, after, upTo, FEED_PAGE);
+      const page =
+        level === undefined
+          ? await opts.source.documents(appId, coll, after, upTo, FEED_PAGE)
+          : await opts.source.documents(appId, coll, after, upTo, FEED_PAGE, level);
       out.push(...page);
       if (page.length < FEED_PAGE) return out;
       after = page[page.length - 1].key;
@@ -251,7 +277,8 @@ export function createDocFeed(opts: DocFeedOptions) {
     appId: string,
     coll: string,
     after: number,
-    upTo: number
+    upTo: number,
+    level: number | undefined
   ): Promise<Map<string, FeedDocument | null>> {
     const latest = new Map<string, { seq: number; doc: FeedDocument | null }>();
     const note = (key: string, seq: number, doc: FeedDocument | null) => {
@@ -260,7 +287,10 @@ export function createDocFeed(opts: DocFeedOptions) {
     };
     let from = after;
     while (from < upTo) {
-      const page = await opts.source.changes(appId, coll, from, upTo, FEED_PAGE);
+      const page =
+        level === undefined
+          ? await opts.source.changes(appId, coll, from, upTo, FEED_PAGE)
+          : await opts.source.changes(appId, coll, from, upTo, FEED_PAGE, level);
       // A full page may stop short of a later event of the other kind, so only the range both
       // pages cover is settled.
       let frontier = upTo;
@@ -310,9 +340,14 @@ export function createDocFeed(opts: DocFeedOptions) {
     }
 
     const digest = familyDigest(family);
+    // Content levels: the audience's level when on for the app. A flip either way since the
+    // stored state is read in full, like a schema change, so what was sent under the other
+    // setting is corrected (deletes or upserts).
+    const level = stream.docLevels ? audienceDocLevel(audience.allowed) : undefined;
+    const sameLevels = (prev?.levels === true) === (level !== undefined);
     // Nothing written since, and the same schemas: the state is unchanged. Returning it as is
     // skips rebuilding the served set (and `changes` skips the diff).
-    if (same && head === prev.seq && prev.family === digest) {
+    if (same && head === prev.seq && prev.family === digest && sameLevels) {
       return { next: prev, entities: new Map() };
     }
     const claims = claimer(family, digest);
@@ -338,12 +373,12 @@ export function createDocFeed(opts: DocFeedOptions) {
 
     // A full read when the stream is new to this app or its schemas changed; otherwise only what
     // changed since the recorded seq, served or not.
-    const full = !same || prev.family !== digest;
+    const full = !same || prev.family !== digest || !sameLevels;
     if (full) {
-      for (const d of await readAll(appId, collection, head)) keep(d);
+      for (const d of await readAll(appId, collection, head, level)) keep(d);
     } else {
       for (const [urn, rev, seq] of prev.served) served.set(urn, { rev, seq });
-      for (const [key, doc] of await readChanged(appId, collection, prev.seq, head)) {
+      for (const [key, doc] of await readChanged(appId, collection, prev.seq, head, level)) {
         served.delete(registryUrn({ kind: 'document', slug, collection, key }));
         if (doc) keep(doc);
       }
@@ -367,6 +402,7 @@ export function createDocFeed(opts: DocFeedOptions) {
         served: [...served]
           .map(([urn, s]) => [urn, s.rev, s.seq] as [string, string, number])
           .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)),
+        ...(level !== undefined ? { levels: true as const } : {}),
       },
       entities,
     };

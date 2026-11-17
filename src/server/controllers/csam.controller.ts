@@ -110,7 +110,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           userId,
           reportedById,
           error: (e as Error)?.message,
-        }).catch(() => undefined)
+        })
       ),
     ]);
   } else if (type === 'TrainingData') {
@@ -140,7 +140,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           userId,
           reportedById,
           error: (e as Error)?.message,
-        }).catch(() => undefined);
+        });
       }
     }
   }
@@ -163,7 +163,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           name: 'csam-report',
           type: 'info',
           message: 'strikes review not found at the orchestrator; nothing to review',
-        }).catch(() => undefined);
+        });
       } else {
         strikesReviewFailed = true;
         logToAxiom({
@@ -174,7 +174,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           userId,
           reportedById,
           error: (e as Error)?.message,
-        }).catch(() => undefined);
+        });
       }
     }
   }

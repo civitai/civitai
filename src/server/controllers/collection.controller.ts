@@ -81,6 +81,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { relatedPostsBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -115,7 +116,7 @@ export const getAllCollectionsInfiniteHandler = async ({
         userId: true,
         user: { select: userWithCosmeticsSelect },
         nsfwLevel: true,
-        image: { select: { ...imageSelect, tosViolation: true } },
+        image: { select: { ...imageSelect, tosViolation: true, poi: true, minor: true } },
         mode: true,
         createdAt: true,
         metadata: true,
@@ -123,9 +124,12 @@ export const getAllCollectionsInfiniteHandler = async ({
       user: ctx.user,
     });
     const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
+    const showsImage = await getRequestImageFilter(ctx, input.browsingLevel);
     // A cover the viewer may not see falls through to the item covers below.
     const items = (await withServableCovers(rows, ctx.user)).map((row) =>
-      row.image && !isCoverWithinBrowsingLevel(row.image, browsingLevel)
+      row.image &&
+      (!isCoverWithinBrowsingLevel(row.image, browsingLevel) ||
+        !showsImage({ ...row.image, tags: row.image.tags.map((t) => t.tag) }))
         ? { ...row, image: null }
         : row
     );
@@ -142,6 +146,7 @@ export const getAllCollectionsInfiniteHandler = async ({
       collectionIds: collectionRequiringImages,
       imagesPerCollection: 10, // Some fallbacks
       browsingLevel,
+      showsImage,
     });
 
     // Get Item Counts
@@ -274,7 +279,7 @@ export const getCollectionByIdHandler = async ({
             message: error instanceof Error ? error.message : String(error),
             stack: error instanceof Error ? error.stack : undefined,
             collectionId: input.id,
-          }).catch(() => undefined);
+          });
           return [] as Collaborator[];
         })
       : [];
@@ -759,7 +764,7 @@ export const addSimpleImagePostHandler = async ({
           message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
           postId: post.id,
           collectionId,
-        }).catch(() => undefined)
+        })
       );
       throw error;
     }
@@ -787,7 +792,7 @@ export const addSimpleImagePostHandler = async ({
           message: error instanceof Error ? error.message : String(error),
           postId: post.id,
           collectionId,
-        }).catch(() => undefined)
+        })
       );
     }
 

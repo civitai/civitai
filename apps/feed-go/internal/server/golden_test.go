@@ -37,6 +37,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
+	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
 const (
@@ -46,7 +47,7 @@ const (
 	goldenMinAsPosts  = 23
 	goldenMinV1       = 36
 	goldenMinInfinite = 21
-	goldenMinModels   = 19
+	goldenMinModels   = 18
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -96,6 +97,9 @@ type goldenFixture struct {
 		LoadingOpenToAll bool `json:"loadingOpenToAll"`
 		// FrameCacheNegative is the frame-cache-negative flag the fixture's Node run had.
 		FrameCacheNegative bool `json:"frameCacheNegative"`
+		// ComputeMissesOff runs the model harness with FEED_GO_COMPUTE_MISSES off (a fixture of a
+		// fallback only that state still has).
+		ComputeMissesOff bool `json:"computeMissesOff"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -391,13 +395,21 @@ func goldenCosmeticCreator(db *goldenDB, id int) any {
 	return nil
 }
 
+// goldenReEntity is the CosmeticEntity literal of a frame or event lookup.
+var goldenReEntity = regexp.MustCompile(`uc\."equippedToType" = '(\w+)'::"CosmeticEntity"`)
+
 // goldenEntityCosmetics answers the frame (event false) and event (event true) lookups: the rows on
-// one of the ids, equipped to an Image, in table order.
-func goldenEntityCosmetics(db *goldenDB, args []any, event bool, cols []string) *testkit.Rows {
+// one of the ids, equipped to the lookup's entity (an Image, or a Model for model.getAll's frames),
+// in table order.
+func goldenEntityCosmetics(db *goldenDB, sql string, args []any, event bool, cols []string) (*testkit.Rows, error) {
+	m := goldenReEntity.FindStringSubmatch(sql)
+	if m == nil {
+		return nil, errors.New("golden: an entity lookup without its entity")
+	}
 	var rows [][]any
 	for _, r := range db.UserCosmetics {
 		if r.EquippedToID == nil || !goldenHas(goldenInts(args[0]), *r.EquippedToID) || r.EquippedToType == nil ||
-			*r.EquippedToType != "Image" || goldenCosmeticEvent(db, r.CosmeticID) != event {
+			*r.EquippedToType != m[1] || goldenCosmeticEvent(db, r.CosmeticID) != event {
 			continue
 		}
 		if event {
@@ -406,7 +418,41 @@ func goldenEntityCosmetics(db *goldenDB, args []any, event bool, cols []string) 
 			rows = append(rows, []any{r.CosmeticID, *r.EquippedToID, goldenPtr(r.Data), goldenCosmeticCreator(db, r.CosmeticID)})
 		}
 	}
-	return testkit.NewRows(cols, rows...)
+	return testkit.NewRows(cols, rows...), nil
+}
+
+// goldenFrameColumns are the frame lookup's columns.
+var goldenFrameColumns = []string{"cosmeticId", "equippedToId", "userData", "createdById"}
+
+// goldenTagRoutes answer the tag-ids miss lookup: the image's tag rows (every fixture tag an enabled
+// User row: the fixtures record no source) and the tag records it reads (a fixture tag is a
+// UserGenerated tag).
+func goldenTagRoutes(db *goldenDB) []testkit.Route {
+	return []testkit.Route{
+		{Match: `FROM "TagsOnImageDetails" WHERE "imageId" = ANY`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, id := range goldenInts(args[0]) {
+				for _, img := range db.Images {
+					if img.ID != id {
+						continue
+					}
+					for _, tag := range img.Tags {
+						rows = append(rows, []any{img.ID, "User", tag})
+					}
+				}
+			}
+			return testkit.NewRows([]string{"imageId", "source", "tagId"}, rows...), nil
+		}},
+		{Match: `name::text AS name, type::text AS type FROM "Tag"`, Rows: func(args []any) (*testkit.Rows, error) {
+			var rows [][]any
+			for _, tag := range db.Tags {
+				if goldenHas(goldenInts(args[0]), tag.ID) {
+					rows = append(rows, []any{tag.ID, tag.Name, "UserGenerated"})
+				}
+			}
+			return testkit.NewRows([]string{"id", "name", "type"}, rows...), nil
+		}},
+	}
 }
 
 // --- the Postgres fake: each query this service sends, answered over the fixture's tables ------
@@ -620,7 +666,7 @@ func goldenImageRows(fx *goldenFixture, sql string, args []any) (*testkit.Rows, 
 // over the fixture's tables. A query no route matches fails (testkit.DB), so the test fails too.
 func newGoldenPG(fx *goldenFixture) *testkit.DB {
 	db := &fx.DB
-	return &testkit.DB{Routes: []testkit.Route{
+	return &testkit.DB{Routes: append([]testkit.Route{
 		{Match: `count(*)::int AS "count"`, Rows: func(args []any) (*testkit.Rows, error) {
 			counts := map[int]int{}
 			for _, img := range db.Images {
@@ -773,11 +819,11 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 			}
 			return testkit.NewRows([]string{"userId", "cosmeticId", "data"}, rows...), nil
 		}},
-		{Match: `jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`, Rows: func(args []any) (*testkit.Rows, error) {
-			return goldenEntityCosmetics(db, args, false, []string{"cosmeticId", "equippedToId", "userData", "createdById"}), nil
+		{Match: `jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, sql, args, false, goldenFrameColumns)
 		}},
-		{Match: `jsonb_typeof(c.data->'event') = 'string'`, Rows: func(args []any) (*testkit.Rows, error) {
-			return goldenEntityCosmetics(db, args, true, []string{"cosmeticId", "equippedToId", "userId"}), nil
+		{Match: `jsonb_typeof(c.data->'event') = 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, sql, args, true, []string{"cosmeticId", "equippedToId", "userId"})
 		}},
 		{Match: `FROM "CosmeticShopItem" si`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
@@ -806,7 +852,7 @@ func newGoldenPG(fx *goldenFixture) *testkit.DB {
 			}
 			return testkit.NewRows([]string{"id", "username", "deletedAt", "image"}, rows...), nil
 		}},
-	}}
+	}, goldenTagRoutes(db)...)}
 }
 
 // --- the feed service fake -----------------------------------------------------------------------
@@ -978,6 +1024,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		events[e] = true
 	}
 	queryCache := &feed.QueryCache{Redis: cache}
+	blocked := &feed.BlockedTags{Cache: cache}
 	deps := &feed.Deps{
 		DB:       db,
 		Cache:    queryCache,
@@ -993,6 +1040,8 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		},
 		Now: nowFn,
 	}
+	// As main: the tag-ids computation's gate is the blocked list and addons the procedures read.
+	sources.Compute.TagGate = feed.ImageTagGate(blocked, deps.Addons.Addons)
 	v1 := &feed.V1Deps{
 		Feed:    deps.Feed,
 		Sources: sources,
@@ -1005,7 +1054,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		NodeProduction: true,
 		Now:            nowFn,
 	}
-	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: &feed.BlockedTags{Cache: cache}}
+	infinite := &feed.InfiniteDeps{Deps: deps, Sources: sources, Blocked: blocked}
 	s := &Server{Resolver: resolver, Deps: deps, Hosts: goldenHosts, V1: v1, Infinite: infinite}
 
 	headers := map[string]string{}
@@ -1246,8 +1295,15 @@ func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
 		t.Error(p)
 	}
-	if c.ttl != nil {
-		t.Errorf("image.getInfinite is never edge-cacheable here, got %+v", *c.ttl)
+	// createContext's policy, as for the gallery procedure: the public TTL exactly when signed out.
+	if fx.Expect.Cacheable == nil {
+		t.Fatal("an image.getInfinite fixture without expect.cacheable")
+	}
+	if *fx.Expect.Cacheable && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
+	}
+	if !*fx.Expect.Cacheable && c.ttl != nil {
+		t.Errorf("a session user: want no cache TTL, got %+v", *c.ttl)
 	}
 	env.feed.check(t, true)
 }
@@ -1266,6 +1322,11 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 	db := &fx.DB
 	g := &goldenModelPG{}
 	g.DB = &testkit.DB{Routes: []testkit.Route{
+		// The version showcase miss lookup: the fixtures record no showcase rows (only the cache
+		// entries Node read), so it fails rather than answer the cover-image route below.
+		{Match: `AS full_mv(id)`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return nil, errors.New("golden: the fixture records no showcase rows")
+		}},
 		{Match: `"cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			g.mu.Lock()
 			defer g.mu.Unlock()
@@ -1327,7 +1388,16 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		{Match: `settings->'hideModelBuzz'`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"id", "hideModelBuzz", "hideModelDownloads", "hideModelGenerations"}), nil
 		}},
+		// The model frame and decoration miss lookups (hydrate.MissCompute), over the fixture's placed
+		// cosmetics.
+		{Match: `jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, sql, args, false, goldenFrameColumns)
+		}},
+		{Match: `jsonb_typeof(c.data->'event') = 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, sql, args, true, []string{"cosmeticId", "equippedToId", "userId"})
+		}},
 	}}
+	g.Routes = append(g.Routes, goldenTagRoutes(db)...)
 	t.Cleanup(func() {
 		g.mu.Lock()
 		defer g.mu.Unlock()
@@ -1398,12 +1468,21 @@ func goldenSetupModels(t *testing.T, fx *goldenFixture) *goldenEnv {
 		events[e] = true
 	}
 	packed := &hydrate.PackedReader{Redis: env.cache, Now: env.now}
+	addons := (&feed.AddonSource{Sys: env.sys}).Addons
+	blocked := &feed.BlockedTags{Cache: env.cache}
+	// As main: the model feed shares the miss computation (write-back off here: these fixtures record
+	// no writes).
+	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons)}
+	if fx.Config.ComputeMissesOff {
+		compute = nil
+		env.server.Deps.Hydrator.(*hydrate.Sources).Compute = nil
+	}
 	env.server.Models = &modelfeed.Deps{
 		DB:      db,
-		Sources: &hydrate.Sources{Packed: packed, Cache: env.cache, Replica: db},
+		Sources: &hydrate.Sources{Packed: packed, Cache: env.cache, Replica: db, Compute: compute},
 		Gallery: &feed.GalleryStore{Cache: env.cache, DB: db},
-		Addons:  (&feed.AddonSource{Sys: env.sys}).Addons,
-		Blocked: &feed.BlockedTags{Cache: env.cache},
+		Addons:  addons,
+		Blocked: blocked,
 		Config: modelfeed.Config{
 			BaseModelMetrics: fx.Config.BaseModelMetrics, ImagesSlim: fx.Config.ModelImagesSlim,
 			CoverageNext: fx.Config.CoverageNext, LoadingOpenToAll: fx.Config.LoadingOpenToAll,

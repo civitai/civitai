@@ -34,7 +34,7 @@ export async function takeProviderDownload(
       message: 'hourly counter unavailable; allowing',
       provider,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     return true;
   }
 }

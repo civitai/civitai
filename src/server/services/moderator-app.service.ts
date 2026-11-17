@@ -45,5 +45,5 @@ export const moderatorApp = createModeratorClient({
     logToAxiom(
       { type: 'error', name: 'moderator-app-request-failed', ...failure },
       'moderator-app'
-    ).catch(() => undefined),
+    ),
 });

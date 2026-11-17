@@ -9,13 +9,16 @@
 # the same change that removes it. Packages without tests (fallback, testkit) are not listed.
 total 77
 cmd/feed-go 23
+internal/apipolicy 88
 internal/auth 94
 internal/browsing 98
+internal/chread 93
 internal/config 78
 internal/dbpool 95
 internal/feed 76
 internal/feedsvc 92
 internal/hydrate 86
+internal/inputschema 80
 internal/jspack 88
 internal/modelfeed 92
 internal/safe 100
@@ -24,3 +27,4 @@ internal/shadow 95
 internal/superjson 97
 internal/sysredis 88
 internal/trpc 89
+internal/v1models 91

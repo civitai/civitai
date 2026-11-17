@@ -50,8 +50,8 @@ type Page struct {
 // Everything that is not a cache read is as in the per-lookup reads, which share these halves:
 // each lookup's misses, markers and staleness (decodeEntry), its fallback reasons, and its replica
 // queries, which run after the pipeline, concurrently, one per lookup that has misses. With
-// s.Compute, the misses of the caches Node fills on read (user cosmetics, frames, event decorations)
-// are computed the same way: one batched lookup per cache that has misses, after the pipeline,
+// s.Compute, the misses of the caches Node fills on read (user cosmetics, frames, tag ids, event
+// decorations) are computed the same way: one batched lookup per cache that has misses, after the pipeline,
 // concurrently (misses.go). The reactions query reads no cache and starts with
 // stage 1. A lookup's error (the first, as with errgroup) is the page's error.
 func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
@@ -69,7 +69,7 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 	}
 	frames := s.Packed.Queue(stage1, KeyImageFrames, images, 0)
 	thumbs := s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)
-	tags := s.Packed.Queue(stage1, KeyTagIDs, images, 0)
+	tags := s.Packed.Queue(stage1, KeyTagIDs, images, tagIDsTTL)
 	// No visible event: no decoration read at all (decorationsForEvents returns before its fetch).
 	readEvents := len(images) > 0 && len(req.VisibleEvents) > 0
 	var events *PackedRead
@@ -96,8 +96,15 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 		out.Thumbs, err = s.thumbnailsFrom(gctx, videos, thumbs.Entries())
 		return
 	}))
-	g.Go(safe.Go(func() (err error) { out.Metrics, err = metrics.result(); return }))
-	g.Go(safe.Go(func() (err error) { out.TagIDs, err = tagIDsFrom(images, tags.Entries()); return }))
+	g.Go(safe.Go(func() (err error) { out.Metrics, err = metrics.result(gctx, s); return }))
+	g.Go(safe.Go(func() (err error) {
+		got, writable := tags.read()
+		if err := s.fillTagIDs(gctx, images, got, writable); err != nil {
+			return err
+		}
+		out.TagIDs, err = tagIDsFrom(images, got)
+		return
+	}))
 	g.Go(safe.Go(func() (err error) {
 		if !readEvents {
 			out.Decorations = map[int]superjson.Object{}

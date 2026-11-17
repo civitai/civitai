@@ -277,7 +277,7 @@ export async function assertComFaceAllowed(
       message: 'refused at save',
       modelId: args.modelId,
       reason: verdict.reason,
-    }).catch(() => undefined);
+    });
     throw throwBadRequestError(
       verdict.disputable ? COM_FACE_REFUSED_MESSAGE : COM_FACE_REFUSED_EDIT_MESSAGE
     );

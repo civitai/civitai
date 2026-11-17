@@ -1589,7 +1589,7 @@ export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
 };
 
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'post-service', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'post-service', type: 'error', ...data });
 };
 
 const DETAIL_LIMIT = 10;
@@ -2308,7 +2308,7 @@ export const getPostResourceCovers = async ({
         type: 'error',
         message: 'post resource covers unavailable',
         error: error.message,
-      }).catch();
+      });
       return undefined;
     });
   if (!byVersion) return covers;

@@ -67,7 +67,7 @@ onDevalueWriteFallback((error) => {
       type: 'warning',
       path,
       message,
-    }).catch(() => undefined);
+    });
   }
 });
 

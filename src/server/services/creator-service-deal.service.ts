@@ -211,7 +211,7 @@ export async function transitionDeal(t: Transition) {
         message: 'refund after close failed; the sweep will retry',
         dealId: t.dealId,
         error: (error as Error)?.message,
-      }).catch(() => null)
+      })
     );
 
   if (moved)
@@ -541,7 +541,7 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
       message: 'deal chat could not be opened',
       dealId,
       error: (error as Error)?.message,
-    }).catch(() => null)
+    })
   );
 }
 
@@ -782,7 +782,7 @@ async function sweep(
         message: `${label} sweep failed`,
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
   return { considered: due.length, moved };
@@ -886,7 +886,7 @@ async function postOverdueChatLine(dealId: number) {
       message: 'overdue chat line could not be posted',
       dealId,
       error: (error as Error)?.message,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -1250,7 +1250,7 @@ export async function resolveServiceDealDispute({
       dealId,
       resolution,
       error: (error as Error)?.message,
-    }).catch(() => null)
+    })
   );
   // The payout claim re-checks the finals and the seller; if it held the deal again, it is back in
   // the queue and the moderator must not be told it was released.

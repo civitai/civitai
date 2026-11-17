@@ -236,7 +236,7 @@ export async function checkMinorHashOnScan({
           sha256,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
 
     return outcome;
@@ -251,7 +251,7 @@ export async function checkMinorHashOnScan({
         sha256,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return 'skipped';
   }
 }
@@ -333,7 +333,7 @@ export async function sweepMinorHashMatches({
           modelId: row.modelId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   });
 
@@ -341,7 +341,7 @@ export async function sweepMinorHashMatches({
 
   // Logged here rather than by the caller so an HTTP timeout on a long backfill
   // cannot lose the record of writes that already committed.
-  await logToAxiom(
+  logToAxiom(
     {
       type: 'info',
       name: 'minor-hash-sweep',
@@ -353,7 +353,7 @@ export async function sweepMinorHashMatches({
       failed: report.failed,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return report;
 }
@@ -713,7 +713,7 @@ export async function confirmMinorHashAutoFlag({
       message: 'moderator minor ruling not recorded on confirm',
       modelId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
     return { hadVerdict, stamped: false };
   }
 }
@@ -763,7 +763,7 @@ export async function revertMinorHashAutoFlag({
       name: 'text-scan',
       message: 'moderator minor ruling not recorded: model text unreadable',
       modelId,
-    }).catch(() => null);
+    });
 
   const report = await rollbackMinorHashAutoFlags({
     dryRun: false,
@@ -982,7 +982,7 @@ export async function resolveMinorFlagAppeal({
         name: 'minor-hash-rollback',
         message: 'appeal overturn: the flag rollback failed, unsetting minor instead',
         modelId,
-      }).catch(() => null);
+      });
     // The owner asked and a moderator agreed, so a minor flag from before the automation goes too.
     if (!report?.rolledBack) await setModelMinor({ id: modelId, minor: false, userId });
   }
@@ -1139,7 +1139,7 @@ async function rollBackFlagOnMinorModel(
   }).catch(() => null);
   await reassertModelPoiRestrictions(row.modelId);
   if (keptBy === 'sfwOnly')
-    await logToAxiom(
+    logToAxiom(
       {
         type: 'info',
         name: 'minor-hash-rollback',
@@ -1147,7 +1147,7 @@ async function rollBackFlagOnMinorModel(
         modelId: row.modelId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 }
 
 export async function rollbackMinorHashAutoFlags({
@@ -1316,14 +1316,14 @@ export async function rollbackMinorHashAutoFlags({
           modelId: row.modelId,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
   });
 
   await limitConcurrency(tasks, concurrency);
   addConfirmedSamples();
 
-  await logToAxiom(
+  logToAxiom(
     {
       type: 'info',
       name: 'minor-hash-rollback',
@@ -1335,7 +1335,7 @@ export async function rollbackMinorHashAutoFlags({
       failed: report.failed,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return report;
 }

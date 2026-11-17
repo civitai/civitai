@@ -2,6 +2,7 @@ import { decodeProtectedHeader, jwtVerify } from 'jose';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
+  blockClaimsAppLabel,
   blockRequestResult,
   ensureRegisterAppBlockRuntimeMetrics,
   recordBlockConsentMarkerUnavailable,
@@ -1461,6 +1462,7 @@ async function resolveDevTunnelHubClaims(args: {
     parseManifestBuzzBudget,
     resolveDevBuzzBudget,
     FORCED_SFW_CEILING,
+    forcedSfwViewerLevel,
   } = await import('~/server/services/blocks/dev-scoped-mint.service');
   const source = dev
     ? tunnel.grantedScopes ?? []
@@ -1488,7 +1490,7 @@ async function resolveDevTunnelHubClaims(args: {
     dev: true,
     ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    viewerBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: await forcedSfwViewerLevel(userId),
   };
 }
 
@@ -1653,7 +1655,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // gated. Bucket ALL dev tokens (real-id or synthetic) to the single stable
     // label 'dev' so that vector is closed while real per-app attribution is
     // preserved for non-dev tokens.
-    const appBlockIdLabel = claims.dev === true ? 'dev' : claims.appBlockId;
+    const appBlockIdLabel = blockClaimsAppLabel(claims);
 
     // ONE resolver for `opts.endpoint`, used by BOTH readers of it below (the RED
     // metric labels and the `not_found` log line). It was open-coded at the metric

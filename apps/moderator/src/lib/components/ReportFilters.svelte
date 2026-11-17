@@ -5,6 +5,8 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { MultiCombobox } from '@civitai/ui/components/ui/multi-combobox/index.js';
   import { DEFAULT_REPORT_STATUSES, reportReasonLabels, reportReasons, reportStatuses } from '$lib/reports';
+  import AgentReportFilter from '$lib/components/AgentReportFilter.svelte';
+  import { setAgentReportParam, type AgentReportFilter as AgentFilter } from '$lib/agent-reports';
 
   /**
    * The report queues' filters: status, reason and reporter, plus the reported-date range where a
@@ -25,6 +27,7 @@
     hidingAutomated,
     statusCounts,
     dates,
+    agentFilter = null,
     navigate,
     compact = false,
     extra,
@@ -41,6 +44,8 @@
     statusCounts: Partial<Record<string, number>>;
     /** Shown only for a queue whose `load` filters on the reported date. */
     dates?: { from: string; to: string };
+    /** The `?agents=` filter; `null` when no agent accounts are configured, which hides the control. */
+    agentFilter?: AgentFilter | null;
     navigate: (href: string) => void;
     /** For a sidebar: status and reason only, the reporter and dates behind "Additional filters". */
     compact?: boolean;
@@ -78,6 +83,8 @@
     );
   }
 
+  const applyAgents = (filter: AgentFilter) => navigate(hrefWith((p) => setAgentReportParam(p, filter)));
+
   function applyText(e: SubmitEvent) {
     e.preventDefault();
     const form = new FormData(e.currentTarget as HTMLFormElement);
@@ -107,6 +114,7 @@
       onValueChange={(vals) => applyMulti('reason', vals)}
       placeholder="Reason…"
     />
+    {#if agentFilter}<AgentReportFilter value={agentFilter} onselect={applyAgents} />{/if}
     {#if extra}{@render extra()}{/if}
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
       <button
@@ -165,6 +173,13 @@
       placeholder="Search reasons…"
     />
   </div>
+
+  {#if agentFilter}
+    <div class="flex flex-col gap-1">
+      <span class="text-xs font-medium text-muted-foreground">Agent reports</span>
+      <AgentReportFilter value={agentFilter} onselect={applyAgents} />
+    </div>
+  {/if}
 
   <!-- One form, one Search: typing a reporter and a date range is one question, not three. -->
   <form class="flex flex-wrap items-end gap-x-2 gap-y-3" onsubmit={applyText}>

@@ -221,6 +221,10 @@ func TestParseCursor(t *testing.T) {
 		{"2026-06-15 10:00:00.123456|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 123_000_000, time.UTC), int64(3)}},
 		{"2026-06-15 10:00:00.125|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 125_000_000, time.UTC), int64(3)}},
 		{"2026-06-15T10:00:00.040|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 40_000_000, time.UTC), int64(3)}},
+		// A 1- or 2-digit fraction is fractional seconds (".25" is 250 ms), as Node reads it since #9075.
+		{"2026-06-15 10:00:00.25|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 250_000_000, time.UTC), int64(3)}},
+		{"2026-06-15 10:00:00.5|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 500_000_000, time.UTC), int64(3)}},
+		{"2026-06-15T10:00:00.07|3", []any{time.Date(2026, 6, 15, 10, 0, 0, 70_000_000, time.UTC), int64(3)}},
 	}
 	for _, c := range ok {
 		got, err := parseCursor(two, c.cursor)
@@ -231,12 +235,6 @@ func TestParseCursor(t *testing.T) {
 	for _, bad := range []string{"12", "1|2|3", "|5", "abc|5", "-5|1", "2147483648|1", "2026-13-45 00:00:00|1", "1-2|3"} {
 		if _, err := parseCursor(two, bad); fallback.Reason(err) != "model-cursor" {
 			t.Errorf("parseCursor(%q): %v, want the model-cursor fallback", bad, err)
-		}
-	}
-	// A 1- or 2-digit fraction is one Node's dayjs misreads (".25" as 25 ms): its own fallback.
-	for _, short := range []string{"2026-06-15 10:00:00.25|3", "2026-06-15 10:00:00.5|3", "2026-06-15T10:00:00.07|3"} {
-		if _, err := parseCursor(two, short); fallback.Reason(err) != "short-fraction-cursor" {
-			t.Errorf("parseCursor(%q): %v, want the short-fraction-cursor fallback", short, err)
 		}
 	}
 }

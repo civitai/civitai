@@ -112,7 +112,7 @@ function logRestServerFault(e: unknown, res: NextApiResponse) {
   logToAxiom(
     { ...buildCentralErrorLog(e), source: 'handleEndpointError', ...(route ? { route } : null) },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -149,7 +149,7 @@ function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
       ...(route ? { route } : null),
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -781,9 +781,12 @@ export function PartnerEndpoint(
 
 export function ModEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  /** `noStore`: `private, no-store` on every answer, this wrapper's own refusals included. */
+  { noStore = false }: { noStore?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (noStore) res.setHeader('cache-control', 'private, no-store');
     if (!req.method || !allowedMethods.includes(req.method)) {
       res.setHeader('Allow', allowedMethods);
       return res.status(405).json({ error: 'Method not allowed' });
@@ -956,7 +959,7 @@ export function OrchestratorEndpoint(
         route: req.url?.split('?')[0],
         requiredScope,
         ...credentialLogFields(credential),
-      }).catch(() => undefined);
+      });
       return res
         .status(403)
         .json({ error: 'Your API key does not have the required scope for this action' });

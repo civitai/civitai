@@ -2,6 +2,7 @@ import { CloseButton, TextInput } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
+import { nextFeedSearchQuery } from '~/components/AutocompleteSearch/autocomplete-query';
 import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-search';
 
 /** The feed's `query` param, normalized, or undefined. */
@@ -23,14 +24,9 @@ export function FeedSearchInput({ placeholder }: { placeholder: string }) {
   useEffect(() => setValue(current ?? ''), [current]);
 
   const commit = (text: string) => {
-    const query = normalizeFeedQuery(text);
-    if (query === current) return;
-    const { query: _drop, ...rest } = router.query;
-    void router.push(
-      { pathname: router.pathname, query: query ? { ...rest, query } : rest },
-      undefined,
-      { shallow: true }
-    );
+    const next = nextFeedSearchQuery(router.query, text);
+    if (next)
+      void router.push({ pathname: router.pathname, query: next }, undefined, { shallow: true });
   };
 
   return (

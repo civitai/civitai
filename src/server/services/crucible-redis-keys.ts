@@ -1,5 +1,5 @@
-import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import type { RedisKeyTemplateCache, RedisKeyTemplateSys } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 
 /** Pair keys (`small:large`) this judge has voted on in this crucible. */
 export function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
@@ -11,8 +11,19 @@ export function getDismissedPairsKey(crucibleId: number, userId: number): RedisK
   return `${REDIS_SYS_KEYS.CRUCIBLE.DISMISSED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
-/** This judge's votes in this crucible as `winner>loser`, for the judge-side skip. */
-export function getVoteOutcomesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+/**
+ * This judge's votes in this crucible as `winner>loser`, for the judge-side skip. A cache key, on
+ * `redis` rather than `sysRedis`: losing it only serves pairs the judge could have skipped.
+ */
+export function getVoteOutcomesKey(crucibleId: number, userId: number): RedisKeyTemplateCache {
+  return `${REDIS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:${crucibleId}:${userId}` as RedisKeyTemplateCache;
+}
+
+/**
+ * The same set where it was written before it moved to `redis`. Read only, by the fallback before
+ * `VOTE_OUTCOMES_SYS_FALLBACK_UNTIL`; delete with it.
+ */
+export function getSysVoteOutcomesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
   return `${REDIS_SYS_KEYS.CRUCIBLE.VOTE_OUTCOMES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 

@@ -101,7 +101,7 @@ export async function trainingDataListing(
         type: 'error',
         name: 'training-data-share-check-failed',
         message: (e as Error).message,
-      }).catch(() => undefined);
+      });
       return null;
     }
   );

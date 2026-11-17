@@ -16,7 +16,7 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
   deploy needed.
 - Backpressure: the optional `maxOpen` field (a whole number, default 5000 when missing or unusable) pauses **scan sampling only** while more
-  than that many items are open at the Knight stage. Owner ratings always enqueue. The main app counts open Knight-stage items up to
+  than that many rating items are open at the Knight stage (yes/no questions share the queue table but are not counted). Owner ratings always enqueue. The main app counts open Knight-stage rating items up to
   `maxOpen + 1` on the `(status, minRank, ...)` index and caches the count in process for 60 s. One count runs at a time; a scan waits at
   most 500 ms for it and is not throttled when it is slower, and the count still fills the cache when it lands. A failed count does not
   throttle, is not cached, and pauses counting for 10 s. The moderator Config page edits only the three fields above; a save there keeps a stored `maxOpen`.

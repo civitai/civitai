@@ -251,7 +251,7 @@ export const upsertBountyEntry = async ({
 export const awardBountyEntry = async ({ id, userId }: { id: number; userId: number }) => {
   const logData = { entryId: id, userId, bountyId: 0 };
   const log = (type: 'info' | 'error', message: string, extra: Record<string, unknown> = {}) =>
-    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra }).catch(() => null);
+    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra });
 
   await log('info', 'Award bounty entry started');
   const fileCheckOn = await isBountyEntryFileCheckOn();

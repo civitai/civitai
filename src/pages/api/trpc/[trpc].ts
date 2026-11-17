@@ -278,7 +278,7 @@ const trpcHandler = createNextApiHandler({
       // its `errorRef`, and the router's own log line doesn't carry one.
       const errorRef = getClientSafeError(error)?.errorRef;
       if (!wasServerFaultLogged(error) || errorRef) {
-        await logToAxiom(
+        logToAxiom(
           {
             path,
             trpcType: type,
@@ -360,6 +360,7 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
       )
     );
   } finally {
-    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
+    // With the status and the response headers responseMeta set (Cache-Control, Cache-Tag, …).
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode, res);
   }
 }) as NextApiHandler;

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { civitaiAppUrl } from './civitai-url';
+import { civitaiAppUrl, civitaiLinkUrl } from './civitai-url';
+import { getIsSafeBrowsingLevel } from '@civitai/shared';
 import { sql } from '@civitai/db/kysely';
 import { violationUserMessage } from '$lib/violations';
 import { deprecatedNsfwName } from '$lib/nsfw-levels';
@@ -375,7 +376,7 @@ export async function applyBlockSideEffects(
       name: 'image-notice-under-review',
       imageId,
       userId: img.userId,
-    }).catch(() => undefined);
+    });
   await Promise.all([
     bestEffort('blocklist', imageId, () =>
       addImagesToBlocklist([
@@ -493,13 +494,27 @@ export async function emailAppealResolution(input: {
   imageIds: number[];
 }): Promise<void> {
   if (!input.imageIds.length) return;
-  const base = civitaiAppUrl();
   try {
+    // civitai.com will not show a mature, mixed or unrated image; those, a missing row and a failed
+    // read all link to .red.
+    const rows = await dbRead
+      .selectFrom('Image')
+      .select(['id', 'nsfwLevel'])
+      .where('id', 'in', input.imageIds)
+      .execute()
+      .catch(() => []);
+    const comSafe = new Set(
+      rows.filter((r) => getIsSafeBrowsingLevel(r.nsfwLevel)).map((r) => r.id)
+    );
+    const base = (id: number) => (comSafe.has(id) ? civitaiAppUrl() : civitaiLinkUrl());
     await appealResolutionEmail.send({
       to: input.to,
       username: input.username,
       approved: input.approved,
-      items: input.imageIds.map((id) => ({ url: `${base}/images/${id}`, label: `Image #${id}` })),
+      items: input.imageIds.map((id) => ({
+        url: `${base(id)}/images/${id}`,
+        label: `Image #${id}`,
+      })),
     });
   } catch (e) {
     console.error('emailAppealResolution failed', {

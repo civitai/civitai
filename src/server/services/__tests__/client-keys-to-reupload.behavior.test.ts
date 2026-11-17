@@ -80,11 +80,11 @@ beforeEach(async () => {
   holder.issued = [];
   holder.logDown = false;
   redis.clear();
-  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+  redisMock.redis.set.mockImplementation((async (key: string, value: string) => {
     redis.set(key, value);
     return 'OK';
   }) as never);
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
 });
 
@@ -178,7 +178,7 @@ describe('clientKeysToReupload', () => {
     holder.logDown = true;
     expect(await check([ABSENT, OTHERS])).toEqual([]);
     holder.logDown = false;
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('down'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('down'));
     holder.issued = [{ key: OTHERS, userId: OTHER }];
     expect(await check([ABSENT, OTHERS])).toEqual([]);
 
@@ -197,11 +197,11 @@ describe('clientKeysToReupload', () => {
   it('writes nothing and counts only the check', async () => {
     holder.issued = [{ key: OWN, userId: CALLER }];
     ownerCounter.inc.mockClear();
-    redisMock.sysRedis.set.mockClear();
+    redisMock.redis.set.mockClear();
 
     await check([OWN, ABSENT]);
 
-    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
     expect((await holder.db.query(`SELECT * FROM "ShopArtworkKeyOwner"`)).rows).toEqual([]);
     expect(ownerCounter.inc.mock.calls).toEqual([[{ outcome: 'draft_check' }]]);
   });

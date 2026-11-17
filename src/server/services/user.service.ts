@@ -1325,13 +1325,13 @@ export const deleteUser = async ({
     try {
       await fn();
     } catch (error) {
-      await logToAxiom({
+      logToAxiom({
         name: step,
         type: 'error',
         source: 'deleteUser',
         userId: user.id,
         message: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   };
 
@@ -1556,7 +1556,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
       source: 'restoreUser',
       userId: id,
       message: (error as Error)?.message,
-    }).catch(() => null)
+    })
   );
 
   // Queued after the clear: `restore-user-images` acts only on an account whose `deletedAt`
@@ -1584,7 +1584,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
       source: 'restoreUser',
       userId: id,
       message: (error as Error)?.message,
-    }).catch(() => null);
+    });
   }
 
   return {
@@ -1784,7 +1784,7 @@ function alertBidRefundFailures(
       userId: wipe.userId,
       moderatorId: wipe.actorUserId,
       ...failure,
-    }).catch(() => undefined);
+    });
   return failures;
 }
 
@@ -1906,7 +1906,7 @@ export const removeAllContent = async ({
           message: `Bounty payout failed - ${(e as Error).message}`,
           userId: id,
           bountyId,
-        }).catch(() => undefined);
+        });
       }
       if (!settled) keptBountyIds.push(bountyId);
     }
@@ -1917,7 +1917,7 @@ export const removeAllContent = async ({
         message: 'Kept bounties whose payout is not settled, hidden until it settles',
         userId: id,
         bountyIds: keptBountyIds,
-      }).catch(() => undefined);
+      });
   }
   // Read on the primary with the delete's own filter, so the index loses exactly what is deleted.
   const bounties = await dbWrite.bounty.findMany({
@@ -2044,7 +2044,7 @@ export const removeAllContent = async ({
       type: 'error',
       message: 'Stopped by a legal hold placed during the wipe',
       userId: id,
-    }).catch(() => undefined);
+    });
     await unindexDeleted([
       [articlesSearchIndex, 'Article', articles],
       [collectionsSearchIndex, 'Collection', collections],
@@ -2069,7 +2069,7 @@ export const removeAllContent = async ({
           type: 'error',
           message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
           userId: id,
-        }).catch(() => undefined)
+        })
       );
     const refundFailures = await refundBidsForRemovedModels(models, alertedBy);
     await removedModels(models.map((m) => m.id))
@@ -2084,7 +2084,7 @@ export const removeAllContent = async ({
             (e as Error).message
           }`,
           userId: id,
-        }).catch(() => undefined)
+        })
       );
     throw new LegalHoldStoppedError(refundFailures.length ? ['bid-refunds'] : []);
   }
@@ -2101,7 +2101,7 @@ export const removeAllContent = async ({
       step,
       userId: id,
       ...details,
-    }).catch(() => undefined);
+    });
   };
   const runStep = async (step: string, fn: () => Promise<unknown>) => {
     try {
@@ -2162,7 +2162,7 @@ export const removeAllContent = async ({
       type: 'error',
       message: 'Stopped by a legal hold before the App Blocks stores',
       userId: id,
-    }).catch(() => undefined);
+    });
     throw new LegalHoldStoppedError(incomplete);
   });
 
@@ -2418,7 +2418,7 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
     name: 'profile-picture-cache-refresh',
     message: (error as Error)?.message,
     ...meta,
-  }).catch(() => undefined);
+  });
 }
 
 /**
@@ -2881,6 +2881,20 @@ export class AlreadyBannedError extends Error {
   }
 }
 
+/** The ban's media block: every image of the user not already Blocked. Keeps an existing CSAM reason. */
+export async function blockBannedUserImages(userId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      ingestion = 'Blocked'::"ImageIngestionStatus",
+      "nsfwLevel" = ${NsfwLevel.Blocked},
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
+        ELSE ${BlockedReason.Moderated} END,
+      "updatedAt" = NOW()
+    WHERE "userId" = ${userId} AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+  `;
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -3129,14 +3143,7 @@ export const toggleBan = async ({
           });
         }
 
-        await dbWrite.image.updateMany({
-          where: { userId: id, ingestion: { not: 'Blocked' } },
-          data: {
-            ingestion: 'Blocked',
-            nsfwLevel: NsfwLevel.Blocked,
-            blockedFor: BlockedReason.Moderated,
-          },
-        });
+        await blockBannedUserImages(id);
 
         // Same reasoning as the CSAM block in `softDeleteUser`, but scoped to what this statement
         // actually blocked rather than to the account: a ban outranks a grace block, so the

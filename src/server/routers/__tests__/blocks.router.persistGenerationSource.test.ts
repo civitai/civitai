@@ -62,6 +62,19 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockUploadAppRateLimit: (...a: unknown[]) => mockCheckUploadAppRate(...a),
   checkBlockGenerationSourceUserRateLimit: (...a: unknown[]) => mockCheckGenSourceUserRate(...a),
 }));
+// The in-flight pool runs for real; `poolFull` makes its slot store answer "full" so the real
+// `withInFlightLimit` refuses, which is the only way its refusal path (and its counter) runs.
+const pool = vi.hoisted(() => ({ full: false }));
+vi.mock('~/server/utils/concurrency-slots', async (importOriginal) => {
+  const actual = (await importOriginal()) as typeof import('~/server/utils/concurrency-slots');
+  return {
+    ...actual,
+    acquireConcurrencySlot: (...a: Parameters<typeof actual.acquireConcurrencySlot>) =>
+      pool.full
+        ? Promise.resolve({ acquired: false as const, reason: 'full' as const })
+        : actual.acquireConcurrencySlot(...a),
+  };
+});
 vi.mock('~/server/services/blocks/block-generation-source.service', () => ({
   persistBlockGenerationSource: (...a: unknown[]) => mockPersistSource(...a),
 }));
@@ -86,6 +99,7 @@ vi.mock('~/server/middleware.trpc', async () => {
   };
 });
 
+import promClient from 'prom-client';
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -139,6 +153,7 @@ const RESULT = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  pool.full = false;
   rateLimitApplied.length = 0;
   mockAuthorizeBlockBridgeToken.mockResolvedValue(claims());
   mockParseSubjectUserId.mockImplementation((sub: string) =>
@@ -266,5 +281,49 @@ describe('blocks.persistGenerationSource', () => {
   ])('rejects %s at the schema', async (_label, input) => {
     await expect(call(input)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockPersistSource).not.toHaveBeenCalled();
+  });
+});
+
+describe('persistGenerationSource refusals are counted per app', () => {
+  async function refusals(bucket: string): Promise<number> {
+    const metric = promClient.register.getSingleMetric(
+      'civitai_app_block_rate_limit_refusals_total'
+    ) as
+      | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
+      | undefined;
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    return (
+      values.find(
+        (v) =>
+          v.labels.app_block_id === 'apb_alpha' &&
+          v.labels.surface === 'bridge' &&
+          v.labels.bucket === bucket
+      )?.value ?? 0
+    );
+  }
+
+  // Pins: a full pool is recorded through withInFlightLimit's onFull, before the hourly bucket.
+  it('a FULL in-flight pool is one {apb_alpha, bridge, in-flight}, and spends no bucket', async () => {
+    pool.full = true;
+    const before = await refusals('in-flight');
+    await expect(call()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect((await refusals('in-flight')) - before).toBe(1);
+    expect(mockCheckGenSourceUserRate).not.toHaveBeenCalled();
+    expect(mockPersistSource).not.toHaveBeenCalled();
+  });
+
+  it('a bucket refusal is one {apb_alpha, bridge, gen-source-user}, not in-flight', async () => {
+    mockCheckGenSourceUserRate.mockResolvedValue({ allowed: false, retryAfterSeconds: 9 });
+    const before = { bucket: await refusals('gen-source-user'), pool: await refusals('in-flight') };
+    await expect(call()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect((await refusals('gen-source-user')) - before.bucket).toBe(1);
+    expect((await refusals('in-flight')) - before.pool).toBe(0);
+  });
+
+  it('a served call counts nothing', async () => {
+    const before = await refusals('in-flight');
+    await call();
+    expect((await refusals('in-flight')) - before).toBe(0);
   });
 });

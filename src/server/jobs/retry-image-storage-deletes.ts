@@ -114,7 +114,7 @@ export const retryImageStorageDeletes = createJob(
         type: 'warning',
         message: 'queued rows without a usable storage key were dropped',
         imageIds: malformed,
-      }).catch(() => undefined);
+      });
 
     const result = {
       deleted,
@@ -123,9 +123,7 @@ export const retryImageStorageDeletes = createJob(
       malformed: malformed.length,
       unattempted: rows.length - attempted,
     };
-    logToAxiom({ name: 'retry-image-storage-deletes', type: 'info', ...result }).catch(
-      () => undefined
-    );
+    logToAxiom({ name: 'retry-image-storage-deletes', type: 'info', ...result });
     return result;
   },
   { lockExpiration: LOCK_SECONDS }
