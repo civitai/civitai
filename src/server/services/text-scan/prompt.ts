@@ -285,7 +285,10 @@ export async function insertTextScanPrompt({
  *  what counts, so a revocation outlives its writer's grant. */
 export function stampPromptRevocations(note: string | undefined, writerIsHolder: boolean) {
   if (!note) return note;
-  const unstamped = note.replace(/holder-revokes:/gi, 'revokes:');
+  // Until none is left: one pass turns a typed `holder-holder-revokes:` into a stamp.
+  let unstamped = note;
+  while (/holder-revokes:/i.test(unstamped))
+    unstamped = unstamped.replace(/holder-revokes:/gi, 'revokes:');
   return writerIsHolder ? unstamped.replace(/\brevokes:(\d+)\b/g, 'holder-revokes:$1') : unstamped;
 }
 

@@ -382,6 +382,17 @@ describe('mod/text-scan', () => {
       expect(savedNote()).toBe('restore 111 revokes:100 revokes:77');
     });
 
+    it.each([
+      'holder-holder-revokes:5',
+      'holder-holder-holder-revokes:5',
+      'HOLDER-holder-revokes:5',
+      'holder-revoholder-revokes:kes:5',
+    ])('never lets a non-holder forge a stamp from %s', async (note) => {
+      as(['textScanPromptPublish']);
+      await putNote(note);
+      expect(savedNote()).not.toMatch(/holder-revokes:/i);
+    });
+
     it('refuses a restore once its author no longer holds the per-key grant', async () => {
       redisMock.sysRedis.get.mockResolvedValue(JSON.stringify({ textScanPromptPublishIntent: [] }));
       as(['textScanPromptPublish']);
