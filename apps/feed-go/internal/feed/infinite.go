@@ -72,8 +72,8 @@ var infiniteUnsupported = func() []string {
 // detail's feed context (ImagesInfinite removes those two from its own filters only). Zod strips all
 // four, so Node answers as if they were absent, and so does ParseInfinite. Only image.getInfinite:
 // Parse (the posts gallery) still falls back on them. TestStrippedURLKeysAreStrippedByZod fails when
-// getInfiniteImagesSchema gains one (it must then be read, not ignored), or when the keys of
-// imagesQueryParamSchema outside getInfiniteImagesSchema stop being exactly this list.
+// getInfiniteImagesSchema gains one (it must then be read, not ignored). This is a deliberate
+// exception to the unknown-key fallback, with a deploy-gap risk: see DESIGN.md §5.1.
 var strippedURLKeys = []string{"query", "section", "similarTo", "view"}
 
 // infiniteAbsentKeys are the keys outside getInfiniteImagesSchema that ParseInfinite reads as absent:
