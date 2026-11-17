@@ -1,3 +1,4 @@
+import { isDefined } from '~/utils/type-guards';
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
 import {
@@ -75,6 +76,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   if (supplementalOf) await createSupplementalCsamReport({ ...filed, supplementalOf });
   else await createCsamReport(filed);
 
+  // Written after the account removal below, so a failed blocklist write cannot hold that up.
+  let blocklistHashes: bigint[] = [];
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
     const [affectedImages, imageReports] = await Promise.all([
@@ -85,15 +88,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       }),
     ]);
 
+    blocklistHashes = affectedImages.map((img) => img.pHash).filter(isDefined);
     await Promise.all([
-      bulkAddBlockedImages({
-        data: affectedImages
-          .filter((img) => !!img.pHash)
-          .map((x) => ({
-            hash: x.pHash as bigint,
-            reason: BlockImageReason.CSAM,
-          })),
-      }),
       // Bookkeeping only: a failure here must not stop the account being removed below.
       bulkSetReportStatus({
         ids: imageReports.map((report) => report.reportId),
@@ -151,6 +147,11 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   if (userId !== -1 && !removed) {
     await softDeleteUser({ id: userId, userId: reportedById });
   }
+  // Throws on failure, so the filing shows the error; the report and the removal already landed.
+  await bulkAddBlockedImages({
+    data: blocklistHashes.map((hash) => ({ hash, reason: BlockImageReason.CSAM })),
+    context: { step: 'csam-report', imageIds, actorUserId: reportedById },
+  });
 
   if (type === 'GeneratedImage') {
     // After the removal, so a slow or failing orchestrator can never hold it up. A 404 is the retired

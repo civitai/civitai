@@ -69,6 +69,7 @@ vi.mock('~/server/services/csam.service-new', async (importOriginal) => ({
   createExternalCsamReport,
 }));
 
+const { bulkAddBlockedImages } = await import('~/server/services/image.service');
 const { createExternalCsamReportHandler, fileCsamReport } = await import(
   '~/server/controllers/csam.controller'
 );
@@ -150,6 +151,19 @@ describe('fileCsamReport', () => {
     await file(OWNER, [IMAGE]);
 
     expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: MOD });
+  });
+
+  it('files the report and removes the account when the blocklist write throws, then throws', async () => {
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
+
+    await expect(file(OWNER, [IMAGE])).rejects.toThrow('no ClickHouse client');
+
+    expect(createCsamReport).toHaveBeenCalledTimes(1);
+    expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: MOD });
+    expect(bulkAddBlockedImages).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+    );
   });
 });
 

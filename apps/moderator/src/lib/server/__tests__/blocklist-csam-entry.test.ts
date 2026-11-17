@@ -14,6 +14,8 @@ const ch = vi.hoisted(() => ({
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/notifications', () => ({ getNotifications: () => ({}) }));
+const logToAxiom = vi.hoisted(() => vi.fn());
+vi.mock('../axiom', () => ({ logToAxiom, logAxiomError: vi.fn() }));
 vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
     query: async ({ query }: { query: string }) => {
@@ -27,7 +29,7 @@ vi.mock('$lib/server/clickhouse', () => ({
   }),
 }));
 
-const { addImagesToBlocklist, removeImagesFromBlocklist, BlocklistCheckError } = await import(
+const { addImagesToBlocklist, removeImagesFromBlocklist } = await import(
   '../image-moderation-effects'
 );
 
@@ -40,6 +42,7 @@ beforeEach(() => {
   ch.liveRows = [];
   ch.csamHashes = [CSAM_HASH];
   ch.lookupFails = false;
+  logToAxiom.mockClear();
 });
 
 describe('a hash with a CSAM entry keeps it', () => {
@@ -69,21 +72,51 @@ describe('a hash with a CSAM entry keeps it', () => {
     expect(ch.inserts[0]?.values).toEqual([{ hash: CSAM_HASH, reason: 'CSAM' }]);
   });
 
-  it('a failed lookup refuses the unblock: it throws and disables nothing', async () => {
+  it('a failed lookup refuses the unblock: nothing is disabled and the refusal is logged', async () => {
     ch.lookupFails = true;
     ch.liveRows = [{ hash: OTHER, reason: 'TOS' }];
 
-    await expect(removeImagesFromBlocklist([OTHER])).rejects.toBeInstanceOf(BlocklistCheckError);
+    await expect(
+      removeImagesFromBlocklist([OTHER], { step: 'unblock', imageId: 9, actorUserId: 2 })
+    ).resolves.toBeUndefined();
     expect(ch.inserts).toEqual([]);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'blocklist-disable-refused',
+        payload: expect.objectContaining({
+          step: 'unblock',
+          imageId: 9,
+          actorUserId: 2,
+          hashes: [OTHER],
+        }),
+      })
+    );
   });
 
-  it('a failed lookup throws the other block unwritten, after the CSAM row lands', async () => {
+  it('a failed lookup leaves the other block unwritten and logged, after the CSAM row lands', async () => {
     ch.lookupFails = true;
 
     await expect(
-      addImagesToBlocklist([{ ...tosImage(CSAM_HASH), csam: true }, tosImage(OTHER)])
-    ).rejects.toBeInstanceOf(BlocklistCheckError);
+      addImagesToBlocklist([{ ...tosImage(CSAM_HASH), csam: true }, tosImage(OTHER)], {
+        step: 'block',
+        imageId: 9,
+        actorUserId: 2,
+      })
+    ).resolves.toBeUndefined();
     expect(ch.inserts.map((i) => i.values)).toEqual([[{ hash: CSAM_HASH, reason: 'CSAM' }]]);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'blocklist-insert-skipped',
+        payload: expect.objectContaining({
+          step: 'block',
+          imageId: 9,
+          actorUserId: 2,
+          hashes: [OTHER],
+        }),
+      })
+    );
   });
 
   it('a row in the same batch as a CSAM row for its hash is not written', async () => {

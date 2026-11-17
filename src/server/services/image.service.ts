@@ -1362,7 +1362,11 @@ export async function handleUnblockImages({
       dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
-      bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
+      bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined), {
+        step: 'unblock',
+        imageIds: ids,
+        actorUserId: moderatorId,
+      }),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
       // `tosViolation`. Unblock flips those, but `processImageScanWorkflow`
       // (where the standard re-queue lives) isn't on this code path —
@@ -1537,6 +1541,7 @@ export async function handleBlockImages({
             };
           })
           .filter(isDefined),
+        context: { step: 'block', imageIds: images.map(({ id }) => id), actorUserId: moderatorId },
       });
     }
     if (include?.includes('user-notification')) {
@@ -7051,9 +7056,12 @@ export async function getImagesByUserIdForModeration(
   });
 }
 
+/** Who and what a blocklist write is for, so a write left undone can be traced and counted. */
+export type BlocklistWriteContext = { step: string; imageIds?: number[]; actorUserId?: number };
+
 /**
- * Hashes among these with a CSAM entry. The table keeps the newest row per hash when it merges,
- * so a later row of any other reason would replace that entry.
+ * Hashes among these with a live CSAM entry. The table keeps the newest row per hash when it
+ * merges, so a later row of any other reason would replace that entry.
  */
 async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
   if (hashes.length === 0) return new Set();
@@ -7073,24 +7081,56 @@ function blocklistClient() {
   return clickhouse;
 }
 
-export function addBlockedImage({ hash, reason }: { hash: bigint; reason: BlockImageReason }) {
-  return bulkAddBlockedImages({ data: [{ hash, reason }] });
+/** The CSAM-entry check failed, so these rows were left unwritten. Logged as an error to be counted. */
+function logBlocklistCheckFailed(
+  name: 'blocklist-insert-skipped' | 'blocklist-disable-refused',
+  rows: { hash: bigint | string; reason: string }[],
+  context: BlocklistWriteContext | undefined,
+  error: unknown
+) {
+  logToAxiom({
+    type: 'error',
+    name,
+    message: 'blocked_images left unchanged: the CSAM-entry check failed',
+    payload: {
+      step: context?.step,
+      imageIds: context?.imageIds,
+      actorUserId: context?.actorUserId,
+      hashes: rows.map(({ hash }) => hash.toString()),
+      reasons: rows.map(({ reason }) => reason),
+      error: safeError(error),
+    },
+  });
+}
+
+export function addBlockedImage({
+  hash,
+  reason,
+  context,
+}: {
+  hash: bigint;
+  reason: BlockImageReason;
+  context?: BlocklistWriteContext;
+}) {
+  return bulkAddBlockedImages({ data: [{ hash, reason }], context });
 }
 
 /**
- * A hash with a CSAM entry keeps it: other reasons are not written over it. CSAM rows are written
- * first and never wait on that lookup; if the lookup fails, the rest throw unwritten.
+ * A hash with a live CSAM entry keeps it: other reasons are not written over it. CSAM rows are
+ * written first and never wait on that check; they throw on any failure. If the check fails, the
+ * other rows are left unwritten and logged.
  */
 export async function bulkAddBlockedImages({
   data,
+  context,
 }: {
   data: { hash: bigint; reason: BlockImageReason }[];
+  context?: BlocklistWriteContext;
 }) {
   if (data.length === 0) return;
-  const client = blocklistClient();
   const write = (rows: typeof data) =>
     rows.length
-      ? client.insert({
+      ? blocklistClient().insert({
           table: 'blocked_images',
           values: rows.map(({ hash, reason }) => ({
             hash: toClickhouseInt64(hash),
@@ -7107,22 +7147,42 @@ export async function bulkAddBlockedImages({
     ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
   );
   if (!others.length) return;
-  const csam = await csamBlockedHashes(others.map(({ hash }) => hash));
+  let csam: Set<string>;
+  try {
+    csam = await csamBlockedHashes(others.map(({ hash }) => hash));
+  } catch (error) {
+    logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
+    return;
+  }
   await write(others.filter(({ hash }) => !csam.has(hash.toString())));
 }
 
-/** Disables the live entries of these hashes, except a hash with a CSAM entry. */
-export async function bulkRemoveBlockedImages(hashes: bigint[]) {
+/**
+ * Disables the live entries of these hashes, except a hash with a live CSAM entry. If that check
+ * fails, nothing is disabled (the entries stay) and the refusal is logged.
+ */
+export async function bulkRemoveBlockedImages(hashes: bigint[], context?: BlocklistWriteContext) {
   if (hashes.length === 0) return;
-  const client = blocklistClient();
-  const [blocked, csam] = await Promise.all([
-    client.$query<{ hash: string; reason: string }>`
-      SELECT toString(hash) AS hash, reason
-      FROM "blocked_images"
-      WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
-    `,
-    csamBlockedHashes(hashes),
-  ]);
+  let blocked: { hash: string; reason: string }[];
+  let csam: Set<string>;
+  try {
+    [blocked, csam] = await Promise.all([
+      blocklistClient().$query<{ hash: string; reason: string }>`
+        SELECT toString(hash) AS hash, reason
+        FROM "blocked_images"
+        WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
+      `,
+      csamBlockedHashes(hashes),
+    ]);
+  } catch (error) {
+    logBlocklistCheckFailed(
+      'blocklist-disable-refused',
+      hashes.map((hash) => ({ hash, reason: 'unknown' })),
+      context,
+      error
+    );
+    return;
+  }
 
   const values = blocked
     .filter(({ hash }) => !csam.has(hash))
@@ -7133,7 +7193,7 @@ export async function bulkRemoveBlockedImages(hashes: bigint[]) {
     }));
   if (!values.length) return;
 
-  return await client.insert({
+  return await blocklistClient().insert({
     table: 'blocked_images',
     values,
     format: 'JSONEachRow',

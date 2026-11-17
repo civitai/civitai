@@ -83,6 +83,7 @@ fakeClickhouse.client = makePermissive({
   },
 });
 
+const { logToAxiom } = await import('~/server/logging/client');
 const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages } = await import(
   '../image.service'
 );
@@ -143,6 +144,7 @@ describe('a hash with a CSAM entry keeps it', () => {
     csamQueryResult = [];
     csamLookupFails = false;
     clientAbsent = false;
+    vi.mocked(logToAxiom).mockClear();
   });
 
   it('an unblock disables none of its rows and still disables an unrelated hash', async () => {
@@ -190,15 +192,29 @@ describe('a hash with a CSAM entry keeps it', () => {
     expect(capturedInserts[0]?.values).toEqual([{ hash: HASH.toString(), reason: 'CSAM' }]);
   });
 
-  it('a failed lookup refuses the unblock: it throws and disables nothing', async () => {
+  it('a failed lookup refuses the unblock: nothing is disabled and the refusal is logged', async () => {
     csamLookupFails = true;
     queryResult = [{ hash: OTHER.toString(), reason: 'TOS' }];
 
-    await expect(bulkRemoveBlockedImages([OTHER])).rejects.toThrow('Socket hang up');
+    await expect(
+      bulkRemoveBlockedImages([OTHER], { step: 'unblock', imageIds: [9], actorUserId: 2 })
+    ).resolves.toBeUndefined();
     expect(capturedInserts).toHaveLength(0);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'blocklist-disable-refused',
+        payload: expect.objectContaining({
+          step: 'unblock',
+          imageIds: [9],
+          actorUserId: 2,
+          hashes: [OTHER.toString()],
+        }),
+      })
+    );
   });
 
-  it('a failed lookup throws the TOS block unwritten, after the CSAM row lands', async () => {
+  it('a failed lookup leaves the TOS block unwritten and logged, after the CSAM row lands', async () => {
     csamLookupFails = true;
 
     await expect(
@@ -207,11 +223,25 @@ describe('a hash with a CSAM entry keeps it', () => {
           { hash: HASH, reason: 'CSAM' as any },
           { hash: OTHER, reason: 'TOS' as any },
         ],
+        context: { step: 'block', imageIds: [9], actorUserId: 2 },
       })
-    ).rejects.toThrow('Socket hang up');
+    ).resolves.toBeUndefined();
     expect(capturedInserts.map((i) => i.values)).toEqual([
       [{ hash: HASH.toString(), reason: 'CSAM' }],
     ]);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'blocklist-insert-skipped',
+        payload: expect.objectContaining({
+          step: 'block',
+          imageIds: [9],
+          actorUserId: 2,
+          hashes: [OTHER.toString()],
+          reasons: ['TOS'],
+        }),
+      })
+    );
   });
 
   it('a CSAM block throws without a client instead of passing as a no-op', async () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { insert, logAxiomError } = vi.hoisted(() => ({
+const { insert, logAxiomError, logToAxiom } = vi.hoisted(() => ({
+  logToAxiom: vi.fn(async (_data: Record<string, unknown>) => undefined),
   insert: vi.fn(async (_args: { table: string; values: unknown[] }) => undefined),
   logAxiomError: vi.fn(async (_error: unknown, _extra?: Record<string, unknown>) => undefined),
 }));
@@ -18,7 +19,7 @@ const { query } = vi.hoisted(() => ({
   query: vi.fn(async (_args: { query: string }) => ({ json: async () => [] as unknown[] })),
 }));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ insert, query }) }));
-vi.mock('../axiom', () => ({ logAxiomError, logToAxiom: vi.fn(async () => undefined) }));
+vi.mock('../axiom', () => ({ logAxiomError, logToAxiom }));
 vi.mock('../notifications', () => ({ getNotifications: vi.fn() }));
 vi.mock('../redis', () => ({
   getSysRedis: () => ({ packed: { set: vi.fn(async () => undefined) } }),
@@ -28,7 +29,7 @@ vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../buzz', () => ({ getBuzz: vi.fn() }));
 vi.mock('../cache', () => ({ bustCacheTag: vi.fn(), bustCachedObject: vi.fn() }));
 
-const { applyBlockSideEffects, BlocklistCheckError } = await import('../image-moderation-effects');
+const { applyBlockSideEffects } = await import('../image-moderation-effects');
 
 const HASH = '-1234567890123456789';
 const block = () =>
@@ -93,14 +94,22 @@ describe('the blocklist check on a non-CSAM block', () => {
     expect(blocklistInserts()).toHaveLength(1);
   });
 
-  it('fails the action when the check fails, writes nothing, and logs the step', async () => {
+  it('completes the action when the check fails, writes nothing, and logs it', async () => {
     query.mockRejectedValueOnce(new Error('Socket hang up'));
 
-    await expect(tosBlock()).rejects.toBeInstanceOf(BlocklistCheckError);
+    await expect(tosBlock()).resolves.toBeUndefined();
     expect(blocklistInserts()).toHaveLength(0);
-    expect(logAxiomError).toHaveBeenCalledWith(
-      expect.any(BlocklistCheckError),
-      expect.objectContaining({ step: 'blocklist' })
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'blocklist-insert-skipped',
+        payload: expect.objectContaining({
+          step: 'block',
+          imageId: 7,
+          actorUserId: 9,
+          hashes: [HASH],
+        }),
+      })
     );
   });
 });

@@ -17,6 +17,7 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
+const csamCheck = vi.hoisted(() => ({ fails: false }));
 const { dbHandle, createNotification, clickhouseInsert, setReportStatus, logToAxiom } = vi.hoisted(
   () => ({
     dbHandle: { current: null as unknown },
@@ -57,7 +58,10 @@ vi.mock('../notifications', () => ({ getNotifications: () => ({ createNotificati
 vi.mock('../clickhouse', () => ({
   getClickhouse: () => ({
     insert: clickhouseInsert,
-    query: async () => ({ json: async () => [] }),
+    query: async ({ query }: { query: string }) => {
+      if (csamCheck.fails && query.includes("reason = 'CSAM'")) throw new Error('Socket hang up');
+      return { json: async () => [] };
+    },
   }),
 }));
 vi.mock('../reports.service', () => ({ setReportStatus }));
@@ -315,6 +319,29 @@ describe('a bulk block over held and other images', () => {
     expect(await deferredImages()).toEqual([FLAG_ONLY, FLAGGED_LIVE]);
     // The image removed with only its flag left is not blocked again, so it adds no entry.
     expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'CSAM', '104': 'TOS' });
+  });
+
+  it('completes when the blocklist check fails: one notice, reports actioned, the skip logged', async () => {
+    csamCheck.fails = true;
+    const ids = [HELD, FLAG_ONLY, FLAGGED_LIVE, OTHER_REASON];
+    try {
+      await imageQueueActions.bulkBlock(
+        event({ imageIds: ids.join(','), reportIds: ids.map(report).join(',') })
+      );
+    } finally {
+      csamCheck.fails = false;
+    }
+
+    expect(notifiedImages()).toEqual([`/images/${OTHER_REASON}`]);
+    expect(actionedReports()).toEqual([report(OTHER_REASON)]);
+    expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'CSAM' });
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'blocklist-insert-skipped',
+        payload: expect.objectContaining({ step: 'block', imageId: OTHER_REASON }),
+      })
+    );
   });
 });
 

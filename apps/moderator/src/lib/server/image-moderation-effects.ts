@@ -42,14 +42,6 @@ async function bestEffort(
     await run();
   } catch (error) {
     void logAxiomError(error, { event: 'image moderation side effect failed', step, imageId });
-    if (error instanceof BlocklistCheckError) throw error;
-  }
-}
-
-/** The blocklist could not be checked, so nothing was written: the caller sees it and can retry. */
-export class BlocklistCheckError extends Error {
-  constructor(cause: unknown) {
-    super('The image blocklist could not be checked; nothing was written to it.', { cause });
   }
 }
 
@@ -148,8 +140,33 @@ async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
     const rows = await resultSet.json<{ hash: string }>();
     return new Set(rows.map((row) => row.hash));
   } catch (error) {
-    throw new BlocklistCheckError(error);
+    throw new Error('blocked_images: the CSAM-entry check failed', { cause: error });
   }
+}
+
+/** Who and what a blocklist write is for, so a write left undone can be traced and counted. */
+export type BlocklistWriteContext = { step: string; imageId?: number; actorUserId?: number };
+
+/** The CSAM-entry check failed, so these rows were left unwritten. Logged as an error to be counted. */
+function logBlocklistCheckFailed(
+  name: 'blocklist-insert-skipped' | 'blocklist-disable-refused',
+  rows: { hash: string; reason: string }[],
+  context: BlocklistWriteContext | undefined,
+  error: unknown
+) {
+  void logToAxiom({
+    type: 'error',
+    name,
+    message: 'blocked_images left unchanged: the CSAM-entry check failed',
+    payload: {
+      step: context?.step,
+      imageId: context?.imageId,
+      actorUserId: context?.actorUserId,
+      hashes: rows.map(({ hash }) => hash),
+      reasons: rows.map(({ reason }) => reason),
+      error: error instanceof Error ? error.message : String(error),
+    },
+  });
 }
 
 /**
@@ -157,7 +174,8 @@ async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
  * first and never wait on that lookup; if the lookup fails, the rest throw unwritten.
  */
 export async function addImagesToBlocklist(
-  images: (BlockableImage & { csam?: boolean })[]
+  images: (BlockableImage & { csam?: boolean })[],
+  context?: BlocklistWriteContext
 ): Promise<void> {
   const candidates = images
     .filter((i): i is BlockableImage & { pHash: string; csam?: boolean } => !!i.pHash)
@@ -175,26 +193,50 @@ export async function addImagesToBlocklist(
   const inBatch = new Set(csamRows.map((v) => v.hash));
   const others = candidates.filter((v) => v.reason !== 'CSAM' && !inBatch.has(v.hash));
   if (!others.length) return;
-  const csam = await csamBlockedHashes(others.map((v) => v.hash));
+  let csam: Set<string>;
+  try {
+    csam = await csamBlockedHashes(others.map((v) => v.hash));
+  } catch (error) {
+    logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
+    return;
+  }
   await write(others.filter((v) => !csam.has(v.hash)));
 }
 
-/** Disables the live entries of these hashes, except a hash with a CSAM entry. */
-export async function removeImagesFromBlocklist(pHashes: (string | null)[]): Promise<void> {
+/**
+ * Disables the live entries of these hashes, except a hash with a live CSAM entry. If that check
+ * fails, nothing is disabled (the entries stay) and the refusal is logged.
+ */
+export async function removeImagesFromBlocklist(
+  pHashes: (string | null)[],
+  context?: BlocklistWriteContext
+): Promise<void> {
   const hashes = pHashes.filter((h): h is string => !!h);
   if (!hashes.length) return;
   const ch = getClickhouse();
-  const [blocked, csam] = await Promise.all([
-    ch
-      .query({
-        query: `SELECT toString(hash) AS hash, reason FROM "blocked_images" WHERE hash IN (${hashes.join(
-          ','
-        )}) AND disabled = false`,
-        format: 'JSONEachRow',
-      })
-      .then((resultSet) => resultSet.json<{ hash: string; reason: string }>()),
-    csamBlockedHashes(hashes),
-  ]);
+  let blocked: { hash: string; reason: string }[];
+  let csam: Set<string>;
+  try {
+    [blocked, csam] = await Promise.all([
+      ch
+        .query({
+          query: `SELECT toString(hash) AS hash, reason FROM "blocked_images" WHERE hash IN (${hashes.join(
+            ','
+          )}) AND disabled = false`,
+          format: 'JSONEachRow',
+        })
+        .then((resultSet) => resultSet.json<{ hash: string; reason: string }>()),
+      csamBlockedHashes(hashes),
+    ]);
+  } catch (error) {
+    logBlocklistCheckFailed(
+      'blocklist-disable-refused',
+      hashes.map((hash) => ({ hash, reason: 'unknown' })),
+      context,
+      error
+    );
+    return;
+  }
   const disable = blocked.filter((b) => !csam.has(b.hash));
   if (!disable.length) return;
   await ch.insert({
@@ -430,14 +472,17 @@ export async function applyBlockSideEffects(
     });
   await Promise.all([
     bestEffort('blocklist', imageId, () =>
-      addImagesToBlocklist([
-        {
-          pHash: img.pHash,
-          needsReview: img.needsReview,
-          blockedFor: img.blockedFor,
-          csam: heldImage || underReview,
-        },
-      ])
+      addImagesToBlocklist(
+        [
+          {
+            pHash: img.pHash,
+            needsReview: img.needsReview,
+            blockedFor: img.blockedFor,
+            csam: heldImage || underReview,
+          },
+        ],
+        { step: 'block', imageId, actorUserId }
+      )
     ),
     trackImageDeleteTos({
       imageId,
@@ -468,10 +513,13 @@ export async function applyBlockSideEffects(
 
 export async function applyAcceptSideEffects(
   img: { pHash: string | null; postId: number | null },
-  imageId: number
+  imageId: number,
+  actorUserId?: number
 ): Promise<void> {
   await Promise.all([
-    bestEffort('unblocklist', imageId, () => removeImagesFromBlocklist([img.pHash])),
+    bestEffort('unblocklist', imageId, () =>
+      removeImagesFromBlocklist([img.pHash], { step: 'unblock', imageId, actorUserId })
+    ),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
   ]);
 }

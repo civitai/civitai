@@ -225,7 +225,7 @@ export async function acceptImage({
       activity: updated.wasMinor && !updated.minor ? 'clearMinor' : 'minorQueueAccept',
     });
 
-  await applyAcceptSideEffects(img, imageId);
+  await applyAcceptSideEffects(img, imageId, userId);
 
   // Drops its blocks' deferred effects unfired. Last and best-effort: the image is already restored.
   await dropDeferredBlockEffects(dbWrite, [imageId]).catch((e: Error) =>
@@ -790,7 +790,8 @@ export async function resolveImageAppeal({
   }
 
   const postId = img?.postId ?? null;
-  if (restored) await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId);
+  if (restored)
+    await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId, userId);
   else await applyVisibilitySideEffects(imageId, postId);
 
   await runAppealCascade(appeal, imageId, approved, resolvedMessage, !deferAppealEmail);
