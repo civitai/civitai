@@ -1,6 +1,6 @@
 # Serving civitai.com/ads.txt from a merging route
 
-Status: design, not built. Decisions marked **Decide** need an owner before the build.
+**Status:** built in the PR that adds this note (`src/server/services/ads-txt.service.ts`, `src/pages/ads.txt`). Live only once the edge redirect is removed (see Cutover).
 
 ## Today
 
@@ -27,7 +27,7 @@ no hand edits, and that never serves something worse than today's file.
 - Add `ads.txt` to `excludedFiles` and `regionMiddlewareMatcher` in
   `src/server/middleware/region-middleware-utils.ts` (as `robots.txt` is), so a crawler in a
   restricted region gets the file rather than the region-blocked redirect.
-- Sources are one list in code, each `{ name, url }`. Adding or dropping a partner is a one-line PR;
+- Sources are one list in code (`ADS_TXT_SOURCES`), each `{ name, url, required }`. Adding or dropping a partner is a one-line PR;
   nobody edits partner lines.
 
 ## Merge
@@ -41,9 +41,8 @@ no hand edits, and that never serves something worse than today's file.
 4. Variables, emitted once in a header we own:
    - `OWNERDOMAIN=civitai.com` once, from config, not from either file. Both files carry this value today.
    - `CONTACT=` lines: keep each distinct value.
-   - `MANAGERDOMAIN`: each file names its own manager (`snigelweb.com`, `sparteo.com`). ads.txt 1.1 allows a
-     global `MANAGERDOMAIN` plus per-country ones; whether two global values are valid is not verified
-     against the spec text yet. **Decide:** which manager to declare, or whether to declare one per country.
+   - `MANAGERDOMAIN=snigelweb.com` once, from config: the ad stack is the primary seller. The second partner's
+     file declares `sparteo.com`; that line is dropped. Revisit when that partner's tag is turned on.
 5. Each source's records go under a `# <name>` comment with the fetch time, so a reader can trace a line.
 
 ## Caching and failure
@@ -52,7 +51,8 @@ no hand edits, and that never serves something worse than today's file.
   and partner changes reach the file within an hour.
 - An upstream body is accepted only if it is a 200, is not HTML, and parses to at least half of that
   source's last good record count (an error page served with a 200 must not empty a section).
-- The last good body for each source is kept in Redis with no TTL. When a fetch fails or is rejected,
+- The last good body for each source is kept in `dbKV` (Postgres), written only when it changes; the built
+  file is memoized per pod for an hour. When a fetch fails or is rejected,
   that source's last good body is used and the failure is logged.
 - If the ad stack's source has never been fetched successfully (cold Redis and upstream down), the route
   answers 302 to the ad stack's hosted URL, which is today's behavior, instead of a file without it.
@@ -70,7 +70,8 @@ no hand edits, and that never serves something worse than today's file.
 
 1. Ship the route. The edge 301 still answers `/ads.txt`, so nothing changes for crawlers.
 2. Served check before cutover: the route's output must be reachable at the origin past the edge rule,
-   for example through the same handler at `/api/ads-txt` or a host the edge rule does not cover.
+   `https://civitai.com/ads.txt?check=1` reaches the origin today (the edge rule does not match it) and
+   will be answered by the route.
    Compare its records with the two upstream files (union, no loss).
 3. DevOps removes the edge 301 for civitai.com only.
 4. Served check after cutover: `curl https://civitai.com/ads.txt` returns 200 `text/plain` with both
@@ -82,5 +83,5 @@ no hand edits, and that never serves something worse than today's file.
   cache window.
 - A new partner is one entry in the source list.
 - Lines that belong to no partner, if any are ever needed, go in a static source in the repo.
-- **Decide:** whether the second partner's lines go live before its tag is turned on. Lines in ads.txt
-  authorize sellers but serve nothing on their own.
+- The second partner's seller lines are served from the start: they authorize sellers and serve nothing on
+  their own.
