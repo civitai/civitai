@@ -884,7 +884,8 @@ func (s *Sources) lookupImageEvents(ctx context.Context, ids []int) (map[int]jsp
 // lookupModelEvents is eventDecorationEntityCaches.Model's lookupFn: lookupImageEvents over the
 // models, `equippedToType` 'Model' (Node: `entity as CosmeticEntity`).
 func (s *Sources) lookupModelEvents(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	return s.lookupEntityEvents(ctx, sqlModelEvents, "Model", ids)
+	return s.lookupEntityEvents(ctx, strings.Replace(sqlModelEvents, `uc."equippedToType" = 'Model'::"CosmeticEntity"`,
+		`(uc."equippedToType" = 'Model'::"CosmeticEntity" OR uc."equippedToType" = 'Image'::"CosmeticEntity")`, 1), "Model", ids)
 }
 
 func (s *Sources) lookupEntityEvents(ctx context.Context, sql, entity string, ids []int) (map[int]jspack.Obj, error) {
