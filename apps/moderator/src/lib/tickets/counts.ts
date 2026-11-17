@@ -14,16 +14,14 @@ export function countTicketViews(snapshot: Snapshot | null): Record<string, numb
     [TICKET_COUNT_KEYS.support]: 0,
   };
   for (const t of snapshot.tickets) {
-    counts[
-      TICKET_COUNT_KEYS[
-        routeTicket({
-          cfFeature: t.cfFeature,
-          status: t.status,
-          routerTopic: t.routerTopic,
-          tags: t.tags,
-        })
-      ]
-    ]++;
+    const route = routeTicket({
+      cfFeature: t.cfFeature,
+      status: t.status,
+      routerTopic: t.routerTopic,
+      tags: t.tags,
+    });
+    // Legal's tickets are in neither view, so they count in neither badge.
+    if (route !== 'legal') counts[TICKET_COUNT_KEYS[route]]++;
   }
   return counts;
 }

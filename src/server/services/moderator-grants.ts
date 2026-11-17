@@ -31,7 +31,8 @@ export type ModeratorGrantId =
   | 'labelStore.submitPrediction'
   | 'apps.buzz.refund'
   | 'apps.buzz.refund.large'
-  | 'feedback.status.set';
+  | 'feedback.status.set'
+  | 'tickets.escalate';
 
 export async function hasModeratorGrant(
   user: { roles?: string[] },

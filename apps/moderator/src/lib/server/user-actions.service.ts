@@ -260,6 +260,7 @@ export type ModEndpoint =
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
   | 'cosmetic/holdings-removed'
+  | 'feedback/ticket-bug'
   | 'cosmetic/refund-box-purchase'
   | 'messages/claim'
   | 'messages/release'
