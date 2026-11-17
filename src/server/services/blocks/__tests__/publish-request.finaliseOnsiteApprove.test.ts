@@ -134,6 +134,28 @@ describe('finaliseOnsiteApprove', () => {
     );
   });
 
+  it('🔴 a delisted app keeps its removed listing on a late hold, so the re-approve never republishes it', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    const tx = fakeTx();
+    const removed = {
+      id: 'al_1',
+      status: 'removed',
+      contentRating: 'pg',
+      name: 'n',
+      tagline: null,
+      description: null,
+      category: null,
+      appBlockId: 'apb_1',
+    };
+    await finaliseOnsiteApprove(tx as never, { ...input, priorListing: removed });
+    const [[{ data }]] = tx.appListing.update.mock.calls as unknown as [
+      [{ data: { status: string } }]
+    ];
+    expect(data.status).toBe('removed');
+    // The reset-restore lookup the re-approve uses cannot match it.
+    expect(data.status).not.toBe(resetRestoreWhere('apb_1').status);
+  });
+
   it('🔴 the snapshot never names a manual-apply column that is not there yet', async () => {
     const tx = fakeTx();
     tx.appListing.findUnique.mockResolvedValueOnce({ id: 'al_1', kind: 'onsite', name: 'n' });

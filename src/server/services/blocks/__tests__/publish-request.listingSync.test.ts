@@ -848,6 +848,61 @@ describe('approveRequest — on-site publish floor (icon + cover)', () => {
     });
   });
 
+  describe('the re-approve after a late hold on a live app is cleared', () => {
+    /**
+     * One stored on-site listing, in the status the late-hold rollback left it
+     * (publish-request.finaliseOnsiteApprove.test.ts pins which). Lookups and the reset flip
+     * match it on their plain where-fields, as the database would.
+     */
+    function storedListing(status: string) {
+      const row: Record<string, unknown> = {
+        id: 'apl_live',
+        status,
+        kind: 'onsite',
+        appBlockId: 'apb_1',
+        iconId: 53,
+        coverId: 47,
+        contentRating: 'pg',
+      };
+      const matches = (where: Record<string, unknown> = {}) =>
+        Object.entries(where).every(
+          ([k, v]) => (v !== null && typeof v === 'object') || row[k] === v
+        );
+      db.read.appBlock.findFirst.mockResolvedValue({
+        ...existingAppBlock(),
+        currentVersionSha: 'a'.repeat(40),
+      });
+      db.write.appListing.findFirst.mockImplementation(async (...a: unknown[]) =>
+        matches((a[0] as { where?: Record<string, unknown> } | undefined)?.where) ? row : null
+      );
+      db.write.appListing.updateMany.mockImplementation(async (...a: unknown[]) => {
+        const args = a[0] as { where?: Record<string, unknown>; data?: object } | undefined;
+        if (!matches(args?.where)) return { count: 0 };
+        Object.assign(row, args?.data);
+        return { count: 1 };
+      });
+      return row;
+    }
+    const unsuspend = {
+      where: { id: 'apb_1', status: 'suspended' },
+      data: { status: 'approved' },
+    };
+
+    it('🔴 a delisted app stays removed and suspended', async () => {
+      const listing = storedListing('removed');
+      await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+      expect(listing.status).toBe('removed');
+      expect(db.write.appBlock.updateMany).not.toHaveBeenCalledWith(unsuspend);
+    });
+
+    it('an app that was live publishes again and is un-suspended', async () => {
+      const listing = storedListing('pending');
+      await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+      expect(listing.status).toBe('approved');
+      expect(db.write.appBlock.updateMany).toHaveBeenCalledWith(unsuspend);
+    });
+  });
+
   describe('a first version re-approved after a late hold (its hold since cleared)', () => {
     /** A first version a late hold left: no current sha, and a late-resuspend on record. */
     function lateHeldFirstVersion({ late = true, currentVersionSha = null as string | null } = {}) {

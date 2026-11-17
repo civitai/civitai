@@ -135,10 +135,13 @@ export async function finaliseOnsiteApprove(
     });
     return { lateHoldIds: late };
   }
+  // Only a listing that was going live is left for that re-approve. Any other status (a delisted
+  // app) goes back as it was, so the re-approve never republishes it.
   const { id, issueTracker, status, appBlockId, ...fields } = prior;
+  const wasGoingLive = status === 'approved' || status === 'draft';
   await tx.appListing.update({
     where: { id },
-    data: { ...fields, status: 'pending', appBlockId: input.appBlockId },
+    data: { ...fields, status: wasGoingLive ? 'pending' : status, appBlockId: input.appBlockId },
   });
   if (issueTracker) {
     const { writeListingIssueTrackerUrl } = await import('./app-listing-issue-tracker.service');
