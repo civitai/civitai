@@ -17,6 +17,7 @@ import type {
   SiteSearchParams,
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
+import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { Availability } from '~/shared/utils/prisma/enums';
 
@@ -239,8 +240,8 @@ function shapeCollectionHit(
 
 /**
  * Whether `shapeHits` can change a hit of `indexUid` for this viewer. Model hits always can (their
- * `sfwName` is never sent); comic, bounty and collection hits only under a browsing-level cap;
- * every other index never. `shapeHits` itself returns early on `false`, so this is the one rule
+ * `sfwName` is never sent); comic, bounty, collection, article and user hits only under a
+ * browsing-level cap; every other index never. `shapeHits` itself returns early on `false`, so this is the one rule
  * both it and the passthrough decision read: a response is passed through unparsed only where
  * shaping it would have been a no-op.
  */
@@ -252,14 +253,58 @@ export function hitsNeedShaping(
   if (
     indexUid === COMICS_SEARCH_INDEX ||
     indexUid === BOUNTIES_SEARCH_INDEX ||
-    indexUid === COLLECTIONS_SEARCH_INDEX
+    indexUid === COLLECTIONS_SEARCH_INDEX ||
+    indexUid === ARTICLES_SEARCH_INDEX ||
+    indexUid === USERS_SEARCH_INDEX
   )
     return viewer.browsingLevelCap !== undefined;
   return false;
 }
 
+type AvatarHolder = Record<string, unknown> & { profilePicture?: { nsfwLevel: number } | null };
+type AvatarHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * Holds the avatar to the cap: `profilePicture` only when its whole rating is inside it, and never
+ * `image`, which carries no rating. A users hit is the user itself; every other hit nests it.
+ */
+function capHitAvatar(indexUid: string | undefined, hit: AvatarHit, cap: number): AvatarHit {
+  const capHolder = (holder: unknown) =>
+    isRecord(holder) ? withPublicAvatar(holder as AvatarHolder, cap) : holder;
+  const capDoc = (doc: Record<string, unknown>) =>
+    indexUid === USERS_SEARCH_INDEX
+      ? (capHolder(doc) as Record<string, unknown>)
+      : 'user' in doc
+      ? { ...doc, user: capHolder(doc.user) }
+      : doc;
+  const shaped = capDoc(hit) as AvatarHit;
+  if (isRecord(hit._formatted)) shaped._formatted = capDoc(hit._formatted);
+  return shaped;
+}
+
+const AVATAR_INDEXES = [
+  MODELS_SEARCH_INDEX,
+  ARTICLES_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+];
+
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
   if (!Array.isArray(hits) || !hitsNeedShaping(indexUid, viewer)) return hits;
+  const cap = viewer.browsingLevelCap;
+  if (cap === undefined || !indexUid || !AVATAR_INDEXES.includes(indexUid))
+    return shapeIndexHits(indexUid, hits, viewer);
+  return shapeIndexHits(indexUid, hits, viewer).map((hit: AvatarHit) =>
+    isRecord(hit) ? capHitAvatar(indexUid, hit, cap) : hit
+  );
+}
+
+function shapeIndexHits(indexUid: string | undefined, hits: unknown[], viewer: SiteSearchViewer) {
   if (indexUid === MODELS_SEARCH_INDEX)
     return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
   if (indexUid === COMICS_SEARCH_INDEX)
