@@ -142,7 +142,9 @@ describe('SharedArticleView banner', () => {
     const banner = await page.getByTestId('article-banner').element();
     // Outside the narrow reading container, and as wide as the page.
     expect(banner.closest('.mantine-Container-root')).toBeNull();
-    expect(Math.round(banner.getBoundingClientRect().width)).toBe(window.innerWidth);
+    expect(Math.round(banner.getBoundingClientRect().width)).toBe(
+      document.documentElement.clientWidth
+    );
     expect(banner.querySelector('a')).toBeNull();
     await expect.poll(() => imgWithSrc(container, BANNER_UUID).length).toBeGreaterThan(0);
   });
@@ -153,7 +155,8 @@ describe('SharedArticleView banner', () => {
       bannerImage: image(601, BANNER_UUID, PG),
     });
 
-    await expect.element(page.getByTestId('article-banner')).toBeVisible();
+    // Wait for the banner's own image, so an absent cover image is not just one not yet mounted.
+    await expect.poll(() => imgWithSrc(container, BANNER_UUID).length).toBeGreaterThan(0);
     expect(imgWithSrc(container, COVER_UUID)).toHaveLength(0);
   });
 
@@ -164,5 +167,37 @@ describe('SharedArticleView banner', () => {
 
     await expect.poll(() => imgWithSrc(container, COVER_UUID)).toHaveLength(1);
     expect(page.getByTestId('article-banner').query()).toBeNull();
+  });
+});
+
+const { ArticleBanner } = await import('~/components/Article/Detail/ArticleBanner');
+
+describe('ArticleBanner', () => {
+  const renderBanner = (bare?: boolean) =>
+    renderWithProviders(
+      <BrowsingModeOverrideCtx.Provider value={{ userBrowsingLevel: PG, blurLevels: 28 }}>
+        <ArticleBanner
+          image={image(701, '66666666-6666-4666-8666-666666666666', PG) as never}
+          articleId={1}
+          title="Draft"
+          bare={bare}
+        />
+      </BrowsingModeOverrideCtx.Provider>
+    );
+
+  test('🔴 pulls up by the sub nav’s 12px bottom margin so it meets the sub nav', async () => {
+    await renderBanner();
+
+    const banner = await page.getByTestId('article-banner').element();
+    expect(getComputedStyle(banner).marginTop).toBe('-12px');
+  });
+
+  test('links to the image unless bare (control for the bare case)', async () => {
+    const { unmount } = await renderBanner();
+    expect((await page.getByTestId('article-banner').element()).querySelector('a')).not.toBeNull();
+    unmount();
+
+    await renderBanner(true);
+    expect((await page.getByTestId('article-banner').element()).querySelector('a')).toBeNull();
   });
 });

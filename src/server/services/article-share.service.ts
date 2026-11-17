@@ -320,7 +320,7 @@ function toSharedArticle(
   contentImages: (Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }> & {
     minor: boolean | null;
   })[],
-  /** Cover or banner images their model withholds: no cover, and no banner in its place. */
+  /** Cover or banner images their model withholds. */
   withheldByModel: Set<number>
 ) {
   const { id, title, nsfwLevel, updatedAt } = article;
