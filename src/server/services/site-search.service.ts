@@ -299,12 +299,13 @@ function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSear
   const cap = viewer.browsingLevelCap;
   if (cap === undefined || !indexUid || !AVATAR_INDEXES.includes(indexUid))
     return shapeIndexHits(indexUid, hits, viewer);
-  return shapeIndexHits(indexUid, hits, viewer).map((hit: AvatarHit) =>
-    isRecord(hit) ? capHitAvatar(indexUid, hit, cap) : hit
-  );
+  const shaped = shapeIndexHits(indexUid, hits, viewer);
+  if (!Array.isArray(shaped)) return shaped;
+  return shaped.map((hit: AvatarHit) => (isRecord(hit) ? capHitAvatar(indexUid, hit, cap) : hit));
 }
 
-function shapeIndexHits(indexUid: string | undefined, hits: unknown[], viewer: SiteSearchViewer) {
+function shapeIndexHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
+  if (!Array.isArray(hits)) return hits;
   if (indexUid === MODELS_SEARCH_INDEX)
     return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
   if (indexUid === COMICS_SEARCH_INDEX)
