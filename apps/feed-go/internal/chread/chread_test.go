@@ -163,9 +163,19 @@ func TestMalformedRow(t *testing.T) {
 func TestBulkhead(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{}, 4)
+	var mu sync.Mutex
+	reqs := 0
 	srv, seen := fakeServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		entered <- struct{}{}
-		<-release
+		mu.Lock()
+		reqs++
+		hold := reqs <= 2
+		mu.Unlock()
+		// Only the first two reads are held, so a read the cap fails to refuse answers (and the test
+		// fails on its own assertion) instead of hanging.
+		if hold {
+			entered <- struct{}{}
+			<-release
+		}
 		_, _ = w.Write([]byte("{\"x\":1}\n"))
 	})
 	c, _ := New(Config{URL: srv.URL, MaxInFlight: 2, HTTP: srv.Client()})
