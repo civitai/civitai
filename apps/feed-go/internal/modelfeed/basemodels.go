@@ -7,8 +7,8 @@ import (
 )
 
 // basemodels.json is generated from the Node constants by scripts/feed-go-basemodels.ts, and
-// scripts/__tests__/feed-go-basemodels.test.ts fails when the two differ: the base-model and
-// ecosystem tables are thousands of lines of TypeScript, so this service reads what Node's own
+// scripts/__tests__/feed-go-basemodels.schema-drift.test.ts fails when the two differ: the base-model
+// and ecosystem tables are thousands of lines of TypeScript, so this service reads what Node's own
 // functions answer for every base model, ecosystem key and model type instead of a transcription.
 //
 //go:embed basemodels.json
