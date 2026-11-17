@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.517",
+  "version": "5.1.521",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -253,7 +253,6 @@
     "algoliasearch": "^4.23.3",
     "archiver": "^6.0.1",
     "blurhash": "^2.0.4",
-    "chalk": "^5.2.0",
     "chart.js": "^4.4.0",
     "chartjs-adapter-dayjs-4": "^1.0.4",
     "cloudflare": "^2.9.1",

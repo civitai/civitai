@@ -9,6 +9,7 @@ import {
   applyBlockSideEffects,
   applyAcceptSideEffects,
   applyVisibilitySideEffects,
+  CsamBlocklistWriteError,
   refundAppealFee,
   notifyAppealResolved,
   emailAppealResolution,
@@ -34,6 +35,7 @@ import {
 } from './csam-queue-set-aside';
 import type { Kysely, Transaction } from 'kysely';
 import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
@@ -135,6 +137,9 @@ const resetBlockedNsfwLevel = (imageId: number) =>
     .where('nsfwLevel', '=', NsfwLevel.Blocked)
     .execute();
 
+// pHash is a signed 64-bit value; the Kysely clients parse INT8 as a float, which rounds it.
+const pHashText = sql<string | null>`"pHash"::text`.as('pHash');
+
 /** An accept refused because the image is removed and a review queue cannot put it back. */
 export class RemovedImageNotRestorableError extends Error {
   constructor(readonly imageId: number) {
@@ -175,7 +180,7 @@ export async function acceptImage({
   const readImage = (db: Kysely<DB>) =>
     db
       .selectFrom('Image')
-      .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
+      .select(['needsReview', pHashText, 'postId', 'ingestion', 'blockedFor'])
       .where('id', '=', imageId)
       .executeTakeFirst();
   // A replica miss is usually lag, not a deleted image: then every read here goes to the primary.
@@ -257,6 +262,11 @@ export async function acceptImage({
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+  // A minor-queue accept rewrites "minor", which no trigger watches.
+  if (nr === 'minor') {
+    await queueArticlesForCoverImages([imageId]);
+    await queueModelsForImageChildTagChanges({ minorImageIds: [imageId] });
+  }
   await rescanIfUnrated(imageId);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
@@ -275,7 +285,7 @@ export async function acceptImage({
       activity: updated.wasMinor && !updated.minor ? 'clearMinor' : 'minorQueueAccept',
     });
 
-  await applyAcceptSideEffects(img, imageId);
+  await applyAcceptSideEffects(img, imageId, userId);
 
   // Drops its blocks' deferred effects unfired. Last and best-effort: the image is already restored.
   await dropDeferredBlockEffects(dbWrite, [imageId]).catch((e: Error) =>
@@ -351,7 +361,7 @@ export async function blockImage({
     .selectFrom('Image')
     .select([
       'needsReview',
-      'pHash',
+      pHashText,
       'blockedFor',
       'postId',
       'nsfwLevel',
@@ -452,6 +462,10 @@ export async function blockImage({
     violationDetails,
     heldImage: blocked.held,
     underReview: blocked.underReview,
+    removedForCsam: blocked.removedForCsam,
+  }).catch((e: unknown) => {
+    if (e instanceof CsamBlocklistWriteError && blocked.held) e.skipped = true;
+    throw e;
   });
   return blocked.held ? { skipped: true } : {};
 }
@@ -788,7 +802,7 @@ export async function resolveImageAppeal({
 
   const img = await dbRead
     .selectFrom('Image')
-    .select(['postId', 'pHash'])
+    .select(['postId', pHashText])
     .where('id', '=', imageId)
     .executeTakeFirst();
 
@@ -841,7 +855,8 @@ export async function resolveImageAppeal({
   }
 
   const postId = img?.postId ?? null;
-  if (restored) await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId);
+  if (restored)
+    await applyAcceptSideEffects({ pHash: img?.pHash ?? null, postId }, imageId, userId);
   else await applyVisibilitySideEffects(imageId, postId);
 
   await runAppealCascade(appeal, imageId, approved, resolvedMessage, !deferAppealEmail);

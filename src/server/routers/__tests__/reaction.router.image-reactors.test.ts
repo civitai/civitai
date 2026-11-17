@@ -23,7 +23,7 @@ const user = {
   muted: false,
 };
 
-function caller({ apiKeyId = null as number | null, tokenScope = TokenScope.Full as number } = {}) {
+function caller({ apiKeyId = null as number | null, tokenScope = TokenScope.Full as bigint } = {}) {
   return reactionRouter.createCaller({
     acceptableOrigin: true,
     user,
@@ -51,8 +51,8 @@ describe('reaction.getImageReactors', () => {
 
   // Deliberately no `requiredScope`: the narrow scopes' consent text ("Read profile, settings & email", "View
   // images...") does not tell a user an app can list who reacted to their content. Adding one widens that.
-  const fullBits = Array.from({ length: 25 }, (_, i) => 1 << i).filter(
-    (bit) => (TokenScope.Full & bit) !== 0
+  const fullBits = Array.from({ length: 25 }, (_, i) => 1n << BigInt(i)).filter(
+    (bit) => (TokenScope.Full & bit) !== 0n
   );
   it.each(fullBits)(
     'refuses a key holding every scope except bit %i: any requiredScope short of Full lets one through',

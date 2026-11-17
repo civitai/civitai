@@ -28,7 +28,7 @@ function request({
   } as unknown as NextApiRequest;
 }
 
-const personalKey = (tokenScope: number, apiKeyType: string | null = 'User') => ({
+const personalKey = (tokenScope: bigint, apiKeyType: string | null = 'User') => ({
   apiKeyId: 1,
   ...(apiKeyType ? { apiKeyType } : {}),
   subject: { type: 'apiKey', id: 1 },

@@ -20,7 +20,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const input = { userId: 7, clientId: 'app-1', scope: 5, ttlSeconds: 600 };
+const input = { userId: 7, clientId: 'app-1', scope: 5n, ttlSeconds: 600 };
 
 describe('mintAppToken', () => {
   it('posts the mint request under the service-secret bearer and maps the hub response', async () => {
@@ -40,13 +40,14 @@ describe('mintAppToken', () => {
       accessToken: 'civitai_abc',
       expiresAt: '2026-09-24T12:00:00.000Z',
       expiresIn: 600,
-      scope: 5,
+      scope: 5n,
     });
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe('https://auth.test/api/auth/oauth/app-token');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer svc-secret');
-    expect(JSON.parse(init.body as string)).toEqual(input);
+    // The scope goes on the wire as a JSON number.
+    expect(JSON.parse(init.body as string)).toEqual({ ...input, scope: 5 });
   });
 
   it('throws an AppTokenError carrying the hub error code on a non-2xx', async () => {

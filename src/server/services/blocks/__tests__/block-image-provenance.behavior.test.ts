@@ -79,7 +79,8 @@ beforeAll(async () => {
       "tosViolation" boolean,
       "acceptableMinor" boolean,
       "blockedFor" text,
-      metadata jsonb
+      metadata jsonb,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean);
   `);
@@ -196,5 +197,38 @@ describe('gated cross-user read: the published key ONLY', () => {
   it('🔴 never returns an image this app UPLOADED — another viewer’s, or the viewer’s own', async () => {
     const { images } = await gatedRead([UPLOADED_OTHER_USER, UPLOADED_OWN, PUBLISHED_OTHER_USER]);
     expect(images.map((i) => i.imageId)).toEqual([PUBLISHED_OTHER_USER]);
+  });
+});
+
+describe('gated cross-user read: a mature image made with a restricted base model', () => {
+  const RESTRICTED_OTHER_USER = 110;
+  const RESTRICTED_OWN = 111;
+
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", url, "nsfwLevel", metadata, "modelRestricted") VALUES
+        (${RESTRICTED_OTHER_USER}, ${OTHER_USER}, 'key-${RESTRICTED_OTHER_USER}', ${MATURE},
+          '{"blockPublishedAppId":"${APP}"}'::jsonb, true),
+        (${RESTRICTED_OWN}, ${VIEWER}, 'key-${RESTRICTED_OWN}', ${MATURE},
+          '{"blockPublishedAppId":"${APP}"}'::jsonb, true);
+    `);
+  });
+
+  const readAtR = (imageIds: number[]) =>
+    getBlockGatedImagesByIds({ imageIds, browsingLevel: R_ALLOWED, appId: APP, userId: VIEWER });
+
+  it('is hidden from a viewer who did not upload it, whose ceiling admits its level', async () => {
+    const { images } = await readAtR([RESTRICTED_OTHER_USER, PUBLISHED_MATURE]);
+    expect(images).toEqual([
+      { imageId: RESTRICTED_OTHER_USER, status: 'hidden' },
+      expect.objectContaining({ imageId: PUBLISHED_MATURE, status: 'visible' }),
+    ]);
+  });
+
+  it('is shown to its uploader', async () => {
+    const { images } = await readAtR([RESTRICTED_OWN]);
+    expect(images).toEqual([
+      expect.objectContaining({ imageId: RESTRICTED_OWN, status: 'visible' }),
+    ]);
   });
 });

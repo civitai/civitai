@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -19,7 +18,7 @@ const { getModel3DRelatedPosts } = await import('~/server/services/model3d.servi
  * would select.
  */
 type Row = Record<string, unknown>;
-const OPERATORS = new Set(['in', 'not', 'lte', 'some']);
+const OPERATORS = new Set(['in', 'notIn', 'not', 'lte', 'some']);
 const matches = (row: Row, where: Row | undefined): boolean =>
   !where ||
   Object.entries(where).every(([key, cond]) => {
@@ -28,10 +27,17 @@ const matches = (row: Row, where: Row | undefined): boolean =>
     if (!(key in row)) throw new Error(`The fake has no column ${key}`);
     const value = row[key];
     if (cond !== null && typeof cond === 'object' && !(cond instanceof Date)) {
-      const ops = cond as { in?: unknown[]; not?: unknown; lte?: Date; some?: Row };
+      const ops = cond as {
+        in?: unknown[];
+        notIn?: unknown[];
+        not?: unknown;
+        lte?: Date;
+        some?: Row;
+      };
       for (const op of Object.keys(ops))
         if (!OPERATORS.has(op)) throw new Error(`The fake does not know ${op}`);
       if ('in' in ops && !ops.in!.includes(value)) return false;
+      if ('notIn' in ops && ops.notIn!.includes(value)) return false;
       if ('not' in ops && value === ops.not) return false;
       if ('lte' in ops && !(value instanceof Date && value <= ops.lte!)) return false;
       if ('some' in ops && !(value as Row[]).some((r) => matches(r, ops.some))) return false;
@@ -54,6 +60,7 @@ const image = (nsfwLevel: number, over: Row = {}) => ({
   needsReview: null,
   blockedFor: null,
   acceptableMinor: false,
+  modelRestricted: false,
   poi: false,
   minor: false,
   ...over,
@@ -92,13 +99,12 @@ const POSTS = [
   post(13, PG | Blocked, [image(PG), image(Blocked)]),
   post(14, PG, [image(PG, { blockedFor: 'tos' })]),
   // A restricted model's mature image is passed over for the next one.
-  post(15, R, [image(R, { id: 9001 }), image(R)]),
+  post(15, R, [image(R, { id: 9001, modelRestricted: true }), image(R)]),
   // Blocked alone is no level a viewer browses at.
   post(16, Blocked, [image(Blocked)]),
   // A post level that has drifted from its images: rated XXX, its one image PG.
   post(17, XXX, [image(PG)]),
 ];
-const RESTRICTED_MATURE = new Set([9001]);
 
 type Args = {
   where: Row;
@@ -108,14 +114,6 @@ type Args = {
 };
 beforeEach(() => {
   dbMock.dbRead.model3D.findUnique.mockResolvedValue({ id: MODEL3D, userId: OWNER } as never);
-  // The restricted-model lookup, over the cover candidates it is asked about.
-  dbMock.dbRead.$queryRaw.mockImplementation((async (
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ) =>
-    Prisma.sql(strings, ...(values as never[]))
-      .values.filter((v): v is number => typeof v === 'number' && RESTRICTED_MATURE.has(v))
-      .map((id) => ({ id }))) as never);
   dbMock.dbRead.post.findMany.mockImplementation((async (args: Args) => {
     const ordered = POSTS.filter((p) => matches(p, args.where)).sort(
       (a, b) =>

@@ -16,7 +16,13 @@ import {
   isSkipConsentRedirectUri,
   redirectUriMatches,
 } from '$lib/server/oauth/redirect-uri';
-import { carriesNonUserScope, hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
+import {
+  carriesNonUserScope,
+  hasScope,
+  parseScopeRequest,
+  scopeFromColumn,
+  scopeToColumn,
+} from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
 import { checkClientAccess } from '$lib/server/oauth/access';
@@ -267,17 +273,17 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     if (params.remember === 'true') {
       await db
         .insertInto('OauthConsent')
-        .values({ userId: user.id, clientId, scope: requestedScope })
+        .values({ userId: user.id, clientId, scope: scopeToColumn(requestedScope) })
         .onConflict((oc) =>
           oc
             .columns(['userId', 'clientId'])
-            .doUpdateSet({ scope: requestedScope, updatedAt: new Date() })
+            .doUpdateSet({ scope: scopeToColumn(requestedScope), updatedAt: new Date() })
         )
         .execute();
     }
   } else if (
     !existingConsent ||
-    !hasScope(existingConsent.scope, requestedScope) ||
+    !hasScope(scopeFromColumn(existingConsent.scope), requestedScope) ||
     prompt.has('consent') ||
     prompt.has('select_account')
   ) {

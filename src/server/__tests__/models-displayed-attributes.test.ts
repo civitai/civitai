@@ -334,8 +334,6 @@ describe('the writer seam', () => {
     // write, which is the review event we want: a NEW writer is the hazard, and a writer
     // DISAPPEARING means an index stopped having its whitelist applied at all and silently fell
     // back to Meili's `["*"]`.
-    // Eight after the retired images index (`images.search-index.ts`) was deleted with its writer;
-    // seven since the retired feeds index (`metrics-images.search-index.ts`) lost its writer too.
     const writers = walk(SRC)
       .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
       .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))

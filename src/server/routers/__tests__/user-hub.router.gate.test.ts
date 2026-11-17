@@ -121,7 +121,7 @@ describe('a signed-out visitor can open a hub and do nothing else', () => {
   }
 });
 
-const caller = (tokenScope: number = TokenScope.Full, apiKeyId: number | null = null) =>
+const caller = (tokenScope: bigint = TokenScope.Full, apiKeyId: number | null = null) =>
   userHubRouter.createCaller({
     user: { id: 7, isModerator: false },
     ip: '1.2.3.4',
@@ -172,7 +172,7 @@ describe('every hub procedure is behind the userHubs flag', () => {
  * written out by hand rather than read off the router, because a map derived from
  * `.meta()` asserts the router against itself and passes whatever it says.
  */
-const requiredScopes: Record<string, number> = {
+const requiredScopes: Record<string, bigint> = {
   getAll: TokenScope.UserRead,
   getById: TokenScope.UserRead,
   resolveSource: TokenScope.UserRead,
@@ -191,7 +191,7 @@ const requiredScopes: Record<string, number> = {
 
 // `UserRead` and `UserWrite` are independent bits, so each is the other's negative
 // control: a read-scoped token must be refused every write procedure and vice versa.
-const otherScope = (scope: number) =>
+const otherScope = (scope: bigint) =>
   scope === TokenScope.UserRead ? TokenScope.UserWrite : TokenScope.UserRead;
 
 describe('every hub procedure declares the scope it needs', () => {

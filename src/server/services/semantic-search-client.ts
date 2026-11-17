@@ -9,8 +9,9 @@ export const MAX_HITS_PER_USER = 3;
 
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
-// Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
-const MAX_HYDRATION_BATCH = 100;
+// The search service's page maximum (a larger `limit` is an error, not a short page), and so the
+// most candidates hydrated per round: each round is one id-list query on the page's fetch path.
+export const MAX_CANDIDATE_LIMIT = 100;
 // The search service's paging cap.
 export const MAX_CANDIDATE_OFFSET = 2000;
 // A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
@@ -67,6 +68,8 @@ export type CandidateFilter = {
   excludedIds?: number[];
   // Payload key → the point matches any of the values.
   anyOf?: Record<string, PayloadValue[] | undefined>;
+  // A full-text payload index on `key` holds every word of `text` (Qdrant's text match).
+  allWords?: { key: string; text: string };
   range?: { key: string; gte?: string | number; lte?: string | number };
   mustNot?: QdrantCondition[];
 };
@@ -125,6 +128,7 @@ export function buildQdrantFilter(collection: SearchCollection, f: CandidateFilt
   for (const tagId of f.tagIds ?? []) must.push({ key: 'tagIds', match: { value: tagId } });
   if (f.userIds?.length) must.push({ key: 'userId', match: { any: f.userIds } });
   if (f.ids?.length) must.push({ has_id: f.ids });
+  if (f.allWords?.text.trim()) must.push({ key: f.allWords.key, match: { text: f.allWords.text } });
   for (const [key, values] of Object.entries(f.anyOf ?? {}))
     if (values?.length) must.push({ key, match: { any: values } });
   if (f.range && (f.range.gte !== undefined || f.range.lte !== undefined))
@@ -223,7 +227,8 @@ function requestIdHeader(): Record<string, string> {
 /**
  * The cluster search service: text through `/v1/search` (embedding and spelling correction are
  * its job), "more like this" through its read-only Qdrant pass-through. Ids only, never payload:
- * the index lags Postgres, so hydration decides what is shown.
+ * the index lags Postgres, so hydration decides what is shown. `limit` is at most
+ * MAX_CANDIDATE_LIMIT; the candidate cache in front of it pages larger ranges in blocks of that size.
  */
 export function searchServiceSource(
   collection: SearchCollection,
@@ -281,6 +286,40 @@ export function searchServiceSource(
       correctedQuery: changes.length ? corrected : undefined,
       guard: readGuard(guard),
     };
+  };
+}
+
+// Cap on the word matches ranked ahead of the rest of a text search.
+const MAX_WORD_MATCHES = 200;
+
+/**
+ * Text candidates with the points holding every query word in `key` first (in their own similarity
+ * order), then the rest of the semantic ranking without them. Embeddings rank meaning, so a query
+ * that is a model's name, or a word of it, otherwise loses to look-alike names and spellings.
+ * Make one per request: the word matches are fetched once and reused for every later block.
+ */
+export function withWordMatchesFirst(source: CandidateSource, key: string): CandidateSource {
+  let matches: ReturnType<CandidateSource> | undefined;
+  return async (args) => {
+    if (!('text' in args.query) || !args.query.text.trim()) return source(args);
+    matches ??= source({
+      ...args,
+      filter: { ...args.filter, allWords: { key, text: args.query.text } },
+      offset: 0,
+      limit: MAX_WORD_MATCHES,
+    });
+    const first = await matches;
+    const rest = (offset: number, limit: number) =>
+      source({
+        ...args,
+        filter: { ...args.filter, excludedIds: [...(args.filter.excludedIds ?? []), ...first.ids] },
+        offset,
+        limit,
+      });
+    if (args.offset >= first.ids.length) return rest(args.offset - first.ids.length, args.limit);
+    const head = first.ids.slice(args.offset, args.offset + args.limit);
+    const tail = head.length < args.limit ? await rest(0, args.limit - head.length) : undefined;
+    return { ...first, ids: [...head, ...(tail?.ids ?? [])] };
   };
 }
 
@@ -366,7 +405,7 @@ export async function collectPage<T extends { id: number }>({
   for (let round = 0; round < MAX_HYDRATION_ROUNDS && items.length < limit; round++) {
     const batchSize = Math.min(
       (limit - items.length) * CANDIDATE_MULTIPLIER,
-      MAX_HYDRATION_BATCH,
+      MAX_CANDIDATE_LIMIT,
       MAX_CANDIDATE_OFFSET - position
     );
     if (batchSize <= 0) {

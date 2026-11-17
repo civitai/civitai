@@ -37,7 +37,7 @@ CREATE TABLE "Model" (
 );
 CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, "modelId" INTEGER);
 CREATE TABLE "Post" (id INTEGER PRIMARY KEY, "modelVersionId" INTEGER);
-CREATE TABLE "Image" (id INTEGER PRIMARY KEY, "postId" INTEGER, index INTEGER, url TEXT, type TEXT);
+CREATE TABLE "Image" (id INTEGER PRIMARY KEY, "postId" INTEGER, index INTEGER, url TEXT, type TEXT, "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE);
 CREATE TABLE "ModActivity" (
   id SERIAL PRIMARY KEY, "userId" INTEGER, activity TEXT NOT NULL, "entityType" TEXT,
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
@@ -105,5 +105,28 @@ describe('getMinorHashMatchDetail for a real-person seed', () => {
     expect(poi?.minorFlaggedByUsername).toBe('first-mod');
     const minor = await getMinorHashMatchDetail({ modelId: MATCH, minorModelId: SEED });
     expect(minor?.minorFlaggedByUsername).toBe('latest-mod');
+  });
+});
+
+describe('getMinorHashMatchDetail covers', () => {
+  it("reads each model's own cover and whether its base model restricts it", async () => {
+    await pg.exec(`
+      INSERT INTO "ModelVersion" (id, "modelId") VALUES (10, ${MATCH}), (20, ${SEED});
+      INSERT INTO "Post" (id, "modelVersionId") VALUES (100, 10), (200, 20);
+      INSERT INTO "Image" (id, "postId", index, url, type, "modelRestricted") VALUES
+        (1000, 100, 0, 'match-cover', 'image', true),
+        (2000, 200, 0, 'seed-cover', 'video', false);
+    `);
+
+    const detail = await getMinorHashMatchDetail({ modelId: MATCH, minorModelId: SEED });
+
+    expect(detail).toMatchObject({
+      modelCoverUrl: 'match-cover',
+      modelCoverType: 'image',
+      modelCoverRestricted: true,
+      minorModelCoverUrl: 'seed-cover',
+      minorModelCoverType: 'video',
+      minorModelCoverRestricted: false,
+    });
   });
 });

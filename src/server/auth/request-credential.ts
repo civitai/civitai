@@ -3,7 +3,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 export type RequestCredential = {
-  tokenScope: number;
+  tokenScope: bigint;
   apiKeyId: number | undefined;
   apiKeyType: ApiKeyType | undefined;
   subject: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string } | undefined;
@@ -16,7 +16,7 @@ export type RequestCredential = {
 export function getRequestCredential(req: unknown): RequestCredential {
   const context = (req as { context?: Record<string, unknown> } | undefined)?.context;
   return {
-    tokenScope: (context?.tokenScope as number | null | undefined) ?? TokenScope.Full,
+    tokenScope: (context?.tokenScope as bigint | null | undefined) ?? TokenScope.Full,
     apiKeyId: (context?.apiKeyId ?? undefined) as RequestCredential['apiKeyId'],
     apiKeyType: (context?.apiKeyType ?? undefined) as RequestCredential['apiKeyType'],
     subject: (context?.subject ?? undefined) as RequestCredential['subject'],
@@ -26,7 +26,7 @@ export function getRequestCredential(req: unknown): RequestCredential {
 /** The credential's kind for a log line: no user, key id or address, and an OAuth client id hashed. */
 export function credentialLogFields({ tokenScope, apiKeyType, subject }: RequestCredential) {
   return {
-    tokenScope,
+    tokenScope: Number(tokenScope),
     apiKeyType: apiKeyType ?? null,
     client: subject?.type === 'oauth' ? 'oauth' : 'personal-key',
     clientIdHash:

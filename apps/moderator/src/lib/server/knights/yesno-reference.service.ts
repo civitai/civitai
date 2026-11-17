@@ -42,6 +42,18 @@ function checkedPrompt(raw: string): { prompt: string } | { error: string } {
   return prompt.length > YESNO_PROMPT_MAX ? { error: PROMPT_TOO_LONG } : { prompt };
 }
 
+async function referenceProblem(imageId: number): Promise<string | null> {
+  const problem = await unservableReason(imageId);
+  if (problem) return problem;
+  const flagged = await dbWrite
+    .selectFrom('Image')
+    .select('id')
+    .where('id', '=', imageId)
+    .where('minor', '=', true)
+    .executeTakeFirst();
+  return flagged ? `Image ${imageId} cannot be used as a reference.` : null;
+}
+
 /** Yes/no questions a pair can be written for, inactive ones included so a pair can be prepared early. */
 export async function getYesNoQuestions(): Promise<YesNoQuestion[]> {
   return dbWrite
@@ -121,7 +133,7 @@ export async function addYesNoReference(input: {
     return { ok: false, error: `${input.questionKey} is not a yes/no question.` };
   }
 
-  const problem = await unservableReason(input.imageId);
+  const problem = await referenceProblem(input.imageId);
   if (problem) return { ok: false, error: problem };
 
   const inserted = await dbWrite
@@ -147,6 +159,16 @@ export async function addYesNoReference(input: {
 }
 
 export async function setYesNoReferenceActive(id: number, active: boolean): Promise<Outcome> {
+  if (active) {
+    const pair = await dbWrite
+      .selectFrom('KnightsYesNoReference')
+      .select('imageId')
+      .where('id', '=', id)
+      .executeTakeFirst();
+    if (!pair) return { ok: false, error: GONE };
+    const problem = await referenceProblem(pair.imageId);
+    if (problem) return { ok: false, error: problem };
+  }
   const updated = await dbWrite
     .updateTable('KnightsYesNoReference')
     .set({ active, updatedAt: utc(new Date()) })

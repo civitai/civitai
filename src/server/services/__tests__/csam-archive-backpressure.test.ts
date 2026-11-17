@@ -879,9 +879,11 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(line).toMatchObject({
       reportId: report.id,
       expected: IMAGE_COUNT,
-      strikeUrls: IMAGE_COUNT,
-      entries: IMAGE_COUNT - 1,
-      unreadable: 1,
+      payload: expect.objectContaining({
+        strikeUrls: IMAGE_COUNT,
+        entries: IMAGE_COUNT - 1,
+        unreadable: 1,
+      }),
       type: 'error',
     });
     const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
@@ -897,7 +899,10 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
 
     await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
 
-    expect(generatedLine()).toMatchObject({ unreadable: 1, type: 'error' });
+    expect(generatedLine()).toMatchObject({
+      payload: expect.objectContaining({ unreadable: 1 }),
+      type: 'error',
+    });
   });
 
   it('stamps a pass that read nothing once the give-up window has passed', async () => {
@@ -906,7 +911,9 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
 
     expect(stamped()).toBe(true);
-    expect(generatedLine()).toMatchObject({ entries: 0, unreadable: IMAGE_COUNT });
+    expect(generatedLine()).toMatchObject({
+      payload: expect.objectContaining({ entries: 0, unreadable: IMAGE_COUNT }),
+    });
   });
 
   it('archives the blobs the report names when the strikes list is not found', async () => {
@@ -923,9 +930,7 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(stamped()).toBe(true);
     expect(probes.flatMap((p) => p.entryNames)).toEqual(['named-0.jpeg']);
     expect(generatedLine()).toMatchObject({
-      strikesNotFound: true,
-      strikeUrls: 0,
-      entries: 1,
+      payload: expect.objectContaining({ strikesNotFound: true, strikeUrls: 0, entries: 1 }),
       type: 'info',
     });
   });
