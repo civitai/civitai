@@ -9,6 +9,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
@@ -52,19 +53,48 @@ export function toCrucibleFilterPatch({ status, contentType }: CrucibleFilterSta
   };
 }
 
+export type CrucibleFeedFilters = Partial<GetCruciblesInfiniteSchema> & { query?: string };
+
 export const useQueryCrucibles = (
-  filters: Partial<GetCruciblesInfiniteSchema>,
+  { query: rawQuery, ...filters }: CrucibleFeedFilters,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const browsingLevel = useBrowsingLevelDebounced();
-  const { data, isLoading, ...rest } = trpc.crucible.getInfinite.useInfiniteQuery(
+  const features = useFeatureFlags();
+  const enabled = options?.enabled ?? true;
+  // Off, the feed has no search box, so a stray ?query= must not filter it.
+  const query = features.semanticCrucibleSearch ? rawQuery?.trim() : undefined;
+  // Cancelled crucibles are not indexed, and the feed has no text search of its own.
+  const searchStatus = filters.status?.filter(
+    (s): s is Exclude<CrucibleStatus, typeof CrucibleStatus.Cancelled> =>
+      s !== CrucibleStatus.Cancelled
+  );
+  const searchesNothing = !!filters.status?.length && !searchStatus?.length;
+  const semantic = trpc.semanticCrucibleSearch.search.useInfiniteQuery(
+    {
+      query: query ?? '',
+      status: searchStatus,
+      contentType: filters.contentType,
+      browsingLevel,
+      limit: filters.limit,
+    },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      ...options,
+      enabled: enabled && !!query && !searchesNothing,
+      retry: false,
+    }
+  );
+  const feed = trpc.crucible.getInfinite.useInfiniteQuery(
     { ...filters, browsingLevel },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       ...options,
+      enabled: enabled && !query,
       trpc: { context: { skipBatch: true } },
     }
   );
+  const { data, isLoading, ...rest } = query ? semantic : feed;
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
   const { items: crucibles, loadingPreferences } = useApplyHiddenPreferences({
