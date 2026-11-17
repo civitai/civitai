@@ -41,6 +41,7 @@
     createVoteTracker,
     postVote,
     refillCount,
+    refusedNote,
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
@@ -407,10 +408,24 @@
     cueTimer = setTimeout(() => (cue = null), CUE_MS);
   }
 
+  // A refused background vote's note stays until the next judgment or until dismissed: the player has moved on by the time
+  // it arrives, and a note that vanished after five seconds let a press pass for a counted vote.
+  let sticky = $state(false);
   function tell(message: string) {
     note = message;
+    sticky = false;
     clearTimeout(noteTimer);
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
+  }
+  function stick(message: string) {
+    note = message;
+    sticky = true;
+    clearTimeout(noteTimer);
+  }
+  function unstick() {
+    if (!sticky) return;
+    sticky = false;
+    note = null;
   }
 
   // Background votes go one at a time, in the order they were answered: this page posts one vote at a time.
@@ -444,7 +459,7 @@
       },
       onFailure: (outcome) => {
         uncount();
-        tell(outcome.message);
+        stick(refusedNote(outcome.message));
         dropBuffered(key);
         if (outcome.resync) {
           local = null;
@@ -496,6 +511,7 @@
     if (!next) return submitAndResync(input, key, token);
     input.cancel();
     if (cooling || !tracker.claim(key, token, input.action.search.startsWith('?/vote'))) return;
+    unstick();
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
@@ -791,7 +807,12 @@
         {/key}
         {@render levelToast(true)}
         {#if note}
-          <p class="nudge" role="status">{note}</p>
+          <p class="nudge" class:sticky role="status">
+            {note}
+            {#if sticky}
+              <button type="button" class="nudge-close" aria-label="Dismiss" onclick={unstick}>×</button>
+            {/if}
+          </p>
         {:else if cue}
           <p class="nudge cheer" role="status">{cue}</p>
         {/if}
@@ -969,6 +990,21 @@
     color: var(--io-parchment);
     font: 400 13px/1.3 var(--io-font-ui);
     text-align: center;
+  }
+  .nudge.sticky {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+  }
+  .nudge-close {
+    min-height: 0;
+    padding: 0 6px;
+    border: 0;
+    background: none;
+    color: var(--io-parchment);
+    font-size: 16px;
+    line-height: 1;
   }
   .nudge.cheer {
     border-color: var(--io-gold);

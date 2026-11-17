@@ -25,6 +25,18 @@ const ESCALATION_REASONS = [
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
+const REFUSAL_REASONS = [
+  'no-player',
+  'not-open',
+  'unavailable',
+  'not-eligible',
+  'bad-answer',
+  'bad-block-reason',
+  'already-voted',
+  'no-weight',
+  'reset-pending',
+  'limited',
+] as const;
 const TICK_FAILURE_STEPS = ['writeback', 'payout', 'yesno', 'reset', 'buzz_grant'] as const;
 
 export type VoteKind = (typeof VOTE_KINDS)[number];
@@ -113,6 +125,12 @@ const tickItemFailures = counter(
   { step: TICK_FAILURE_STEPS }
 );
 
+const voteRefusals = counter(
+  'knights_vote_refusals_total',
+  'Votes the server refused, by reason and kind; the player saw a note and their press did not count.',
+  { reason: [...REFUSAL_REASONS, 'other'], kind: VOTE_KINDS }
+);
+
 registerGauges(register, loadGaugeSnapshot);
 
 // Telemetry must never break the path that records it.
@@ -153,6 +171,16 @@ export const metrics = {
     safely(() => {
       if (count > 0) notificationsSent.inc({ kind: bounded(kind, NOTIFY_KINDS) }, count);
     }),
+  // No table records a refused vote, so each also leaves an Axiom event naming the player and item.
+  voteRefused: (reason: string, kind: VoteKind, playerId: number, itemId: number) => {
+    safely(() => voteRefusals.inc({ reason: bounded(reason, REFUSAL_REASONS), kind }));
+    void logToAxiom({
+      type: 'info',
+      name: 'knights-vote-refused',
+      message: 'A vote was refused',
+      details: { reason, kind, playerId, itemId },
+    });
+  },
   // No table records these three, so each also leaves one Axiom event.
   careerReset: (playerId: number, trigger: ResetTrigger) => {
     safely(() => careerResets.inc({ trigger }));

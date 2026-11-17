@@ -11,6 +11,8 @@ import {
   describeOutcome,
   itemKey,
   postVote,
+  NETWORK_NOTICE,
+  refusedNote,
   sendWithRetry,
 } from './optimistic';
 import type { PickedItem } from './optimistic';
@@ -363,6 +365,15 @@ describe('sendWithRetry', () => {
     const send = vi.fn(async () => null);
     expect(await sendWithRetry(send, async () => undefined)).toBeNull();
     expect(send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('refusedNote', () => {
+  it('says the press was not counted, once', () => {
+    expect(refusedNote('This one has already been settled.')).toBe(
+      'This one has already been settled. That judgment was not counted.'
+    );
+    expect(refusedNote(NETWORK_NOTICE)).toBe(NETWORK_NOTICE);
   });
 });
 

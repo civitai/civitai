@@ -4,6 +4,7 @@ import { db } from '$lib/server/db';
 import { getDailyStatus } from '$lib/server/daily/daily.service';
 import { openItem } from '$lib/server/feed-token';
 import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
+import { metrics } from '$lib/server/metrics';
 import {
   answerHiddenCheck,
   dismissHiddenNotices,
@@ -292,8 +293,13 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
             },
             queueDeps
           );
-    if (result.status === 'limited') return limitedFailure(result.until);
+    const kind = ref.kind === 'hidden' ? 'hidden_check' : ref.kind === 'yesno' ? 'yesno' : 'rating';
+    if (result.status === 'limited') {
+      metrics.voteRefused('limited', kind, locals.user.id, itemId);
+      return limitedFailure(result.until);
+    }
     if (result.status === 'rejected') {
+      metrics.voteRefused(result.reason, kind, locals.user.id, itemId);
       return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
         message: REJECTION_TEXT[result.reason],
       });

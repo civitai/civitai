@@ -36,6 +36,14 @@ export const NETWORK_NOTICE =
   'Your last judgment may not have been recorded: check your connection.';
 const FAILED_NOTICE = 'Your judgment could not be recorded.';
 
+const NOT_COUNTED = 'That judgment was not counted.';
+
+/** A background vote the server refused: by then the player has moved on, so the note says the press did not count. */
+export const refusedNote = (message: string) =>
+  message === NETWORK_NOTICE || message.includes(NOT_COUNTED)
+    ? message
+    : `${message} ${NOT_COUNTED}`;
+
 /**
  * Bookkeeping for votes posted in the background: an item is sent once (by key, since its token changes each time it is
  * served), and the next stretch is asked for without the items whose votes may not have landed yet or that would not load.

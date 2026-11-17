@@ -5,6 +5,11 @@ const feedSecretMock = vi.hoisted(() => vi.fn(() => 'secret'));
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
+const voteRefused = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/metrics', async (original) => {
+  const real = await original<typeof import('$lib/server/metrics')>();
+  return { ...real, metrics: { ...real.metrics, voteRefused } };
+});
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
@@ -57,6 +62,7 @@ beforeEach(() => {
   castVote.mockReset();
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
+  voteRefused.mockReset();
 });
 
 describe('vote action on a yes/no question', () => {
@@ -198,6 +204,23 @@ describe('vote action', () => {
       expect.anything(),
       expect.objectContaining({ grade: expect.objectContaining({ settings: { rate: 1 } }) })
     );
+  });
+
+  it('records why each refused vote was refused, with its kind and the player', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    answerHiddenCheck.mockResolvedValue({ status: 'rejected', reason: 'already-voted' });
+
+    await submit({ item: queueItem(3), answer: '4' });
+    await submit({ item: hiddenItem(5), answer: '8' });
+
+    expect(voteRefused).toHaveBeenNthCalledWith(1, 'not-open', 'rating', 7, 3);
+    expect(voteRefused).toHaveBeenNthCalledWith(2, 'already-voted', 'hidden_check', 7, 5);
+  });
+
+  it('records nothing for a vote that was recorded', async () => {
+    castVote.mockResolvedValue({ status: 'recorded' });
+    await submit({ item: queueItem(3), answer: '4' });
+    expect(voteRefused).not.toHaveBeenCalled();
   });
 
   it('refuses a hidden check with the same message and status as a vote', async () => {
