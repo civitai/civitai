@@ -7,6 +7,8 @@ import { deprecatedNsfwName } from '$lib/nsfw-levels';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { NotificationCategory } from '@civitai/notifications';
 import { isSafeToRetry } from '@civitai/buzz';
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead } from './db';
 import { getBuzz } from './buzz';
 import { bustCacheTag, bustCachedObject } from './cache';
@@ -267,11 +269,12 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
 export async function trackImageRestore(input: {
   imageId: number;
   actorUserId: number;
+  db?: Kysely<DB>;
 }): Promise<void> {
-  const { imageId, actorUserId } = input;
+  const { imageId, actorUserId, db = dbRead } = input;
   try {
     const [image, tags] = await Promise.all([
-      dbRead
+      db
         .selectFrom('Image')
         .select(['userId', 'nsfwLevel'])
         .where('id', '=', imageId)

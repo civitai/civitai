@@ -5,6 +5,7 @@ import { NsfwLevel } from '@civitai/shared';
 import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { syncSearchIndexBulk } from './search-index';
+import { queueModelsForImageChildTagChanges } from './image-models-reindex';
 import { bustImageTagCaches } from './cache';
 import { bustAfterWrite } from './bust-after-write';
 import { invalidateThumbnails } from './thumbnail-cache';
@@ -102,6 +103,7 @@ export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void
     await bustAfterWrite('tag-write-cache-bust', () => bustImageTagCaches(imageIds));
     await invalidateThumbnails(imageIds);
     await bustProfilePictures({ imageIds });
+    await queueModelsForImageChildTagChanges({ tagWrites: items, levelImageIds: imageIds });
   }
   await queueBlockedTagReviews(items);
   void syncSearchIndexBulk({ entityType: 'image', entityIds: imageIds, action: 'update' });
