@@ -1,8 +1,10 @@
-// The calls that start or price a training run, and Review's mature count, answered by the Studio's
-// own server routes (/api/train, /api/continue-training, /api/dataset-rating). The shell reaches them
-// with a relative fetch; the web component reaches them through its host's `studioServer` hook.
+// The calls that spend (start a training run, generate an edit or a suggestion, build an epoch
+// archive), plus pricing a continuation and Review's mature count, answered by the Studio's own server
+// routes. The shell reaches them with a relative fetch; the web component reaches them through its
+// host's `studioServer` hook.
 import type { StudioBackend, SubmittedBatch, TrainingRunPayload } from '$lib/backend';
 import type { DatasetRatingCount } from '$lib/dataset-rating';
+import type { EpochArchive } from '$lib/orchestrator-core';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
 
@@ -46,7 +48,22 @@ const postJson = (body: unknown): RequestInit => ({
 
 export function studioServerCalls(
   server: StudioServerFetch
-): Pick<StudioBackend, 'submitTraining' | 'datasetRating' | 'continueQuote' | 'continueRun'> {
+): Pick<
+  StudioBackend,
+  | 'submitTraining'
+  | 'datasetRating'
+  | 'continueQuote'
+  | 'continueRun'
+  | 'editImageSubmit'
+  | 'suggestSubmit'
+  | 'epochArchive'
+> {
+  const submitHelper = async (path: string, body: unknown, fallback: string) => {
+    const res = await server(path, postJson(body));
+    if (!res.ok) throw new Error(await messageOf(res, fallback));
+    return { workflowId: ((await res.json()) as { workflowId: string }).workflowId };
+  };
+
   return {
     submitTraining: async (runs: TrainingRunPayload[]) => {
       const res = await server('/api/train', postJson({ runs }));
@@ -80,6 +97,19 @@ export function studioServerCalls(
       );
       if (!res.ok) throw await startFailure(res, 'Could not start training.');
       return ((await res.json()) as { workflowId: string }).workflowId;
+    },
+
+    editImageSubmit: (req) => submitHelper('/api/edit-image', req, "Couldn't create the image."),
+
+    suggestSubmit: (req) =>
+      submitHelper('/api/suggest-instruction', req, "Couldn't suggest an instruction."),
+
+    epochArchive: async (workflowId, kind) => {
+      const params = new URLSearchParams({ id: workflowId, kind });
+      // An empty JSON body: the embed's forward takes only JSON posts.
+      const res = await server(`/api/epoch-archive?${params}`, postJson({}));
+      if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
+      return (await res.json()) as EpochArchive[];
     },
   };
 }

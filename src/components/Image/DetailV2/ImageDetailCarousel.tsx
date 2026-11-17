@@ -166,29 +166,39 @@ export function ImageDetailCarousel({
   // `scrollTo` emits 'select' synchronously, which would echo straight back into
   // `navigate` and run the whole onChange side-effect chain a second time.
   const syncingRef = useRef(false);
-  const navigateRef = useRef(navigate);
-  navigateRef.current = navigate;
+  // Embla announces its slide on every reInit too (a slide added or removed, a resize), and a
+  // reInit keeps the slide it had. Writing that back is not a move: it lands after any index the
+  // parent has set but not yet rendered (a cold `?text=` load names the text from an effect, in
+  // the commit after the slide arrived) and undoes it. Only a slide that changed is passed on.
+  const announcedRef = useRef(index);
   const keysRef = useRef<string[]>([]);
   keysRef.current = slides.map((slide) => slide.key);
-  // The slide embla last moved to. Slides inserted or removed ahead of it leave embla on the same
-  // numbered slot, which then holds another slide.
+  // The slide embla last moved to. A slide inserted or removed ahead of it leaves embla on the same
+  // slide number, which then holds another slide.
   const shownKeyRef = useRef(slides[index]?.key);
+  const handleSlideChange = (slideIndex: number) => {
+    const moved = slideIndex !== announcedRef.current;
+    announcedRef.current = slideIndex;
+    if (moved) shownKeyRef.current = keysRef.current[slideIndex];
+    if (moved && !syncingRef.current) navigate?.(slideIndex);
+  };
 
   const followIndex = (api: EmblaCarouselType) => {
     const at = api.selectedScrollSnap();
-    // A slide added in the same commit as the index that names it is not embla's yet: a scroll
-    // would stop short of it, and embla's own reinit then keeps the slot it stopped on.
+    // A slide added in the same commit as the index that names it is not embla's yet: scrolling
+    // there would miss it, so reInit embla onto it instead.
     const unknownToEmbla = index >= api.slideNodes().length && index < slideCount;
     if (!unknownToEmbla && at === index) return;
     syncingRef.current = true;
     if (unknownToEmbla) api.reInit({ startIndex: index });
-    // Out of a slot that now holds another slide, jump: travelling would show a slide nobody chose.
+    // Out of a slide number that now holds another slide, jump: travelling would show it in passing.
     else api.scrollTo(index, keysRef.current[at] !== shownKeyRef.current);
     syncingRef.current = false;
     shownKeyRef.current = keysRef.current[index];
   };
 
-  // An index that moved after mount (a cached branch) is followed as soon as embla is handed over.
+  // The provider announces embla's start slide right after handing it over, so an index that moved
+  // after mount (a cached branch) has to be followed first, or that announcement writes the old one back.
   const handleSetEmbla = (api: EmblaCarouselType) => {
     emblaRef.current = api;
     followIndex(api);
@@ -209,6 +219,8 @@ export function ImageDetailCarousel({
   const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
+  // The slide the last commit settled on, seeded like `settledIndex`.
+  const committedRef = useRef(index);
 
   useEffect(() => {
     if (!embla) return;
@@ -220,8 +232,16 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
+      committedRef.current = current;
       setSettledIndex(current);
       onSettleRef.current?.(current);
+    };
+
+    // A reInit keeps embla's slide, so one that left it where the last commit did owes no settle.
+    // Committing it anyway would announce the slide being left as the one landed on: the URL
+    // would move back to it while the carousel goes on to the index the parent just set.
+    const commitIfMoved = () => {
+      if (embla.selectedScrollSnap() !== committedRef.current) commit();
     };
 
     // 'settle' only fires from the animation loop, so anything that destroys the
@@ -233,31 +253,10 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    // A reInit commits only a move still in flight (the fallback is armed). A bare one keeps the
-    // numbered slot it was on, which after an insert is another slide, and would write that to the URL.
-    const commitInterrupted = () => {
-      if (fallback) commit();
-    };
-
-    // Only embla's own moves (a swipe, its controls) are the reader's. The provider's
-    // `onSlideChange` also announces every reInit, which would overwrite an index set from outside.
-    const announce = () => {
-      shownKeyRef.current = keysRef.current[embla.selectedScrollSnap()];
-      if (!syncingRef.current) navigateRef.current?.(embla.selectedScrollSnap());
-    };
-
-    embla
-      .on('settle', commit)
-      .on('reInit', commitInterrupted)
-      .on('select', armFallback)
-      .on('select', announce);
+    embla.on('settle', commit).on('reInit', commitIfMoved).on('select', armFallback);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla
-        .off('settle', commit)
-        .off('reInit', commitInterrupted)
-        .off('select', armFallback)
-        .off('select', announce);
+      embla.off('settle', commit).off('reInit', commitIfMoved).off('select', armFallback);
     };
   }, [embla]);
 
@@ -272,6 +271,7 @@ export function ImageDetailCarousel({
       <Embla
         withControls={canNavigate}
         className="flex-1"
+        onSlideChange={handleSlideChange}
         setEmbla={handleSetEmbla}
         startIndex={startIndexRef.current}
         loop={loop}

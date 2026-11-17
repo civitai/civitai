@@ -9,6 +9,7 @@ import {
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
 import type { DetailText } from '~/components/Image/Detail/detail-items';
+import { anchorImageIndex } from '~/components/Image/Detail/detail-items';
 import {
   ImageDetailProvider,
   useImageDetailContext,
@@ -168,6 +169,9 @@ function slideInView() {
   });
 }
 
+/** The key of the slide in view. */
+const keyInView = () => page.getByTestId('items').element().textContent?.split(',')[slideInView()];
+
 /** ImageDetail2's carousel wiring, around the real provider. */
 function Detail() {
   const { items, index, navigateTo } = useImageDetailContext();
@@ -176,6 +180,7 @@ function Detail() {
     items,
     index,
     navigate: navigateTo,
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   return (
@@ -183,6 +188,10 @@ function Detail() {
       <button type="button" data-testid="next" onClick={carouselNavigation.next} />
       <output data-testid="shown">{items[carouselNavigation.index]?.key}</output>
       <output data-testid="items">{items.map((item) => item.key).join(',')}</output>
+      {/* ImageDetail2's sidebar shows the anchor image of the carousel's slide */}
+      <output data-testid="sidebar">
+        {items[anchorImageIndex(items, carouselNavigation.index)]?.key}
+      </output>
       <div style={{ width: 400, height: 300, display: 'flex' }}>
         <ImageDetailCarousel
           images={IMAGES}
@@ -279,19 +288,29 @@ describe('text slides in the image detail carousel', () => {
     expect(location.pathname + location.search).toBe('/images/101?text=7');
   });
 
-  test('a cold load of the image after a text stays on that image once the text arrives', async () => {
+  test('a cold load of an image after a text stays on that image once the text arrives', async () => {
     postGate.held = true;
     await openAt(102);
     await vi.waitFor(() => expect(slideInView()).toBe(1));
+    // Every frame from the release on, so a text that only passes through the view is seen.
+    const inView: (string | undefined)[] = [];
+    let sampling = true;
+    const sample = () => {
+      inView.push(keyInView());
+      if (sampling) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
     postGate.release();
+    // Text 7 is inserted before image 102, which moves 102 up one slide.
     await expect
       .element(page.getByTestId('items'))
       .toHaveTextContent('img:101,txt:7,img:102,img:103');
-    await vi.waitFor(() => {
-      expect(slideInView()).toBe(2);
-      expect(shown().element().textContent).toBe('img:102');
-      expect(location.pathname + location.search).toBe('/images/102');
-    });
+    await expect.element(shown()).toHaveTextContent('img:102');
+    await expect.element(page.getByTestId('sidebar')).toHaveTextContent('img:102');
+    await vi.waitFor(() => expect(slideInView()).toBe(2));
+    sampling = false;
+    expect(inView).not.toContain('txt:7');
+    expect(location.pathname + location.search).toBe('/images/102');
   });
 
   test('an unknown text id opens the image the URL names', async () => {
