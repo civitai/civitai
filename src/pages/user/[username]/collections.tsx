@@ -47,7 +47,8 @@ function UserCollectionsPage() {
   // The header bar's search of this creator's collections (pageSearch).
   const features = useFeatureFlags();
   const pageSearchText = useFeedSearchQuery();
-  const searchText = features.pageSearch ? pageSearchText : undefined;
+  // The collections query takes at most 100 characters.
+  const searchText = features.pageSearch ? pageSearchText?.slice(0, 100) : undefined;
 
   const username = (router.query.username as string) ?? '';
   const { data: user, isLoading } = trpc.userProfile.get.useQuery(

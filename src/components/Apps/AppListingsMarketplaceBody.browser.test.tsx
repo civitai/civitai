@@ -99,9 +99,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 // gates exactly this rule for its own directory.
 // Both hooks must return the SAME flags: a component may call either, and which one
 // it calls is not something a test file can see.
+const flags = vi.hoisted(() => ({
+  value: { appBlocks: true, appBlocksPages: false } as Record<string, boolean>,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
-  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
+  useFeatureFlags: () => flags.value,
+  useOptionalFeatureFlags: () => flags.value,
 }));
 
 // The filters now live in the shared `AdaptiveFiltersDropdown`, which pulls in two
@@ -172,6 +175,7 @@ beforeEach(() => {
   // A FRESH object each test: `useZodRouteParams` memoises on the `query`
   // reference, so mutating the previous object in place would be invisible.
   router.query = {};
+  flags.value = { appBlocks: true, appBlocksPages: false };
   vi.mocked(router.replace).mockClear();
   clearRecentlyOpenedApps();
 });
@@ -381,6 +385,33 @@ describe('AppListingsMarketplaceBody', () => {
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
     // Bravo is filtered out client-side by the seeded query.
     expect(page.getByText('Bravo App').elements()).toHaveLength(0);
+  });
+
+  test("with pageSearch the header bar is the store's search: no box of its own, the query still filters", async () => {
+    const pathname = router.pathname;
+    router.pathname = '/apps/store';
+    flags.value = { ...flags.value, pageSearch: true };
+    router.query = { query: 'Alpha' };
+    try {
+      renderWithProviders(<StoreWithControls />);
+      await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
+      expect(page.getByLabelText('Search').elements()).toHaveLength(0);
+      expect(page.getByText('Bravo App').elements()).toHaveLength(0);
+    } finally {
+      router.pathname = pathname;
+    }
+  });
+
+  test('a page sharing the store body that the header does not search keeps its box', async () => {
+    const pathname = router.pathname;
+    router.pathname = '/apps/store-preview';
+    flags.value = { ...flags.value, pageSearch: true };
+    try {
+      renderWithProviders(<StoreWithControls />);
+      await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
+    } finally {
+      router.pathname = pathname;
+    }
   });
 
   test('sorting writes the sort param', async () => {

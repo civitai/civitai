@@ -12,11 +12,6 @@ export const useFeedSearchQuery = () => {
 };
 
 /**
- * A feed's text search, kept in the page's `query` param. Like the header bar (useFeedSearchSync),
- * it writes the URL only on Enter, blur or clear, never as you type: each applied query is a
- * semantic search.
- */
-/**
  * The text of a box that edits the page's `query` param: committed (a history entry) only on
  * Enter, blur or clear, and following the URL when Back, a link or another control changes it.
  */
@@ -34,6 +29,7 @@ export function useFeedSearchText() {
   return { value, setValue, commit };
 }
 
+/** A feed's text search box, kept in the page's `query` param (see `useFeedSearchText`). */
 export function FeedSearchInput({ placeholder }: { placeholder: string }) {
   const { value, setValue, commit } = useFeedSearchText();
 

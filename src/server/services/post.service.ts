@@ -1,4 +1,4 @@
-import { escapeLike } from '~/server/utils/ilike';
+import { ilikeContains } from '~/server/utils/ilike';
 import { Prisma } from '@prisma/client';
 import {
   onStorySparkLost,
@@ -417,7 +417,7 @@ export const getPostsInfinite = async ({
   if (query)
     AND.push(
       targetUser
-        ? Prisma.sql`p.title ILIKE ${'%' + escapeLike(query) + '%'}`
+        ? Prisma.sql`p.title ILIKE ${ilikeContains(query)}`
         : Prisma.sql`p.title ILIKE ${query + '%'}`
     );
 
