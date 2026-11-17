@@ -379,6 +379,13 @@ describe('getImageGenerationData visibility', () => {
     it('is served to a moderator', async () => {
       expect(await sees(MOD)).toBe(true);
     });
+
+    // Control: the manager loses held rows only. The same image under another review still opens.
+    it('is served again to its owner and the manager once under another review', async () => {
+      await db.exec(`UPDATE "Image" SET "needsReview" = 'poi'`);
+      expect(await sees(SELF)).toBe(true);
+      expect(await sees({ userId: MANAGER })).toBe(true);
+    });
   });
 
   it.each(['Pending', 'Error'])(
