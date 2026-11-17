@@ -158,11 +158,8 @@ export async function runImageSearch(
   // Meili feed query builder does not filter on any of them, so they'd silently
   // return the global feed.
   //
-  // 🔴 The mechanism is the QUERY BUILDER, not the index schema, and an earlier
-  // version of this comment had that wrong ("it indexes postedToId/
-  // modelVersionId only"). Image `id` WAS a filterable attribute on the retired
-  // feeds index (its processor declared it). What
-  // is missing is the CLAUSE: `ImagesFeed.queryDocuments`
+  // 🔴 The mechanism is the QUERY BUILDER, not the index schema. What is
+  // missing is the CLAUSE: `ImagesFeed.queryDocuments`
   // (event-engine-common/feeds/images.feed.ts) never destructures `ids` and
   // never pushes an `id IN [...]` filter, while its sibling `models.feed.ts`
   // does (line 558). So an `ids` key reaching the feed is dropped on the floor

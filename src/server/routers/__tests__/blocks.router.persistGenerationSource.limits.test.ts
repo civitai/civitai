@@ -223,7 +223,7 @@ describe('blocks.persistGenerationSource — the output ceiling is the viewer le
     }));
     await expect(call()).resolves.toEqual(RESULT);
     expect(mockPersistSource).toHaveBeenCalledWith(
-      expect.objectContaining({ ceiling: { maxBrowsingLevel: level } })
+      expect.objectContaining({ ceiling: { maxBrowsingLevel: level, serving: false } })
     );
   });
 });

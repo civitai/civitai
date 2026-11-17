@@ -12,7 +12,7 @@ import { getStepByOrchestratorType, postureProducesMedia } from '../steps';
 import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.schema';
 
 /** Every browsing level, so no fixture output is above the ceiling. */
-const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31 };
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
 
 /**
  * Which finished workflows `civitai_app_block_succeeded_without_media_total`
