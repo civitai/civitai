@@ -257,7 +257,9 @@ const (
 // is a mod-locked image whose scan errored permanently (imageReviewedSql: an Error row with a
 // permanent failure in scanJobs is not reviewed, where 1150738's plain Error row is). On the
 // system-owned model 1150702 (userId -1) every published post's images are included: the system
-// user's own post and another user's.
+// user's own post and another user's. Version 1150714's ids run against its (post, index) order:
+// 1150750 then 1150748 by index in post 1150726, then 1150747 in the later post 1150727, an order
+// that id alone, (index, id), or (post, id) would each change.
 func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 	e := integMissSetup(t)
 	integtest.Exec(t, e.pool, `DELETE FROM "Image" WHERE id BETWEEN 1150700 AND 1150799;
@@ -265,13 +267,16 @@ func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 		DELETE FROM "ModelVersion" WHERE id BETWEEN 1150700 AND 1150799;
 		DELETE FROM "Model" WHERE id BETWEEN 1150700 AND 1150799;
 		INSERT INTO "Model" (id, "userId") VALUES (1150701, 1150801), (1150702, -1);
-		INSERT INTO "ModelVersion" (id, "modelId") VALUES (1150711, 1150701), (1150712, 1150701), (1150713, 1150702);
+		INSERT INTO "ModelVersion" (id, "modelId") VALUES (1150711, 1150701), (1150712, 1150701), (1150713, 1150702),
+		  (1150714, 1150701);
 		INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
 		  (1150721, 1150801, 1150711, now()),
 		  (1150722, 1150802, 1150711, now()),
 		  (1150723, 1150801, 1150711, NULL),
 		  (1150724, -1, 1150713, now()),
-		  (1150725, 1150802, 1150713, now());
+		  (1150725, 1150802, 1150713, now()),
+		  (1150726, 1150801, 1150714, now()),
+		  (1150727, 1150801, 1150714, now());
 		INSERT INTO "Image" (id, name, url, "userId", "postId", index, hash, width, height, type, metadata, meta, "hideMeta",
 		  "nsfwLevel", "nsfwLevelLocked", ingestion, "blockedFor", "tosViolation", "needsReview", "modelRestricted", poi) VALUES
 		  (1150731, 'integ-a', 'integ-url-a', 1150801, 1150721, 1, 'integ-hash', 8, 9, 'image', '{"height": 9, "width": 8}',
@@ -292,10 +297,15 @@ func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 		  (1150742, 'permanent-failure', 'u', 1150801, 1150721, 9, 'image', '{}', 1, true, 'Error',
 		   '{"lastFailure": {"failureClass": "permanent"}}', false),
 		  (1150745, 'system-post', 'u', -1, 1150724, 0, 'image', '{}', 1, false, 'Scanned', NULL, false),
-		  (1150746, 'system-model-other-post', 'u', 1150802, 1150725, 0, 'image', '{}', 1, false, 'Scanned', NULL, false);`)
+		  (1150746, 'system-model-other-post', 'u', 1150802, 1150725, 0, 'image', '{}', 1, false, 'Scanned', NULL, false),
+		  (1150750, 'order-post1-index0', 'u', 1150801, 1150726, 0, 'image', '{}', 1, false, 'Scanned', NULL, false),
+		  (1150748, 'order-post1-index1', 'u', 1150801, 1150726, 1, 'image', '{}', 1, false, 'Scanned', NULL, false),
+		  (1150747, 'order-post2-index0', 'u', 1150801, 1150727, 0, 'image', '{}', 1, false, 'Scanned', NULL, false);`)
 	ctx := integtest.Ctx(t)
-	ids := []int{1150711, 1150712, 1150713}
-	t.Cleanup(func() { _ = e.c.Del(integtest.Ctx(t), e.prefix+KeyVersionImages+":1150713").Err() })
+	ids := []int{1150711, 1150712, 1150713, 1150714}
+	t.Cleanup(func() {
+		_ = e.c.Del(integtest.Ctx(t), e.prefix+KeyVersionImages+":1150713", e.prefix+KeyVersionImages+":1150714").Err()
+	})
 	got, writable := e.src.read(ctx, KeyVersionImages, ids, versionImagesTTL)
 	if err := e.src.fillVersionImages(ctx, ids, got, writable); err != nil {
 		t.Fatal(err)
@@ -307,7 +317,7 @@ func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 		t.Fatalf("1150712 = %+v, want a notFound entry", d)
 	}
 	// The image ids first, so a wrongly admitted row is named (the bytes below pin the rest).
-	for v, want := range map[int][]int{1150711: {1150731, 1150738}, 1150713: {1150745, 1150746}} {
+	for v, want := range map[int][]int{1150711: {1150731, 1150738}, 1150713: {1150745, 1150746}, 1150714: {1150750, 1150748, 1150747}} {
 		var ids []int
 		for _, img := range asList(got[v].Value["images"]) {
 			m, _ := img.(map[string]any)
