@@ -28,6 +28,8 @@ describe('containsPrivateMediaUrl', () => {
     ['ideographic dots', 'https://orchestration\u3002civitai\u3002com/x'],
     ['full-width letters', 'https://\uff4frchestration.civitai.com/x'],
     ['dot segments in the path', 'https://cdn.example.net/v2/consumer/x/../blobs/abc'],
+    ['split by a tab', 'https://orches\ttration.civitai.com/x'],
+    ['split by a newline', 'https://orchestration.civitai\r\n.com/x'],
     ['split by an invisible character', 'https://orches​tration.civitai.com/v2/consumer/blobs/abc'],
   ])('matches a %s', (_label, text) => {
     expect(containsPrivateMediaUrl(text)).toBe(true);

@@ -38,6 +38,7 @@
 // `additionalProperties` schema).
 
 import { firstSchemaFailure, jsonEqual } from '~/server/services/apps/doc-store-schema';
+import { collectSharedDataLeaves } from '~/server/services/apps/shared-data-leaves';
 import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import type {
   AppStorageBreakingKeyword,
@@ -371,6 +372,14 @@ function opLabel(name: string, index: number): string {
  * reports those errors itself, and a baseline that does not parse cannot be compared (a warning
  * says so; an unparseable `history` entry is skipped).
  */
+/** Each string in `value` (keys included), read as stored rather than as escaped JSON. */
+function valueCarriesPrivateMedia(value: unknown): boolean {
+  if (typeof value === 'string') return containsPrivateMediaUrl(value);
+  const collected = collectSharedDataLeaves(value);
+  if ('overflow' in collected) return containsPrivateMediaUrl(JSON.stringify(value) ?? '');
+  return collected.leaves.some((leaf) => containsPrivateMediaUrl(leaf.raw));
+}
+
 export function checkStorageMigrations(
   prev: unknown,
   next: unknown,
@@ -468,7 +477,7 @@ export function checkStorageMigrations(
 
     // A default is written into documents other viewers read, so it is held to the shared-data rule.
     ops.forEach((op, i) => {
-      if (op.op === 'default' && containsPrivateMediaUrl(JSON.stringify(op.value) ?? '')) {
+      if (op.op === 'default' && valueCarriesPrivateMedia(op.value)) {
         check.errors.push(
           `${opLabel(
             name,

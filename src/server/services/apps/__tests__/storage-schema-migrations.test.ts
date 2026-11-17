@@ -918,10 +918,26 @@ describe('checkStorageMigrations — default values', () => {
       'a resolved content url',
       'https://orchestration-new.civitai.com/v2/consumer/blobs/content/Tk1',
     ],
+    ['a host split by a tab', 'https://orches\ttration.civitai.com/v2/consumer/blobs/T1'],
+    ['a host split by a newline', 'https://orchestration.civitai\n.com/x'],
   ])('🔴 a default carrying %s is refused', (_label, value) => {
     const check = withDefault(value);
     expect(check.errors).toEqual([expect.stringMatching(/orchestrator media link/)]);
     expect(() => assertStorageMigrationsCover(check)).toThrow(StorageMigrationRefusal);
+  });
+
+  it('🔴 a link nested in an object default, or used as a key, is refused', () => {
+    const ANY = obj({ meta: {} }, { additionalProperties: false, required: ['meta'] });
+    for (const value of [
+      { nested: { img: 'https://orches\ttration.civitai.com/x' } },
+      { 'orchestration.civitai.com': 1 },
+    ]) {
+      const check = checkStorageMigrations(
+        manifest({ cards: cards(obj({ meta: {} }, { additionalProperties: false })) }),
+        manifest({ cards: cards(ANY, [{ op: 'default', path: '/meta', value }]) })
+      );
+      expect(check.errors).toEqual([expect.stringMatching(/orchestrator media link/)]);
+    }
   });
 
   it.each([

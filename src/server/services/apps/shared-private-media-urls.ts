@@ -34,6 +34,8 @@ const decodePercents = (s: string) =>
 /** What a URL parser makes of the text: compatibility forms folded, dot segments resolved. */
 function asParserReadsIt(s: string) {
   let out = s
+    // URL parsers drop ASCII tab and newlines anywhere in a URL.
+    .replace(/[\t\n\r]/g, '')
     .normalize('NFKC')
     .replace(/[。．｡]/g, '.')
     .toLowerCase();
