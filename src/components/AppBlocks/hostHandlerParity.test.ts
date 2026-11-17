@@ -334,7 +334,8 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       // 23: PERSIST_GENERATION_SOURCE, pinned by PageBlockHostGenerationSource.browser.test.tsx.
       // 24: GET_WORKFLOW_MEDIA, pinned by PageBlockHostWorkflowMedia.browser.test.tsx.
       // 25: REQUEST_OUTPUT_UNLOCK, pinned by {PageBlock,Iframe}HostOutputUnlock.browser.test.tsx.
-      expect(unforwarded).toHaveLength(25);
+      // 26: SHARE_LINK, pinned by PageBlockHostDeepLinks.browser.test.tsx.
+      expect(unforwarded).toHaveLength(26);
       const pins = pinsFromTestSources();
       expect(pins.length).toBeGreaterThanOrEqual(30);
       expect([...new Set(pins.map((p) => p.type))].sort()).toEqual(unforwarded);

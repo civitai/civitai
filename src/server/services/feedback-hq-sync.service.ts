@@ -1,5 +1,10 @@
 import type { FeedbackTriageRequest } from '@civitai/moderation';
-import { HQ_TASK_URL_PREFIX, hqTaskFromUrl } from '@civitai/shared/clickup-url';
+import {
+  HQ_ORIGIN,
+  HQ_TASK_ID_PATTERN,
+  HQ_TASK_URL_PREFIX,
+  hqTaskFromUrl,
+} from '@civitai/shared/clickup-url';
 import type { FeedbackTriageStatus } from '@civitai/shared/feedback.constants';
 import type { FeedbackHqSyncEvent } from '~/server/prom/feedback-hq-sync.metrics';
 import type { FeedbackTriageOutcome } from '~/server/services/feedback-triage.service';
@@ -65,7 +70,8 @@ export type TaskTarget =
   | { unresolved: 'task_missing' | 'unknown_done_status' | 'merge_too_deep' };
 
 export type SyncDeps = {
-  listLinks: () => Promise<HqFeedbackLink[]>;
+  /** `truncated`: HQ held more links than one run reads; the rest are not visited this run. */
+  listLinks: () => Promise<{ links: HqFeedbackLink[]; truncated: boolean }>;
   readRows: (ids: number[]) => Promise<FeedbackSyncRow[]>;
   /** null: HQ does not show the task. Throws on any other failure. */
   readTask: (id: string) => Promise<HqTaskRow | null>;
@@ -87,6 +93,8 @@ export type HqFeedbackLink = { feedbackId: number; taskId: string; area?: string
 
 export type SyncSummary = {
   links: number;
+  /** HQ held more links than one run reads (MAX_PAGES); only those read were worked. */
+  linksTruncated: boolean;
   rows: number;
   moved: Record<SyncStatus, number>;
   stamped: number;
@@ -102,12 +110,11 @@ export type SyncSummary = {
 };
 
 const RANK: Record<string, number> = { new: 0, reviewed: 1, actioned: 2, dismissed: 2 };
-const TASK_ID = /^[a-z0-9_-]{1,100}$/;
 
 /** `hq:<id>` and `<id>` name the same task; anything not id-shaped is no task. */
 const bareTaskId = (value: string) => {
   const id = value.startsWith('hq:') ? value.slice(3) : value;
-  return TASK_ID.test(id) ? id : null;
+  return HQ_TASK_ID_PATTERN.test(id) ? id : null;
 };
 
 /** What a task's outcome means for a feedback row, following merges. Throws when a read throws. */
@@ -140,6 +147,7 @@ export async function resolveTaskTarget(
 export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
   const summary: SyncSummary = {
     links: 0,
+    linksTruncated: false,
     rows: 0,
     moved: { reviewed: 0, actioned: 0, dismissed: 0 },
     stamped: 0,
@@ -159,12 +167,22 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
 
   let links: HqFeedbackLink[];
   try {
-    links = await deps.listLinks();
+    const listed = await deps.listLinks();
+    links = listed.links;
+    summary.linksTruncated = listed.truncated;
   } catch (error) {
     summary.hqReadFailures++;
     deps.count('hq_read_failed');
     deps.log({ type: 'error', step: 'list-links', message: (error as Error).message });
     return summary;
+  }
+  // 🔴 A truncated list is SAFE to work: a row is only ever read and written because a link names
+  // it, so a row whose link was not read this run is simply not visited — its absence drives no
+  // write. Counted, because the links past the cut are the same ones every run while HQ's order
+  // holds, and they would then never be worked.
+  if (summary.linksTruncated) {
+    deps.count('links_truncated');
+    deps.log({ type: 'warning', step: 'list-links', truncated: true, read: links.length });
   }
 
   // One task per feedback row: the first link wins, as HQ keys `feedback_items` on the feedback id.
@@ -377,10 +395,10 @@ export async function runFeedbackHqSyncGuarded({
   return runFeedbackHqSync(make(token, actorId));
 }
 
-const HQ_ORIGIN = 'https://hq.civitai.com';
 const HQ_TIMEOUT_MS = 10_000;
 const PAGE_LIMIT = 200;
-const MAX_PAGES = 25;
+/** Pages of links one run reads; a list longer than this is worked up to it (`links_truncated`). */
+export const MAX_PAGES = 25;
 
 /** HQ reads with a `read`-scoped token: the linked feedback items, and one task at a time. */
 export function createHqFeedbackReader({
@@ -426,14 +444,14 @@ export function createHqFeedbackReader({
               area: typeof area === 'string' ? area : undefined,
             });
         }
-        if (typeof body.next !== 'string' || !body.next) return links;
+        if (typeof body.next !== 'string' || !body.next) return { links, truncated: false };
         cursor = body.next;
       }
-      throw new Error(`more than ${MAX_PAGES} pages of feedback items`);
+      return { links, truncated: true };
     },
 
     async readTask(id) {
-      if (!TASK_ID.test(id)) throw new Error('not an HQ task id');
+      if (!HQ_TASK_ID_PATTERN.test(id)) throw new Error('not an HQ task id');
       const res = await get(`/api/v1/data/tasks/${id}`);
       if (res.status === 404) return null;
       if (!res.ok) throw new Error(`HQ answered ${res.status} reading a task`);

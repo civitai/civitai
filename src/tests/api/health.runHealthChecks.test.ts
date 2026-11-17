@@ -62,7 +62,6 @@ vi.mock('~/server/db/pgDb', () => ({
 }));
 
 vi.mock('~/server/meilisearch/client', () => ({
-  metricsSearchClient: null,
   MeiliCallTimeoutError: class MeiliCallTimeoutError extends Error {},
 }));
 

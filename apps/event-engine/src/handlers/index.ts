@@ -18,7 +18,6 @@ import { comicEngagementHandler } from './comic-engagements';
 import { bountyEntryHandler } from './bounty-entries';
 import { bountyBenefactorHandler } from './bounty-benefactors';
 import { bountyHandler } from './bounty';
-import { tagsHandler } from './tags';
 import { modelVersionEventsHandler } from './model-version-events';
 import { jobsHandler } from './jobs';
 import { manualHandler } from './manual';
@@ -58,7 +57,6 @@ export const eventHandlers: Record<string, EventHandler> = {
 
   // Tags
   tagEngagementHandler,
-  tagsHandler,
 
   // Engagements
   bountyEngagementHandler,

@@ -12,6 +12,8 @@ import { REDIS_SYS_KEYS } from '../client';
  * The list is a hand-maintained literal on purpose. Never build it from `REDIS_SYS_KEYS`.
  */
 const SYS_KEY_LEDGER = [
+  'app:cases:send-running',
+  'app:cases:sends-paused',
   'app:held-sheet:code',
   'app:held-sheet:session',
   'app:page-access',

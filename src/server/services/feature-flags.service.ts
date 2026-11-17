@@ -816,6 +816,7 @@ const featureFlags = createFeatureFlags({
   // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
   knightsEnqueue: ['granted'],
   textScanPromptPublish: ['granted'],
+  textScanPromptPublishIntent: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.

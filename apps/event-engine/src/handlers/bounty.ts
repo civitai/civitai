@@ -9,10 +9,6 @@ export const bountyHandler = createEventHandler<Bounty>({
   tables: ['Bounty'],
   operations: ['create', 'update', 'delete'],
   processor: async ({ operation, record, actions }) => {
-    // Feed update for the bounty itself
-    const updateType = operation === 'delete' ? 'delete' : 'update';
-    actions.feedUpdate('Bounty', record.id, updateType);
-
     // Update user's bounty count if creating/deleting
     if (operation !== 'update') {
       const userMetric = actions.forMetric('User', record.userId).as(record.userId)

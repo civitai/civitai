@@ -120,6 +120,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { parseManifestStorage } from '~/shared/constants/block-storage.constants';
 import storageRoute from '~/pages/api/v1/blocks/storage/[[...path]]';
 import promClient from 'prom-client';
+import { DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX } from '~/server/utils/shared-storage-rate-limit';
 
 void loggingMock;
 
@@ -655,8 +656,9 @@ describe('flag on: the free path is throttled and counted', () => {
       if (r.status === 200) served += 1;
       else refused = r;
     }
-    // 120 a minute: the first write and 119 free puts are served, the next is refused.
-    expect(served).toBe(120);
+    // One bucket's worth a minute: the first write and the free puts after it are served, the
+    // next is refused.
+    expect(served).toBe(DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX);
     expect(refused?.status).toBe(429);
     expect(refused?.body).toMatchObject({ code: 'rate_limited', details: { bucket: 'write' } });
     // None of the free puts spent the shared-write budget.
@@ -677,8 +679,8 @@ describe('flag on: the free path is throttled and counted', () => {
   });
 });
 
-describe('the race: a write that lands while the request is in flight', () => {
-  it('a body equal to the OLD document, after a concurrent change landed, spends, scans and writes', async () => {
+describe('a body equal to an OLDER version is a change', () => {
+  it('a body equal to the OLD document, after another write changed it before the probe, spends, scans and writes', async () => {
     const A = freshApp();
     const t = await mint(A, V1);
     await expectOk(put(t, 'k1', { n: 1 }));
@@ -693,7 +695,7 @@ describe('the race: a write that lands while the request is in flight', () => {
       );
     };
     const r = await expectOk(put(t, 'k1', { n: 1 }));
-    expect(h.onSessionLookup).toBeNull(); // the race write ran
+    expect(h.onSessionLookup).toBeNull(); // the intervening write ran
     expect((r.body as { version: number }).version).toBe(3);
     expect(await row(A, 'k1')).toMatchObject({ data: { n: 1 }, version: 3 });
     expect(sharedBudget(A)).toEqual(SHARED_AFTER_TWO_WRITES);
