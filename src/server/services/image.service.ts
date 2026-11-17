@@ -251,7 +251,9 @@ import {
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
+import { Flags } from '~/shared/utils/flags';
 import {
+  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
@@ -7449,6 +7451,10 @@ const notHeldForReviewWhere: Prisma.ImageWhereInput = {
   OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
 };
 
+/** Held to the request's servable levels: a capped request gets no unrated upload either. */
+const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
+  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
+
 // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
 // over a crucible's maxClipSeconds before the user spends a click on them.
 const myImagesSelect = {
@@ -7473,10 +7479,12 @@ async function getFailedEntryDrafts({
   userId,
   type,
   limit,
+  servableLevels,
 }: {
   userId: number;
   type: Prisma.ImageWhereInput['type'];
   limit: number;
+  servableLevels: number;
 }) {
   try {
     const held = await ownerHeld(dbWrite, Prisma.sql`FROM (SELECT ${userId}::int AS "userId") m`);
@@ -7491,6 +7499,7 @@ async function getFailedEntryDrafts({
         nsfwLevel: { not: NsfwLevel.Blocked },
         createdAt: { gte: decreaseDate(new Date(), 7, 'days') },
         ...entryDraftImageWhere(),
+        AND: [servableLevelWhere(servableLevels)],
       },
       take: limit,
       orderBy: { id: 'desc' },
@@ -7521,7 +7530,12 @@ export const getMyImages = async ({
   userId,
   limit,
   cursor = 0,
-}: GetMyImagesInput & { userId: number }) => {
+  servableLevels,
+}: GetMyImagesInput & {
+  userId: number;
+  /** `requestServableLevels(ctx)`: the input carries no level, so the domain cap is applied here. */
+  servableLevels: number;
+}) => {
   const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
   const type = {
     in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
@@ -7545,7 +7559,7 @@ export const getMyImages = async ({
           : {}),
         // The unpublished path has no review gate of its own; these holds stay out of it too,
         // for moderators as well: they review held media in the mod tools.
-        AND: [notHeldForReviewWhere],
+        AND: [notHeldForReviewWhere, servableLevelWhere(servableLevels)],
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,
@@ -7553,7 +7567,7 @@ export const getMyImages = async ({
     });
     const failedEntryDraftsQuery =
       publishedOnly && includeEntryDrafts && !cursor
-        ? getFailedEntryDrafts({ userId, type, limit })
+        ? getFailedEntryDrafts({ userId, type, limit, servableLevels })
         : Promise.resolve([]);
     const [media, failedEntryDrafts] = await Promise.all([mediaQuery, failedEntryDraftsQuery]);
 

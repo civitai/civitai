@@ -151,9 +151,8 @@ export async function swapFlagDay(
     type: 'info',
     name: 'flag-race-swap',
     event: event.name,
-    flagDayId: day.id,
     crucibleId: crucible.id,
-    flags: imageIds.length,
+    payload: { flagDayId: day.id, flags: imageIds.length },
   });
   return day;
 }

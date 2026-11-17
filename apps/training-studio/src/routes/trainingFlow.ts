@@ -136,6 +136,9 @@ export function runVersion(run: Run): ModelVersionInfo {
 
 export const runEngine = (run: Run): string => run.engine ?? runVersion(run).engine ?? 'ai-toolkit';
 export const runSupportsKohya = (run: Run): boolean => !!kohyaFamily(runVersion(run).ecosystem);
+/** A card's versions share one ecosystem, so its first decides whether the card trains on Kohya. */
+export const cardSupportsKohya = (card: ModelCard): boolean =>
+  !!kohyaFamily(card.versions[0]!.ecosystem);
 
 /** The run on `engine`, moved to the card's first version when its pick isn't offered there (Custom
  *  exists for some cards only under Kohya). */
@@ -203,7 +206,7 @@ export function versionOptions(
 ): { key: string; label: string }[] {
   return [
     ...visibleVersions(card, enabledFlags).map((v) => ({ key: v.key, label: v.label })),
-    ...(allowsCustomBase(card) || (engine === 'kohya' && kohyaFamily(card.versions[0]!.ecosystem))
+    ...(allowsCustomBase(card) || (engine === 'kohya' && cardSupportsKohya(card))
       ? [{ key: CUSTOM_VERSION_KEY, label: 'Custom' }]
       : []),
   ];

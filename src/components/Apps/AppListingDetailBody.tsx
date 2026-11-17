@@ -22,6 +22,7 @@ import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconApps,
   IconArrowLeft,
+  IconBrandGithub,
   IconBug,
   IconCategory,
   IconClock,
@@ -831,6 +832,7 @@ const DETAIL_ROW_ICONS: Record<ListingDetailRow['key'], Icon> = {
   category: IconCategory,
   rating: IconShield,
   source: IconCode,
+  'actions-run': IconBrandGithub,
   support: IconBug,
   reviews: IconThumbUp,
   plays: IconPlayerPlay,
