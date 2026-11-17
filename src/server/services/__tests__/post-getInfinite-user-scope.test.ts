@@ -38,7 +38,12 @@ const baseInput = {
 };
 
 async function run(input: Partial<Parameters<typeof getPostsInfinite>[0]>) {
-  return getPostsInfinite({ ...baseInput, ...input } as Parameters<typeof getPostsInfinite>[0])
+  return getPostsInfinite({
+    asModerator: true,
+    asOwner: true,
+    ...baseInput,
+    ...input,
+  } as Parameters<typeof getPostsInfinite>[0])
     .then((result) => ({ result }))
     .catch((error) => {
       if (error instanceof QueryIssued) return { result: undefined };
