@@ -57,6 +57,9 @@ function parsePayeeStatus(status: unknown) {
   return parsed;
 }
 
+const EVENT_PROCESSING = 'processing';
+const EVENT_DONE = 'done';
+
 async function buffer(readable: Readable) {
   const chunks = [];
   for await (const chunk of readable) {
@@ -105,21 +108,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       event = JSON.parse(rawPayload) as TipaltiWebhookEventData;
 
       // Claimed only once the signature holds, and for as long as a signature stays valid, so a
-      // copy of a delivery cannot be processed twice. Released below if processing fails, so
-      // Tipalti's retry is still handled. Without Redis the event is processed unguarded.
+      // copy of a delivery cannot be processed twice. A copy arriving mid-processing gets a 409 so
+      // Tipalti retries it; the claim is released if processing fails. Without Redis the event is
+      // processed unguarded.
       if (event.id) {
         const key = `${REDIS_KEYS.WEBHOOKS.TIPALTI_EVENT}:${event.id}` as const;
         const claimed = await redis
-          .set(key, '1', { EX: TIPALTI_SIGNATURE_LIFETIME_SECONDS, NX: true })
+          .set(key, EVENT_PROCESSING, { EX: TIPALTI_SIGNATURE_LIFETIME_SECONDS, NX: true })
           .catch((error: Error) => {
             logToAxiom(
               { type: 'error', name: 'tipalti-webhook-dedupe-unavailable', message: error.message },
               'webhooks'
             );
-            return 'OK' as const;
+            return 'unavailable' as const;
           });
-        if (claimed !== 'OK') return res.status(200).json({ received: true, duplicate: true });
-        claimKey = key;
+        if (claimed === 'OK') claimKey = key;
+        else if (claimed !== 'unavailable') {
+          const state = await redis.get(key).catch(() => null);
+          if (state === EVENT_DONE)
+            return res.status(200).json({ received: true, duplicate: true });
+          return res.status(409).send({ error: 'Event is already being processed' });
+        }
       }
 
       switch (event.type) {
@@ -189,6 +198,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).send('Webhook Error');
     }
 
+    if (claimKey)
+      await redis
+        .set(claimKey, EVENT_DONE, { EX: TIPALTI_SIGNATURE_LIFETIME_SECONDS, XX: true })
+        .catch((error: Error) =>
+          logToAxiom(
+            { type: 'error', name: 'tipalti-webhook-dedupe-mark-failed', message: error.message },
+            'webhooks'
+          )
+        );
     return res.status(200).json({ received: true });
   } else {
     res.setHeader('Allow', 'POST');

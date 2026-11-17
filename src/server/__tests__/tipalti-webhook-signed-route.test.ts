@@ -8,6 +8,7 @@ import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as UserPaymentConfigurationService from '~/server/services/user-payment-configuration.service';
 import type * as CreatorProgramService from '~/server/services/creator-program.service';
 
@@ -209,7 +210,7 @@ describe('POST /api/webhooks/tipalti with a signed event', () => {
   );
 
   it('rejects a timestamp more than a minute in the future', async () => {
-    const res = await post(sign(body, Math.floor(Date.now() / 1000) + 5 * 60));
+    const res = await post(sign(body, Math.floor(Date.now() / 1000) + 90));
 
     expect(res.status).toBe(400);
     expect(updateByTipaltiAccount).not.toHaveBeenCalled();
@@ -251,6 +252,33 @@ describe('POST /api/webhooks/tipalti delivered more than once', () => {
     expect(first.status).toBe(400);
     expect(second.status).toBe(200);
     expect(updateByTipaltiAccount).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks for a retry of a copy that arrives while the first is processing, and processes it once the first fails', async () => {
+    let failFirst!: (error: Error) => void;
+    updateByTipaltiAccount.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => (failFirst = reject))
+    );
+
+    const first = post(sign(body));
+    await vi.waitFor(() => expect(updateByTipaltiAccount).toHaveBeenCalledTimes(1));
+    const during = await post(sign(body));
+    failFirst(new Error('db down'));
+    const retried = await post(sign((await first, body)));
+
+    expect(during.status).toBe(409);
+    expect((await first).status).toBe(400);
+    expect(retried.status).toBe(200);
+    expect(updateByTipaltiAccount).toHaveBeenCalledTimes(2);
+  });
+
+  it('processes events while the dedupe store is unavailable', async () => {
+    redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+
+    const res = await post(sign(body));
+
+    expect(res.status).toBe(200);
+    expect(updateByTipaltiAccount).toHaveBeenCalledTimes(1);
   });
 
   it('processes a signed event after an invalid request carrying the same id', async () => {
