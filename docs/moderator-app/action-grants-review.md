@@ -57,7 +57,7 @@ withheld — so it is the one that cannot be spotted without ticking it and comp
       → `/audit/training-data/<versionId>`.
 - [ ] `tickets.reply` — *Reply to and change the status of a support ticket*
       → `/tickets/<view>?ticket=<id>`, the Reply panel.
-- [ ] `tickets.escalate` — *Send a moderation ticket to support*
+- [ ] `tickets.escalate` — *Hand off a moderation ticket (support, bug report, mod lead)*
       → `/tickets/moderation?ticket=<id>`, the Send to support panel.
 
 ## 3. Tick the page grants

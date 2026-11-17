@@ -49,13 +49,15 @@ type HqLogStatus =
   | 'bad-response'
   | 'filed';
 
-// Id and outcome only — never the token, the report or HQ's reply.
-const log = (feedbackId: number, status: HqLogStatus) =>
+// Ids and outcome only — never the token, the report or HQ's reply. `userId` only on a cap refusal, so
+// refusals can be counted per reporter.
+const log = (feedbackId: number, status: HqLogStatus, userId?: number) =>
   logToAxiom({
     name: 'feedback-hq-intake',
     type: status === 'filed' ? 'info' : 'warning',
     feedbackId,
     status,
+    ...(userId !== undefined ? { userId } : {}),
   });
 
 const INVISIBLE_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
@@ -412,7 +414,7 @@ export async function fileFeedbackToHq(input: FeedbackHqFilingInput): Promise<vo
     const token = env.HQ_INTAKE_TOKEN;
     if (!baseUrl || !token) return void (await log(input.feedbackId, 'unconfigured'));
     if (!(await claimHqFilingSlot(input.userId)))
-      return void (await log(input.feedbackId, 'user-cap'));
+      return void (await log(input.feedbackId, 'user-cap', input.userId));
 
     const screenshotId = input.context?.screenshotId;
     const considered =
