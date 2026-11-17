@@ -128,6 +128,9 @@ function logged() {
   return logToAxiom.mock.calls.map((c) => c[0] as Record<string, unknown>);
 }
 
+const missedOf = (p: Record<string, unknown>) =>
+  (p.payload as { indexesMissed?: unknown } | undefined)?.indexesMissed;
+
 function payloadFor(key: string) {
   return logged().find((p) => p.key === key);
 }
@@ -520,11 +523,13 @@ describe('search-index-cleanup: an index the run never reached is reported', () 
 
     await searchIndexCleanupJob.run({}).result;
 
-    const missedLine = logged().find((p) => p.indexesMissed !== undefined);
+    const missedLine = logged().find((p) => missedOf(p) !== undefined);
     expect(missedLine?.type).toBe('error');
-    expect(missedLine?.indexesConfigured).toBe(CLEANUP_INDEXES.length);
-    expect(missedLine?.indexesAttempted).toBe(2);
-    expect(missedLine?.indexesMissed).toEqual(rest.map((c) => c.key));
+    expect(missedLine?.payload).toEqual({
+      indexesConfigured: CLEANUP_INDEXES.length,
+      indexesAttempted: 2,
+      indexesMissed: rest.map((c) => c.key),
+    });
     expect(missedLine?.message).toBe(
       `run ENDED BEFORE ${rest.length} of ${CLEANUP_INDEXES.length} configured index(es) ` +
         `were attempted: ${rest.map((c) => c.key).join(', ')}`
@@ -540,7 +545,10 @@ describe('search-index-cleanup: an index the run never reached is reported', () 
 
     await searchIndexCleanupJob.run({}).result;
 
-    expect(logged().find((p) => p.indexesMissed !== undefined)).toBeUndefined();
+    // Matched on the message, not the payload, so a log that fires in any shape fails this.
+    expect(
+      logged().find((p) => String(p.message ?? '').startsWith('run ENDED BEFORE'))
+    ).toBeUndefined();
   });
 });
 

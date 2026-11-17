@@ -72,6 +72,8 @@ beforeAll(async () => {
       (60, 'error', 6, 'Error', NULL);
     INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevelLocked") VALUES
       (70, 'pending-mod-rated', 7, 'Pending', true);
+    INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel") VALUES
+      (80, 'unrated', 8, 'Scanned', 0);
   `);
 });
 afterAll(() => pg.close());
@@ -136,9 +138,11 @@ describe('servable profile pictures', () => {
       50,
       60,
       70,
+      80,
     ]);
 
-    // Unscanned pictures (Pending, Error) are left out; a moderator's rating stands in for a scan.
+    // Unscanned (Pending, Error) and unrated pictures are left out; a moderator's rating stands in
+    // for a scan.
     expect(pictureUrls(pictures)).toEqual(['clean', 'other-review', 'pending-mod-rated']);
   });
 
