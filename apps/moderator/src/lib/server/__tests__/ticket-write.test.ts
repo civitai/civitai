@@ -210,6 +210,13 @@ describe('privacy', () => {
     const res = await writer.privacy('9', ticket, null, ACK, mod);
     expect((res as { message: string }).message).toMatch(/NOT sent to Legal/);
     expect(deps.reply).not.toHaveBeenCalled();
+    // The note written before the PUT said it was sent; the ticket is corrected.
+    expect(vi.mocked(deps.note).mock.calls.at(-1)?.[1]).toBe(
+      'The hand-off to Legal above did NOT go through.'
+    );
+    const unsure = setup({ escalate: boom });
+    await unsure.writer.privacy('9', ticket, null, ACK, mod);
+    expect(vi.mocked(unsure.deps.note).mock.calls.at(-1)?.[1]).toMatch(/may or may not/);
   });
 
   it('reports a failed acknowledgment after a landed PUT as a warning that says whether it went', async () => {

@@ -58,8 +58,9 @@ export type RoutingInput = {
 const isIn = (list: readonly (string | number)[], value: string | number) => list.includes(value);
 
 /**
- * Precedence: the privacy tag (Legal owns the ticket whatever else it carries), then moderation status, then the sent-to-support tag, then `cf_feature`, then the router's topic
- * (only for a ticket with no feature). A moderation status outranks the tag because that is how support
+ * Precedence: the privacy tag (Legal owns the ticket whatever else it carries), then moderation
+ * status, then the sent-to-support tag, then `cf_feature`, then the router's topic (only for a ticket
+ * with no feature). A moderation status outranks the sent-to-support tag because that is how support
  * hands an escalated ticket back.
  */
 export function routeTicket({ cfFeature, status, routerTopic, tags }: RoutingInput): TicketRoute {

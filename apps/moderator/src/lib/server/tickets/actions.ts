@@ -196,12 +196,12 @@ export function ticketActions(view: TicketView): Actions {
             );
           }),
 
-          // It emails the requester, so it needs the reply grant as well as the hand-off one.
-          privacy: requiresGrant('tickets.escalate', async ({ request, locals }) => {
-            if (!locals.grants['tickets.reply'])
+          // Its own grant (it ships dark), plus the hand-off one, plus the reply one: it emails the requester.
+          privacy: requiresGrant('tickets.privacy', async ({ request, locals }) => {
+            if (!locals.grants['tickets.escalate'] || !locals.grants['tickets.reply'])
               return fail(403, {
                 error:
-                  'Sending to Legal emails the requester, so it also needs the reply permission.',
+                  'Sending to Legal also needs the hand-off and reply permissions: it emails the requester.',
               });
             const form = await request.formData();
             const ticketId = ticketIdOf(form);

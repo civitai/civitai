@@ -36,6 +36,7 @@
     view,
     canReply,
     canEscalate,
+    canPrivacy,
     canAccountAct,
     canUnban,
     onleave,
@@ -44,6 +45,7 @@
     view: TicketView;
     canReply: boolean;
     canEscalate: boolean;
+    canPrivacy: boolean;
     canAccountAct: boolean;
     canUnban: boolean;
     /** The ticket no longer belongs in this list (another view, or resolved): move to the next one. */
@@ -258,7 +260,7 @@
       <p class="m-0 mb-2 text-dark-2">
         Not a moderation issue? Send it to the team that owns it.
       </p>
-      <TicketHandOff ticketId={row.id} {canEscalate} {canReply} ondone={done} />
+      <TicketHandOff ticketId={row.id} {canEscalate} {canPrivacy} ondone={done} />
     </TriageCard>
   {/if}
 {/snippet}

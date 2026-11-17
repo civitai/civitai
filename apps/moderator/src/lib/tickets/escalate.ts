@@ -37,7 +37,8 @@ export function escalationFields(
 
 /**
  * Hands a ticket to Legal. Freshdesk has no Legal group, so the group is left alone: the tag is the
- * routing key. Status is never Resolved or Closed, and priority is not sent, so it cannot drop.
+ * routing key. Legal requires that this hand-off never resolves, closes or lowers the priority of a
+ * ticket, so never add a resolving status or `priority` here.
  */
 export const privacyFields = (currentTags: readonly string[]): EscalationFields => ({
   tags: withTag(currentTags, PRIVACY_REQUEST_TAG),

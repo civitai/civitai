@@ -1,14 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock, resetSharedMocks } from '~/__tests__/mocks';
 
-/**
- * `/api/mod/feedback/ticket-bug`: the moderator app's "Bug → dev queue" hand-off, filed as the moderator.
- *
- * Drives the REAL endpoint wrapper and the REAL grant check. Faked: the session, the grant row, the
- * feedback insert and the HQ filing (each pinned by its own suite), so what is pinned here is the wiring:
- * who may file, which area, whose report, the ticket stamp, and that HQ filing happens at all.
- */
-
 const MOD = 5;
 const GRANTED_ROLE = 'moderator:tickets';
 const HQ_URL = 'https://hq.civitai.com/t/abc_def_9xyz';
@@ -104,6 +96,8 @@ describe('filing a bug from a ticket', () => {
     const { status, body } = await call(REQUEST);
     expect(status).toBe(200);
     expect(body).toEqual({ id: 77, hqUrl: HQ_URL });
+    expect(createFeedback).toHaveBeenCalledTimes(1);
+    expect(fileFeedbackToHq).toHaveBeenCalledTimes(1);
     expect(createFeedback).toHaveBeenCalledWith({
       area: 'site-bug-report',
       message: REQUEST.message,

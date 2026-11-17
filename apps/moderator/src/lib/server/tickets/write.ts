@@ -222,8 +222,7 @@ export function createTicketWriter(deps: WriteDeps) {
      * note is added to it; written after the PUT, our own note would move the ticket off Legal's status.
      *
      * 🔴 ONCE THE PUT HAS LANDED the ticket is Legal's, so a failed acknowledgment is a `warning` on a
-     * success that says plainly whether it went: a failure would invite a second click, and the
-     * requester an unknown number of emails.
+     * success that says whether it went, never a failure: a failure invites a second click.
      */
     async privacy(
       ticketId: string,
@@ -244,12 +243,19 @@ export function createTicketWriter(deps: WriteDeps) {
       const noteError = await attribute(ticketId, lines);
 
       const res = await deps.escalate(ticketId, privacyFields(ticket.tags));
-      if (res.status !== 'ok')
+      if (res.status !== 'ok') {
+        // The note above already says it was sent; correct it on the ticket.
+        await attribute(ticketId, [
+          res.status === 'error' && !res.certain
+            ? 'The hand-off to Legal above may or may not have gone through; check the tag and status.'
+            : 'The hand-off to Legal above did NOT go through.',
+        ]);
         return failure(
           res,
           'The ticket was NOT sent to Legal',
           'The ticket may or may not have been sent to Legal'
         );
+      }
       await deps.record(moderator.id, ticketNumber(ticketId), 'ticketPrivacy');
 
       const warnings: string[] = [];

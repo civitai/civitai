@@ -9,9 +9,19 @@ const resolveTicketView = vi.fn();
 const patch = vi.fn();
 const callModEndpoint = vi.fn();
 
+// The real rule, minus the denial text: the grant on `locals` decides.
 vi.mock('$lib/server/access', () => ({
-  requiresGrant: (_id: string, handler: unknown) => handler,
+  requiresGrant:
+    (id: string, handler: (e: { locals: { grants: Record<string, boolean> } }) => unknown) =>
+    (e: { locals: { grants: Record<string, boolean> } }) =>
+      e.locals.grants[id] ? handler(e) : { status: 403, data: { error: `denied ${id}` } },
 }));
+
+const ALL_GRANTS = {
+  'tickets.reply': true,
+  'tickets.escalate': true,
+  'tickets.privacy': true,
+};
 vi.mock('../freshdesk-write.service', () => ({
   replyToTicket: (...a: unknown[]) => replyToTicket(...a),
   addPrivateNote: (...a: unknown[]) => addPrivateNote(...a),
@@ -42,7 +52,7 @@ const run = async (
   view: 'moderation' | 'support',
   action: 'reply' | 'status' | 'escalate' | 'fileBug' | 'privacy' | 'modLead',
   fields: Record<string, string>,
-  grants: Record<string, boolean> = { 'tickets.reply': true }
+  grants: Record<string, boolean> = ALL_GRANTS
 ) => {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.set(k, v);
@@ -177,8 +187,25 @@ describe('whether a status-only action changed the status', () => {
 });
 
 describe('the hand-off routes', () => {
+  it('refuses Privacy while its grant is off (it ships dark), even with every other ticket grant', async () => {
+    const res = await run(
+      'moderation',
+      'privacy',
+      { ticketId: '5' },
+      { 'tickets.reply': true, 'tickets.escalate': true }
+    );
+    expect(res).toMatchObject({ status: 403 });
+    expect(getTicketDetail).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
+  });
+
   it('refuses Privacy without the reply permission, because it emails the requester', async () => {
-    const res = await run('moderation', 'privacy', { ticketId: '5' }, {});
+    const res = await run(
+      'moderation',
+      'privacy',
+      { ticketId: '5' },
+      { 'tickets.privacy': true, 'tickets.escalate': true }
+    );
     expect(res).toMatchObject({ status: 403 });
     expect(getTicketDetail).not.toHaveBeenCalled();
     expect(writes()).toEqual([]);

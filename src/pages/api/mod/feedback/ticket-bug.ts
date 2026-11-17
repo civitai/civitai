@@ -46,7 +46,7 @@ export default defineModeratorEndpoint('feedback.ticketBug', {
       message: input.message,
       context,
     });
-    // primary: reads back the HQ link `fileFeedbackToHq` wrote a moment ago.
+    // primary: a replica may not have the HQ link `fileFeedbackToHq` wrote a moment ago yet.
     const row = await dbWrite.feedback.findUnique({
       where: { id: saved.id },
       select: { context: true },

@@ -157,6 +157,9 @@ export const PERMISSIONS = [
   { id: 'tickets.reply', label: 'Reply to and change the status of a support ticket' },
   // Hands a moderation ticket to support, naming the moderator who did it.
   { id: 'tickets.escalate', label: 'Send a moderation ticket to support' },
+  // The privacy hand-off emails the requester Legal's acknowledgment. Its own grant so it can ship dark
+  // and be turned on for one role first, then for every moderator once Legal has proved its wake.
+  { id: 'tickets.privacy', label: 'Hand a moderation ticket to Legal as a privacy request' },
   { id: 'scan-label.quota.edit', label: 'Set scan label voters and their daily quotas' },
   // Submits a real scan with the site's system account; the page shows signals only.
   { id: 'image.scanProbe.run', label: 'Run the image scanner on chosen images (signals only)' },

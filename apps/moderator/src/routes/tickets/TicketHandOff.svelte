@@ -5,67 +5,23 @@
   import { FormState } from '$lib/form-state.svelte';
   import { denied } from '$lib/permissions';
   import { cancelUnlessConfirming } from '$lib/tickets/confirm-guard';
+  import { handOffRoutes, type HandOffRoute } from '$lib/tickets/hand-off';
 
   let {
     ticketId,
     canEscalate,
-    canReply,
+    canPrivacy,
     ondone,
   }: {
     ticketId: string;
     canEscalate: boolean;
-    canReply: boolean;
+    /** The privacy route has its own grant and ships dark: without it the button is not shown at all. */
+    canPrivacy: boolean;
     ondone: (what: string, data: Record<string, unknown> | undefined, status: number | null) => void;
   } = $props();
 
-  type Route = {
-    action: 'fileBug' | 'privacy' | 'modLead' | 'escalate';
-    label: string;
-    confirm: string;
-    yes: string;
-    done: string;
-    /** The note is the report itself, so it cannot be empty. */
-    needsNote?: boolean;
-    /** It emails the requester. */
-    emails?: boolean;
-  };
 
-  const ROUTES: Route[] = [
-    {
-      action: 'fileBug',
-      label: 'Bug → dev queue…',
-      confirm:
-        'Files a bug report for the dev team from your note. The ticket stays here: reply to it or close it as usual.',
-      yes: 'Yes, file the bug',
-      done: 'Bug report filed',
-      needsNote: true,
-    },
-    {
-      action: 'privacy',
-      label: 'Privacy / account deletion…',
-      confirm:
-        "Emails the requester Legal's acknowledgment and hands the ticket to Legal; it leaves both ticket views. Not for takedowns (DMCA, TAKE IT DOWN, likeness), law enforcement or CSAM.",
-      yes: 'Yes, send to Legal',
-      done: 'Sent to Legal',
-      emails: true,
-    },
-    {
-      action: 'modLead',
-      label: 'Mod lead…',
-      confirm: 'Sets "Waiting on Mod Lead" for the mod lead to pick up. Nothing is emailed.',
-      yes: 'Yes, send to the mod lead',
-      done: 'Sent to the mod lead',
-    },
-    {
-      action: 'escalate',
-      label: 'Send to support…',
-      confirm: "Nothing is emailed, but the ticket leaves the moderators' queue.",
-      yes: 'Yes, send to support',
-      done: 'Sent to support',
-    },
-  ];
-
-  let confirming = $state<Route | null>(null);
+  let confirming = $state<HandOffRoute | null>(null);
   let note = $state('');
 
   const form = new FormState({
@@ -79,7 +35,7 @@
   });
 
   const why = $derived(canEscalate ? undefined : denied('tickets.escalate'));
-  const whyFor = (r: Route) => why ?? (r.emails && !canReply ? denied('tickets.reply') : undefined);
+  const shown = $derived(handOffRoutes(canPrivacy));
 </script>
 
 <form
@@ -125,13 +81,13 @@
     </div>
   {:else}
     <div class="flex flex-wrap gap-1.5">
-      {#each ROUTES as route (route.action)}
+      {#each shown as route (route.action)}
         <Button
           type="button"
           size="sm"
           variant="outline"
-          disabled={!!whyFor(route) || form.submitting}
-          title={whyFor(route)}
+          disabled={!!why || form.submitting}
+          title={why}
           onclick={() => (confirming = route)}
           data-touch-target
         >
