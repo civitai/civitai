@@ -561,21 +561,32 @@ describe('an image whose key shop artwork uses', () => {
     expect(invalidateCalls()).toHaveLength(0);
   });
 
+  // A blocked or CSAM-review image goes with every version of its object: listed, then read back.
   it.each([
-    ['a moderator deletes it', { deletedById: 99 }, {}],
-    ['the deleter is unknown', {}, {}],
-    ['it is blocked', { deletedById: OWNER }, { ingestion: 'Blocked' }],
+    ['a moderator deletes it', { deletedById: 99 }, {}, false],
+    ['the deleter is unknown', {}, {}, false],
+    ['it is blocked', { deletedById: OWNER }, { ingestion: 'Blocked' }, true],
     // A scan error or rescan moves ingestion off Blocked but keeps the other block markers.
-    ['it keeps a block reason', { deletedById: OWNER }, { ingestion: 'Error', blockedFor: 'tos' }],
-    ['it keeps the Blocked level', { deletedById: OWNER }, { nsfwLevel: NsfwLevel.Blocked }],
-    ['it is not scanned yet', { deletedById: OWNER }, { ingestion: 'Pending' }],
-    ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }],
-  ])('deletes and purges its object when %s', async (_case, args, over) => {
+    [
+      'it keeps a block reason',
+      { deletedById: OWNER },
+      { ingestion: 'Error', blockedFor: 'tos' },
+      true,
+    ],
+    ['it keeps the Blocked level', { deletedById: OWNER }, { nsfwLevel: NsfwLevel.Blocked }, true],
+    ['it is not scanned yet', { deletedById: OWNER }, { ingestion: 'Pending' }, false],
+    ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }, true],
+  ])('deletes and purges its object when %s', async (_case, args, over, allVersions) => {
     deleted(over);
 
     await deleteImageById({ id: 4242, ...args });
 
-    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    const sent = mockB2Send.mock.calls.map(([command]) => command.constructor.name);
+    expect(sent).toEqual(
+      allVersions
+        ? ['ListObjectVersionsCommand', 'ListObjectVersionsCommand']
+        : ['DeleteObjectCommand']
+    );
     expect(invalidateCalls()).toHaveLength(1);
   });
 

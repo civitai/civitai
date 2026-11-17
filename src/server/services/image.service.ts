@@ -293,6 +293,7 @@ import {
   ImageScanFailureClass,
 } from '~/server/services/image-scan-failure';
 import { withRetries } from '~/utils/errorHandling';
+import { purgeObjectVersions } from '~/utils/s3-purge-versions';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
@@ -554,12 +555,21 @@ export async function purgeResizeCache({
 type DeleteImageFromS3Args = {
   id: number;
   url: string;
+  /** Delete every version of the object and verify none remain; see {@link purgesAllVersions}. */
+  allVersions?: boolean;
   /** Set only by {@link isPlainOwnerDelete}: keep an object that shop artwork still uses. */
   keepShopArtwork?: boolean;
   purgeOnFailure?: boolean;
   abortSignal?: AbortSignal;
   retractionGate?: RetractionGate;
 } & PurgeResizeCacheRetraction;
+
+/** A blocked image, or one under CSAM review, leaves no object version behind when deleted. */
+export function purgesAllVersions(
+  image: Parameters<typeof hasBlockMarker>[0] & { needsReview: string | null }
+): boolean {
+  return hasBlockMarker(image) || image.needsReview === 'csam';
+}
 
 /**
  * An owner deleting their own scanned image that carries no block, is not held for review and has no
@@ -619,6 +629,7 @@ export async function deleteImageFromS3(
 async function deleteImageFromStorage({
   id,
   url,
+  allVersions = false,
   // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
   // destroys and for the collateral that is knowingly accepted along with it.
   retractPublicBlobs = false,
@@ -702,15 +713,18 @@ async function deleteImageFromStorage({
     }
 
     const b2Client = getB2ImageS3Client();
-    await withRetries(() =>
-      b2Client.send(
-        new DeleteObjectCommand({
-          Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
-          Key: url,
-        }),
-        { abortSignal }
-      )
-    );
+    const bucket = env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads';
+    if (allVersions) {
+      const { versionsDeleted, remaining } = await withRetries(() =>
+        purgeObjectVersions({ client: b2Client, bucket, key: url, abortSignal })
+      );
+      if (remaining > 0)
+        throw new Error(`${remaining} object version(s) remain after deleting ${versionsDeleted}`);
+    } else {
+      await withRetries(() =>
+        b2Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: url }), { abortSignal })
+      );
+    }
   } catch (error) {
     // The DB row is already gone, so this key is the only route back to a publicly reachable
     // object (CDN urls are unsigned). `retry-image-storage-deletes` works the queue.
@@ -721,9 +735,10 @@ async function deleteImageFromStorage({
       message: 'S3 delete failed; the object may still be public',
       imageId: id,
       url,
+      allVersions,
       error: safeError(error),
     });
-    await queueImageStorageDeleteRetry({ id, url });
+    await queueImageStorageDeleteRetry({ id, url, allVersions });
   }
 
   // The attribution trail for a retraction (see `PurgeResizeCacheRetraction`). Emitted just before
@@ -763,8 +778,16 @@ export type StorageDeleteOutcome = 'deleted' | 'skipped' | 'failed';
  * written before every pod knows it breaks every Prisma reader of JobQueue. Until then this insert
  * fails and is logged, which is today's behaviour.
  */
-export async function queueImageStorageDeleteRetry({ id, url }: { id: number; url: string }) {
-  const payload: ImageStorageDeletePayload = { url };
+export async function queueImageStorageDeleteRetry({
+  id,
+  url,
+  allVersions = false,
+}: {
+  id: number;
+  url: string;
+  allVersions?: boolean;
+}) {
+  const payload: ImageStorageDeletePayload = allVersions ? { url, allVersions: true } : { url };
   try {
     await dbWrite.$executeRaw`
       INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
@@ -772,8 +795,10 @@ export async function queueImageStorageDeleteRetry({ id, url }: { id: number; ur
       JobQueueType.ImageStorageDelete
     }::"JobQueueType", ${JSON.stringify(payload)}::jsonb)
       -- Every failed retry lands here again; an unchanged key must not leave a dead row version.
+      -- A queued all-versions purge of the same key stays one: a later key-only failure cannot downgrade it.
       ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "data" = EXCLUDED."data"
         WHERE "JobQueue"."data"->>'url' IS DISTINCT FROM EXCLUDED."data"->>'url'
+          OR (EXCLUDED."data"->>'allVersions' IS NOT NULL AND "JobQueue"."data"->>'allVersions' IS NULL)
     `;
   } catch (error) {
     logToAxiom({
@@ -938,6 +963,7 @@ export const deleteImageById = async ({
       deleteImageFromS3({
         id,
         url: image.url,
+        allVersions: purgesAllVersions(image),
         keepShopArtwork: isPlainOwnerDelete({ ...image, openReport }, deletedById),
       }),
       queueImageSearchIndexUpdate({
@@ -1074,6 +1100,9 @@ export async function deleteImages(
         nsfwLevel: number;
         userId: number;
         parentId: number | null;
+        blockedFor: string | null;
+        needsReview: string | null;
+        ingestion: string;
       }[]
     >`
       WITH doomed AS (
@@ -1089,7 +1118,8 @@ export async function deleteImages(
         -- Again here: a row changed while this statement waits for it is re-checked only against
         -- the DELETE's own WHERE, never the CTE's, and only on its own columns.
         ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
-      RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
+      RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId",
+        "blockedFor", "needsReview", ingestion::text
     `;
     const imageIds = results.map((x) => x.id);
     const returned = new Set(imageIds);
@@ -1143,6 +1173,9 @@ type DeletedImageRow = {
   nsfwLevel: number;
   userId: number;
   parentId: number | null;
+  blockedFor: string | null;
+  needsReview: string | null;
+  ingestion: string;
   /** A retracting delete's outcome; absent when nothing was asked (another row still uses the url). */
   retraction?: ImageCacherOutcome;
 };
@@ -1164,7 +1197,12 @@ async function deleteFromStorage(
   if (!retractPublicBlobs) {
     await Limiter({ batchSize: 5 }).process(
       rows,
-      async (rows) => await Promise.all(rows.map(({ id, url }) => deleteImageFromS3({ id, url })))
+      async (rows) =>
+        await Promise.all(
+          rows.map((row) =>
+            deleteImageFromS3({ id: row.id, url: row.url, allVersions: purgesAllVersions(row) })
+          )
+        )
     );
     return rows;
   }
@@ -1174,6 +1212,7 @@ async function deleteFromStorage(
         const { purge } = await deleteImageFromStorage({
           id: row.id,
           url: row.url,
+          allVersions: purgesAllVersions(row),
           retractPublicBlobs,
           retractionGate,
           // A failed object delete is queued for its own retry, and the purge still runs.

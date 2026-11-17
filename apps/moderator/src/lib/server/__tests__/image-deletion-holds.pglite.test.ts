@@ -12,9 +12,11 @@ import type { ImageKeptReason } from '$lib/image-kept-reasons';
 
 /** A moderator delete refuses any image a CSAM review, block, report or owner hold covers. */
 
-const { dbHandle, deletedKeys } = vi.hoisted(() => ({
+const { dbHandle, deletedKeys, purgedKeys, purgeFails } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   deletedKeys: [] as string[],
+  purgedKeys: [] as string[],
+  purgeFails: { current: false },
 }));
 
 vi.mock('../db', () => ({
@@ -31,6 +33,11 @@ vi.mock('../storage', () => ({
   getStorage: () => ({
     deleteObject: async ({ key }: { key: string }) => {
       deletedKeys.push(key);
+    },
+    purgeObjectVersions: async ({ key }: { key: string }) => {
+      if (purgeFails.current) throw new Error('Versions remain');
+      purgedKeys.push(key);
+      return { versionsDeleted: 2, remaining: 0 };
     },
   }),
 }));
@@ -96,6 +103,8 @@ let db: PGlite;
 
 beforeEach(async () => {
   deletedKeys.length = 0;
+  purgedKeys.length = 0;
+  purgeFails.current = false;
   db = await freshPglite();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
@@ -185,6 +194,34 @@ describe('deleteImageRows', () => {
     expect(await remaining()).toEqual([]);
     expect(deletedKeys.sort()).toEqual(['key-1', 'key-2']);
     expect(rows.refused).toEqual([]);
+  });
+
+  it('purges every version of a blocked image, and deletes an unblocked one by key', async () => {
+    await image(2, { blockedFor: 'moderated' });
+    const rows = await deleteImages([PLAIN, 2]);
+    expect(await remaining()).toEqual([]);
+    expect(purgedKeys).toEqual(['key-2']);
+    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
+    expect(rows.deleted.map((d) => [d.id, d.allVersions])).toEqual([
+      [PLAIN, false],
+      [2, true],
+    ]);
+  });
+
+  it('reports a purge that did not verify', async () => {
+    await image(2, { blockedFor: 'moderated' });
+    purgeFails.current = true;
+    const rows = await (dbHandle.current as Kysely<DB>)
+      .transaction()
+      .execute((trx) => deleteImageRows(trx, [PLAIN, 2]));
+    await expect(finishImageDeletes(rows)).resolves.toEqual({ storageFailed: [2] });
+  });
+
+  it('purges nothing for a held image', async () => {
+    await image(2, { needsReview: 'csam' });
+    await deleteImages([PLAIN, 2]);
+    expect(await remaining()).toEqual([2]);
+    expect(purgedKeys).toEqual([]);
   });
 
   it('deletes an image whose owner was named only on a report closed over a year ago', async () => {
