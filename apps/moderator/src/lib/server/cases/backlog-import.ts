@@ -1,6 +1,5 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { logToAxiom } from '../axiom';
 import { casesDb, noticesOfBatch, SENDABLE, type CasesDb } from './cases.db';
 import { CASE_TARGET_STATES } from './cases-tables';
 import { newPublicRef } from './public-ref';
@@ -177,18 +176,21 @@ export async function importBatch(
 }
 
 /**
- * Delete one batch, children first, in one transaction. Refused once any of its notices has left
- * `pending`: from then on the rows are the record of what was sent.
+ * Undo one batch, in one transaction. Refused once any of its notices has left `pending` (from then on
+ * the rows are the record of what was sent) or once it was ever exported for the fallback sender
+ * (those rows may have been sent there, and a re-import would give them ids its sent.jsonl can't match).
  *
- * Also refused once the batch was ever exported for the fallback sender: those rows may have been sent
- * there, and a re-import would give them new ids that its sent.jsonl can't match.
+ * The notices, parties and targets are deleted. The cases are kept, emptied of personal data and
+ * detached from the batch, because their events are append-only: a `pii_read` happened whether or not
+ * the import is later undone. Each case gets an `import_undone` event naming the batch.
  *
- * The cases and notices are locked first. A send can't claim a notice between the check and the
- * delete (a claim that got there first shows as `sending` and refuses the undo; one after finds no
- * row), and a preview can't add a `pii_read` event (its foreign key waits on the case lock). The
- * batch's events go with it; who read its personal data is logged before they do.
+ * The cases and notices are locked first, so a send can't claim a notice between the check and the
+ * delete: a claim that got there first shows as `sending` and refuses the undo; one after finds no row.
  */
-export async function undoImport(batchId: string, { db = casesDb() }: { db?: CasesDb } = {}) {
+export async function undoImport(
+  batchId: string,
+  { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
+) {
   return db.transaction().execute(async (tx) => {
     const cases = tx.selectFrom('case_record').select('id').where('import_batch_id', '=', batchId);
     await tx
@@ -213,21 +215,21 @@ export async function undoImport(batchId: string, { db = casesDb() }: { db?: Cas
         `${moved} notice(s) of batch ${batchId} are no longer pending; it can't be undone`
       );
 
-    const reads = await tx
-      .selectFrom('case_event as e')
-      .innerJoin('case_record as c', 'c.id', 'e.case_id')
-      .select(['c.public_ref as caseRef', 'e.actor_id as actorId', 'e.at'])
-      .where('c.import_batch_id', '=', batchId)
-      .where('e.type', '=', 'pii_read')
-      .execute();
-    if (reads.length) logToAxiom({ name: 'cases.undo.pii-reads', batchId, reads });
-
-    await tx.deleteFrom('case_event').where('case_id', 'in', cases).execute();
+    await recordBatchEvent(tx as unknown as CasesDb, batchId, 'import_undone', actorId);
     await tx.deleteFrom('case_notice').where('case_id', 'in', cases).execute();
     await tx.deleteFrom('case_party').where('case_id', 'in', cases).execute();
     await tx.deleteFrom('case_target').where('case_id', 'in', cases).execute();
-    const deleted = await tx
-      .deleteFrom('case_record')
+    const undone = await tx
+      .updateTable('case_record')
+      .set({
+        state: UNDONE_STATE,
+        import_batch_id: null,
+        submitter: JSON.stringify({}),
+        statements: JSON.stringify([]),
+        details: JSON.stringify({}),
+        submitter_user_id: null,
+        updated_at: sql`now()`,
+      })
       .where('import_batch_id', '=', batchId)
       .executeTakeFirst();
 
@@ -248,7 +250,7 @@ export async function undoImport(batchId: string, { db = casesDb() }: { db?: Cas
         .execute();
       await tx.deleteFrom('process_definition').where('id', '=', def.id).execute();
     }
-    return { cases: Number(deleted.numDeletedRows) };
+    return { cases: Number(undone.numUpdatedRows) };
   });
 }
 
@@ -301,6 +303,9 @@ export async function batchCounts(batchId: string, { db = casesDb() }: { db?: Ca
     };
   });
 }
+
+/** The state of a case whose import was undone: kept only so its events stay attached. */
+export const UNDONE_STATE = 'Undone';
 
 export type ExportState = 'never' | 'outstanding' | 'closed';
 

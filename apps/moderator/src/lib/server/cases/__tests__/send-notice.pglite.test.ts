@@ -5,8 +5,6 @@ import { casesPglite } from './cases-pglite.harness';
 
 const redis = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn(), del: vi.fn() }));
 vi.mock('../../redis', () => ({ getSysRedis: () => redis }));
-const logToAxiom = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('../../axiom', () => ({ logToAxiom, logAxiomError: vi.fn() }));
 
 const { hashAddress, sendBatch, sendNotice, MAX_CONSECUTIVE_FAILURES } = await import(
   '../send-notice'
@@ -95,7 +93,6 @@ beforeEach(async () => {
   alert.mockReset();
   pauseSends.mockReset().mockResolvedValue(undefined);
   alert.mockResolvedValue(undefined);
-  logToAxiom.mockClear();
   redis.get.mockReset();
 });
 afterEach(async () => {
@@ -311,14 +308,16 @@ describe('the batch', () => {
   });
 
   it('undoes an unsent batch completely, and refuses once anything has been sent', async () => {
-    await expect(undoImport('backlog-test', { db })).resolves.toEqual({ cases: 1 });
+    await expect(undoImport('backlog-test', { actorId: 1, db })).resolves.toEqual({ cases: 1 });
     expect(await notices()).toHaveLength(0);
     expect(await db.selectFrom('process_definition').selectAll().execute()).toHaveLength(0);
 
     await importBatch(input(), { actorId: 1, db });
     const [first] = await notices();
     await sendNotice(first.id, deps());
-    await expect(undoImport('backlog-test', { db })).rejects.toBeInstanceOf(ImportRefusedError);
+    await expect(undoImport('backlog-test', { actorId: 1, db })).rejects.toBeInstanceOf(
+      ImportRefusedError
+    );
     expect(await notices()).toHaveLength(3);
   });
 
@@ -329,7 +328,9 @@ describe('the batch', () => {
       .set({ status: 'sending' })
       .where('id', '=', first.id)
       .execute();
-    await expect(undoImport('backlog-test', { db })).rejects.toBeInstanceOf(ImportRefusedError);
+    await expect(undoImport('backlog-test', { actorId: 1, db })).rejects.toBeInstanceOf(
+      ImportRefusedError
+    );
     expect(await notices()).toHaveLength(3);
   });
 
@@ -343,21 +344,27 @@ describe('the batch', () => {
 
   it('refuses to undo a batch that was ever exported for the fallback', async () => {
     await exportUnsent('backlog-test', { actorId: 1, db });
-    await expect(undoImport('backlog-test', { db })).rejects.toThrow(/exported/);
+    await expect(undoImport('backlog-test', { actorId: 1, db })).rejects.toThrow(/exported/);
     await importSentJsonl('backlog-test', '', { actorId: 1, db });
-    await expect(undoImport('backlog-test', { db })).rejects.toThrow(/exported/);
+    await expect(undoImport('backlog-test', { actorId: 1, db })).rejects.toThrow(/exported/);
     expect(await notices()).toHaveLength(3);
   });
 
-  it('logs who read the personal data before an undo deletes those events', async () => {
+  it('keeps every pii_read event through an undo, on a case emptied of personal data', async () => {
     await batchPreview('backlog-test', { actorId: 7, db });
-    await undoImport('backlog-test', { db });
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'cases.undo.pii-reads',
-        reads: [expect.objectContaining({ actorId: 7, caseRef: expect.stringMatching(/^TD-/) })],
-      })
-    );
+    const reads = () =>
+      db
+        .selectFrom('case_event')
+        .select(['case_id', 'actor_id'])
+        .where('type', '=', 'pii_read')
+        .execute();
+    const before = await reads();
+    expect(before).toHaveLength(1);
+    await undoImport('backlog-test', { actorId: 1, db });
+    expect(await reads()).toEqual(before);
+    const [kept] = await db.selectFrom('case_record').selectAll().execute();
+    expect(kept).toMatchObject({ state: 'Undone', import_batch_id: null, submitter: {} });
+    expect(await batchCounts('backlog-test', { db })).toEqual([]);
   });
 
   it('exports unsent rows without addresses, and takes back only those the fallback sent', async () => {

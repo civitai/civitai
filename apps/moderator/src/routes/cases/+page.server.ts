@@ -55,13 +55,13 @@ export const actions: Actions = {
       return caseActionFailure('import', e);
     }
   }),
-  undo: requiresGrant('cases.act', async ({ request }) => {
+  undo: requiresGrant('cases.act', async ({ request, locals }) => {
     const input = parseForm(batchSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { scope: 'undo', error: input });
     try {
       const blocked = await caseDataBlocked();
       if (blocked) return fail(503, { scope: 'undo', error: blocked });
-      return { scope: 'undo', ...(await undoImport(input.batchId)) };
+      return { scope: 'undo', ...(await undoImport(input.batchId, { actorId: locals.user.id })) };
     } catch (e) {
       return caseActionFailure('undo', e);
     }
