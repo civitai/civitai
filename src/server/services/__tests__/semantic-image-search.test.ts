@@ -334,6 +334,38 @@ describe('Made On-site and Metadata only', () => {
   });
 });
 
+// The own-images search asks for candidates at every level, so hydration is the only filter on
+// what the owner is shown: it must keep the review and minor filters for the owner too.
+describe("the own-images search's image query", () => {
+  async function ownImageSql() {
+    const { source } = rankedSource([101, 102]);
+    await searchSemanticImages({
+      input: input({ query: 'kuro', imageId: undefined, userIds: [VIEWER.id], browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    }).catch(() => undefined);
+    expect(h.queryWithTimeout, 'the search no longer reaches the image query').toHaveBeenCalled();
+    const stmt = h.queryWithTimeout.mock.calls[0][2] as { text: string; values: unknown[] };
+    return { text: stmt.text.replace(/\s+/g, ' '), values: stmt.values };
+  }
+
+  it('never serves the owner their own images awaiting review', async () => {
+    const { text } = await ownImageSql();
+    // Unconditional: the pending read's form, `(... IS NULL OR i."userId" = $n)`, exempts the owner.
+    expect(text).toMatch(/i\."needsReview" IS NULL(?! OR)/);
+    expect(text).not.toMatch(/i\."needsReview" IS NULL OR i\."userId"/);
+    expect(text).toMatch(/i\."acceptableMinor" = FALSE(?! OR)/);
+  });
+
+  // Control: the owner's candidates do reach that query, so the filter is what decides.
+  it("still asks for the owner's candidates", async () => {
+    const { text, values } = await ownImageSql();
+    expect(text).toMatch(/i\."id" = ANY\(/);
+    expect(values).toContainEqual([101, 102]);
+  });
+});
+
 describe.each([
   ['a text query', { query: 'a red fox', imageId: undefined }],
   ['the "more like this" anchor check', {}],
@@ -574,6 +606,56 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+  });
+
+  // The showcase picker's own-images search refuses where the general search narrows.
+  it('refuses a minor query on the own-images search, at an NSFW level with the clamp off', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const result = await searchSemanticImages({
+      input: textQuery({ browsingLevel: ALL_LEVELS }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('audits the own-images query at one level, whatever level is asked for', async () => {
+    const { source } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: SAFE }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+
+    expect(h.includesInappropriate).toHaveBeenCalledWith(expect.anything(), true);
+  });
+
+  it('asks every level for own-images candidates and keeps the viewer’s level on the page', async () => {
+    const levelOf: Record<number, number> = { 101: 1, 102: 16 };
+    h.fakeGetAllImages = async (args) => {
+      const { ids, browsingLevel } = args as { ids: number[]; browsingLevel: number };
+      return {
+        items: ids
+          .filter((id) => (levelOf[id] & browsingLevel) !== 0)
+          .map((id) => ({ id, nsfwLevel: levelOf[id] })),
+        nextCursor: undefined,
+      };
+    };
+    const { source, calls } = rankedSource([101, 102]);
+    const result = await searchSemanticImages({
+      input: textQuery({ browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+    expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
   it('recomputes the add-ons at the narrowed level', async () => {

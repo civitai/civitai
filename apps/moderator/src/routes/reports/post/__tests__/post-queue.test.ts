@@ -38,6 +38,11 @@ vi.mock('$lib/server/storyline-takedown.service', () => ({ getPostStorylineChapt
 const getResolvedPostReportIds = vi.fn(async () => [] as number[]);
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
 vi.mock('$lib/server/report-actions', () => ({ reportModerationActions: () => ({}) }));
+vi.mock('$lib/server/post-text-reports.service', () => ({
+  getReportedPostTexts: vi.fn(async () => new Map()),
+  getReportPostTextId: vi.fn(),
+  moderatePostText: vi.fn(),
+}));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/users.service', () => ({ MAX_INT4: 2_147_483_647 }));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));

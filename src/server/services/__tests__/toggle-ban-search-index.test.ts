@@ -292,14 +292,17 @@ describe('toggleBan -> removeMedia', () => {
       removeMedia,
     } as Parameters<typeof toggleBan>[0]);
 
-  // The Moderated block's own shape, so the CSAM block in `softDeleteUser` cannot satisfy it.
+  // `blockBannedUserImages`' own shape, so the CSAM block in `softDeleteUser` cannot satisfy it.
   const moderatedBlocks = () =>
-    imageUpdateMany.mock.calls.filter(
-      ([args]) =>
-        JSON.stringify(args?.where) ===
-          JSON.stringify({ userId: USER_ID, ingestion: { not: 'Blocked' } }) &&
-        args?.data?.blockedFor === 'moderated'
-    ).length;
+    dbMock.dbWrite.$executeRaw.mock.calls.filter(([strings, ...values]) => {
+      const text = (strings as unknown as string[]).join('?');
+      return (
+        text.includes('UPDATE "Image"') &&
+        text.includes('WHERE "userId" = ? AND ingestion <>') &&
+        values.includes('moderated') &&
+        values.includes(USER_ID)
+      );
+    }).length;
 
   beforeEach(() => {
     userFindUnique.mockResolvedValue({

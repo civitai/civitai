@@ -282,7 +282,7 @@ func TestServeSlotAllocatesNothing(t *testing.T) {
 		t.Fatalf("a refused acquire allocated %v times, want 0", n)
 	}
 	// The refusal is the bulkhead fallback, before the compute (nil here) is ever called.
-	if _, err := s.computeServe(publicRequest(), nil); fallback.Reason(err) != "bulkhead" {
+	if _, err := s.computeServe(publicRequest(), EndpointAsPosts, nil); fallback.Reason(err) != "bulkhead" {
 		t.Fatalf("full pod: %v, want the bulkhead fallback", err)
 	}
 }

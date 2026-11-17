@@ -5,7 +5,8 @@ import { caseDataBlocked, casesStoreMessage } from './cases.service';
 
 /**
  * Runs `fn` only while case data may be read and written. Otherwise returns why not: the PII lockdown
- * is open, or the case tables can't be reached.
+ * is open, or the case tables can't be reached. A refusal (`ImportRefusedError`) is not a store
+ * failure: it is rethrown for the caller to answer.
  */
 export async function withCaseData<T>(
   fn: () => Promise<T>
@@ -15,6 +16,7 @@ export async function withCaseData<T>(
     if (blocked) return { ok: false, message: blocked };
     return { ok: true, value: await fn() };
   } catch (e) {
+    if (e instanceof ImportRefusedError) throw e;
     return { ok: false, message: casesStoreMessage(e) };
   }
 }
