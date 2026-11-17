@@ -213,10 +213,11 @@ describe('the SQL printed for a run by hand', () => {
     expect(await statusOf()).toEqual({ 1: 'active', 2: 'retired', 3: 'retired', 4: 'retired' });
   });
 
-  it('retires fewer than planned, never more, when a check gains agreement in between', async () => {
+  it('retires fewer than planned, never more, when a check gains agreement or arrives in between', async () => {
     const late = await reference(1, '4', agree(4, 4));
     await reference(2, '4', []);
     const ids = (await planHiddenRebuild(db, { excludeImageIds: [] })).ids;
+    await reference(3, '4', []); // arrives after the plan
     await pg.query(
       `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
        VALUES ($1,999,$2,$3,1,'Knight','4',1)`,
@@ -229,6 +230,6 @@ describe('the SQL printed for a run by hand', () => {
 
     expect(ids).toHaveLength(2);
     expect(affectedRows).toBe(1);
-    expect(await statusOf()).toEqual({ 1: 'active', 2: 'retired' });
+    expect(await statusOf()).toEqual({ 1: 'active', 2: 'retired', 3: 'active' });
   });
 });
