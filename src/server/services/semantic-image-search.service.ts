@@ -26,6 +26,7 @@ import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-setti
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
+import { sleep } from '~/server/utils/concurrency-helpers';
 import {
   collectPage,
   resolveTagIds,
@@ -49,6 +50,13 @@ const searchServiceCandidates = searchServiceSource(IMAGE_COLLECTION, {
 
 const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: undefined });
 
+// With refuseNarrowing, a refused query answers no sooner than a typical search would.
+// shortcut: fixed estimates; re-derive from the semantic search latency histogram if it moves.
+export const OWN_REFUSAL_FLOOR_MS = 600;
+export const OWN_REFUSAL_JITTER_MS = 300;
+const holdOwnRefusal = (started: number) =>
+  sleep(started + OWN_REFUSAL_FLOOR_MS + Math.random() * OWN_REFUSAL_JITTER_MS - Date.now());
+
 export async function searchSemanticImages({
   input,
   user,
@@ -66,6 +74,7 @@ export async function searchSemanticImages({
   /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
   refuseNarrowing?: boolean;
 }) {
+  const started = Date.now();
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
@@ -214,7 +223,8 @@ export async function searchSemanticImages({
 
   const viewer = { isModerator: !!user?.isModerator };
   // Refused before any search: the audit may run it after the response, for its row only.
-  if (queryRefused)
+  if (queryRefused) {
+    if (refuseNarrowing) await holdOwnRefusal(started);
     return input.query && !input.imageId
       ? audit.refused(
           emptyPage(),
@@ -222,6 +232,7 @@ export async function searchSemanticImages({
           refusedTextCandidates(cachedSource, { text: input.query, filter, viewer })
         )
       : audit.done(emptyPage(), browsingLevel);
+  }
   const query: SearchQuery = input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
