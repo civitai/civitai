@@ -43,7 +43,119 @@ export type KnightsSourcesConfig = {
   maxOpen?: number;
   /** Share of yes/no questions Knights serves, 0 to 1 (0 turns them off). Absent when not stored: Knights then uses its environment default. */
   yesNoShare?: number;
+  /** Knights game tuning saved on the moderator Config page. Absent when nothing is stored. */
+  game?: KnightsGameSettings;
 };
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+/**
+ * Each Knights game setting the moderator Config page can store, with the environment variable it overrides. A field
+ * that is not stored leaves Knights on that variable (or its built-in default). Number ranges match the Knights
+ * environment readers (`hidden/config.ts`, `yesno/config.ts`), so a stored value is never one the environment would refuse.
+ */
+export const KNIGHTS_GAME_SETTINGS = {
+  hiddenCheckRate: {
+    kind: 'number',
+    env: 'KNIGHTS_HIDDEN_CHECK_RATE',
+    label: 'Skill check rate',
+    range: 'from 0 to 1 (0 stops serving skill checks)',
+    valid: (n: number) => n >= 0 && n <= 1,
+  },
+  hiddenCheckFailureWindowHours: {
+    kind: 'number',
+    env: 'KNIGHTS_HIDDEN_CHECK_FAILURE_WINDOW_HOURS',
+    label: 'Failure window (hours)',
+    range: 'greater than 0',
+    valid: (n: number) => n > 0,
+  },
+  hiddenCheckSevereDistance: {
+    kind: 'number',
+    env: 'KNIGHTS_HIDDEN_CHECK_SEVERE_DISTANCE',
+    label: 'Severe miss distance (levels)',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
+  },
+  hiddenCheckSettleDelayMinutes: {
+    kind: 'number',
+    env: 'KNIGHTS_HIDDEN_CHECK_SETTLE_DELAY_MINUTES',
+    label: 'Settle delay (minutes)',
+    range: '0 or more',
+    valid: (n: number) => n >= 0,
+  },
+  hiddenCheckRetireMinAnswers: {
+    kind: 'number',
+    env: 'KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS',
+    label: 'Answers before a check can retire',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
+  },
+  hiddenCheckRetireFailureRate: {
+    kind: 'number',
+    env: 'KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE',
+    label: 'Retire failure rate',
+    range: 'greater than 0, up to 1',
+    valid: (n: number) => n > 0 && n <= 1,
+  },
+  yesNoStretch: {
+    kind: 'number',
+    env: 'KNIGHTS_YESNO_STRETCH',
+    label: 'Questions per axis in a row',
+    range: 'a whole number greater than 0',
+    valid: (n: number) => Number.isInteger(n) && n > 0,
+  },
+  yesNoMaxAgeDays: {
+    kind: 'number',
+    env: 'KNIGHTS_YESNO_MAX_AGE_DAYS',
+    label: 'Close unanswered questions after (days)',
+    range: 'greater than 0',
+    valid: (n: number) => n > 0,
+  },
+  apprenticeSmites: {
+    kind: 'toggle',
+    env: 'KNIGHTS_APPRENTICE_SMITES',
+    label: 'Acolyte wrong-answer smites',
+  },
+  shopDisabled: { kind: 'toggle', env: 'KNIGHTS_SHOP_DISABLED', label: 'Shop closed' },
+  conversionDisabled: {
+    kind: 'toggle',
+    env: 'KNIGHTS_CONVERSION_DISABLED',
+    label: 'Gold to Buzz conversion off',
+  },
+} as const;
+
+type GameSettingSpec = (typeof KNIGHTS_GAME_SETTINGS)[keyof typeof KNIGHTS_GAME_SETTINGS];
+
+export type KnightsGameSettingKey = keyof typeof KNIGHTS_GAME_SETTINGS;
+
+export type KnightsGameSettings = {
+  -readonly [K in KnightsGameSettingKey]?: (typeof KNIGHTS_GAME_SETTINGS)[K]['kind'] extends 'toggle'
+    ? boolean
+    : number;
+};
+
+export const KNIGHTS_GAME_SETTING_KEYS = Object.keys(
+  KNIGHTS_GAME_SETTINGS
+) as KnightsGameSettingKey[];
+
+/** Toggles are booleans; numbers must be finite and in the setting's range. Nothing is coerced. */
+export function isValidKnightsGameSetting(key: KnightsGameSettingKey, value: unknown): boolean {
+  const spec: GameSettingSpec = KNIGHTS_GAME_SETTINGS[key];
+  return spec.kind === 'toggle'
+    ? typeof value === 'boolean'
+    : isFiniteNumber(value) && spec.valid(value);
+}
+
+/** Keeps the usable fields only; undefined when none is, so an absent `game` reads back absent. */
+function readGame(value: unknown): KnightsGameSettings | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const stored = value as Record<string, unknown>;
+  const game: Record<string, number | boolean> = {};
+  for (const key of KNIGHTS_GAME_SETTING_KEYS)
+    if (isValidKnightsGameSetting(key, stored[key])) game[key] = stored[key] as number | boolean;
+  return Object.keys(game).length ? (game as KnightsGameSettings) : undefined;
+}
 
 /** The rates used when the stored JSON omits one. Reading never turns a missing key on. */
 export const KNIGHTS_SOURCES_DEFAULT_RATES = { sfwRate: 1, nsfwRate: 0.3 } as const;
@@ -59,7 +171,7 @@ const KNIGHTS_SOURCES_OFF: KnightsSourcesConfig = {
 };
 
 const clampRate = (value: unknown, fallback: number) =>
-  typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
+  isFiniteNumber(value) ? Math.min(1, Math.max(0, value)) : fallback;
 
 const readShare = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
@@ -82,6 +194,7 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
     const config = parsed as Record<string, unknown>;
     const maxOpen = readCap(config.maxOpen);
     const yesNoShare = readShare(config.yesNoShare);
+    const game = readGame(config.game);
     return {
       stored: true,
       config: {
@@ -91,6 +204,7 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
         // Left out when not stored, so the moderator page's three-field shape reads back unchanged.
         ...(maxOpen === undefined ? {} : { maxOpen }),
         ...(yesNoShare === undefined ? {} : { yesNoShare }),
+        ...(game === undefined ? {} : { game }),
       },
     };
   } catch {

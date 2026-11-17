@@ -11,8 +11,8 @@ type Executor = Kysely<DB> | Transaction<DB>;
 export type ResetDeps = {
   /** Resets the career in the main app. Resolves once it is done or already done; a throw is retried by the tick. */
   resetPlayer: (playerId: number) => Promise<void>;
-  /** Whether Acolyte wrong-answer smites are on (`KNIGHTS_APPRENTICE_SMITES`). Without it, they are. */
-  acolyteSmites?: () => boolean;
+  /** Whether Acolyte wrong-answer smites are on (saved on the moderator Config page, else `KNIGHTS_APPRENTICE_SMITES`). Without it, they are. */
+  acolyteSmites?: () => boolean | Promise<boolean>;
 };
 
 export async function activeSmiteCount(db: Executor, playerId: number): Promise<number> {
@@ -217,7 +217,7 @@ export async function resetPendingPlayers(
   deps: ResetDeps
 ): Promise<{ due: number; failed: number }> {
   const due = await playersDueForReset(db, {
-    holdAcolyteWrongAnswer: deps.acolyteSmites?.() === false,
+    holdAcolyteWrongAnswer: (await deps.acolyteSmites?.()) === false,
   });
   let failed = 0;
   for (const playerId of due) if (!(await resetNow(playerId, deps))) failed++;

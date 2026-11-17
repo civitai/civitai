@@ -28,3 +28,23 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
 - Dev queue: with the migration applied to your local database, `cd apps/knights && pnpm run dev:enqueue-recent [count]` enqueues the newest eligible
   images (scanned, unlocked, and servable: published, level not 0 or Blocked, no block marker, no review hold; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
   `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
+
+## Game settings
+
+The game-tuning variables Knights read from its environment can also be saved under the optional `game` object of the same
+`system:knights-v2-sources` key (no new key; the main app ignores it). Fields, each overriding the variable named:
+`hiddenCheckRate` (`KNIGHTS_HIDDEN_CHECK_RATE`, 0-1, 0 stops serving skill checks), `hiddenCheckFailureWindowHours` (`>0`),
+`hiddenCheckSevereDistance` (whole number `>0`), `hiddenCheckSettleDelayMinutes` (`>=0`), `hiddenCheckRetireMinAnswers` (whole number
+`>0`), `hiddenCheckRetireFailureRate` (`>0` to 1), `yesNoStretch` (whole number `>0`), `yesNoMaxAgeDays` (`>0`), and the booleans
+`apprenticeSmites` (`KNIGHTS_APPRENTICE_SMITES`), `shopDisabled` (`KNIGHTS_SHOP_DISABLED`) and `conversionDisabled`
+(`KNIGHTS_CONVERSION_DISABLED`). The list, its ranges (the same as the Knights environment readers) and the reader are
+`KNIGHTS_GAME_SETTINGS` / `readKnightsSourcesConfig` in `@civitai/shared/new-order`; a stored field that is out of range is dropped
+on read, so that setting falls back to the environment.
+
+Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/src/lib/server/settings`), at most every 30 s:
+
+- a saved value wins over the environment;
+- a read that fails or takes over 400 ms keeps the last value read;
+- before any good read, the environment (then the built-in default) applies.
+
+The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
