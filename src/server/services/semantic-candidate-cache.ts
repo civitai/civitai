@@ -19,6 +19,7 @@ import {
   type GuardOutcome,
   MAX_CANDIDATE_LIMIT,
   type GuardRead,
+  MAX_CANDIDATE_LIMIT,
   type SearchCollection,
 } from '~/server/services/semantic-search-client';
 

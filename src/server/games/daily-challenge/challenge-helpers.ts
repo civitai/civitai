@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -165,10 +166,10 @@ const challengeSelectFragment = Prisma.sql`
   c.theme,
   c.invitation,
   c."coverImageId",
-  (SELECT url FROM "Image" WHERE id = c."coverImageId") as "coverUrl",
-  (SELECT hash FROM "Image" WHERE id = c."coverImageId") as "coverImageHash",
-  (SELECT width FROM "Image" WHERE id = c."coverImageId") as "coverImageWidth",
-  (SELECT height FROM "Image" WHERE id = c."coverImageId") as "coverImageHeight",
+  (SELECT url FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()}) as "coverUrl",
+  (SELECT hash FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()}) as "coverImageHash",
+  (SELECT width FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()}) as "coverImageWidth",
+  (SELECT height FROM "Image" i WHERE i.id = c."coverImageId" AND ${imageNotRestrictedSql()}) as "coverImageHeight",
   c."nsfwLevel",
   c."allowedNsfwLevel",
   c."modelVersionIds",
@@ -737,6 +738,7 @@ export async function getChallengeWinners(
       imageIngestion: ImageIngestionStatus | null;
       imageBlockedFor: string | null;
       imageReviewed: boolean | null;
+      imageNotRestricted: boolean | null;
       place: number;
       buzzAwarded: number;
       pointsAwarded: number;
@@ -770,8 +772,21 @@ export async function getChallengeWinners(
 
   const hideThumbs = green?.isGreen ?? false;
   return rows.map(
-    ({ collectionItemNote, imageIngestion, imageBlockedFor, imageReviewed, ...row }) => {
-      const image = winnerImageFields({ ...row, imageIngestion, imageBlockedFor, imageReviewed });
+    ({
+      collectionItemNote,
+      imageIngestion,
+      imageBlockedFor,
+      imageReviewed,
+      imageNotRestricted,
+      ...row
+    }) => {
+      const image = winnerImageFields({
+        ...row,
+        imageIngestion,
+        imageBlockedFor,
+        imageReviewed,
+        imageNotRestricted,
+      });
       return {
         ...row,
         ...image,

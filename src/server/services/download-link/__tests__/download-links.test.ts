@@ -46,7 +46,7 @@ const {
       {
         userId: number;
         grants: string[];
-        allowedScopes: number;
+        allowedScopes: bigint;
         secret: string;
         user: { bannedAt: Date | null; deletedAt: Date | null };
       }
@@ -69,11 +69,11 @@ vi.mock('~/server/auth/bearer-token', async () => {
       token: string,
       options: { allowClientCredentialsOnly?: boolean } = {}
     ) => {
-      const session = mockSessions.get(token) as { tokenScope?: number } | undefined;
+      const session = mockSessions.get(token) as { tokenScope?: bigint } | undefined;
       if (!session) return null;
       if (
         !options.allowClientCredentialsOnly &&
-        ((session.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0
+        ((session.tokenScope ?? 0n) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0n
       )
         return null;
       return session;

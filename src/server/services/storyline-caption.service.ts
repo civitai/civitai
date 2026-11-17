@@ -3,6 +3,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 /**
  * The post's author, on a live storyline chapter or a draft started from the storyline flow: who may
@@ -163,6 +164,7 @@ export async function getStorylineImageCaptions({
           { tags: { none: { tagId: { in: hiddenTagIds }, disabled: false } } },
           ...(viewerId != null ? [{ userId: viewerId }] : []),
         ],
+        AND: [imageNotRestrictedWhere()],
       },
     },
     select: {

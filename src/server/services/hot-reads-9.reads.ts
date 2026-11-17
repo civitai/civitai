@@ -93,6 +93,7 @@ function coverImageOf(row: Row, prefix: 'cover' | 'sfwCover') {
     scannedAt: c('ScannedAt'),
     ingestion: c('Ingestion'),
     blockedFor: c('BlockedFor'),
+    modelRestricted: c('ModelRestricted'),
     postId: c('PostId'),
     type: c('Type'),
     metadata: c('Metadata'),

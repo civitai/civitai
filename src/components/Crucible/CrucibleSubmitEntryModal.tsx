@@ -70,6 +70,7 @@ import { Flags } from '~/shared/utils/flags';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import clsx from 'clsx';
 import { formatDate } from '~/utils/date-helpers';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 /**
  * Props for the CrucibleSubmitEntryModal
@@ -637,6 +638,7 @@ export default function CrucibleSubmitEntryModal({
     const eligibilityPending = ineligibleReasons === undefined;
     const isRecentEnough = !ineligibleReasons?.includes('created-before-start');
     const levelAllowedByModels = !ineligibleReasons?.includes('required-model-level');
+    const levelAllowedByLicense = !ineligibleReasons?.includes('restricted-model');
     const hasNoResources = !!ineligibleReasons?.includes('no-resources');
     const usesRequiredModel =
       !hasNoResources && !ineligibleReasons?.includes('missing-required-resource');
@@ -692,10 +694,12 @@ export default function CrucibleSubmitEntryModal({
       },
       {
         label: 'Content level',
-        passes: isCompatibleNsfw && levelAllowedByModels,
+        passes: isCompatibleNsfw && levelAllowedByModels && levelAllowedByLicense,
         passText: `${imageNsfwLabel} content`,
         failReason: !isCompatibleNsfw
           ? `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`
+          : !levelAllowedByLicense
+          ? `${imageNsfwLabel} content (${RESTRICTED_IMAGE_REASON})`
           : `${imageNsfwLabel} content (a required model allows only PG and PG-13)`,
       },
       ...(maxClipSeconds

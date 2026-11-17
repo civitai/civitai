@@ -36,6 +36,7 @@ export type ImageReviewItem = {
   ingestion: string;
   minor: boolean;
   poi: boolean;
+  modelRestricted: boolean;
   acceptableMinor: boolean;
   ruleReason: string | null;
   ruleId: number | null;
@@ -128,6 +129,7 @@ export async function getImageReviewQueue({
       'i.ingestion',
       'i.minor',
       'i.poi',
+      'i.modelRestricted',
       'i.acceptableMinor',
       sql<string | null>`i.metadata ->> 'ruleReason'`.as('ruleReason'),
       sql<number | null>`(i.metadata ->> 'ruleId')::int`.as('ruleId'),
@@ -435,6 +437,7 @@ export type ReportedImageItem = {
   needsReview: string | null;
   minor: boolean;
   poi: boolean;
+  modelRestricted: boolean;
   userId: number;
   username: string | null;
   report: {
@@ -484,6 +487,7 @@ export async function getReportedImageQueue({
       'i.needsReview',
       'i.minor',
       'i.poi',
+      'i.modelRestricted',
       'i.userId',
       'u.username',
       'r.id as reportId',
@@ -524,6 +528,7 @@ export async function getReportedImageQueue({
     needsReview: r.needsReview,
     minor: r.minor,
     poi: r.poi,
+    modelRestricted: r.modelRestricted,
     userId: r.userId,
     username: r.username,
     report: {
@@ -561,6 +566,7 @@ export type AppealImageItem = {
   needsReview: string | null;
   minor: boolean;
   poi: boolean;
+  modelRestricted: boolean;
   blockedFor: string | null;
   userId: number;
   username: string | null;
@@ -630,6 +636,7 @@ export async function getAppealImageQueue({
       'i.needsReview',
       'i.minor',
       'i.poi',
+      'i.modelRestricted',
       'i.blockedFor',
       'i.userId',
       'u.username',
@@ -711,6 +718,7 @@ export async function getAppealImageQueue({
     needsReview: r.needsReview,
     minor: r.minor,
     poi: r.poi,
+    modelRestricted: r.modelRestricted,
     blockedFor: r.blockedFor,
     userId: r.userId,
     username: r.username,

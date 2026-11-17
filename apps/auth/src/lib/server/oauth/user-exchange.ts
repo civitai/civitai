@@ -196,10 +196,11 @@ export async function handleUserTokenExchange(input: UserExchangeInput): Promise
     if (body.scope !== undefined) {
       const requested = parseScopeRequest(body.scope);
       if (!requested || requested.openid) return refuse('invalid_scope', 'unparseable scope');
-      if ((requested.scope & ~ceiling) !== 0) return refuse('invalid_scope', 'scope outside grant');
+      if ((requested.scope & ~ceiling) !== 0n)
+        return refuse('invalid_scope', 'scope outside grant');
       scope = requested.scope;
     }
-    if (scope === 0) return refuse('invalid_scope', 'empty scope');
+    if (scope === 0n) return refuse('invalid_scope', 'empty scope');
     ctx.scope = scopeNames(scope);
 
     // 9. The user, against the final scope.

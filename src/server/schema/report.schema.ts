@@ -170,10 +170,6 @@ export const reportAdminAttentionSchema = baseSchema.extend({
   details: reportAdminAttentionDetailsSchema,
 });
 
-export const reportCsamSchema = baseSchema.extend({
-  reason: z.literal(ReportReason.CSAM),
-});
-
 export const reportSpamSchema = baseSchema.extend({
   reason: z.literal(ReportReason.Spam),
 });
@@ -198,7 +194,6 @@ export const createReportInputSchema = z
     reportOwnershipSchema,
     reportClaimSchema,
     reportAdminAttentionSchema,
-    reportCsamSchema,
     reportAutomatedSchema,
     reportSpamSchema,
     reportStickerPlacementSchema,

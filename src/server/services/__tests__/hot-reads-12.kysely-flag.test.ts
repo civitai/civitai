@@ -77,6 +77,7 @@ const kyselyUserRow = (id: number, username: string) => ({
   profilePictureUserId: id,
   profilePictureIngestion: 'Scanned',
   profilePictureNeedsReview: null,
+  profilePictureModelRestricted: false,
   profilePictureType: 'image',
   profilePictureWidth: 10,
   profilePictureHeight: 20,
@@ -358,5 +359,27 @@ describe('readResourceReviewsPage (resourceReview.getInfinite)', () => {
     await readResourceReviewsPage(ARGS);
     expect(flag).toHaveBeenCalledTimes(1);
     expect(dbMock.dbRead.resourceReview.findMany).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('the owner profile picture restricted by its base model', () => {
+  it.each<[string, number, boolean, boolean]>([
+    ['a mature restricted picture is withheld', 4, true, false],
+    ['a mature unrestricted picture is served', 4, false, true],
+    ['a SFW restricted picture is served', 1, true, true],
+  ])('%s', async (_, nsfwLevel, modelRestricted, served) => {
+    flag.mockReturnValue(true);
+    modelRow.mockResolvedValue({
+      ...kyselyUserRow(OWNER, 'kysely owner'),
+      profilePictureNsfwLevel: nsfwLevel,
+      profilePictureModelRestricted: modelRestricted,
+      modelId: MODEL,
+      modelName: 'from kysely',
+      modelCreatedAt: CREATED_AT,
+      modelLocked: true,
+      modelStatus: 'Published',
+    } as never);
+    const result = await readSimpleModelWithOwner(MODEL);
+    expect(!!result?.user.profilePicture).toBe(served);
   });
 });
