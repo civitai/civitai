@@ -4,6 +4,7 @@ import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 import { ratingsCounter } from '~/server/routers/research.router';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
+import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
 
 type RaterWebhookData = {
   userId: number;
@@ -25,9 +26,9 @@ export const researchWebhooks = createWebhookProcessor({
           u.id as "userId",
           u.username,
           COALESCE((
-            SELECT url
-            FROM "Image"
-            WHERE id = u."profilePictureId"
+            SELECT i.url
+            FROM "Image" i
+            WHERE i.id = u."profilePictureId" AND ${servableProfilePictureSql}
           ), u.image) as image
         FROM "User" u
         WHERE id IN (${Prisma.join(userIds)})

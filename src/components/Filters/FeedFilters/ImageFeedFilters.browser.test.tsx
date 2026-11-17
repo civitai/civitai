@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import Router from 'next/router';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import { ImageFeedFilters } from '~/components/Filters/FeedFilters/ImageFeedFilters';
+import { FiltersProvider } from '~/providers/FiltersProvider';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -11,7 +12,8 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => flags.value,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+const currentUser = vi.hoisted(() => ({ value: null as { id: number } | null }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => currentUser.value }));
 // Needs the page's container providers; the sort menu is what is under test.
 vi.mock('~/components/Image/Filters/MediaFiltersDropdown', () => ({
   MediaFiltersDropdown: () => null,
@@ -25,6 +27,7 @@ const lastReplaceQuery = () =>
 describe('ImageFeedFilters sort while searching', () => {
   beforeEach(() => {
     flags.value = { feedSearch: true, imageSearchNewestSort: true };
+    currentUser.value = null;
     router.replace.mockClear();
   });
 
@@ -55,5 +58,49 @@ describe('ImageFeedFilters sort while searching', () => {
 
     await expect.element(page.getByRole('button', { name: 'Best match' })).toBeDisabled();
     expect(page.getByText('Newest matches').query()).toBeNull();
+  });
+
+  // A tap is a click with no mouse hover before it. That it lands on the wrapper, not the disabled
+  // button, needs the real stylesheet: SearchSortLock.geometry.test.tsx.
+  async function tapLock(name: string) {
+    const button = page.getByRole('button', { name });
+    await expect.element(button).toBeDisabled();
+    (button.element().parentElement as HTMLElement).click();
+  }
+
+  test('tapping the locked sort says why it is locked, and a tap elsewhere closes it', async () => {
+    flags.value = { feedSearch: true };
+    router.query = { similarTo: '123' };
+    renderWithProviders(<ImageFeedFilters />);
+    const reason = page.getByText('Clear the search to sort the feed');
+
+    await tapLock('Best match');
+    await expect.element(reason).toBeVisible();
+
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await expect.element(reason).not.toBeInTheDocument();
+  });
+
+  test('the locked sort shows no reason until tapped', async () => {
+    flags.value = { feedSearch: true };
+    router.query = { similarTo: '123' };
+    renderWithProviders(<ImageFeedFilters />);
+
+    await expect.element(page.getByRole('button', { name: 'Best match' })).toBeDisabled();
+    expect(page.getByText('Clear the search to sort the feed').query()).toBeNull();
+  });
+
+  test('tapping the locked audience says why it is locked', async () => {
+    flags.value = { feedSearch: true };
+    currentUser.value = { id: 1 };
+    router.query = { similarTo: '123' };
+    renderWithProviders(
+      <FiltersProvider>
+        <ImageFeedFilters />
+      </FiltersProvider>
+    );
+
+    await tapLock('Everyone');
+    await expect.element(page.getByText('Clear the search to filter by who posted')).toBeVisible();
   });
 });

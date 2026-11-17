@@ -268,6 +268,7 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         '& (CASE WHEN m.minor THEN ?::int ELSE ?::int END), 0), ' +
         '(CASE WHEN m.minor THEN ?::int ELSE ?::int END))) <> 0 ' +
         'OR (?::boolean AND m."userId" = ?) OR ?::boolean ) ' +
+        'AND ((i."nsfwLevel" & ?) = 0 OR NOT i."modelRestricted") ' +
         // Only types with a visibility rule here, then canViewBounty or the article rule.
         `AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article') ` +
         'AND ( ?::boolean ' +

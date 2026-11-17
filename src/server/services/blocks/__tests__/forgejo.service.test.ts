@@ -854,14 +854,14 @@ describe('Forgejo client-side timeout routing', () => {
     expect(timeouts[commitIdx]).toBe(120000);
   });
 
-  it('ensureReviewRepo: the auto_init repo-create POST uses the 120s commit timeout; the org-create keeps 15s', async () => {
+  it('ensureReviewRepo: the auto_init repo-create POST uses the 120s commit timeout; the org lookup keeps 15s', async () => {
     const { ensureReviewRepo } = await import('../forgejo.service');
-    fm.enqueue(null, 422); // POST /orgs (already exists)
+    fm.enqueue({ id: 1 }); // GET /orgs/<review> (exists)
     fm.enqueue(null, 201); // POST /orgs/<review>/repos (created)
 
     await ensureReviewRepo('gen-matrix');
 
-    const orgIdx = fm.calls.findIndex((c) => c.url.endsWith('/api/v1/orgs'));
+    const orgIdx = fm.calls.findIndex((c) => c.url.endsWith('/api/v1/orgs/civitai-apps-review'));
     const repoIdx = fm.calls.findIndex((c) => c.url.endsWith('/orgs/civitai-apps-review/repos'));
     expect(orgIdx).toBeGreaterThanOrEqual(0);
     expect(repoIdx).toBeGreaterThanOrEqual(0);

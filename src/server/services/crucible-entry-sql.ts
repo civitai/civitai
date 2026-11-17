@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 /** `enteredImageWhere` for entry image `i`. */
@@ -11,7 +12,7 @@ const enteredEntryImageSql = Prisma.sql`
 /**
  * Entry image `i` as someone else may see it: still scanned and published as `submitEntry` required
  * (a review hold, a ToS flag or an unpublished post can come later), still inside the crucible's
- * levels (a re-rating can move it out), and inside the viewer's level.
+ * levels (a re-rating can move it out), inside the viewer's level, and not restricted by its base model.
  */
 export const visibleEntryImageSql = (
   crucibleLevel: number | Prisma.Sql,
@@ -20,5 +21,6 @@ export const visibleEntryImageSql = (
   i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
   AND ${enteredEntryImageSql}
   AND (i."nsfwLevel" & ${crucibleLevel}) <> 0
+  AND ${imageNotRestrictedSql()}
   ${viewerLevel > 0 ? Prisma.sql`AND (i."nsfwLevel" & ${viewerLevel}) <> 0` : Prisma.empty}
 `;

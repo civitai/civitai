@@ -357,6 +357,7 @@ function toSharedArticle(
         ingestion: _ingestion,
         needsReview: _needsReview,
         tosViolation: _tosViolation,
+        modelRestricted: _modelRestricted,
         minor: _minor,
         ...image
       }) => image

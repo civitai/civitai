@@ -239,6 +239,9 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
     ctx: {},
     scopes: ['collections:read:self'],
     maxBrowsingLevel: 3,
+    // The viewer at every level: these cases mock the DOMAIN clamp, so the viewer
+    // level must not narrow it unless a case says so (the viewer clamp's own cases do).
+    viewerBrowsingLevel: 31,
     ...over,
   } as BlockTokenClaims;
 }
@@ -959,6 +962,22 @@ describe('GET /api/v1/blocks/collections', () => {
     const calls = mockItemCount.mock.calls.map((c: any[]) => c[0]);
     expect(calls).toHaveLength(1);
     expect(calls[0].browsingLevel).toBe(3);
+  });
+
+  it('🔴 a PG-only viewer on a mature domain: the count query carries PG, not the domain level', async () => {
+    mockMaturity.mockReturnValue({ browsingLevel: 31, isSfwCeiling: false });
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: 31, viewerBrowsingLevel: 1 });
+    mockUserCollections.mockResolvedValueOnce([
+      { id: 21, name: 'Mine', description: null, read: 'Public', userId: 42, image: null },
+    ]);
+    itemCounts({ 21: 2080 }, { 21: 19 });
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const calls = mockItemCount.mock.calls.map((c: any[]) => c[0]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].browsingLevel).toBe(1);
   });
 
   // ---- coverNsfwLevel: the maturity of the cover ACTUALLY SERVED ----

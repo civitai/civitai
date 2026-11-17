@@ -1199,9 +1199,14 @@ export type BlockWorkflowSnapshot = {
    */
   outputs?: BlockWorkflowOutput[];
   /**
-   * `true` while any entry of {@link outputs} is `{ pending: true }`: the workflow may
-   * be terminal and still gain a rating, so poll again until this is absent. OMITTED
-   * otherwise. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   * `true` while any entry of {@link outputs} is `{ pending: true }`: an output may
+   * still gain a rating, so poll again until this is absent. OMITTED otherwise.
+   * While it is set on a workflow the orchestrator reports `succeeded`, `status` reads
+   * `processing`, so an app that predates this field keeps polling instead of keeping
+   * an empty result. That is bounded: 5 minutes after the workflow finished, the real
+   * status returns with the output still `{ pending: true }` and this flag still set
+   * (`appWorkflowStatus` / `isRatingHoldExpired` in `services/blocks/workflow.service`).
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
    */
   ratingPending?: true;
   error?: string;
