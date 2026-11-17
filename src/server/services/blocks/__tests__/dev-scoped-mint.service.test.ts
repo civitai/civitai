@@ -649,16 +649,14 @@ describe("dev mints narrow the forced-SFW level by the minter's own level", () =
     signAppBlockId: 'pubreq_x',
     blockInstanceId: 'page_x',
     granted: ['user:read:self'],
+    buzzBudget: undefined,
   };
   const signedLevel = () =>
     (mockSign.mock.calls.at(-1)![0] as Record<string, unknown>).viewerBrowsingLevel;
 
   it.each([
     ['signDevScopedPageToken', () => signDevScopedPageToken(base)],
-    [
-      'signPrivateRunPageToken',
-      () => signPrivateRunPageToken({ ...base, buzzBudget: undefined, audience: 'editor' }),
-    ],
+    ['signPrivateRunPageToken', () => signPrivateRunPageToken({ ...base, audience: 'editor' })],
   ])('🔴 %s: a PG-only minter gets a PG token', async (_, sign) => {
     ownLevel.mockResolvedValueOnce(NsfwLevel.PG);
     await sign();
