@@ -42,8 +42,7 @@ function restrictedAsRejection(error: unknown): never {
   throw error;
 }
 
-// The transcode fails on a plain https source; it reads its own blobs. The seller's media goes up
-// under the seller's token, as every consumer upload does, so a restricted seller cannot send one.
+// The transcode fails on a plain https source; it reads its own blobs.
 async function uploadSourceBlob(data: Buffer, mimeType: string, sellerId: number) {
   const token = await getOrchestratorToken(sellerId).catch(restrictedAsRejection);
   const presign = await getConsumerBlobUploadUrlService({ token });

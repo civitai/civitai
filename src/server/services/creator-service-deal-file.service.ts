@@ -1148,14 +1148,7 @@ function claimPreviews(where: Prisma.Sql, limit: number) {
     RETURNING f."id", f."s3Key", f."scanKey", f."mimeType", d."sellerId"`;
 }
 
-export async function readObject(bucket: string, key: string) {
-  const response = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-  if (!response.Body) throw new Error('Empty object body');
-  return Buffer.from(await response.Body.transformToByteArray());
-}
-
-async function readImageStoreObject(key: string) {
-  const { s3, bucket } = await getImageUploadBackend();
+export async function readObject(bucket: string, key: string, s3 = getS3Client()) {
   const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!response.Body) throw new Error('Empty object body');
   return Buffer.from(await response.Body.transformToByteArray());
@@ -1204,7 +1197,7 @@ export async function createScanImage(
 /** Step 1: the hidden scan copy, for previews that have none yet. */
 export async function startPreviewScans({ limit = 5 } = {}) {
   const unscanned = Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`;
-  // One video per run: each holds the run for a transcode wait, and the claim goes stale in 10 min.
+  // One video per run: each holds the run for a transcode wait, inside the claim's stale window.
   const claimed = [
     ...(await claimPreviews(
       Prisma.sql`${unscanned} AND p."mimeType" NOT IN (${VIDEO_MIMES})`,
@@ -1327,7 +1320,8 @@ export async function publishPreviews({ limit = 5 } = {}) {
       if (isVideoPreviewMime(preview.mimeType)) {
         // Published from the scanned clip only, copied because step 4 deletes the scan copy.
         if (!preview.scanKey) throw new Error('Video preview has no scanned clip to publish');
-        const data = await readImageStoreObject(preview.scanKey);
+        const { s3, bucket } = await getImageUploadBackend();
+        const data = await readObject(bucket, preview.scanKey, s3);
         result = { data, mimeType: 'video/mp4', frames: 0 };
       } else {
         result = await buildWatermarkedPreview(await readObject(await getBucket(), preview.s3Key));

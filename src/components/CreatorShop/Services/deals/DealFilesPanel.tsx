@@ -312,6 +312,7 @@ function PartyFiles({
 
 function PreviewMedia({ file, maw }: { file: DealFile; maw?: number }) {
   if (!file.previewUrl) return null;
+  // EdgeVideo builds its URL from a key; previewUrl is already the finished edge URL.
   if (isVideoPreviewMime(file.mimeType))
     return (
       <video

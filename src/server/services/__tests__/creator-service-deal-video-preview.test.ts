@@ -2,10 +2,10 @@ import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestrationClient from '@civitai/orchestration-client';
 import type * as OrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
+import type * as ConsumerBlobUpload from '~/server/services/orchestrator/consumerBlobUpload';
 
 const orchestrator = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
-  getConsumerBlobUploadUrl: vi.fn(),
 }));
 vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestrationClient>()),
@@ -16,6 +16,12 @@ const tokens = vi.hoisted(() => ({ getOrchestratorToken: vi.fn(async () => 'sell
 vi.mock('~/server/orchestrator/get-orchestrator-token', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorToken>()),
   ...tokens,
+}));
+
+const presign = vi.hoisted(() => ({ getConsumerBlobUploadUrlService: vi.fn() }));
+vi.mock('~/server/services/orchestrator/consumerBlobUpload', async (importOriginal) => ({
+  ...(await importOriginal<typeof ConsumerBlobUpload>()),
+  ...presign,
 }));
 
 const { buildWatermarkedVideoPreview } = await import(
@@ -35,8 +41,9 @@ const workflow = (status: string, url: string | null = OUTPUT_URL) => ({
 
 beforeEach(() => {
   orchestrator.submitWorkflow.mockReset();
-  orchestrator.getConsumerBlobUploadUrl.mockResolvedValue({
-    data: { uploadUrl: 'https://orchestration.example/upload?sig=z', expiresAt: '' },
+  presign.getConsumerBlobUploadUrlService.mockResolvedValue({
+    uploadUrl: 'https://orchestration.example/upload?sig=z',
+    expiresAt: '',
   });
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (url: string) =>
@@ -57,6 +64,7 @@ describe('buildWatermarkedVideoPreview', () => {
     expect(result.data.toString()).toBe('marked clip');
     // The seller's media is uploaded under the seller's own token, never the system credentials.
     expect(tokens.getOrchestratorToken).toHaveBeenCalledWith(SELLER);
+    expect(presign.getConsumerBlobUploadUrlService).toHaveBeenCalledWith({ token: 'seller-token' });
     const [uploadUrl, upload] = fetchMock.mock.calls[0];
     expect(uploadUrl).toBe('https://orchestration.example/upload?sig=z');
     expect(upload).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'video/mp4' } });
