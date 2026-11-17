@@ -177,3 +177,32 @@ describe('🔴 a filter pattern is not run on a value longer than the input boun
     expect(res.text.startsWith('event: live')).toBe(true);
   });
 });
+
+/** A source serving one entity per `tags` list, each with that list as its body's `tags`. */
+const servingTags = (...lists: string[][]): Adapter => {
+  const entities = lists.map((tags, i) => ({ ...one, urn: `${one.urn}-${i}`, body: { tags } }));
+  return {
+    ...adapter,
+    // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+    snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities }),
+  };
+};
+
+// Literals: 65536 is the per-body budget, 4 × 16384.
+describe('🔴 each body a filter is evaluated on gets 65536 characters of pattern input', () => {
+  const A = 'a'.repeat(16384);
+  const filter = { properties: { tags: { items: { pattern: '^a' } } } };
+  const upserts = (text: string) => text.split('event: upsert').length - 1;
+
+  it('two entities that each spend the whole budget are both sent', async () => {
+    const res = await get(filter, servingTags([A, A, A, A], [A, A, A, A]));
+    expect([res.status, upserts(res.text)]).toEqual([200, 2]);
+  });
+
+  it('an entity whose values run past the budget is excluded; the next one is still sent', async () => {
+    const res = await get(filter, servingTags([A, A, A, A, 'a'], [A, A, A, A]));
+    expect([res.status, upserts(res.text)]).toEqual([200, 1]);
+    expect(res.text).toContain(`"${one.urn}-1"`);
+    expect(res.text).not.toContain(`"${one.urn}-0"`);
+  });
+});

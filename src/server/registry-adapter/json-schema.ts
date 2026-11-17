@@ -22,8 +22,8 @@ export function newValidator() {
  * each such key again where `additionalProperties` re-tests it, a pattern repeated counted every
  * time. Each place runs its pattern over every value it applies to, so the pattern work per body
  * is at most this many runs, each linear in the value's length with a factor of the pattern's
- * size ({@link FILTER_PATTERN_MAX_SIZE}): at most places × size × value length, where a value
- * longer than `FILTER_PATTERN_MAX_INPUT_LENGTH` is not matched and costs no pattern work.
+ * size ({@link FILTER_PATTERN_MAX_SIZE}). What that comes to per body is at
+ * `FILTER_PATTERN_BODY_BUDGET` (`filter-pattern.ts`).
  *
  * Distinct patterns are at most the places, so this also bounds the compiled patterns a filter
  * keeps.
@@ -73,11 +73,11 @@ export const FILTER_MAX_DEPTH = 32;
  * (`FILTER_PATTERN_DFA_BYTES`), a match is linear in the input with that factor, whatever the
  * input. So a pattern's size is bounded ({@link FILTER_PATTERN_MAX_SIZE}), and so are the places a
  * filter applies one ({@link FILTER_MAX_PATTERN_PLACES}) and their sizes' sum
- * ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE}); the pattern work per body is then bounded by places ×
- * size × string length, where a string longer than `FILTER_PATTERN_MAX_INPUT_LENGTH`
- * (`filter-pattern.ts`) is not matched and costs no pattern work, so `not: {pattern}` passes for
- * it. A pattern it cannot run with ECMA-262's meaning (a lookaround, a backreference), one over
- * its length or size bound, or a filter over
+ * ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE}), and so is the input patterns run on, per value
+ * (`FILTER_PATTERN_MAX_INPUT_LENGTH` in `filter-pattern.ts`, which says what not matching means)
+ * and per body (`FILTER_PATTERN_BODY_BUDGET`, which states the per-body bound). A pattern it
+ * cannot run with ECMA-262's meaning (a lookaround, a backreference), one over its length or size
+ * bound, or a filter over
  * {@link FILTER_MAX_PATTERN_PLACES} or the total, is `bad_request` when it is compiled.
  */
 const REFUSED_FILTER_KEYS = [
@@ -125,7 +125,7 @@ const NAME_MAP_KEYWORDS: ReadonlySet<string> = new Set([
  * every stream, so a costly filter would stall every consumer, not just its sender. The work
  * outside patterns is bounded by the filter's size times the body's; pattern work by
  * {@link FILTER_MAX_PATTERN_PLACES} places of at most {@link FILTER_PATTERN_MAX_SIZE} each, run over
- * the body's strings.
+ * the body's strings up to `FILTER_PATTERN_BODY_BUDGET` per body.
  */
 export function filterRefusal(filter: unknown): string | null {
   // `names`: the node is a NAME_MAP_KEYWORDS map, whose keys are names rather than keywords.
@@ -171,6 +171,10 @@ export function filterRefusal(filter: unknown): string | null {
  * own predicate for as long as it is open, whatever the cache does. What bounds a predicate's
  * memory is each pattern's DFA budget (`FILTER_PATTERN_DFA_BYTES` in `filter-pattern.ts`) and the
  * {@link FILTER_MAX_PATTERN_PLACES} patterns per filter.
+ *
+ * The predicate is the only caller of the compiled validator, and it refills the filter's pattern
+ * budget (`FILTER_PATTERN_BODY_BUDGET`) before each body, so a predicate shared through the
+ * cache by many subscriptions gives each body a full budget.
  */
 export type BodyPredicate = (body: unknown) => boolean;
 
@@ -207,7 +211,8 @@ export function createFilterCompiler(maxCached = 100, maxCachedPatterns = 16) {
       if (err instanceof FilterPatternError) throw new ProtocolError('bad_request', err.message);
       throw new ProtocolError('bad_request', 'filter is not a valid JSON Schema');
     }
-    const predicate = (body: unknown) => validate(body) === true;
+    // The one call of `validate`: each body is validated with a full pattern budget.
+    const predicate = (body: unknown) => regExp.metered(() => validate(body)) === true;
     const patterns = regExp.distinct();
     if (cache.size >= maxCached || cachedPatterns + patterns > maxCachedPatterns) {
       cache.clear();

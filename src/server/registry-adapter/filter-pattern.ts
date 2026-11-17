@@ -78,6 +78,36 @@ export const FILTER_PATTERN_MAX_SIZE = 256;
  */
 export const FILTER_PATTERN_MAX_INPUT_LENGTH = 16384;
 
+/**
+ * Most pattern input one body evaluation may run, in UTF-16 code units, summed over every value
+ * any of the filter's patterns is run on. {@link FILTER_PATTERN_MAX_INPUT_LENGTH} bounds one value,
+ * but one place runs its pattern on every value it applies to (`items: {pattern}`,
+ * `additionalProperties: {pattern}`), so without this the work grew with the whole body. Every
+ * run is charged, whichever place makes it, so the pattern work per body is at most size ×
+ * min(places × the body's string length, this budget), where size is
+ * {@link FILTER_PATTERN_MAX_SIZE}, places is `FILTER_MAX_PATTERN_PLACES` (`json-schema.ts`), and
+ * the string length counts property names as well as string values.
+ *
+ * Each filter's engine ({@link filterRegExpEngine}) holds one budget, shared by all of the filter's
+ * patterns, and refills it immediately before each body is validated
+ * ({@link FilterRegExpEngine.metered}, the one call that runs the compiled filter). Validation is
+ * synchronous, so no other body can run in between, and a filter shared by many subscriptions
+ * through the filter cache refills it for each body it evaluates: the budget is per evaluation,
+ * not per pattern or per subscription.
+ *
+ * A pattern `test` charges its value's length before running. A value that does not fit in what is
+ * left is not matched and ends the budget, so it and every later value in that body are not
+ * matched, without running the engine. Not matched composes as for
+ * {@link FILTER_PATTERN_MAX_INPUT_LENGTH}: the `pattern` keyword fails, so `not: {pattern}`
+ * passes. Which values come after the budget is spent follows ajv's evaluation order. A value over
+ * {@link FILTER_PATTERN_MAX_INPUT_LENGTH} charges nothing: it is refused before the charge, and
+ * never runs.
+ */
+export const FILTER_PATTERN_BODY_BUDGET = 65536;
+
+/** The pattern input left for the body being evaluated, shared by one filter's patterns. */
+export type FilterPatternBudget = { remaining: number };
+
 /** A pattern this source will not evaluate. Its message is the `bad_request` sent. */
 export class FilterPatternError extends Error {}
 
@@ -520,9 +550,13 @@ export type CompiledFilterPattern = RegExpLike & {
 /**
  * `pattern` compiled for unanchored, linear-time matching; throws {@link FilterPatternError}. Its
  * `test` is false, without matching, for a value longer than
- * {@link FILTER_PATTERN_MAX_INPUT_LENGTH}.
+ * {@link FILTER_PATTERN_MAX_INPUT_LENGTH}, and, given a `budget`, for a value that does not fit in
+ * it ({@link FILTER_PATTERN_BODY_BUDGET}).
  */
-export function compileFilterPattern(pattern: string): CompiledFilterPattern {
+export function compileFilterPattern(
+  pattern: string,
+  budget?: FilterPatternBudget
+): CompiledFilterPattern {
   const { re2, size } = translate(pattern);
   let compiled: RE2JS;
   try {
@@ -538,8 +572,19 @@ export function compileFilterPattern(pattern: string): CompiledFilterPattern {
   boundDfa(compiled);
   return {
     // RE2JS `test` finds a match anywhere in the input, as ECMA's does: unanchored. A value over
-    // FILTER_PATTERN_MAX_INPUT_LENGTH is not matched, and the engine is not run on it.
-    test: (s: string) => s.length <= FILTER_PATTERN_MAX_INPUT_LENGTH && compiled.test(s),
+    // FILTER_PATTERN_MAX_INPUT_LENGTH, or one the budget cannot pay for, is not matched, and the
+    // engine is not run on it.
+    test: (s: string) => {
+      if (s.length > FILTER_PATTERN_MAX_INPUT_LENGTH) return false;
+      if (budget) {
+        if (s.length > budget.remaining) {
+          budget.remaining = 0;
+          return false;
+        }
+        budget.remaining -= s.length;
+      }
+      return compiled.test(s);
+    },
     // ajv keys a compiled pattern by `toString()` within one schema, so it must name the pattern.
     toString: () => `/${pattern}/u (re2)`,
     size,
@@ -551,9 +596,14 @@ export function compileFilterPattern(pattern: string): CompiledFilterPattern {
 
 /**
  * An ajv `code.regExp` engine that counts only once armed, and says how many distinct patterns
- * it compiled for the filter.
+ * it compiled for the filter. `metered(run)` refills the filter's
+ * {@link FILTER_PATTERN_BODY_BUDGET} and then calls `run`, which validates one body.
  */
-export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () => number };
+export type FilterRegExpEngine = RegExpEngine & {
+  arm: () => void;
+  distinct: () => number;
+  metered: <T>(run: () => T) => T;
+};
 
 /**
  * An ajv `code.regExp` engine compiling with {@link compileFilterPattern}, each distinct pattern
@@ -564,7 +614,8 @@ export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () 
  * it applies to. Every ask is a place, a repeated pattern counted each time. A filter with more
  * than `maxPlaces` places, or whose sizes summed over its places exceed `maxTotalSize`, throws
  * {@link FilterPatternError}. Each place runs its pattern once per value it applies to, so the
- * places, with each pattern's size, bound the matching work per body.
+ * places and sizes bound the work per character; {@link FILTER_PATTERN_BODY_BUDGET} bounds the
+ * characters per body.
  *
  * Nothing is counted before {@link FilterRegExpEngine.arm}: ajv compiles its meta-schema's own
  * patterns (for `$id`, `$anchor` and the like) through the same engine, the first time it
@@ -582,6 +633,9 @@ export function filterRegExpEngine({
   let armed = false;
   let places = 0;
   let total = 0;
+  // One budget for every pattern this engine compiles (the meta-schema's too, so a filter pattern
+  // that happens to equal one of those, and so shares its compiled object, is still charged).
+  const budget: FilterPatternBudget = { remaining: FILTER_PATTERN_BODY_BUDGET };
   const engine = (pattern: string) => {
     if (armed) {
       places += 1;
@@ -596,7 +650,7 @@ export function filterRegExpEngine({
     }
     let rx = compiled.get(pattern);
     if (!rx) {
-      rx = compileFilterPattern(pattern);
+      rx = compileFilterPattern(pattern, budget);
       compiled.set(pattern, rx);
     }
     if (!armed) return rx;
@@ -613,6 +667,10 @@ export function filterRegExpEngine({
     armed = true;
   };
   engine.distinct = () => counted.size;
+  engine.metered = <T>(run: () => T): T => {
+    budget.remaining = FILTER_PATTERN_BODY_BUDGET;
+    return run();
+  };
   // ajv writes `code` into a validator's source only when generating standalone code, which a
   // filter never is.
   engine.code = 'filterRegExp';

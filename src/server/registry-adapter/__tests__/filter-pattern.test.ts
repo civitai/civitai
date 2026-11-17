@@ -1,6 +1,7 @@
 import { RE2JS } from 're2js';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  FILTER_PATTERN_BODY_BUDGET,
   FILTER_PATTERN_DFA_BYTES,
   FILTER_PATTERN_MAX_INPUT_LENGTH,
   FILTER_PATTERN_MAX_LENGTH,
@@ -588,5 +589,88 @@ describe('🔴 a pattern is not run on a value longer than the input bound', () 
       const f = compile({ propertyNames: { pattern: '^a' } })!;
       expect([f({ [atBound]: 1 }), f({ [overBound]: 1 })]).toEqual([true, false]);
     });
+  });
+});
+
+// Built from literals (65536 = 4 × 16384), not from FILTER_PATTERN_BODY_BUDGET, so moving the
+// budget fails a test here. Every value is at the per-value bound (16384), so only the budget is
+// at stake.
+describe('🔴 one body evaluation runs at most 65536 characters of pattern input', () => {
+  const A = 'a'.repeat(16384);
+  const B = 'b'.repeat(16384);
+
+  it('the budget is 65536', () => {
+    expect(FILTER_PATTERN_BODY_BUDGET).toBe(65536);
+  });
+
+  it('items: 4 values of 16384 spend it exactly and match; a 5th is not matched, and not run', () => {
+    const f = createFilterCompiler()({ properties: { tags: { items: { pattern: '^a' } } } })!;
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      expect(f({ tags: [A, A, A, A] })).toBe(true);
+      expect(re2Test).toHaveBeenCalledTimes(4);
+      re2Test.mockClear();
+      expect(f({ tags: [A, A, A, A, 'a'] })).toBe(false);
+      expect(re2Test).toHaveBeenCalledTimes(4);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+
+  it('a value after the budget is spent counts as not matching: not: {pattern} passes for it', () => {
+    const f = createFilterCompiler()({
+      properties: { tags: { items: { not: { pattern: '^a' } } } },
+    })!;
+    // `a` matches ^a, so `not` fails for it while the budget lasts, and passes once it is spent.
+    expect([f({ tags: [B, B, B, 'a'] }), f({ tags: [B, B, B, B, 'a'] })]).toEqual([false, true]);
+  });
+
+  it('a value that does not fit ends the budget: a shorter value after it is not matched either', () => {
+    const f = createFilterCompiler()({
+      properties: { tags: { items: { not: { pattern: '^a' } } } },
+    })!;
+    const b10k = 'b'.repeat(10000);
+    // After three B, 16384 is left: one b10k fits, the second does not, and then `a` (which would
+    // fit in the 6384 still unspent) is not matched, so `not` passes for it.
+    expect(f({ tags: [B, B, B, b10k, b10k, 'a'] })).toBe(true);
+  });
+
+  it("two patterns share one body's budget: 3 + 1 values match, 3 + 2 do not", () => {
+    const f = createFilterCompiler()({
+      properties: { a: { items: { pattern: '^a' } }, b: { items: { pattern: '^b' } } },
+    })!;
+    expect([f({ a: [A, A, A], b: [B] }), f({ a: [A, A, A], b: [B, B] })]).toEqual([true, false]);
+  });
+
+  it('a value over the per-value bound charges nothing: it never runs', () => {
+    const over = 'a'.repeat(16385);
+    // Each `over` fails the pattern and passes minLength; the four A then spend the whole budget.
+    const f = createFilterCompiler()({
+      properties: { tags: { items: { anyOf: [{ pattern: '^a' }, { minLength: 16385 }] } } },
+    })!;
+    expect(f({ tags: [over, over, over, over, over, over, over, over, A, A, A, A] })).toBe(true);
+  });
+
+  it('each body gets a full budget: the same filter, body after body, even after one spent it', () => {
+    const f = createFilterCompiler()({ properties: { tags: { items: { pattern: '^a' } } } })!;
+    expect([
+      f({ tags: [A, A, A, A] }),
+      f({ tags: [A, A, A, A] }),
+      f({ tags: [A, A, A, A, A] }),
+      f({ tags: [A, A, A, A] }),
+    ]).toEqual([true, true, false, true]);
+  });
+
+  it('a filter shared through the cache by two subscriptions: each body gets a full budget', () => {
+    const compile = createFilterCompiler();
+    const filter = { properties: { tags: { items: { pattern: '^a' } } } };
+    const first = compile(filter)!;
+    const second = compile(filter)!;
+    expect(second).toBe(first);
+    expect([
+      first({ tags: [A, A, A, A, A] }),
+      second({ tags: [A, A, A, A] }),
+      first({ tags: [A, A, A, A] }),
+    ]).toEqual([false, true, true]);
   });
 });
