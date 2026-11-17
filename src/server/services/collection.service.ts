@@ -3919,6 +3919,8 @@ type ImageProps = {
   mimeType: string | null;
   meta: Prisma.JsonObject | null;
   userId: number;
+  poi: boolean;
+  minor: boolean;
   tosViolation: boolean;
 } | null;
 
@@ -3938,7 +3940,12 @@ export const getCollectionCoverImages = async ({
   imagesPerCollection: number;
   browsingLevel: number;
   /** The viewer's browsing-tag filter, from `getShowcaseImageFilter`. */
-  showsImage: (image: { userId?: number; tags: number[] }) => boolean;
+  showsImage: (image: {
+    userId?: number;
+    poi?: boolean;
+    minor?: boolean;
+    tags: number[];
+  }) => boolean;
 }) => {
   const imageSql = Prisma.sql`
     jsonb_build_object(
@@ -3957,6 +3964,8 @@ export const getCollectionCoverImages = async ({
         'type', i."type",
         'meta', i."meta",
         'userId', i."userId",
+        'poi', i."poi",
+        'minor', i."minor",
         'tosViolation', i."tosViolation"
       ) image
   `;
@@ -3984,7 +3993,7 @@ export const getCollectionCoverImages = async ({
   return withinLevel.flatMap(({ id, image, src }) => {
     if (!image) return [];
     const tags = tagIdsOf(image.id);
-    if (!showsImage({ userId: image.userId, tags })) return [];
+    if (!showsImage({ ...image, tags })) return [];
     return [
       {
         id,

@@ -42,18 +42,8 @@ import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
-import { capNestedImages, relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
-import { getShowcaseImageFilter } from '~/server/services/blocked-browsing-tags.service';
-
-/** The viewer's browsing-tag filter over a bounty's images, at their browsing level. */
-export const getBountyImageFilter = async (ctx: Context) => {
-  const showsImage = await getShowcaseImageFilter({
-    browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
-    viewer: { id: ctx.user?.id, username: ctx.user?.username, isModerator: ctx.user?.isModerator },
-  });
-  return (image: { userId: number; tags: { id: number }[] }) =>
-    showsImage({ userId: image.userId, tags: image.tags.map((tag) => tag.id) });
-};
+import { capNestedImages } from '~/server/utils/browsing-level';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -115,7 +105,7 @@ export const getInfiniteBountiesHandler = async ({
         userId: user?.id,
         isModerator: user?.isModerator,
       }),
-      getBountyImageFilter(ctx),
+      getRequestImageFilter(ctx),
     ]);
 
     return {
@@ -204,7 +194,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         userId: user?.id,
         isModerator: user?.isModerator,
       }),
-      getBountyImageFilter(ctx),
+      getRequestImageFilter(ctx),
     ]);
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
@@ -296,7 +286,7 @@ export const getBountyEntriesHandler = async ({
         isModerator: ctx.user?.isModerator,
         userId: ctx.user?.id,
       }),
-      getBountyImageFilter(ctx),
+      getRequestImageFilter(ctx),
     ]);
 
     const files = await getFilesByEntity({

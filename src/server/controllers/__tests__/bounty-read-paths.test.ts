@@ -550,6 +550,36 @@ describe('bounty images and browsing-tag rules', () => {
     expect(await entryIds(modViewer)).toEqual({ list: [30, 31], entry: [30, 31] });
   });
 
+  it('drops a POI or minor-flagged image for a mature non-moderator', async () => {
+    const flagged = (id: number, flag: object, entityId = 0) => ({
+      ...image(id, OTHER_TAG),
+      ...flag,
+      entityId,
+    });
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      { id: 1, name: 'B', nsfw: false, nsfwLevel: NsfwLevel.R, tags: [], user: { id: 5 } },
+    ]);
+    mockImagesForBounties.mockResolvedValue({
+      1: [flagged(10, { poi: true }), flagged(11, { minor: true }), flagged(12, {})],
+    });
+    const feed = await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx: matureViewer as never,
+    });
+    expect(ids(feed.items[0].images)).toEqual([12]);
+
+    mockGetEntries.mockResolvedValue([{ id: 3, user: { id: 5 } }] as never);
+    mockImagesByEntity.mockResolvedValue([
+      flagged(30, { poi: true }, 3),
+      flagged(31, { minor: true }, 3),
+      flagged(32, {}, 3),
+    ]);
+    const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: matureViewer as never });
+    expect(ids(entry.images)).toEqual([32]);
+    const modEntry = await getBountyEntryHandler({ input: { id: 3 }, ctx: modViewer as never });
+    expect(ids(modEntry.images)).toEqual([30, 31, 32]);
+  });
+
   it('reads tags for entry detail images', async () => {
     await entryIds(matureViewer);
     expect(mockImagesByEntity).toHaveBeenCalledWith(

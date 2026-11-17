@@ -10,7 +10,7 @@ import {
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
 import { capNestedImages } from '~/server/utils/browsing-level';
-import { getBountyImageFilter } from '~/server/controllers/bounty.controller';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 import {
   awardBountyEntry,
   deleteBountyEntry,
@@ -82,7 +82,7 @@ export const getBountyEntryHandler = async ({
         userId: ctx.user?.id,
         imagesPerId: canEdit ? constants.bounties.maxEntryImagesForEdit : 10,
       }),
-      getBountyImageFilter(ctx),
+      getRequestImageFilter(ctx),
     ]);
     const files = await getBountyEntryFilteredFiles({
       id: entry.id,

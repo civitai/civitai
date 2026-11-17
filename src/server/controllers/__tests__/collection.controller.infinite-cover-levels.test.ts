@@ -30,11 +30,12 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   tagIdsForImagesCache: { fetch: mockTagIdsFetch },
 }));
 
-vi.mock('~/server/services/system-cache', async () => {
+vi.mock('~/server/services/system-cache', async (importOriginal) => {
   const { DEFAULT_BROWSING_SETTINGS_ADDONS } = await import(
     '~/shared/constants/browsing-settings-addons'
   );
   return {
+    ...(await importOriginal<object>()),
     getBlockedBrowsingTags: vi.fn(async () => []),
     getBrowsingSettingAddons: vi.fn(async () => DEFAULT_BROWSING_SETTINGS_ADDONS),
   };
@@ -243,6 +244,32 @@ describe('getAllCollectionsInfiniteHandler browsing-tag rules', () => {
       { id: 1, own: 101, items: [] },
       { id: 2, own: 102, items: [] },
       { id: 3, own: null, items: [300, 301] },
+    ]);
+  });
+
+  it('drops a POI or minor-flagged image for a mature non-moderator', async () => {
+    mockGetAllCollections.mockResolvedValue([
+      ownCover(1, NsfwLevel.R, { userId: 5, poi: true }),
+      ownCover(2, NsfwLevel.R, { userId: 5, minor: true }),
+      noCover(3),
+    ]);
+    itemCovers([
+      itemCover(1, 400, NsfwLevel.PG, { userId: 5 }),
+      itemCover(2, 401, NsfwLevel.PG, { userId: 5 }),
+      itemCover(3, 300, NsfwLevel.R, { userId: 5, poi: true }),
+      itemCover(3, 301, NsfwLevel.R, { userId: 5, minor: true }),
+      itemCover(3, 302, NsfwLevel.R, { userId: 5 }),
+    ]);
+    mockTagIdsFetch.mockResolvedValue({});
+    expect(await feed(MATURE_VIEWER)).toEqual([
+      { id: 1, own: null, items: [400] },
+      { id: 2, own: null, items: [401] },
+      { id: 3, own: null, items: [302] },
+    ]);
+    expect(await feed(MOD_VIEWER)).toEqual([
+      { id: 1, own: 101, items: [] },
+      { id: 2, own: 102, items: [] },
+      { id: 3, own: null, items: [300, 301, 302] },
     ]);
   });
 

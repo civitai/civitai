@@ -7,6 +7,8 @@ import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-setti
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { isViewerUsername } from '~/utils/is-viewer';
+import type { Context } from '~/server/createContext';
+import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
 
 type AddonTarget = {
   excludedTagIds?: number[];
@@ -176,4 +178,23 @@ export async function getShowcaseImageFilter({
     (!(rules.disablePoi && image.poi) &&
       !(rules.disableMinor && image.minor) &&
       (!excluded.size || (image.tags != null && !image.tags.some((tagId) => excluded.has(tagId)))));
+}
+
+/**
+ * `getShowcaseImageFilter` for a listing of other people's images: the request's viewer, at the
+ * level `relatedPostsBrowsingLevel` resolves. Takes tags as ids or as `{ id }` rows.
+ */
+export async function getRequestImageFilter(
+  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  requestedBrowsingLevel?: number
+) {
+  const showsImage = await getShowcaseImageFilter({
+    browsingLevel: relatedPostsBrowsingLevel(ctx, requestedBrowsingLevel),
+    viewer: { id: ctx.user?.id, username: ctx.user?.username, isModerator: ctx.user?.isModerator },
+  });
+  return (image: Omit<ShowcaseImage, 'tags'> & { tags: (number | { id: number })[] }) =>
+    showsImage({
+      ...image,
+      tags: image.tags.map((tag) => (typeof tag === 'number' ? tag : tag.id)),
+    });
 }
