@@ -62,8 +62,8 @@ beforeEach(() => {
   }) as never);
 });
 
-async function minorReview() {
-  const outcome = await resolveScanOutcome({ image, workflowId: 'wf' });
+async function minorReview(stored: Partial<ScanImage> = {}) {
+  const outcome = await resolveScanOutcome({ image: { ...image, ...stored }, workflowId: 'wf' });
   return outcome.audit?.minorReview;
 }
 
@@ -104,5 +104,16 @@ describe('the scan sends an image to minor review', () => {
     scan.tags = [{ name: 'scene', nsfwLevel }];
     scan.associatedMinor = false;
     expect(await minorReview()).toBe(false);
+  });
+});
+
+describe('minor routing does not depend on a locked rating', () => {
+  it.each([
+    ['locked with no rating', { nsfwLevelLocked: true, nsfwLevel: 0 }],
+    ['locked at PG', { nsfwLevelLocked: true, nsfwLevel: PG }],
+  ])('routes an X scan with a minor signal when the image is %s', async (_, stored) => {
+    scan.tags = [{ name: 'scene', nsfwLevel: X }];
+    scan.associatedMinor = true;
+    expect(await minorReview(stored as Partial<ScanImage>)).toBe(true);
   });
 });

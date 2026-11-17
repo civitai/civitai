@@ -43,6 +43,11 @@ import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
 import { capNestedImages } from '~/server/utils/browsing-level';
+import {
+  bountyNsfwFlagLevel,
+  getTextRatedBountyLevels,
+  mayBeTextRated,
+} from '~/server/services/bounty-rated-level';
 import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 
 export const getInfiniteBountiesHandler = async ({
@@ -71,6 +76,7 @@ export const getInfiniteBountiesHandler = async ({
         user: { select: userWithCosmeticsSelect },
         nsfw: true,
         nsfwLevel: true,
+        moderatorNsfwLevel: true,
         tags: {
           select: {
             tagId: true,
@@ -99,27 +105,37 @@ export const getInfiniteBountiesHandler = async ({
     }
 
     const bountIds = items.map((bounty) => bounty.id);
-    const [images, showsImage] = await Promise.all([
+    const [images, textRated, showsImage] = await Promise.all([
       getImagesForBounties({
         bountyIds: bountIds,
         userId: user?.id,
         isModerator: user?.isModerator,
       }),
+      getTextRatedBountyLevels(items.filter(mayBeTextRated).map((bounty) => bounty.id)),
       getRequestImageFilter(ctx),
     ]);
 
     return {
       nextCursor,
       items: items
-        .map((item) => {
+        .map(({ moderatorNsfwLevel, ...item }) => {
           const tags = item.tags;
           const user = item.user;
+          const flagLevel = bountyNsfwFlagLevel(
+            { ...item, moderatorNsfwLevel },
+            textRated.get(item.id)
+          );
+          const unrated = moderatorNsfwLevel == null && !textRated.has(item.id);
           const itemImages = capNestedImages(
             (images[item.id] ?? []).filter(showsImage).map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
-              // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
-              nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
+              nsfwLevel:
+                flagLevel == null
+                  ? image.nsfwLefel
+                  : unrated
+                  ? NsfwLevel.XXX
+                  : Math.max(image.nsfwLefel, flagLevel),
             })),
             ctx
           );
@@ -128,7 +144,7 @@ export const getInfiniteBountiesHandler = async ({
 
           return {
             ...item,
-            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
+            nsfwLevel: flagLevel ?? item.nsfwLevel,
             user,
             images: itemImages,
             tags: tags.map(({ tagId }) => tagId),
@@ -149,6 +165,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       select: {
         ...getBountyDetailsSelect,
         meta: true,
+        moderatorNsfwLevel: true,
         benefactors: {
           select: {
             user: {
@@ -185,16 +202,23 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
             userId: user.id,
           })
         : null;
-    const { meta: _meta, ...publicBounty } = bounty;
+    const { meta: _meta, moderatorNsfwLevel: _moderatorNsfwLevel, ...publicBounty } = bounty;
 
-    const [images, showsImage] = await Promise.all([
+    const [images, textRated, showsImage] = await Promise.all([
       getBountyImages({
         id: bounty.id,
         userId: user?.id,
         isModerator: user?.isModerator,
       }),
+      mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
       getRequestImageFilter(ctx),
     ]);
+    // A rated flag raises the images to its level; a flag with no rating leaves them at their own.
+    const ratedFlagLevel =
+      bounty.moderatorNsfwLevel != null || textRated.has(bounty.id)
+        ? bountyNsfwFlagLevel(bounty, textRated.get(bounty.id))
+        : null;
+    const shownImages = images.filter(showsImage);
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
@@ -208,7 +232,15 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       details: bounty.details
         ? publicBountyDetails(bounty.details as BountyDetailsSchema, ctx?.user?.isModerator)
         : ({} as BountyDetailsSchema),
-      images: capNestedImages(images.filter(showsImage), ctx).map((image) => ({
+      images: capNestedImages(
+        ratedFlagLevel == null
+          ? shownImages
+          : shownImages.map((image) => ({
+              ...image,
+              nsfwLevel: Math.max(image.nsfwLevel, ratedFlagLevel) as NsfwLevel,
+            })),
+        ctx
+      ).map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,
         metadata: image?.metadata as MixedObject,

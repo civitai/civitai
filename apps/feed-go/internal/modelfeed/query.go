@@ -49,6 +49,10 @@ type PageQuery struct {
 	OnSale                bool
 	ExcludedUserIDs       []int
 	FileFormats           []string
+	// CollectionID is the collection filter (0 = none), applied only once the viewer may read the
+	// collection (servePage); CollectionTagID narrows it to one collection tag (0 = none).
+	CollectionID    int
+	CollectionTagID int
 }
 
 // SQL is one statement and its arguments.
@@ -425,6 +429,27 @@ func (q *PageQuery) Build() (SQL, error) {
 	// No availability filter is ported: a non-moderator's feed never holds Private models.
 	if !q.IsModerator {
 		and = append(and, p+`."availability" != 'Private'::"Availability"`)
+	}
+	if q.CollectionID != 0 {
+		// The semi-join of every sort but Recently Added (Parse refuses that one), with
+		// getAvailableCollectionItemsFilterForUser's item filter built without `statuses`: accepted
+		// items, and for a signed-in viewer also the items they added that are still in review.
+		clause := `EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."modelId" = mm."modelId"
+        AND ci."collectionId" = ` + b.arg(q.CollectionID) + `
+        AND `
+		if q.ViewerID != 0 {
+			clause += `(ci."status" = 'ACCEPTED'::"CollectionItemStatus" OR (ci."status" = 'REVIEW'::"CollectionItemStatus" AND ci."addedById" = ` + b.arg(q.ViewerID) + `))`
+		} else {
+			clause += `ci."status" = 'ACCEPTED'::"CollectionItemStatus"`
+		}
+		if q.CollectionTagID != 0 {
+			clause += `
+        AND ci."tagId" = ` + b.arg(q.CollectionTagID)
+		}
+		and = append(and, clause+`
+      )`)
 	}
 	if len(q.ExcludedUserIDs) > 0 {
 		and = append(and, `mm."userId" != ALL(`+b.arg(q.ExcludedUserIDs)+`::int[])`)

@@ -15,6 +15,7 @@ import {
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 import { stripInvisible } from '~/server/utils/confusable-fold';
+import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import {
   collectSharedDataLeaves,
   type SharedDataLeafKind,
@@ -239,6 +240,8 @@ export async function classifySharedTexts(
     const leaf = inputs[index];
     if (includesMinor(text))
       hits.push({ category: 'minor', matched: 'minor', label: 'minor', leaf });
+    if (containsPrivateMediaUrl(text))
+      hits.push({ category: 'link', matched: 'private_media', label: 'private_media', leaf });
     const poi = includesPoi(text);
     if (poi) {
       // `includesPoi` (no prompt-edit matching) returns the LIST word, never the input's spelling.

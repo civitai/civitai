@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import type { GuardStatus } from '~/server/services/semantic-guard-status';
+import { parseGuardStatus, type GuardStatus } from '~/server/services/semantic-guard-status';
 import type {
   CandidateFilter,
   CandidateSource,
@@ -239,6 +239,23 @@ describe('withCandidateCache and the query guard', () => {
     await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
     await run(withCandidateCache('images', source, 'user', status('enforce:v2')));
     expect(calls()).toBe(3);
+  });
+
+  it('does not cache a block judged by an artifact named `none` under no artifact', async () => {
+    h.auditFlag = true;
+    const noArtifact = status(parseGuardStatus({ mode: 'shadow', version: null }).key);
+    let calls = 0;
+    const source: CandidateSource = async ({ offset, limit }) => {
+      calls++;
+      return {
+        ids: Array.from({ length: limit }, (_, i) => offset + i + 1),
+        guard: { ...flagged, version: 'none' },
+      };
+    };
+    await run(withCandidateCache('images', source, 'user', noArtifact));
+    const again = await run(withCandidateCache('images', source, 'user', noArtifact));
+    expect(again.cacheHit).toBe(false);
+    expect(calls).toBe(2);
   });
 
   it('does not cache a block under a mode other than the one that judged it', async () => {

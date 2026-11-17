@@ -119,6 +119,7 @@ func WriteError(w http.ResponseWriter, path string, e *Error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Vary", Vary)
 	w.WriteHeader(e.HTTPStatus)
 	_, _ = w.Write([]byte(`{"error":`))
 	_, _ = w.Write(enc)
@@ -144,10 +145,15 @@ func ResultCacheControl(ttl *CacheTTL) string {
 	return apipolicy.PrivateCacheControl() // PRIVATE_CACHE_CONTROL
 }
 
-// ResultHeaders are the headers of shadow.ComparedHeaders WriteResult sends (only Cache-Control: it
-// sets no Vary, Cache-Tag, Set-Cookie or x-update-required), for the shadow comparison.
+// Vary is the Vary every tRPC answer carries: tRPC v11's resolveResponse starts each response's headers
+// from `vary: trpc-accept, accept`, on a result and on an error alike. WriteResult and WriteError both
+// send it.
+const Vary = "trpc-accept, accept"
+
+// ResultHeaders are the headers of shadow.ComparedHeaders WriteResult sends (Cache-Control and Vary: it
+// sets no Cache-Tag, Set-Cookie or x-update-required), for the shadow comparison.
 func ResultHeaders(ttl *CacheTTL) map[string]string {
-	return map[string]string{"cache-control": ResultCacheControl(ttl)}
+	return map[string]string{"cache-control": ResultCacheControl(ttl), "vary": Vary}
 }
 
 // WriteResult writes a success envelope around an already-serialized superjson payload. It does not
@@ -157,6 +163,7 @@ func WriteResult(w http.ResponseWriter, payload []byte, ttl *CacheTTL) {
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
 	h.Set("Cache-Control", ResultCacheControl(ttl))
+	h.Set("Vary", Vary)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"result":{"data":`))
 	_, _ = w.Write(payload)
