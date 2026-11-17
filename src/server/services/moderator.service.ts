@@ -206,6 +206,11 @@ type PublishRequestHoldModActivity = {
   activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
 };
 
+type PostTextModActivity = {
+  entityType: 'postText';
+  activity: 'refuse' | 'restore' | 'csamHold';
+};
+
 type CsamReportModActivity = {
   entityType: 'csamReport';
   activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
@@ -233,6 +238,7 @@ type ModActivity = {
   | HeldMediaGridModActivity
   | StorylineModActivity
   | SearchQueryRuleModActivity
+  | PostTextModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

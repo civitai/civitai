@@ -423,6 +423,23 @@ async function makeValidBundle(over: Record<string, unknown> = {}): Promise<Buff
   });
 }
 
+// Trimmed-store fixtures: a tagline of exactly MANIFEST_TAGLINE_MAX_LENGTH (140) chars and a valid
+// repository URL, each wrapped in heavy whitespace. The validator measures both trimmed, so the
+// padded manifest validates; every store path must then write the trimmed values.
+const TRIM_TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
+const TRIM_REPO = 'https://github.com/example-org/hello';
+const PAD = ` \t\n${' '.repeat(600)}\n\t `;
+const paddedStrings = () => ({
+  tagline: `${PAD}${TRIM_TAGLINE}${PAD}`,
+  repository: `${PAD}${TRIM_REPO}${PAD}`,
+});
+function expectTrimmedStrings(stored: unknown) {
+  expect(TRIM_TAGLINE).toHaveLength(140);
+  const m = stored as { tagline?: unknown; repository?: unknown };
+  expect(m.tagline).toBe(TRIM_TAGLINE);
+  expect(m.repository).toBe(TRIM_REPO);
+}
+
 beforeEach(() => {
   // M-2 manifests here: publish-request.service uses raw `process.env.NEXTAUTH_URL`
   // for the git-push webhook callback URL in approveRequest, not the typed `env`
@@ -811,6 +828,20 @@ describe('submitVersion', () => {
       expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
       expect(persistedManifest().iframe.sandbox).toBe('allow-scripts');
     }
+  });
+
+  // Red at origin/main: submit stored the padded strings verbatim.
+  it('stores a padded tagline/repository trimmed in the publish_request row', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle(paddedStrings());
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 42,
+      submitterIsModerator: false,
+    });
+    expect(result.publishRequestId).toBeDefined();
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(persistedManifest());
   });
 
   it('leaves an already-canonical iframe.src unchanged', async () => {
@@ -3121,6 +3152,22 @@ describe('approveRequest', () => {
     expect(ocUpdateArg.data.allowedScopes).toBe(0);
   });
 
+  // Red at origin/main: approve wrote the request's padded strings into app_blocks.manifest. The
+  // validator here is the real one, so this also shows the padded manifest is accepted, not refused.
+  it('writes a padded tagline/repository trimmed into app_blocks.manifest', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ manifest: manifest(paddedStrings()) })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle(paddedStrings());
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlock.create.mock.calls[0][0].data.manifest);
+  });
+
   // ---- C1: trust-tier self-escalation (the most security-critical contract) ----
   //
   // The fix at publish-request.service.ts:1050-1062: trust tier is
@@ -4281,6 +4328,35 @@ describe('backfillPublishRequest', () => {
     expect(createArg.forgejoCommitSha).toBe('sha_in_repo');
   });
 
+  // Red at origin/main: backfill stored the repo manifest's padded strings verbatim.
+  it('stores a padded tagline/repository from the repo manifest trimmed', async () => {
+    const { backfillPublishRequest } = await import('../publish-request.service');
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      manifest: manifest(),
+      version: '0.1.0',
+      currentVersionSha: 'sha_in_repo',
+      app: { userId: 42 },
+    });
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
+      new Map([
+        ['block.manifest.json', 'blob1'],
+        ['index.html', 'blob2'],
+      ])
+    );
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blob1') return Buffer.from(JSON.stringify(manifest(paddedStrings())));
+      return Buffer.from('<!doctype html>');
+    });
+
+    await backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 });
+
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.manifest);
+  });
+
   it('idempotent: re-running with the same Forgejo HEAD returns the existing row', async () => {
     const { backfillPublishRequest } = await import('../publish-request.service');
     mockDbRead.appBlock.findFirst.mockResolvedValue({
@@ -4453,6 +4529,38 @@ describe('recordPendingFromPush', () => {
       submittedByUserId: 777,
       origin: 'push',
     });
+  });
+
+  // Red at origin/main: the push recorder (git-push webhook and web manifest editor) stored the
+  // padded strings verbatim, on both the create and the same-sha refresh.
+  it('stores a padded tagline/repository trimmed on a new pending request', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await recordPendingFromPush({ ...pushArgs, manifest: manifest(paddedStrings()) });
+    await flush();
+
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.manifest);
+  });
+
+  it('stores a padded tagline/repository trimmed on a same-sha refresh', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
+      id: 'pubreq_existing_sha',
+    });
+    mockDbWrite.appBlockPublishRequest.update.mockResolvedValue(undefined);
+
+    await recordPendingFromPush({ ...pushArgs, manifest: manifest(paddedStrings()) });
+    await flush();
+
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0].data.manifest);
   });
 
   it('a refresh of an already-pending sha announces nothing (one alert per new request)', async () => {

@@ -1818,6 +1818,7 @@ model Report {
   crucible       CrucibleReport?
   gameFrameGame  GameFrameGameReport?
   serviceOffering ServiceOfferingReport?
+  postText       PostTextReport?
   gameFrameReceipts GameFrameReportReceipt[]
 }
 
@@ -2151,6 +2152,7 @@ model Post {
   tagsComposite   PostTag[]
   tagVotes        TagsOnPostVote[]
   reports         PostReport[]
+  textReports     PostTextReport[]
   collectionItems CollectionItem[]
   storylineChapter StorylineChapter?
   storylinePendingChapter StorylinePendingChapter?
@@ -11266,10 +11268,32 @@ model PostText {
   refused   Boolean  @default(false)
   /// Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
   csamHeld  Boolean  @default(false)
+  /// A moderator refused it from a report: `refused` stays set until a moderator restores it, and no
+  /// scan verdict lifts it.
+  refusedByModerator Boolean @default(false)
+  /// The scan's own refusal while a moderator's covers it (`refused` is then the moderator's): what a
+  /// restore falls back to. False whenever `refusedByModerator` is.
+  refusedByScan      Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  reports   PostTextReport[]
 
   @@index([postId, index])
+}
+
+/// A report on one storyline text. Filed in the post report queue, so it names the text's post too;
+/// it outlives the text (`postTextId` goes NULL), and `Report.details.postText` keeps the words as
+/// reported, stamped from the row when it was filed.
+model PostTextReport {
+  reportId   Int       @id
+  report     Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  postTextId Int?
+  postText   PostText? @relation(fields: [postTextId], references: [id], onDelete: SetNull)
+  postId     Int
+  post       Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postTextId], type: Hash)
+  @@index([postId], type: Hash)
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
