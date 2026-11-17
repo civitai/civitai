@@ -956,7 +956,6 @@
     "apps/moderator/src/lib/server/deferred-block-effects.ts": 1,
     "apps/moderator/src/lib/server/held-media.ts": 1,
     "apps/moderator/src/lib/server/mod-actions/registry.ts": 1,
-    "apps/moderator/src/lib/server/rewards.ts": 1,
     "apps/moderator/src/lib/server/text-scan-tests/deps.ts": 3,
     "apps/moderator/src/lib/server/training-moderation.service.ts": 4,
     "apps/moderator/src/routes/api/auth/authorize/+server.ts": 1,

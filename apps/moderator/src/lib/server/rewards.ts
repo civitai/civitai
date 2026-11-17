@@ -70,10 +70,13 @@ export async function rewardReportReporters(input: {
         name: 'buzz-rewards',
         type: 'error',
         message: 'Buzz event multiplier was negative and was floored to 0',
-        payload: { flooredEvents: floored.length, batchSize: rows.length },
-        // Omitted rather than reported when every floored raw overflowed: `Math.min()` of no
-        // arguments is +Infinity, which is the opposite sign of the alert and serializes to `null`.
-        ...(finiteFloored.length ? { minRaw: Math.min(...finiteFloored) } : {}),
+        payload: {
+          flooredEvents: floored.length,
+          batchSize: rows.length,
+          // Omitted rather than reported when every floored raw overflowed: `Math.min()` of no
+          // arguments is +Infinity, which is the opposite sign of the alert and serializes to `null`.
+          ...(finiteFloored.length ? { minRaw: Math.min(...finiteFloored) } : {}),
+        },
       });
     }
     if (clamped.length) {

@@ -436,7 +436,7 @@ describe('rewardReportReporters multiplier', () => {
     expect(axiom).toHaveBeenCalledTimes(1);
     const payload = axiom.mock.calls[0][0];
     expect(payload.message).toMatch(/negative and was floored/);
-    expect(payload).toMatchObject({ payload: { flooredEvents: 2, batchSize: 3 }, minRaw: -10 });
+    expect(payload).toMatchObject({ payload: { flooredEvents: 2, batchSize: 3, minRaw: -10 } });
   });
 
   it('keeps the unclamped negative in the audit trail', async () => {
@@ -457,7 +457,7 @@ describe('rewardReportReporters multiplier', () => {
     expect(payload).toMatchObject({ payload: { flooredEvents: 1 } });
     // No `minRaw` at all rather than one computed from an empty list: `Math.min()` of no arguments
     // is +Infinity, so the floor alert would report a POSITIVE minimum, serialized as `null`.
-    expect(payload).not.toHaveProperty('minRaw');
+    expect(payload).not.toHaveProperty('payload.minRaw');
     expect(row.transactionDetails).toBe('{}');
   });
 
