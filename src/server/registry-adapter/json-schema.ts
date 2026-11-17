@@ -20,21 +20,19 @@ export function newValidator() {
 /**
  * Most places a filter may apply a pattern: each `pattern`, each `patternProperties` key, and
  * each such key again where `additionalProperties` re-tests it, a pattern repeated counted every
- * time. A pattern runs on re2js's DFA where its states fit the DFA's memory, and otherwise
- * rebuilds the DFA and falls back to its NFA, so a place whose input keeps the DFA from fitting
- * costs tens of milliseconds whatever its size: the number of places, more than their size, sets
- * the worst case.
+ * time. Each place runs its pattern over every value it applies to, so the pattern work per body
+ * is at most this many runs, each linear in the value's length with a factor of the pattern's
+ * size ({@link FILTER_PATTERN_MAX_SIZE}).
  *
- * Measured through ajv against random `a`/`b` text (which keeps the DFA from fitting), best of 3,
- * `^x` 0 ms throughout: `[ab]{0,125}b[ab]{125}c` (size 253), the worst shape found, ~130 ms in one
- * place and ~250-270 ms in two (the same pattern twice or two variants) per 20 000 characters,
- * ~0.7 s and ~1.3 s per 200 000; smaller sizes of that shape cost less. With 8 places allowed, 8
- * places of ~61 took ~610 ms per 20 000.
+ * Measured through ajv against random `a`/`b` text, which keeps a pattern's DFA from fitting its
+ * budget (`FILTER_PATTERN_DFA_BYTES` in `filter-pattern.ts`), best of 3, `^x` 0 ms throughout:
+ * `[ab]{0,125}b[ab]{125}c` (size 253), the worst shape found, ~70 ms in one place and ~130 ms in
+ * two per 20 000 characters, ~1.3 s in two per 200 000; the same shape at size 63, 123 and 183 in
+ * two places ~31, ~61 and ~93 ms per 20 000. Before the DFA budget, a place whose input defeated
+ * re2js's 8 MiB DFA cost tens of milliseconds whatever its size, and 8 places took ~610 ms.
  *
  * Distinct patterns are at most the places, so this also bounds the compiled patterns a filter
- * keeps, each with a DFA re2js lets grow to ~8 MB as bodies are matched (measured: ~8.7 MB of
- * heap for `.{0,1000}[xy]` after one 20 000-character match, ~4 MB for the 23-sized
- * `[ab]*a[ab]{20}$`).
+ * keeps.
  */
 export const FILTER_MAX_PATTERN_PLACES = 2;
 
@@ -173,10 +171,11 @@ export function filterRefusal(filter: unknown): string | null {
  *
  * Compiled filters are cached by their text, at most `maxCached` of them holding at most
  * `maxCachedPatterns` patterns in all (the cache is emptied when either is full), so many distinct
- * filters cost compile time, never unbounded memory: a cached pattern can keep ~8 MB of DFA
- * ({@link FILTER_MAX_PATTERN_PLACES}), so the patterns, not the filters, are what the cache must
- * count. A filter holds at most 2 patterns, so 100 filters could otherwise hold 200 (~1.7 GB at
- * the worst measured); 16 bounds it to ~140 MB.
+ * filters cost compile time. The cache bounds only what it holds: a live subscription keeps its
+ * own predicate for as long as it is open, whatever the cache does. What bounds a predicate's
+ * memory is each pattern's DFA budget (`FILTER_PATTERN_DFA_BYTES` in `filter-pattern.ts`) and the
+ * {@link FILTER_MAX_PATTERN_PLACES} patterns per filter: measured, 40 live two-pattern filters each
+ * run over ~42 000 characters retained ~6.7 MB in all, 120 retained ~15 MB.
  */
 export type BodyPredicate = (body: unknown) => boolean;
 

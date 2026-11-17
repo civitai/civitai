@@ -364,8 +364,66 @@ function translate(pattern: string): { re2: string; size: number } {
   return { re2: out, size: sizes[0].sum };
 }
 
-/** A compiled pattern, with its size as {@link translateFilterPattern} counts it. */
-export type CompiledFilterPattern = RegExpLike & { readonly size: number };
+/**
+ * Most memory, in re2js's own estimate, the DFA of one compiled pattern may hold: 32 KiB, where
+ * re2js's default is 8 MiB. re2js builds a pattern's DFA lazily on its first match and keeps it for
+ * the pattern's lifetime; a filter predicate lives as long as its subscription, and a caller can
+ * open many subscriptions with distinct filters, so at the default each live pattern could keep
+ * ~5-8 MB. A DFA over its budget clears its cache and, if that happens too often, re2js runs the
+ * pattern on its NFA instead, in the same linear time the size bounds already assume.
+ *
+ * Measured, through ajv: 40 live two-pattern filters, each run once over 50 bodies of ~840
+ * characters of English-like text, retained ~6.7 MB at 32 KiB against ~520 MB at the default (and
+ * ~107 MB at the default with the predicates dropped, the filter cache only). Realistic patterns
+ * (a `^urn:schema:civitai.com:` prefix, a slug, a date, a five-word alternation, a word pattern)
+ * ran at the default's speed or faster; the auditor's `e[^.]{120}\.` pair, whose DFA needs
+ * megabytes, ran ~10x slower (~7 ms per 42 000 characters, the NFA's speed); the hostile
+ * `[ab]{0,125}b[ab]{125}c` in two places took about half as long. At 8 KiB a five-word
+ * alternation ran ~11x slower, so 32 KiB is the smallest budget measured that kept them fast.
+ */
+export const FILTER_PATTERN_DFA_BYTES = 32 * 1024;
+
+/** The parts of re2js 2.9.1's internal state that {@link boundDfa} reads and writes. */
+type Re2jsInternals = {
+  re2Input?: {
+    prog?: unknown;
+    lazyDFA?: { maxMem?: number } | null;
+    readonly dfa?: { constructor: new (prog: unknown, maxMem: number) => { maxMem?: number } };
+  };
+};
+
+/**
+ * Gives `compiled` a DFA of {@link FILTER_PATTERN_DFA_BYTES}. re2js has no public option for it
+ * (`RE2JS#reset()` clears only its matcher pool), so this builds one with re2js's own DFA class
+ * (its constructor takes the program and the budget) and puts it where re2js keeps the lazy one,
+ * which it then uses for every match. re2js is pinned exactly (`package.json`); if its internals
+ * are not as expected the pattern is refused ({@link FilterPatternError}, so `bad_request`),
+ * rather than applied with an unbounded DFA.
+ */
+function boundDfa(compiled: RE2JS): void {
+  const re2 = (compiled as unknown as Re2jsInternals).re2Input;
+  const Dfa = re2 && 'lazyDFA' in re2 && re2.prog ? re2.dfa?.constructor : undefined;
+  if (re2 && Dfa) re2.lazyDFA = new Dfa(re2.prog, FILTER_PATTERN_DFA_BYTES);
+  if (re2?.lazyDFA?.maxMem !== FILTER_PATTERN_DFA_BYTES) {
+    throw new FilterPatternError(
+      "this registry cannot apply filter patterns: its regular expression engine's internals changed"
+    );
+  }
+}
+
+/** The DFA budget `compiled` has now, read from re2js; for tests. */
+function dfaBudget(compiled: RE2JS): number | undefined {
+  return (compiled as unknown as Re2jsInternals).re2Input?.lazyDFA?.maxMem;
+}
+
+/**
+ * A compiled pattern, with its size as {@link translateFilterPattern} counts it and the DFA
+ * budget its engine has (read live, so a test sees what re2js will use).
+ */
+export type CompiledFilterPattern = RegExpLike & {
+  readonly size: number;
+  readonly dfaBytes: number | undefined;
+};
 
 /** `pattern` compiled for unanchored, linear-time matching; throws {@link FilterPatternError}. */
 export function compileFilterPattern(pattern: string): CompiledFilterPattern {
@@ -381,12 +439,16 @@ export function compileFilterPattern(pattern: string): CompiledFilterPattern {
       )} cannot be compiled by this registry's ` + `linear-time regular expression engine${why}`
     );
   }
+  boundDfa(compiled);
   return {
     // RE2JS `test` finds a match anywhere in the input, as ECMA's does: unanchored.
     test: (s: string) => compiled.test(s),
     // ajv keys a compiled pattern by `toString()` within one schema, so it must name the pattern.
     toString: () => `/${pattern}/u (re2)`,
     size,
+    get dfaBytes() {
+      return dfaBudget(compiled);
+    },
   } as CompiledFilterPattern;
 }
 
@@ -404,8 +466,8 @@ export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () 
  * key, and that key again under `additionalProperties`), and each place runs it once per value
  * it applies to. Every ask is a place, a repeated pattern counted each time. A filter with more
  * than `maxPlaces` places, or whose sizes summed over its places exceed `maxTotalSize`, throws
- * {@link FilterPatternError}. Places are what bound the worst case: a place whose input keeps
- * re2js's DFA from fitting costs tens of milliseconds whatever the pattern's size.
+ * {@link FilterPatternError}. Each place runs its pattern once per value it applies to, so the
+ * places, with each pattern's size, bound the matching work per body.
  *
  * Nothing is counted before {@link FilterRegExpEngine.arm}: ajv compiles its meta-schema's own
  * patterns (for `$id`, `$anchor` and the like) through the same engine, the first time it

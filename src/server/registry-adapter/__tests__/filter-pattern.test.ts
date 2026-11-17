@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FILTER_PATTERN_DFA_BYTES,
   FILTER_PATTERN_MAX_LENGTH,
   FILTER_PATTERN_MAX_SIZE,
   FilterPatternError,
   compileFilterPattern,
+  filterRegExpEngine,
 } from '~/server/registry-adapter/filter-pattern';
 import {
   FILTER_MAX_PATTERN_PLACES,
@@ -236,6 +238,60 @@ describe('🔴 a pattern whose counted repetitions multiply out too large is ref
     ['a{01}', 1],
   ])('%s is under the bound, with size %i, and is compiled', (p, size) => {
     expect(compileFilterPattern(p).size).toBe(size);
+  });
+});
+
+/** Text of `a` and `b` from a fixed seed, which keeps `[ab]*a[ab]{20}$`'s DFA from fitting. */
+function randomAb(length: number, seed: number) {
+  let x = seed;
+  let out = '';
+  for (let k = 0; k < length; k++) {
+    x = (x * 1103515245 + 12345) & 0x7fffffff;
+    out += x & 0x10000 ? 'a' : 'b';
+  }
+  return out;
+}
+
+describe('🔴 a compiled pattern keeps a bounded DFA', () => {
+  // re2js keeps a pattern's lazily built DFA for the pattern's lifetime, up to 8 MiB by default,
+  // and a live subscription keeps its patterns as long as it is open.
+  it('the budget is 32 KiB, not re2js default of 8 MiB', () => {
+    expect(FILTER_PATTERN_DFA_BYTES).toBe(32768);
+  });
+
+  // Read from re2js, after a match whose DFA is far over the budget: the bounded DFA is still the
+  // one in use, not a default one re2js built on the first match.
+  it.each([['e[^.]{120}\\.'], ['[ab]*a[ab]{20}$'], ['^urn:schema:civitai.com:']])(
+    '%s has a 32 KiB DFA after it is compiled and after it matches',
+    (p) => {
+      const rx = compileFilterPattern(p);
+      const before = rx.dfaBytes;
+      rx.test(randomAb(20_000, 7));
+      rx.test(`${'e'.repeat(200)}. urn:schema:civitai.com:`);
+      expect([before, rx.dfaBytes]).toEqual([32768, 32768]);
+    }
+  );
+
+  it('so does a pattern compiled for a filter', () => {
+    const engine = filterRegExpEngine({ maxTotalSize: 512, maxPlaces: 2 });
+    engine.arm();
+    const rx = engine('s[^.]{120}\\.', 'u') as ReturnType<typeof compileFilterPattern>;
+    rx.test(randomAb(5_000, 3));
+    expect(rx.dfaBytes).toBe(32768);
+  });
+
+  // Past its budget the DFA clears its cache or re2js runs the NFA; the verdicts must not change.
+  it('a pattern whose DFA overflows the budget still agrees with the platform RegExp', () => {
+    const p = '[ab]*a[ab]{20}$';
+    const rx = compileFilterPattern(p);
+    const native = new RegExp(p, 'u');
+    // A random prefix that overflows the DFA, then an end that fixes the verdict: the 21st code
+    // point from the end is `a` (a match), `b`, or the input ends in `c` (no match).
+    const ends = [`a${'b'.repeat(20)}`, `b${'a'.repeat(20)}`, 'c'];
+    const inputs = [1, 2, 3, 4, 5, 6].map((seed) => `${randomAb(3_000, seed)}${ends[seed % 3]}`);
+    expect(inputs.map((s) => rx.test(s))).toEqual(inputs.map((s) => native.test(s)));
+    // Positive control: both verdicts occur, so the comparison is not vacuous.
+    expect(new Set(inputs.map((s) => native.test(s)))).toEqual(new Set([true, false]));
   });
 });
 
