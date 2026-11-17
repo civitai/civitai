@@ -22,6 +22,7 @@
 
 import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
 import type {
+  ImageBackgroundRemovalStepTemplate,
   PreprocessImageInput,
   PreprocessImageStepTemplate,
   WorkflowCost,
@@ -1014,6 +1015,16 @@ async function createImageRemoveBackgroundInput(
   const sourceImage = data.images?.[0];
   if (!sourceImage?.url) {
     throw throwBadRequestError('Image URL is required for background removal');
+  }
+
+  if (data.backgroundRemovalModel === 'rmbg3') {
+    // The pinned @civitai/orchestration-client predates the step's `model` field.
+    const step = {
+      $type: 'imageBackgroundRemoval',
+      input: { image: sourceImage.url, format: 'png', model: 'rmbg3' },
+    } as ImageBackgroundRemovalStepTemplate as StepInput;
+    if (!sourceCtx) return step;
+    return { ...step, resolvedSource: buildResolvedSource(sourceImage.url, sourceCtx) };
   }
 
   const step = await createComfyInput({
@@ -2743,6 +2754,7 @@ type StepWithOutput = WorkflowStep & {
     // job (e.g. LTX 2.3). Each slot uses Seed + slotIndex.
     additionalVideos?: VideoBlob[] | null;
     blobs?: ImageBlob[];
+    image?: ImageBlob;
     // Audio steps bundle a cover image into a VideoBlob when they have one, so the
     // container type varies per result — discriminate on blob.type, not on $type.
     blob?: ImageBlob | VideoBlob | AudioBlob;
@@ -2804,6 +2816,8 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
     case 'imageUpscaler':
     case 'preprocessImage':
       return output.blob ? [{ ...(output.blob as ImageBlob), type: 'image' as const }] : [];
+    case 'imageBackgroundRemoval':
+      return output.image ? [{ ...output.image, type: 'image' as const }] : [];
     case 'videoGen': {
       // LTX 2.3 batches multiple videos in a single job — primary in `video`,
       // remainder in `additionalVideos` (each slot uses Seed + slotIndex).

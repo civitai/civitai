@@ -18,7 +18,23 @@ import { optionFallback, imagesDef, sliderDef } from '../defs';
  * the graph engine, and duplicating 36 kinds' specs would only drift.
  */
 
-export const imageRemoveBackground = defineGraph<GenerationCtx>().field('images', imagesDef({}));
+export const backgroundRemovalModels = ['birefnet', 'rmbg3'] as const;
+export type BackgroundRemovalModel = (typeof backgroundRemovalModels)[number];
+
+export const imageRemoveBackground = defineGraph<GenerationCtx>()
+  .field('images', imagesDef({}))
+  .field('backgroundRemovalModel', {
+    input: z.enum(backgroundRemovalModels).optional(),
+    output: z.enum(backgroundRemovalModels),
+    default: 'birefnet' as BackgroundRemovalModel,
+    correct: optionFallback(backgroundRemovalModels, 'birefnet' as BackgroundRemovalModel),
+    meta: {
+      options: [
+        { label: 'Standard', value: 'birefnet' },
+        { label: 'RMBG 3.0', value: 'rmbg3' },
+      ] as { label: string; value: BackgroundRemovalModel }[],
+    },
+  });
 
 const kindParamsSchema = z.record(z.string(), z.unknown());
 const kindParamsInput = kindParamsSchema.optional();
