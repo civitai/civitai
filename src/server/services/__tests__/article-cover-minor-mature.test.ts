@@ -261,6 +261,7 @@ describe('getArticleById body images', () => {
     url: BODY_UUID,
     nsfwLevel,
     minor,
+    modelRestricted: false,
     userId: OWNER,
     ingestion: 'Scanned',
     needsReview: null,

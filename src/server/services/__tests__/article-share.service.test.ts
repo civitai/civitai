@@ -323,6 +323,7 @@ describe('getArticleByShareToken: cover and viewer', () => {
     nsfwLevel: 1,
     ingestion: 'Scanned',
     needsReview: null,
+    modelRestricted: false,
     meta: null,
     metadata: null,
     tags: [],
