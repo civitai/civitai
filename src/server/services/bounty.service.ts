@@ -962,14 +962,6 @@ export const upsertBounty = async ({
   }
 };
 
-/**
- * The one path for "a bounty's description changed", for a caller holding only new HTML — the
- * blurb fan-out. `upsertBounty` is form-shaped, so a partial call to it would clear name, tags,
- * files, images and the entry limit rather than update a column.
- *
- * `updateBountyById`'s own follow-up — the image ingest queue and the owner's bounty COUNT —
- * is not repeated here: a re-materialised body moves neither.
- */
 const autoNsfwBountySelect = {
   name: true,
   nsfw: true,
@@ -978,6 +970,14 @@ const autoNsfwBountySelect = {
   details: true,
 } satisfies Prisma.BountySelect;
 
+/**
+ * The one path for "a bounty's description changed", for a caller holding only new HTML — the
+ * blurb fan-out. `upsertBounty` is form-shaped, so a partial call to it would clear name, tags,
+ * files, images and the entry limit rather than update a column.
+ *
+ * `updateBountyById`'s own follow-up — the image ingest queue and the owner's bounty COUNT —
+ * is not repeated here: a re-materialised body moves neither.
+ */
 export async function applyBountyContentChange({
   id,
   description,
