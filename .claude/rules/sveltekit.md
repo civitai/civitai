@@ -13,6 +13,8 @@ Root CLAUDE.md covers the stack, the `typecheck`-not-`check` rule and the pretti
 - Review a segment with `svelte-correctness-review`, `svelte-idiom-review` and `svelte-abstraction-review`.
 - `apps/moderator`: a bulk-selection bar is `$lib/components/SelectionBar`, never a hand-rolled fixed footer, and every action in it is a `TipButton` (or `ConfirmSubmit` with `tip`).
 
+- Kysely row types: a row type comes from the generated Kysely types: `Selectable<DB['Table']>`, or `Pick<Selectable<DB['Table']>, 'id' | 'name'>` for a subset. Never hand-write an object type that repeats a table's columns, and keep the schema's nullability (no `| null` on a `NOT NULL` column). Let a query's result type be inferred rather than restated. `DB` is the app's own (`moderator-db/types`) or `@civitai/db-schema/kysely` for the main database.
+
 ## `typecheck` vs `check`
 
 `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it with `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/`, a directory the Vite dev server watches.

@@ -25,7 +25,9 @@ Say nothing about whether the code is correct, fast or well tested.
    "future" hook with no consumer?
 2. **Fewer steps or less code?** Is there a shorter way to the same behavior: an existing helper, a
    simpler data shape, deleting a branch instead of adding one, fixing the cause once instead of a
-   guard at each symptom?
+   guard at each symptom? A hand-written object type that repeats a Kysely table's columns is a
+   finding: the fix is `Selectable<DB['Table']>` or a `Pick<>` of it, which is shorter and keeps the
+   schema's nullability.
 3. **Is the fix to delete a duplicate?** Shared with `civitai-reuse-review`: report it here only when
    the fix is to delete the new code. "Use X instead of this" is reuse's finding, not yours.
 4. **Temporary code with no removal task?** If the PR body or its plan says "part 1 of N" or "a
