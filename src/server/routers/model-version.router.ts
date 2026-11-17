@@ -311,8 +311,8 @@ export const modelVersionRouter = router({
     .mutation(publishPrivateModelVersionHandler),
   bustCache: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => bustMvCache(input.id)),
   /**
-   * Use only when the purchase is refunded separately: the revoke removes the purchase record that a
-   * later unpublish would refund from.
+   * Use only when the purchase is refunded separately: the revoke takes it out of the refund a later
+   * unpublish would make.
    */
   revokeUserEarlyAccess: moderatorProcedure
     .input(revokeUserEarlyAccessSchema)

@@ -4,8 +4,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 /**
- * A grant row with no permissions, which a moderator's revoke leaves as the purchase record, is no
- * access to a model version, for the callers that ask without naming permissions. Ids are invented.
+ * A model version grant a moderator revoked, kept with no permissions as the purchase record, is no
+ * access for the callers that ask without naming permissions. Ids are invented.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -60,12 +60,13 @@ beforeEach(async () => {
   dbMock.dbRead.$queryRaw.mockResolvedValue([privateEntity] as never);
 });
 
-const grant = (accessToType: string, permissions: number) =>
-  db.query(`INSERT INTO "EntityAccess" VALUES ($1, $2, $3, 'User', $4, '{}'::jsonb)`, [
+const grant = (accessToType: string, permissions: number, meta: object = {}) =>
+  db.query(`INSERT INTO "EntityAccess" VALUES ($1, $2, $3, 'User', $4, $5::jsonb)`, [
     ENTITY_ID,
     accessToType,
     VIEWER,
     permissions,
+    JSON.stringify(meta),
   ]);
 
 const access = async (entityType: 'ModelVersion' | 'Post') =>
@@ -77,9 +78,14 @@ describe('hasEntityAccess with no permissions named', () => {
     expect(await access('ModelVersion')).toBe(true);
   });
 
-  it('refuses a model version grant with no permissions', async () => {
-    await grant('ModelVersion', 0);
+  it('refuses a model version grant a moderator revoked', async () => {
+    await grant('ModelVersion', 0, { revocations: [{ revokedById: 1 }] });
     expect(await access('ModelVersion')).toBe(false);
+  });
+
+  it('still grants a model version grant from before permissions were recorded', async () => {
+    await grant('ModelVersion', 0);
+    expect(await access('ModelVersion')).toBe(true);
   });
 
   it('still reads any other entity type by the row alone', async () => {
