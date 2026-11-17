@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/redis/go-redis/v9"
 
@@ -145,7 +144,7 @@ func (s *Sources) lookupVersionImages(ctx context.Context, ids []int) (map[int]j
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, strings.Replace(sqlVersionImages, `ORDER BY i."postId", i."index", i.id`, `ORDER BY i.id`, 1), ids) // MUTANT M4
+	rows, err := db.Query(ctx, sqlVersionImages, ids)
 	if err != nil {
 		return nil, err
 	}
