@@ -9,7 +9,9 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as UserService from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { childBrowsingTagIds } from '@civitai/shared';
 import { NsfwLevel } from '~/server/common/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const {
   mockAssert,
@@ -78,6 +80,17 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
   BlockedUsers: emptyPreference,
   BlockedByUsers: emptyPreference,
 }));
+
+vi.mock('~/server/services/system-cache', async (importOriginal) => {
+  const { DEFAULT_BROWSING_SETTINGS_ADDONS } = await import(
+    '~/shared/constants/browsing-settings-addons'
+  );
+  return {
+    ...(await importOriginal<object>()),
+    getBlockedBrowsingTags: vi.fn(async () => []),
+    getBrowsingSettingAddons: vi.fn(async () => DEFAULT_BROWSING_SETTINGS_ADDONS),
+  };
+});
 
 // event-engine-common is a git submodule a fresh checkout does not have; image.service imports it.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -458,5 +471,64 @@ describe('entry detail image count', () => {
 
   it('still gives other viewers 10', async () => {
     expect(await entryImageCount(stranger as object)).toBe(10);
+  });
+});
+
+describe('bounty images and browsing-tag rules', () => {
+  const CHILD_TAG = childBrowsingTagIds[0];
+  const OTHER_TAG = 999001;
+  const mature = {
+    id: 6,
+    isModerator: false,
+    showNsfw: true,
+    browsingLevel: allBrowsingLevelsFlag,
+  };
+  const matureViewer = { user: mature, ...uncapped };
+  const modViewer = { user: { ...mature, isModerator: true }, ...uncapped };
+  const image = (id: number, tagId: number) => ({
+    id,
+    userId: 5,
+    nsfwLevel: NsfwLevel.R,
+    nsfwLefel: NsfwLevel.R,
+    tags: [{ id: tagId, name: 't' }],
+  });
+  const ids = (images: { id: number }[]) => images.map((i) => i.id);
+
+  const feedIds = async (ctx: object) => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      { id: 1, name: 'B', nsfw: false, nsfwLevel: NsfwLevel.R, tags: [], user: { id: 5 } },
+    ]);
+    mockImagesForBounties.mockResolvedValue({ 1: [image(10, CHILD_TAG), image(11, OTHER_TAG)] });
+    const { items } = await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx: ctx as never,
+    });
+    return ids(items[0].images);
+  };
+  const detailIds = async (ctx: object) => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      id: 9,
+      name: 'B',
+      availability: 'Public',
+      poi: false,
+      user: { id: 5 },
+      details: null,
+      tags: [],
+      meta: {},
+    });
+    mockBountyImages.mockResolvedValue([image(10, CHILD_TAG), image(11, OTHER_TAG)]);
+    return ids((await getBountyHandler({ input: { id: 9 }, ctx: ctx as never })).images);
+  };
+
+  beforeEach(() => mockAssert.mockResolvedValue(undefined));
+
+  it('drops a child-tagged image for a mature non-moderator, keeping other mature images', async () => {
+    expect(await feedIds(matureViewer)).toEqual([11]);
+    expect(await detailIds(matureViewer)).toEqual([11]);
+  });
+
+  it('serves a moderator every image', async () => {
+    expect(await feedIds(modViewer)).toEqual([10, 11]);
+    expect(await detailIds(modViewer)).toEqual([10, 11]);
   });
 });

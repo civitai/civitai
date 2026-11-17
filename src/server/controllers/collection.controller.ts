@@ -81,6 +81,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { relatedPostsBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
+import { getShowcaseImageFilter } from '~/server/services/blocked-browsing-tags.service';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -123,9 +124,19 @@ export const getAllCollectionsInfiniteHandler = async ({
       user: ctx.user,
     });
     const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
+    const showsImage = await getShowcaseImageFilter({
+      browsingLevel,
+      viewer: {
+        id: ctx.user?.id,
+        username: ctx.user?.username,
+        isModerator: ctx.user?.isModerator,
+      },
+    });
     // A cover the viewer may not see falls through to the item covers below.
     const items = (await withServableCovers(rows, ctx.user)).map((row) =>
-      row.image && !isCoverWithinBrowsingLevel(row.image, browsingLevel)
+      row.image &&
+      (!isCoverWithinBrowsingLevel(row.image, browsingLevel) ||
+        !showsImage({ userId: row.image.userId, tags: row.image.tags.map((t) => t.tag.id) }))
         ? { ...row, image: null }
         : row
     );
@@ -142,6 +153,7 @@ export const getAllCollectionsInfiniteHandler = async ({
       collectionIds: collectionRequiringImages,
       imagesPerCollection: 10, // Some fallbacks
       browsingLevel,
+      showsImage,
     });
 
     // Get Item Counts

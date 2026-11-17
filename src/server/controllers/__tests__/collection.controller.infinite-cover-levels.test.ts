@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { childBrowsingTagIds } from '@civitai/shared';
 import { NsfwLevel } from '~/server/common/enums';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as CollectionService from '~/server/services/collection.service';
@@ -23,10 +24,21 @@ vi.mock('~/server/services/collection-cover-visibility', async (importOriginal) 
   withServableCovers: async <T>(rows: T[]) => rows,
 }));
 
+const { mockTagIdsFetch } = vi.hoisted(() => ({ mockTagIdsFetch: vi.fn() }));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof RedisCaches>()),
-  tagIdsForImagesCache: { fetch: vi.fn().mockResolvedValue({}) },
+  tagIdsForImagesCache: { fetch: mockTagIdsFetch },
 }));
+
+vi.mock('~/server/services/system-cache', async () => {
+  const { DEFAULT_BROWSING_SETTINGS_ADDONS } = await import(
+    '~/shared/constants/browsing-settings-addons'
+  );
+  return {
+    getBlockedBrowsingTags: vi.fn(async () => []),
+    getBrowsingSettingAddons: vi.fn(async () => DEFAULT_BROWSING_SETTINGS_ADDONS),
+  };
+});
 
 import { getAllCollectionsInfiniteHandler } from '../collection.controller';
 
@@ -78,6 +90,7 @@ async function feed(ctx: object, browsingLevel?: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockTagIdsFetch.mockResolvedValue({});
   mockGetAllCollections.mockResolvedValue([
     ownCover(1, NsfwLevel.PG),
     ownCover(2, NsfwLevel.XXX),
@@ -192,5 +205,49 @@ describe('getAllCollectionsInfiniteHandler cover levels', () => {
       { id: 2, own: null, items: [] },
       { id: 3, own: null, items: [300] },
     ]);
+  });
+});
+
+describe('getAllCollectionsInfiniteHandler browsing-tag rules', () => {
+  const CHILD_TAG = childBrowsingTagIds[0];
+  const OTHER_TAG = 999001;
+  const MOD_VIEWER = { ...MATURE_VIEWER, user: { ...MATURE_VIEWER.user, isModerator: true } };
+
+  beforeEach(() => {
+    mockGetAllCollections.mockResolvedValue([
+      ownCover(1, NsfwLevel.R, { userId: 5, tags: [{ tag: { id: CHILD_TAG } }] }),
+      ownCover(2, NsfwLevel.R, { userId: 5, tags: [{ tag: { id: OTHER_TAG } }] }),
+      noCover(3),
+    ]);
+    itemCovers([
+      itemCover(1, 400, NsfwLevel.PG, { userId: 5 }),
+      itemCover(3, 300, NsfwLevel.R, { userId: 5 }),
+      itemCover(3, 301, NsfwLevel.R, { userId: 5 }),
+    ]);
+    mockTagIdsFetch.mockResolvedValue({
+      300: { imageId: 300, tags: [CHILD_TAG] },
+      301: { imageId: 301, tags: [OTHER_TAG] },
+    });
+  });
+
+  it('drops a child-tagged image for a mature non-moderator, keeping other mature images', async () => {
+    expect(await feed(MATURE_VIEWER)).toEqual([
+      { id: 1, own: null, items: [400] },
+      { id: 2, own: 102, items: [] },
+      { id: 3, own: null, items: [301] },
+    ]);
+  });
+
+  it('serves a moderator every image', async () => {
+    expect(await feed(MOD_VIEWER)).toEqual([
+      { id: 1, own: 101, items: [] },
+      { id: 2, own: 102, items: [] },
+      { id: 3, own: null, items: [300, 301] },
+    ]);
+  });
+
+  it('reads the tag ids past the local cache', async () => {
+    await feed(MATURE_VIEWER);
+    expect(mockTagIdsFetch).toHaveBeenCalledWith(expect.any(Array), { bypassLocal: true });
   });
 });

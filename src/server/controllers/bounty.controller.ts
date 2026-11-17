@@ -42,7 +42,18 @@ import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
-import { capNestedImages } from '~/server/utils/browsing-level';
+import { capNestedImages, relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
+import { getShowcaseImageFilter } from '~/server/services/blocked-browsing-tags.service';
+
+/** The viewer's browsing-tag filter over a bounty's images, at their browsing level. */
+const getBountyImageFilter = async (ctx: Context) => {
+  const showsImage = await getShowcaseImageFilter({
+    browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
+    viewer: { id: ctx.user?.id, username: ctx.user?.username, isModerator: ctx.user?.isModerator },
+  });
+  return (image: { userId: number; tags: { id: number }[] }) =>
+    showsImage({ userId: image.userId, tags: image.tags.map((tag) => tag.id) });
+};
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -98,11 +109,14 @@ export const getInfiniteBountiesHandler = async ({
     }
 
     const bountIds = items.map((bounty) => bounty.id);
-    const images = await getImagesForBounties({
-      bountyIds: bountIds,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const [images, showsImage] = await Promise.all([
+      getImagesForBounties({
+        bountyIds: bountIds,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      }),
+      getBountyImageFilter(ctx),
+    ]);
 
     return {
       nextCursor,
@@ -111,7 +125,7 @@ export const getInfiniteBountiesHandler = async ({
           const tags = item.tags;
           const user = item.user;
           const itemImages = capNestedImages(
-            (images[item.id] ?? []).map((image) => ({
+            (images[item.id] ?? []).filter(showsImage).map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
               // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
@@ -184,11 +198,14 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         : null;
     const { meta: _meta, ...publicBounty } = bounty;
 
-    const images = await getBountyImages({
-      id: bounty.id,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const [images, showsImage] = await Promise.all([
+      getBountyImages({
+        id: bounty.id,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      }),
+      getBountyImageFilter(ctx),
+    ]);
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
@@ -202,11 +219,13 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       details: bounty.details
         ? publicBountyDetails(bounty.details as BountyDetailsSchema, ctx?.user?.isModerator)
         : ({} as BountyDetailsSchema),
-      images: capNestedImages(images, ctx, { ownerId: bounty.user?.id }).map((image) => ({
-        ...image,
-        meta: (image?.meta ?? {}) as ImageMetaProps,
-        metadata: image?.metadata as MixedObject,
-      })),
+      images: capNestedImages(images.filter(showsImage), ctx, { ownerId: bounty.user?.id }).map(
+        (image) => ({
+          ...image,
+          meta: (image?.meta ?? {}) as ImageMetaProps,
+          metadata: image?.metadata as MixedObject,
+        })
+      ),
       tags: bounty.tags.map(({ tag }) => tag),
       files,
     };

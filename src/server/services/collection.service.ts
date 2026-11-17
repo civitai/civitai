@@ -3932,10 +3932,13 @@ export const getCollectionCoverImages = async ({
   collectionIds,
   imagesPerCollection,
   browsingLevel,
+  showsImage,
 }: {
   collectionIds: number[];
   imagesPerCollection: number;
   browsingLevel: number;
+  /** The viewer's browsing-tag filter, from `getShowcaseImageFilter`. */
+  showsImage: (image: { userId?: number; tags: number[] }) => boolean;
 }) => {
   const imageSql = Prisma.sql`
     jsonb_build_object(
@@ -3968,33 +3971,28 @@ export const getCollectionCoverImages = async ({
           srcImageLevels: allBrowsingLevelsFlag,
         })}`
       : [];
+  const withinLevel = itemImages.filter(
+    ({ image }) => image && isCoverWithinBrowsingLevel(image, browsingLevel)
+  );
+  // Past the L1: these ids decide which images are served.
+  const imageIds = [...new Set(withinLevel.map(({ image }) => image?.id).filter(isDefined))];
+  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds, { bypassLocal: true });
+  const tagIdsOf = (imageId: number) => imageTagsCache[imageId]?.tags ?? [];
+
   // An article's cover string carries no rating of its own: it is served only beside a cover
   // image that passed.
-  const shown = itemImages.map(({ id, image, src }) =>
-    image && isCoverWithinBrowsingLevel(image, browsingLevel)
-      ? { id, image, src }
-      : { id, image: null, src: null }
-  );
-
-  // Use Redis cache for tag lookups (much faster than direct DB query)
-  const imageIds = [...new Set(shown.map(({ image }) => image?.id).filter(isDefined))];
-  const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
-  const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
-    cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
-  );
-
-  return shown
-    .map(({ id, image, src }) => ({
-      id,
-      image: image
-        ? {
-            ...omit(image, 'tosViolation'),
-            tags: tags.filter((t) => t.imageId === image.id).map((t) => ({ id: t.tagId })),
-          }
-        : null,
-      src,
-    }))
-    .filter((itemImage) => !!(itemImage.image || itemImage.src));
+  return withinLevel.flatMap(({ id, image, src }) => {
+    if (!image) return [];
+    const tags = tagIdsOf(image.id);
+    if (!showsImage({ userId: image.userId, tags })) return [];
+    return [
+      {
+        id,
+        image: { ...omit(image, 'tosViolation'), tags: tags.map((tagId) => ({ id: tagId })) },
+        src,
+      },
+    ];
+  });
 };
 
 type CollectionForMeta = { id: number; metadata: CollectionMetadataSchema | null };
