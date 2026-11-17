@@ -783,9 +783,9 @@ function extractSnapshotStep(
     // are echoed back by the orchestrator. Anything else keeps the pre-existing
     // behaviour: dropped.
     //
-    // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
-    // image this arm produces on the one channel the publish path and the
-    // per-viewer gated read already own; see `stepOutputs` in
+    // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs` (an unapproved training
+    // run's go to neither). That keeps every image this arm produces on the one
+    // channel the publish path and the per-viewer gated read already own; see `stepOutputs` in
     // `schema/blocks/workflow.schema`. A training checkpoint goes to NEITHER —
     // `splitPassThroughStep` drops it.
     if (!bridgeSubmitted) return { media, trainedEpochs, model3d: [] };

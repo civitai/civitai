@@ -373,14 +373,13 @@ export type TrainedEpoch = { $type: TrainingStepType; epochNumber: number };
  * keyed on the two `$type`s, before the walk runs — never by sniffing a url for
  * a file extension.
  *
- * 🔴 SAMPLES GO TO `imageUrls` FOR BOTH TYPES. `training` samples are `Blob`s and
- * the walk lifts them; `imageResourceTraining.epochs[].sampleImages` are plain
+ * 🔴 SAMPLES GO TO `imageUrls` FOR BOTH TYPES, once the run is approved.
+ * `training` samples are `Blob`s and the walk lifts them; `imageResourceTraining.epochs[].sampleImages` are plain
  * strings the main app renders as image urls, so they are lifted here by
  * position — otherwise they would ride `stepOutputs`, around the gated read.
  *
- * 🔴 `trainedEpochs` IS EMPTY UNLESS THE RUN'S `moderationStatus` IS `approved`.
- * It is what a block offers to the publish wizard; a run still evaluating, under
- * review or rejected has nothing to offer.
+ * 🔴 NO SAMPLE AND NO EPOCH UNLESS THE RUN'S `moderationStatus` IS `approved`.
+ * The manager API returns it in either casing, so compare case-insensitively.
  *
  * Both workflow extractors call this rather than `splitPassThroughStepOutput`
  * directly, so neither can forget the training rule.
@@ -420,18 +419,14 @@ export function splitPassThroughStep(
       neverRated: true,
     });
   }
+  const moderationStatus =
+    output !== null && typeof output === 'object'
+      ? (output as Record<string, unknown>).moderationStatus
+      : undefined;
   const approved =
-    output !== null &&
-    typeof output === 'object' &&
-    (output as Record<string, unknown>).moderationStatus === 'approved';
-  return {
-    media,
-    rest,
-    trainedEpochs: approved ? trainedEpochs : [],
-    model3d,
-    slots,
-    truncated,
-  };
+    typeof moderationStatus === 'string' && moderationStatus.toLowerCase() === 'approved';
+  if (!approved) return { media: [], rest, trainedEpochs: [], model3d, slots: [], truncated };
+  return { media, rest, trainedEpochs, model3d, slots, truncated };
 }
 
 /**

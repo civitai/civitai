@@ -233,18 +233,40 @@ describe('trainedEpochs', () => {
     expect(snap.imageUrls).toBeUndefined();
   });
 
-  it.each(['evaluating', 'underReview', 'rejected', undefined])(
-    'is OMITTED when the run moderationStatus is %s, while samples still surface',
+  it.each(['evaluating', 'underReview', 'UnderReview', 'rejected', undefined])(
+    'is OMITTED, and no sample surfaces, when the run moderationStatus is %s',
     (moderationStatus) => {
       const snap = snapshotFromWorkflow(
         workflow('training', { ...trainingOutput(), moderationStatus }),
         TEST_OUTPUT_CEILING
       );
       expect(snap).not.toHaveProperty('trainedEpochs');
-      expect(snap.imageUrls).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
-      expect(JSON.stringify(snap)).not.toContain('.safetensors');
+      expect(snap.imageUrls ?? []).toEqual([]);
+      const wire = JSON.stringify(snap);
+      for (const url of [SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]) expect(wire).not.toContain(url);
+      expect(wire).not.toContain('.safetensors');
     }
   );
+
+  it('surfaces no legacy sample url on an imageResourceTraining run under review', () => {
+    const snap = snapshotFromWorkflow(
+      workflow('imageResourceTraining', {
+        ...imageResourceTrainingOutput(),
+        moderationStatus: 'underReview',
+      }),
+      TEST_OUTPUT_CEILING
+    );
+    expect(JSON.stringify(snap)).not.toContain(LEGACY_SAMPLE_URL);
+  });
+
+  it('treats the manager-API casing `Approved` as approved', () => {
+    const snap = snapshotFromWorkflow(
+      workflow('training', { ...trainingOutput(), moderationStatus: 'Approved' }),
+      TEST_OUTPUT_CEILING
+    );
+    expect(snap.imageUrls).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
+    expect(snap.trainedEpochs).toHaveLength(2);
+  });
 
   it('accumulates across two training steps rather than keeping the last', () => {
     const wf = workflow('training', trainingOutput());
@@ -298,14 +320,16 @@ describe('trainedEpochs on AppWorkflow rows', () => {
   });
 
   it.each(['evaluating', 'underReview', 'rejected', undefined])(
-    'is OMITTED when the run moderationStatus is %s',
+    'is OMITTED, with no sample image, when the run moderationStatus is %s',
     (moderationStatus) => {
       const projected = projectAppWorkflow(
         workflow('training', { ...trainingOutput(), moderationStatus }),
         TEST_OUTPUT_CEILING
       );
       expect(projected).not.toHaveProperty('trainedEpochs');
-      expect(projected.images.map((i) => i.url)).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
+      expect(projected.images).toEqual([]);
+      const wire = JSON.stringify(projected);
+      for (const url of [SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]) expect(wire).not.toContain(url);
     }
   );
 
