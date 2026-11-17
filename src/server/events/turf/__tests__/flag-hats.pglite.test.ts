@@ -52,7 +52,7 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptClientSync: () => null,
 }));
 
-const { placeFlagHats, placeTurfSticker, getFlagSummary } = await import(
+const { placeFlagHats, placeTurfSticker, getFlagSummary, getPastFlags } = await import(
   '~/server/events/turf/turf.service'
 );
 const { flagRaceConfigKey } = await import('~/server/events/scoring/award-results');
@@ -230,6 +230,39 @@ describe('hats on a flag', () => {
         BEFORE
       )
     ).rejects.toThrow(/is a flag today/);
+  });
+});
+
+describe('past flags', () => {
+  it("names each frozen flag's winners and the points paid, and leaves out a day not frozen", async () => {
+    await db.query(
+      `INSERT INTO "FlagDay" (event, "crucibleId", "startsAt", "cutAt", "closesAt", "imageIds")
+       VALUES ('e', 2, '2026-11-15T16:03:00Z', '2026-11-16T15:30:00Z', '2026-11-16T16:00:00Z', ARRAY[${NOT_FLAG}])`
+    );
+    await db.query(
+      `INSERT INTO "EventAwardResult" (event, "sourceId", kind, team, points, at, inputs, "voidedAt")
+       VALUES ('e', $1, 'flag', NULL, 0, $2, '{}', NULL), ('e', $3, 'flag', 'Pink', 10, $2, '{}', NULL),
+              ('e', $4, 'flag', 'Blue', 6, $2, '{}', NULL), ('e', $5, 'flag', 'Green', 50, $2, '{}', $2)`,
+      [
+        `flag:${dayId}:${FLAG}`,
+        CUT,
+        `flag:${dayId}:${FLAG}:Pink`,
+        `flag:${dayId}:${FLAG}:Blue`,
+        `flag:${dayId}:${FLAG}:Green`,
+      ]
+    );
+    expect(await getPastFlags('e')).toEqual([
+      {
+        imageId: FLAG,
+        flagDayId: dayId,
+        rank: 1,
+        cutAt: CUT,
+        closesAt: new Date('2026-11-15T16:00:00Z'),
+        // A voided share still names its team, as the day's own badge did, but pays nothing.
+        winners: ['Blue', 'Green', 'Pink'],
+        points: 16,
+      },
+    ]);
   });
 });
 

@@ -229,6 +229,65 @@ describe('the swap', () => {
   });
 });
 
+describe('the all-time collection', () => {
+  const ALL = 78;
+  const DAY = 24 * 3_600_000;
+  const items = async (collectionId: number) =>
+    (
+      await db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "CollectionItem" WHERE "collectionId" = $1 ORDER BY "createdAt" DESC`,
+        [collectionId]
+      )
+    ).rows.map((r) => r.imageId);
+  async function laterCrucible(id: number, days: number, images: number[]) {
+    await db.query(`INSERT INTO "Crucible" VALUES ($1, 'Completed', $2, $3)`, [
+      id,
+      new Date(END.getTime() + days * DAY),
+      [TAG],
+    ]);
+    for (const [index, image] of images.entries()) {
+      await db.query(
+        `INSERT INTO "Image" (id, "nsfwLevel") VALUES ($1, 1) ON CONFLICT DO NOTHING`,
+        [image]
+      );
+      await db.query(
+        `INSERT INTO "CrucibleEntry" ("crucibleId", "imageId", position) VALUES ($1, $2, $3)`,
+        [id, image, index + 1]
+      );
+    }
+  }
+  const swapOn = (days: number, allTime?: number) =>
+    swapFlagDay(
+      EVENT,
+      { ...FLAGS, allTimeCollectionId: allTime },
+      new Date(SWAP.getTime() + days * DAY)
+    );
+
+  it('gathers every day so far once set, keeps what it holds, and adds a repeat flag once', async () => {
+    await db.query(
+      `INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "createdAt")
+       VALUES ($1, 500, 'ACCEPTED', '2026-11-01')`,
+      [ALL]
+    );
+    await laterCrucible(1, 0, [11, 12]);
+    expect((await swapOn(0))?.imageIds).toEqual([11, 12]);
+    expect(await items(ALL)).toEqual([500]);
+
+    // Set from day 2: day 1 comes in too, and 12, a flag both days, is in it once.
+    await laterCrucible(2, 1, [13, 12]);
+    await swapOn(1, ALL);
+    expect(await homeItems()).toEqual([13, 12]);
+    expect(await items(ALL)).toEqual([13, 12, 11, 500]);
+
+    await laterCrucible(3, 2, [14, 12]);
+    await swapOn(2, ALL);
+    expect(await homeItems()).toEqual([14, 12]);
+    expect(await items(ALL)).toEqual([14, 13, 12, 11, 500]);
+    expect(await swapOn(2.01, ALL)).toBeUndefined();
+    expect(await items(ALL)).toEqual([14, 13, 12, 11, 500]);
+  });
+});
+
 describe('what the swap may raise as a flag', () => {
   it('only an image anyone may see, from an active owner; a failing place is left empty', async () => {
     await crucible(
