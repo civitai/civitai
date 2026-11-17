@@ -14,6 +14,7 @@ import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilters';
 import ModelsPage from '~/pages/models/index';
+import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 
@@ -422,6 +423,18 @@ describe('the Hide Paid notice', () => {
     await userEvent.click(page.getByRole('button', { name: 'Show all' }));
     await expect.poll(() => router.query.hidePaid).toBeUndefined();
     await expect.poll(() => lastRequest().hidePaid).toBeUndefined();
+    await expect.element(notice()).not.toBeInTheDocument();
+  });
+
+  test('is absent from an embedded feed whose filters are not the saved ones', async () => {
+    renderWithProviders(
+      <IsClientProvider>
+        <FiltersProvider>
+          <ModelsInfinite disableStoreFilters filters={{ hidePaid: true }} />
+        </FiltersProvider>
+      </IsClientProvider>
+    );
+    await expect.poll(() => lastRequest().hidePaid).toBe(true);
     await expect.element(notice()).not.toBeInTheDocument();
   });
 

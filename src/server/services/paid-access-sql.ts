@@ -21,13 +21,18 @@ export const paidAccessLiveSql = Prisma.sql`pa."entityType" = 'ModelVersion'
 
 /**
  * The model in `modelId` has a Published version with no live gate: what Hide Paid keeps a model for.
+ * `publicOnly` also requires that version be Public, for feeds that drop every other availability.
  * Interpolate a column reference, e.g. `Prisma.sql\`m.id\``. The inner `pa`/`mv` aliases shadow any outer ones,
  * so the caller's own `mv` is safe to pass in.
  */
-export const freePublishedVersionExistsSql = (modelId: Prisma.Sql) => Prisma.sql`EXISTS (
+export const freePublishedVersionExistsSql = (
+  modelId: Prisma.Sql,
+  { publicOnly = false }: { publicOnly?: boolean } = {}
+) => Prisma.sql`EXISTS (
       SELECT 1 FROM "ModelVersion" fv
       WHERE fv."modelId" = ${modelId}
         AND fv.status = 'Published'::"ModelStatus"
+        ${publicOnly ? Prisma.sql`AND fv.availability = 'Public'::"Availability"` : Prisma.empty}
         AND NOT EXISTS (
           SELECT 1 FROM "PaidAccess" pa
           JOIN "ModelVersion" mv ON mv.id = pa."entityId"

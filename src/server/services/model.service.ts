@@ -1059,7 +1059,9 @@ export const getModelsRaw = async ({
         JOIN "ModelVersion" mv ON mv.id = pa."entityId"
         WHERE ${paidAccessLiveSql}
           AND mv."modelId" = m.id
-      ) OR ${freePublishedVersionExistsSql(Prisma.sql`m.id`)})`
+      ) OR ${freePublishedVersionExistsSql(Prisma.sql`m.id`, {
+        publicOnly: hidePrivateModels || !!publicVersionsOnly,
+      })})`
     );
   }
   if (onSale) {
@@ -2023,8 +2025,9 @@ export const getModelsWithImagesAndModelVersions = async ({
       coverId: pickCoverImageId(model, showSfwFace),
     })),
     modelVersionImages,
-    // Under a base-model filter the card shows that version, so a cover from another stays put.
-    sameVersionOnly: !!input.baseModels?.length,
+    // Under a base-model filter or Hide Paid the card shows a chosen version, so a cover from another
+    // (under Hide Paid, possibly a paid one) stays put.
+    sameVersionOnly: !!input.baseModels?.length || !!input.hidePaid,
   });
   // A cover found outside the held images is read unheld, so it is held here too.
   const coverImages = holdExempt?.isModerator

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
 import { getModelPaidAccessGates } from '~/server/services/paid-access.service';
+import { getCoverImages } from '~/server/services/model-cover.service';
 import type * as Caches from '~/server/redis/caches';
 import { MODEL, OWNER, cardImage, stubPackedRedis } from './getall-feed-harness';
 
@@ -94,6 +95,8 @@ describe('model.getAll card under Hide Paid', () => {
     expect(item?.images.map((i) => i.id)).toEqual([FREE * 10]);
     expect(item?.hasActivePaidAccess).toBe(false);
     expect(item?.earlyAccessDeadline).toBeNull();
+    // A cover chosen from the paid version must not be hoisted onto the free version's card.
+    expect(vi.mocked(getCoverImages).mock.calls.at(-1)?.[0].sameVersionOnly).toBe(true);
   });
 
   it('drops a model whose every version is gated', async () => {
@@ -109,5 +112,6 @@ describe('model.getAll card under Hide Paid', () => {
     expect(item?.images.map((i) => i.id)).toEqual([PAID * 10]);
     expect(item?.hasActivePaidAccess).toBe(true);
     expect(item?.earlyAccessDeadline).toEqual(deadline);
+    expect(vi.mocked(getCoverImages).mock.calls.at(-1)?.[0].sameVersionOnly).toBe(false);
   });
 });
