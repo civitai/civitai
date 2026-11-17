@@ -165,8 +165,13 @@ export function ImageDetailCarousel({
   // `scrollTo` emits 'select' synchronously, which would echo straight back into
   // `navigate` and run the whole onChange side-effect chain a second time.
   const syncingRef = useRef(false);
+  // The provider also announces on every reInit, which keeps embla's slide: passing that on would
+  // overwrite an index the carousel has yet to follow (a cold `?text=` load's text slide arriving).
+  const selectedRef = useRef(startIndexRef.current);
   const handleSlideChange = (slideIndex: number) => {
-    if (!syncingRef.current) navigate?.(slideIndex);
+    const moved = slideIndex !== selectedRef.current;
+    selectedRef.current = slideIndex;
+    if (moved && !syncingRef.current) navigate?.(slideIndex);
   };
 
   const followIndex = (api: EmblaCarouselType) => {
@@ -204,6 +209,7 @@ export function ImageDetailCarousel({
   useEffect(() => {
     if (!embla) return;
     let fallback: ReturnType<typeof setTimeout> | undefined;
+    let committed = embla.selectedScrollSnap();
 
     const commit = () => {
       if (fallback) {
@@ -211,8 +217,16 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
+      committed = current;
       setSettledIndex(current);
       onSettleRef.current?.(current);
+    };
+
+    // A reInit that kept its slide with no swipe outstanding (slides added, a resize) is no settle:
+    // announcing it would write that slide back over an index the carousel has yet to follow,
+    // e.g. a cold `?text=` load whose text slide arrived in the same commit.
+    const commitReInit = () => {
+      if (fallback || embla.selectedScrollSnap() !== committed) commit();
     };
 
     // 'settle' only fires from the animation loop, so anything that destroys the
@@ -224,10 +238,10 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    embla.on('settle', commit).on('reInit', commit).on('select', armFallback);
+    embla.on('settle', commit).on('reInit', commitReInit).on('select', armFallback);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla.off('settle', commit).off('reInit', commit).off('select', armFallback);
+      embla.off('settle', commit).off('reInit', commitReInit).off('select', armFallback);
     };
   }, [embla]);
 

@@ -1,5 +1,6 @@
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { postgresSlugify } from '~/utils/string-helpers';
 
 /**
  * The search target a dropdown should DEFAULT to, given where it was derived from (the URL
@@ -81,6 +82,21 @@ export function searchesFeedInPlace(
   if (!feed || !features[feed.flag]) return false;
   if (pathname === feed.pathname) return true;
   return pathname === feed.profilePathname && SEARCHABLE_PROFILE_SECTIONS.includes(section);
+}
+
+/**
+ * The `?section=` a profile tab renders: the profile pages honour it only on the viewer's own
+ * profile, so a visitor's `?section=draft` still shows (and searches) the published feed.
+ */
+export function profileFeedSection(
+  query: { username?: unknown; section?: unknown },
+  viewerUsername: string | undefined
+) {
+  const ownProfile =
+    !!viewerUsername &&
+    typeof query.username === 'string' &&
+    postgresSlugify(viewerUsername) === postgresSlugify(query.username);
+  return ownProfile ? query.section : undefined;
 }
 
 /** A creator's profile tab that the header bar filters in place (its `username` is the route's). */

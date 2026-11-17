@@ -67,6 +67,7 @@ import {
   offersImageSearch,
   resolveSearchTarget,
   feedSearchPathname,
+  profileFeedSection,
   searchSectionFromPath,
   searchesFeedInPlace,
 } from '~/components/Search/search-target';
@@ -292,7 +293,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   }: AutocompleteSearchProps<TKey>,
   ref: React.ForwardedRef<{ focus: () => void }>
 ) {
-  // const currentUser = useCurrentUser();
+  const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const showSfwFace = useShowsSfwFace();
   const colorScheme = useComputedColorScheme('dark');
@@ -321,7 +322,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     features,
     indexNameProp,
     router.pathname,
-    router.query.section
+    profileFeedSection(router.query, currentUser?.username)
   );
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);

@@ -6,6 +6,7 @@ import {
   feedSearchPathname,
   isProfileFeedPathname,
   searchSectionFromPath,
+  profileFeedSection,
   searchesFeedInPlace,
 } from '~/components/Search/search-target';
 
@@ -90,6 +91,13 @@ describe('the feed search flag on its own', () => {
     expect(searchesFeedInPlace(all, 'articles', '/user/[username]/articles', 'draft')).toBe(false);
     // The main feeds have no sections.
     expect(searchesFeedInPlace(all, 'models', '/models', 'private')).toBe(true);
+  });
+
+  it("ignores a visitor's ?section= the way the profile pages do", () => {
+    const query = { username: 'RisingV', section: 'draft' };
+    expect(profileFeedSection(query, 'risingv')).toBe('draft');
+    expect(profileFeedSection(query, 'someone')).toBeUndefined();
+    expect(profileFeedSection(query, undefined)).toBeUndefined();
   });
 
   it('sends /search/images to the feed under feedSearch, even without imageSearch', () => {
