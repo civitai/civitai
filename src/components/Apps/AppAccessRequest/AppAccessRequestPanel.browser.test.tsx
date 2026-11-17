@@ -38,25 +38,9 @@ const mocks = vi.hoisted(() => ({
   requireLogin: vi.fn(),
   openLoginHere: vi.fn(),
   onRequest: vi.fn(),
-  query: {} as Record<string, string>,
-  asPath: '/apps/build',
-  replace: vi.fn(async (..._args: unknown[]) => true),
   sessionStatus: 'authenticated' as 'authenticated' | 'unauthenticated' | 'loading',
 }));
 
-vi.mock('next/router', () => ({
-  useRouter: () => ({
-    isReady: true,
-    pathname: '/apps/build',
-    get query() {
-      return mocks.query;
-    },
-    get asPath() {
-      return mocks.asPath;
-    },
-    replace: mocks.replace,
-  }),
-}));
 vi.mock('~/providers/SessionProvider', () => ({
   useSession: () => ({ data: undefined, status: mocks.sessionStatus, update: async () => null }),
 }));
@@ -92,6 +76,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { AppAccessRequestPanel } = await import('./AppAccessRequestPanel');
+// The pages-router is stubbed by `test/component-setup` as ONE shared object, and that module-level
+// mock wins over a per-file `vi.mock('next/router')` — so the deep-link cases drive that object.
+const { useRouter } = await import('next/router');
+const router = useRouter() as unknown as {
+  query: Record<string, string>;
+  asPath: string;
+  pathname: string;
+  replace: ReturnType<typeof vi.fn>;
+};
 const { DialogProvider } = await import('~/components/Dialog/DialogProvider');
 const { dialogStore, useDialogStore } = await import('~/components/Dialog/dialogStore');
 
@@ -128,9 +121,10 @@ beforeEach(() => {
   mocks.requireLogin.mockReset();
   mocks.openLoginHere.mockReset();
   mocks.onRequest.mockReset();
-  mocks.query = {};
-  mocks.asPath = '/apps/build';
-  mocks.replace.mockClear();
+  router.query = {};
+  router.asPath = '/apps/build';
+  router.pathname = '/apps/build';
+  router.replace.mockClear();
   mocks.sessionStatus = 'authenticated';
 });
 
@@ -235,14 +229,14 @@ describe('AppAccessRequestPanel — signed out', () => {
 
 describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link', () => {
   const withParam = (extra: Record<string, string> = {}) => {
-    mocks.query = { 'request-access': '1', ...extra };
-    const qs = new URLSearchParams(mocks.query).toString();
-    mocks.asPath = `/apps/build?${qs}`;
+    router.query = { 'request-access': '1', ...extra };
+    const qs = new URLSearchParams(router.query).toString();
+    router.asPath = `/apps/build?${qs}`;
   };
   /** The param was dropped with a shallow replace that kept every other param. */
   const expectParamDropped = (rest: Record<string, string> = {}) => {
-    expect(mocks.replace).toHaveBeenCalledTimes(1);
-    expect(mocks.replace).toHaveBeenCalledWith(
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledWith(
       { pathname: '/apps/build', query: rest },
       undefined,
       { shallow: true }
@@ -262,7 +256,7 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
   test('other params survive the drop', async () => {
     withParam({ ref: 'cli' });
     render();
-    await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalled());
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
     expectParamDropped({ ref: 'cli' });
   });
 
@@ -271,7 +265,7 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     withParam();
     render();
     // Positive control first: the effect ran (it drops the param in the same pass that would open).
-    await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalled());
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
     expectParamDropped();
     await expect
       .element(page.getByTestId('app-access-request-status'))
@@ -287,7 +281,7 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     };
     withParam();
     render();
-    await vi.waitFor(() => expect(mocks.replace).toHaveBeenCalled());
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
     expect(openDialogIds()).toEqual([]);
   });
 
@@ -308,7 +302,7 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     withParam();
     render();
     await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
-    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
     expect(openDialogIds()).toEqual([]);
   });
 
@@ -324,7 +318,7 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     );
     // Dropped BEFORE sign-in opens, so Back from sign-in does not bounce into it again.
     expectParamDropped();
-    expect(mocks.replace.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(router.replace.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.openLoginHere.mock.invocationCallOrder[0]
     );
     expect(openDialogIds()).toEqual([]);
@@ -337,13 +331,13 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
     render();
     await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
     expect(mocks.openLoginHere).not.toHaveBeenCalled();
-    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
   });
 
   test('without the param, nothing opens and the URL is left alone', async () => {
     render();
     await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
     expect(openDialogIds()).toEqual([]);
-    expect(mocks.replace).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });
