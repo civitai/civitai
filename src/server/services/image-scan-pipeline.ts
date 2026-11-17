@@ -1206,7 +1206,7 @@ export async function applyIngestionSideEffects({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Update,
     });
-    if (image.postId) await queueModelsForImageChildTagChanges({ levelImageIds: [image.id] });
+    await queueModelsForImageChildTagChanges({ levelImageIds: [image.id] });
 
     // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.
     try {
