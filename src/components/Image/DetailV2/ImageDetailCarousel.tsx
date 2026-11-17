@@ -2,6 +2,9 @@ import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useOptionalCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
+import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import { HatTurfDetailLayer } from '~/components/HatTurf/detail/HatTurfDetailLayer';
 import { takesHats } from '~/components/HatTurf/detail/HatTurfDetailProvider';
@@ -46,6 +49,7 @@ type ImageProps = {
   name: string | null;
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
   eventDecoration?: WornDecoration;
+  ingestion?: string | null;
 };
 type CarouselItem =
   | { type: 'image'; key: string; image: ImageProps }
@@ -311,6 +315,12 @@ function ImageContent({
     defaultValue: true,
   });
   const features = useFeatureFlags();
+  // Optional: the carousel also renders without a session provider.
+  const session = useOptionalCivitaiSessionContext();
+  const retractedSrc =
+    features.modRetractedMedia && session?.type === 'authed'
+      ? retractedMediaUrl(image, session)
+      : null;
 
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
@@ -361,6 +371,14 @@ function ImageContent({
             >
               <MediaHash {...image} />
             </div>
+          ) : retractedSrc ? (
+            <RetractedMedia
+              src={retractedSrc}
+              type={image.type}
+              alt={image.name ?? undefined}
+              className="max-h-full w-auto max-w-full"
+              controls={active}
+            />
           ) : (
             <EdgeMedia
               // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,
