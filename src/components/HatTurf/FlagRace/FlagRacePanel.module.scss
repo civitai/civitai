@@ -185,9 +185,8 @@
   container-type: inline-size;
 }
 
-// Stacked (under 1200px): one wrapping bar of the clock and points, the flags held, and the way in,
-// so a wide stacked panel fills its width. Side by side, the bar's children are the panel's own,
-// with the way in last.
+// Stacked (under 1200px): one wrapping bar of the clock, the points and the flags held, so a wide
+// stacked panel fills its width. Side by side, the bar's children are the panel's own.
 .bar {
   display: flex;
   flex-wrap: wrap;
