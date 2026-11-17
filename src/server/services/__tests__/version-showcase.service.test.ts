@@ -99,7 +99,7 @@ describe('withCuratedShowcases: the public API list', () => {
       ],
       community: [{ id: 9, site: 'red', nsfwLevel: 1 }],
     };
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 9 }] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 9, nsfwLevel: 1 }] as never);
     const result = await showcase.withCuratedShowcases(
       { [VERSION]: { images: [owner(1), owner(2)] } },
       'red'
@@ -502,9 +502,10 @@ describe('setVersionShowcase: a valid save', () => {
 describe('getCoverImages: a community cover on a model card', () => {
   const featuredOnRedOnly = () => {
     dbMock.dbRead.image.findMany.mockResolvedValue([]);
-    dbMock.dbRead.$queryRaw.mockResolvedValue([
-      { modelVersionId: VERSION, modelId: 1, imageId: 77 },
-    ] as never);
+    // The showcase rows, then the image's live state.
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([{ modelVersionId: VERSION, modelId: 1, imageId: 77 }] as never)
+      .mockResolvedValueOnce([{ id: 77, nsfwLevel: 1 }] as never);
     mocks.entry = {
       modelVersionId: VERSION,
       rows: [],

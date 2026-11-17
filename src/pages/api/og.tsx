@@ -292,8 +292,6 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
         })
       : null,
   ]);
-  // A cover that is someone else's image the creator featured in the showcase: served only while
-  // it still passes the showcase's filters, and credited to its author.
   const featuredCover =
     !coverImage && coverId && !withheld
       ? isShowcaseCoverImage(

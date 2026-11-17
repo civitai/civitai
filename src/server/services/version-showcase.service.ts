@@ -318,28 +318,20 @@ export async function withCuratedShowcases<E extends { images: ImagesForModelVer
   if (!versionIds.length) return byVersion;
   try {
     const showcases = await getVersionShowcases(versionIds);
-    // A deleted or held image can still sit in the cache (its bust can't find it by post), so the
-    // community images served here are re-checked against the image rows.
+    // A deleted, held or moderated image can still sit in the cache.
     const communityIds = versionIds.flatMap((id) =>
       showcases[id] ? communityFor(showcases[id], site).map((image) => image.id) : []
     );
-    const servable = new Set(
-      communityIds.length
-        ? (
-            await dbRead.$queryRaw<{ id: number }[]>`
-              SELECT i.id FROM "Image" i
-              JOIN "Post" p ON p.id = i."postId"
-              WHERE i.id IN (${Prisma.join(communityIds)})
-                AND p.availability = 'Public'
-                AND ${Prisma.join(showcaseImageConditions(), ' AND ')}
-            `
-          ).map((row) => row.id)
-        : []
-    );
+    const live = await liveCommunityLevels(communityIds);
     const tagged = await withTagIds(
       versionIds.flatMap((id) =>
         showcases[id]
-          ? communityFor(showcases[id], site).filter((image) => servable.has(image.id))
+          ? communityFor(showcases[id], site).flatMap((image) => {
+              const nsfwLevel = live.get(image.id);
+              if (nsfwLevel === undefined) return [];
+              if (site === 'com' && !isComSafeLevel(nsfwLevel)) return [];
+              return [{ ...image, nsfwLevel }];
+            })
           : []
       )
     );
@@ -443,12 +435,38 @@ async function findShowcaseCommunityCovers(
       found.set(key, entry);
     }
   }
-  // Validation needs no tags; readers drawing the cover do.
+  // Validation read the showcases fresh from the primary; readers drawing the cover check each
+  // image's live state and rating, and need its tags.
   if (!primary) {
+    const live = await liveCommunityLevels([...found.values()].map((entry) => entry.image.id));
+    for (const [key, entry] of found) {
+      const nsfwLevel = live.get(entry.image.id);
+      if (nsfwLevel !== undefined && !isComSafeLevel(nsfwLevel)) entry.sites.delete('com');
+      if (nsfwLevel === undefined || !entry.sites.size) found.delete(key);
+      else entry.image = { ...entry.image, nsfwLevel };
+    }
     const tagged = await withTagIds([...found.values()].map((entry) => entry.image));
     for (const entry of found.values()) entry.image = tagged.get(entry.image.id) ?? entry.image;
   }
   return found;
+}
+
+/**
+ * The live rating of each community image that still passes the showcase filters. A moderation
+ * action can miss the showcase cache's refresh, so what is served is checked against the rows.
+ */
+async function liveCommunityLevels(imageIds: number[]) {
+  const levels = new Map<number, number>();
+  if (!imageIds.length) return levels;
+  const rows = await dbRead.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+    SELECT i.id, i."nsfwLevel" FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    WHERE i.id IN (${Prisma.join([...new Set(imageIds)])})
+      AND p.availability = 'Public'
+      AND ${Prisma.join(showcaseImageConditions(), ' AND ')}
+  `;
+  for (const row of rows) levels.set(row.id, row.nsfwLevel);
+  return levels;
 }
 
 /**

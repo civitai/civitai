@@ -122,7 +122,6 @@ export async function bustModelGallerySettings(modelIds: number[]) {
     () => deleteModelGallerySettingsKeys(modelIds).catch(() => null),
     REBUST_DELAY_MS
   ).unref?.();
-  // The version showcase filters its community images by the same gallery rules and hold.
   const { bustVersionShowcasesForModels } = await import(
     '~/server/services/version-showcase.service'
   );

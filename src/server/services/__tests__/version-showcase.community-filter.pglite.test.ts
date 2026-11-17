@@ -370,6 +370,30 @@ describe('when a featured image stops qualifying', () => {
     expect([...covers.values()][0].image.tags).toEqual([5]);
   });
 
+  it('a moderated image stops counting as a cover at once, though the cache still holds it', async () => {
+    const id = await featured();
+    expect((await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: id }])).size).toBe(1);
+    await db.query(`UPDATE "Image" SET "tosViolation" = true WHERE id = $1`, [id]);
+    expect(await served()).toContain(id);
+    expect((await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: id }])).size).toBe(0);
+  });
+
+  it('an image re-rated above PG-13 stops being a .com cover, and keeps its .red one', async () => {
+    const id = await featured({ site: 'com' });
+    await db.query(
+      `INSERT INTO "ModelVersionShowcaseItem" ("modelVersionId", site, "imageId", source, "addedById")
+       VALUES ($1, 'red', $2, 'Community', $3)`,
+      [VERSION, id, CREATOR]
+    );
+    const before = await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: id }]);
+    expect([...before.values()][0].sites).toEqual(new Set(['com', 'red']));
+    await db.query(`UPDATE "Image" SET "nsfwLevel" = $1 WHERE id = $2`, [R, id]);
+    const after = await getShowcaseCommunityCovers([{ modelId: MODEL, imageId: id }]);
+    const entry = [...after.values()][0];
+    expect(entry.sites).toEqual(new Set(['red']));
+    expect(entry.image.nsfwLevel).toBe(R);
+  });
+
   it("doesn't count a row featured on another model", async () => {
     const id = await featured();
     const covers = await getShowcaseCommunityCovers([{ modelId: MODEL + 1, imageId: id }]);
