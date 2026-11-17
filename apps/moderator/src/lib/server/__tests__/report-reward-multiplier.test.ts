@@ -208,7 +208,7 @@ describe('rewardReportReporters multiplier', () => {
   it('reports a clamp to Axiom rather than swallowing it', async () => {
     await rowFor({ tier: cached(4), storedBonus: 50 });
     expect(axiom).toHaveBeenCalledTimes(1);
-    expect(axiom.mock.calls[0][0]).toMatchObject({ clampedEvents: 1, maxRaw: 20 });
+    expect(axiom.mock.calls[0][0]).toMatchObject({ payload: { clampedEvents: 1, maxRaw: 20 } });
   });
 
   it('leaves a product the column can hold exactly alone', async () => {
@@ -402,9 +402,7 @@ describe('rewardReportReporters multiplier', () => {
     expect(axiom.mock.calls[0][0]).toMatchObject({
       name: 'buzz-rewards',
       type: 'error',
-      clampedEvents: 2,
-      batchSize: 3,
-      maxRaw: 20,
+      payload: { clampedEvents: 2, batchSize: 3, maxRaw: 20 },
     });
   });
 
@@ -438,7 +436,7 @@ describe('rewardReportReporters multiplier', () => {
     expect(axiom).toHaveBeenCalledTimes(1);
     const payload = axiom.mock.calls[0][0];
     expect(payload.message).toMatch(/negative and was floored/);
-    expect(payload).toMatchObject({ flooredEvents: 2, batchSize: 3, minRaw: -10 });
+    expect(payload).toMatchObject({ payload: { flooredEvents: 2, batchSize: 3, minRaw: -10 } });
   });
 
   it('keeps the unclamped negative in the audit trail', async () => {
@@ -456,10 +454,10 @@ describe('rewardReportReporters multiplier', () => {
     expect(axiom).toHaveBeenCalledTimes(1);
     const payload = axiom.mock.calls[0][0];
     expect(payload.message).toMatch(/negative and was floored/);
-    expect(payload.flooredEvents).toBe(1);
+    expect(payload).toMatchObject({ payload: { flooredEvents: 1 } });
     // No `minRaw` at all rather than one computed from an empty list: `Math.min()` of no arguments
     // is +Infinity, so the floor alert would report a POSITIVE minimum, serialized as `null`.
-    expect(payload).not.toHaveProperty('minRaw');
+    expect(payload).not.toHaveProperty('payload.minRaw');
     expect(row.transactionDetails).toBe('{}');
   });
 

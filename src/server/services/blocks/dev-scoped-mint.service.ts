@@ -424,7 +424,7 @@ export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new
  */
 export function clampDevScopes(opts: {
   scopeSource: string[];
-  oauthAllowed: number | null;
+  oauthAllowed: bigint | null;
   requestedScopes?: string[];
   /** MAY this context spend? (credential bit, or a runtime gate.) Required. */
   spendEntitled: boolean;

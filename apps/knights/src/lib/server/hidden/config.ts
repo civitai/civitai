@@ -2,8 +2,12 @@ export type HiddenCheckSettings = {
   rate: number;
   failureWindowHours: number;
   severeDistance: number;
-  /** Minutes between a check being answered and being graded. */
+  /** Minutes before the tick's sweep grades a check still pending (a check answered on /play is graded at once). */
   settleDelayMinutes: number;
+  /** Answers a check needs before its failure rate can retire it. */
+  retireMinAnswers: number;
+  /** A check failed by more than this share of its answers is retired: its known answer is likely wrong or unclear. */
+  retireFailureRate: number;
 };
 
 /** Used when the environment does not set a value. */
@@ -12,6 +16,8 @@ export const DEFAULT_HIDDEN_CHECKS: HiddenCheckSettings = {
   failureWindowHours: 24,
   severeDistance: 2,
   settleDelayMinutes: 30,
+  retireMinAnswers: 20,
+  retireFailureRate: 0.5,
 };
 
 const read = (raw: string | undefined, fallback: number, valid: (n: number) => boolean) => {
@@ -37,6 +43,16 @@ export function hiddenCheckSettings(env: Record<string, string | undefined>): Hi
       env.KNIGHTS_HIDDEN_CHECK_SETTLE_DELAY_MINUTES,
       DEFAULT_HIDDEN_CHECKS.settleDelayMinutes,
       (n) => n >= 0
+    ),
+    retireMinAnswers: read(
+      env.KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS,
+      DEFAULT_HIDDEN_CHECKS.retireMinAnswers,
+      (n) => Number.isInteger(n) && n > 0
+    ),
+    retireFailureRate: read(
+      env.KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE,
+      DEFAULT_HIDDEN_CHECKS.retireFailureRate,
+      (n) => n > 0 && n <= 1
     ),
   };
 }

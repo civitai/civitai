@@ -220,7 +220,7 @@ describe("git-push webhook — the approve's own commit, before its markers are 
       blockId: SLUG,
       // The PREVIOUS approved version: approveRequest has committed but not stamped yet.
       currentVersionSha: PREVIOUS_SHA,
-      app: { id: `app-${SLUG}`, allowedScopes: 0, allowedOrigins: [`https://${SLUG}.civit.ai`] },
+      app: { id: `app-${SLUG}`, allowedScopes: 0n, allowedOrigins: [`https://${SLUG}.civit.ai`] },
     };
     state.requests = [
       { id: APPROVING_ID, slug: SLUG, status: 'pending' },

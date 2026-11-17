@@ -414,13 +414,18 @@ describe('passthrough (site-search-passthrough)', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it('hitsNeedShaping: models always; comics, bounties and collections only under a cap; others never', () => {
+  it('hitsNeedShaping: models always; comics, bounties, collections, articles and users only under a cap; others never', () => {
     for (const viewer of [capped, uncapped]) {
       expect(hitsNeedShaping(MODELS_SEARCH_INDEX, viewer)).toBe(true);
-      for (const index of [USERS_SEARCH_INDEX, ARTICLES_SEARCH_INDEX, TOOLS_SEARCH_INDEX])
-        expect(hitsNeedShaping(index, viewer), index).toBe(false);
+      expect(hitsNeedShaping(TOOLS_SEARCH_INDEX, viewer)).toBe(false);
     }
-    for (const index of [COMICS_SEARCH_INDEX, BOUNTIES_SEARCH_INDEX, COLLECTIONS_SEARCH_INDEX]) {
+    for (const index of [
+      COMICS_SEARCH_INDEX,
+      BOUNTIES_SEARCH_INDEX,
+      COLLECTIONS_SEARCH_INDEX,
+      ARTICLES_SEARCH_INDEX,
+      USERS_SEARCH_INDEX,
+    ]) {
       expect(hitsNeedShaping(index, capped), index).toBe(true);
       expect(hitsNeedShaping(index, uncapped), index).toBe(false);
     }
@@ -428,7 +433,7 @@ describe('passthrough (site-search-passthrough)', () => {
 
   it('an index whose hits are never shaped is sent as the exact upstream bytes', async () => {
     respondRaw(upstream);
-    const response = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped, on);
+    const response = await siteIndexSearch(TOOLS_SEARCH_INDEX, { q: 'x' }, capped, on);
     expect(response.status).toBe(200);
     expect(response.body).toBeUndefined();
     expect(response.raw?.toString('utf8')).toBe(upstream);
@@ -436,7 +441,7 @@ describe('passthrough (site-search-passthrough)', () => {
 
   it('with passthrough off, the same response is parsed, as before', async () => {
     respondRaw(upstream);
-    const response = await siteIndexSearch(USERS_SEARCH_INDEX, { q: 'x' }, capped);
+    const response = await siteIndexSearch(TOOLS_SEARCH_INDEX, { q: 'x' }, capped);
     expect(response.raw).toBeUndefined();
     expect(response.body).toEqual({
       hits: [{ id: 1, username: 'caf\u00e9' }],
@@ -476,7 +481,7 @@ describe('passthrough (site-search-passthrough)', () => {
           { indexUid: ARTICLES_SEARCH_INDEX, q: 'x' },
         ],
       },
-      capped,
+      uncapped,
       on
     );
     expect(passed.raw?.toString('utf8')).toBe(multi);
@@ -535,5 +540,125 @@ describe('passthrough (site-search-passthrough)', () => {
     expect(response.status).toBe(400);
     expect(response.raw).toBeUndefined();
     expect(response.body).toEqual(rejection);
+  });
+});
+
+describe('user avatars in hits', () => {
+  const capped = { showSfwFace: true, browsingLevelCap: sfwBrowsingLevelsFlag };
+  const uncapped = { showSfwFace: false };
+  const pic = (nsfwLevel: number) => ({ id: 5, url: 'pic-url', nsfwLevel });
+  const image = 'unrated-url';
+  const respond = (body: unknown) => {
+    const raw = JSON.stringify(body);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(raw, { status: 200 }))
+    );
+    return raw;
+  };
+  const hitOf = (body: unknown) => (body as { hits: Record<string, any>[] }).hits[0];
+  const userOf = (index: string, hit: Record<string, any>) =>
+    index === USERS_SEARCH_INDEX ? hit : hit.user;
+  const docFor = (index: string, nsfwLevel: number) => {
+    const user = { id: 2, username: 'u', image, profilePicture: pic(nsfwLevel) };
+    const doc = index === USERS_SEARCH_INDEX ? { ...user } : { id: 1, user };
+    return { ...doc, _formatted: structuredClone(doc) };
+  };
+  const indexes = [
+    MODELS_SEARCH_INDEX,
+    ARTICLES_SEARCH_INDEX,
+    BOUNTIES_SEARCH_INDEX,
+    COLLECTIONS_SEARCH_INDEX,
+    COMICS_SEARCH_INDEX,
+    USERS_SEARCH_INDEX,
+  ];
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(indexes)(
+    '%s: a capped viewer gets no unrated image and no picture outside the cap, highlight included',
+    async (index) => {
+      for (const level of [NsfwLevel.X, 0, NsfwLevel.PG | NsfwLevel.R]) {
+        respond({ hits: [docFor(index, level)] });
+        const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, capped)).body);
+        for (const user of [userOf(index, hit), userOf(index, hit._formatted)]) {
+          expect(user.image, `${level}`).toBeNull();
+          expect(user.profilePicture, `${level}`).toBeNull();
+          expect(user.username).toBe('u');
+        }
+      }
+    }
+  );
+
+  it.each(indexes)(
+    '%s: a capped viewer keeps a picture inside the cap, but not the unrated image',
+    async (index) => {
+      respond({ hits: [docFor(index, NsfwLevel.PG | NsfwLevel.PG13)] });
+      const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, capped)).body);
+      expect(userOf(index, hit).profilePicture).toEqual(pic(NsfwLevel.PG | NsfwLevel.PG13));
+      expect(userOf(index, hit).image).toBeNull();
+    }
+  );
+
+  // The caller chooses which fields come back and how the highlight copy is written.
+  it.each(indexes)(
+    '%s: a capped viewer gets no avatar whose rating is missing or unreadable, or in-cap only in the copy',
+    async (index) => {
+      const withPicture = (doc: Record<string, any>, raw: unknown, copy: unknown) => {
+        userOf(index, doc).profilePicture = raw;
+        userOf(index, doc._formatted).profilePicture = copy;
+        return doc;
+      };
+      const { nsfwLevel: _, ...unrated } = pic(NsfwLevel.PG);
+      const cases = [
+        withPicture(docFor(index, NsfwLevel.PG), unrated, unrated),
+        withPicture(
+          docFor(index, NsfwLevel.PG),
+          { ...unrated, nsfwLevel: 'pg' },
+          { ...unrated, nsfwLevel: 'pg' }
+        ),
+        withPicture(docFor(index, NsfwLevel.PG), pic(NsfwLevel.X), { ...unrated, nsfwLevel: '1' }),
+      ];
+      for (const [i, doc] of cases.entries()) {
+        respond({ hits: [doc] });
+        const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, capped)).body);
+        for (const user of [userOf(index, hit), userOf(index, hit._formatted)]) {
+          expect(user.image, `case ${i}`).toBeNull();
+          expect(user.profilePicture, `case ${i}`).toBeNull();
+        }
+      }
+    }
+  );
+
+  it.each(indexes)('%s: a capped response whose hits are not a list sends none', async (index) => {
+    respond({ hits: { 0: docFor(index, NsfwLevel.X) } });
+    const body = (await siteIndexSearch(index, { q: 'x' }, capped)).body as { hits: unknown };
+    expect(body.hits).toEqual([]);
+  });
+
+  // Author-less documents (a deleted user) carry no user object.
+  it.each(indexes.filter((index) => index !== USERS_SEARCH_INDEX))(
+    '%s: a capped hit with no user, or a null one, comes back unchanged',
+    async (index) => {
+      const hits = [
+        { id: 1 },
+        { id: 2, user: null },
+        { id: 3, user: null, _formatted: { id: '3' } },
+      ];
+      respond({ hits });
+      const body = (await siteIndexSearch(index, { q: 'x' }, capped)).body as {
+        hits: Record<string, unknown>[];
+      };
+      expect(body.hits.map(({ id, user, _formatted }) => ({ id, user, _formatted }))).toEqual(
+        hits.map(({ id, user, _formatted }: Record<string, unknown>) => ({ id, user, _formatted }))
+      );
+    }
+  );
+
+  it.each(indexes)('%s: an uncapped viewer gets the avatar as indexed', async (index) => {
+    const doc = docFor(index, NsfwLevel.X);
+    respond({ hits: [doc] });
+    const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, uncapped)).body);
+    expect(userOf(index, hit)).toEqual(userOf(index, doc));
   });
 });

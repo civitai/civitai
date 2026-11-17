@@ -18,6 +18,7 @@ import { notifDbRead, notifDbWrite } from './clients/db';
 import { notificationCache, redisWithin, type NotificationCategoryCount } from './cache';
 import { getNotifDbWithoutLag, isWritePool, preventReplicationLag } from './lag';
 import { logToAxiom, safeError } from './clients/axiom';
+import { queryWithRetry } from './db-retry';
 import { countDbFallbackEnabled, countRedisDeadlineMs } from '../../env';
 
 const bulkBatchSize = 5000;
@@ -104,7 +105,8 @@ export async function queryNotifications(input: {
   params.push(limit);
 
   const db = await getNotifDbWithoutLag(userId);
-  const query = await db.cancellableQuery<NotificationRow>(
+  return queryWithRetry<NotificationRow>(
+    db,
     `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read,
        to_char(un."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.US') AS "cursorAt"
      FROM "UserNotification" un
@@ -114,7 +116,6 @@ export async function queryNotifications(input: {
      LIMIT $${params.length}`,
     params
   );
-  return await query.result();
 }
 
 // --- read: per-category counts (cache-fronted, lag-aware, single-flighted) --------------------------
@@ -231,7 +232,8 @@ async function countNotificationsImpl(input: {
     params.push(category);
     where.push(`n.category = $${params.length}::"NotificationCategory"`);
   }
-  const query = await db.cancellableQuery<NotificationCategoryCount>(
+  const rows = await queryWithRetry<NotificationCategoryCount>(
+    db,
     `SELECT category, COUNT(*) AS count
      FROM (
        SELECT n.category
@@ -243,7 +245,6 @@ async function countNotificationsImpl(input: {
      GROUP BY category`,
     params
   );
-  const rows = await query.result();
   const truncated = rows.reduce((sum, { count }) => sum + Number(count), 0) > COUNT_ROW_LIMIT;
   const result = truncated ? rows.map((row) => ({ ...row, floor: true })) : rows;
   if (useCache)
@@ -256,11 +257,12 @@ async function countNotificationsImpl(input: {
 // replica-lag false-negative only risks a duplicate PendingNotification, which the worker collapses via
 // the UNIQUE Notification.key. No per-key lag flag exists to route on, so no primary read is warranted.
 export async function notificationExists(key: string): Promise<boolean> {
-  const query = await notifDbRead().cancellableQuery<{ exists: number }>(
+  const rows = await queryWithRetry<{ exists: number }>(
+    notifDbRead(),
     `SELECT 1 as exists FROM "Notification" WHERE key = $1`,
     [key]
   );
-  return (await query.result()).length > 0;
+  return rows.length > 0;
 }
 
 // --- cleanup: batched delete of old UserNotification rows -------------------------------------------

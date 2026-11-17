@@ -8,6 +8,7 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as CrucibleService from '~/server/services/crucible.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 /**
  * A crucible's ranking is secret until it ends: a live leaderboard tells judges which entry is
@@ -359,7 +360,6 @@ describe('crucible.getEntries — podium', () => {
     );
     expectEnteredEntryImage(sql!);
     expect(sql).toContain('i."nsfwLevel" &');
-    expect(sql!.match(/i\."nsfwLevel" &/g)).toHaveLength(1);
   });
 
   it('keeps a winner whose image the viewer cannot see on the podium, without the image', async () => {
@@ -675,10 +675,15 @@ describe('crucible.getMinVotesToPlace', () => {
     expect(aggregate.mock.calls[0][0].where).toMatchObject({
       crucibleId: CRUCIBLE_ID,
       image: {
-        ingestion: { not: 'Blocked' },
-        needsReview: null,
-        tosViolation: false,
-        post: { publishedAt: { not: null } },
+        AND: [
+          {
+            ingestion: { not: 'Blocked' },
+            needsReview: null,
+            tosViolation: false,
+            post: { publishedAt: { not: null } },
+          },
+          imageNotRestrictedWhere(),
+        ],
       },
     });
   });

@@ -18,13 +18,13 @@ describe('team remix prompt vs the prompt audit', () => {
     expect(auditPrompt(prompt, undefined, green as boolean)).toMatchObject({ success: true });
   });
 
-  // Control: the wording this prompt replaced. If this passes, the audit above proves nothing.
-  it('refuses the old "4th Birthday" wording', () => {
-    const old = TEAM_REMIX_PROMPT.replace(
+  // Control: the same prompt with a stated age. If this passes, the audit above proves nothing.
+  it('refuses the prompt once it states an age', () => {
+    const aged = TEAM_REMIX_PROMPT.replace(
       'a Civitai anniversary party',
-      'a Civitai 4th Birthday celebration'
+      'a Civitai 4 years anniversary party'
     ).replaceAll('{{team}}', 'Pink');
-    expect(old).toContain('Civitai 4th Birthday celebration');
-    expect(auditPrompt(old).success).toBe(false);
+    expect(aged).toContain('Civitai 4 years anniversary party');
+    expect(auditPrompt(aged).success).toBe(false);
   });
 });

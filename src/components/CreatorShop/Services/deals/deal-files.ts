@@ -7,6 +7,9 @@ import {
   SERVICE_PREVIEW_MAX_BYTES,
   SERVICE_PREVIEW_MAX_FILES,
   SERVICE_PREVIEW_MIME_TYPES,
+  SERVICE_PREVIEW_VIDEO_MAX_BYTES,
+  SERVICE_PREVIEW_VIDEO_MIME_TYPES,
+  isVideoPreviewMime,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealFileKind,
@@ -27,6 +30,13 @@ export type DealFileFacts = {
 };
 
 const MB = 1024 * 1024;
+
+/** What the preview picker offers: video only where the deal takes a video preview. */
+export const previewAccept = (previewKind: ServicePreviewKind) =>
+  [
+    ...SERVICE_PREVIEW_MIME_TYPES,
+    ...(previewKind === 'Video' ? SERVICE_PREVIEW_VIDEO_MIME_TYPES : []),
+  ].join(',');
 const megabytes = (bytes: number) => `${Math.floor(bytes / MB)} MB`;
 
 /**
@@ -36,11 +46,20 @@ const megabytes = (bytes: number) => `${Math.floor(bytes / MB)} MB`;
  */
 export function uploadRefusal(
   kind: ServiceDealFileKind,
-  file: { name: string; type: string; size: number }
+  file: { name: string; type: string; size: number },
+  previewKind?: ServicePreviewKind
 ) {
+  if (kind === 'Preview' && isVideoPreviewMime(file.type)) {
+    if (previewKind !== 'Video') return 'Previews must be JPEG, PNG, WebP or GIF images.';
+    if (file.size > SERVICE_PREVIEW_VIDEO_MAX_BYTES)
+      return `Preview is too large (max ${megabytes(SERVICE_PREVIEW_VIDEO_MAX_BYTES)}).`;
+    return null;
+  }
   if (kind === 'Preview') {
     if (!(SERVICE_PREVIEW_MIME_TYPES as readonly string[]).includes(file.type))
-      return 'Previews must be JPEG, PNG, WebP or GIF images.';
+      return previewKind === 'Video'
+        ? 'Previews must be MP4 or WebM videos, or JPEG, PNG, WebP or GIF images.'
+        : 'Previews must be JPEG, PNG, WebP or GIF images.';
     // GIF and WebP may be animated, so they get the animated allowance, as on the server.
     const cap =
       file.type === 'image/gif' || file.type === 'image/webp'
@@ -97,12 +116,13 @@ export function uploadSlotsLeft(
 export function sortPicked<T extends { name: string; type: string; size: number }>(
   kind: ServiceDealFileKind,
   picked: T[],
-  slots: number
+  slots: number,
+  previewKind?: ServicePreviewKind
 ) {
   const refused: { name: string; reason: string }[] = [];
   const valid: T[] = [];
   for (const file of picked) {
-    const reason = uploadRefusal(kind, file);
+    const reason = uploadRefusal(kind, file, previewKind);
     if (reason) refused.push({ name: file.name, reason });
     else valid.push(file);
   }

@@ -548,7 +548,8 @@ export async function exportUnsent(
       .where(sendable('n'))
       .orderBy('n.id')
       // Locked, so a withdraw that got there first is seen here, and one that comes after sees the export.
-      .forUpdate()
+      // Only the notice rows: locking case_record too deadlocks with a withdraw's case_event insert.
+      .forUpdate('n')
       .execute();
     // A lock that lapsed may let a send start, and it can't see this uncommitted export: roll back
     // rather than hand out rows that send may also claim.

@@ -82,13 +82,13 @@ import vaultRoute from '~/pages/api/download/vault/[vaultItemId]';
 import attachmentRoute from '~/pages/api/download/attachments/[fileId]';
 import trainingRoute from '~/pages/api/download/training/[modelVersionId]';
 
-const personalKey = (tokenScope: number | undefined) => ({
+const personalKey = (tokenScope: bigint | undefined) => ({
   apiKeyId: 5,
   apiKeyType: 'User',
   subject: { type: 'apiKey', id: 5 },
   ...(tokenScope === undefined ? {} : { tokenScope }),
 });
-const oauthToken = (tokenScope: number) => ({
+const oauthToken = (tokenScope: bigint) => ({
   apiKeyId: 6,
   apiKeyType: 'Access',
   subject: { type: 'oauth', id: 'client-abc' },

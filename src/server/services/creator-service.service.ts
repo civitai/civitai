@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { ImageReferenceInput } from '~/server/schema/image.schema';
 import { profileImageSelect } from '~/server/selectors/image.selector';
+import { withServableImage } from '~/server/common/image-visibility';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { updateServiceOfferingNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -51,6 +52,7 @@ import {
 } from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { creatorAggregateScoreFromMeta } from '~/shared/utils/creator-score';
+import { escapeLike } from '~/server/utils/ilike';
 import {
   ImageIngestionStatus,
   ServiceOfferingIngestionStatus,
@@ -71,7 +73,7 @@ export const serviceOfferingSelect = {
   status: true,
   createdAt: true,
   updatedAt: true,
-  coverImage: { select: profileImageSelect },
+  coverImage: { select: { ...profileImageSelect, modelRestricted: true } },
 } satisfies Prisma.ServiceOfferingSelect;
 
 /** What only the seller and moderators see: the seller's own rating and the content check. */
@@ -344,7 +346,9 @@ export async function getShopServiceOfferings({
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
   });
-  return withOpenSlots(offerings);
+  // No viewer: a restricted cover is withheld from its seller too, as the storefront shows what
+  // visitors see. The offering stays listed without it.
+  return withOpenSlots(offerings.map((offering) => withServableImage(offering, 'coverImage')));
 }
 
 const feedOrderBy = {
@@ -364,6 +368,7 @@ export async function getServiceOfferingFeed({
   servable,
   viewerId,
   sort,
+  query,
   cursor,
   limit,
 }: GetServiceOfferingFeedInput & {
@@ -376,6 +381,21 @@ export async function getServiceOfferingFeed({
   const rows = await dbRead.serviceOffering.findMany({
     where: {
       ...listable,
+      // Keep the listing rule's AND; the query only narrows it.
+      AND: [
+        ...listable.AND,
+        ...(query
+          ? [
+              {
+                // Prisma passes `%` and `_` through to LIKE as wildcards.
+                OR: [
+                  { title: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                  { description: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                ],
+              },
+            ]
+          : []),
+      ],
       seller: {
         ...listable.seller,
         // The card links to the storefront, which is addressed by username.
@@ -391,7 +411,7 @@ export async function getServiceOfferingFeed({
   });
   const page = rows.slice(0, limit);
   return {
-    items: await withOpenSlots(page),
+    items: await withOpenSlots(page.map((offering) => withServableImage(offering, 'coverImage'))),
     nextCursor: rows.length > limit ? page[page.length - 1].id : undefined,
   };
 }

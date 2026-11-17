@@ -31,7 +31,8 @@ beforeAll(async () => {
       "needsReview" text,
       "tosViolation" boolean NOT NULL DEFAULT false,
       "postId" int,
-      "nsfwLevel" int NOT NULL DEFAULT 1
+      "nsfwLevel" int NOT NULL DEFAULT 1,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "CrucibleEntry" (
       id int PRIMARY KEY,

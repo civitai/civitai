@@ -5,7 +5,6 @@ vi.hoisted(() => {
 });
 
 import { generateSecretHash } from '@civitai/auth/secret-hash';
-import { TokenScope } from '@civitai/auth/token-scope';
 import { createKyselyFake } from '../../../../test/kysely-fake';
 import { blockWorkerDevice, createIntrospectorClient, createWorkerClient } from '../worker-admin';
 
@@ -55,7 +54,8 @@ describe('createWorkerClient', () => {
         id: 'workers-salad',
         secret: generateSecretHash(secret),
         grants: ['urn:ietf:params:oauth:grant-type:token-exchange'],
-        allowedScopes: TokenScope.WorkerRegister,
+        // The bigint column, written as its decimal string: WorkerRegister (2^29).
+        allowedScopes: '536870912',
         isConfidential: true,
         userId: 900,
       }),
@@ -153,7 +153,7 @@ describe('createIntrospectorClient', () => {
         id: 'orchestrator-workers',
         secret: generateSecretHash(secret),
         grants: [],
-        allowedScopes: 0,
+        allowedScopes: '0',
         isConfidential: true,
         userId: 900,
       }),
