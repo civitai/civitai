@@ -1876,6 +1876,14 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   // bust debounce window.
   await preventReplicationLagBatch('modelVersion', showcaseVersionIds);
   await imagesForModelVersionsCache.refresh(showcaseVersionIds);
+
+  // The models sync re-picks a model only when `Model.updatedAt` moves, so a showcase image that
+  // stops qualifying would stay in its search document. Call-site import: models.search-index
+  // imports image.service, which imports this module.
+  const { modelsSearchIndex } = await import('~/server/search-index/models.search-index');
+  await modelsSearchIndex.queueUpdate(
+    showcaseModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
