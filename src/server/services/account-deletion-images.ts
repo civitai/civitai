@@ -94,7 +94,6 @@ export async function unblockAccountDeletionImages(userId: number) {
       break;
     }
 
-    // A CSAM row comes back Blocked, but the reason check stays as a second guard.
     const visible = restored.filter(
       (x) => x.ingestion !== 'Blocked' && x.blockedFor !== BlockedReason.CSAM
     );
