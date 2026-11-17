@@ -25,6 +25,7 @@ export async function getTextRatedBountyLevels(ids: number[]): Promise<Map<numbe
     {
       id: number;
       byScan: boolean;
+      scanCurrent: boolean;
       scanLevel: number | null;
       scanVersion: string | null;
       content: number | null;
@@ -32,6 +33,7 @@ export async function getTextRatedBountyLevels(ids: number[]): Promise<Map<numbe
   >`
     SELECT b.id,
       (b.details -> ${BOUNTY_SCAN_DETAILS_KEY}::text) IS NOT NULL AS "byScan",
+      sm.status = 'Succeeded'::"EntityModerationStatus" AS "scanCurrent",
       sm."nsfwLevel" AS "scanLevel",
       sm.result ->> 'version' AS "scanVersion",
       ${ratedEntityContentNsfwLevelSql('Bounty', 'b')} AS content
@@ -40,7 +42,8 @@ export async function getTextRatedBountyLevels(ids: number[]): Promise<Map<numbe
     WHERE b.id IN (${Prisma.join(ids)})
   `;
   for (const row of rows) {
-    if (!row.byScan || row.scanLevel == null) continue;
+    // A pending or failed rescan keeps the previous verdict on the row; only a settled one rates.
+    if (!row.byScan || !row.scanCurrent || row.scanLevel == null) continue;
     const raised = isTextScanRaised({
       entityType: 'Bounty',
       nsfwLevel: row.scanLevel,
