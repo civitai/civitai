@@ -1638,7 +1638,15 @@ column; 2.5 let 10 of them in.
   counts are visible to the same run's model write. `lastVersionAt` joined the trigger's `UPDATE OF`
   list so a version publish rescores the model.
 - The per-base-model slice is credited only by versions of its own base model.
-- A newly published version adds nothing at the moment it publishes; its credit arrives as the
-  metrics jobs write its counts (model job every minute, base-model job every five).
+- A version lifts its model the moment it publishes: with no engagement yet it still carries a
+  fresh date, so the model ranks like an empty new model. The engagement part of its credit arrives
+  as the metrics jobs write its counts (model job every minute, base-model job every five).
+- Known gap: a version leaving Published through a raw-SQL sweep that does not also write `Model`
+  keeps its credit until the model's next metrics write, because the score only recomputes when
+  the `ModelMetric` (or slice) row is written. Ranking only; the version itself is not served.
+- A version's generation term is capped by the whole model's (or slice's) distinct-generator count,
+  not its own. Under C = 2.0 that cannot lift a model past what a new model with two generators can
+  reach; re-check it before raising `C`, or the owner's own generations on a new version become a
+  way to lift it.
 - The migration's in-file `CALL` rescores only rows where a version term beats the stored score,
   then refreshes mirrored slices. Apply it without `--single-transaction`.

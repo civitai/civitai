@@ -45,12 +45,24 @@ const MONTH = 2_592_000;
 const modelTerm = (likes: number, published: Date) =>
   Math.round((Math.log10(1 + likes) + published.getTime() / 1000 / MONTH) * 10000);
 
-type Version = { id: number; base?: string; at: Date; likes: number; status?: string };
+type Version = {
+  base?: string;
+  at: Date;
+  likes: number;
+  downloads?: number;
+  generations?: number;
+  status?: string;
+};
 
 let nextModel = 1;
 /** Writes versions first, as the metrics job does, then the ModelMetric row the trigger scores. */
-async function model(published: Date, likes: number, versions: Omit<Version, 'id'>[]) {
-  const modelId = nextModel++;
+async function model(
+  published: Date,
+  likes: number,
+  versions: Version[],
+  opts: { id?: number; uniqueGenerators?: number } = {}
+) {
+  const modelId = opts.id ?? nextModel++;
   for (const [i, v] of versions.entries()) {
     const id = modelId * 100 + i;
     await db.pg.query(
@@ -58,13 +70,15 @@ async function model(published: Date, likes: number, versions: Omit<Version, 'id
       [id, modelId, v.base ?? 'SDXL 1.0', v.status ?? 'Published', v.at.toISOString()]
     );
     await db.pg.query(
-      `INSERT INTO "ModelVersionMetric" ("modelVersionId", "thumbsUpCount") VALUES ($1, $2)`,
-      [id, v.likes]
+      `INSERT INTO "ModelVersionMetric" ("modelVersionId", "thumbsUpCount", "downloadCount", "generationCount")
+       VALUES ($1, $2, $3, $4)`,
+      [id, v.likes, v.downloads ?? 0, v.generations ?? 0]
     );
   }
   await db.pg.query(
-    `INSERT INTO "ModelMetric" ("modelId", "thumbsUpCount", "publishedAt") VALUES ($1, $2, $3)`,
-    [modelId, likes, published.toISOString()]
+    `INSERT INTO "ModelMetric" ("modelId", "thumbsUpCount", "publishedAt", "uniqueGeneratorCount")
+     VALUES ($1, $2, $3, $4)`,
+    [modelId, likes, published.toISOString(), opts.uniqueGenerators ?? 0]
   );
   return modelId;
 }
@@ -93,6 +107,7 @@ const slice = async (modelId: number, baseModel: string, likes: number) => {
 
 const OLD = daysAgo(540);
 const RECENT = daysAgo(3);
+const BATCH_EDGES = [250_000, 500_000];
 let preexisting: number;
 
 beforeAll(async () => {
@@ -128,6 +143,28 @@ beforeAll(async () => {
     `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount") VALUES ($1, 'SDXL 1.0', 0)`,
     [preexisting]
   );
+  // The backfill walks ids in fixed batches (its default size): one row opening each later
+  // batch, the last at the max id, each with a mirrored slice and a measured one.
+  for (const id of BATCH_EDGES) {
+    await model(
+      OLD,
+      12_000,
+      [
+        { at: OLD, likes: 11_500 },
+        { at: RECENT, likes: 500 },
+      ],
+      { id }
+    );
+    await db.pg.query(
+      `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount") VALUES ($1, 'Mirror', 0)`,
+      [id]
+    );
+    await db.pg.query(
+      `INSERT INTO "ModelBaseModelMetric" ("modelId", "baseModel", "thumbsUpCount", "generationCount", "uniqueGeneratorCount")
+       VALUES ($1, 'SDXL 1.0', 12000, 0, 0)`,
+      [id]
+    );
+  }
 
   for (const dir of LATER) await apply(dir);
 });
@@ -194,6 +231,7 @@ describe('Hot credits a model for a newer version, on that version alone', () =>
     ]);
     const ceiling = Math.round((2 + Date.now() / 1000 / MONTH) * 10000);
 
+    expect(await score(id)).toBeGreaterThan(modelTerm(12_000, OLD));
     expect(await score(id)).toBeLessThanOrEqual(ceiling);
   });
 
@@ -210,6 +248,38 @@ describe('Hot credits a model for a newer version, on that version alone', () =>
     expect(await score(preexisting)).toBeGreaterThan(modelTerm(12_000, OLD));
     expect(await score(preexisting)).toBe(await score(twin));
     expect(mirror.rows[0].hotScore).toBe(await score(preexisting));
+
+    for (const id of BATCH_EDGES) {
+      const slices = await db.pg.query<{ baseModel: string; hotScore: number }>(
+        `SELECT "baseModel", "hotScore" FROM "ModelBaseModelMetric" WHERE "modelId" = $1`,
+        [id]
+      );
+      const byBase = Object.fromEntries(slices.rows.map((r) => [r.baseModel, r.hotScore]));
+
+      expect(await score(id)).toBe(await score(twin));
+      expect(byBase['Mirror']).toBe(await score(twin));
+      expect(byBase['SDXL 1.0']).toBeGreaterThan(modelTerm(12_000, OLD));
+    }
+  });
+
+  it("scores a version's downloads, and its generations only past the first generator", async () => {
+    const at = daysAgo(2);
+    const atCap = await score(await model(at, 99, [{ at, likes: 99 }]));
+    const empty = await score(await model(at, 0, [{ at, likes: 0 }]));
+    const old = { at: OLD, likes: 12_000 };
+
+    // Downloads count at 1/6.4 of a like, so this alone is past the cap.
+    const downloads = await model(OLD, 12_000, [old, { at, likes: 0, downloads: 6_400 }]);
+    const oneGenerator = await model(OLD, 12_000, [old, { at, likes: 0, generations: 5_000 }], {
+      uniqueGenerators: 1,
+    });
+    const manyGenerators = await model(OLD, 12_000, [old, { at, likes: 0, generations: 5_000 }], {
+      uniqueGenerators: 50,
+    });
+
+    expect(await score(downloads)).toBe(atCap);
+    expect(await score(oneGenerator)).toBe(empty);
+    expect(await score(manyGenerators)).toBe(atCap);
   });
 });
 
