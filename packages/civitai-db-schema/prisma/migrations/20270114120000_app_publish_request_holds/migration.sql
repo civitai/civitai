@@ -4,7 +4,7 @@
 -- NOT AUTO-APPLIED. A human runs this file against the main civitai database, dev first, then
 -- production, BEFORE the release that reads it rolls out. The approve paths fail closed while
 -- these tables are absent (approve is refused with a message saying the holds could not be read); the review
--- queue's hold badge fails open.
+-- queue shows the hold state as unknown and keeps those apps out of the fast lane.
 --
 -- ADDITIVE ONLY. Two new, empty tables and their indexes; no existing table, column or row changes,
 -- and no foreign keys, so no lock is taken on any existing table. Idempotent (`IF NOT EXISTS`).

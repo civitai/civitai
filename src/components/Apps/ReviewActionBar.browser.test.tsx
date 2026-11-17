@@ -2,6 +2,7 @@ import superjson from 'superjson';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as NotificationsMod from '@mantine/notifications';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
@@ -44,6 +45,18 @@ const mocks = vi.hoisted(() => ({
   holds: [] as unknown[],
   approveResult: undefined as unknown,
 }));
+
+const notified = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock('@mantine/notifications', async (importOriginal) => {
+  const real = await importOriginal<typeof NotificationsMod>();
+  return {
+    ...real,
+    showNotification: (n: Parameters<typeof real.showNotification>[0]) => {
+      notified.push(n as unknown as Record<string, unknown>);
+      return real.showNotification(n);
+    },
+  };
+});
 
 const showError = vi.fn();
 vi.mock('~/utils/notifications', () => ({
@@ -676,6 +689,44 @@ describe('🔴 "Approve & next" survives the tab closing (keepalive)', () => {
       const { reviewApprovalQueue } = await import('./pendingApprovalQueue');
       await vi.waitFor(() =>
         expect(reviewApprovalQueue.get('req-keepalive')?.status).toBe('committed')
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('🔴 a late hold found on commit shows "App suspended", never "Build started"', async () => {
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.includes('/api/trpc/')) return realFetch(input, init);
+      return new Response(
+        JSON.stringify({
+          result: { data: { json: { publishRequestId: 'req-late', lateHoldIds: [5] } } },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    });
+    try {
+      notified.length = 0;
+      const request = { ...PENDING, id: 'req-late' };
+      renderWithProviders(
+        <ReviewActionBar
+          selection={{ request, mode: 'pending' }}
+          onClose={vi.fn()}
+          approveAndNext
+        />
+      );
+      await page.getByTestId('apps-review-approve-next').click();
+      const { reviewApprovalQueue } = await import('./pendingApprovalQueue');
+      await reviewApprovalQueue.commitNow('req-late');
+      await vi.waitFor(() =>
+        expect(notified.map((n) => n.title)).toContain(
+          'App suspended: a review hold was placed during the approve'
+        )
+      );
+      expect(notified.map((n) => String(n.message))).not.toContain(
+        `Approved ${request.slug} v${request.version}. Build started.`
       );
     } finally {
       spy.mockRestore();

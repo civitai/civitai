@@ -125,9 +125,8 @@ export async function finaliseOnsiteApprove(
       data: { allowedScopes: input.priorVersion.allowedScopes },
     });
   }
-  // The listing is left as a mod reset leaves it (`resetRestoreWhere`): hidden from the store, and
-  // the re-approve once the hold is cleared publishes it and un-suspends the block. Left approved,
-  // it would show a card for a suspended app that no restore path reaches.
+  // Left as a mod reset leaves it (`resetRestoreWhere`), so the re-approve after the hold is
+  // cleared publishes it and un-suspends the block.
   const prior = input.priorListing;
   if (!prior) {
     await tx.appListing.updateMany({
