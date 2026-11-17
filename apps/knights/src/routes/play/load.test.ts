@@ -26,7 +26,7 @@ vi.mock('$lib/server/membership', async (original) => ({
   consented: vi.fn(async () => true),
   requireConsent: vi.fn(async () => undefined),
 }));
-vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
+vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key, THUMBNAIL_WIDTH: 192 }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
 vi.mock('$lib/server/vote-limits/runtime', () => ({ lockoutFor, voteGate: { guard: vi.fn() } }));
@@ -453,10 +453,16 @@ describe('play load feed', () => {
 
   it('carries the reset notice and the notices from hidden checks', async () => {
     hasUnseenReset.mockResolvedValue(true);
-    readHiddenNotices.mockResolvedValue([{ title: 'T', message: 'M' }]);
+    readHiddenNotices.mockResolvedValue([
+      { title: 'T', message: 'M', imageKey: 'img-key' },
+      { title: 'T', message: 'M', imageKey: null },
+    ]);
     const page = await run();
     expect(page.resetNotice).toBe(true);
-    expect(page.notices).toEqual([{ title: 'T', message: 'M' }]);
+    expect(page.notices).toEqual([
+      { title: 'T', message: 'M', imageKey: 'img-key', imageSrc: 'img-key' },
+      { title: 'T', message: 'M', imageKey: null, imageSrc: null },
+    ]);
   });
 
   it('shows the reset notice on the apprenticeship page, where a reset player lands', async () => {

@@ -3,6 +3,7 @@ import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { getDailyStatus } from '$lib/server/daily/daily.service';
 import { openItem } from '$lib/server/feed-token';
+import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
 import {
   answerHiddenCheck,
   dismissHiddenNotices,
@@ -30,9 +31,9 @@ import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { lockoutFor, voteGate } from '$lib/server/vote-limits/runtime';
-import { feedSecret } from '$lib/server/smites/runtime';
+import { hiddenSettings } from '$lib/server/hidden/runtime';
+import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
-import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
 import { crossedMilestone } from '$lib/server/apprenticeship/standing';
@@ -127,7 +128,10 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     status,
     muted,
     resetNotice,
-    notices,
+    notices: notices.map((notice) => ({
+      ...notice,
+      imageSrc: notice.imageKey ? imageUrl(notice.imageKey, THUMBNAIL_WIDTH) : null,
+    })),
     whatsNew: seen.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
     showGuide: seen.guide,
     progress: withRankPerks(seen.progress),
@@ -268,7 +272,8 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
               blockReason,
               isModerator: locals.user.isModerator,
             },
-            queueDeps
+            // Graded in this request, so the warning or smite shows on the answer that caused it.
+            { ...queueDeps, grade: { settings: hiddenSettings(), ...resetDeps } }
           )
         : ref.kind === 'yesno'
         ? await castYesNoVote(
@@ -293,7 +298,9 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
         message: REJECTION_TEXT[result.reason],
       });
     }
-    return { success: true };
+    return 'check' in result && result.check
+      ? { success: true, check: result.check }
+      : { success: true };
   } catch (error) {
     console.error('knights: vote failed', { itemId, error });
     return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });

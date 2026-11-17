@@ -23,12 +23,19 @@ ordinary vote in every way a player can see.
   daily tally, pacing, `/judgments` and the status line treat them alike. A check has no queue item: its ledger `itemId` is the
   negative of its reference image's id, so write-back, consensus and the queue sweeps never see it, and it is stored as already
   labelled so the label pass skips it.
-- `settleHiddenChecks` (run by the tick) grades a check against the known answer after a delay, then pays it through the same
-  `payOutVotes` as a settled queue vote: a right answer earns gold and bulk XP and works smites off, a wrong one drops its gold.
-  Accuracy counts the check only from then.
-- A wrong answer can cost the player a warning or a smite, decided when the check is graded. It is stored on the vote
-  (`consequence`) and shown as a notice that the player dismisses (only a notice from the current career, since `startAt`; a career reset leaves the old one behind) (`readHiddenNotices`, `dismissHiddenNotices`); reading never
-  changes anything, so a preload cannot lose it.
+- A check answered on `/play` is graded in the same request (`answerHiddenCheck` with `grade`, through `gradeHiddenVotes`), then
+  paid through the same `payOutVotes` as a settled queue vote: a right answer earns gold and bulk XP and works smites off, a wrong
+  one drops its gold. Accuracy counts the check from then. The action returns the outcome (`check`: verdict, warning or smite,
+  active smites, whether it reset the career), and the page reads its data again after the vote, so the notice shows at once.
+  `settleHiddenChecks` (run by the tick) is now only the sweep for checks still pending after `settleDelayMinutes`, such as ones
+  answered before inline grading shipped. Grading on the spot shows which images were checks; that is accepted because a player is
+  never served a check on an image they already voted on, and the harvest keeps renewing the pool.
+- A wrong answer can cost the player a warning or a smite, decided when the check is graded: the first failure in
+  `failureWindowHours` is a warning, each later one (or a severe under-rating) a smite, one check at a time. It is stored on the
+  vote (`consequence`) and shown as a notice that the player dismisses (only a notice from the current career, since `startAt`; a
+  career reset leaves the old one behind) (`readHiddenNotices`, `dismissHiddenNotices`). There is one notice per check, newest
+  first (at most 5), with the image's thumbnail (when still servable), the answer given and the answer the check wanted; reading
+  never changes anything, so a preload cannot lose it. `/judgments` names the known answer on a wrong check too.
 
 ## Smites (`src/lib/server/smites`)
 

@@ -188,6 +188,18 @@ describe('vote action', () => {
     expect(castVote).toHaveBeenCalledTimes(1);
   });
 
+  it('grades a hidden check in the request and returns what it cost', async () => {
+    const check = { verdict: 'failed', consequence: 'smite', smites: 1, reset: false };
+    answerHiddenCheck.mockResolvedValue({ status: 'recorded', check });
+
+    expect(await submit({ item: hiddenItem(5), answer: '8' })).toEqual({ success: true, check });
+    expect(answerHiddenCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ grade: expect.objectContaining({ settings: { rate: 1 } }) })
+    );
+  });
+
   it('refuses a hidden check with the same message and status as a vote', async () => {
     const rejected = { status: 'rejected', reason: 'reset-pending' };
     castVote.mockResolvedValue(rejected);

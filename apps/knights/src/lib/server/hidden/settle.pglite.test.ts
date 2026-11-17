@@ -145,14 +145,14 @@ describe('grading hidden checks', () => {
     expect(after.exp).toBe(before.exp);
     expect((await vote(1))[0]).toMatchObject({ verdict: 'failed', consequence: 'warning' });
     expect(await smites(1)).toHaveLength(0);
-    expect(await readHiddenNotices(db, 1)).toEqual([WARNING_NOTICE]);
+    expect(await readHiddenNotices(db, 1)).toMatchObject([WARNING_NOTICE]);
   });
 
   it('does not show a notice from before a career reset to the new career', async () => {
     await seedPlayer(pg, 1);
     await answer(1, await reference(10, '4'), '8');
     await settle(minutes(31));
-    expect(await readHiddenNotices(db, 1)).toEqual([WARNING_NOTICE]);
+    expect(await readHiddenNotices(db, 1)).toMatchObject([WARNING_NOTICE]);
     await pg.query(
       `UPDATE "NewOrderPlayer" SET "startAt" = '2026-12-16T00:00:00Z' WHERE "userId" = 1`
     );
@@ -167,7 +167,8 @@ describe('grading hidden checks', () => {
     expect(await smites(1)).toEqual([
       { size: SMITES.size, givenById: SMITES.systemGiverId, reason: SMITE_REASON },
     ]);
-    expect(await readHiddenNotices(db, 1)).toEqual([SMITE_NOTICE]);
+    // One notice per check, newest first.
+    expect(await readHiddenNotices(db, 1)).toMatchObject([SMITE_NOTICE, WARNING_NOTICE]);
     expect(SMITE_REASON).not.toMatch(/repeat|severe|another|24/i);
   });
 
@@ -276,5 +277,76 @@ describe('grading hidden checks', () => {
       )
     ).rows[0];
     expect(row).toEqual({ answers: 1, failures: 1 });
+  });
+});
+
+describe('naming the check behind a notice', () => {
+  it('names the image, the answer given and the answer it wanted', async () => {
+    await seedPlayer(pg, 1);
+    await answer(1, await reference(10, '4'), '8');
+    await settle(minutes(31));
+    const [notice] = await readHiddenNotices(db, 1);
+    expect(notice).toMatchObject({ consequence: 'warning', imageKey: expect.any(String) });
+    expect(notice.answerLabel).not.toBe(notice.correctLabel);
+    expect(notice.correctLabel).toBeTruthy();
+  });
+
+  it('hides the image of a check that is no longer servable but still names the answers', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '4');
+    await answer(1, ref, '8');
+    await settle(minutes(31));
+    await pg.query(`UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 10`);
+    const [notice] = await readHiddenNotices(db, 1);
+    expect(notice.imageKey).toBeNull();
+    expect(notice.correctLabel).toBeTruthy();
+  });
+});
+
+describe('grading a hidden check as it is answered', () => {
+  const answerNow = (userId: number, referenceId: number, value: string, at = NOW) =>
+    answerHiddenCheck(
+      db,
+      { userId, referenceId, answer: value },
+      { now: () => at, mirrorXp: mirror as never, grade: { settings, resetPlayer } }
+    );
+
+  it('grades and pays a right answer in the same request', async () => {
+    await seedPlayer(pg, 1);
+    const result = await answerNow(1, await reference(10, '4'), '4');
+    expect(result).toEqual({
+      status: 'recorded',
+      check: { verdict: 'correct', consequence: null, smites: 0, reset: false },
+    });
+    expect(await vote(1)).toMatchObject([{ verdict: 'correct', consequence: null }]);
+    expect((await vote(1))[0].settledAt).not.toBeNull();
+  });
+
+  it('warns at once on a first wrong answer and smites the next one, one answer at a time', async () => {
+    await seedPlayer(pg, 1);
+    expect(await answerNow(1, await reference(10, '4'), '8')).toEqual({
+      status: 'recorded',
+      check: { verdict: 'failed', consequence: 'warning', smites: 0, reset: false },
+    });
+    expect(await readHiddenNotices(db, 1)).toHaveLength(1);
+    expect(await answerNow(1, await reference(11, '4'), '8', minutes(1))).toEqual({
+      status: 'recorded',
+      check: { verdict: 'failed', consequence: 'smite', smites: 1, reset: false },
+    });
+    expect(await smites(1)).toHaveLength(1);
+  });
+
+  it('resets the career in the request that lands the third smite', async () => {
+    await seedPlayer(pg, 1);
+    await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1)`);
+    const result = await answerNow(1, await reference(10, '16'), '2');
+    expect(result).toMatchObject({ check: { consequence: 'smite', smites: 3, reset: true } });
+    expect(resetPlayer).toHaveBeenCalledWith(1);
+  });
+
+  it('leaves nothing for the tick to grade', async () => {
+    await seedPlayer(pg, 1);
+    await answerNow(1, await reference(10, '4'), '4');
+    expect(await settle(minutes(60))).toMatchObject({ graded: 0 });
   });
 });

@@ -637,8 +637,19 @@
     <section class="toast" role="status" aria-label="Skill check">
       <Icon name="triangle-alert" size={18} />
       <div class="toast-body">
-        {#each data.notices as notice (notice.title)}
-          <p><strong>{notice.title}</strong> {notice.message}</p>
+        {#each data.notices as notice (notice.key)}
+          <div class="check-notice">
+            {#if notice.imageSrc}
+              <img class="check-thumb" src={notice.imageSrc} alt="The skill check image" loading="lazy" />
+            {/if}
+            <p>
+              <strong>{notice.title}</strong>
+              {notice.message}
+              <span class="check-answers">
+                You answered {notice.answerLabel}{#if notice.correctLabel}; the answer was {notice.correctLabel}{/if}.
+              </span>
+            </p>
+          </div>
         {/each}
         {#if form?.noticeFailed}
           <p>{form.message}</p>
@@ -889,6 +900,26 @@
   .toast-body strong {
     display: block;
     color: var(--io-crimson-text);
+  }
+  .check-notice {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .check-notice + .check-notice {
+    margin-top: 8px;
+  }
+  .check-thumb {
+    flex: none;
+    width: 48px;
+    height: 48px;
+    border-radius: 6px;
+    object-fit: cover;
+  }
+  .check-answers {
+    display: block;
+    color: var(--io-parchment);
+    opacity: 0.8;
   }
   .toast button {
     min-height: 0;

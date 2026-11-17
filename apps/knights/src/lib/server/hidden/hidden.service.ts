@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
-import { REFERENCE_POOL } from '@civitai/db/knights';
+import { REFERENCE_POOL, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
+import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
+import { metrics } from '../metrics';
 import { PROGRESSION } from '../progression/config';
 import { BUCKET_LEVELS } from '../queue/feed';
 import { canVote } from '../queue/ranks';
@@ -16,6 +17,9 @@ import {
 import { creditVote, insertVote } from '../queue/vote-record';
 import { isRank } from '../ranks';
 import { servableReferences } from '../reference';
+import { resetNow, type ResetDeps } from '../smites/smites.service';
+import type { HiddenCheckSettings } from './config';
+import { gradeHiddenVotes, type CheckOutcome } from './settle';
 import { SMITE_NOTICE, WARNING_NOTICE, type Notice } from './notices';
 
 type Executor = Kysely<DB> | Transaction<DB>;
@@ -28,11 +32,20 @@ export type HiddenCheckOffer = {
   height: number | null;
 };
 
-/** The same answers a vote gets, so a check cannot be told apart by what comes back. */
-export type HiddenCheckResult = Exclude<
-  CastVoteResult,
-  { status: 'resolved' | 'escalated' | 'inquisitor' }
->;
+/** What the player is told about a check graded in the request that answered it. */
+export type CheckFeedback = {
+  verdict: CheckOutcome['verdict'];
+  consequence: CheckOutcome['consequence'];
+  /** Active smites after this check. */
+  smites: number;
+  /** The check landed the smite that resets the career. */
+  reset: boolean;
+};
+
+/** A vote's answers; a check graded on the spot also carries `check`. */
+export type HiddenCheckResult =
+  | Exclude<CastVoteResult, { status: 'resolved' | 'escalated' | 'inquisitor' | 'recorded' }>
+  | { status: 'recorded'; check?: CheckFeedback };
 
 /** A hidden check sits in the vote ledger under the negative of its reference image's id. */
 export const hiddenItemId = (referenceId: number) => -referenceId;
@@ -181,7 +194,9 @@ export const isSevereUnderRating = (given: string, known: string, distance: numb
 
 /**
  * Takes a hidden check answer as an ordinary vote: the same ledger row, XP, pending gold, daily tally and pacing as a
- * queue vote. It has no queue item and no write-back; `settleHiddenChecks` grades it later.
+ * queue vote. It has no queue item and no write-back. With `grade` it is graded in the same transaction (`gradeHiddenVotes`)
+ * and the result says what it cost, so the player sees a warning or smite on the answer that caused it; without `grade`,
+ * `settleHiddenChecks` grades it later.
  */
 export async function answerHiddenCheck(
   db: Kysely<DB>,
@@ -192,9 +207,13 @@ export async function answerHiddenCheck(
     blockReason?: string | null;
     isModerator?: boolean;
   },
-  deps: Pick<QueueDeps, 'now' | 'voteLimits'> & { mirrorXp?: XpMirror }
+  deps: Pick<QueueDeps, 'now' | 'voteLimits'> & {
+    mirrorXp?: XpMirror;
+    grade?: ResetDeps & { settings: HiddenCheckSettings };
+  }
 ): Promise<HiddenCheckResult> {
   const now = deps.now();
+  let graded: { outcome: CheckOutcome; xp: XpDelta[]; reset: boolean } | null = null;
   const result = await db.transaction().execute(async (trx): Promise<HiddenCheckResult> => {
     const until = await pacingGate(trx, input, now, deps);
     if (until) return { status: 'limited', until };
@@ -234,35 +253,101 @@ export async function answerHiddenCheck(
       player: vote.player,
       gold: vote.gold,
     });
+    if (!deps.grade) return { status: 'recorded' };
+
+    // Read back: `creditVote` may have clamped the stored gold to the day's cap.
+    const due = await trx
+      .selectFrom('KnightsVote')
+      .select(['itemId', 'playerId', 'verdict', 'gold', 'createdAt', 'answer'])
+      .where('itemId', '=', itemId)
+      .where('playerId', '=', input.userId)
+      .where('createdAt', '=', utc(now))
+      .execute();
+    const { outcomes, xp, resetFor } = await gradeHiddenVotes(trx, due, {
+      now,
+      settings: deps.grade.settings,
+    });
+    graded = { outcome: outcomes[0], xp, reset: resetFor.includes(input.userId) };
     return { status: 'recorded' };
   });
 
-  if (result.status === 'recorded') {
-    await mirrorXp(deps.mirrorXp, [{ playerId: input.userId, xp: PROGRESSION.voteXp }]);
-  }
-  return result;
+  if (result.status !== 'recorded') return result;
+  await mirrorXp(deps.mirrorXp, [{ playerId: input.userId, xp: PROGRESSION.voteXp }]);
+  if (!graded || !deps.grade) return result;
+
+  const { outcome, xp, reset } = graded as { outcome: CheckOutcome; xp: XpDelta[]; reset: boolean };
+  metrics.hiddenCheckGraded(outcome.verdict);
+  await mirrorXp(deps.mirrorXp, xp);
+  // A reset that fails here stays due: the tick retries it (`resetPendingPlayers`).
+  if (reset) await resetNow(input.userId, deps.grade);
+  return {
+    status: 'recorded',
+    check: {
+      verdict: outcome.verdict,
+      consequence: outcome.consequence,
+      smites: outcome.smites,
+      reset,
+    },
+  };
 }
 
-const noticeOf = (consequence: string): Notice =>
-  consequence === 'smite' ? SMITE_NOTICE : WARNING_NOTICE;
+/** A warning or smite the player has not dismissed, naming the check that caused it. */
+export type CheckNotice = Notice & {
+  /** Unique per check: the vote's item id and time. */
+  key: string;
+  consequence: 'warning' | 'smite';
+  /** Null when the image is no longer one the public feeds would show. */
+  imageKey: string | null;
+  answerLabel: string;
+  correctLabel: string | null;
+};
+
+const NOTICES_SHOWN = 5;
 
 /**
- * What graded checks cost the player in this career that they have not dismissed yet. A career reset moves
- * `startAt`, and a notice from before it belongs to the old career. Reading changes nothing, so a preload cannot lose it.
+ * What graded checks cost the player in this career that they have not dismissed yet, newest first, one per check so each
+ * names its image and the answer it wanted. A career reset moves `startAt`, and a notice from before it belongs to the old
+ * career. Reading changes nothing, so a preload cannot lose it.
  */
-export async function readHiddenNotices(db: Executor, playerId: number): Promise<Notice[]> {
+export async function readHiddenNotices(db: Executor, playerId: number): Promise<CheckNotice[]> {
   const rows = await db
-    .selectFrom('KnightsVote')
-    .select('consequence')
-    .where('playerId', '=', playerId)
-    .where('consequence', 'is not', null)
-    .where('noticedAt', 'is', null)
+    .selectFrom('KnightsVote as v')
+    .leftJoin('KnightsReferenceImage as r', (join) => join.on(sql<SqlBool>`r.id = -v."itemId"`))
+    .leftJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
+    .leftJoin('Image as img', 'img.id', 'v.imageId')
+    .leftJoin('Post as p', 'p.id', 'img.postId')
+    .select((eb) => [
+      'v.itemId',
+      'v.createdAt',
+      'v.consequence',
+      'v.answer',
+      'r.answer as correct',
+      'q.options',
+      'img.url as imageKey',
+      servableImage(eb).as('servable'),
+    ])
+    .where('v.playerId', '=', playerId)
+    .where('v.consequence', 'is not', null)
+    .where('v.noticedAt', 'is', null)
     .where(
-      sql<SqlBool>`"createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = "KnightsVote"."playerId"), 'epoch')`
+      sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
     )
+    .orderBy('v.createdAt', 'desc')
+    .limit(NOTICES_SHOWN)
     .execute();
-  if (rows.length === 0) return [];
-  return [noticeOf(rows.some((r) => r.consequence === 'smite') ? 'smite' : 'warning')];
+  return rows.map((row) => {
+    const options = (row.options ?? []) as QuestionOption[];
+    const labelOf = (value: string) => options.find((o) => o.value === value)?.label ?? value;
+    const consequence = row.consequence === 'smite' ? 'smite' : 'warning';
+    return {
+      ...(consequence === 'smite' ? SMITE_NOTICE : WARNING_NOTICE),
+      key: `${row.itemId}:${new Date(row.createdAt).getTime()}`,
+      consequence,
+      imageKey: row.servable && row.imageKey ? row.imageKey : null,
+      answerLabel: labelOf(row.answer),
+      correctLabel: row.correct ? labelOf(row.correct) : null,
+    };
+  });
 }
 
 export async function dismissHiddenNotices(db: Executor, playerId: number, now: Date) {
