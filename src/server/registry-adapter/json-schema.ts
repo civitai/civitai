@@ -61,8 +61,11 @@ export const FILTER_MAX_BYTES = 8 * 1024;
 export const FILTER_MAX_DEPTH = 32;
 
 /**
- * Keys that make a filter's evaluation cost unbounded by its size, refused wherever they appear:
- * `$ref`, `$dynamicRef`, `$recursiveRef`, `$defs`, `definitions`. A reference lets a small filter
+ * Keys refused wherever they appear in a filter. `$ref`, `$dynamicRef`, `$recursiveRef`, `$defs`
+ * and `definitions` make its evaluation cost unbounded by its size. `$async` makes ajv compile an
+ * async validator, which the synchronous predicate does not support (it would answer a promise for
+ * every body); ajv honours it only at the root of a schema, but it is refused anywhere, like the
+ * others, so the rule stays one walk. A reference lets a small filter
  * reuse a subschema, so definitions that each hold two references to the next form a DAG whose
  * evaluation doubles at every level. Without them every subschema is evaluated once per value it
  * applies to, so the work outside patterns is bounded by the filter's size times the body's.
@@ -86,6 +89,7 @@ const REFUSED_FILTER_KEYS = [
   '$recursiveRef',
   '$defs',
   'definitions',
+  '$async',
 ] as const;
 
 /**

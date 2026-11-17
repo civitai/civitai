@@ -83,10 +83,11 @@ export const FILTER_PATTERN_MAX_INPUT_LENGTH = 16384;
  * any of the filter's patterns is run on. {@link FILTER_PATTERN_MAX_INPUT_LENGTH} bounds one value,
  * but one place runs its pattern on every value it applies to (`items: {pattern}`,
  * `additionalProperties: {pattern}`), so without this the work grew with the whole body. Every
- * run is charged, whichever place makes it, so the pattern work per body is at most size ×
- * min(places × the body's string length, this budget), where size is
+ * run is charged, whichever place makes it, its value's length and at least 1, so a body runs its
+ * patterns at most this many times, on at most this many characters in all. The pattern work per
+ * body is then at most size × min(places × the body's charge, this budget), where size is
  * {@link FILTER_PATTERN_MAX_SIZE}, places is `FILTER_MAX_PATTERN_PLACES` (`json-schema.ts`), and
- * the string length counts property names as well as string values.
+ * the body's charge sums max(1, length) over its string values and property names.
  *
  * Each filter's engine ({@link filterRegExpEngine}) holds one budget, shared by all of the filter's
  * patterns, and refills it immediately before each body is validated
@@ -95,8 +96,8 @@ export const FILTER_PATTERN_MAX_INPUT_LENGTH = 16384;
  * through the filter cache refills it for each body it evaluates: the budget is per evaluation,
  * not per pattern or per subscription.
  *
- * A pattern `test` charges its value's length before running. A value that does not fit in what is
- * left is not matched and ends the budget, so it and every later value in that body are not
+ * A pattern `test` charges its value's length, and at least 1 (so an empty value is charged too),
+ * before running. A value that does not fit in what is left is not matched and ends the budget, so it and every later value in that body are not
  * matched, without running the engine. Not matched composes as for
  * {@link FILTER_PATTERN_MAX_INPUT_LENGTH}: the `pattern` keyword fails, so `not: {pattern}`
  * passes. Which values come after the budget is spent follows ajv's evaluation order. A value over
@@ -577,11 +578,13 @@ export function compileFilterPattern(
     test: (s: string) => {
       if (s.length > FILTER_PATTERN_MAX_INPUT_LENGTH) return false;
       if (budget) {
-        if (s.length > budget.remaining) {
+        // At least 1: an empty value costs a run too, so runs are bounded by the budget.
+        const charge = Math.max(1, s.length);
+        if (charge > budget.remaining) {
           budget.remaining = 0;
           return false;
         }
-        budget.remaining -= s.length;
+        budget.remaining -= charge;
       }
       return compiled.test(s);
     },

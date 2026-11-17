@@ -91,6 +91,19 @@ describe('🔴 a filter whose evaluation cost is unbounded by its size is bad_re
     expect(refused(res)).toEqual([400, 'bad_request']);
   });
 
+  // An async validator answers a promise, which the synchronous predicate does not support.
+  it.each([
+    ['at the root', { $async: true, properties: { slug: {} } }],
+    ['under allOf', { allOf: [{ $async: true }] }],
+  ])('a filter using $async %s is bad_request, naming it', async (_name, filter) => {
+    const res = await get(filter);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.text)).toMatchObject({
+      error: 'bad_request',
+      message: expect.stringContaining('filter uses "$async"'),
+    });
+  });
+
   it('a filter nested deeper than the bound is bad_request, naming the bound', async () => {
     let deep: Record<string, unknown> = { not: {} };
     for (let i = 0; i < 40; i++) deep = { allOf: [deep] };

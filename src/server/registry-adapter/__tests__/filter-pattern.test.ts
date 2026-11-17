@@ -430,6 +430,15 @@ describe('createFilterCompiler with patterns', () => {
 
   it.each([
     ['a lookahead in pattern', { properties: { slug: { pattern: '(?=z)' } } }, 'a lookahead'],
+    // ajv compiles a root `$async` to a validator that answers a promise; nested, it ignores it
+    // under allOf and throws under properties. Each is refused by name.
+    ['$async at the root', { $async: true, properties: { slug: {} } }, 'filter uses "$async"'],
+    ['$async under allOf', { allOf: [{ $async: true }] }, 'filter uses "$async"'],
+    [
+      '$async under properties',
+      { properties: { slug: { $async: true, type: 'string' } } },
+      'filter uses "$async"',
+    ],
     [
       'a backreference in patternProperties',
       { patternProperties: { '(a)\\1': { type: 'number' } } },
@@ -672,5 +681,50 @@ describe('🔴 one body evaluation runs at most 65536 characters of pattern inpu
       second({ tags: [A, A, A, A] }),
       first({ tags: [A, A, A, A] }),
     ]).toEqual([false, true, true]);
+  });
+});
+
+describe('🔴 the body budget charges every run and is full for the first body', () => {
+  const A = 'a'.repeat(16384);
+  const B = 'b'.repeat(16384);
+
+  it("an empty value after the budget is spent is not run: not: {pattern: '^$'} passes for it", () => {
+    const f = createFilterCompiler()({
+      properties: { tags: { items: { not: { pattern: '^$' } } } },
+    })!;
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      // Four B spend the budget; `a` does not fit and ends it; `''` would match ^$ if it ran.
+      expect(f({ tags: [B, B, B, B, 'a', ''] })).toBe(true);
+      expect(re2Test).toHaveBeenCalledTimes(4);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+
+  it('empty values cost 1 each: 65536 of them run, the 65537th does not', () => {
+    const f = createFilterCompiler()({ properties: { tags: { items: { pattern: '^$' } } } })!;
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      expect(f({ tags: new Array<string>(65536).fill('') })).toBe(true);
+      expect(re2Test).toHaveBeenCalledTimes(65536);
+      re2Test.mockClear();
+      expect(f({ tags: new Array<string>(65537).fill('') })).toBe(false);
+      expect(re2Test).toHaveBeenCalledTimes(65536);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+
+  // ajv's meta-schema runs a pattern on `$id` when the filter is compiled, through the same engine,
+  // so the budget is part spent before the first body: it must be refilled before that body runs.
+  it('a 7000-character $id spends budget at compile time; the first body still gets all of it', () => {
+    const filter = {
+      $id: `urn:example:${'x'.repeat(7000)}`,
+      properties: { tags: { items: { pattern: '^a' } } },
+    };
+    expect(JSON.stringify(filter).length).toBeLessThan(8192);
+    const f = createFilterCompiler()(filter)!;
+    expect(f({ tags: [A, A, A, A] })).toBe(true);
   });
 });
