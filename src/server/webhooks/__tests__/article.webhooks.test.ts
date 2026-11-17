@@ -20,6 +20,8 @@ const image = (id: number, extra: Record<string, unknown> = {}) => ({
   ingestion: 'Scanned',
   needsReview: null,
   blockedFor: null,
+  // The column's default: the image's base model does not restrict it.
+  modelRestricted: false,
   ...extra,
 });
 

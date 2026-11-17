@@ -23,6 +23,10 @@ import {
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
+import {
+  CSAM_BLOCKLIST_RETRY,
+  CsamBlocklistWriteError,
+} from '$lib/server/image-moderation-effects';
 import { setReportStatus } from '$lib/server/reports.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import { dbRead, dbWrite } from '$lib/server/db';
@@ -272,6 +276,8 @@ export const imageQueueActions = {
     const violation = parseViolation(form);
     if (typeof violation === 'string') return fail(400, { error: violation });
 
+    // The block commits even when its CSAM blocklist entry fails; that is reported after the report.
+    let csamBlocklistFailed = false;
     const { held, skipped } = await blockImage({
       imageId,
       userId: locals.user.id,
@@ -279,6 +285,10 @@ export const imageQueueActions = {
       ...getActorMeta(event),
       reportIds: reportId ? [reportId] : undefined,
       skipAppealCheck: !!locals.grants['image.removal.confirm'],
+    }).catch((e: unknown) => {
+      if (!(e instanceof CsamBlocklistWriteError)) throw e;
+      csamBlocklistFailed = true;
+      return { held: undefined, skipped: e.skipped };
     });
     // Not removed, so the report stays open; confirming the hold actions it.
     if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
@@ -288,6 +298,7 @@ export const imageQueueActions = {
         status: ReportStatus.Actioned,
         userId: locals.user.id,
       });
+    if (csamBlocklistFailed) return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageId });
     return { success: true, imageId };
   },
 
@@ -494,6 +505,7 @@ export const imageQueueActions = {
       skipAppealCheck: !!locals.grants['image.removal.confirm'],
     };
     const reportsByImage = await reportIdsByImage(reportIds);
+    const csamBlocklistFailed: number[] = [];
     const results = await Promise.all(
       imageIds.map((imageId) =>
         blockImage({
@@ -501,6 +513,10 @@ export const imageQueueActions = {
           userId: locals.user.id,
           ...actor,
           reportIds: reportsByImage.get(imageId),
+        }).catch((e: unknown): Awaited<ReturnType<typeof blockImage>> => {
+          if (!(e instanceof CsamBlocklistWriteError)) throw e;
+          csamBlocklistFailed.push(imageId);
+          return { skipped: e.skipped };
         })
       )
     );
@@ -518,6 +534,8 @@ export const imageQueueActions = {
         .filter((id) => !heldReports.has(id))
         .map((id) => setReportStatus({ id, status: ReportStatus.Actioned, userId: locals.user.id }))
     );
+    if (csamBlocklistFailed.length)
+      return fail(502, { error: CSAM_BLOCKLIST_RETRY, imageIds: csamBlocklistFailed });
     return {
       success: true,
       ...(held.length && {
