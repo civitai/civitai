@@ -223,6 +223,18 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
   });
 
   it.each([
+    ['a session', false, true],
+    ['a full-scope key', 'full', true],
+    ['a narrow-scope key', true, false],
+  ] as const)(
+    'serves the creator their own blocked image through %s: %s',
+    async (_, apiKey, served) => {
+      const page = await feed({ id: CREATOR }, MATURE, apiKey);
+      expect(page[10] ?? []).toEqual(served ? [101] : []);
+    }
+  );
+
+  it.each([
     ['a session', false],
     ['a full-scope key', 'full'],
   ] as const)("does not hold a moderator to the site's tags through %s", async (_, apiKey) => {
@@ -295,11 +307,11 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
       expect(othersUnrated()).toBe(true);
     });
 
-    it("does not reach a narrow-scope key: no private posts, no other user's unscanned post", async () => {
+    it('does not reach a narrow-scope key: no private posts, no unscanned post, its own included', async () => {
       await pendingFeed(true);
       expect(privateHidden()).toBe(true);
       expect(othersUnrated()).toBe(false);
-      expect(h.sql).toContain(`p."nsfwLevel" = 0 AND p."userId" =`);
+      expect(h.sql).not.toContain(`p."nsfwLevel" = 0 AND p."userId" =`);
     });
 
     const asModerator = async (apiKey: boolean | 'full', extra: Record<string, unknown>) =>
@@ -352,7 +364,10 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
       const { getImagesForPosts } = await import('~/server/services/image.service');
       vi.mocked(getImagesForPosts).mockClear();
       await asModerator(apiKey, {});
-      expect(vi.mocked(getImagesForPosts).mock.calls[0][0].user?.isModerator).toBe(yes);
+      const { user } = vi.mocked(getImagesForPosts).mock.calls[0][0];
+      expect(!!user?.isModerator).toBe(yes);
+      // A narrow key fetches images signed out: no id, so no owner carve-out either.
+      expect(user?.id).toBe(yes ? 1 : undefined);
     });
   });
 });

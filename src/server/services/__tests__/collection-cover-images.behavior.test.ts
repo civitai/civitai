@@ -96,8 +96,17 @@ beforeAll(async () => {
       "ingestion"   text NOT NULL DEFAULT 'Scanned',
       "needsReview" text,
       "blockedFor"  text,
-      "tosViolation" boolean NOT NULL DEFAULT false
+      "tosViolation" boolean NOT NULL DEFAULT false,
+      "poi"         boolean NOT NULL DEFAULT false,
+      "minor"       boolean NOT NULL DEFAULT false
     );
+    CREATE TABLE "TagsOnImageDetails" (
+      "imageId" integer NOT NULL, "tagId" integer NOT NULL, "source" text NOT NULL,
+      "disabled" boolean NOT NULL DEFAULT false
+    );
+    INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", "source", "disabled") VALUES
+      (100, 777, 'WD14', false),
+      (100, 778, 'WD14', true);
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer, "modelVersionId" integer,
       "publishedAt" timestamp, "availability" text NOT NULL DEFAULT 'Public'
@@ -291,16 +300,33 @@ beforeAll(async () => {
   `);
 });
 
-async function coversFor(collectionId: number, browsingLevel = allBrowsingLevelsFlag) {
+const showsEveryImage = () => true;
+
+async function coversFor(
+  collectionId: number,
+  browsingLevel = allBrowsingLevelsFlag,
+  showsImage: Parameters<typeof getCollectionCoverImages>[0]['showsImage'] = showsEveryImage
+) {
   const rows = await getCollectionCoverImages({
     collectionIds: [collectionId],
     imagesPerCollection: 10,
     browsingLevel,
+    showsImage,
   });
   return rows.map(({ image, src }) => ({ imageId: image?.id ?? null, src }));
 }
 
 describe('getCollectionCoverImages', () => {
+  it("passes each cover's poi, minor and enabled tag ids to the browsing filter, and drops what it refuses", async () => {
+    const seen: unknown[] = [];
+    const refuseAll = (image: unknown) => {
+      seen.push(image);
+      return false;
+    };
+    expect(await coversFor(IMAGE_ITEM, allBrowsingLevelsFlag, refuseAll)).toEqual([]);
+    expect(seen).toEqual([expect.objectContaining({ poi: false, minor: false, tags: [777] })]);
+  });
+
   it('resolves an Image item to its image (harness control)', async () => {
     expect(await coversFor(IMAGE_ITEM)).toEqual([{ imageId: 100, src: null }]);
   });
@@ -375,6 +401,7 @@ describe('getCollectionCoverImages', () => {
       collectionIds: [SHARED_UPLOAD_OWNER_ADDED, SHARED_UPLOAD_STRANGER_ADDED],
       imagesPerCollection: 10,
       browsingLevel: allBrowsingLevelsFlag,
+      showsImage: showsEveryImage,
     });
     expect(rows.map(({ id, image }) => [id, image?.id ?? null])).toEqual([
       [SHARED_UPLOAD_OWNER_ADDED, 118],

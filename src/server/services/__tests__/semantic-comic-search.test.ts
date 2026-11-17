@@ -234,7 +234,11 @@ describe('semantic comic search', () => {
     h.rows.set(10, comic(10));
     await search([11, 10]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'semantic-comic-search', returned: 2, hydrated: 1 })
+      expect.objectContaining({
+        name: 'semantic-comic-search',
+        hydrated: 1,
+        payload: expect.objectContaining({ returned: 2 }),
+      })
     );
   });
 });

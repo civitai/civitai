@@ -13,6 +13,11 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
+import {
+  isSysReadonlyRetryAllowed,
+  withoutSysReadonlyRetry,
+  withSysReadonlyRetry,
+} from './sys-readonly-retry';
 import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
@@ -1016,6 +1021,8 @@ export type RedisMetricsBridge = {
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
   redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
+  // sys READONLY retry outcome counter (./sys-readonly-retry), same bridge and label shape.
+  redisSysReadonlyRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
 };
 
 function getRedisMetrics(): RedisMetricsBridge | undefined {
@@ -1204,6 +1211,10 @@ export interface InstrumentCommandsOptions {
   sysDeadlineMs?: number;
   /** Sys client: reject new commands while this many are already in flight. <= 0 disables. */
   sysInflightCap?: number;
+  /** Sys client: retry writes rejected with READONLY (./sys-readonly-retry). */
+  sysReadonlyRetryEnabled?: boolean;
+  /** Sys client: delay before each READONLY retry (ms). */
+  sysReadonlyRetryBackoffMs?: readonly number[];
 }
 
 /**
@@ -1344,6 +1355,21 @@ export function instrumentCommands(
     clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
   // This connection's own timeout/success record for the sys self-heal (./sys-timeouts).
   const sysTimeouts = clientLabel === 'sys' ? createSysTimeoutRecord() : undefined;
+  // Sentinel client only: it re-resolves the master when a command fails with READONLY, so a
+  // retry can reach the new primary. A single-node client keeps its one connection, so READONLY
+  // there means it points at a replica and retrying the same address cannot help.
+  const sysReadonlyRetry =
+    clientLabel === 'sys' &&
+    isClusterClient &&
+    (opts.sysReadonlyRetryEnabled ?? config?.sysReadonlyRetryEnabled ?? true);
+  // A pipeline that hits READONLY may already have applied earlier writes, so this wrapper never
+  // retries one.
+  if (sysReadonlyRetry && typeof self._executePipeline === 'function') {
+    const originalPipeline = self._executePipeline;
+    self._executePipeline = function (this: any, ...args: any[]) {
+      return withoutSysReadonlyRetry(() => originalPipeline.apply(this, args));
+    };
+  }
   self[methodName] = function (this: any, ...args: any[]) {
     if (sysInflightCap > 0 && getSysInflight() >= sysInflightCap) {
       return Promise.reject(
@@ -1385,6 +1411,14 @@ export function instrumentCommands(
           backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
           rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
           onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
+        })
+      : sysReadonlyRetry && isSysReadonlyRetryAllowed()
+      ? withSysReadonlyRetry(runOnce, {
+          backoffMs: opts.sysReadonlyRetryBackoffMs,
+          onResult: (result, retries) => {
+            getRedisMetrics()?.redisSysReadonlyRetryCounter?.inc({ result });
+            log(`sysRedis READONLY retry ${result} after ${retries} retries`);
+          },
         })
       : runOnce();
 
@@ -2268,6 +2302,10 @@ export const REDIS_SYS_KEYS = {
     REVIEW_BATCH_IDEM_LOCK: 'app:review-batch-idem-lock',
     // `app:review-sheet:session:<sha256(token)>` — one general-tier review sheet session.
     REVIEW_SHEET_SESSION: 'app:review-sheet:session',
+    // The case engine's send brake: present = no case notice is sent. JSON { by, at, reason }.
+    CASES_SENDS_PAUSED: 'app:cases:sends-paused',
+    // `app:cases:send-running:<batchId>` — one batch's run lock, held by its send or its export (never both).
+    CASES_SEND_RUNNING: 'app:cases:send-running',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
@@ -3184,6 +3222,11 @@ const REDIS_KEYS_UNPREFIXED = {
     CONSENT_REVOKED_SCOPES: 'blocks:consent-revoked-scopes',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
+    // One-use marker for a GitHub Actions OIDC token an App submit presented:
+    // `${ACTIONS_OIDC_JTI}:${jti}`, SET NX with a TTL that outlives the token's own expiry
+    // (capped). Present ⇒ the token was already used, so the submit is refused as a replay.
+    // See `src/server/services/blocks/github-actions-oidc.service.ts`.
+    ACTIONS_OIDC_JTI: 'blocks:actions-oidc-jti',
   },
   DOWNLOAD: {
     COUNT: 'download:count',
@@ -3290,7 +3333,7 @@ const REDIS_KEYS_UNPREFIXED = {
     USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
-    PROFILE_PICTURES: 'packed:caches:profile-pictures:v2',
+    PROFILE_PICTURES: 'packed:caches:profile-pictures:v3',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',

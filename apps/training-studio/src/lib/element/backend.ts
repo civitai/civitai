@@ -1,7 +1,8 @@
 // The web-component's StudioBackend: the browser-direct half of the contract in
 // docs/training-studio-web-component.md. Most calls run with a freshly-minted host token and talk to
-// the orchestrator with the client-safe cores; starting or pricing a training run, and Review's
-// mature count, go to the Studio's own server routes through the host's `studioServer` hook.
+// the orchestrator with the client-safe cores. Every call that spends (a training run, an edit, a
+// suggestion, an epoch archive), plus pricing a continuation and Review's mature count, goes to the
+// Studio's own server routes through the host's `studioServer` hook.
 import { createCivitaiClient } from '@civitai/orchestration-client';
 import type { StudioBackend } from '$lib/backend';
 import type {
@@ -30,14 +31,13 @@ export interface StudioElementHost {
   /** Called per request and again after a 401 — the host mints server-side and returns the raw token. */
   getOrchestratorToken(): Promise<string>;
   /** The Studio's server routes, reached through the host's server as this user: `path` is the
-   *  Studio route's path and query (`/api/train`, `/api/continue-training?…`, `/api/dataset-rating`).
-   *  A host without it cannot start or price training: the element refuses rather than submit from
-   *  the browser. */
+   *  Studio route's path and query (`/api/train`, `/api/continue-training?…`, `/api/dataset-rating`,
+   *  `/api/edit-image`, `/api/suggest-instruction`, `/api/epoch-archive?…`). A host without it cannot
+   *  start or price training, generate an edit or a suggestion, or build an archive: the element
+   *  refuses rather than spend from the browser. */
   studioServer?: StudioServerFetch;
-  /** The main app's check of the prompt of an edit the element is about to generate (a run's
-   *  trigger word is checked by the Studio server). Resolves `{ ok: false, error }` on a refusal;
-   *  rejects when the check could not run. A host without it cannot generate an edit: the element
-   *  refuses rather than submit unchecked. */
+  /** Unused: an edit's prompt is now checked by the Studio server it is submitted to. Kept so
+   *  existing hosts still type-check. */
   checkTrainingText?(
     input: TrainingTextCheckInput
   ): Promise<{ ok: true } | { ok: false; error: string }>;
@@ -153,12 +153,6 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     throw retried.err;
   };
 
-  const hostTextCheck: train.TrainingTextCheck = async (input) => {
-    if (!host.checkTrainingText) throw new Error(TRAINING_UNAVAILABLE);
-    const result = await host.checkTrainingText(input);
-    if (!result.ok) throw new train.TrainingTextRefusedError(result.error);
-  };
-
   const hostStatus = async () => {
     const raw = host.getTrainingStatus ? await host.getTrainingStatus() : null;
     return raw ? parseServiceStatus(raw) : null;
@@ -224,25 +218,19 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     editImageQuote: (imageUrl) => call((client) => edit.editImageQuote(client, imageUrl)),
 
-    editImageSubmit: async (req) => {
-      await hostTextCheck({ editPrompt: req.prompt, inputImages: [req.imageUrl] });
-      return { workflowId: await call((client) => edit.submitEditImage(client, req)) };
-    },
+    editImageSubmit: server.editImageSubmit,
 
     editImagePoll: (workflowId) => call((client) => edit.pollEditImage(client, workflowId)),
 
     suggestQuote: () => call((client) => edit.suggestQuote(client)),
 
-    suggestSubmit: async (req) => ({
-      workflowId: await call((client) => edit.submitSuggest(client, req)),
-    }),
+    suggestSubmit: server.suggestSubmit,
 
     suggestPoll: (workflowId) => call((client) => edit.pollSuggest(client, workflowId)),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
-    epochArchive: (workflowId, kind) =>
-      call((client) => orch.createEpochArchive(client, workflowId, kind)),
+    epochArchive: server.epochArchive,
     deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
     continueQuote: server.continueQuote,

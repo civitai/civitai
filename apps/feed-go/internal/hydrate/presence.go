@@ -60,10 +60,18 @@ var PageCaches = []PageCache{
 }
 
 // MissReason is the fallback reason a miss on the named cache raises when s serves: "" for a cache
-// s.Compute answers (MissCaches, shared with the miss computation); else the PageCaches Reason of a
+// s.Compute answers (MissCaches, shared with the miss computation; the metric hashes only when s
+// reads ClickHouse); else the PageCaches Reason of a
 // page cache, the lookup spec's reason for another computed cache (model-frames), and "" for any
 // other name.
 func (s *Sources) MissReason(name string) string {
+	if name == CacheMetrics {
+		// Computed only with a ClickHouse reader (metricsComputed), not by every MissCompute.
+		if s.metricsComputed() {
+			return ""
+		}
+		return "metrics-miss"
+	}
 	if s.Compute != nil && slices.Contains(MissCaches, name) {
 		return ""
 	}
@@ -318,16 +326,27 @@ func (p *PresenceProbe) Page(ctx context.Context, req PageRequest) (*Page, error
 	if p.misses == nil {
 		p.misses, p.raced, p.dbReads = map[string]int{}, map[string]int{}, map[string]int{}
 	}
+	// A miss or a raced entry on a cache Go answers itself: one database query for this cache on this
+	// page (the replica path's, or the miss computation's batched lookup). A raced entry was most
+	// likely filled by the Node request the probe races, so a Go-first serve would have looked it up
+	// with the misses; a cache both missed and raced on this page is one batched lookup, counted once.
+	read := map[string]bool{}
 	for name, n := range res.Misses {
 		p.misses[name] += n
-		if n > 0 && p.Checker.MissReason(name) == "" {
-			// A miss Go answers itself: one database query for this cache on this page (the
-			// replica path's, or the miss computation's batched lookup).
-			p.dbReads[name]++
+		if n > 0 {
+			read[name] = true
 		}
 	}
 	for name, n := range res.Raced {
 		p.raced[name] += n
+		if n > 0 {
+			read[name] = true
+		}
+	}
+	for name := range read {
+		if p.Checker.MissReason(name) == "" {
+			p.dbReads[name]++
+		}
 	}
 	return &Page{}, nil
 }
@@ -396,8 +415,9 @@ func (p *PresenceProbe) Raced() map[string]int {
 	return copyCounts(p.raced)
 }
 
-// DBReads is, per cache, the database queries a Go-first serve would have made for the misses Go
-// answers itself (one per page and cache with such misses; a lower bound: the user-cosmetics and
+// DBReads is, per cache, the database queries a Go-first serve would have made for the misses and
+// raced entries of the caches Go answers itself (one per page and cache with such a miss or raced
+// entry, once when both; a lower bound: the user-cosmetics and
 // frame computations can add up to two withheld-cosmetic queries, the tag-ids one a tag query for
 // the tags the basic-tags cache misses).
 func (p *PresenceProbe) DBReads() map[string]int {

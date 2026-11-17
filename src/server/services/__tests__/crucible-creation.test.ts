@@ -689,7 +689,12 @@ describe('getCrucibles — browsing level', () => {
       const where = await whereFor({ browsingLevel });
       expect(where.AND[0].AND[0]).toEqual({
         ingestion: CrucibleIngestionStatus.Scanned,
-        image: { ingestion: ImageIngestionStatus.Scanned, needsReview: null, tosViolation: false },
+        image: {
+          ingestion: ImageIngestionStatus.Scanned,
+          nsfwLevel: { notIn: [0] },
+          needsReview: null,
+          tosViolation: false,
+        },
       });
     }
   });

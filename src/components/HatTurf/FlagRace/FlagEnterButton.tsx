@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 
-/** Links to the flag Crucible taking entries now, whose top places become the next day's flags. */
-export function FlagEnterButton({ event }: { event: string }) {
+/** The flag Crucible taking entries now; null once its end passes, when the next one is asked for. */
+export function useOpenFlagCrucible(event: string) {
   const { data: open, refetch } = trpc.hatTurf.getOpenFlagCrucible.useQuery(
     { event },
     {
@@ -17,7 +17,7 @@ export function FlagEnterButton({ event }: { event: string }) {
   );
   const endsAtMs = open ? new Date(open.endAt).getTime() : undefined;
   const [ended, setEnded] = useState(false);
-  // At its end the button goes, and the next day's Crucible is asked for, rather than linking to a
+  // At its end the link goes, and the next day's Crucible is asked for, rather than linking to a
   // closed one until the next poll.
   useEffect(() => {
     setEnded(false);
@@ -33,8 +33,13 @@ export function FlagEnterButton({ event }: { event: string }) {
     }, Math.min(ms, 2 ** 31 - 1));
     return () => clearTimeout(timer);
   }, [endsAtMs, refetch]);
+  return open && !ended ? open : null;
+}
 
-  if (!open || ended) return null;
+/** Links to the flag Crucible taking entries now, whose top places become the next day's flags. */
+export function FlagEnterButton({ event }: { event: string }) {
+  const open = useOpenFlagCrucible(event);
+  if (!open) return null;
   return (
     <Link legacyBehavior href={`/crucibles/${open.id}`} passHref>
       <Button

@@ -192,7 +192,11 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById({ ...input, deletedById: ctx.user.id });
+    const image = await deleteImageById({
+      ...input,
+      deletedById: ctx.user.id,
+      moderatorDelete: !!ctx.user.isModerator,
+    });
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -568,6 +572,8 @@ export const getInfiniteImagesHandler = async ({
     }
     const dbInput = {
       user,
+      asModerator: moderatorView(ctx),
+      asOwner: isSessionOrFullUserKey(ctx),
       domain: getRequestBoardDomainColor(ctx.req),
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...scopedInput.include, 'tagIds' as const],
@@ -639,6 +645,8 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImagesIndex({
         ...scopedInput,
         user,
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         holdExempt: moderatorView(ctx),
         galleryOwnerId: galleryOwnerId(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
@@ -659,6 +667,8 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImages({
         ...scopedInput,
         user,
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
@@ -808,6 +818,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         // Fetch the posts whole and narrow them with filterPinnedImagesToVersion
         // below. The ImageResourceNew join that modelVersionId triggers is an
         // inner join, so filtering it here drops media with no resource-detection
@@ -860,6 +872,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: sponsoredImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
@@ -893,6 +907,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       domain: getRequestBoardDomainColor(ctx.req),
       ids: fetchHidden ? versionHiddenImages : undefined,
       user,
+      asModerator: moderatorView(ctx),
+      asOwner: isSessionOrFullUserKey(ctx),
       eventDecorationViewer: eventViewer,
       headers: { src: 'getImagesAsPostsInfiniteHandler' },
       include: [...input.include, 'tagIds' as const, 'profilePictures' as const],

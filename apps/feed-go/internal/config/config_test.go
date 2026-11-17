@@ -180,6 +180,22 @@ func TestLoadPprofDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestLoadServeModelGetAllDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_SERVE_MODEL_GETALL", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeModelGetAll != want {
+			t.Errorf("FEED_GO_SERVE_MODEL_GETALL=%q -> %v, want %v", in, c.ServeModelGetAll, want)
+		}
+	}
+}
+
 // SESSION_REVOCATION_CACHE is a default-on switch (isEnvSwitchOn): only off/0/false, any case and
 // surrounding whitespace, turn it off; unset, empty and unknown values keep it on. The cases are the
 // package's own env-switch.test.ts.
@@ -295,6 +311,67 @@ func TestLoadCacheMissSettings(t *testing.T) {
 	}
 	if c.ComputeMisses || !c.CacheWriteBack || !c.FrameCacheNegative || c.PrimaryDatabaseURL != "x://primary" {
 		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q", c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	}
+}
+
+// The ClickHouse reader is configured only from feed-go's own variables: the miss computation on and
+// both FEED_GO_CLICKHOUSE_HOST and FEED_GO_CLICKHOUSE_USERNAME set (Node's shouldConnect over those).
+// The app's own CLICKHOUSE_HOST / CLICKHOUSE_USERNAME / CLICKHOUSE_PASSWORD, which the shared app
+// config carries into this service's environment with the app's read-write login, never configure
+// it, alone or alongside. Its timeout defaults to 2 s and is held to half the request budget; its
+// read cap defaults to 4.
+func TestLoadClickHouse(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CLICKHOUSE_TIMEOUT_MS", "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT",
+		"FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME", "CLICKHOUSE_PASSWORD",
+		"FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD"} {
+		t.Setenv(k, "")
+	}
+	load := func() *Config {
+		t.Helper()
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if c := load(); c.ClickHouseURL != "" || c.ClickHouseTimeout != 2*time.Second || c.ClickHouseMaxInFlight != 4 {
+		t.Fatalf("defaults: url %q timeout %v cap %d; want unset, 2s, 4", c.ClickHouseURL, c.ClickHouseTimeout, c.ClickHouseMaxInFlight)
+	}
+	// The app's variables alone: no reader.
+	t.Setenv("CLICKHOUSE_HOST", "https://app-ch.example.test:8443")
+	t.Setenv("CLICKHOUSE_USERNAME", "app-writer")
+	t.Setenv("CLICKHOUSE_PASSWORD", "app-pw")
+	if c := load(); c.ClickHouseURL != "" || c.ClickHouseUsername != "" || c.ClickHousePassword != "" {
+		t.Fatalf("app variables only: %q %q %q, want no reader (the app's login is never used)", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_HOST", "https://ch.example.test:8443")
+	if c := load(); c.ClickHouseURL != "" {
+		t.Fatalf("host without username (the app's username set): url %q, want unset", c.ClickHouseURL)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_USERNAME", "feed-go-reader")
+	if c := load(); c.ClickHouseURL != "https://ch.example.test:8443" || c.ClickHouseUsername != "feed-go-reader" || c.ClickHousePassword != "" {
+		t.Fatalf("own host and username, no own password: %q %q %q; want the app's password not taken", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_PASSWORD", "feed-go-pw")
+	if c := load(); c.ClickHouseURL != "https://ch.example.test:8443" || c.ClickHouseUsername != "feed-go-reader" || c.ClickHousePassword != "feed-go-pw" {
+		t.Fatalf("set: %q %q %q", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
+	}
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
+	if c := load(); c.ClickHouseURL != "" {
+		t.Fatalf("compute off: url %q, want unset", c.ClickHouseURL)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", "900")
+	t.Setenv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", "7")
+	if c := load(); c.ClickHouseTimeout != 900*time.Millisecond || c.ClickHouseMaxInFlight != 7 {
+		t.Fatalf("explicit: %v %d, want 900ms 7", c.ClickHouseTimeout, c.ClickHouseMaxInFlight)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", "5000")
+	t.Setenv("FEED_GO_REQUEST_BUDGET_MS", "3000")
+	if c := load(); c.ClickHouseTimeout != 1500*time.Millisecond {
+		t.Fatalf("past half the budget: %v, want 1.5s", c.ClickHouseTimeout)
 	}
 }
 

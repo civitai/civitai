@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { newAppBlockId } from '~/server/utils/app-block-ids';
 import { BlockManifestValidator } from '~/server/services/block-manifest-validator.service';
+import { trimManifestStringFields } from '~/server/services/blocks/manifest-normalize';
 import { newBlockIdError } from '~/server/utils/apps-slug';
 
 // B5: cap the body parser BEFORE the JSON.stringify size check. Next's
@@ -112,6 +113,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(422).json({ error: 'Invalid manifest', details: validation.errors });
     return;
   }
+
+  // BEFORE the I11 byte-equal check, so a re-upload of the same padded manifest compares equal
+  // to the stored trimmed row.
+  trimManifestStringFields(body.manifest);
 
   const manifest = body.manifest as {
     blockId: string;

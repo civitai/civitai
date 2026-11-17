@@ -119,6 +119,7 @@ func WriteError(w http.ResponseWriter, path string, e *Error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Vary", Vary)
 	w.WriteHeader(e.HTTPStatus)
 	_, _ = w.Write([]byte(`{"error":`))
 	_, _ = w.Write(enc)
@@ -133,19 +134,36 @@ type CacheTTL struct {
 // SignedOutTTL is createContext's cacheable policy.
 var SignedOutTTL = CacheTTL{Browser: 60, Edge: 60, StaleWhileRevalidate: 30}
 
+// ResultCacheControl is the Cache-Control WriteResult sends: edge-cache-headers.ts's
+// `public, max-age=<browser>, s-maxage=<edge>, stale-while-revalidate=<swr>` for a cacheable answer,
+// else the app's private default (PRIVATE_CACHE_CONTROL).
+func ResultCacheControl(ttl *CacheTTL) string {
+	if ttl != nil && ttl.Edge > 0 {
+		return "public, max-age=" + strconv.Itoa(ttl.Browser) + ", s-maxage=" + strconv.Itoa(ttl.Edge) +
+			", stale-while-revalidate=" + strconv.Itoa(ttl.StaleWhileRevalidate)
+	}
+	return apipolicy.PrivateCacheControl() // PRIVATE_CACHE_CONTROL
+}
+
+// Vary is the Vary every tRPC answer carries: tRPC v11's resolveResponse starts each response's headers
+// from `vary: trpc-accept, accept`, on a result and on an error alike. WriteResult and WriteError both
+// send it.
+const Vary = "trpc-accept, accept"
+
+// ResultHeaders are the headers of shadow.ComparedHeaders WriteResult sends (Cache-Control and Vary: it
+// sets no Cache-Tag, Set-Cookie or x-update-required), for the shadow comparison.
+func ResultHeaders(ttl *CacheTTL) map[string]string {
+	return map[string]string{"cache-control": ResultCacheControl(ttl), "vary": Vary}
+}
+
 // WriteResult writes a success envelope around an already-serialized superjson payload. It does not
 // keep payload once it returns (an http.ResponseWriter's Write copies or sends it before returning), so
 // the caller may release a pooled payload (superjson.Buffer) right after.
 func WriteResult(w http.ResponseWriter, payload []byte, ttl *CacheTTL) {
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
-	if ttl != nil && ttl.Edge > 0 {
-		// edge-cache-headers.ts: `public, max-age=<browser>, s-maxage=<edge>, stale-while-revalidate=<swr>`.
-		h.Set("Cache-Control", "public, max-age="+strconv.Itoa(ttl.Browser)+", s-maxage="+strconv.Itoa(ttl.Edge)+
-			", stale-while-revalidate="+strconv.Itoa(ttl.StaleWhileRevalidate))
-	} else {
-		h.Set("Cache-Control", apipolicy.PrivateCacheControl()) // PRIVATE_CACHE_CONTROL
-	}
+	h.Set("Cache-Control", ResultCacheControl(ttl))
+	h.Set("Vary", Vary)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"result":{"data":`))
 	_, _ = w.Write(payload)

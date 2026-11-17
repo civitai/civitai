@@ -37,6 +37,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
+	"github.com/civitai/civitai/apps/feed-go/internal/trpc"
 )
 
 const (
@@ -46,7 +47,7 @@ const (
 	goldenMinAsPosts  = 23
 	goldenMinV1       = 36
 	goldenMinInfinite = 21
-	goldenMinModels   = 18
+	goldenMinModels   = 26
 	goldenIssuer      = "https://auth.example.test"
 	goldenCookieName  = "__Secure-civ-token"
 )
@@ -282,13 +283,29 @@ type goldenDB struct {
 	} `json:"users"`
 
 	// model-getall/ fixtures: the page query's answer per call, in order, with the cursor Node sent
-	// for it; the paid-access gates, cover lookups, tags by name and creators by name Node read.
+	// for it; the paid-access gates, cover lookups, tags by name, creators by name and collections
+	// Node read.
 	ModelPages []struct {
 		Cursor *string `json:"cursor"`
 		// Bound is what Node's parseCursor binds for Cursor: a {"$date"} instant or an integer per token.
 		Bound []json.RawMessage `json:"bound"`
 		Rows  []goldenModelRow  `json:"rows"`
+		// Collection is what Node binds into the page's CollectionItem semi-join (absent: no
+		// collection filter): the collection, the viewer whose in-review items it keeps (null signed
+		// out) and the collection tag (null: none).
+		Collection *goldenCollectionFilter `json:"collection"`
 	} `json:"modelPages"`
+	// Collections are the Collection rows Node's permission read found, each with the contributor
+	// rows it holds.
+	Collections []struct {
+		ID           int    `json:"id"`
+		Read         string `json:"read"`
+		UserID       int    `json:"userId"`
+		Contributors []struct {
+			UserID      int      `json:"userId"`
+			Permissions []string `json:"permissions"`
+		} `json:"contributors"`
+	} `json:"collections"`
 	PaidAccess []struct {
 		ModelID  int        `json:"modelId"`
 		Deadline goldenTime `json:"deadline"`
@@ -1294,8 +1311,15 @@ func goldenRunInfiniteMode(t *testing.T, fx *goldenFixture, writeBack bool) {
 	for _, p := range goldenWriteProblems(fx, before, goldenCacheState(env.cache), writeBack) {
 		t.Error(p)
 	}
-	if c.ttl != nil {
-		t.Errorf("image.getInfinite is never edge-cacheable here, got %+v", *c.ttl)
+	// createContext's policy, as for the gallery procedure: the public TTL exactly when signed out.
+	if fx.Expect.Cacheable == nil {
+		t.Fatal("an image.getInfinite fixture without expect.cacheable")
+	}
+	if *fx.Expect.Cacheable && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
+	}
+	if !*fx.Expect.Cacheable && c.ttl != nil {
+		t.Errorf("a session user: want no cache TTL, got %+v", *c.ttl)
 	}
 	env.feed.check(t, true)
 }
@@ -1308,6 +1332,8 @@ type goldenModelPG struct {
 	*testkit.DB
 	mu    sync.Mutex
 	pages int
+	// collectionReads counts the collection permission reads.
+	collectionReads int
 }
 
 func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
@@ -1334,6 +1360,9 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 			} else if err := goldenCheckBound(*page.Cursor, page.Bound, args); err != nil {
 				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
 			}
+			if err := goldenCheckCollectionFilter(page.Collection, sql, args); err != nil {
+				return nil, fmt.Errorf("golden: page %d: %w", g.pages, err)
+			}
 			rows := make([][]any, len(page.Rows))
 			for i, r := range page.Rows {
 				rows[i] = r.row()
@@ -1357,6 +1386,34 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 				}
 			}
 			return testkit.NewRows([]string{"id", "userId", "modelVersionId", "modelId"}, rows...), nil
+		}},
+		// The collection permission read: the fixture's Collection row and the viewer's contributor
+		// row (none: no permissions); a collection the fixture does not hold is no row.
+		{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			g.mu.Lock()
+			g.collectionReads++
+			g.mu.Unlock()
+			cols := []string{"read", "userId", "permissions"}
+			viewer := 0
+			if len(args) > 1 {
+				viewer = args[1].(int)
+			}
+			if (viewer != 0) != strings.Contains(sql, `"CollectionContributor"`) {
+				return nil, fmt.Errorf("golden: the collection read joins the contributor row exactly for a viewer (viewer %d)", viewer)
+			}
+			for _, c := range db.Collections {
+				if c.ID != args[0].(int) {
+					continue
+				}
+				perms := []string{}
+				for _, cc := range c.Contributors {
+					if cc.UserID == viewer {
+						perms = cc.Permissions
+					}
+				}
+				return testkit.NewRows(cols, []any{c.Read, c.UserID, perms}), nil
+			}
+			return testkit.NewRows(cols), nil
 		}},
 		// Tag.name and User.username are citext.
 		{Match: `SELECT id FROM "Tag" WHERE name = $1`, Rows: func(args []any) (*testkit.Rows, error) {
@@ -1396,6 +1453,13 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		if !t.Failed() && fx.Expect.Fallback == "" && g.pages != len(db.ModelPages) {
 			t.Errorf("feed-go asked for %d page(s); Node asked for %d", g.pages, len(db.ModelPages))
 		}
+		// Node reads the collection permission on every getModelsRaw call: once per page it queries,
+		// and once for an unreadable collection, which queries no page.
+		if !t.Failed() && fx.Expect.Fallback == "" && db.Collections != nil {
+			if want := max(len(db.ModelPages), 1); g.collectionReads != want {
+				t.Errorf("feed-go read the collection permission %d time(s); Node read it %d", g.collectionReads, want)
+			}
+		}
 	})
 	return g
 }
@@ -1432,6 +1496,52 @@ func goldenCheckBound(cursor string, bound []json.RawMessage, args []any) error 
 		}
 		if !have[key] {
 			return fmt.Errorf("node binds %s for token %d of cursor %q; feed-go's arguments are %v", key, i, cursor, args)
+		}
+	}
+	return nil
+}
+
+// goldenCollectionFilter is a model-getall page's CollectionItem semi-join as Node bound it.
+type goldenCollectionFilter struct {
+	CollectionID int  `json:"collectionId"`
+	AddedByID    *int `json:"addedById"`
+	TagID        *int `json:"tagId"`
+}
+
+// goldenCheckCollectionFilter checks a page query against the CollectionItem semi-join Node built for
+// the page: no collection clause where Node had none, and otherwise each value Node bound (the
+// collection, the viewer's in-review carve-out, the collection tag) bound by feed-go, with no
+// carve-out or tag clause where Node had none.
+func goldenCheckCollectionFilter(want *goldenCollectionFilter, sql string, args []any) error {
+	clauses := map[string]bool{
+		`ci."collectionId" = $`: strings.Contains(sql, `ci."collectionId" = $`),
+		`ci."addedById" = $`:    strings.Contains(sql, `ci."addedById" = $`),
+		`ci."tagId" = $`:        strings.Contains(sql, `ci."tagId" = $`),
+	}
+	if want == nil {
+		for c, has := range clauses {
+			if has {
+				return fmt.Errorf("node filters by no collection; feed-go's page query has %s", c)
+			}
+		}
+		return nil
+	}
+	bound := func(v int) bool {
+		for _, a := range args {
+			if n, ok := a.(int); ok && n == v {
+				return true
+			}
+		}
+		return false
+	}
+	for clause, v := range map[string]*int{`ci."collectionId" = $`: &want.CollectionID, `ci."addedById" = $`: want.AddedByID, `ci."tagId" = $`: want.TagID} {
+		switch {
+		case v == nil && clauses[clause]:
+			return fmt.Errorf("node's collection filter has no %s; feed-go's has", clause)
+		case v != nil && !clauses[clause]:
+			return fmt.Errorf("node's collection filter has %s%d; feed-go's has none", clause, *v)
+		case v != nil && !bound(*v):
+			return fmt.Errorf("node binds %d for %s; feed-go's arguments are %v", *v, clause, args)
 		}
 	}
 	return nil
@@ -1504,6 +1614,14 @@ func goldenRunModels(t *testing.T, fx *goldenFixture) {
 		t.Fatalf("compare: %v", err)
 	}
 	goldenReport(t, rep, c.payload)
+	// The cache policy computeModelGetAll documents: the public TTL exactly when there is no session,
+	// none for a session.
+	if fx.Request.Session == nil && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
+	}
+	if fx.Request.Session != nil && c.ttl != nil {
+		t.Errorf("a session: want no cache TTL, got %+v", *c.ttl)
+	}
 }
 
 func TestGoldenModelGetAll(t *testing.T) {

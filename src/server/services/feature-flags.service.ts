@@ -104,6 +104,10 @@ const featureFlags = createFeatureFlags({
   // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
   // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
+  // Sends `model.getAll` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the gallery
+  // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
+  // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -789,7 +793,7 @@ const featureFlags = createFeatureFlags({
   // Raw orchestrator-blob AIR resources in the generator (Training Studio
   // "generate with this epoch" handoff) — gates both server acceptance and the
   // /generate?air= form entry (form-graph/generation/ingestion.ts).
-  generationAirResources: { availability: ['mod'] },
+  generationAirResources: { availability: ['user'] },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
   // Both mod-only at launch; Flipt key allows broadening without a code change.
@@ -816,6 +820,7 @@ const featureFlags = createFeatureFlags({
   // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
   knightsEnqueue: ['granted'],
   textScanPromptPublish: ['granted'],
+  textScanPromptPublishIntent: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.
