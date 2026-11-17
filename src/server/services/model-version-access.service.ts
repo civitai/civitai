@@ -154,7 +154,7 @@ export async function revokeModelVersionAccess({
   });
 }
 
-/** What pays for or gifted a grant: a moderator revoke moves each into its `revocations` entry. */
+/** Purchase and gift keys a moderator revoke moves into a `revocations` entry. */
 const ARCHIVED_ON_REVOKE_KEYS = [
   ...EARLY_ACCESS_PURCHASES.flatMap(({ transactionKey, purchasedAtKey }) => [
     transactionKey,
@@ -171,8 +171,9 @@ export const REVOCATIONS_KEY = 'revocations';
  * A moderator's revoke, for a purchase refunded outside the unpublish refund. The row stays with no
  * permissions, as the record of what was paid: its purchase and gift keys move into a new entry of
  * `revocations`, with who revoked it and when. The unpublish refund reads only the live keys, so it
- * can't refund it again, and a later purchase starts a fresh refund window. Returns the grant as it
- * was, or null when there was none to revoke.
+ * can't refund it again, and a later purchase starts a fresh refund window. A grant from before
+ * permissions were recorded (0, no `revocations`) still counts as access, so it is revoked too.
+ * Returns the grant as it was, or null when there was none to revoke.
  */
 export async function archiveModelVersionAccess({
   client = dbWrite,
@@ -188,10 +189,10 @@ export async function archiveModelVersionAccess({
   const meta = asJsonbObjectSql('ea."meta"');
   const [before] = await client.$queryRaw<{ permissions: number; meta: unknown }[]>`
     WITH before AS (
-      SELECT permissions, meta FROM "EntityAccess"
+      SELECT permissions, meta FROM "EntityAccess" ea
        WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
          AND "accessorId" = ${userId} AND "accessorType" = 'User'
-         AND permissions <> 0
+         AND (permissions <> 0 OR NOT (${meta} ? ${REVOCATIONS_KEY}::text))
        FOR UPDATE
     )
     UPDATE "EntityAccess" ea

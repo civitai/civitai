@@ -8,8 +8,8 @@ import { trackModActivity } from '~/server/services/moderator.service';
 /**
  * A moderator takes away one user's early access to one model version, refunding nothing. Use only
  * when the purchase is refunded separately: the unpublish refund will not refund it afterwards. The
- * user's gift claims on the version are removed too, so a claimed link can't re-grant it. A grant
- * already revoked, or never there, is a no-op.
+ * user's gift claims on the version are marked revoked too (nothing is deleted), so a claimed link
+ * can't re-grant it. A grant already revoked, or never there, is a no-op.
  */
 export async function moderatorRevokeEarlyAccess({
   moderatorId,
@@ -46,7 +46,7 @@ export async function moderatorRevokeEarlyAccess({
     // One string, not new keys: the dataset is at its field limit.
     details: JSON.stringify(revoked),
   });
-  // Each step runs whatever the other did: a retry is a no-op and can't redo either.
+  // The revoke is committed and a retry is a no-op, so a failed step is logged, not thrown or retried.
   const afterRevoke = async (step: string, run: () => Promise<unknown>) => {
     try {
       await run();

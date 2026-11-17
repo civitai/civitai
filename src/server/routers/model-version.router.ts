@@ -310,10 +310,7 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .mutation(publishPrivateModelVersionHandler),
   bustCache: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => bustMvCache(input.id)),
-  /**
-   * Use only when the purchase is refunded separately: the revoke takes it out of the refund a later
-   * unpublish would make.
-   */
+  /** Refunds nothing: see moderatorRevokeEarlyAccess. */
   revokeUserEarlyAccess: moderatorProcedure
     .input(revokeUserEarlyAccessSchema)
     .mutation(({ input: { userId, modelVersionId, reason }, ctx }) =>

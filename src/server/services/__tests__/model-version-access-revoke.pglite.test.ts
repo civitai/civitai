@@ -2,6 +2,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as Caches from '~/server/redis/caches';
+import type * as PaidAccessService from '~/server/services/paid-access.service';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
 
@@ -22,6 +24,17 @@ const mocks = vi.hoisted(() => ({
   },
   bustMvCache: vi.fn(),
   trackModActivity: vi.fn(),
+  accessCacheFetch: vi.fn(),
+  lookupModelVersionAccess: vi.fn(),
+}));
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<typeof Caches>()),
+  modelVersionAccessCache: { fetch: mocks.accessCacheFetch },
+  lookupModelVersionAccess: mocks.lookupModelVersionAccess,
+}));
+vi.mock('~/server/services/paid-access.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PaidAccessService>()),
+  getPaidAccess: vi.fn(async () => ({})),
 }));
 vi.mock('~/server/services/buzz.service', () => mocks.buzz);
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
@@ -42,6 +55,7 @@ const { redeemGiftLink, revokeGiftRedemption } = await import(
   '~/server/services/model-version-gift.service'
 );
 const { grantModelVersionAccess } = await import('~/server/services/model-version-access.service');
+const { hasEntityAccess } = await import('~/server/services/common.service');
 
 const VERSION_ID = 501;
 const OTHER_VERSION_ID = 502;
@@ -111,6 +125,10 @@ beforeEach(async () => {
     { accountType: 'yellow', amount: 500 },
   ]);
   mocks.buzz.getUserBuzzAccountByAccountTypes.mockResolvedValue({ yellow: 10_000 });
+  const privateVersion = { entityId: VERSION_ID, userId: 5, availability: 'Private' };
+  mocks.accessCacheFetch.mockResolvedValue({});
+  mocks.lookupModelVersionAccess.mockResolvedValue({ [VERSION_ID]: privateVersion });
+  dbMock.dbRead.$queryRaw.mockResolvedValue([privateVersion] as never);
 });
 
 const buy = (versionId: number, userId: number) =>
@@ -143,6 +161,10 @@ const revoke = (userId = BUYER_A) =>
     modelVersionId: VERSION_ID,
     reason: 'bought the wrong version',
   });
+
+const hasAccess = async (userId: number) =>
+  (await hasEntityAccess({ entityType: 'ModelVersion', entityIds: [VERSION_ID], userId }))[0]
+    .hasAccess;
 
 const refundedBuyers = async () =>
   (await getModelVersionEarlyAccessRefundRequirement({ id: VERSION_ID })).purchases.map(
@@ -280,6 +302,53 @@ describe('moderatorRevokeEarlyAccess', () => {
       'granted'
     );
     expect((await grantOf(VERSION_ID, BUYER_B)).permissions).toBe(1);
+  });
+
+  it("leaves the buyer's gift claim on another version's link granted", async () => {
+    const OTHER_LINK = GIFT_LINK + 1;
+    await db.query(
+      `INSERT INTO "ModelVersionGiftLink" (id, "modelVersionId") VALUES ($1, $2), ($3, $4)`,
+      [GIFT_LINK, VERSION_ID, OTHER_LINK, OTHER_VERSION_ID]
+    );
+    for (const [giftLinkId, modelVersionId] of [
+      [GIFT_LINK, VERSION_ID],
+      [OTHER_LINK, OTHER_VERSION_ID],
+    ]) {
+      await redeemGiftLink(dbMock.dbWrite as never, {
+        giftLinkId,
+        userId: BUYER_A,
+        modelVersionId,
+        permissions: 1,
+        addedById: 2,
+      });
+    }
+
+    await revoke(BUYER_A);
+
+    const claims = (
+      await db.query<{ giftLinkId: number; revokedAt: Date | null }>(
+        `SELECT "giftLinkId", "revokedAt" FROM "ModelVersionGiftRedemption" ORDER BY "giftLinkId"`
+      )
+    ).rows;
+    expect(claims).toEqual([
+      { giftLinkId: GIFT_LINK, revokedAt: expect.any(Date) },
+      { giftLinkId: OTHER_LINK, revokedAt: null },
+    ]);
+    expect((await grantOf(OTHER_VERSION_ID, BUYER_A)).permissions).toBe(1);
+  });
+
+  it('revokes a grant from before permissions were recorded', async () => {
+    await db.query(
+      `INSERT INTO "EntityAccess" ("accessToId", "accessToType", "accessorId", "accessorType", permissions)
+       VALUES ($1, 'ModelVersion', $2, 'User', 0)`,
+      [VERSION_ID, BUYER_A]
+    );
+    expect(await hasAccess(BUYER_A)).toBe(true);
+
+    await expect(revoke()).resolves.toEqual({ revoked: true, permissions: 0 });
+
+    expect(await hasAccess(BUYER_A)).toBe(false);
+    expect(mocks.bustMvCache).toHaveBeenCalled();
   });
 
   it('keeps the purchase record when a later gift claim on the row is removed', async () => {
