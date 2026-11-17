@@ -307,7 +307,7 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 		observeLag(s.Metrics.GoFirstCheckLag, spec.endpoint, first, req.StartedAt)
 	}
 	raced := rec.Raced()
-	result, missed := classifyProbe(err, rec.Misses(), len(raced) > 0, checker.MissReason)
+	result, missed := classifyProbe(err, rec.Misses(), raced, checker.MissReason)
 	s.Metrics.GoFirst.WithLabelValues(spec.endpoint, result).Inc()
 	for _, c := range missed {
 		s.Metrics.GoFirstMiss.WithLabelValues(spec.endpoint, c).Inc()
@@ -338,8 +338,9 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 // request began) turns would_serve into raced; would_miss wins over it (a miss was seen anyway). The
 // misses are listed whatever the result: a fallback for another reason can come after a page was
 // checked.
-func classifyProbe(err error, misses map[string]int, raced bool, missReason func(string) string) (string, []string) {
+func classifyProbe(err error, misses, raced map[string]int, missReason func(string) string) (string, []string) {
 	reason := fallback.Reason(err)
+	wouldRace := len(raced) > 0
 	pre := fallbackMissCache(reason)
 	var missed []string
 	wouldMiss := pre != ""
@@ -359,7 +360,7 @@ func classifyProbe(err error, misses map[string]int, raced bool, missReason func
 	switch {
 	case err == nil && wouldMiss, pre != "":
 		return ProbeWouldMiss, missed
-	case err == nil && raced:
+	case err == nil && wouldRace:
 		return ProbeRaced, missed
 	case err == nil:
 		return ProbeWouldServe, missed

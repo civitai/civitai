@@ -100,7 +100,7 @@ func runGoldenProbe(t *testing.T, env *goldenEnv, fx *goldenFixture, procedure s
 	}
 	rec := &hydrate.PresenceProbe{Checker: checker}
 	err := probes[procedure].run(env.server, context.Background(), ProbeRequest{Input: fx.Request.Input, Headers: env.headers}, rec)
-	result, missed := classifyProbe(err, rec.Misses(), len(rec.Raced()) > 0, checker.MissReason)
+	result, missed := classifyProbe(err, rec.Misses(), rec.Raced(), checker.MissReason)
 	return result, missed, err
 }
 
@@ -354,7 +354,7 @@ func TestClassifyProbe(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			result, missed := classifyProbe(c.err, c.misses, false, (&hydrate.Sources{}).MissReason)
+			result, missed := classifyProbe(c.err, c.misses, nil, (&hydrate.Sources{}).MissReason)
 			if result != c.wantResult || !reflect.DeepEqual(missed, c.wantMissed) {
 				t.Fatalf("classifyProbe = %s %v, want %s %v", result, missed, c.wantResult, c.wantMissed)
 			}
@@ -368,52 +368,66 @@ func TestClassifyProbe(t *testing.T) {
 func TestClassifyProbeWithComputedMisses(t *testing.T) {
 	computed := (&hydrate.Sources{Compute: &hydrate.MissCompute{}}).MissReason
 	plain := (&hydrate.Sources{}).MissReason
-	result, missed := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheImageFrames: 1, hydrate.CacheTagIDs: 2}, false, computed)
+	result, missed := classifyProbe(nil, map[string]int{hydrate.CacheUserCosmetics: 3, hydrate.CacheImageFrames: 1, hydrate.CacheTagIDs: 2}, nil, computed)
 	if result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{hydrate.CacheUserCosmetics, hydrate.CacheImageFrames, hydrate.CacheTagIDs}) {
 		t.Fatalf("computed misses: %s %v, want would_serve reporting all three", result, missed)
 	}
-	if result, missed := classifyProbe(nil, map[string]int{CacheModelFrames: 1}, false, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheModelFrames}) {
+	if result, missed := classifyProbe(nil, map[string]int{CacheModelFrames: 1}, nil, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheModelFrames}) {
 		t.Fatalf("a model-frames miss with computed misses: %s %v, want would_serve reporting it", result, missed)
 	}
-	if result, missed := classifyProbe(nil, map[string]int{CacheVersionImages: 3}, false, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheVersionImages}) {
+	if result, missed := classifyProbe(nil, map[string]int{CacheVersionImages: 3}, nil, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheVersionImages}) {
 		t.Fatalf("a version-images miss with computed misses: %s %v, want would_serve reporting it", result, missed)
 	}
-	if result, missed := classifyProbe(nil, map[string]int{CacheModelDecorations: 2}, false, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheModelDecorations}) {
+	if result, missed := classifyProbe(nil, map[string]int{CacheModelDecorations: 2}, nil, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheModelDecorations}) {
 		t.Fatalf("a model-decorations miss with computed misses: %s %v, want would_serve reporting it", result, missed)
 	}
-	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheTagIDs: 1, hydrate.CacheMetrics: 1}, false, computed); result != ProbeWouldMiss {
+	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheTagIDs: 1, hydrate.CacheMetrics: 1}, nil, computed); result != ProbeWouldMiss {
 		t.Fatalf("a metrics miss with computed misses: %s, want would_miss", result)
 	}
 	// The same misses without a computation are would_miss (the arm can differ).
 	for _, c := range []string{hydrate.CacheUserCosmetics, hydrate.CacheTagIDs, CacheModelFrames, CacheModelDecorations, CacheVersionImages} {
-		if result, _ := classifyProbe(nil, map[string]int{c: 1}, false, plain); result != ProbeWouldMiss {
+		if result, _ := classifyProbe(nil, map[string]int{c: 1}, nil, plain); result != ProbeWouldMiss {
 			t.Fatalf("a %s miss without a computation: %s, want would_miss", c, result)
 		}
 	}
 }
 
-// Raced turns would_serve into raced, and only that: a miss Go falls back on, a fallback or an error
-// keep their own result.
+// A race turns would_serve into raced only on a cache Go falls back on (missReason non-empty): an
+// entry filled mid-probe on a cache Go answers itself would have been answered had it been missing,
+// exactly as a cold miss there is. A miss Go falls back on, a fallback or an error keep their own
+// result whatever raced.
 func TestClassifyProbeRaced(t *testing.T) {
-	reason := (&hydrate.Sources{}).MissReason
+	// metrics falls back on a miss; every other cache (image-frames, basic-users, ...) Go answers.
+	reason := func(name string) string {
+		if name == hydrate.CacheMetrics {
+			return "metrics-miss"
+		}
+		return ""
+	}
+	frames, metrics := hydrate.CacheImageFrames, hydrate.CacheMetrics
 	for _, c := range []struct {
 		name   string
 		err    error
 		misses map[string]int
+		raced  map[string]int
 		want   string
 	}{
-		{"every cache answered", nil, nil, ProbeRaced},
-		{"a miss Go answers itself", nil, map[string]int{hydrate.CacheBasicUsers: 1}, ProbeRaced},
-		{"a miss Go falls back on", nil, map[string]int{hydrate.CacheTagIDs: 1}, ProbeWouldMiss},
-		{"another fallback", fallback.New("input-sort"), nil, ProbeUnsupported},
-		{"a store error", errors.New("down"), nil, ProbeError},
+		{"nothing raced", nil, nil, nil, ProbeWouldServe},
+		{"raced only on a cache Go computes", nil, nil, map[string]int{frames: 2}, ProbeWouldServe},
+		{"raced on caches Go answers, one also missed", nil, map[string]int{frames: 1},
+			map[string]int{frames: 1, hydrate.CacheBasicUsers: 3}, ProbeWouldServe},
+		{"raced on a cache Go falls back on", nil, nil, map[string]int{metrics: 1}, ProbeRaced},
+		{"raced on both kinds", nil, nil, map[string]int{frames: 1, metrics: 1}, ProbeRaced},
+		{"a computed miss and a fallback-cache race", nil, map[string]int{frames: 1}, map[string]int{metrics: 1}, ProbeRaced},
+		{"a zero raced count", nil, nil, map[string]int{metrics: 0}, ProbeWouldServe},
+		{"a fallback-cache miss and a race on it", nil, map[string]int{metrics: 1}, map[string]int{metrics: 1}, ProbeWouldMiss},
+		{"a fallback-cache miss and a computed-cache race", nil, map[string]int{metrics: 1}, map[string]int{frames: 1}, ProbeWouldMiss},
+		{"another fallback", fallback.New("input-sort"), nil, map[string]int{metrics: 1}, ProbeUnsupported},
+		{"a store error", errors.New("down"), nil, map[string]int{metrics: 1}, ProbeError},
 	} {
-		if got, _ := classifyProbe(c.err, c.misses, true, reason); got != c.want {
-			t.Errorf("%s, raced: %s, want %s", c.name, got, c.want)
+		if got, _ := classifyProbe(c.err, c.misses, c.raced, reason); got != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
 		}
-	}
-	if got, _ := classifyProbe(nil, nil, false, reason); got != ProbeWouldServe {
-		t.Errorf("not raced: %s, want would_serve", got)
 	}
 }
 
@@ -428,48 +442,83 @@ func TestRacedSince(t *testing.T) {
 	}
 }
 
-// The race end to end: a tag-ids entry Node filled after the request began (its cachedAt after
-// startedAt) is present, so the probe would read would_serve — but it is classified raced, and
-// counted on its cache. The same fixture with the entry stamped before the request is would_serve
+// The race end to end. A tag-ids entry Node filled after the request began (its cachedAt after
+// startedAt) is present; tag ids are a cache Go computes, so a Go-first serve would have answered it
+// cold too: would_serve, the race still counted on its cache, and the lookup it would have made
+// counted as a database read. A metric hash populated after the request began is a cache Go falls back
+// on: raced. The same fixture with the entry stamped before the margin is would_serve with no read
 // (the control: the stamp alone decides).
 func TestProbeHandlerRaced(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
+		cache    string
 		filledAt time.Duration // relative to the request's start
 		want     string
+		reads    bool // a database read counted on the cache
 	}{
-		{"filled after the request began", 20 * time.Millisecond, ProbeRaced},
-		{"filled inside the skew margin before it", -RaceSkewMargin / 2, ProbeRaced},
-		{"filled before the margin", -time.Hour, ProbeWouldServe},
+		{"tag ids filled after the request began", hydrate.CacheTagIDs, 20 * time.Millisecond, ProbeWouldServe, true},
+		{"tag ids filled inside the skew margin before it", hydrate.CacheTagIDs, -RaceSkewMargin / 2, ProbeWouldServe, true},
+		{"tag ids filled before the margin", hydrate.CacheTagIDs, -time.Hour, ProbeWouldServe, false},
+		{"metrics populated after the request began", hydrate.CacheMetrics, 20 * time.Millisecond, ProbeRaced, false},
+		{"metrics populated before the margin", hydrate.CacheMetrics, -time.Hour, ProbeWouldServe, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env, fx, reg := probeEnv(t)
 			start := time.Now().Add(-time.Second)
+			filled := start.Add(tc.filledAt)
 			cache := goldenCache(t, env)
 			stamped := 0
 			for _, k := range cache.AllKeys() {
-				if !strings.HasPrefix(k, hydrate.KeyTagIDs+":") {
+				switch {
+				case tc.cache == hydrate.CacheTagIDs && strings.HasPrefix(k, hydrate.KeyTagIDs+":"):
+					b, err := msgpack.Marshal(map[string]any{"tags": []any{1}, "cachedAt": filled})
+					if err != nil {
+						t.Fatal(err)
+					}
+					cache.SetString(k, b)
+				case tc.cache == hydrate.CacheMetrics && strings.HasPrefix(k, "metrics:Image:"):
+					h := cache.Hash(k)
+					if h == nil {
+						t.Fatalf("%s is not a hash", k)
+					}
+					h["_populatedAt"] = strconv.FormatInt(filled.UnixMilli(), 10)
+					cache.SetHash(k, h)
+				default:
 					continue
 				}
-				b, err := msgpack.Marshal(map[string]any{"tags": []any{1}, "cachedAt": start.Add(tc.filledAt)})
-				if err != nil {
-					t.Fatal(err)
-				}
-				cache.SetString(k, b)
 				stamped++
 			}
 			if stamped == 0 {
-				t.Fatal("the fixture has no tag-ids keys to stamp")
+				t.Fatalf("the fixture has no %s keys to stamp", tc.cache)
 			}
 			startedAt := float64(start.UnixNano()) / 1e6
 			w := httptest.NewRecorder()
 			env.server.ProbeHandler(w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, ProbePathPrefix+Procedure, probeBody(t, fx, env.headers, startedAt)))
+			results := []string{ProbeWouldServe, ProbeWouldMiss, ProbeRaced, ProbeUnsupported, ProbeError}
 			waitFor(t, "the probe to finish", func() bool {
-				return goFirst(t, reg, "feed_go_gofirst_total", resultLabels(tc.want)) == 1 && len(env.server.ProbeQueue) == 0
+				n := 0.0
+				for _, r := range results {
+					n += goFirst(t, reg, "feed_go_gofirst_total", resultLabels(r))
+				}
+				return n == 1 && len(env.server.ProbeQueue) == 0
 			})
-			racedTags := goFirst(t, reg, "feed_go_gofirst_raced_total", map[string]string{"feed_endpoint": EndpointAsPosts, "cache": hydrate.CacheTagIDs})
-			if wantRaced := map[bool]float64{true: 1, false: 0}[tc.want == ProbeRaced]; racedTags != wantRaced {
-				t.Errorf("raced{tag-ids} = %v, want %v", racedTags, wantRaced)
+			for _, r := range results {
+				if n := goFirst(t, reg, "feed_go_gofirst_total", resultLabels(r)); r == tc.want && n != 1 || r != tc.want && n != 0 {
+					t.Errorf("%s = %v, want the probe %s", r, n, tc.want)
+				}
+			}
+			labels := map[string]string{"feed_endpoint": EndpointAsPosts, "cache": tc.cache}
+			// Every raced cache is counted, whatever the result.
+			racedN := goFirst(t, reg, "feed_go_gofirst_raced_total", labels)
+			if wantRaced := map[bool]float64{true: 1, false: 0}[tc.filledAt > -time.Hour]; racedN != wantRaced {
+				t.Errorf("raced{%s} = %v, want %v", tc.cache, racedN, wantRaced)
+			}
+			reads := goFirst(t, reg, "feed_go_gofirst_db_reads_total", labels)
+			pages := goFirst(t, reg, "feed_go_gofirst_pages_total", map[string]string{"feed_endpoint": EndpointAsPosts})
+			if tc.reads && (reads < 1 || reads > pages) {
+				t.Errorf("db reads{%s} = %v over %v pages, want at least one and at most one per page", tc.cache, reads, pages)
+			} else if !tc.reads && reads != 0 {
+				t.Errorf("db reads{%s} = %v, want 0", tc.cache, reads)
 			}
 		})
 	}
@@ -665,7 +714,7 @@ func TestProbeModelGetAllComputedFrameMiss(t *testing.T) {
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
 		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
-		result, missed := classifyProbe(err, rec.Misses(), false, checker.MissReason)
+		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, CacheModelFrames) {
 			t.Fatalf("compute %v: missed %v, want model-frames reported", withCompute, missed)
 		}
@@ -787,7 +836,7 @@ func TestProbeModelGetAllComputedShowcaseMiss(t *testing.T) {
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
 		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
-		result, missed := classifyProbe(err, rec.Misses(), false, checker.MissReason)
+		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, "version-images") {
 			t.Fatalf("compute %v: missed %v (err %v), want version-images reported", withCompute, missed, err)
 		}
@@ -843,7 +892,7 @@ func TestProbeModelGetAllComputedDecorationMiss(t *testing.T) {
 		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
 		rec := &hydrate.PresenceProbe{Checker: checker}
 		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
-		result, missed := classifyProbe(err, rec.Misses(), false, checker.MissReason)
+		result, missed := classifyProbe(err, rec.Misses(), nil, checker.MissReason)
 		if !slices.Contains(missed, "model-decorations") {
 			t.Fatalf("compute %v: missed %v, want model-decorations reported", withCompute, missed)
 		}
