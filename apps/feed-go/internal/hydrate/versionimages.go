@@ -68,7 +68,7 @@ SELECT
   p."availability"::text AS availability,
   (
     CASE
-      WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' THEN FALSE
+      WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
       ELSE TRUE
     END
   ) AS "hasMeta",
