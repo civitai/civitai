@@ -475,6 +475,33 @@ describe('the batch', () => {
     ]);
   });
 
+  it('rolls back an export whose run lock lapsed: nothing recorded, no rows handed out', async () => {
+    const redis = fakeLockRedis();
+    const asLock = redis as unknown as Parameters<typeof acquireRunLock>[0];
+    const token = (await acquireRunLock(asLock, 'backlog-test'))!;
+    const holdsLock = async () => {
+      // The export ran past its TTL and a send took the batch.
+      redis.store.delete(runLockKey('backlog-test'));
+      await acquireRunLock(asLock, 'backlog-test');
+      return renewRunLock(asLock, 'backlog-test', token);
+    };
+    await expect(
+      exportUnsent('backlog-test', { actorId: 1, holdsLock, db })
+    ).rejects.toBeInstanceOf(ImportRefusedError);
+    expect(await exportState('backlog-test', { db })).toBe('never');
+
+    // While it still holds the lock, the same export goes through.
+    const held = (await acquireRunLock(asLock, 'other'))!;
+    redis.store.set(runLockKey('backlog-test'), held);
+    const rows = await exportUnsent('backlog-test', {
+      actorId: 1,
+      holdsLock: () => renewRunLock(asLock, 'backlog-test', held),
+      db,
+    });
+    expect(rows).toHaveLength(3);
+    expect(await exportState('backlog-test', { db })).toBe('outstanding');
+  });
+
   it('refuses to undo a batch that was ever exported for the fallback', async () => {
     await exportUnsent('backlog-test', { actorId: 1, db });
     await expect(undoImport('backlog-test', { actorId: 1, db })).rejects.toThrow(/exported/);
