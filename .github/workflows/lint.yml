@@ -779,6 +779,7 @@ jobs:
     #   cost  N=4     1173-1215s      69-72
     #   hash  N=6     816-964s        69-70
     #   cost  N=6     860-894s        65-70
+    #   cost  N=6 *   824-860s        66-71     (* the shipped, runner-normalised table)
     #   cost  N=8     648-883s        69-79
     #
     # Going 4 -> 6 is what moved the wall clock (~20%) at about the same job-minutes.
