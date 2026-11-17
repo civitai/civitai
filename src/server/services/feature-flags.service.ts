@@ -500,6 +500,9 @@ const featureFlags = createFeatureFlags({
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
   // The semantic storyline search endpoint. Dark: Flipt is its only switch.
   semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
+  // The semantic collection and bounty search endpoints. Dark: Flipt is their only switch.
+  semanticCollectionSearch: { availability: [], fliptKey: 'semantic-collection-search' },
+  semanticBountySearch: { availability: [], fliptKey: 'semantic-bounty-search' },
   // The crucibles feed's search box, answered from the semantic search. Off, the feed has no
   // search box. Dark: Flipt is its only switch.
   semanticCrucibleSearch: { availability: [], fliptKey: 'semantic-crucible-search' },
