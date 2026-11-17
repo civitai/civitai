@@ -2076,7 +2076,13 @@ export const getCollectionItemsByCollectionId = async ({
 
   const isModerator = asModerator ?? user?.isModerator ?? false;
   // Ownership and contributor rights follow the user even on a scoped key: it is their own
-  // collection. The post and image reads inside still get no owner or moderator view.
+  // collection. The item reads inside still get no owner or moderator view.
+  // The model and article reads take a user, not flags: a scoped key reads them signed out.
+  const itemsViewer = !asOwner
+    ? undefined
+    : user && isModerator !== !!user.isModerator
+    ? { ...user, isModerator }
+    : user;
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
     userId: user?.id,
@@ -2358,7 +2364,7 @@ export const getCollectionItemsByCollectionId = async ({
       ? await (
           await modelService()
         ).getModelsWithImagesAndModelVersions({
-          user,
+          user: itemsViewer,
           coverage,
           input: {
             limit: modelIds.length,
@@ -2387,7 +2393,7 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ArticleSort.Newest,
           ...userPreferencesInput,
           browsingLevel: input.browsingLevel,
-          sessionUser: user,
+          sessionUser: itemsViewer,
           ids: articleIds,
           include: ['cosmetics'],
         })

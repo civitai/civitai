@@ -9,7 +9,15 @@ import type * as ImageService from '~/server/services/image.service';
  * - `collection.getEntryCount` throws the same not-found error.
  * The permission rule runs for real over a mocked collection row.
  */
-const { mockGetAllImages } = vi.hoisted(() => ({ mockGetAllImages: vi.fn() }));
+const { mockGetAllImages, mockGetModels, mockGetArticles } = vi.hoisted(() => ({
+  mockGetAllImages: vi.fn(),
+  mockGetModels: vi.fn(async () => ({ items: [] })),
+  mockGetArticles: vi.fn(async () => ({ items: [] })),
+}));
+vi.mock('~/server/services/model.service', () => ({
+  getModelsWithImagesAndModelVersions: mockGetModels,
+}));
+vi.mock('~/server/services/article.service', () => ({ getArticles: mockGetArticles }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -35,6 +43,8 @@ const ITEMS = [
   { id: 1, imageId: 5, addedById: OTHER_SUBMITTER },
   { id: 2, imageId: 6, addedById: 77 },
 ].map((item) => ({ ...item, modelId: null, postId: null, articleId: null, status: 'ACCEPTED' }));
+// A model and an article item, for the tests of those reads.
+let extraItems: Record<string, unknown>[] = [];
 
 /** The `ci."addedById" = $n` fragment's value, when the query restricts to one submitter. */
 const addedByFilter = (values: unknown[]) => {
@@ -49,7 +59,8 @@ const route = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
   const sql = strings.join('?');
   if (sql.includes('FROM "CollectionItem" ci')) {
     const only = addedByFilter(values);
-    return only ? ITEMS.filter((item) => item.addedById === only.value) : ITEMS;
+    const all = [...ITEMS, ...extraItems];
+    return only ? all.filter((item) => item.addedById === only.value) : all;
   }
   if (sql.includes("c.metadata->'maxItemsPerUser'")) return collectionRow ? [{ total: 3 }] : [];
   if (sql.includes('FROM "CollectionItem"') && sql.includes('"addedById"'))
@@ -148,6 +159,48 @@ describe('collection items of a collection the viewer may not read', () => {
     expect(mockGetAllImages).toHaveBeenCalledWith(
       expect.objectContaining({ asModerator: false, asOwner: false })
     );
+  });
+
+  it.each([
+    ["a moderator's narrow-scope key", false, undefined],
+    ['a moderator on a full credential (control)', true, MOD],
+  ])('reads model and article items for %s with its own view', async (_, full, viewer) => {
+    extraItems = [
+      {
+        id: 3,
+        modelId: 30,
+        imageId: null,
+        postId: null,
+        articleId: null,
+        addedById: 1,
+        status: 'ACCEPTED',
+      },
+      {
+        id: 4,
+        articleId: 40,
+        imageId: null,
+        postId: null,
+        modelId: null,
+        addedById: 1,
+        status: 'ACCEPTED',
+      },
+    ];
+    try {
+      collectionIs({ read: 'Public' });
+      await getCollectionItemsByCollectionId({
+        input: { collectionId: COLLECTION_ID, limit: 10, browsingLevel: 3 } as never,
+        user: MOD as never,
+        requireRead: true,
+        asModerator: full,
+        asOwner: full,
+      });
+      expect(mockGetModels).toHaveBeenCalledWith(expect.objectContaining({ user: viewer }));
+      expect(mockGetArticles).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionUser: viewer })
+      );
+    } finally {
+      extraItems = [];
+    }
   });
 
   it('lists Public and Unlisted collections to anyone, signed out too (control)', async () => {
