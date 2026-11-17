@@ -75,6 +75,12 @@ describe('parseExchangeResources', () => {
     });
   });
 
+  it('accepts the Apps scopes (bits 31, 32): they are user scopes a resource may receive', () => {
+    const parsed = parse(entry({ scopes: ['AppsRead', 'AppDataRead'] }));
+    expect(parsed).not.toHaveProperty('error');
+    expect((parsed as { resources: { scopes: bigint }[] }).resources[0].scopes).toBe(6442450944n);
+  });
+
   it('treats unset as no resources', () => {
     expect(parseExchangeResources(undefined)).toEqual({ resources: [], serviceErrors: [] });
     expect(parseExchangeResources('')).toEqual({ resources: [], serviceErrors: [] });

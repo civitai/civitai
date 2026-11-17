@@ -39,13 +39,13 @@ vi.mock('$lib/server/auth/session-producer', () => ({
 }));
 
 const { getGrantedScope } = vi.hoisted(() => ({
-  getGrantedScope: vi.fn(async (): Promise<number | null> => null),
+  getGrantedScope: vi.fn(async (): Promise<bigint | null> => null),
 }));
 vi.mock('$lib/server/oauth/granted-scope', () => ({ getGrantedScope }));
 
 import { load } from '../+page.server';
 
-function loadWith(scope: number | string, extra: Record<string, string> = {}) {
+function loadWith(scope: bigint | string, extra: Record<string, string> = {}) {
   const url = new URL('https://auth.civitai.com/login/oauth/authorize');
   url.searchParams.set('client_id', 'game-frame');
   url.searchParams.set('redirect_uri', 'https://games.example.com/cb');
@@ -70,6 +70,19 @@ describe('consent screen load', () => {
       invalid: false,
       scopes: [{ label: 'Read profile, settings & email', isNew: false }],
     });
+  });
+
+  it('lists the Apps permissions (bits 31, 32) and submits them in the Approve form', async () => {
+    const page = await loadWith('AppsRead AppDataRead');
+    expect(page).toMatchObject({
+      invalid: false,
+      scopes: [
+        { label: 'Read profile, settings & email', isNew: false },
+        { label: 'See the Apps available to you', isNew: false },
+        { label: 'See your own data in Apps', isNew: false },
+      ],
+    });
+    expect((page.params as Record<string, string>).scope).toBe('6442450945');
   });
 
   it('forbids framing the consent screen', async () => {

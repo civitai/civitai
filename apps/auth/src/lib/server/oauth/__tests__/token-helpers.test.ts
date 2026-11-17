@@ -29,8 +29,7 @@ vi.mock('@civitai/auth/secret-hash', () => ({
 
 import { createOAuthTokenPair } from '../token-helpers';
 
-const UserRead = 1;
-const VaultWrite = 1 << 24;
+const VaultWrite = 1n << 24n;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,9 +49,11 @@ describe('createOAuthTokenPair (parity)', () => {
     expect(access.userId).toBe(42);
     expect(access.clientId).toBe('client-x');
 
-    // UserRead forced on regardless of request
-    expect(access.tokenScope).toBe(VaultWrite | UserRead);
-    expect(refresh.tokenScope).toBe(VaultWrite | UserRead);
+    // UserRead forced on regardless of request: VaultWrite (16777216) | UserRead (1).
+    expect(access.tokenScope).toBe(16777217);
+    expect(access.tokenScopeWide).toBe('16777217');
+    expect(refresh.tokenScope).toBe(16777217);
+    expect(refresh.tokenScopeWide).toBe('16777217');
 
     // tokens are civitai_-prefixed and the stored key is the salted hash
     expect(pair.accessToken.startsWith('civitai_')).toBe(true);
@@ -62,12 +63,23 @@ describe('createOAuthTokenPair (parity)', () => {
   });
 
   it('forces UserRead even when scope is 0', async () => {
-    await createOAuthTokenPair(1, 'c', 0);
-    expect(h.inserts[0].tokenScope).toBe(UserRead);
+    await createOAuthTokenPair(1, 'c', 0n);
+    expect(h.inserts[0].tokenScope).toBe(1);
+    expect(h.inserts[0].tokenScopeWide).toBe('1');
+  });
+
+  it('writes bits 31 and 32 to tokenScopeWide only, and the low 31 bits to tokenScope', async () => {
+    // AppsRead (2^31) | AppDataRead (2^32) | VaultWrite (2^24); UserRead (1) is forced on.
+    await createOAuthTokenPair(1, 'c', 2147483648n | 4294967296n | VaultWrite);
+    for (const row of h.inserts) {
+      expect(row.tokenScopeWide).toBe('6459228161');
+      // The 32-bit column a pod on the previous build reads: the same mask without bits 31 and 32.
+      expect(row.tokenScope).toBe(16777217);
+    }
   });
 
   it('sets ~1h access expiry and ~30d refresh expiry', async () => {
-    const pair = await createOAuthTokenPair(1, 'c', 0);
+    const pair = await createOAuthTokenPair(1, 'c', 0n);
     const accessMs = pair.accessTokenExpiresAt.getTime() - Date.now();
     const refreshMs = pair.refreshTokenExpiresAt.getTime() - Date.now();
     expect(Math.abs(accessMs - 60 * 60 * 1000)).toBeLessThan(5000);
