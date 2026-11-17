@@ -1312,11 +1312,10 @@ describe('review mode: a first detection waits for a moderator', () => {
         message: 'held detection resolved',
         entityType: 'Model',
         entityId: MODEL_ID,
-        label: 'minor',
         kind: 'first',
         decision,
-        promptIds: { p: 1 },
         moderatorId: 9,
+        payload: { label: 'minor', promptIds: { p: 1 } },
       })
     );
   });
@@ -1387,8 +1386,8 @@ describe('review mode: a first detection waits for a moderator', () => {
         message: 'held detection resolved',
         decision: 'closed',
         kind: 'first',
-        promptIds: { p: 1 },
         moderatorId: 9,
+        payload: expect.objectContaining({ promptIds: { p: 1 } }),
       })
     );
   });

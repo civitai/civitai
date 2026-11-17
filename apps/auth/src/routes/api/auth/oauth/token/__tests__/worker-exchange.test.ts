@@ -272,7 +272,9 @@ describe('worker token exchange', () => {
       expect.objectContaining({
         key: generateSecretHash(res.body.access_token as string),
         type: 'Worker',
-        tokenScope: WORKER,
+        // WorkerRegister (2^29), in both scope columns.
+        tokenScope: 536870912,
+        tokenScopeWide: '536870912',
         userId: OWNER,
         clientId: POOL,
         workerDeviceId: device.id,

@@ -95,7 +95,8 @@ function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const { sort } = useImageFeedSearchSort();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
   const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
-  const period = useSearchPeriod(!!query || !!similarTo);
+  // A feed with its own filters (a profile tab) keeps its period: the saved one is the images feed's.
+  const period = useSearchPeriod(!props.disableStoreFilters && (!!query || !!similarTo));
   return (
     <ImagesFeed
       {...props}

@@ -403,7 +403,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   const appContext: AppContext = {
-    allowedScopes: appBlock.app.allowedScopes ?? 0,
+    allowedScopes: appBlock.app.allowedScopes ?? 0n,
     allowedOrigins: (appBlock.app.allowedOrigins ?? []).map((o: string) => o.toLowerCase()),
   };
   // `strictIssueTrackerLink: false`: a push re-validates the app's manifest, which may carry a

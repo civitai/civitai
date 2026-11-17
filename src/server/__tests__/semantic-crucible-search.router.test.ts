@@ -18,7 +18,7 @@ const { semanticCrucibleSearchRouter } = await import(
   '~/server/routers/semantic-crucible-search.router'
 );
 
-const callerWith = (features: Record<string, boolean>, tokenScope: number = TokenScope.Full) =>
+const callerWith = (features: Record<string, boolean>, tokenScope: bigint = TokenScope.Full) =>
   createCallerFactory(semanticCrucibleSearchRouter)({
     acceptableOrigin: true,
     tokenScope,
