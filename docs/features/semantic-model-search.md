@@ -115,7 +115,8 @@ query (`modelFeedUrlFromLegacySearch`). Off, the feed's `?query=` stays the Meil
   published range. Period is not applied, as on today's searched feed. Sort is Best match.
 - Name matches rank first (`withWordMatchesFirst`): up to 200 models whose `name` (a word index,
   lowercase) holds every query word, in similarity order, then the rest of the ranking without
-  them. The service's own exact-title pass still leads. A word in many names (e.g. `WAI`, in about 555) leaves the model it names wherever similarity puts it among those matches.
+  them. The service's own exact-title pass still leads. A word in many names (e.g. `WAI`) leaves the model it names wherever similarity puts it among those
+  matches.
 - Hidden models and users are dropped on the server; hidden tags by the feed's client-side
   preferences. A failed search falls back to the keyword feed with a Retry banner.
 
