@@ -78,13 +78,13 @@ describe('the moderator provenance lines', () => {
     ).toEqual([
       {
         key: 'claimed',
-        label: 'Claimed commit (sent by the client, not checked)',
+        heading: 'Claimed commit (sent by the client, not checked)',
         value: 'b4c3d2e · clean tree',
         links: [],
       },
       {
         key: 'actions-run',
-        label: 'Verified GitHub Actions run',
+        heading: 'Verified GitHub Actions run',
         value: 'harbor-tools/knot-tier @ v0.9.1 (b4c3d2e)',
         links: [
           { label: 'commit', href: `https://github.com/harbor-tools/knot-tier/commit/${SHA}` },

@@ -334,7 +334,7 @@ export function ReviewSourceProvenanceMeta({
         <div key={line.key} data-review-provenance-line={line.key}>
           <Text size="xs">
             <Text span size="xs" c="dimmed">
-              {line.label}:{' '}
+              {line.heading}:{' '}
             </Text>
             <Text span size="xs" ff="monospace">
               {line.value}

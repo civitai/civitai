@@ -130,9 +130,6 @@ export default AuthedEndpoint(
 
     try {
       const { submitVersion } = await import('~/server/services/blocks/publish-request.service');
-      const { actionsOidcTokenForSubmit } = await import(
-        '~/server/services/blocks/github-actions-oidc.service'
-      );
       const result = await submitVersion({
         bundleBuffer,
         submittedByUserId: user.id,
@@ -143,7 +140,12 @@ export default AuthedEndpoint(
         sourceDirty: parsed.data.sourceDirty,
         // GitHub Actions OIDC token: dropped here unless `app-blocks-oidc-verified-submit` is on
         // for this submitter, so with the flag off it is never verified or stored.
-        githubOidcToken: await actionsOidcTokenForSubmit(user, parsed.data.githubOidcToken),
+        // (The verifier module is loaded only when a token was sent.)
+        githubOidcToken: parsed.data.githubOidcToken
+          ? await (
+              await import('~/server/services/blocks/github-actions-oidc.service')
+            ).actionsOidcTokenForSubmit(user, parsed.data.githubOidcToken)
+          : undefined,
       });
       // The stable subset, as the CLI route answers: never the file or manifest diff against the
       // previous approved version, which is moderator review material.
@@ -170,7 +172,7 @@ export default AuthedEndpoint(
       // A GitHub Actions OIDC token that failed verification: 400 (fix the pipeline) or 503 (GitHub's
       // keys or the replay store did not answer; re-run). The message never contains the token.
       const { isGithubActionsOidcRefusal } = await import(
-        '~/server/services/blocks/github-actions-oidc.service'
+        '~/server/services/blocks/github-actions-oidc-refusal'
       );
       if (isGithubActionsOidcRefusal(err)) {
         res.status(err.status).json({

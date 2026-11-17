@@ -15,7 +15,7 @@ import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-
 
 export type ReviewProvenanceLine = {
   key: 'claimed' | 'actions-run';
-  label: string;
+  heading: string;
   value: string;
   links: { label: string; href: string }[];
   note?: string;
@@ -45,11 +45,11 @@ export function reviewProvenanceLines(
 ): ReviewProvenanceLine[] {
   if (!p) return [];
   const lines: ReviewProvenanceLine[] = [
-    { key: 'claimed', label: CLAIMED_COMMIT_LABEL, value: claimedValue(p), links: [] },
+    { key: 'claimed', heading: CLAIMED_COMMIT_LABEL, value: claimedValue(p), links: [] },
   ];
   const run = p.actionsRun;
   if (!run) {
-    lines.push({ key: 'actions-run', label: ACTIONS_RUN_LABEL, value: 'none', links: [] });
+    lines.push({ key: 'actions-run', heading: ACTIONS_RUN_LABEL, value: 'none', links: [] });
     return lines;
   }
   const tag = run.ref.startsWith(TAG_REF_PREFIX) ? run.ref.slice(TAG_REF_PREFIX.length) : run.ref;
@@ -74,7 +74,7 @@ export function reviewProvenanceLines(
   }
   lines.push({
     key: 'actions-run',
-    label: ACTIONS_RUN_LABEL,
+    heading: ACTIONS_RUN_LABEL,
     value: `${run.repository} @ ${tag} (${run.sha.slice(0, 7)})${visibility}`,
     links,
     note: ACTIONS_RUN_NOTE,

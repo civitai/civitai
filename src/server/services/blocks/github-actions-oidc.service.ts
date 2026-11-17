@@ -33,8 +33,15 @@ import { createRemoteJWKSet, errors as joseErrors, jwtVerify } from 'jose';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ActionsRunSource } from '~/server/schema/blocks/actions-run-source.schema';
+import { GithubActionsOidcRefusal } from '~/server/services/blocks/github-actions-oidc-refusal';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
+
+export {
+  GithubActionsOidcRefusal,
+  isGithubActionsOidcRefusal,
+  type ActionsOidcRefusalReason,
+} from '~/server/services/blocks/github-actions-oidc-refusal';
 
 export const ACTIONS_OIDC_SUBMIT_FLAG = FLIPT_FEATURE_FLAGS.APP_BLOCKS_OIDC_VERIFIED_SUBMIT;
 
@@ -58,41 +65,6 @@ const SHA_RE = /^[0-9a-f]{40}$/;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const VISIBILITIES = new Set(['public', 'private', 'internal']);
 const TAG_REF_PREFIX = 'refs/tags/';
-
-export type ActionsOidcRefusalReason =
-  | 'malformed'
-  | 'signature'
-  | 'issuer'
-  | 'audience'
-  | 'expired'
-  | 'invalid-claims'
-  | 'missing-claim'
-  | 'not-a-push'
-  | 'not-a-tag'
-  | 'tag-version-mismatch'
-  | 'sha-mismatch'
-  | 'replayed'
-  | 'unavailable';
-
-/**
- * A token the submit refuses. `status` 400 = the token or the pipeline is wrong (do not retry the
- * same way); 503 = a dependency (GitHub's key set, the replay store) could not answer, so re-run the
- * workflow. The message never includes the token.
- */
-export class GithubActionsOidcRefusal extends Error {
-  readonly reason: ActionsOidcRefusalReason;
-  readonly status: 400 | 503;
-  constructor(reason: ActionsOidcRefusalReason, detail: string, status: 400 | 503 = 400) {
-    super(`GitHub Actions OIDC token rejected: ${detail}`);
-    this.name = 'GithubActionsOidcRefusal';
-    this.reason = reason;
-    this.status = status;
-  }
-}
-
-export function isGithubActionsOidcRefusal(err: unknown): err is GithubActionsOidcRefusal {
-  return err instanceof GithubActionsOidcRefusal;
-}
 
 // ---------------------------------------------------------------------------
 // The flag
