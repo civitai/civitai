@@ -123,9 +123,8 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 	var nextCursor any = superjson.Undefined{}
 	cursor := in.Cursor
 	loaded := false
-	coll := &collectionMemo{}
 	for loop := 0; len(items) < in.Limit && loop < maxLoops; {
-		page, err := servePage(ctx, d, in, level, cursor, req.Viewer, now, coll)
+		page, err := servePage(ctx, d, in, level, cursor, req.Viewer, now)
 		if err != nil {
 			return nil, err
 		}
@@ -240,9 +239,8 @@ type rawInput struct {
 	excluded []int
 }
 
-// servePage is one getModelsWithImagesAndModelVersions call. coll memoizes the collection read
-// decision across the request's pages.
-func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string, viewer *Viewer, now time.Time, coll *collectionMemo) (*page, error) {
+// servePage is one getModelsWithImagesAndModelVersions call.
+func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string, viewer *Viewer, now time.Time) (*page, error) {
 	viewerID, isMod := 0, false
 	if viewer != nil {
 		viewerID, isMod = viewer.ID, viewer.IsModerator
@@ -285,15 +283,13 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 	if in.CollectionID != 0 {
 		// getModelsRaw checks the collection after the tag and creator lookups (so an unknown creator
 		// is still Node's 404) and before the cursor is parsed: a collection the viewer may not read
-		// is an empty page with no lookahead, whatever the cursor says.
-		if !coll.done {
-			read, err := collectionReadable(ctx, d.DB, in.CollectionID, viewerID)
-			if err != nil {
-				return nil, err
-			}
-			coll.done, coll.read = true, read
+		// is an empty page with no lookahead, whatever the cursor says. Read on every page, as Node
+		// reads it on every getModelsRaw call of its loop.
+		read, err := collectionReadable(ctx, d.DB, in.CollectionID, viewerID)
+		if err != nil {
+			return nil, err
 		}
-		if !coll.read {
+		if !read {
 			return &page{items: []any{}}, nil
 		}
 	}

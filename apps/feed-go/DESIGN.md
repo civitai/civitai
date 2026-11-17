@@ -1573,7 +1573,7 @@ before the cursor is parsed, as Node orders them (`internal/modelfeed/collection
   viewer's `CollectionContributor` row holds VIEW. A missing collection reads for no one. No read is
   `{ items: [], nextCursor: undefined }` with no page query, whatever the cursor (Node returns before
   parsing it). One indexed read of the `Collection` row (with the viewer's contributor row when signed
-  in) on the replica, on the first page; the loop's later pages reuse it.
+  in) on the replica, on every page of the loop, as Node reads it on every `getModelsRaw` call.
 - **Items.** `getAvailableCollectionItemsFilterForUser` without `statuses` (model.getAll never passes
   them; `collectionItemStatus` is ignored): `ACCEPTED` items, and for a signed-in viewer also the
   `REVIEW` items they added, as `EXISTS (SELECT 1 FROM "CollectionItem" ci …)` on `mm."modelId"`,
@@ -1655,10 +1655,8 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   this service and a Node pod up to 30 s apart;
 - a cursor's date token is read in Postgres' own `CONCAT` form only; any other spelling dayjs accepts
   falls back;
-- the collection read permission is read once per request (Node reads it again on each page of its
-  loop): a permission changed between two pages of one request is the only difference. Node's read
-  also joins the viewer's accepted invite, which feeds only `isCollaborator`, not `read`; it is not
-  read here;
+- the collection read permission: Node's read also joins the viewer's accepted invite, which feeds
+  only `isCollaborator`, not `read`; it is not read here;
 - `ids` falls back whenever it is present, empty included: Node reads `[]` as `[]` and `""` as `[0]`,
   both truthy, so either turns off the private-model filter;
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,

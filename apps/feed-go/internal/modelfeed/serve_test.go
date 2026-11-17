@@ -1011,8 +1011,8 @@ func TestServeCollectionAccess(t *testing.T) {
 	}
 }
 
-// Across the page loop the permission is read once and every page carries the semi-join (with the
-// collection tag); the answer keeps the previous page's cursor as for any feed.
+// Across the page loop the permission is read on every page, as Node reads it on every getModelsRaw
+// call, and every page carries the semi-join (with the collection tag); the answer keeps the previous page's cursor as for any feed.
 func TestServeCollectionPagesAndTag(t *testing.T) {
 	e := newEnv(
 		[]testRow{{id: 1, owner: 9, cursor: "c1"}, {id: 2, owner: 9, cursor: "c2"}, {id: 3, owner: 9, cursor: "5|5|3"}},
@@ -1033,8 +1033,8 @@ func TestServeCollectionPagesAndTag(t *testing.T) {
 	if v, _ := ans.Value.Get("nextCursor"); v != "5|5|3" {
 		t.Fatalf("nextCursor %v, want 5|5|3", v)
 	}
-	if len(*reads) != 1 || len(e.queries) != 2 {
-		t.Fatalf("%d permission reads and %d page queries, want 1 and 2", len(*reads), len(e.queries))
+	if len(*reads) != 2 || len(e.queries) != 2 {
+		t.Fatalf("%d permission reads and %d page queries, want 2 and 2", len(*reads), len(e.queries))
 	}
 	for i, q := range e.queries {
 		if !strings.Contains(norm(q), `AND ci."addedById" = $2)) AND ci."tagId" = $3)`) || !reflect.DeepEqual(e.args[i][:3], []any{42, 71, 88}) {

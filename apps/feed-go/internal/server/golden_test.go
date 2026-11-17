@@ -1332,6 +1332,8 @@ type goldenModelPG struct {
 	*testkit.DB
 	mu    sync.Mutex
 	pages int
+	// collectionReads counts the collection permission reads.
+	collectionReads int
 }
 
 func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
@@ -1388,6 +1390,9 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		// The collection permission read: the fixture's Collection row and the viewer's contributor
 		// row (none: no permissions); a collection the fixture does not hold is no row.
 		{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			g.mu.Lock()
+			g.collectionReads++
+			g.mu.Unlock()
 			cols := []string{"read", "userId", "permissions"}
 			viewer := 0
 			if len(args) > 1 {
@@ -1447,6 +1452,13 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		defer g.mu.Unlock()
 		if !t.Failed() && fx.Expect.Fallback == "" && g.pages != len(db.ModelPages) {
 			t.Errorf("feed-go asked for %d page(s); Node asked for %d", g.pages, len(db.ModelPages))
+		}
+		// Node reads the collection permission on every getModelsRaw call: once per page it queries,
+		// and once for an unreadable collection, which queries no page.
+		if !t.Failed() && fx.Expect.Fallback == "" && db.Collections != nil {
+			if want := max(len(db.ModelPages), 1); g.collectionReads != want {
+				t.Errorf("feed-go read the collection permission %d time(s); Node read it %d", g.collectionReads, want)
+			}
 		}
 	})
 	return g

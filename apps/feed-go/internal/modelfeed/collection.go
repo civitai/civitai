@@ -77,9 +77,3 @@ func readGranted(read string, ownerID int, perms []string, viewerID int) bool {
 	}
 	return false
 }
-
-// collectionMemo holds one request's collection read decision: Node reads the permissions again on
-// every page of the loop; this service reads them once, on the first page that reaches the check.
-type collectionMemo struct {
-	done, read bool
-}
