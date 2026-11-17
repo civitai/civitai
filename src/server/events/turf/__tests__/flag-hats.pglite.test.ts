@@ -97,7 +97,12 @@ beforeAll(async () => {
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int, "postId" int, ingestion text DEFAULT 'Scanned',
-      "tosViolation" boolean DEFAULT false, "needsReview" text, "blockedFor" text
+      "tosViolation" boolean DEFAULT false, "needsReview" text, "blockedFor" text,
+      url text, "nsfwLevel" int DEFAULT 1
+    );
+    CREATE TABLE "Crucible" (
+      id int PRIMARY KEY, status "CrucibleStatus", "eventTags" text[] NOT NULL DEFAULT '{}',
+      "endAt" timestamptz, "imageId" int
     );
     CREATE TABLE "Cosmetic" (id int PRIMARY KEY, type text, data jsonb);
     CREATE TABLE "UserCosmetic" ("userId" int, "cosmeticId" int);
@@ -123,7 +128,7 @@ afterAll(async () => db.close());
 beforeEach(async () => {
   config = { flags: FLAGS };
   await db.exec(`
-    TRUNCATE "User", "Image", "UserCosmetic", "EventTurfStock", "FlagDay", "EventTurfFlagSticker";
+    TRUNCATE "User", "Image", "Crucible", "UserCosmetic", "EventTurfStock", "FlagDay", "EventTurfFlagSticker";
     INSERT INTO "User" (id, settings) VALUES
       (${PLACER}, '{"eventTurfOptIn": {"e": true}}'),
       (${OWNER_OFF}, '{"eventTurfOwnerOff": {"e": true}}');
@@ -302,13 +307,34 @@ describe('the shared flag summary', () => {
         if (key === flagSummaryGenKey('e')) return gen;
         return null;
       }) as never);
+    const writes = () => redisMock.sysRedis.set.mock.calls.length;
+    const before = writes();
     serve(null);
-    redisMock.sysRedis.set.mockClear();
     await getFlagSummary('e', BEFORE);
-    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+    expect(writes()).toBe(before);
     // A swap since (the generation moved on): the cached day is rebuilt, not served.
     serve('1');
     await getFlagSummary('e', BEFORE);
-    expect(redisMock.sysRedis.set).toHaveBeenCalledOnce();
+    expect(writes()).toBe(before + 1);
+  });
+
+  it('links the running flag Crucible that ends first, with its cover only when PG or PG-13', async () => {
+    expect((await getFlagSummary('e', BEFORE))?.nextCrucible).toBeNull();
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId", "postId", url, "nsfwLevel") VALUES
+        (950, ${OWNER_OFF}, 1, 'pg-cover', 1), (951, ${OWNER_OFF}, 1, 'r-cover', 4);
+      INSERT INTO "Crucible" (id, status, "eventTags", "endAt", "imageId") VALUES
+        (388, 'Completed', '{e-flag}', '2026-11-14T22:00:00Z', 950),
+        (390, 'Active', '{e-flag}', '2026-11-16T22:00:00Z', 950),
+        (389, 'Active', '{e-flag}', '2026-11-15T22:00:00Z', 950),
+        (500, 'Active', '{other}', '2026-11-15T12:00:00Z', 950);
+    `);
+    expect((await getFlagSummary('e', BEFORE))?.nextCrucible).toEqual({
+      id: 389,
+      endAt: new Date('2026-11-15T22:00:00Z'),
+      coverUrl: 'pg-cover',
+    });
+    await db.exec(`UPDATE "Crucible" SET "imageId" = 951 WHERE id = 389`);
+    expect((await getFlagSummary('e', BEFORE))?.nextCrucible?.coverUrl).toBeNull();
   });
 });

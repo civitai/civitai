@@ -1,0 +1,169 @@
+.row {
+  display: grid;
+  gap: 18px;
+  padding: 16px;
+  border-radius: 18px;
+  grid-template-columns: minmax(0, 1fr);
+
+  @container (min-width: 1100px) {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+}
+
+.flags {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+
+  > * {
+    flex: none;
+    width: 180px;
+    scroll-snap-align: start;
+  }
+
+  @container (min-width: 640px) {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    overflow: visible;
+
+    > * {
+      width: auto;
+    }
+  }
+}
+
+.panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+// Desktop: across the top of the panel, fading down. Stacked: tucked into the top right corner.
+.art {
+  position: absolute;
+  pointer-events: none;
+  object-fit: cover;
+  right: -16px;
+  top: -16px;
+  width: 240px;
+  height: 120px;
+  object-position: 85% 45%;
+  mask-image: linear-gradient(90deg, transparent, #000 45%);
+
+  @container (min-width: 1100px) {
+    left: -16px;
+    top: -16px;
+    width: calc(100% + 34px);
+    height: 160px;
+    object-position: 50% 30%;
+    mask-image: linear-gradient(180deg, #000 55%, transparent);
+  }
+}
+
+.artSpace {
+  @container (min-width: 1100px) {
+    height: 104px;
+  }
+}
+
+.title {
+  position: relative;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.1;
+
+  @container (min-width: 1100px) {
+    font-size: 26px;
+  }
+}
+
+.tag {
+  position: relative;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+
+  b {
+    color: #ffd43b;
+  }
+
+  @container (min-width: 1100px) {
+    font-size: 15px;
+  }
+}
+
+.label {
+  margin: 12px 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.howto {
+  position: relative;
+  margin-top: 12px;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.step {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.72);
+
+  b {
+    color: #fff;
+  }
+}
+
+.stepIcon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.enter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  border-radius: 12px;
+  padding: 8px;
+  background: #fefefe;
+  color: #101113;
+  text-decoration: none;
+
+  img {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    object-fit: cover;
+  }
+
+  small {
+    display: block;
+    font-size: 11px;
+    color: #5c5f66;
+  }
+}
+
+.wrap {
+  container-type: inline-size;
+}
