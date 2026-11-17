@@ -112,9 +112,12 @@ type Server struct {
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
-	// dbpool.DefaultMaxConns, never unlimited): the Node app's `heavy-image` bulkhead. A request past
-	// it is not computed: it is the `bulkhead` fallback, proxied to the Node app. Shadow samples and
-	// probes are bounded by their own queues and never take a serve slot.
+	// dbpool.DefaultMaxConns, never unlimited), across BOTH public routes: the gallery procedure and
+	// model.getAll share one pool of slots, so one route can hold slots the other then sheds for. For
+	// the gallery it stands in for the Node app's `heavy-image` bulkhead; Node has no bulkhead on
+	// model.getAll. A request past it is not computed: it is the `bulkhead` fallback, proxied to the
+	// Node app (feed_go_fallback_total and feed_go_serve_in_flight are per endpoint). Shadow samples
+	// and probes are bounded by their own queues and never take a serve slot.
 	MaxInFlight int
 
 	// inFlight counts the public requests holding a serve slot (feed_go_serve_in_flight).
@@ -509,7 +512,6 @@ func (s *Server) acquireServe() bool {
 			return false
 		}
 		if s.inFlight.CompareAndSwap(n, n+1) {
-			s.Metrics.ServeInFlight.Inc()
 			return true
 		}
 	}
@@ -517,7 +519,6 @@ func (s *Server) acquireServe() bool {
 
 func (s *Server) releaseServe() {
 	s.inFlight.Add(-1)
-	s.Metrics.ServeInFlight.Dec()
 }
 
 // InFlight is the number of public requests computing now.
@@ -526,12 +527,18 @@ func (s *Server) InFlight() int64 { return s.inFlight.Load() }
 // computeServe is computeWithin for a public request, inside a serve slot. A full pod is the
 // `bulkhead` fallback without computing anything. The slot is held for the computation only, never
 // for the proxied fallback that may follow, and is released however the computation ends (answer,
-// fallback, error, panic, deadline, client gone) by the deferred release.
-func (s *Server) computeServe(r *http.Request, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
+// fallback, error, panic, deadline, client gone) by the deferred release. The slot shows on
+// feed_go_serve_in_flight under endpoint, the route holding it.
+func (s *Server) computeServe(r *http.Request, endpoint string, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
 	if !s.acquireServe() {
 		return nil, errBulkhead
 	}
-	defer s.releaseServe()
+	g := s.Metrics.ServeInFlight[endpoint]
+	g.Inc()
+	defer func() {
+		g.Dec()
+		s.releaseServe()
+	}()
 	return s.computeWithin(r.Context(), r, "serve", fn)
 }
 
@@ -660,7 +667,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		switch err = s.apiRequestPolicy(r); {
 		case err != nil:
 		case AcceptableOrigin(r, s.AllowedOrigins):
-			c, err = s.computeServe(r, fn)
+			c, err = s.computeServe(r, endpoint, fn)
 		default:
 			// The app's answer differs by environment and credential (non-production and bearer callers
 			// are accepted, a cookie caller in production is refused): never decided here.
@@ -668,10 +675,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedu
 		}
 	}
 	if err == nil {
+		// An answer that loaded no row is `served_empty`, as in the shadow path, so the per-served-call
+		// figures cover only answers that did the work.
+		served := "served"
+		if c.trivial {
+			served = "served_empty"
+		}
 		trpc.WriteResult(w, c.payload, c.ttl)
 		c.release() // WriteResult has sent payload and keeps no reference
-		s.Metrics.Requests.WithLabelValues(endpoint, "serve", "served").Inc()
-		s.Metrics.Duration.WithLabelValues(endpoint, "serve", "served").Observe(time.Since(start).Seconds())
+		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
+		s.Metrics.Duration.WithLabelValues(endpoint, "serve", served).Observe(time.Since(start).Seconds())
 		return
 	}
 	outcome := "fallback"

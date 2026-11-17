@@ -193,7 +193,7 @@ func TestServeModelGetAllTrivialIsServedEmpty(t *testing.T) {
 	if got := w.Body.String(); got != `{"result":{"data":{"json":{"items":[],"nextCursor":null}}}}` {
 		t.Fatalf("body = %s", got)
 	}
-	if e, s := modelsServeCount(t, reg, "served_empty"), modelsServeCount(t, reg, "served"); e != 1 || s != 0 {
-		t.Fatalf("served_empty=%v served=%v, want 1 and 0", e, s)
+	if empty, served := modelsServeCount(t, reg, "served_empty"), modelsServeCount(t, reg, "served"); empty != 1 || served != 0 {
+		t.Fatalf("served_empty=%v served=%v, want 1 and 0", empty, served)
 	}
 }

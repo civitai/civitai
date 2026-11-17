@@ -1652,8 +1652,17 @@ sends a signed-in browser's `model.getAll` to `/api/trpc-go/model.getAll` (an ex
 of the app rewrites that path to `/api/trpc/model.getAll` on this service). The client flag alone, with
 this switch off, moves the cohort through this service to the Node app unchanged.
 
-`feed_go_serve_in_flight` keeps its `feed_endpoint="as-posts"` label: it counts the shared serve slots,
-whichever route holds them.
+Serve slots are SHARED: both public routes draw on the one `FEED_GO_MAX_IN_FLIGHT` pool (for the
+gallery it stands in for Node's `heavy-image` bulkhead; Node has no bulkhead on `model.getAll`), so a
+burst on one route makes the other shed. `feed_go_serve_in_flight` is labelled by the route holding
+the slot, and both endpoints' series and `bulkhead` fallbacks are seeded at 0. An answer that loaded
+no model row is counted `served_empty`, as in the shadow (§15.6).
+
+Rollout step, before the switch goes on and for as long as it is on: watch the `bulkhead` fallbacks
+per endpoint, `sum by (feed_endpoint) (rate(feed_go_fallback_total{mode="serve",reason="bulkhead"}[5m]))`,
+with `sum by (feed_endpoint) (feed_go_serve_in_flight)`. A gallery `bulkhead` rate that rises when
+model.getAll is served means the shared pool is too small for both: turn the switch off and size it
+first.
 
 ## 16. `GET /api/v1/models` and `GET /api/v1/models/[id]` (REST, shadow only)
 
