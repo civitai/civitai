@@ -334,6 +334,38 @@ describe('Made On-site and Metadata only', () => {
   });
 });
 
+// The own-images search asks for candidates at every level, so hydration is the only filter on
+// what the owner is shown: it must keep the review and minor filters for the owner too.
+describe("the own-images search's image query", () => {
+  async function ownImageSql() {
+    const { source } = rankedSource([101, 102]);
+    await searchSemanticImages({
+      input: input({ query: 'kuro', imageId: undefined, userIds: [VIEWER.id], browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    }).catch(() => undefined);
+    expect(h.queryWithTimeout, 'the search no longer reaches the image query').toHaveBeenCalled();
+    const stmt = h.queryWithTimeout.mock.calls[0][2] as { text: string; values: unknown[] };
+    return { text: stmt.text.replace(/\s+/g, ' '), values: stmt.values };
+  }
+
+  it('never serves the owner their own images awaiting review', async () => {
+    const { text } = await ownImageSql();
+    // Unconditional: the pending read's form, `(... IS NULL OR i."userId" = $n)`, exempts the owner.
+    expect(text).toMatch(/i\."needsReview" IS NULL(?! OR)/);
+    expect(text).not.toMatch(/i\."needsReview" IS NULL OR i\."userId"/);
+    expect(text).toMatch(/i\."acceptableMinor" = FALSE(?! OR)/);
+  });
+
+  // Control: the owner's candidates do reach that query, so the filter is what decides.
+  it("still asks for the owner's candidates", async () => {
+    const { text, values } = await ownImageSql();
+    expect(text).toMatch(/i\."id" = ANY\(/);
+    expect(values).toContainEqual([101, 102]);
+  });
+});
+
 describe.each([
   ['a text query', { query: 'a red fox', imageId: undefined }],
   ['the "more like this" anchor check', {}],
