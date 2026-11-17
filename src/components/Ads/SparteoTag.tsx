@@ -10,6 +10,12 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const SPARTEO_TAG_ID = 'sparteo-tag';
 
+declare global {
+  interface Window {
+    _hbdbrk?: unknown[];
+  }
+}
+
 type TcfConsents = {
   consents?: Record<number, boolean>;
   legitimateInterests?: Record<number, boolean>;
@@ -69,9 +75,12 @@ export function SparteoTag() {
 
   useEffect(() => {
     if (!enabled || !src || document.getElementById(SPARTEO_TAG_ID)) return;
+    // The partner's tag declares this queue inline before its loader runs.
+    window._hbdbrk = window._hbdbrk || [];
     const script = document.createElement('script');
     script.id = SPARTEO_TAG_ID;
     script.async = true;
+    script.setAttribute('data-cfasync', 'false');
     script.src = src;
     document.head.appendChild(script);
   }, [enabled, src]);

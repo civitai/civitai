@@ -109,6 +109,8 @@ describe('SparteoTag', () => {
     const tag = headTag();
     expect(tag?.src).toBe('https://tag.example.test/sparteo.js');
     expect(tag?.async).toBe(true);
+    expect(tag?.getAttribute('data-cfasync')).toBe('false');
+    expect(Array.isArray(window._hbdbrk)).toBe(true);
     expect(document.querySelectorAll(`#${SPARTEO_TAG_ID}`)).toHaveLength(1);
   });
 
