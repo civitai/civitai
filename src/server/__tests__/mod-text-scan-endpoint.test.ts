@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ClickhouseModule from '~/server/clickhouse/client';
 import type * as HarnessModule from '~/server/services/text-scan/harness';
@@ -273,6 +274,72 @@ describe('mod/text-scan', () => {
 
     it.each(actions)('$action serves a session', async (body) => {
       expect((await call(body)).status).toBe(200);
+    });
+  });
+
+  describe('putPrompt for the intent key', () => {
+    const INTENT = 'label:model-com-face-intent';
+    const rows = [
+      { id: 77, content: 'V77', note: null, createdById: 1 },
+      { id: 90, content: 'BY A MODERATOR', note: null, createdById: MOD },
+      { id: 100, content: 'BAD', note: 'revokes:111', createdById: 1 },
+      { id: 111, content: 'V111', note: null, createdById: 1 },
+      { id: 112, content: 'V112', note: 'restore 111 revokes:100', createdById: 1 },
+    ];
+    const as = (permissions: string[]) => {
+      session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions } };
+    };
+    const put = (content: string, key = INTENT) =>
+      call({ action: 'putPrompt', key, content, note: 'n' });
+
+    beforeEach(() => {
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue(rows);
+      redisMock.sysRedis.get.mockResolvedValue(
+        JSON.stringify({ textScanPromptPublish: [1, MOD], textScanPromptPublishIntent: [1] })
+      );
+    });
+
+    it('refuses new text without the per-key grant, reaching no harness', async () => {
+      as(['textScanPromptPublish']);
+      expect((await put('NEW TEXT')).status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    });
+
+    it('publishes new text with the per-key grant', async () => {
+      as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+      expect((await put('NEW TEXT')).status).toBe(200);
+      expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves another key to the publish permission alone', async () => {
+      as(['textScanPromptPublish']);
+      expect((await put('NEW TEXT', 'label:nsfw')).status).toBe(200);
+      expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['V111', 'V77', 'V112'])(
+      'restores %s, an unrevoked version by a holder, with the publish permission alone',
+      async (content) => {
+        as(['textScanPromptPublish']);
+        expect((await put(content)).status).toBe(200);
+        expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it.each([
+      ['one changed byte', 'V111 '],
+      ['a version by a non-holder', 'BY A MODERATOR'],
+      ['a version a later note revokes', 'BAD'],
+    ])('refuses %s without the per-key grant', async (_, content) => {
+      as(['textScanPromptPublish']);
+      expect((await put(content)).status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    });
+
+    it('refuses a restore once its author no longer holds the per-key grant', async () => {
+      redisMock.sysRedis.get.mockResolvedValue(JSON.stringify({ textScanPromptPublishIntent: [] }));
+      as(['textScanPromptPublish']);
+      expect((await put('V111')).status).toBe(403);
     });
   });
 });

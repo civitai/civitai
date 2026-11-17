@@ -2,6 +2,8 @@ import {
   runTextScanHarnessAction,
   textScanHarnessSchema,
 } from '~/server/services/text-scan/harness';
+import { isRestorableTextScanPrompt } from '~/server/services/text-scan/prompt';
+import { getSystemPermissions } from '~/server/services/system-cache';
 import { TRPCError } from '@trpc/server';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
@@ -15,6 +17,8 @@ const PUBLISH_ACTIONS: ReadonlySet<string> = new Set([
   'putWebSearchModes',
   'putLabelModes',
 ]);
+const INTENT_PROMPT_KEY = 'label:model-com-face-intent';
+const INTENT_PROMPT_PUBLISH_PERMISSION = 'textScanPromptPublishIntent';
 
 // The harness's own caps bound a request at ~1M characters, which multibyte text can take past the
 // 1mb default.
@@ -27,6 +31,7 @@ export default defineModeratorEndpoint('textScan.harness', {
   notes: [
     'putPrompt/putConfig/putModes/putWebSearchModes/putLabelModes are attributed to the signed-in moderator; ids in the body are ignored.',
     'putPrompt, putConfig, putModes, putWebSearchModes and putLabelModes require the textScanPromptPublish permission.',
+    'putPrompt for label:model-com-face-intent also requires textScanPromptPublishIntent, unless the content is exactly an earlier version by a current holder that no later note revokes (a restore). A restore note should name the version it rolls back from as revokes:<id>.',
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
     'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
@@ -47,6 +52,24 @@ export default defineModeratorEndpoint('textScan.harness', {
         code: 'FORBIDDEN',
         message: `Permission "${TEXT_SCAN_PROMPT_PUBLISH_PERMISSION}" required for ${input.action}`,
       });
+    if (
+      input.action === 'putPrompt' &&
+      input.key === INTENT_PROMPT_KEY &&
+      !ctx.actor.permissions?.includes(INTENT_PROMPT_PUBLISH_PERMISSION)
+    ) {
+      // Without the key's own grant, only a restore: an unrevoked earlier version by a current holder.
+      const holders = (await getSystemPermissions())[INTENT_PROMPT_PUBLISH_PERMISSION] ?? [];
+      const restorable = await isRestorableTextScanPrompt({
+        key: input.key,
+        content: input.content,
+        authorIds: holders,
+      });
+      if (!restorable)
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: `Permission "${INTENT_PROMPT_PUBLISH_PERMISSION}" required to publish new ${INTENT_PROMPT_KEY} text`,
+        });
+    }
     const result = await runTextScanHarnessAction(input, { moderatorId: ctx.actor.id });
     return result.kind === 'csv' ? { csv: result.body } : (result.body as Record<string, unknown>);
   },

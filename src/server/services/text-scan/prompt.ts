@@ -280,6 +280,35 @@ export async function insertTextScanPrompt({
   return row;
 }
 
+/** True when `content` is exactly an earlier version of `key`, written by one of `authorIds`, that no
+ *  later version's note revokes (`revokes:<id>`). Saving it again restores that version. */
+export async function isRestorableTextScanPrompt({
+  key,
+  content,
+  authorIds,
+}: {
+  key: string;
+  content: string;
+  authorIds: number[];
+}) {
+  // primary: guards a publish; a revoking note saved a moment ago must already count
+  const rows = await dbWrite.textScanPrompt.findMany({
+    where: { key },
+    select: { id: true, content: true, note: true, createdById: true },
+  });
+  const revokedIds = new Set<number>();
+  for (const row of rows)
+    for (const [, id] of row.note?.matchAll(/\brevokes:(\d+)\b/g) ?? [])
+      if (Number(id) < row.id) revokedIds.add(Number(id));
+  return rows.some(
+    (row) =>
+      row.content === content &&
+      row.createdById !== null &&
+      authorIds.includes(row.createdById) &&
+      !revokedIds.has(row.id)
+  );
+}
+
 export class MissingTextScanPromptError extends Error {
   constructor(public keys: string[]) {
     super(`Missing text-scan prompt rows: ${keys.join(', ')}`);
