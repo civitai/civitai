@@ -1,5 +1,6 @@
 import type { EventViewer } from '~/server/events/event-access';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { Prisma } from '@prisma/client';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
@@ -654,15 +655,20 @@ export const getArticles = async ({
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const cover = coverImages.find((x) => x.id === article.coverId);
-        const isOwnerOrMod = !!sessionUser?.isModerator || article.userId === sessionUser?.id;
-        const coverImage = isArticleImageViewable(cover, isOwnerOrMod) ? cover : undefined;
+        const coverImage = isArticleImageViewable(
+          cover,
+          articleImageViewer(sessionUser, article.userId)
+        )
+          ? cover
+          : undefined;
         const match = articleStats[article.id];
 
         return {
           ...article,
           // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
           ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
-            (article.coverId != null && minorHiddenCoverIds.has(article.coverId))) && {
+            (article.coverId != null && minorHiddenCoverIds.has(article.coverId)) ||
+            (!!cover && !coverImage && isRestrictedImage(cover))) && {
             cover: null,
           }),
           tags: tags.map(({ tag }) => ({
@@ -773,7 +779,7 @@ export const getCivitaiNews = async () => {
     const user = users.find((x) => x.id === article.userId);
     const cover = coverImages.find((x) => x.id === article.coverId);
     // A public page with no viewer: no owner exception.
-    const coverImage = isArticleImageViewable(cover, false) ? cover : undefined;
+    const coverImage = isArticleImageViewable(cover, 'other') ? cover : undefined;
     return {
       ...article,
       user: user ?? null,
@@ -840,6 +846,7 @@ export const articleContentImageSelect = {
   height: true,
   needsReview: true,
   tosViolation: true,
+  modelRestricted: true,
 } satisfies Prisma.ImageSelect;
 
 /** A minor-flagged R+ image (`isMinorMatureImage`) is shown only to its uploader and moderators. */
@@ -919,7 +926,9 @@ export const getArticleById = async ({
       type: 'Article',
     });
 
-    const isOwnerOrMod = isModerator || userId === article.userId;
+    // On the article's own page and edit form a moderator gets its restricted cover and banner, as its
+    // owner does; card and feed covers still withhold them from moderators.
+    const viewer = isModerator ? 'owner' : articleImageViewer({ id: userId }, article.userId);
     // A cover or banner its model withholds is shown only to moderators, and to the article's
     // owner when they uploaded it. The edit form learns of one it may not see from the
     // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
@@ -933,15 +942,12 @@ export const getArticleById = async ({
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
     const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);
-    const coverImage = viewableArticleImage(
-      coverWithheld ? null : article.coverImage,
-      isOwnerOrMod
-    );
+    const coverImage = viewableArticleImage(coverWithheld ? null : article.coverImage, viewer);
     const bannerImage = viewableArticleImage(
       bannerHidden || minorMatureHidden(article.bannerImage, userId, isModerator)
         ? null
         : article.bannerImage,
-      isOwnerOrMod
+      viewer
     );
     // For the owner's edit form only: anyone else learns nothing about an image they cannot see.
     const isOwner = userId !== undefined && userId === article.userId;
@@ -981,7 +987,10 @@ export const getArticleById = async ({
     return {
       ...article,
       // The legacy `cover` is the same image's key.
-      ...(coverWithheld && { cover: null }),
+      ...((coverWithheld ||
+        (!!article.coverImage && !coverImage && isRestrictedImage(article.coverImage))) && {
+        cover: null,
+      }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,
       attachments,
       tags: article.tags.map(({ tag }) => ({
@@ -1005,19 +1014,29 @@ export const getArticleById = async ({
 
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
-/** Owners and moderators always; anyone else per `servableArticleImage`. */
+type ArticleImageViewer = 'owner' | 'moderator' | 'other';
+
+const articleImageViewer = (
+  viewer: { id?: number; isModerator?: boolean } | undefined,
+  articleUserId: number | null
+): ArticleImageViewer =>
+  viewer?.id === articleUserId ? 'owner' : viewer?.isModerator ? 'moderator' : 'other';
+
+/** On cards and feeds a moderator gets no exception for a restricted image; anyone else per `servableArticleImage`. */
 function isArticleImageViewable<
-  T extends Pick<ArticleImageRow, 'ingestion' | 'nsfwLevel' | 'needsReview'>
->(image: T | null | undefined, isOwnerOrMod: boolean): image is T {
+  T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview' | 'nsfwLevel' | 'modelRestricted'>
+>(image: T | null | undefined, viewer: ArticleImageViewer): image is T {
   if (!image) return false;
-  return isOwnerOrMod || servableArticleImage(image) !== null;
+  if (viewer === 'owner') return true;
+  if (viewer === 'moderator') return !isRestrictedImage(image);
+  return servableArticleImage(image) !== null;
 }
 
 function viewableArticleImage(
   image: (ArticleImageRow & { minor?: boolean | null }) | null | undefined,
-  isOwnerOrMod: boolean
+  viewer: ArticleImageViewer
 ) {
-  if (!isArticleImageViewable(image, isOwnerOrMod)) return undefined;
+  if (!isArticleImageViewable(image, viewer)) return undefined;
   const { minor, ...row } = image;
   return {
     ...row,

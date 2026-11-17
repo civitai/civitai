@@ -2255,6 +2255,8 @@ model Image {
   minor             Boolean                 @default(false)
   poi               Boolean                 @default(false)
   acceptableMinor   Boolean                 @default(false)
+  /// Made with a base model that restricts mature images. Read through imageNotRestrictedSql / imageNotRestrictedWhere.
+  modelRestricted   Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]

@@ -634,6 +634,14 @@ describe('the article banner', () => {
     );
   });
 
+  it('keeps the cover when the save does not mention it', async () => {
+    dbMock.dbWrite.article.count.mockResolvedValue(0 as never);
+    await save({});
+
+    expect(saved.coverId).toBe(COVER.id);
+    expect(deletedIds()).not.toContain(COVER.id);
+  });
+
   it('keeps the banner when the save does not mention it', async () => {
     await save({ coverImage: COVER });
 
@@ -878,5 +886,25 @@ describe('the article banner', () => {
     await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
 
     expect(deletedIds()).toContain(BANNER.id);
+  });
+
+  // A moderator's form carries a restricted banner (getArticleById), so their null removes it.
+  it("clears a restricted banner on a moderator's save", async () => {
+    const base = dbMock.dbWrite.image.findMany.getMockImplementation();
+    dbMock.dbWrite.image.findMany.mockImplementation((async (args: any) =>
+      args.select?.modelRestricted
+        ? args.where.id.in.map((id: number) => ({ id, nsfwLevel: 4, modelRestricted: true }))
+        : base?.(args)) as never);
+    await upsertArticle({
+      id: ARTICLE_ID,
+      userId: MODERATOR,
+      isModerator: true,
+      title: 'A title',
+      content: '<p>had images</p>',
+      status: 'Draft',
+      coverImage: { id: COVER.id, url: 'u' },
+      bannerImage: null,
+    } as never);
+    expect(saved.bannerId).toBeNull();
   });
 });
