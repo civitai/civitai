@@ -1,3 +1,4 @@
+import { IMAGE_RESCAN_RETRY_LIMIT } from '~/server/services/image-scan-failure';
 import { Prisma } from '@prisma/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { decreaseDate } from '~/utils/date-helpers';
@@ -54,10 +55,12 @@ import {
   hasBlockMarker,
   hasBlockMarkerSql,
   imageReviewedSql,
+  isMinorMatureImage,
   keepPermanentScanFailureSql,
   pendingLevelImageSql,
   pendingOthersImageConditions,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+  minorMatureImageVisibleSql,
 } from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
@@ -250,7 +253,9 @@ import {
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
+import { Flags } from '~/shared/utils/flags';
 import {
+  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
@@ -1360,6 +1365,8 @@ export async function handleUnblockImages({
       resetBlockedNsfwLevel(ids),
       dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
+      // The unblock SQL above can rewrite "minor", which no trigger watches.
+      queueModelsForImageChildTagChanges({ minorImageIds: ids }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
@@ -1611,8 +1618,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
 // Blocking force-sets nsfwLevel=Blocked and may leave the rating lock on; the recompute
 // (update_nsfw_levels_new) skips locked rows, so a Blocked-locked row can never be restored
 // by updateNsfwLevel alone. Reset+unlock only the Blocked rows (never-corrupted locks are
-// preserved), then recompute — untagged rows fall to Unrated and re-derive on rescan.
-// Used by both unblock paths (handleUnblockImages and report.service resolveEntityAppeal).
+// preserved), then recompute; a never-tagged row the recompute leaves unrated goes back to the scanner.
 export async function resetBlockedNsfwLevel(ids: number | number[]) {
   if (!Array.isArray(ids)) ids = [ids];
   ids = [...new Set(ids)];
@@ -1623,6 +1629,46 @@ export async function resetBlockedNsfwLevel(ids: number | number[]) {
     WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked};
   `;
   await updateNsfwLevel(ids);
+  await rescanUnratedImages(ids);
+}
+
+/**
+ * The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
+ * its scan landed) stays at level 0. Rather than leave it Scanned with no rating, send it back to
+ * the scanner. An image with tags, live or disabled by a moderator, or with an earlier moderator
+ * review, is left as it is: a rescan would re-audit it over the moderator's ruling. The caller's own
+ * review row is written after this runs, so it does not count. One out of rescan retries goes to
+ * `Error` instead, where
+ * the scan would leave it anyway, as `queueNeverScannedRescan` does.
+ */
+export async function rescanUnratedImages(ids: number[]) {
+  if (!ids.length) return;
+  const outOfRetries = Prisma.sql`COALESCE((i."scanJobs"->>'retryCount')::int, 0) >= ${IMAGE_RESCAN_RETRY_LIMIT}`;
+  const rows = await dbWrite.$queryRaw<{ id: number; ingestion: ImageIngestionStatus }[]>`
+    UPDATE "Image" i
+    SET ingestion = CASE WHEN ${outOfRetries}
+      THEN ${ImageIngestionStatus.Error}::"ImageIngestionStatus"
+      ELSE ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+    END
+    WHERE i.id = ANY(${ids}::int[])
+      AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+      AND i."nsfwLevel" = 0
+      AND i."blockedFor" IS NULL
+      AND NOT EXISTS (SELECT 1 FROM "TagsOnImageDetails" t WHERE t."imageId" = i.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM "ModActivity" m
+        WHERE m."entityType" = 'image' AND m."entityId" = i.id AND m.activity = 'review'
+      )
+    RETURNING i.id, i.ingestion
+  `;
+  const queued = rows.filter((r) => r.ingestion === ImageIngestionStatus.Rescan).map((r) => r.id);
+  if (!queued.length) return;
+  await dbWrite.$executeRaw`
+    INSERT INTO "JobQueue" (type, "entityType", "entityId")
+    SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", id
+    FROM unnest(${queued}::int[]) AS id
+    ON CONFLICT DO NOTHING
+  `;
 }
 
 /**
@@ -2573,6 +2619,8 @@ const getAllImagesUncaptured = async (
         : Prisma.sql`(i."minor" != TRUE)`
     );
   }
+  // Whatever the viewer's settings; also the feed service's hydrate, which reads through here.
+  AND.push(minorMatureImageVisibleSql({ userId: ownerId, isModerator }));
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "TagsOnImageDetails" toi
@@ -4457,6 +4505,7 @@ export const getImagesForModelVersion = async ({
     );
     imageWhere.push(imageReviewedSql());
   }
+  imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   const query = Prisma.sql`
      WITH targets AS (
@@ -4621,6 +4670,7 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     return records;
   },
   appendFn: async (records, { bypassLocal }) => {
+    for (const entry of records) entry.images = entry.images.filter((i) => !isMinorMatureImage(i));
     const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
     // Passed on so the models search index, which fetches with bypassLocal, writes Redis-fresh tag
     // ids into its documents instead of ones this process's L1 may hold from before a tag edit.
@@ -4732,6 +4782,7 @@ export const getImagesForPosts = async ({
         : Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`
     );
   }
+  imageWhere.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   if (isModerator) {
     if (poiOnly) {
@@ -4984,6 +5035,7 @@ export const getImagesByEntity = async ({
     }
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
+  AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -5554,7 +5606,10 @@ export const getEntityCoverImage = async ({
   // they apply it before DISTINCT ON and fall back to the next image.
   const imageNotFlagged = Prisma.sql`(
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
-  )`;
+  ) AND ${minorMatureImageVisibleSql({
+    userId: signedIn ? viewerId ?? undefined : undefined,
+    isModerator,
+  })}`;
 
   // An unrated image is never a cover for anyone but moderators, owner included.
   const coverRated = Prisma.sql`(i."nsfwLevel" != 0 OR ${isModerator}::boolean)`;
@@ -7412,6 +7467,10 @@ const notHeldForReviewWhere: Prisma.ImageWhereInput = {
   OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
 };
 
+/** Held to the request's servable levels: a capped request gets no unrated upload either. */
+const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
+  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
+
 // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
 // over a crucible's maxClipSeconds before the user spends a click on them.
 const myImagesSelect = {
@@ -7436,10 +7495,12 @@ async function getFailedEntryDrafts({
   userId,
   type,
   limit,
+  servableLevels,
 }: {
   userId: number;
   type: Prisma.ImageWhereInput['type'];
   limit: number;
+  servableLevels: number;
 }) {
   try {
     const held = await ownerHeld(dbWrite, Prisma.sql`FROM (SELECT ${userId}::int AS "userId") m`);
@@ -7454,6 +7515,7 @@ async function getFailedEntryDrafts({
         nsfwLevel: { not: NsfwLevel.Blocked },
         createdAt: { gte: decreaseDate(new Date(), 7, 'days') },
         ...entryDraftImageWhere(),
+        AND: [servableLevelWhere(servableLevels)],
       },
       take: limit,
       orderBy: { id: 'desc' },
@@ -7484,7 +7546,12 @@ export const getMyImages = async ({
   userId,
   limit,
   cursor = 0,
-}: GetMyImagesInput & { userId: number }) => {
+  servableLevels,
+}: GetMyImagesInput & {
+  userId: number;
+  /** `requestServableLevels(ctx)`: the input carries no level, so the domain cap is applied here. */
+  servableLevels: number;
+}) => {
   const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
   const type = {
     in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
@@ -7508,7 +7575,7 @@ export const getMyImages = async ({
           : {}),
         // The unpublished path has no review gate of its own; these holds stay out of it too,
         // for moderators as well: they review held media in the mod tools.
-        AND: [notHeldForReviewWhere],
+        AND: [notHeldForReviewWhere, servableLevelWhere(servableLevels)],
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,
@@ -7516,7 +7583,7 @@ export const getMyImages = async ({
     });
     const failedEntryDraftsQuery =
       publishedOnly && includeEntryDrafts && !cursor
-        ? getFailedEntryDrafts({ userId, type, limit })
+        ? getFailedEntryDrafts({ userId, type, limit, servableLevels })
         : Promise.resolve([]);
     const [media, failedEntryDrafts] = await Promise.all([mediaQuery, failedEntryDraftsQuery]);
 
@@ -7664,6 +7731,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.refresh(id);
+  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: [id] });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7683,6 +7751,7 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.refresh(ids);
+  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: ids });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(

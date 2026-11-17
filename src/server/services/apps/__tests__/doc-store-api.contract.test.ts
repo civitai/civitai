@@ -677,7 +677,7 @@ async function runCase(c: Case) {
 async function mintDevReal(app: AppRow, uid: number, scopeSource: string[]): Promise<string> {
   const granted = clampDevScopes({
     scopeSource,
-    oauthAllowed: 0,
+    oauthAllowed: 0n,
     spendEntitled: false,
     spendRequested: false,
     allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
@@ -4281,5 +4281,149 @@ describe('per-app refusal attribution: which limit, for which app', () => {
       status: 409,
       userId: VIEWER_IDS.v1,
     });
+  });
+});
+
+describe('orchestrator media links in shared data are refused in every moderation mode', () => {
+  const BLOB =
+    'https://orchestration.civitai.com/v2/consumer/blobs/ABC123DEF.png?sig=s1&exp=2099-01-01';
+  const PUBLIC = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc-123/width=450/1.jpeg';
+
+  const CONTENT_REDIRECT = 'https://orchestration-new.civitai.com/v2/consumer/blobs/content/Tk9x2Q';
+
+  async function put(data: Record<string, unknown>, key = 'p1') {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    return call({ token: t, method: 'PUT', path: `/posts/${key}`, body: { data } });
+  }
+
+  it.each(['off', 'shadow', 'enforce'] as const)(
+    'a consumer-blob url is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const r = await put({ caption: 'mine', img: BLOB });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect((r.body as { details: unknown }).details).toEqual({
+        category: 'link',
+        field: 'data.img',
+        fieldKind: 'value',
+      });
+      expect(JSON.stringify(r.body)).not.toContain('ABC123DEF');
+    }
+  );
+
+  it.each(['off', 'shadow', 'enforce'] as const)(
+    'a resolved blob content redirect url is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const r = await put({ img: CONTENT_REDIRECT });
+      expect(r.status).toBe(422);
+      expect((r.body as { details: unknown }).details).toMatchObject({
+        category: 'link',
+        field: 'data.img',
+      });
+    }
+  );
+
+  it('a percent-encoded orchestrator link is refused', async () => {
+    h.moderationMode = 'off';
+    const r = await put({ img: encodeURIComponent(BLOB) });
+    expect(r.status).toBe(422);
+    expect(r.body).toMatchObject({ code: 'content_rejected' });
+  });
+
+  it('a create carrying a consumer-blob url is refused', async () => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({
+      token: t,
+      method: 'POST',
+      path: '/posts',
+      body: { data: { img: BLOB } },
+    });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({
+      category: 'link',
+      field: 'data.img',
+    });
+  });
+
+  it.each([
+    ['a document key', 'PUT', '/posts/orchestration.civitai.com', { data: { caption: 'fine' } }],
+    [
+      'a counter key that creates a document',
+      'POST',
+      '/plays/orchestration.civitai.com/counters/plays',
+      undefined,
+    ],
+  ] as const)('an orchestrator host as %s is refused', async (_label, method, path, body) => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({ token: t, method, path, ...(body ? { body } : {}) });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({
+      category: 'link',
+      field: 'key',
+    });
+  });
+
+  it('a refused write stores nothing', async () => {
+    h.moderationMode = 'off';
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    const r = await call({
+      token: t,
+      method: 'PUT',
+      path: '/posts/p9',
+      body: { data: { img: BLOB } },
+    });
+    expect(r.status).toBe(422);
+    expect((await call({ token: t, method: 'GET', path: '/posts/p9' })).status).toBe(404);
+  });
+
+  it.each([
+    ['tab', 'https://orches\ttration.civitai.com/x'],
+    ['newline', 'https://orchestration.civitai\n.com/x'],
+    ['carriage return', 'https://orchestration.civi\rtai.com/x'],
+  ])('a host split by a %s is refused', async (_label, url) => {
+    h.moderationMode = 'off';
+    const r = await put({ img: url });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ category: 'link' });
+  });
+
+  it('a link in a document too large for the leaf walk is still refused', async () => {
+    h.moderationMode = 'off';
+    const pad = Array.from({ length: 1200 }, (_, i) => `p${i}`);
+    const r = await put({ pad, img: 'https://orchestration.civitai\n.com/x' });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ category: 'link' });
+  });
+
+  it('names the nested field that holds the link', async () => {
+    h.moderationMode = 'off';
+    const r = await put({ a: 'ok', b: { c: BLOB } });
+    expect((r.body as { details: unknown }).details).toMatchObject({ field: 'data.b.c' });
+  });
+
+  it('enforce: a minor hit in the same write still takes precedence over the link', async () => {
+    h.moderationMode = 'enforce';
+    const r = await put({ t: 'contract-minor-term', img: BLOB });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ field: 'data.t' });
+    expect((r.body as { details: { category: string } }).details.category).not.toBe('link');
+  });
+
+  it('a public image url saves', async () => {
+    h.moderationMode = 'off';
+    expect((await put({ img: PUBLIC })).status).toBe(200);
+  });
+
+  it('plain text saves', async () => {
+    h.moderationMode = 'off';
+    expect((await put({ caption: 'a cat on a windowsill' })).status).toBe(200);
   });
 });

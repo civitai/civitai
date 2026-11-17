@@ -1,6 +1,6 @@
 {
-  "name": "fallback-collection",
-  "description": "A collection is read with its permissions: not ported.",
+  "name": "fallback-collection-recently-added",
+  "description": "Recently Added orders by the collection item: not ported.",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "baseModelMetrics": true,
@@ -10,7 +10,7 @@
     "decorationEvents": []
   },
   "request": {
-    "input": "{\"json\":{\"collectionId\":7,\"browsingLevel\":1}}",
+    "input": "{\"json\":{\"collectionId\":41,\"sort\":\"Recently Added\",\"browsingLevel\":1}}",
     "headers": {
       "host": "blue.example.test"
     },
@@ -30,6 +30,6 @@
     "creators": []
   },
   "expect": {
-    "fallback": "input-collectionId"
+    "fallback": "model-sort-recently-added"
   }
 }

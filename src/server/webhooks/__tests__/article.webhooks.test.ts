@@ -68,10 +68,33 @@ describe('new-article webhook payload', () => {
     ['is blocked', image(10, { ingestion: 'Blocked' }), []],
     ['awaits review', image(10, { needsReview: 'minor' }), []],
     ['is not scanned yet', image(10, { ingestion: 'Pending' }), []],
+    ['is a restricted minor image', image(10, { minor: true, nsfwLevel: 4 }), []],
   ])('🔴 sends no cover, as image or URL, that %s', async (_, cover, ids) => {
     const { payload } = await send([article(cover)], ids);
     expect(payload[0].coverImage).toBeNull();
     expect(payload[0].cover).toBeNull();
+  });
+
+  it('sends a minor-flagged PG-13 cover and an unflagged R cover, without the flag (control)', async () => {
+    for (const extra of [
+      { minor: true, nsfwLevel: 2 },
+      { minor: false, nsfwLevel: 4 },
+    ]) {
+      const { payload } = await send([article(image(10, extra))]);
+      expect(payload[0].coverImage).toMatchObject({ id: 10 });
+      expect(payload[0].coverImage).not.toHaveProperty('minor');
+    }
+  });
+
+  it('reads the flag for the cover', async () => {
+    const { findMany } = await send([]);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          coverImage: { select: expect.objectContaining({ minor: true }) },
+        }),
+      })
+    );
   });
 
   it('keeps the cover URL of an article with no cover image', async () => {

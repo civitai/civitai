@@ -1,11 +1,11 @@
 import { REDIS_SYS_KEYS } from '@civitai/redis';
-import { TokenScope, tokenScopeMaskToList } from '@civitai/auth/token-scope';
+import { parseTokenScope, TokenScope, tokenScopeMaskToList } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getSysRedis } from '$lib/server/redis';
 import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
 import { checkClientAccess, userHasRole } from './access';
 import { SYSTEM_USER_ID, SYSTEM_WORKLOAD_ROLE } from './constants';
-import { carriesNonUserScope } from './scope';
+import { apiKeyRowScope, carriesNonUserScope, scopeFromColumn } from './scope';
 import { accountRefusesScope, CLIENT_CREDENTIALS_TOKEN_NAME_PREFIX } from './token-helpers';
 import type { ExchangeResource } from './exchange-resources';
 
@@ -20,7 +20,7 @@ export interface SubjectToken {
   id: number;
   userId: number;
   clientId: string;
-  tokenScope: number;
+  tokenScope: bigint;
   expiresAt: Date;
   name: string;
 }
@@ -28,7 +28,7 @@ export interface SubjectToken {
 function subjectTokenQuery(now: Date) {
   return db
     .selectFrom('ApiKey')
-    .select(['id', 'userId', 'clientId', 'tokenScope', 'expiresAt', 'name'])
+    .select(['id', 'userId', 'clientId', 'tokenScope', 'tokenScopeWide', 'expiresAt', 'name'])
     .where('type', '=', 'Access')
     .where('clientId', 'is not', null)
     .where('expiresAt', '>', now);
@@ -39,11 +39,19 @@ function asSubject(row: {
   userId: number;
   clientId: string | null;
   tokenScope: number;
+  tokenScopeWide: string | number | null;
   expiresAt: Date | null;
   name: string;
 }): SubjectToken | undefined {
   if (!row.clientId || !row.expiresAt) return undefined;
-  return { ...row, clientId: row.clientId, expiresAt: row.expiresAt };
+  return {
+    id: row.id,
+    userId: row.userId,
+    clientId: row.clientId,
+    tokenScope: apiKeyRowScope(row),
+    expiresAt: row.expiresAt,
+    name: row.name,
+  };
 }
 
 /** The unexpired OAuth access token with this hash (a null expiry never matches). */
@@ -66,16 +74,17 @@ export async function findSubjectTokenById(
 
 export interface ExchangeClient {
   id: string;
-  allowedScopes: number;
+  allowedScopes: bigint;
   accessMode: string;
 }
 
 export async function findExchangeClient(id: string): Promise<ExchangeClient | undefined> {
-  return db
+  const row = await db
     .selectFrom('OauthClient')
     .select(['id', 'allowedScopes', 'accessMode'])
     .where('id', '=', id)
     .executeTakeFirst();
+  return row && { ...row, allowedScopes: scopeFromColumn(row.allowedScopes) };
 }
 
 /** Why the subject token may not be exchanged, or null. */
@@ -94,7 +103,7 @@ export async function subjectTokenRefusal(subject: SubjectToken): Promise<string
  */
 export async function userRefusal(
   userId: number,
-  scope: number,
+  scope: bigint,
   app: ExchangeClient
 ): Promise<{ reason: string; refusal: 'unauthorized_client' | 'invalid_grant' } | null> {
   const access = await checkClientAccess(app.accessMode, userId);
@@ -121,16 +130,16 @@ export async function userRefusal(
 
 /** The most an exchanged token may carry: the subject's scope within the resource's and the app's. */
 export function exchangeScopeCeiling(
-  subjectScope: number,
+  subjectScope: bigint,
   resource: ExchangeResource,
   app: ExchangeClient
-): number {
+): bigint {
   // UserRead rides every OAuth token; the resource never receives it (registry validation refuses it).
   return subjectScope & resource.scopes & app.allowedScopes & ~TokenScope.UserRead;
 }
 
 /** Space-separated scope names, in bit order. */
-export function scopeNames(scope: number): string {
+export function scopeNames(scope: bigint): string {
   return tokenScopeMaskToList(scope)
     .map((s) => s.key)
     .join(' ');
@@ -146,7 +155,7 @@ export interface ExchangeRecord {
   clientId: string;
   actor: string | null;
   resource: string;
-  scopeBits: number;
+  scopeBits: bigint;
   exp: number;
 }
 
@@ -155,7 +164,7 @@ export interface ServiceTokenRecord {
   kind: 'service';
   clientId: string;
   resource: string;
-  scopeBits: number;
+  scopeBits: bigint;
   exp: number;
 }
 
@@ -202,7 +211,8 @@ export async function writeExchangeRecord(
   nowSeconds: number
 ): Promise<void> {
   const ttl = Math.max(1, record.exp - nowSeconds + 60);
-  await withSysRedis((redis) => redis.set(recordKey(jti), JSON.stringify(record), { EX: ttl }));
+  const stored = { ...record, scopeBits: Number(record.scopeBits) };
+  await withSysRedis((redis) => redis.set(recordKey(jti), JSON.stringify(stored), { EX: ttl }));
 }
 
 /** The record for `jti`, or null when there is none. Throws when Redis cannot answer. */
@@ -210,7 +220,10 @@ export async function readExchangeRecord(jti: string): Promise<TokenRecord | nul
   const raw = await withSysRedis((redis) => redis.get(recordKey(jti)));
   if (raw == null) return null;
   try {
-    return JSON.parse(raw) as TokenRecord;
+    const stored = JSON.parse(raw) as Omit<TokenRecord, 'scopeBits'> & { scopeBits: unknown };
+    const scopeBits = parseTokenScope(stored.scopeBits);
+    if (scopeBits === null) return null;
+    return { ...stored, scopeBits } as TokenRecord;
   } catch {
     return null;
   }

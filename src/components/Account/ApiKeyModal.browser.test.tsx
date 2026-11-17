@@ -27,7 +27,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 import { ApiKeyModal } from '~/components/Account/ApiKeyModal';
-import { TokenScope, getScopeLabel } from '~/shared/constants/token-scope.constants';
+import { getScopeLabel } from '~/shared/constants/token-scope.constants';
 
 function submittedScope(): number {
   expect(mutate).toHaveBeenCalledTimes(1);
@@ -54,7 +54,8 @@ describe('ApiKeyModal scope', () => {
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
 
     await vi.waitFor(() => expect(mutate).toHaveBeenCalled());
-    expect(submittedScope()).toBe(TokenScope.UserRead);
+    // Sent as a JSON number (UserRead = 1): tRPC scope inputs stay numbers.
+    expect(submittedScope()).toBe(1);
   });
 
   test('unticking a box and ticking it again still saves Full Access', async () => {

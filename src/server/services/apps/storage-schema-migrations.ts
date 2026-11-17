@@ -38,6 +38,8 @@
 // `additionalProperties` schema).
 
 import { firstSchemaFailure, jsonEqual } from '~/server/services/apps/doc-store-schema';
+import { collectSharedDataLeaves } from '~/server/services/apps/shared-data-leaves';
+import { valueContainsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import type {
   AppStorageBreakingKeyword,
   AppStorageCollectionSchema,
@@ -464,6 +466,23 @@ export function checkStorageMigrations(
       }
     });
     if (plan.length > 0) check.plans.set(name, plan);
+
+    // A default is written into documents other viewers read, so it is held to the shared-data rule.
+    ops.forEach((op, i) => {
+      if (op.op !== 'default') return;
+      if (typeof op.value !== 'string' && 'overflow' in collectSharedDataLeaves(op.value)) {
+        check.errors.push(
+          `${opLabel(name, i)}.value is too large or too deeply nested to check, so it is refused`
+        );
+      } else if (valueContainsPrivateMediaUrl(op.value)) {
+        check.errors.push(
+          `${opLabel(
+            name,
+            i
+          )}.value carries an orchestrator media link, which app storage does not accept`
+        );
+      }
+    });
 
     // What a mutation op writes must be what the new schema accepts there.
     const schema = collection.schema as Node | undefined;

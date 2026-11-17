@@ -1,6 +1,6 @@
 {
   "name": "@civitai/notifications-app",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",

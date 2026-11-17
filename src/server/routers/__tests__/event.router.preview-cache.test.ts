@@ -52,7 +52,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 type Ctx = {
   user?: { id: number; isModerator?: boolean };
   acceptableOrigin: boolean;
-  tokenScope: number;
+  tokenScope: bigint;
   cache: {
     browserTTL: number;
     edgeTTL: number;

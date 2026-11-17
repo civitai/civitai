@@ -51,6 +51,7 @@ import {
 } from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { creatorAggregateScoreFromMeta } from '~/shared/utils/creator-score';
+import { escapeLike } from '~/server/utils/ilike';
 import {
   ImageIngestionStatus,
   ServiceOfferingIngestionStatus,
@@ -364,6 +365,7 @@ export async function getServiceOfferingFeed({
   servable,
   viewerId,
   sort,
+  query,
   cursor,
   limit,
 }: GetServiceOfferingFeedInput & {
@@ -376,6 +378,21 @@ export async function getServiceOfferingFeed({
   const rows = await dbRead.serviceOffering.findMany({
     where: {
       ...listable,
+      // Keep the listing rule's AND; the query only narrows it.
+      AND: [
+        ...listable.AND,
+        ...(query
+          ? [
+              {
+                // Prisma passes `%` and `_` through to LIKE as wildcards.
+                OR: [
+                  { title: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                  { description: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                ],
+              },
+            ]
+          : []),
+      ],
       seller: {
         ...listable.seller,
         // The card links to the storefront, which is addressed by username.
