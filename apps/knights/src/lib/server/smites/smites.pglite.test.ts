@@ -100,6 +100,20 @@ describe('smites', () => {
     expect(await activeSmiteCount(db, 2)).toBe(0);
   });
 
+  it('lapses the old smites of an Acolyte whose reset is held, and only while it is held', async () => {
+    await seedPlayer(pg, 1, 'Acolyte');
+    await seedPlayer(pg, 2, 'Knight');
+    const old = new Date(NOW.getTime() - (SMITES.expireAfterDays + 1) * 86_400_000);
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","reason","createdAt") VALUES (1,$1,$2),(1,$1,$2),(1,$1,$2),(2,$1,$2),(2,$1,$2),(2,$1,$2)`,
+      [ACOLYTE_WRONG_ANSWER_SMITE, old]
+    );
+    expect(await expireSmites(db, NOW)).toBe(0);
+    expect(await expireSmites(db, NOW, { holdAcolyteWrongAnswer: true })).toBe(3);
+    expect(await activeSmiteCount(db, 1)).toBe(0);
+    expect(await activeSmiteCount(db, 2)).toBe(3);
+  });
+
   it('refuses a vote while a reset is due', async () => {
     await seedPlayer(pg, 1);
     await seedImage(pg, 10);
@@ -151,13 +165,16 @@ describe('career reset retry', () => {
 describe('career reset hold while Acolyte smites are off', () => {
   async function seedDue() {
     // 1: Acolyte, three wrong-answer smites. 2: Acolyte, one smite for another reason. 3: Knight, three wrong-answer smites.
-    await seedPlayer(pg, 1, 'Acolyte');
-    await seedPlayer(pg, 2, 'Acolyte');
+    // 4: Acolyte, one smite with no reason. 5: Acolyte, three wrong-answer smites and a cleansed one for another reason.
+    for (const id of [1, 2, 4, 5]) await seedPlayer(pg, id, 'Acolyte');
     await seedPlayer(pg, 3, 'Knight');
     const W = ACOLYTE_WRONG_ANSWER_SMITE;
     await pg.query(
-      `INSERT INTO "NewOrderSmite" ("targetPlayerId","reason") VALUES (1,$1),(1,$1),(1,$1),(2,$1),(2,$1),(2,'Hidden check'),(3,$1),(3,$1),(3,$1)`,
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","reason") VALUES (1,$1),(1,$1),(1,$1),(2,$1),(2,$1),(2,'Hidden check'),(3,$1),(3,$1),(3,$1),(4,$1),(4,$1),(4,NULL),(5,$1),(5,$1),(5,$1)`,
       [W]
+    );
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","reason","cleansedAt") VALUES (5,'Hidden check',now())`
     );
   }
   const resetsWith = async (acolyteSmites?: () => boolean) => {
@@ -171,13 +188,16 @@ describe('career reset hold while Acolyte smites are off', () => {
 
   it('holds the reset of an Acolyte whose active smites are all wrong-answer smites, and no one else', async () => {
     await seedDue();
-    expect(await resetsWith(() => false)).toEqual({ result: { due: 2, failed: 0 }, reset: [2, 3] });
+    expect(await resetsWith(() => false)).toEqual({
+      result: { due: 3, failed: 0 },
+      reset: [2, 3, 4],
+    });
   });
 
   it('resets everyone at the limit when Acolyte smites are on, or the switch is not wired', async () => {
     await seedDue();
-    expect((await resetsWith(() => true)).reset).toEqual([1, 2, 3]);
-    expect((await resetsWith()).reset).toEqual([1, 2, 3]);
+    expect((await resetsWith(() => true)).reset).toEqual([1, 2, 3, 4, 5]);
+    expect((await resetsWith()).reset).toEqual([1, 2, 3, 4, 5]);
   });
 });
 

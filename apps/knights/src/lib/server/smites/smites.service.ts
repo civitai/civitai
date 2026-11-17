@@ -83,17 +83,14 @@ export async function workOffSmites(trx: Executor, playerId: number, now: Date):
  * Lapses old smites, as the original game's nightly job does, except for a player whose reset is still due: expiry must not
  * undo it. The affected players are locked in id order first, the order votes and settlement take them in.
  */
-export async function expireSmites(db: Kysely<DB>, now: Date): Promise<number> {
+export async function expireSmites(
+  db: Kysely<DB>,
+  now: Date,
+  hold: HoldOption = {}
+): Promise<number> {
   const cutoff = new Date(now.getTime() - SMITES.expireAfterDays * 86_400_000);
   const resetDue = (eb: ExpressionBuilder<DB, 'NewOrderSmite'>) =>
-    eb('targetPlayerId', 'in', (sub) =>
-      sub
-        .selectFrom('NewOrderSmite as a')
-        .select('a.targetPlayerId')
-        .where('a.cleansedAt', 'is', null)
-        .groupBy('a.targetPlayerId')
-        .having((hb) => hb.fn.countAll(), '>=', SMITES.max)
-    );
+    eb('targetPlayerId', 'in', dueForReset(db, hold));
 
   return db.transaction().execute(async (trx) => {
     const players = await trx
@@ -128,14 +125,13 @@ export async function expireSmites(db: Kysely<DB>, now: Date): Promise<number> {
   });
 }
 
-/** `holdAcolyteWrongAnswer` leaves out Acolytes whose active smites are all wrong-answer smites. */
-export async function playersDueForReset(
-  db: Executor,
-  {
-    limit = 100,
-    holdAcolyteWrongAnswer = false,
-  }: { limit?: number; holdAcolyteWrongAnswer?: boolean } = {}
-): Promise<number[]> {
+type HoldOption = {
+  /** Leaves out Acolytes whose active smites are all wrong-answer smites (`KNIGHTS_APPRENTICE_SMITES=off`). */
+  holdAcolyteWrongAnswer?: boolean;
+};
+
+/** Players whose active smites make a career reset due. */
+function dueForReset(db: Executor, { holdAcolyteWrongAnswer = false }: HoldOption) {
   let query = db
     .selectFrom('NewOrderSmite as s')
     .select('s.targetPlayerId')
@@ -158,7 +154,17 @@ export async function playersDueForReset(
       )
     );
   }
-  const rows = await query.orderBy('s.targetPlayerId', 'asc').limit(limit).execute();
+  return query;
+}
+
+export async function playersDueForReset(
+  db: Executor,
+  { limit = 100, ...hold }: { limit?: number } & HoldOption = {}
+): Promise<number[]> {
+  const rows = await dueForReset(db, hold)
+    .orderBy('s.targetPlayerId', 'asc')
+    .limit(limit)
+    .execute();
   return rows.map((r) => r.targetPlayerId);
 }
 
