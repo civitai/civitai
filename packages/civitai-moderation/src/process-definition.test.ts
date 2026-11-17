@@ -116,6 +116,16 @@ describe('processDefinitionSchema', () => {
     expect(errors(d)).toEqual([]);
   });
 
+  it('holds a transition behind a clock window only when that clock has one, opening before its deadline', () => {
+    const d = valid();
+    Object.assign(d.transitions[0], { notBefore: 'restore-window' });
+    expect(errors(d)).toContain('clock "restore-window" has no opensAfter');
+    Object.assign(d.clocks[0], { opensAfter: 10 });
+    expect(errors(d)).toContain('a window must open before its deadline');
+    Object.assign(d.clocks[0], { businessDays: 14 });
+    expect(errors(d)).toEqual([]);
+  });
+
   it('refuses a transition out of a terminal state', () => {
     const d = valid();
     d.transitions[0].from = 'closed';

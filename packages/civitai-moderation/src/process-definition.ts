@@ -27,7 +27,14 @@ export const FIELD_KINDS = [
 
 export const PARTY_ROLES = ['claimant', 'uploader', 'agent-for-uploader'] as const;
 
-export const NOTICE_SLOTS = ['caseRef', 'items', 'continueLink', 'receivedAt'] as const;
+/** `submission` renders the fields the party submitted (a counter-notice copied to the claimant, say). */
+export const NOTICE_SLOTS = [
+  'caseRef',
+  'items',
+  'continueLink',
+  'receivedAt',
+  'submission',
+] as const;
 
 const id = z
   .string()
@@ -85,6 +92,8 @@ const definitionShape = z.strictObject({
         to: id,
         label: z.string().min(1),
         requires: z.array(id).default([]),
+        /** Unavailable until this clock's window opens (a restore no earlier than business day 10). */
+        notBefore: id.optional(),
         effects: z.array(effectSchema).default([]),
       })
     )
@@ -103,11 +112,19 @@ const definitionShape = z.strictObject({
           startsOn: z.enum(['receipt', 'effect']).default('effect'),
           hours: z.number().int().positive().optional(),
           businessDays: z.number().int().positive().optional(),
+          /** Where a window opens, in the clock's own unit; the duration is its deadline. */
+          opensAfter: z.number().int().positive().optional(),
           warnBeforeHours: z.number().int().positive().optional(),
         })
         .refine((c) => (c.hours === undefined) !== (c.businessDays === undefined), {
           message: 'a clock runs for either hours or businessDays',
         })
+        .refine(
+          (c) => c.opensAfter === undefined || c.opensAfter < (c.hours ?? c.businessDays ?? 0),
+          {
+            message: 'a window must open before its deadline',
+          }
+        )
     )
     .default([]),
   notices: z
@@ -186,6 +203,12 @@ export const processDefinitionSchema = definitionShape.superRefine((d, ctx) => {
       if (e.kind === 'rerouteTo' && e.process === d.key)
         issue(['transitions', i, 'effects', j], 'a process cannot reroute to itself');
     });
+    if (t.notBefore !== undefined) {
+      const clock = d.clocks.find((c) => c.id === t.notBefore);
+      if (!clock) issue(['transitions', i, 'notBefore'], `unknown clock "${t.notBefore}"`);
+      else if (clock.opensAfter === undefined)
+        issue(['transitions', i, 'notBefore'], `clock "${t.notBefore}" has no opensAfter`);
+    }
     if (
       t.effects.some((e) => e.kind === 'rerouteTo') &&
       !t.effects.some((e) => e.kind === 'escalateToLegal')
