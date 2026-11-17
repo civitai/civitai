@@ -1547,6 +1547,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
   await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
+  await queueModelsForImageChildTagChanges({ levelImageIds: ids });
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -6112,6 +6113,7 @@ async function afterImageNsfwLevelSet({
     // The version showcase is cached for a day and filtered by level when it is built.
     postId ? bustCachesForPosts(postId) : undefined,
   ]);
+  if (postId) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
   if (status) {
     await dbWrite.imageRatingRequest.updateMany({
       where: { imageId: id, status: 'Pending' },
@@ -6307,7 +6309,10 @@ export async function raiseOwnImageNsfwLevel({
   if (!raised) return false;
 
   await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
-  if (raised.postId) await updatePostNsfwLevel(raised.postId);
+  if (raised.postId) {
+    await updatePostNsfwLevel(raised.postId);
+    await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  }
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
   return true;

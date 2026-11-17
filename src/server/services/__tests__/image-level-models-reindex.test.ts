@@ -18,7 +18,12 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
-import { resolveIngestionError } from '~/server/services/image.service';
+import {
+  raiseOwnImageNsfwLevel,
+  resolveIngestionError,
+  setImageNsfwLevelFromKnights,
+  updateNsfwLevel,
+} from '~/server/services/image.service';
 import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -85,5 +90,42 @@ describe('resolveIngestionError: models index', () => {
     await resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
 
     expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+  });
+});
+
+describe('level setters: models index', () => {
+  const updatedPost = (postId: number | null) =>
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ postId }] as never);
+
+  it('a Knights level hands the re-rated post image over', async () => {
+    updatedPost(10);
+
+    await setImageNsfwLevelFromKnights({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+  });
+
+  it("an owner's raise hands the re-rated post image over", async () => {
+    updatedPost(10);
+
+    await raiseOwnImageNsfwLevel({ id: IMAGE_ID, nsfwLevel: 4, userId: 7 });
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+  });
+
+  it("an owner's raise skips an image on no post", async () => {
+    updatedPost(null);
+
+    await raiseOwnImageNsfwLevel({ id: IMAGE_ID, nsfwLevel: 4, userId: 7 });
+
+    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+  });
+
+  it('a recompute hands its images over', async () => {
+    await updateNsfwLevel([IMAGE_ID, 89]);
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
+      levelImageIds: [IMAGE_ID, 89],
+    });
   });
 });
