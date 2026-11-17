@@ -30,7 +30,8 @@ export type ModeratorGrantId =
   | 'user.message.asCivitai'
   | 'labelStore.submitPrediction'
   | 'apps.buzz.refund'
-  | 'apps.buzz.refund.large';
+  | 'apps.buzz.refund.large'
+  | 'feedback.status.set';
 
 export async function hasModeratorGrant(
   user: { roles?: string[] },

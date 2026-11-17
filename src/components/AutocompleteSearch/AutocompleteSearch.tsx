@@ -557,7 +557,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onClear?.();
   };
 
-  const dropsImages = !!features.imageSearch && isImageSearchIndex(searchIndexMap[indexNameProp]);
+  const dropsImages =
+    offersImageSearch(features) && isImageSearchIndex(searchIndexMap[indexNameProp]);
   const handleDragOver = (event: React.DragEvent) => {
     if (dropsImages && mayCarryImage(event.dataTransfer.types)) event.preventDefault();
   };
@@ -566,7 +567,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     const imageId = imageIdFromDrop(event.dataTransfer, [window.location.host]);
     if (!imageId) return;
     event.preventDefault();
-    void router.push(moreLikeThisHref(imageId));
+    void router.push(moreLikeThisHref(features, imageId));
   };
 
   // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed

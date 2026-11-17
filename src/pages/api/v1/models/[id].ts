@@ -246,7 +246,7 @@ const baseHandler = PublicEndpoint(async function handler(
   } catch (error) {
     return handleEndpointError(res, error);
   } finally {
-    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode, res);
   }
 });
 
