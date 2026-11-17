@@ -28,7 +28,8 @@
  * @returns {number[]} the 0-based shard of each key, aligned with `keys`
  */
 export function assignShards(keys, costOf, count) {
-  if (!Number.isInteger(count) || count < 1) throw new Error(`shard count must be >= 1, got ${count}`);
+  if (!Number.isInteger(count) || count < 1)
+    throw new Error(`shard count must be >= 1, got ${count}`);
   if (new Set(keys).size !== keys.length) throw new Error('assignShards: keys must be unique');
 
   const byKey = (a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
@@ -36,7 +37,8 @@ export function assignShards(keys, costOf, count) {
   const unknown = [];
   keys.forEach((key, index) => {
     const cost = costOf(key);
-    if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) known.push({ key, index, cost });
+    if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0)
+      known.push({ key, index, cost });
     else unknown.push({ key, index });
   });
 

@@ -36,7 +36,10 @@ describe('assignShards', () => {
   });
 
   it('is a partition independent of input order, at every width', () => {
-    const keys = Array.from({ length: 257 }, (_, i) => `src/f${String(i).padStart(3, '0')}.test.ts`);
+    const keys = Array.from(
+      { length: 257 },
+      (_, i) => `src/f${String(i).padStart(3, '0')}.test.ts`
+    );
     // Deterministic, pairwise-distinct-ish costs with deliberate ties, plus some unknowns.
     const cost = (k: string) => {
       const n = Number(k.slice(5, 8));
@@ -100,9 +103,17 @@ describe('TimingShardSequencer', () => {
         config: { root: '/repo', shard: { index, count: 3 } },
       } as never).shard(files as never);
       expect(ours).toEqual(theirs);
-      const rr = files.filter((_, i) => assignShards(
-        files.map((f) => `${f.project.name}\0${f.moduleId}`), () => undefined, 3)[i] === index - 1);
-      if (rr.length !== theirs.length || rr.some((f, i) => f !== theirs[i])) differsFromRoundRobin = true;
+      const rr = files.filter(
+        (_, i) =>
+          assignShards(
+            files.map((f) => `${f.project.name}\0${f.moduleId}`),
+            () => undefined,
+            3
+          )[i] ===
+          index - 1
+      );
+      if (rr.length !== theirs.length || rr.some((f, i) => f !== theirs[i]))
+        differsFromRoundRobin = true;
     }
     // Control: the fixture must be one where the two splits disagree, or this test proves nothing.
     expect(differsFromRoundRobin).toBe(true);

@@ -72,7 +72,8 @@ export function buildTimings(perfs, { rounds = 5 } = {}) {
   // The consensus used to ESTIMATE factors is a geometric mean, not a median: with two or three
   // samples per file the median IS one run's own sample, so that run's ratios come out exactly 1
   // for most of its files and its factor sticks at 1.00 whatever its speed.
-  const geomean = (xs) => Math.exp(xs.reduce((a, x) => a + Math.log(Math.max(x, 1)), 0) / xs.length);
+  const geomean = (xs) =>
+    Math.exp(xs.reduce((a, x) => a + Math.log(Math.max(x, 1)), 0) / xs.length);
 
   let factors = runs.map(() => 1);
   for (let round = 0; round < rounds && runs.length > 1; round++) {
@@ -92,7 +93,10 @@ export function buildTimings(perfs, { rounds = 5 } = {}) {
   return { files, factors };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
+) {
   const inputs = process.argv.slice(2);
   if (inputs.length === 0) {
     console.error('usage: update-timings.mjs <dir-or-perf.json>...');
@@ -107,7 +111,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   const { files, factors } = buildTimings(perfs);
   const n = Object.keys(files).length;
   console.log(
-    `runner speed factors: ${paths.map((p, i) => `${path.basename(path.dirname(path.dirname(path.dirname(p))))}=${factors[i].toFixed(2)}`).join(' ')}`
+    `runner speed factors: ${paths
+      .map(
+        (p, i) =>
+          `${path.basename(path.dirname(path.dirname(path.dirname(p))))}=${factors[i].toFixed(2)}`
+      )
+      .join(' ')}`
   );
   writeFileSync(
     TIMINGS_PATH,
@@ -120,7 +129,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
         files,
       },
       null,
-      1
+      2
     ) + '\n'
   );
   console.log(`wrote ${n} file costs from ${paths.length} perf.json file(s) to ${TIMINGS_PATH}`);
