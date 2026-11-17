@@ -179,7 +179,13 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 		return nil, err
 	}
 	c.remember(cache, rest, records)
-	return records, nil
+	if len(kept) == 0 {
+		return records, nil
+	}
+	for id, rec := range records {
+		kept[id] = rec
+	}
+	return kept, nil
 }
 
 // memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every
