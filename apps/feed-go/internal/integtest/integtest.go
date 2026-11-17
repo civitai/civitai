@@ -36,7 +36,7 @@ const (
 	// account (the job's container user).
 	EnvClickHouseURL      = "FEED_GO_TEST_CLICKHOUSE_URL"
 	EnvClickHouseUser     = "FEED_GO_TEST_CLICKHOUSE_USER"
-	EnvClickHousePassword = "FEED_GO_TEST_CLICKHOUSE_PASSWORD"
+	EnvClickHousePassword = "FEED_GO_TEST_CLICKHOUSE_PASSWORD" //nolint:gosec // the variable's name, not a credential
 )
 
 func env(t *testing.T, name string) string {
