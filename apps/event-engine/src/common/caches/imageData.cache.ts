@@ -269,7 +269,16 @@ export const profilePictures = createCache<ProfilePictureData>({
        WHERE u.id = ANY($1)
          AND i.ingestion <> 'Blocked'
          AND i."nsfwLevel" != 0
-         AND i."needsReview" IS DISTINCT FROM 'csam'`,
+         AND i."needsReview" IS DISTINCT FROM 'csam'
+         -- The main app's imageReviewedSql: scanned, or a moderator's rating it may stand on.
+         AND (i.ingestion = 'Scanned'
+           OR (i."nsfwLevelLocked" = TRUE
+             AND i.ingestion NOT IN ('Blocked', 'NotFound')
+             AND NOT (i.ingestion = 'Error'
+               AND (COALESCE(i.metadata->>'nsfwLevelReason', '') = 'Knights Vote'
+                 OR COALESCE(i."scanJobs"->'error'->>'failureClass', '') = 'permanent'
+                 OR COALESCE(i."scanJobs"->'lastFailure'->>'failureClass', '') = 'permanent'
+                 OR COALESCE(i."scanJobs"->'permanentFailure' = 'true'::jsonb, FALSE)))))`,
       [ids]
     );
   },
