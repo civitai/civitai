@@ -106,7 +106,7 @@ func (s *Sources) ImageMetrics(ctx context.Context, imageIDs []int) (map[int]Met
 	b := NewBatch()
 	r := s.queueMetrics(b, Unique(imageIDs))
 	b.Exec(ctx)
-	return r.result()
+	return r.result(ctx, s)
 }
 
 // TagIDs is tagIdsForImagesCache.fetch.

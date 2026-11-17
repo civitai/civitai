@@ -354,7 +354,6 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
   sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
 }
 
-/** The `app_block_id` label of the request's verified block claims (`other` without any). */
 /**
  * Whether `app-blocks-storage-unchanged-writes-free` is on for the REQUESTING app: evaluated, like
  * the publish flag (`isPublishRouteServed`), for the block token's app block id — not the
@@ -367,6 +366,7 @@ async function isUnchangedWriteFree(req: NextApiRequest): Promise<boolean> {
   return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE, appBlockId);
 }
 
+/** The `app_block_id` label of the request's verified block claims (`other` without any). */
 function requestAppLabel(req: NextApiRequest): string {
   const claims = (req as BlockScopedNextApiRequest).blockClaims;
   return claims ? blockClaimsAppLabel(claims) : 'other';

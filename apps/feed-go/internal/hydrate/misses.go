@@ -34,7 +34,7 @@ const (
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
-	MissModelDecorations, MissVersionImages}
+	MissModelDecorations, MissVersionImages, MissMetrics}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -70,6 +70,14 @@ type MissCompute struct {
 	// WD14 also tagged); an error, or no TagGate, then fails that lookup (tag-ids-miss-failed) where
 	// Node, which rebuilds the blocked list from the database on a cache miss, would have had one.
 	TagGate func(context.Context) (map[int]bool, error)
+	// ClickHouse is the reader the image metric-hash misses are computed with (imagemetrics.go:
+	// MetricService's populate, its query and, with WriteBack, its locks and writes). nil (no
+	// FEED_GO_CLICKHOUSE_HOST / FEED_GO_CLICKHOUSE_USERNAME) leaves those misses falling back
+	// (`metrics-miss`).
+	ClickHouse ClickHouse
+	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS), held to at most
+	// metricsTimeoutMax (under Node's own budget); past it the page falls back (`metrics-miss-failed`).
+	MetricsTimeout time.Duration
 
 	// flight coalesces concurrent lookups of one cache and id set; recent keeps answers for a few
 	// seconds with write-back off (lookupShared).
