@@ -73,26 +73,32 @@ export type SavedPosition = { type: 'image' | 'text'; id: number; index: number 
 /**
  * The editor's images and texts with the indexes the server saved (`reorderPostImages`). Those can
  * differ from the editor's own when the post has images the editor does not show, which keep their
- * place; a text added next takes its index from these.
+ * place; a text added next takes its index from these. An image in `sentImageIds` that the server
+ * did not place is one it no longer serves this editor (rated above the cap or held since it
+ * loaded), so it leaves the editor rather than keep a guessed index.
  */
 export function withSavedPositions(
   images: ControlledImage[],
   texts: PostEditTextDetail[],
-  positions: SavedPosition[]
+  positions: SavedPosition[],
+  sentImageIds: number[] = []
 ) {
   const saved = (type: SavedPosition['type']) =>
     new Map(positions.filter((p) => p.type === type).map((p) => [p.id, p.index]));
   const imageIndex = saved('image');
   const textIndex = saved('text');
+  const notPlaced = new Set(sentImageIds.filter((id) => !imageIndex.has(id)));
   return {
-    images: images.map((image) =>
-      image.type === 'added' && imageIndex.has(image.data.id)
-        ? ({
-            ...image,
-            data: { ...image.data, index: imageIndex.get(image.data.id)! },
-          } as ControlledImage)
-        : image
-    ),
+    images: images
+      .filter((image) => !(image.type === 'added' && notPlaced.has(image.data.id)))
+      .map((image) =>
+        image.type === 'added' && imageIndex.has(image.data.id)
+          ? ({
+              ...image,
+              data: { ...image.data, index: imageIndex.get(image.data.id)! },
+            } as ControlledImage)
+          : image
+      ),
     texts: texts.map((text) =>
       textIndex.has(text.id) ? { ...text, index: textIndex.get(text.id)! } : text
     ),

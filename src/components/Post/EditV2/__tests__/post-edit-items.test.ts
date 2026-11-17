@@ -41,4 +41,23 @@ describe('withSavedPositions', () => {
     ]);
     expect(saved.texts).toEqual([text(6, 2), text(5, 3)]);
   });
+
+  test('an image it sent that the server did not place leaves the editor', () => {
+    // Image 10 is now one the server keeps where it is; the editor must not keep a guessed index.
+    const saved = withSavedPositions(
+      images,
+      texts,
+      [{ type: 'image', id: 11, index: 0 }],
+      [11, 10]
+    );
+    expect(saved.images.map((x) => x.type === 'added' && x.data.id)).toEqual([11]);
+  });
+
+  test('control: an image it did not send stays as it is', () => {
+    const saved = withSavedPositions(images, texts, [{ type: 'image', id: 11, index: 0 }], [11]);
+    expect(saved.images.map((x) => [x.type === 'added' && x.data.id, x.data.index])).toEqual([
+      [11, 0],
+      [10, 0],
+    ]);
+  });
 });

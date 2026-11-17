@@ -264,9 +264,9 @@ export function ReorderImagesButton() {
     ]);
 
   const { mutate, isPending: isLoading } = trpc.post.reorderImages.useMutation({
-    async onSuccess(positions) {
+    async onSuccess(positions, { imageIds }) {
       // The saved indexes, not the editor's guess: they differ around images the editor hides.
-      setImages((current) => withSavedPositions(current, [], positions).images);
+      setImages((current) => withSavedPositions(current, [], positions, imageIds).images);
       setTexts((current) => withSavedPositions([], current, positions).texts);
       await queryUtils.model.getAll.invalidate();
       await queryUtils.image.getInfinite.invalidate();

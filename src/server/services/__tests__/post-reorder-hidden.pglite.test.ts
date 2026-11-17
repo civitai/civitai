@@ -51,6 +51,9 @@ beforeAll(async () => {
   dbMock.dbWrite.image.findMany.mockImplementation(((
     ...args: Parameters<typeof prisma.image.findMany>
   ) => prisma.image.findMany(...args)) as never);
+  dbMock.dbWrite.postText.findMany.mockImplementation(((
+    ...args: Parameters<typeof prisma.postText.findMany>
+  ) => prisma.postText.findMany(...args)) as never);
   dbMock.dbWrite.postText.count.mockImplementation(((
     ...args: Parameters<typeof prisma.postText.count>
   ) => prisma.postText.count(...args)) as never);
@@ -95,13 +98,21 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(await versionLevel()).toBe(XXX | PG);
 
     // The editor shows only the PG images (image 1 is held or above the cap); the owner reverses them.
-    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [...pgIds].reverse() });
+    const positions = await reorderPostImages({
+      ...OWNER_EDITOR,
+      id: POST,
+      imageIds: [...pgIds].reverse(),
+    });
 
     const after = await indexes();
     expect(after[1]).toBe(0);
     expect(new Set(Object.values(after)).size).toBe(Object.keys(after).length);
     expect(after[30]).toBe(1); // the first listed image takes the first free index
     expect(await versionLevel()).toBe(XXX | PG);
+    // The editor applies what is returned: every listed image at the index it was saved at.
+    expect(positions).toEqual(
+      [...pgIds].reverse().map((id) => ({ type: 'image', id, index: after[id] }))
+    );
   });
 
   it('places listed items around it with `items` too, texts included', async () => {
@@ -118,6 +129,56 @@ describe('reorderPostImages around images the editor does not list', () => {
     const text = (await harness.pg.query<{ index: number }>(`SELECT index FROM "PostText"`)).rows;
     expect(text).toEqual([{ index: 1 }]);
     expect(await versionLevel()).toBe(XXX | PG);
+  });
+
+  it('keeps a text the editor did not send at its index, clear of the listed items', async () => {
+    const pgIds = await seedPost();
+    // Text 6 sits at 2 and is not in `items` (another editor added it); text 5 is listed.
+    await harness.pg.exec(`INSERT INTO "PostText" VALUES (5, ${POST}, 0), (6, ${POST}, 2)`);
+    await reorderPostImages({
+      ...OWNER_EDITOR,
+      id: POST,
+      imageIds: [],
+      items: [{ type: 'text', id: 5 }, ...pgIds.map((id) => ({ type: 'image' as const, id }))],
+    });
+    const texts = (
+      await harness.pg.query<{ id: number; index: number }>(`SELECT id, index FROM "PostText"`)
+    ).rows;
+    expect(texts.find((t) => t.id === 6)?.index).toBe(2);
+    const all = [...Object.values(await indexes()), ...texts.map((t) => t.index)];
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it('without `items` on a post with text, a listed held image keeps its index', async () => {
+    const pgIds = await seedPost();
+    await harness.pg.exec(`
+      UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1;
+      INSERT INTO "PostText" VALUES (5, ${POST}, 22);
+    `);
+    const positions = await reorderPostImages({
+      ...OWNER_EDITOR,
+      id: POST,
+      imageIds: [...pgIds].reverse().concat(1),
+    });
+    const after = await indexes();
+    expect(after[1]).toBe(0);
+    expect(new Set(Object.values(after)).size).toBe(Object.keys(after).length);
+    expect(positions.map((p) => p.id)).not.toContain(1);
+    const text = (await harness.pg.query<{ index: number }>(`SELECT index FROM "PostText"`)).rows;
+    expect(text).toEqual([{ index: 22 }]);
+    expect(await versionLevel()).toBe(XXX | PG);
+  });
+
+  it('a moderator moves a held image it lists: the hold does not pin it for them', async () => {
+    const pgIds = await seedPost();
+    await harness.pg.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`);
+    await reorderPostImages({
+      user: { id: 99, isModerator: true } as SessionUser,
+      servableLevels: allBrowsingLevelsFlag,
+      id: POST,
+      imageIds: [...pgIds, 1],
+    });
+    expect((await indexes())[1]).toBe(21);
   });
 
   it('control: with every image listed, positions are numbered from 0', async () => {
