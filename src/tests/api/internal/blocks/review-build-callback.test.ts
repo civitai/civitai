@@ -1217,6 +1217,9 @@ describe('POST review-build-callback — build-only environment', () => {
     expect(mockRecordAttempt).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'succeeded' })
     );
+    // Nothing was published, and no apply Job exists for the replay mark to protect.
+    expect((mockMarkPreview.mock.calls[0] as unknown[])[2]).toMatchObject({ sharedServer: false });
+    expect(mockRedisDel).toHaveBeenCalledTimes(1);
   });
 
   it('failure: unchanged — marked failed without buildOnly', async () => {

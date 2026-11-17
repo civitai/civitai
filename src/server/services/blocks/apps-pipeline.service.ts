@@ -78,6 +78,20 @@ export async function unwrap<T>(res: Response, allowStatuses: number[] = []): Pr
 
 // ---------- in-cluster (dp-1) target ---------------------------------------
 
+/**
+ * A build-only environment (APPS_REVIEW_BUILD_ONLY, PR previews) creates nothing in
+ * APPS_KUBE_NAMESPACE: that namespace serves production apps and review previews. Called by every
+ * function here (and in agent-review.service) that creates a Job there, so the refusal does not
+ * rest on the cluster's RBAC alone.
+ */
+export function assertAppsNamespaceWritable(what: string): void {
+  if (env.APPS_REVIEW_BUILD_ONLY) {
+    throw new Error(
+      `${what} refused: this environment is build-only (APPS_REVIEW_BUILD_ONLY) and creates nothing in the apps namespace`
+    );
+  }
+}
+
 let dp1Target: K8sTarget | null = null;
 export async function getDp1Target(): Promise<K8sTarget> {
   if (dp1Target) return dp1Target;
@@ -671,6 +685,7 @@ export type TriggerApplyReviewArgs = {
  * talos PR as `review.yaml.tmpl`).
  */
 export async function triggerApplyReview(args: TriggerApplyReviewArgs): Promise<{ name: string }> {
+  assertAppsNamespaceWritable('review apply Job');
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const host = reviewHostSha(args.sha);
@@ -792,6 +807,7 @@ async function runTemplatesScriptJob(args: {
   env: Array<{ name: string; value: string }>;
   script: string;
 }): Promise<{ name: string }> {
+  assertAppsNamespaceWritable(`${args.name} Job`);
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const labels = { ...args.labels, [TEMPLATES_JOB_ROLE_LABEL]: TEMPLATES_JOB_ROLE };
@@ -984,6 +1000,9 @@ export async function deleteReviewResources(args: {
    */
   sharedServer?: boolean;
 }): Promise<void> {
+  // A build-only environment never served a preview, so there is nothing to unpublish or sweep,
+  // and it must not list or delete in the apps namespace.
+  if (env.APPS_REVIEW_BUILD_ONLY) return;
   // Shared static server: the preview is a published meta, not objects. Unpublish it with a Job
   // (the web pod holds no storage credential). The label sweep below still runs: it removes any
   // per-preview objects a preview built before the flag was turned on still has.
@@ -1128,6 +1147,7 @@ export type TriggerApplyArgs = {
 };
 
 export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: string }> {
+  assertAppsNamespaceWritable('apply Job');
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const jobName = `${args.slug}-apply-${args.sha.slice(0, 8)}`;

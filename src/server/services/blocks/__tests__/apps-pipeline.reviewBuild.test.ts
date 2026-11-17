@@ -228,3 +228,46 @@ describe('triggerReviewBuild: directPublish', () => {
     expect(sentBody).toBe(JSON.stringify({ mode: 'review', ...args, ts: parsed.ts }));
   });
 });
+
+describe('build-only environment: nothing in the apps namespace', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    mockEnv.APPS_REVIEW_BUILD_ONLY = true;
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    delete mockEnv.APPS_REVIEW_BUILD_ONLY;
+    vi.unstubAllGlobals();
+  });
+
+  it('the review apply Job is refused before any request', async () => {
+    const { triggerApplyReview } = await import('~/server/services/blocks/apps-pipeline.service');
+    await expect(
+      triggerApplyReview({
+        slug: 'my-app',
+        sha: 'a'.repeat(40),
+        publishRequestId: 'pubreq_0123456789ABCDEFGHJKMNPQRS',
+        imageRef: `ghcr.io/civitai/app-block-review-my-app:${'a'.repeat(40)}`,
+        sharedServer: false,
+      })
+    ).rejects.toThrow(
+      'review apply Job refused: this environment is build-only (APPS_REVIEW_BUILD_ONLY) and creates nothing in the apps namespace'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('a review teardown lists and deletes nothing', async () => {
+    const { deleteReviewResources } = await import(
+      '~/server/services/blocks/apps-pipeline.service'
+    );
+    await expect(
+      deleteReviewResources({
+        slug: 'my-app',
+        sha: 'a'.repeat(40),
+        publishRequestId: 'pubreq_0123456789ABCDEFGHJKMNPQRS',
+      })
+    ).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

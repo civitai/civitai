@@ -378,6 +378,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       'preview-failed',
       {
         ...baseDetail,
+        // A failure is never a build-only pass, whatever an earlier run of this sha recorded.
+        buildOnly: undefined,
         // A direct build may have published its meta to the shared server before it failed:
         // record that, so a different-sha rebuild and a teardown unpublish it the shared way.
         ...(directPublish ? { sharedServer: true } : {}),
@@ -436,9 +438,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     await markReviewPreviewState(
       body.publishRequestId,
       'preview-failed',
-      { ...baseDetail, buildOnly: true, error: REVIEW_BUILD_ONLY_PASSED },
+      // sharedServer: false — nothing was published, so a teardown must not unpublish.
+      { ...baseDetail, sharedServer: false, buildOnly: true, error: REVIEW_BUILD_ONLY_PASSED },
       { requireActivePreview: true }
     );
+    // The replay mark guards an apply Job, and there is none here: free it, or a same-sha
+    // rebuild within its TTL would have its own success swallowed as a duplicate and keep its
+    // slot until stale.
+    await clearReviewApplyMark(body.publishRequestId, body.sha);
     await recordBuildAttempt({
       mode: 'review',
       status: 'succeeded',

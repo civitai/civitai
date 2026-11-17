@@ -1284,8 +1284,9 @@ export const serverSchema = z
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     // Build review previews, serve none (PR previews). A passed review build is recorded on the
     // request (`preview-failed` with `buildOnly: true`) and nothing is deployed: no apply Job into
-    // APPS_KUBE_NAMESPACE and no shared-server publish, so this environment never touches a
-    // production review host. Unset (production) changes nothing.
+    // APPS_KUBE_NAMESPACE and no shared-server publish. Every function that creates a Job in that
+    // namespace refuses (`assertAppsNamespaceWritable`), and review/agent teardowns do nothing.
+    // Unset (production) changes nothing.
     APPS_REVIEW_BUILD_ONLY: zc.booleanString.optional().default(false),
     APPS_DOMAIN: z.string().default('civit.ai'),
     // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
