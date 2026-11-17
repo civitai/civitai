@@ -46,6 +46,10 @@ type Config struct {
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
+	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
+	// on the Postgres path fall back (the cache-ordered branch is not ported).
+	PrioritizedVersionCache bool
 	// The flags model.getAll reads (DESIGN.md §15.3), each defaulting to its production value. Only
 	// that state is ported: any of them off makes every model.getAll sample the flag-off-state fallback.
 	BaseModelFeedMetrics bool // FEED_GO_BASE_MODEL_FEED_METRICS: mirrors `base-model-feed-metrics`
@@ -58,6 +62,10 @@ type Config struct {
 	// Pprof is FEED_GO_PPROF (default off): serve net/http/pprof under /debug/pprof/ on the internal
 	// listener only (never the public one).
 	Pprof bool
+	// ServeModelGetAll is FEED_GO_SERVE_MODEL_GETALL (default off): compute `model.getAll` on the public
+	// route (`/api/trpc/model.getAll`). Off, every request there is the `model-getall-off` fallback,
+	// proxied to the Node app unchanged.
+	ServeModelGetAll bool
 
 	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
 	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
@@ -153,11 +161,14 @@ func Load() (*Config, error) {
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 
+		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
+
 		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
 		ModelImagesSlim:      boolEnv("FEED_GO_MODEL_IMAGES_SLIM", true),
 		CoverageNext:         boolEnv("FEED_GO_GENERATION_COVERAGE_NEXT", true),
 		LoadingOpenToAll:     boolEnv("FEED_GO_GENERATION_LOADING_OPEN_TO_ALL", true),
 		Pprof:                boolEnv("FEED_GO_PPROF", false),
+		ServeModelGetAll:     boolEnv("FEED_GO_SERVE_MODEL_GETALL", false),
 		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),

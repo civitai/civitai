@@ -619,20 +619,20 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
  *     construction.
  * Do not read a block of green tests here as a block of tests OF THE FIX.
  */
-const FULL = 33554431; // TokenScope.Full — a Full personal API key
-const CLI = 1 | (1 << 25) | (1 << 26); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
-const NO_SUBMIT = 1 | (1 << 26); // UserRead|AppBlocksDevTunnel = 67108865 — lacks AppBlocksSubmit
+const FULL = 33554431n; // TokenScope.Full — a Full personal API key
+const CLI = 1n | (1n << 25n) | (1n << 26n); // UserRead|AppBlocksSubmit|AppBlocksDevTunnel = 100663297
+const NO_SUBMIT = 1n | (1n << 26n); // UserRead|AppBlocksDevTunnel = 67108865 — lacks AppBlocksSubmit
 
 // A token-authenticated caller (apiKeyId set) carrying `scope`. The user stays a
 // moderator so the author/flag gates are satisfied and the ONLY variable is scope.
-function tokenCtx(scope: number) {
+function tokenCtx(scope: bigint) {
   return { ...fakeCtx(modUser), apiKeyId: 999, tokenScope: scope };
 }
 
 describe('getMyAppAnalytics — OAuth scope gate', () => {
   it('the hard-coded bitmasks match the enum', () => {
     expect(TokenScope.Full).toBe(FULL);
-    expect(TokenScope.AppBlocksSubmit).toBe(1 << 25);
+    expect(TokenScope.AppBlocksSubmit).toBe(1n << 25n);
     expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.AppBlocksDevTunnel).toBe(
       CLI
     );
@@ -714,38 +714,41 @@ describe('getMyAppAnalytics — OAuth scope gate', () => {
     );
 
     const SUPERSET = TokenScope.Full | TokenScope.AppBlocksDevTunnel;
-    expect(SUPERSET).toBe(100663295);
+    expect(SUPERSET).toBe(100663295n);
+    // The schemas take the scope as it arrives on the wire: a JSON number.
+    const SUPERSET_WIRE = Number(SUPERSET);
+    const FULL_WIRE = Number(TokenScope.Full);
     // Sanity: this really is the allow→deny case — it satisfies Full by hasFlag (so it
     // passed the un-annotated gate) yet does not carry bit 25.
     expect((SUPERSET & TokenScope.Full) === TokenScope.Full).toBe(true);
     expect((SUPERSET & TokenScope.AppBlocksSubmit) === TokenScope.AppBlocksSubmit).toBe(false);
 
     // A personal API key cannot be created with it...
-    expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: SUPERSET }).success).toBe(false);
+    expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: SUPERSET_WIRE }).success).toBe(
+      false
+    );
     // ...nor an OAuth client be granted it, on create or update.
     const clientBase = {
       name: 'c',
       redirectUris: ['https://example.com/cb'],
     };
     expect(
-      createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: SUPERSET }).success
+      createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: SUPERSET_WIRE }).success
     ).toBe(false);
-    expect(updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: SUPERSET }).success).toBe(
-      false
-    );
+    expect(
+      updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: SUPERSET_WIRE }).success
+    ).toBe(false);
     // Boundary controls: each cap must still ADMIT Full, or the rejections above prove
     // nothing (a fixture missing a required field would reject regardless of the scope,
     // and the test would still pass with the cap removed). One per assertion above —
     // the fixtures differ ONLY in the scope field, so a green here isolates the cap as
     // the cause.
-    expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: TokenScope.Full }).success).toBe(
+    expect(addApiKeyInputSchema.safeParse({ name: 'k', tokenScope: FULL_WIRE }).success).toBe(true);
+    expect(
+      createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: FULL_WIRE }).success
+    ).toBe(true);
+    expect(updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: FULL_WIRE }).success).toBe(
       true
     );
-    expect(
-      createOauthClientSchema.safeParse({ ...clientBase, allowedScopes: TokenScope.Full }).success
-    ).toBe(true);
-    expect(
-      updateOauthClientSchema.safeParse({ id: 'c', allowedScopes: TokenScope.Full }).success
-    ).toBe(true);
   });
 });

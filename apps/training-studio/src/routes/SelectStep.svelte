@@ -45,6 +45,7 @@
     cardUnavailability,
     versionStatusKey,
     runCard,
+    cardSupportsKohya,
     runEngine,
     runSupportsKohya,
     withEngine,
@@ -128,12 +129,20 @@
   const primary = $derived(runs[0]!);
   const focused = $derived(runs[focus] ?? primary);
   const selectedCard = $derived(runCard(focused));
+  // Like the tiles, the Engine choice applies to the highlighted run.
+  const kohyaCards = $derived(
+    editSection ? [] : cardsForMedia(media, enabledFlags).filter(cardSupportsKohya)
+  );
+  const showEngine = $derived(kohyaEnabled && kohyaCards.length > 0);
+  const kohyaMode = $derived(showEngine && runEngine(focused) === 'kohya');
   const recommendedType = $derived(type.recommended[media]);
   // Undefined when the type has no recommendation for this media, or when the recommended model is gated
   // off for this user — the banner then simply doesn't show.
   const recommendedCard = $derived(
     recommendedType && !editSection
-      ? cardsForMedia(media, enabledFlags).find((c) => c.type === recommendedType)
+      ? cardsForMedia(media, enabledFlags).find(
+          (c) => c.type === recommendedType && (!kohyaMode || cardSupportsKohya(c))
+        )
       : undefined
   );
   // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
@@ -145,6 +154,7 @@
   };
   const featuredCards = $derived.by(() => {
     if (editSection) return visibleEditCards;
+    if (kohyaMode) return kohyaCards;
     const cards = cardsForMedia(media, enabledFlags);
     const featured = FEATURED[media];
     if (!featured) return cards;
@@ -153,7 +163,7 @@
       .filter((c): c is (typeof cards)[number] => c !== undefined);
   });
   const otherCards = $derived.by(() => {
-    if (editSection) return [];
+    if (editSection || kohyaMode) return [];
     const featured = FEATURED[media];
     if (!featured) return [];
     const featuredSet = new Set(featured);
@@ -213,7 +223,7 @@
 
   function pickType(id: string) {
     loraType = id;
-    if (runs.length === 1 && !userPickedModel) {
+    if (runs.length === 1 && !userPickedModel && runEngine(primary) !== 'kohya') {
       runs = [newRun(recommendedCardFor(id, media, enabledFlags), enabledFlags)];
       focus = 0;
     }
@@ -252,9 +262,11 @@
   function pickBase(card: ModelCard) {
     if (multi && !sweepCompatible(card, runCard(primary))) return; // dataset-shape lock
     if (cardUnavailability(card, enabledFlags, serviceStatus.value)) return;
-    runs = runs.map((r, i) =>
-      i === focus ? { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id } : r
-    );
+    runs = runs.map((r, i) => {
+      if (i !== focus) return r;
+      const run = { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id };
+      return kohyaMode ? withEngine(run, 'kohya', enabledFlags) : run;
+    });
     userPickedModel = true;
   }
 
@@ -270,7 +282,36 @@
     if (runs.length === 1) addRun();
   }
 
-  function pickEngine(index: number, engine: string) {
+  /** The first Kohya model the highlighted run can move to: one the sweep's dataset allows, not down. */
+  const kohyaFallbackCard = $derived(
+    kohyaCards.find(
+      (c) =>
+        (!multi || sweepCompatible(c, runCard(primary))) &&
+        !cardUnavailability(c, enabledFlags, serviceStatus.value)
+    )
+  );
+  const kohyaBlockedReason = $derived(
+    runSupportsKohya(focused) || kohyaFallbackCard
+      ? null
+      : 'No Kohya model is available for this run right now.'
+  );
+
+  /** Kohya on a model it can't train moves the run to the first Kohya model it can join. */
+  function pickEngine(engine: string, index = focus) {
+    if (engine === 'kohya' && !runSupportsKohya(runs[index]!)) {
+      const card = kohyaFallbackCard;
+      if (!card) return;
+      runs = runs.map((r, i) =>
+        i === index
+          ? withEngine(
+              { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id },
+              'kohya',
+              enabledFlags
+            )
+          : r
+      );
+      return;
+    }
     runs = runs.map((run, i) =>
       i !== index || !runSupportsKohya(run) ? run : withEngine(run, engine, enabledFlags)
     );
@@ -357,11 +398,12 @@
   }
 </script>
 
-{#snippet enginePicker(run: Run, index: number)}
+
+
+{#snippet rowEnginePicker(run: Run, index: number)}
   {#if kohyaEnabled && runSupportsKohya(run)}
-    <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Training engine</div>
     <div
-      class="mt-1.5 flex gap-2"
+      class="mt-2.5 flex gap-2"
       role="radiogroup"
       tabindex="-1"
       aria-label={`Run ${index + 1} training engine`}
@@ -374,13 +416,12 @@
           role="radio"
           aria-checked={runEngine(run) === engine.value}
           tabindex={runEngine(run) === engine.value ? 0 : -1}
-          onclick={() => pickEngine(index, engine.value)}
+          onclick={() => pickEngine(engine.value, index)}
         >{engine.label}</Button>
       {/each}
     </div>
   {/if}
 {/snippet}
-
 
 {#snippet customIncompleteNote()}
   {#if blockedMessage}
@@ -561,6 +602,49 @@
         </div>
       </div>
       {/if}
+
+      {#if showEngine}
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <div id="engine-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
+            Engine
+          </div>
+          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div
+              class="flex flex-wrap gap-2"
+              role="radiogroup"
+              aria-labelledby="engine-group-label"
+              tabindex="-1"
+              onkeydown={radioKeydown}
+            >
+              {#each [{ value: 'ai-toolkit', label: 'AI Toolkit' }, { value: 'kohya', label: 'Kohya' }] as engine (engine.value)}
+                {@const checked = kohyaMode === (engine.value === 'kohya')}
+                {@const blocked = engine.value === 'kohya' && !checked ? kohyaBlockedReason : null}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  tabindex={checked ? 0 : -1}
+                  disabled={!!blocked}
+                  title={blocked ?? undefined}
+                  onclick={() => pickEngine(engine.value)}
+                  class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40
+                    {checked
+                    ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
+                    : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
+                >
+                  {#if checked}
+                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
+                  {/if}
+                  {engine.label}
+                </button>
+              {/each}
+            </div>
+            <span class="font-mono text-xs text-dark-2">
+              Kohya trains {kohyaCards.map((c) => c.name).join(', ')}
+            </span>
+          </div>
+        </div>
+      {/if}
     </div>
 
     <!-- base model: every model visible as an equal peer, recommended first; no disclosure -->
@@ -723,12 +807,11 @@
                 {runVersionLabel(primary)}
               </div>
               <div class="font-mono text-xs text-dark-2">
-                {labelNoun(card)}{#if isCustom(primary)} · custom{/if}
+                {labelNoun(card)}{isCustom(primary) ? ' · custom' : ''}{runEngine(primary) === 'kohya' ? ' · Kohya' : ''}
               </div>
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
-          {@render enginePicker(primary, 0)}
           {#if versions.length > 1}
             <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
@@ -813,7 +896,7 @@
                       {runVersionLabel(r)}
                     </div>
                     <div class="font-mono text-xs text-dark-2">
-                      {labelNoun(card)}{#if isCustom(r)} · custom{/if}{focusedRow ? ' · editing' : ''}
+                      {labelNoun(card)}{isCustom(r) ? ' · custom' : ''}{runEngine(r) === 'kohya' ? ' · Kohya' : ''}{focusedRow ? ' · editing' : ''}
                     </div>
                   </div>
                 </button>
@@ -832,7 +915,7 @@
                   </button>
                 {/if}
               </div>
-              {@render enginePicker(r, ri)}
+              {@render rowEnginePicker(r, ri)}
               <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
                 {#each versionOptions(card, enabledFlags, runEngine(r)) as v (v.key)}
                   <button

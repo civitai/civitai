@@ -77,6 +77,8 @@ const CLAIMS = {
   exp: 0,
   jti: 'jti',
   maxBrowsingLevel: 31,
+  // The viewer at every level, so a case about the domain ceiling reads the domain alone.
+  viewerBrowsingLevel: 31,
 };
 
 const VALID_BODY = { prompt: 'a photorealistic portrait of a knight', baseModel: 'SDXL 1.0' };
@@ -189,6 +191,14 @@ describe('the auth/clamp mirror with generation-resources.ts', () => {
     expect(input).toEqual(VALID_BODY);
     // 3 = PG|PG13: the SFW intersection of any ceiling below 4.
     expect(ctx.browsingLevel).toBe(3);
+  });
+
+  it('a PG-only viewer on a mature domain: the service is handed PG and the echo says SFW-only', async () => {
+    const { res } = await call({ __claims: { ...CLAIMS, maxBrowsingLevel: 31, viewerBrowsingLevel: 1 } });
+    const [, ctx] = mockGetResourceIntent.mock.calls[0] as unknown as [unknown, { browsingLevel: number }];
+    expect(ctx.browsingLevel).toBe(1);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ maturity: { browsingLevel: 1, sfwOnly: true } });
   });
 
   it('resourceIntentPoolMerge picks the POOL_MERGE arm; absent, the service gets false', async () => {

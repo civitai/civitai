@@ -67,10 +67,12 @@ beforeAll(async () => {
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
     CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
     CREATE TABLE "Image" (
+      minor boolean DEFAULT false,
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
@@ -191,6 +193,10 @@ async function sees(viewer: Viewer) {
 
 const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
   ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
+  [
+    'rated R on a restricted base model',
+    { image: { '"nsfwLevel"': '4', '"modelRestricted"': 'true' } },
+  ],
   ['not yet scanned', { image: { ingestion: `'Pending'` } }],
   [
     'with a mod-locked rating from a Knights vote whose scan errored',
@@ -488,7 +494,6 @@ describe('getImageGenerationData media links', () => {
 
   it.each([
     [2, true],
-    [0, false],
     [2 | 4, false],
   ])(
     'a signed-in viewer on the SFW domain, image rated %i: links kept is %s',
@@ -498,6 +503,13 @@ describe('getImageGenerationData media links', () => {
       expect(leaked(json)).toEqual(kept ? MARKERS : []);
     }
   );
+
+  it('refuses an unrated image to a signed-in viewer who does not own it', async () => {
+    await db.exec(`UPDATE "Image" SET "nsfwLevel" = 0`);
+    await expect(fetchFor(OTHER, { canViewNsfw: false })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
 
   it('keeps them for a signed-out viewer of a PG image', async () => {
     await db.exec(`UPDATE "Image" SET "nsfwLevel" = 1`);

@@ -11,6 +11,7 @@ import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { blockedNSFW } from '@civitai/mod-utils/prompt-audit/lists';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
@@ -27,7 +28,6 @@ const h = vi.hoisted(() => {
       vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
     includesPoi: vi.fn<(prompt?: string) => string | false>(),
     includesMinor: vi.fn<(prompt?: string) => boolean>(),
-    getBlockedNsfwWords: vi.fn<(text?: string) => string[]>(),
     isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
     evalBoolean: vi.fn<() => { enabled: unknown }>(),
     fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
@@ -48,10 +48,6 @@ vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   includesInappropriate: h.includesInappropriate,
   includesPoi: h.includesPoi,
   includesMinor: h.includesMinor,
-}));
-vi.mock('~/utils/metadata/audit-base', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  getBlockedNsfwWords: h.getBlockedNsfwWords,
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => ({
@@ -158,7 +154,6 @@ beforeEach(() => {
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
-  h.getBlockedNsfwWords.mockReset().mockReturnValue([]);
   h.isFlipt.mockReset().mockResolvedValue(false);
   h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
   h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
@@ -331,6 +326,38 @@ describe('Made On-site and Metadata only', () => {
       { fromPlatform: undefined, withMeta: false },
       { fromPlatform: true, withMeta: true },
     ]);
+  });
+});
+
+// The own-images search asks for candidates at every level, so hydration is the only filter on
+// what the owner is shown: it must keep the review and minor filters for the owner too.
+describe("the own-images search's image query", () => {
+  async function ownImageSql() {
+    const { source } = rankedSource([101, 102]);
+    await searchSemanticImages({
+      input: input({ query: 'kuro', imageId: undefined, userIds: [VIEWER.id], browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    }).catch(() => undefined);
+    expect(h.queryWithTimeout, 'the search no longer reaches the image query').toHaveBeenCalled();
+    const stmt = h.queryWithTimeout.mock.calls[0][2] as { text: string; values: unknown[] };
+    return { text: stmt.text.replace(/\s+/g, ' '), values: stmt.values };
+  }
+
+  it('never serves the owner their own images awaiting review', async () => {
+    const { text } = await ownImageSql();
+    // Unconditional: the pending read's form, `(... IS NULL OR i."userId" = $n)`, exempts the owner.
+    expect(text).toMatch(/i\."needsReview" IS NULL(?! OR)/);
+    expect(text).not.toMatch(/i\."needsReview" IS NULL OR i\."userId"/);
+    expect(text).toMatch(/i\."acceptableMinor" = FALSE(?! OR)/);
+  });
+
+  // Control: the owner's candidates do reach that query, so the filter is what decides.
+  it("still asks for the owner's candidates", async () => {
+    const { text, values } = await ownImageSql();
+    expect(text).toMatch(/i\."id" = ANY\(/);
+    expect(values).toContainEqual([101, 102]);
   });
 });
 
@@ -576,6 +603,56 @@ describe('the query audit and the browsing level', () => {
     );
   });
 
+  // The showcase picker's own-images search refuses where the general search narrows.
+  it('refuses a minor query on the own-images search, at an NSFW level with the clamp off', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const result = await searchSemanticImages({
+      input: textQuery({ browsingLevel: ALL_LEVELS }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('audits the own-images query at one level, whatever level is asked for', async () => {
+    const { source } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: SAFE }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+
+    expect(h.includesInappropriate).toHaveBeenCalledWith(expect.anything(), true);
+  });
+
+  it('asks every level for own-images candidates and keeps the viewer’s level on the page', async () => {
+    const levelOf: Record<number, number> = { 101: 1, 102: 16 };
+    h.fakeGetAllImages = async (args) => {
+      const { ids, browsingLevel } = args as { ids: number[]; browsingLevel: number };
+      return {
+        items: ids
+          .filter((id) => (levelOf[id] & browsingLevel) !== 0)
+          .map((id) => ({ id, nsfwLevel: levelOf[id] })),
+        nextCursor: undefined,
+      };
+    };
+    const { source, calls } = rankedSource([101, 102]);
+    const result = await searchSemanticImages({
+      input: textQuery({ browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+    expect(result.items.map((i) => i.id)).toEqual([101]);
+  });
+
   it('recomputes the add-ons at the narrowed level', async () => {
     vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([
       { type: 'none', nsfwLevels: [4, 8, 16], excludedTagIds: [9200] },
@@ -682,17 +759,23 @@ describe('the query audit and the browsing level', () => {
     expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
-  // The search boxes refuse these words too; this is the request that skips the box.
+  const blockedWordQuery = `a ${blockedNSFW[0]} fox`;
+
   it('refuses a query with a blocked word from a non-moderator, before asking the index', async () => {
-    h.getBlockedNsfwWords.mockReturnValue(['blocked']);
-    const { result, calls } = await run({});
+    const { result, calls } = await run({ query: blockedWordQuery });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses a blocked word even when the benign-phrase pass strips it', async () => {
+    h.stripBenignPhrases.mockResolvedValue('a fox');
+    const { result, calls } = await run({ query: blockedWordQuery });
     expect(result.items).toEqual([]);
     expect(calls).toHaveLength(0);
   });
 
   it('lets a moderator search a query with a blocked word', async () => {
-    h.getBlockedNsfwWords.mockReturnValue(['blocked']);
-    const { result } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    const { result } = await run({ query: blockedWordQuery, browsingLevel: ALL_LEVELS }, MOD);
     expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 

@@ -5,6 +5,7 @@ import {
   importSentJsonl,
   resolveSending,
   retireNotice,
+  withdrawNotice,
 } from '$lib/server/cases/backlog-import';
 import { readBrake } from '$lib/server/cases/brake';
 import { caseActionFailure, withCaseData } from '$lib/server/cases/case-routes';
@@ -21,6 +22,9 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 
 const rowSchema = z.object({ rowId: z.coerce.number().int().positive() });
+const withdrawSchema = rowSchema.extend({
+  reason: z.string().trim().min(1, 'Give a reason.').max(300),
+});
 const resolveSchema = z.object({
   rowId: z.coerce.number().int().positive(),
   outcome: z.enum(['sent', 'failed']),
@@ -113,6 +117,22 @@ export const actions: Actions = {
       };
     } catch (e) {
       return caseActionFailure('retire', e);
+    }
+  }),
+  withdraw: requiresGrant('cases.act', async ({ params, request, locals }) => {
+    const batchId = params.batchId ?? '';
+    if (!BATCH_ID.test(batchId)) return fail(404, { scope: 'withdraw', error: 'Unknown batch.' });
+    const input = parseForm(withdrawSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { scope: 'withdraw', error: input });
+    try {
+      const blocked = await caseDataBlocked();
+      if (blocked) return fail(503, { scope: 'withdraw', error: blocked });
+      return {
+        scope: 'withdraw',
+        ...(await withdrawNotice(batchId, input.rowId, input.reason, { actorId: locals.user.id })),
+      };
+    } catch (e) {
+      return caseActionFailure('withdraw', e);
     }
   }),
 };

@@ -104,6 +104,10 @@ const featureFlags = createFeatureFlags({
   // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
   // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
   feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
+  // Sends `model.getAll` (signed in) to `/api/trpc-go`, as `feedGoTransport` does for the gallery
+  // feed; its own flag, so either can be turned on or killed alone. Enable only once the edge routes
+  // `/api/trpc-go/model.getAll`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransportModelGetAll: { availability: [], fliptKey: 'feed-go-transport-model-getall' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -423,6 +427,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
+  // Classic trainer kill switch: dark until the Flipt flag exists.
+  classicTrainerOff: { availability: [], fliptKey: 'classic-trainer-off' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -481,6 +487,10 @@ const featureFlags = createFeatureFlags({
   // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
   // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // "More like this": the image card button, the image menu item, dropping an image on the search
+  // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
+  // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
+  moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
   // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
   imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
@@ -551,6 +561,8 @@ const featureFlags = createFeatureFlags({
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
+  // The header bar filters the /services feed in place (`?query=`).
+  servicesFeedSearch: { availability: ['public'], fliptKey: 'creator-services-feed-search' },
   // Whether Creator Services Finals go to the malware scan. Read once per file by the jobs, never per
   // user (see `isFinalsMalwareScanOn`). Off, or missing from Flipt, skips that one step; Flipt
   // unreachable keeps it.
@@ -789,7 +801,7 @@ const featureFlags = createFeatureFlags({
   // Raw orchestrator-blob AIR resources in the generator (Training Studio
   // "generate with this epoch" handoff) — gates both server acceptance and the
   // /generate?air= form entry (form-graph/generation/ingestion.ts).
-  generationAirResources: { availability: ['mod'] },
+  generationAirResources: { availability: ['user'] },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
   // Both mod-only at launch; Flipt key allows broadening without a code change.
@@ -1835,6 +1847,10 @@ export function computeUserFeatureFlagsOverlay(
       delete result[key];
     }
   }
+
+  // A stored opt-back can't reopen a retired classic trainer.
+  if (hostFeatures.classicTrainerOff && 'trainingStudioUi' in result)
+    result.trainingStudioUi = true;
 
   return result;
 }

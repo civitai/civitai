@@ -21,7 +21,14 @@ import { createAppAccessToken, createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
 import { firstPartyClientForOrigin, originOf } from './first-party';
-import { hasScope, isScopeGrantable, scopeToString, stringToScope } from './scope';
+import {
+  apiKeyRowScope,
+  hasScope,
+  isScopeGrantable,
+  scopeFromColumn,
+  scopeToString,
+  stringToScope,
+} from './scope';
 import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 
 // Ported from the main app's src/server/oauth/model.ts. Every `prisma.*` call is rewritten to Kysely
@@ -145,7 +152,7 @@ export const oauthModel = {
       redirectUris: client.redirectUris,
       accessTokenLifetime: ACCESS_TOKEN_TTL,
       refreshTokenLifetime: REFRESH_TOKEN_TTL,
-      allowedScopes: client.allowedScopes,
+      allowedScopes: scopeFromColumn(client.allowedScopes),
       isConfidential: client.isConfidential,
     } as Client;
   },
@@ -274,7 +281,7 @@ export const oauthModel = {
 
     const apiKey = await db
       .selectFrom('ApiKey')
-      .select(['userId', 'tokenScope', 'expiresAt', 'clientId'])
+      .select(['userId', 'tokenScope', 'tokenScopeWide', 'expiresAt', 'clientId'])
       .where('key', '=', hash)
       .where('type', '=', 'Access')
       .where((eb) => eb.or([eb('expiresAt', '>=', now), eb('expiresAt', 'is', null)]))
@@ -285,7 +292,7 @@ export const oauthModel = {
     return {
       accessToken,
       accessTokenExpiresAt: apiKey.expiresAt ?? undefined,
-      scope: scopeToString(apiKey.tokenScope),
+      scope: scopeToString(apiKeyRowScope(apiKey)),
       client: { id: apiKey.clientId ?? '' } as Client,
       user: { id: apiKey.userId },
     } as unknown as Token;
@@ -297,7 +304,7 @@ export const oauthModel = {
 
     const apiKey = await db
       .selectFrom('ApiKey')
-      .select(['userId', 'tokenScope', 'expiresAt', 'clientId'])
+      .select(['userId', 'tokenScope', 'tokenScopeWide', 'expiresAt', 'clientId'])
       .where('key', '=', hash)
       .where('type', '=', 'Refresh')
       .where((eb) => eb.or([eb('expiresAt', '>=', now), eb('expiresAt', 'is', null)]))
@@ -308,7 +315,7 @@ export const oauthModel = {
     return {
       refreshToken,
       refreshTokenExpiresAt: apiKey.expiresAt ?? undefined,
-      scope: scopeToString(apiKey.tokenScope),
+      scope: scopeToString(apiKeyRowScope(apiKey)),
       client: { id: apiKey.clientId ?? '' } as Client,
       user: { id: apiKey.userId },
     } as unknown as RefreshToken;
@@ -366,7 +373,7 @@ export const oauthModel = {
     // first-party client). The OauthClient.allowedScopes column is NOT NULL, so this fallback is unreachable
     // for real rows — it's purely fail-safe.
     const allowedScopes =
-      (client as Client & { allowedScopes?: number }).allowedScopes ?? TokenScope.UserRead;
+      (client as Client & { allowedScopes?: bigint }).allowedScopes ?? TokenScope.UserRead;
     // The library does not pass the grant type here; the client_credentials grant is recognised by
     // the user `getUserFromClient` returned.
     const grant = isClientCredentialsUser(user) ? 'client_credentials' : 'user';

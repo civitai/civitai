@@ -17,6 +17,7 @@ const {
   importBatch,
   resolveSending,
   retireNotice,
+  withdrawNotice,
   importSentJsonl,
   undoImport,
   ImportRefusedError,
@@ -335,6 +336,70 @@ describe('the batch', () => {
     expect(event).toMatchObject({ actor_id: 4, data: { previousError: 'Error:550' } });
   });
 
+  it('withdraws a pending notice: never sent or exported, and no longer owed', async () => {
+    const rows = await notices();
+    const t4 = rows.filter((r) => r.notice_id === 'T4');
+    await withdrawNotice('backlog-test', t4[0].id, 'target restored', { actorId: 5, db });
+    expect(await sendNotice(t4[0].id, deps())).toBe('not-claimable');
+    expect(
+      (await exportUnsent('backlog-test', { actorId: 1, db })).map((r) => r.rowId)
+    ).not.toContain(t4[0].id);
+    await importSentJsonl('backlog-test', '', { actorId: 1, db });
+    await sendBatch('backlog-test', deps());
+    const counts = await batchCounts('backlog-test', { db });
+    expect(counts.find((c) => c.noticeId === 'T4')).toMatchObject({
+      expected: 2,
+      sent: 1,
+      dropped: 1,
+      failed: 0,
+      done: true,
+    });
+    const [event] = await db
+      .selectFrom('case_event')
+      .select(['actor_id', 'data'])
+      .where('type', '=', 'notice_withdrawn')
+      .execute();
+    expect(event).toMatchObject({ actor_id: 5, data: { reason: 'target restored' } });
+  });
+
+  it('refuses to withdraw a notice a send has already claimed or sent', async () => {
+    const [first, second] = await notices();
+    await db
+      .updateTable('case_notice')
+      .set({ status: 'sending' })
+      .where('id', '=', first.id)
+      .execute();
+    await expect(withdrawNotice('backlog-test', first.id, 'x', { actorId: 1, db })).rejects.toThrow(
+      /not a pending notice/
+    );
+    await sendNotice(second.id, deps());
+    await expect(
+      withdrawNotice('backlog-test', second.id, 'x', { actorId: 1, db })
+    ).rejects.toThrow(/not a pending notice/);
+  });
+
+  it('refuses to withdraw while the batch is out with the fallback sender, and allows it after', async () => {
+    const [first] = await notices();
+    await exportUnsent('backlog-test', { actorId: 1, db });
+    await expect(withdrawNotice('backlog-test', first.id, 'x', { actorId: 1, db })).rejects.toThrow(
+      /out with the fallback sender/
+    );
+    expect((await notices())[0]).toMatchObject({ status: 'pending', error: null });
+    await importSentJsonl('backlog-test', '', { actorId: 1, db });
+    await expect(
+      withdrawNotice('backlog-test', first.id, 'x', { actorId: 1, db })
+    ).resolves.toEqual({ rowId: first.id });
+  });
+
+  it('withdraws only a row of the batch it names', async () => {
+    await importBatch(input('backlog-other'), { actorId: 1, db });
+    const other = (await notices()).at(-1)!;
+    await expect(withdrawNotice('backlog-test', other.id, 'x', { actorId: 1, db })).rejects.toThrow(
+      /not a pending notice of batch backlog-test/
+    );
+    expect((await notices()).at(-1)).toMatchObject({ id: other.id, status: 'pending' });
+  });
+
   it('never retries an erased row, and does not count it as a relay refusal', async () => {
     const [first] = await notices();
     await db
@@ -473,6 +538,33 @@ describe('the batch', () => {
       [3, 'failed'],
       [3, 'sent'],
     ]);
+  });
+
+  it('rolls back an export whose run lock lapsed: nothing recorded, no rows handed out', async () => {
+    const redis = fakeLockRedis();
+    const asLock = redis as unknown as Parameters<typeof acquireRunLock>[0];
+    const token = (await acquireRunLock(asLock, 'backlog-test'))!;
+    const holdsLock = async () => {
+      // The export ran past its TTL and a send took the batch.
+      redis.store.delete(runLockKey('backlog-test'));
+      await acquireRunLock(asLock, 'backlog-test');
+      return renewRunLock(asLock, 'backlog-test', token);
+    };
+    await expect(
+      exportUnsent('backlog-test', { actorId: 1, holdsLock, db })
+    ).rejects.toBeInstanceOf(ImportRefusedError);
+    expect(await exportState('backlog-test', { db })).toBe('never');
+
+    // While it still holds the lock, the same export goes through.
+    const held = (await acquireRunLock(asLock, 'other'))!;
+    redis.store.set(runLockKey('backlog-test'), held);
+    const rows = await exportUnsent('backlog-test', {
+      actorId: 1,
+      holdsLock: () => renewRunLock(asLock, 'backlog-test', held),
+      db,
+    });
+    expect(rows).toHaveLength(3);
+    expect(await exportState('backlog-test', { db })).toBe('outstanding');
   });
 
   it('refuses to undo a batch that was ever exported for the fallback', async () => {

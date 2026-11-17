@@ -96,6 +96,43 @@ describe('the servable profile picture gate', () => {
     expect(result[1].profilePicture).toEqual(picture('Scanned'));
   });
 
+  it('nulls a mature picture made with a restricted base model, keeping a SFW one', async () => {
+    const query = vi.fn(async (args: unknown) => {
+      const sent = (args as { select: { profilePicture: { select: Record<string, boolean> } } })
+        .select.profilePicture.select;
+      expect(sent.modelRestricted).toBe(true);
+      return [
+        { profilePicture: { ...picture('Scanned'), nsfwLevel: 4, modelRestricted: true } },
+        { profilePicture: { ...picture('Scanned'), nsfwLevel: 1, modelRestricted: true } },
+        { profilePicture: { ...picture('Scanned'), nsfwLevel: 4, modelRestricted: false } },
+      ];
+    });
+
+    const result = await gateProfilePictures({ select: simpleUserSelect }, query, vi.fn());
+
+    expect(result.map((row) => row.profilePicture?.nsfwLevel ?? null)).toEqual([null, 1, 4]);
+    expect(result[1].profilePicture).not.toHaveProperty('modelRestricted');
+  });
+
+  it('nulls an unrated Scanned picture, reading nsfwLevel even when the select omits it', async () => {
+    const select = { id: true, profilePicture: { select: { id: true, url: true } } };
+    const query = vi.fn(async (args: unknown) => {
+      const sent = (args as { select: { profilePicture: { select: Record<string, boolean> } } })
+        .select.profilePicture.select;
+      expect(sent.nsfwLevel).toBe(true);
+      return [
+        { profilePicture: { ...picture('Scanned'), nsfwLevel: 0 } },
+        { profilePicture: { ...picture('Scanned'), nsfwLevel: 1 } },
+      ];
+    });
+
+    const result = await gateProfilePictures({ select }, query, vi.fn());
+
+    expect(result[0].profilePicture).toBeNull();
+    // The fields the gate added are stripped again.
+    expect(result[1].profilePicture).toEqual({ id: 1, url: 'avatar-Scanned' });
+  });
+
   it('un-omits the fields it checks on a whole-row picture, and removes them again', async () => {
     const query = vi.fn(async (args: unknown) => {
       expect(

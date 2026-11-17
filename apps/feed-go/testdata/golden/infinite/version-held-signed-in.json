@@ -164,6 +164,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6101,
@@ -221,6 +222,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6101,
@@ -588,6 +590,7 @@
             "availability": "Public",
             "minor": false,
             "poi": false,
+            "restricted": false,
             "meta": null,
             "modelVersionIds": [],
             "modelVersionIdsManual": [],

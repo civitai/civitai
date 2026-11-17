@@ -514,6 +514,39 @@ describe('getPendingWorkflowGates', () => {
     expect(read.some((u) => u.includes(B) || u.includes(C))).toBe(false);
   });
 
+  // The tags exactly as the main app's `buildBlockTrainingTags` stamps an App Blocks training run.
+  it('lists an App Blocks training run under review, attributed to its app', async () => {
+    const BLOCK_RUN = id(8, 8);
+    ledger([BLOCK_RUN]);
+    route = (url) =>
+      byId(url) === BLOCK_RUN
+        ? json(
+            workflow({
+              id: BLOCK_RUN,
+              tags: [
+                'gen',
+                'img',
+                'training',
+                'ai-toolkit',
+                'app-block',
+                'app-block:apb_01EXAMPLEAPP',
+                'app-block:block:example-block',
+                'app-block:instance:bi_01EXAMPLE',
+              ],
+            })
+          )
+        : new Response(null, { status: 599 });
+    const result = await getPendingWorkflowGates();
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        workflowId: BLOCK_RUN,
+        ownerId: 8,
+        verified: true,
+        origin: { kind: 'app-block', appId: 'apb_01EXAMPLEAPP' },
+      }),
+    ]);
+  });
+
   it('keeps claimed runs listed, unverified, when the version check fails', async () => {
     ledger();
     route = standardRoute;
@@ -570,14 +603,14 @@ describe('getPendingWorkflowGates', () => {
     expect(fetchMock).toHaveBeenCalledTimes(MAX_PENDING_CANDIDATES);
   });
 
-  it('bounds the ledger window at 49 hours before now', async () => {
+  it('bounds the ledger window at 72 hours before now', async () => {
     ledger([]);
     route = () => new Response(null, { status: 599 });
     await getPendingWorkflowGates({ now: Date.parse('2026-10-05T12:00:00Z') });
     const charges = chQuery.mock.calls
       .map(([q]) => String(q))
       .find((q) => q.includes("'training'"));
-    expect(charges).toContain("date >= '2026-10-03 11:00:00'");
+    expect(charges).toContain("date >= '2026-10-02 12:00:00'");
   });
 
   it('says the ledger was unreadable rather than returning an empty queue', async () => {

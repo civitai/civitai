@@ -88,6 +88,8 @@ const PAGE_LINK_MESSAGE =
   'This request includes a link to a Civitai page, not an image. Please upload the image instead.';
 
 const CALLER = 7;
+/** The app an App Blocks entry names; `isFlipt` here answers the same for every app. */
+const APP_LOG = { appBlockId: 'apb_1' };
 const OTHER = 8;
 const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
 const AFTER = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() + 60_000);
@@ -343,6 +345,7 @@ describe('an App Blocks generation source', () => {
       entry,
       isApiCaller: false,
       opaqueInput,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',
@@ -693,7 +696,7 @@ describe('an App Blocks generation source', () => {
       ]);
       holder.scannedRows = true;
       hostSourceCounter.inc.mockClear();
-      await countAppBlockHostSources({ urls: [BLOB], appBlockLog: {} });
+      await countAppBlockHostSources({ urls: [BLOB], appBlockLog: APP_LOG });
       expect(hostSourceCounter.inc).not.toHaveBeenCalled();
     });
 
@@ -759,6 +762,7 @@ describe('assertGenerationInputsUsable', () => {
       userId: CALLER,
       entry,
       isApiCaller: false,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',
@@ -923,6 +927,7 @@ describe('assertGenerationInputsUsable', () => {
         entry: 'appBlocksPassThrough',
         isApiCaller: false,
         opaqueInput: true,
+        appBlockLog: APP_LOG,
         now: AFTER,
       }).then(
         () => 'accepted',
@@ -1015,6 +1020,7 @@ describe('assertGenerationInputsUsable', () => {
           entry: 'appBlocksPassThrough',
           isApiCaller: false,
           opaqueInput: true,
+          appBlockLog: APP_LOG,
           now: AFTER,
         })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
@@ -1068,7 +1074,14 @@ describe('assertGenerationInputsUsable', () => {
 
   it('refuses an external host with its own message, and anything else with the unavailable one', async () => {
     const message = (urls: string[], entry: 'iterateGenerate' | 'appBlocksPassThrough') =>
-      assertGenerationInputsUsable({ urls, userId: CALLER, entry, isApiCaller: false, now: AFTER })
+      assertGenerationInputsUsable({
+        urls,
+        userId: CALLER,
+        entry,
+        isApiCaller: false,
+        appBlockLog: APP_LOG,
+        now: AFTER,
+      })
         .then(() => 'accepted')
         .catch((e: TRPCError) => `${e.code}: ${e.message}`);
     holder.refuseExternal = true;
@@ -1778,6 +1791,7 @@ describe('a chat App Block step, with the external-host refusal on', () => {
       entry,
       isApiCaller: false,
       opaqueInput: true,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',

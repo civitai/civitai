@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { getAllImages } from '~/server/services/image.service';
@@ -54,6 +55,7 @@ export async function searchSemanticImages({
   domain,
   track,
   candidateSource = searchServiceCandidates,
+  refuseNarrowing = false,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
@@ -61,6 +63,8 @@ export async function searchSemanticImages({
   domain?: DomainColor;
   track?: QueryTracker;
   candidateSource?: CandidateSource;
+  /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
+  refuseNarrowing?: boolean;
 }) {
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
@@ -105,7 +109,8 @@ export async function searchSemanticImages({
     index: 'images_semantic',
     track,
     context: () => ({
-      browsingLevel,
+      // With refuseNarrowing the verdict is taken at one level, whatever level is asked for.
+      browsingLevel: refuseNarrowing ? allBrowsingLevelsFlag : browsingLevel,
       disablePoi: addons.disablePoi,
       isModerator: user?.isModerator,
     }),
@@ -113,7 +118,7 @@ export async function searchSemanticImages({
   });
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  const queryRefused = verdictLevel === 'refuse';
+  const queryRefused = verdictLevel === 'refuse' || (refuseNarrowing && !!refusal);
   if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
@@ -192,9 +197,10 @@ export async function searchSemanticImages({
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
   const filter: CandidateFilter = {
+    // With refuseNarrowing, candidates are not pre-narrowed to the viewer's level.
     gate: {
       kind: 'level',
-      nsfwLevels: Flags.instanceToArray(level),
+      nsfwLevels: Flags.instanceToArray(refuseNarrowing ? allBrowsingLevelsFlag : level),
     },
     tagIds,
     anyOf: { baseModels: input.baseModels, type: input.types },

@@ -112,21 +112,24 @@ func TestLoadFeedServiceMirrors(t *testing.T) {
 	t.Setenv("FEED_GO_IMAGE_INDEX_FEED", "")
 	t.Setenv("FEED_GO_LAZY_POST_IMAGES", "")
 	t.Setenv("FEED_SERVICE_URL", "")
+	// Unset: `use-model-version-cache-for-images` mirrored OFF (its production value).
+	t.Setenv("FEED_GO_PRIORITIZED_VERSION_CACHE", "")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.ImageIndexFeed || !c.LazyPostImages || c.FeedServiceURL != "" {
-		t.Fatalf("defaults: index=%v lazy=%v url=%q", c.ImageIndexFeed, c.LazyPostImages, c.FeedServiceURL)
+	if !c.ImageIndexFeed || !c.LazyPostImages || c.FeedServiceURL != "" || c.PrioritizedVersionCache {
+		t.Fatalf("defaults: index=%v lazy=%v url=%q versionCache=%v", c.ImageIndexFeed, c.LazyPostImages, c.FeedServiceURL, c.PrioritizedVersionCache)
 	}
 	t.Setenv("FEED_GO_IMAGE_INDEX_FEED", "false")
 	t.Setenv("FEED_GO_LAZY_POST_IMAGES", "false")
 	t.Setenv("FEED_SERVICE_URL", "http://feed.internal")
+	t.Setenv("FEED_GO_PRIORITIZED_VERSION_CACHE", "true")
 	if c, err = Load(); err != nil {
 		t.Fatal(err)
 	}
-	if c.ImageIndexFeed || c.LazyPostImages || c.FeedServiceURL != "http://feed.internal" {
-		t.Fatalf("set: index=%v lazy=%v url=%q", c.ImageIndexFeed, c.LazyPostImages, c.FeedServiceURL)
+	if c.ImageIndexFeed || c.LazyPostImages || c.FeedServiceURL != "http://feed.internal" || !c.PrioritizedVersionCache {
+		t.Fatalf("set: index=%v lazy=%v url=%q versionCache=%v", c.ImageIndexFeed, c.LazyPostImages, c.FeedServiceURL, c.PrioritizedVersionCache)
 	}
 }
 
@@ -176,6 +179,22 @@ func TestLoadPprofDefaultsOff(t *testing.T) {
 		}
 		if c.Pprof != want {
 			t.Errorf("FEED_GO_PPROF=%q -> %v, want %v", in, c.Pprof, want)
+		}
+	}
+}
+
+func TestLoadServeModelGetAllDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_SERVE_MODEL_GETALL", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeModelGetAll != want {
+			t.Errorf("FEED_GO_SERVE_MODEL_GETALL=%q -> %v, want %v", in, c.ServeModelGetAll, want)
 		}
 	}
 }

@@ -165,8 +165,9 @@ function TrainingStudioEmbed({
           return (await r.json()).token as string;
         },
         checkTrainingText: checkStudioTriggerWord,
-        // Starting or pricing a run, and Review's mature count, are the Studio server's: this
-        // app forwards them (/api/training-studio/studio/*). The element refuses them without it.
+        // Every paid call, pricing a continuation, and Review's mature count are the Studio
+        // server's: this app forwards them (/api/training-studio/studio/*). The element refuses
+        // them without it.
         studioServer: (path: string, init?: RequestInit) => {
           if (!path.startsWith('/api/')) return Promise.reject(new Error(`Unknown route ${path}`));
           return fetch(`/api/training-studio/studio/${path.slice('/api/'.length)}`, init);
@@ -323,14 +324,14 @@ function TrainingStudioEmbed({
     ref.current?.classList.toggle('light', colorScheme === 'light');
   }, [elReady, colorScheme]);
 
-  const classicTrainerUrl =
-    isNew || !currentUser?.username
-      ? '/models/train'
-      : `/user/${currentUser.username}/models?section=training`;
+  const pastRunsUrl = currentUser?.username
+    ? `/user/${currentUser.username}/models?section=training`
+    : undefined;
+  const classicTrainerUrl = isNew || !pastRunsUrl ? '/models/train' : pastRunsUrl;
 
   return (
     <div className="mx-auto max-w-[1100px] p-4 sm:p-6">
-      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
+      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} pastRunsUrl={pastRunsUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>
   );

@@ -26,6 +26,14 @@ export const clickupTaskIdFromUrl = (url?: string | null): string | null => {
 const CLICKUP_HOSTS = new Set(['app.clickup.com', 'clickup.com', 'www.clickup.com']);
 /** HQ replaced ClickUp and kept its task ids, so `https://hq.civitai.com/t/<id>` matches the same way. */
 const HQ_HOST = 'hq.civitai.com';
+/** The one HQ origin: the task links stored on feedback rows, and the data API the sync reads. */
+export const HQ_ORIGIN = `https://${HQ_HOST}`;
+/**
+ * The shape of an HQ task id as HQ issues them: lower-case letters, digits, `_` and `-`
+ * (`abc_def_9xyz`). Not every reader of a task link uses it; some keep their own, looser
+ * pattern, so grep for this constant rather than trusting a list here.
+ */
+export const HQ_TASK_ID_PATTERN = /^[a-z0-9_-]{1,100}$/;
 
 /**
  * Whether a string is a ClickUp or HQ task URL that may be STORED as a new link.
@@ -64,7 +72,7 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
     return (
       segments.length === 2 &&
       segments[0] === 't' &&
-      /^[a-z0-9]+$/.test(segments[1]) &&
+      HQ_TASK_ID_PATTERN.test(segments[1]) &&
       clickupTaskIdFromUrl(url) === segments[1]
     );
   }
@@ -138,14 +146,12 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
  * render, or be matched by id, as something else; refusing everything but the canonical text leaves
  * nothing for the two readings to disagree on.
  *
- * Ids are what HQ issues today: lower-case letters, digits, `_` and `-` (`abc_def_9xyz`). That is
- * WIDER than `isClickupTaskUrl`'s HQ branch, which refuses `_` and so refuses most current HQ ids;
- * this function does not change that gate.
+ * Ids are `HQ_TASK_ID_PATTERN`, the same rule `isClickupTaskUrl`'s HQ branch applies.
  */
-export const HQ_TASK_URL_PREFIX = `https://${HQ_HOST}/t/`;
-const HQ_TASK_URL = /^https:\/\/hq\.civitai\.com\/t\/([a-z0-9_-]{1,100})$/;
+export const HQ_TASK_URL_PREFIX = `${HQ_ORIGIN}/t/`;
 
 export const hqTaskFromUrl = (url?: string | null): { id: string; url: string } | null => {
-  const match = url ? HQ_TASK_URL.exec(url) : null;
-  return match ? { id: match[1], url: `${HQ_TASK_URL_PREFIX}${match[1]}` } : null;
+  if (!url || !url.startsWith(HQ_TASK_URL_PREFIX)) return null;
+  const id = url.slice(HQ_TASK_URL_PREFIX.length);
+  return HQ_TASK_ID_PATTERN.test(id) ? { id, url: `${HQ_TASK_URL_PREFIX}${id}` } : null;
 };

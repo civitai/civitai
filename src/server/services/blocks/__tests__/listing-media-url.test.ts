@@ -45,6 +45,7 @@ function img(url: string) {
     tosViolation: false,
     acceptableMinor: false,
     blockedFor: null,
+    modelRestricted: false,
   } satisfies ListingMediaImage;
 }
 

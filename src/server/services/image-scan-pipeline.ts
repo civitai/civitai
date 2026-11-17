@@ -36,6 +36,10 @@ import { styleTags, tagsNeedingReview } from '~/libs/tags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
+  queueArticlesAndComicsForImages,
+  queueModelsForImageChildTagChanges,
+} from '~/server/services/image-models-reindex.service';
+import {
   tagIdsForImagesCache,
   tagCacheByName,
   thumbnailCache,
@@ -535,8 +539,8 @@ function isBlockKeptByHold(imageId: number) {
  *  - `blocked` (legacy mediaRating hard block, already written by the caller): only
  *    stamp provenance — re-auditing would recompute nsfwLevel/ingestion and silently
  *    un-block the image. A *prior* block is deliberately not sticky, so a moderator
- *    rescan can clear it, unless the owner is banned or held, a hold kept the image, or the
- *    image is under appeal.
+ *    rescan can clear it, unless the owner is banned or held, a hold kept the image, the
+ *    image is under appeal, or the block is CSAM.
  *    imageScanning never passes `blocked`, so on that path only `audit.blockedFor` and
  *    moderation rules re-block.
  *  - `audit.blockedFor` (prompt TOS/CSAM): block.
@@ -584,7 +588,8 @@ export async function resolveScanOutcome({
     );
     return {
       ingestion: ImageIngestionStatus.Blocked,
-      blockedFor: blocked.reason,
+      // The caller's block write keeps a stored CSAM reason, and `image` was loaded after it.
+      blockedFor: image.blockedFor === BlockedReason.CSAM ? BlockedReason.CSAM : blocked.reason,
       reviewKey: null,
     };
   }
@@ -618,6 +623,7 @@ export async function resolveScanOutcome({
     toUpdate.scannedAt = now;
   else toUpdate.scannedAt = image.scannedAt;
 
+  const ratingLocked = image.nsfwLevelLocked && image.nsfwLevel !== 0;
   if (audit.blockedFor) {
     // A block outranks a locked rating: it is a ToS decision, not a rating.
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
@@ -627,14 +633,16 @@ export async function resolveScanOutcome({
     toUpdate.ingestion = ImageIngestionStatus.Scanned;
     toUpdate.needsReview = reviewKey;
     toUpdate.blockedFor = null;
-    // Respect a manually-locked nsfw level — never overwrite it from the scan.
-    toUpdate.nsfwLevel = image.nsfwLevelLocked ? image.nsfwLevel : audit.nsfwLevel;
+    // Respect a manually-locked nsfw level — never overwrite it from the scan. A lock on no rating
+    // (level 0) is not a rating, so the scan's level stands and the lock is dropped in the write.
+    toUpdate.nsfwLevel = ratingLocked ? image.nsfwLevel : audit.nsfwLevel;
   }
 
   // Moderation rules can block the image, hold it for review, or annotate its
   // metadata with the matched rule. Applied after the scan audit so a Block/Hold
   // takes precedence over the audit's own decision.
   const modRule = await evaluateImageModRules(image, audit.tags);
+  let ruleBlocked = false;
   let metadataUpdate: Record<string, any> | undefined;
   if (modRule) {
     metadataUpdate = modRule.metadata;
@@ -645,15 +653,8 @@ export async function resolveScanOutcome({
       toUpdate.needsReview = modRule.needsReview;
       if (typeof modRule.needsReview === 'string') reviewKey = modRule.needsReview;
     }
-    // Notify the user only when a rule auto-blocked the image (not on Hold).
-    if (modRule.ingestion === ImageIngestionStatus.Blocked) {
-      await notifyImageAutoBlocked({
-        imageId: image.id,
-        userId: image.userId,
-        reason: modRule.ruleReason,
-        log,
-      });
-    }
+    // The owner is told only of a rule block (not a Hold), after the write below.
+    ruleBlocked = modRule.ingestion === ImageIngestionStatus.Blocked;
   }
 
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
@@ -703,24 +704,34 @@ export async function resolveScanOutcome({
     }
   }
 
-  const scanLevel = toUpdate.nsfwLevel as number;
+  let scanLevel = toUpdate.nsfwLevel as number;
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
+  // Decided on the row, so a stored CSAM block holds whatever this scan loaded or decided.
+  const csamBlocked = Prisma.raw(`"blockedFor" = '${BlockedReason.CSAM}'`);
   await writeWithNsfwAxes(
     (axesTerm) => dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
       "pHash" = ${pHash ?? null},
-      "ingestion" = ${ingestionAfterVerdictSql(toUpdate.ingestion as string)},
-      "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
-      "nsfwLevel" = ${scanLevel},
+      "ingestion" = CASE WHEN ${csamBlocked} THEN 'Blocked'::"ImageIngestionStatus"
+        ELSE ${ingestionAfterVerdictSql(toUpdate.ingestion as string)} END,
+      "blockedFor" = CASE WHEN ${csamBlocked} THEN "blockedFor"
+        ELSE ${(toUpdate.blockedFor as string) ?? null} END,
+      "nsfwLevel" = CASE WHEN ${csamBlocked} THEN ${Prisma.raw(String(NsfwLevel.Blocked))}
+        -- A rating locked since the image was loaded stands over a rating, never over a block; a
+        -- lock that holds no level does not stand.
+        WHEN "nsfwLevelLocked" AND "nsfwLevel" <> 0
+          AND ${scanLevel}::int <> ${Prisma.raw(String(NsfwLevel.Blocked))} THEN "nsfwLevel"
+        ELSE ${scanLevel}::int END,
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
         ELSE ${(toUpdate.needsReview as string) ?? null} END,
+      "nsfwLevelLocked" = "nsfwLevelLocked" AND "nsfwLevel" <> 0,
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
-      "metadata" = CASE WHEN ${metadataJson}::jsonb IS NULL THEN "metadata"
+      "metadata" = CASE WHEN ${metadataJson}::jsonb IS NULL OR ${csamBlocked} THEN "metadata"
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END,
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
@@ -730,6 +741,33 @@ export async function resolveScanOutcome({
     axesSet,
     axesTarget
   );
+  // The side effects follow the row as written, not the verdict above: a Scanned outcome queues the
+  // image for Knights review and signals its owner, though the guard kept the row CSAM-blocked. The
+  // verdict has landed, so a failed read must not turn it into a scan error.
+  const [written] = await dbWrite.$queryRaw<{ blockedFor: string | null }[]>`
+    SELECT "blockedFor" FROM "Image" WHERE id = ${image.id}
+  `.catch((error: Error) => {
+    logToAxiom({
+      type: 'error',
+      name: 'scan-outcome-read-back',
+      imageId: image.id,
+      message: error.message,
+    });
+    return [];
+  });
+  if (written?.blockedFor === BlockedReason.CSAM) {
+    toUpdate.ingestion = ImageIngestionStatus.Blocked;
+    toUpdate.blockedFor = BlockedReason.CSAM;
+    toUpdate.nsfwLevel = scanLevel = NsfwLevel.Blocked;
+  }
+  // A CSAM block is decided only in a moderator's CSAM review, so its owner gets no rule notice.
+  if (ruleBlocked && toUpdate.blockedFor !== BlockedReason.CSAM)
+    await notifyImageAutoBlocked({
+      imageId: image.id,
+      userId: image.userId,
+      reason: modRule?.ruleReason,
+      log,
+    });
 
   // A collection judge's rating is a floor under an unlocked, unblocked level. Read from the row
   // after the write above, so a rating that landed after this scan loaded the image still holds; the
@@ -749,7 +787,7 @@ export async function resolveScanOutcome({
     `.catch(() => []); // the verdict has landed: a failed read-back must not turn it into a scan error
     ingestion = row?.ingestion ?? ingestion;
   }
-  if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {
+  if (scanLevel !== NsfwLevel.Blocked && !ratingLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
     try {
@@ -1177,6 +1215,12 @@ export async function applyIngestionSideEffects({
     await queueImageSearchIndexUpdate({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Update,
+    });
+    // The scan writes "minor", which no trigger watches.
+    await queueArticlesAndComicsForImages([image.id]);
+    await queueModelsForImageChildTagChanges({
+      levelImageIds: [image.id],
+      ...(outcome.audit?.minor && { minorImageIds: [image.id] }),
     });
 
     // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.

@@ -72,7 +72,13 @@ vi.mock('~/server/utils/pagination-helpers', () => ({
   getNextPage: () => ({ baseUrl: { origin: 'https://civitai.com' }, nextPage: undefined }),
 }));
 
+/**
+ * A minted token carries BOTH maturity claims. Unless a test names the viewer's
+ * own level, the viewer sits at the full domain ceiling, so a case about the
+ * DOMAIN clamp reads the domain alone; the viewer-level cases set it.
+ */
 function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
+  const viewer = 'viewerBrowsingLevel' in over ? {} : { viewerBrowsingLevel: over.maxBrowsingLevel };
   return {
     iss: 'civitai',
     aud: 'civitai-app-block',
@@ -86,6 +92,7 @@ function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
     blockInstanceId: 'bki_test',
     ctx: {},
     scopes: [],
+    ...viewer,
     ...over,
   } as BlockTokenClaims;
 }
@@ -233,11 +240,19 @@ describe('🔴 /api/v1/blocks/tools — the maturity clamp is applied IN THIS HA
     expect(res.body.maturity.sfwOnly).toBe(false);
   });
 
-  it('🔴 a MISSING claim FAILS CLOSED to SFW', async () => {
+  it('🔴 a MISSING claim FAILS CLOSED to PG', async () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: undefined });
     await invoke('POST', { name: 'search_models', arguments: { query: 'x' } });
     const [, ctx] = mockRunModelSearch.mock.calls[0];
-    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.browsingLevel).toBe(1);
+  });
+
+  it('🔴 RED domain + a PG-only viewer → the tool searches at PG, SFW-only', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, viewerBrowsingLevel: 1 });
+    const res = await invoke('POST', { name: 'search_models', arguments: { query: 'x' } });
+    const [, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(1);
+    expect(res.body.maturity.sfwOnly).toBe(true);
   });
 
   it('🔴 a region-restricted viewer is clamped DOWN even on a RED token', async () => {

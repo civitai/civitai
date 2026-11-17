@@ -49,11 +49,61 @@ export const FILTER_PATTERN_MAX_LENGTH = 1024;
  * Largest size a pattern may have, counted as {@link translateFilterPattern} says. Matching is
  * linear in the input with a factor of the size (the NFA can hold one thread per instruction), so
  * the size, not the length, is what a match costs: `.{1000}` written 146 times fits in 1022
- * characters, is size 146 000, and took ~0.7 s against a 10 000-character string. A literal
- * pattern's size is its length, so this also bounds literals below the length bound. What a
- * pattern at this bound costs is measured at `FILTER_PATTERNS_MAX_TOTAL_SIZE` (`json-schema.ts`).
+ * characters and is size 146 000. A literal pattern's size is its length, so this also bounds
+ * literals below the length bound. How the sizes bound a filter's pattern work is at
+ * `FILTER_MAX_PATTERN_PLACES` (`json-schema.ts`).
  */
 export const FILTER_PATTERN_MAX_SIZE = 256;
+
+/**
+ * Longest value a filter pattern is run on, in UTF-16 code units (`string.length`): a body string
+ * for `pattern` (and `propertyNames`' `pattern`), a property name for `patternProperties` and the
+ * `additionalProperties` that re-tests its keys. Matching is linear in the value's length, and
+ * the strings a body holds have no length bound of their own, so this bounds the CPU a pattern
+ * can spend per value: at most this length times the pattern's size.
+ *
+ * A longer value counts as not matching: the compiled pattern's `test` returns false without
+ * running the engine ({@link compileFilterPattern}, the one object ajv calls `test` on). It is
+ * the `pattern` keyword that fails, not the filter, so the result composes as a failed keyword
+ * does: `not: {pattern: p}` PASSES for an oversized value whatever `p` is; an `anyOf` or `oneOf`
+ * branch holding the pattern fails, so another branch decides; an `if` with the pattern takes the
+ * `else`; a property name over the bound is matched by no `patternProperties` key, so
+ * `additionalProperties` applies to it unless `properties` names it. A pattern filter over a
+ * string longer than this (document text, say) therefore finds no match in it, not even one in
+ * its first characters.
+ *
+ * ajv's meta-schema patterns, which validate the filter itself and never a body, are compiled
+ * through the same engine and so carry the bound too; they never meet it, as no string in a filter
+ * is longer than the filter's own bound as JSON (`FILTER_MAX_BYTES` in `json-schema.ts`).
+ */
+export const FILTER_PATTERN_MAX_INPUT_LENGTH = 16384;
+
+/**
+ * Most pattern input one body evaluation may run, in UTF-16 code units, summed over every value
+ * any of the filter's patterns is run on. {@link FILTER_PATTERN_MAX_INPUT_LENGTH} bounds one value,
+ * but one place runs its pattern on every value it applies to (`items: {pattern}`,
+ * `additionalProperties: {pattern}`), so without this the work grew with the whole body. With it,
+ * the pattern work per body is at most size × min(places × the body's charge, this budget), where
+ * size is {@link FILTER_PATTERN_MAX_SIZE}, places is `FILTER_MAX_PATTERN_PLACES`
+ * (`json-schema.ts`), and the body's charge sums max(1, length) over its string values and
+ * property names.
+ *
+ * Each filter's engine ({@link filterRegExpEngine}) holds one budget, shared by all of the filter's
+ * patterns, and refills it immediately before each body is validated
+ * ({@link FilterRegExpEngine.metered}, the one call that runs the compiled filter). Validation is
+ * synchronous, so no other body can run in between, and a filter shared by many subscriptions
+ * through the filter cache refills it for each body it evaluates: the budget is per evaluation,
+ * not per pattern or per subscription.
+ *
+ * Each run is charged its value's length, at least 1, so the number of runs is bounded too. A
+ * value that does not fit is not matched (see {@link FILTER_PATTERN_MAX_INPUT_LENGTH} for how that
+ * composes) and ends the budget for the rest of the body; which values come after follows ajv's
+ * evaluation order.
+ */
+export const FILTER_PATTERN_BODY_BUDGET = 65536;
+
+/** The pattern input left for the body being evaluated, shared by one filter's patterns. */
+export type FilterPatternBudget = { remaining: number };
 
 /** A pattern this source will not evaluate. Its message is the `bad_request` sent. */
 export class FilterPatternError extends Error {}
@@ -372,14 +422,9 @@ function translate(pattern: string): { re2: string; size: number } {
  * ~5-8 MB. A DFA over its budget clears its cache and, if that happens too often, re2js runs the
  * pattern on its NFA instead, in the same linear time the size bounds already assume.
  *
- * Measured, through ajv: 40 live two-pattern filters, each run once over 50 bodies of ~840
- * characters of English-like text, retained ~6.7 MB at 32 KiB against ~520 MB at the default (and
- * ~107 MB at the default with the predicates dropped, the filter cache only). Realistic patterns
- * (a `^urn:schema:civitai.com:` prefix, a slug, a date, a five-word alternation, a word pattern)
- * ran at the default's speed or faster; the auditor's `e[^.]{120}\.` pair, whose DFA needs
- * megabytes, ran ~10x slower (~7 ms per 42 000 characters, the NFA's speed); the hostile
- * `[ab]{0,125}b[ab]{125}c` in two places took about half as long. At 8 KiB a five-word
- * alternation ran ~11x slower, so 32 KiB is the smallest budget measured that kept them fast.
+ * 32 KiB is the smallest budget measured that kept realistic patterns (a
+ * `^urn:schema:civitai.com:` prefix, a slug, a five-word alternation) at the default's speed;
+ * smaller budgets ran them markedly slower, so do not lower it.
  */
 export const FILTER_PATTERN_DFA_BYTES = 32 * 1024;
 
@@ -430,9 +475,9 @@ function enforcesBound(dfa: Re2jsDfa | null | undefined): boolean {
 const SELF_TEST_PATTERN = '[ab]*a[ab]{20}$';
 
 /**
- * 256 code points of `a` and `b` from a fixed seed. Measured: it makes a 32 KiB DFA for
- * {@link SELF_TEST_PATTERN} clear its cache once (128 do too, 64 do not), in ~0.2 ms with the
- * compile; its 21st code point from the end is `b`, so the pattern does not match.
+ * 256 code points of `a` and `b` from a fixed seed: long enough that a
+ * {@link FILTER_PATTERN_DFA_BYTES} DFA for {@link SELF_TEST_PATTERN} clears its cache at least
+ * once. Its 21st code point from the end is `b`, so the pattern does not match.
  */
 const SELF_TEST_INPUT = (() => {
   let x = 1;
@@ -474,8 +519,8 @@ export function dfaSelfTest(): boolean {
  * keeps the lazy one, which it then uses for every match. re2js is pinned exactly (`package.json`).
  * The pattern is refused ({@link FilterPatternError}, so `bad_request`) rather than applied with an
  * unbounded DFA when the installed DFA does not hold the bound in its enforced fields
- * ({@link enforcesBound}), or when {@link dfaSelfTest} fails; the self-test runs on every compile
- * (~0.2 ms), so nothing about it is cached or depends on which pattern was compiled first.
+ * ({@link enforcesBound}), or when {@link dfaSelfTest} fails; the self-test runs on every compile,
+ * so nothing about it is cached or depends on which pattern was compiled first.
  */
 function boundDfa(compiled: RE2JS): void {
   if (!enforcesBound(installBoundedDfa(compiled)) || !dfaSelfTest()) {
@@ -499,8 +544,16 @@ export type CompiledFilterPattern = RegExpLike & {
   readonly dfaBytes: number | undefined;
 };
 
-/** `pattern` compiled for unanchored, linear-time matching; throws {@link FilterPatternError}. */
-export function compileFilterPattern(pattern: string): CompiledFilterPattern {
+/**
+ * `pattern` compiled for unanchored, linear-time matching; throws {@link FilterPatternError}. Its
+ * `test` is false, without matching, for a value longer than
+ * {@link FILTER_PATTERN_MAX_INPUT_LENGTH}, and, given a `budget`, for a value that does not fit in
+ * it ({@link FILTER_PATTERN_BODY_BUDGET}).
+ */
+export function compileFilterPattern(
+  pattern: string,
+  budget?: FilterPatternBudget
+): CompiledFilterPattern {
   const { re2, size } = translate(pattern);
   let compiled: RE2JS;
   try {
@@ -515,8 +568,21 @@ export function compileFilterPattern(pattern: string): CompiledFilterPattern {
   }
   boundDfa(compiled);
   return {
-    // RE2JS `test` finds a match anywhere in the input, as ECMA's does: unanchored.
-    test: (s: string) => compiled.test(s),
+    // RE2JS `test` finds a match anywhere in the input, as ECMA's does: unanchored. A value over
+    // FILTER_PATTERN_MAX_INPUT_LENGTH, or one the budget cannot pay for, is not matched, and the
+    // engine is not run on it.
+    test: (s: string) => {
+      if (s.length > FILTER_PATTERN_MAX_INPUT_LENGTH) return false;
+      if (budget) {
+        const charge = Math.max(1, s.length);
+        if (charge > budget.remaining) {
+          budget.remaining = 0;
+          return false;
+        }
+        budget.remaining -= charge;
+      }
+      return compiled.test(s);
+    },
     // ajv keys a compiled pattern by `toString()` within one schema, so it must name the pattern.
     toString: () => `/${pattern}/u (re2)`,
     size,
@@ -528,9 +594,14 @@ export function compileFilterPattern(pattern: string): CompiledFilterPattern {
 
 /**
  * An ajv `code.regExp` engine that counts only once armed, and says how many distinct patterns
- * it compiled for the filter.
+ * it compiled for the filter. `metered(run)` refills the filter's
+ * {@link FILTER_PATTERN_BODY_BUDGET} and then calls `run`, which validates one body.
  */
-export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () => number };
+export type FilterRegExpEngine = RegExpEngine & {
+  arm: () => void;
+  distinct: () => number;
+  metered: <T>(run: () => T) => T;
+};
 
 /**
  * An ajv `code.regExp` engine compiling with {@link compileFilterPattern}, each distinct pattern
@@ -541,7 +612,8 @@ export type FilterRegExpEngine = RegExpEngine & { arm: () => void; distinct: () 
  * it applies to. Every ask is a place, a repeated pattern counted each time. A filter with more
  * than `maxPlaces` places, or whose sizes summed over its places exceed `maxTotalSize`, throws
  * {@link FilterPatternError}. Each place runs its pattern once per value it applies to, so the
- * places, with each pattern's size, bound the matching work per body.
+ * places and sizes bound the work per character; {@link FILTER_PATTERN_BODY_BUDGET} bounds the
+ * characters per body.
  *
  * Nothing is counted before {@link FilterRegExpEngine.arm}: ajv compiles its meta-schema's own
  * patterns (for `$id`, `$anchor` and the like) through the same engine, the first time it
@@ -559,6 +631,9 @@ export function filterRegExpEngine({
   let armed = false;
   let places = 0;
   let total = 0;
+  // One budget for every pattern this engine compiles (the meta-schema's too, so a filter pattern
+  // that happens to equal one of those, and so shares its compiled object, is still charged).
+  const budget: FilterPatternBudget = { remaining: FILTER_PATTERN_BODY_BUDGET };
   const engine = (pattern: string) => {
     if (armed) {
       places += 1;
@@ -573,7 +648,7 @@ export function filterRegExpEngine({
     }
     let rx = compiled.get(pattern);
     if (!rx) {
-      rx = compileFilterPattern(pattern);
+      rx = compileFilterPattern(pattern, budget);
       compiled.set(pattern, rx);
     }
     if (!armed) return rx;
@@ -590,6 +665,10 @@ export function filterRegExpEngine({
     armed = true;
   };
   engine.distinct = () => counted.size;
+  engine.metered = <T>(run: () => T): T => {
+    budget.remaining = FILTER_PATTERN_BODY_BUDGET;
+    return run();
+  };
   // ajv writes `code` into a validator's source only when generating standalone code, which a
   // filter never is.
   engine.code = 'filterRegExp';

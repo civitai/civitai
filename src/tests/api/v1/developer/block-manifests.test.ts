@@ -83,7 +83,7 @@ beforeEach(() => {
   mockEnv.JOB_TOKEN = 'job-secret';
   mockValidator.validate.mockReturnValue({ valid: true });
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
-    allowedScopes: 0xffffff,
+    allowedScopes: 0xffffffn,
     allowedOrigins: ['https://blocks.civitai.com'],
   });
   mockDbRead.appBlock.findUnique.mockResolvedValue(null);
@@ -264,6 +264,53 @@ describe('POST /api/v1/developer/block-manifests', () => {
     };
     expect(upsertArgs.create.renderMode).toBe('iframe');
     expect(upsertArgs.create.trustTier).toBe('unverified');
+  });
+
+  describe('stores tagline/repository trimmed', () => {
+    const TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
+    const REPO = 'https://github.com/example-org/test-block';
+    const PAD = ` \t\n${' '.repeat(600)}\n\t `;
+    const paddedBody = () => ({
+      ...VALID_BODY,
+      manifest: {
+        ...VALID_BODY.manifest,
+        tagline: `${PAD}${TAGLINE}${PAD}`,
+        repository: `${PAD}${REPO}${PAD}`,
+      },
+    });
+    type Upsert = {
+      create: { manifest: Record<string, unknown> };
+      update: { manifest: Record<string, unknown> };
+    };
+
+    it('writes the trimmed values on both the create and update payloads', async () => {
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: paddedBody() }), res);
+      expect(res._status).toBe(200);
+      expect(TAGLINE).toHaveLength(140);
+      const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as Upsert;
+      expect(upsertArgs.create.manifest.tagline).toBe(TAGLINE);
+      expect(upsertArgs.create.manifest.repository).toBe(REPO);
+      expect(upsertArgs.update.manifest.tagline).toBe(TAGLINE);
+      expect(upsertArgs.update.manifest.repository).toBe(REPO);
+    });
+
+    it('a padded re-upload of the stored (trimmed) manifest is unchanged, not re-moderated', async () => {
+      mockDbRead.appBlock.findUnique.mockResolvedValue({
+        id: 'ab_existing',
+        manifest: { ...VALID_BODY.manifest, tagline: TAGLINE, repository: REPO },
+        status: 'approved',
+        trustTier: 'unverified',
+        renderMode: 'iframe',
+      });
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: paddedBody() }), res);
+      expect(res._status).toBe(200);
+      expect(res._body).toEqual({ id: 'ab_existing', status: 'approved', unchanged: true });
+      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+    });
   });
 });
 

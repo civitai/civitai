@@ -42,7 +42,7 @@ import type { AppRole } from './app-capabilities.constants';
  * per-op server-side checks for apps:storage:*).
  */
 export const SKIP_OAUTH_CHECK = Symbol('SKIP_OAUTH_CHECK');
-export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
+export type ScopeBitmaskRequirement = bigint | typeof SKIP_OAUTH_CHECK;
 
 export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> = {
   'models:read:self': TokenScope.ModelsRead,
@@ -797,7 +797,7 @@ export type { SensitiveScopeManifestInput } from '@civitai/shared/sensitive-bloc
  */
 export function validateBlockScopesAgainstOauthClient(
   blockScopes: string[],
-  oauthClientAllowedScopes: number
+  oauthClientAllowedScopes: bigint
 ): { valid: boolean; rejectedScopes: string[] } {
   const rejected: string[] = [];
   for (const scope of blockScopes) {
@@ -849,8 +849,8 @@ export function isAppBlockOauthClientId(clientId: string | null | undefined): bo
  * the OAuth-eligible scope set, exactly what the validator / token-mint path
  * expects as the per-client ceiling.
  */
-export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number {
-  let bitmask = 0;
+export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): bigint {
+  let bitmask = 0n;
   for (const scope of blockScopes) {
     if (!isKnownBlockScope(scope)) continue;
     const requirement = BLOCK_SCOPE_TO_OAUTH_BIT[scope];

@@ -28,6 +28,10 @@ type Config struct {
 	// ImageIndexFeed mirrors `image-index-feed`: on, the pages come from the feed service
 	// (getAllImagesIndex) instead of the Postgres query (getAllImages).
 	ImageIndexFeed bool
+	// PrioritizedVersionCache mirrors `use-model-version-cache-for-images` (image.getInfinite only):
+	// on, a prioritizedUserIds request on the Postgres path takes its ids from
+	// imagesForModelVersionsCache in Node, which is not ported, so it falls back here.
+	PrioritizedVersionCache bool
 	// VisibleDecorationEvents is the set of event decorations every viewer may see.
 	VisibleDecorationEvents map[string]bool
 	// CompletionConcurrency caps the lazy-post-images completion fetches one request runs at once

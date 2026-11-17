@@ -11,6 +11,7 @@ const imports = vi.hoisted(() => ({
   importSentJsonl: vi.fn(),
   resolveSending: vi.fn(),
   retireNotice: vi.fn(),
+  withdrawNotice: vi.fn(),
   ImportRefusedError: class extends Error {},
 }));
 vi.mock('$lib/server/cases/backlog-import', () => imports);
@@ -49,13 +50,32 @@ describe('/cases/batch grants', () => {
   });
 
   it('refuses send, importSent and resolve without cases.act', async () => {
-    for (const action of [actions.send!, actions.importSent!, actions.resolve!, actions.retire!]) {
+    for (const action of [
+      actions.send!,
+      actions.importSent!,
+      actions.resolve!,
+      actions.retire!,
+      actions.withdraw!,
+    ]) {
       expect(((await action(event({ 'cases.pii': true }))) as { status: number }).status).toBe(403);
     }
     expect(service.startBatchSend).not.toHaveBeenCalled();
     expect(imports.importSentJsonl).not.toHaveBeenCalled();
     expect(imports.resolveSending).not.toHaveBeenCalled();
     expect(imports.retireNotice).not.toHaveBeenCalled();
+    expect(imports.withdrawNotice).not.toHaveBeenCalled();
+  });
+
+  it('answers an export that lost its run lock with a 409, not a store outage', async () => {
+    service.startExport.mockRejectedValueOnce(
+      new imports.ImportRefusedError(
+        'the export of batch backlog-1 lost its run lock; export again'
+      )
+    );
+    await expect(POST(event({ 'cases.act': true }))).rejects.toMatchObject({
+      status: 409,
+      body: { message: expect.stringContaining('lost its run lock') },
+    });
   });
 
   it('refuses the export without cases.act, and records nothing', async () => {

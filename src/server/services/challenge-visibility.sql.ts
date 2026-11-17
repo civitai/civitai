@@ -19,10 +19,10 @@ export function challengeScanGates(viewerId?: number): Prisma.Sql[] {
     own(
       Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
     ),
-    // The cover's own scan, for user challenges: System and Mod covers are trusted, as on the
-    // detail page (getChallengeDetail).
+    // The cover's own scan and rating, for user challenges: System and Mod covers are trusted, as
+    // on the detail page (getChallengeDetail).
     own(
-      Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"))`
+      Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus" AND i."nsfwLevel" != 0))`
     ),
   ];
 }

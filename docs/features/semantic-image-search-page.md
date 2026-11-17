@@ -106,8 +106,8 @@ reuse `semanticArticleSearch.search`, which also takes the feed's tags, period (
 bound), followed, bookmarks, hidden and collection; /search/articles redirects to /articles. Both
 share `FeedSearchSummary` and `SearchSortLock`. Articles read `?query=` only on their own page
 (`useFeedSearchQuery`), since other pages share the article filter params. Followed narrows the
-index to the viewer's follows (up to 1,000); bookmarks, hidden and collection apply at hydration
-only, so a narrow list can leave a page sparse.
+index to the viewer's follows, and bookmarks, hidden and collection to their article ids (each up to
+1,000; a longer list applies at hydration only).
 
 ## Feedback and logging
 

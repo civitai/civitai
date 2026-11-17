@@ -254,6 +254,7 @@ function image(id, postId, opts = {}) {
     minor: opts.minor ?? false,
     poi: false,
     acceptableMinor: false,
+    restricted: false,
   };
   RESOURCES[id] = opts.resources ?? (post.modelVersionId ? [{ modelVersionId: post.modelVersionId, detected: true }] : []);
 }
@@ -382,7 +383,7 @@ const K = {
   basic: 'packed:caches:basic-users',
   userCosmetics: 'packed:caches:user-cosmetics',
   cosmetics: 'packed:caches:cosmetics2',
-  profile: 'packed:caches:profile-pictures:v2',
+  profile: 'packed:caches:profile-pictures:v3',
   frames: 'packed:caches:cosmetics2:Image',
   events: 'packed:caches:cosmetics2:event:v2:Image',
   thumbs: 'packed:caches:thumbnails',

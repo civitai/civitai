@@ -6,6 +6,7 @@ import {
   GO_TRANSPORT_PROCEDURES,
   GO_TRANSPORT_URL,
   setFeedGoTransportEnabled,
+  setFeedGoTransportModelGetAllEnabled,
 } from '~/utils/trpc-go-transport';
 
 /**
@@ -22,11 +23,14 @@ const FEED = 'image.getImagesAsPostsInfinite';
 const FEED_INPUT = { modelId: 1, modelVersionId: 2, limit: 50 };
 const ORDINARY = 'model.getById';
 const ORDINARY_INPUT = { id: 1 };
+const MODELS = 'model.getAll';
+const MODELS_INPUT = { sort: 'Newest', limit: 20, browsingLevel: 1 };
 
 beforeEach(() => {
   sent = [];
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
+  setFeedGoTransportModelGetAllEnabled(false);
   delete (globalThis as { window?: unknown }).window;
   vi.stubGlobal(
     'fetch',
@@ -43,6 +47,7 @@ beforeEach(() => {
 afterEach(() => {
   setTrpcBatchingEnabled(false);
   setFeedGoTransportEnabled(false);
+  setFeedGoTransportModelGetAllEnabled(false);
   delete (globalThis as { window?: unknown }).window;
   vi.unstubAllGlobals();
 });
@@ -61,6 +66,12 @@ async function callQuery(path: string, input: Record<string, unknown>): Promise<
 const signIn = () => {
   (globalThis as { window?: unknown }).window = { isAuthed: true };
 };
+
+// The path the edge route matches: the talos-infra IngressRoute feed-go routes exactly
+// `/api/trpc-go/<procedure>` to the Go service, so this constant must stay that literal.
+it('GO_TRANSPORT_URL is the edge route prefix /api/trpc-go', () => {
+  expect(GO_TRANSPORT_URL).toBe('/api/trpc-go');
+});
 
 it('every Go-transport procedure is also never batched (a batched path cannot be routed)', () => {
   expect(GO_TRANSPORT_PROCEDURES.size).toBeGreaterThan(0);
@@ -101,6 +112,18 @@ describe('the /api/trpc-go rewrite', () => {
     expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${ORDINARY}`)).toBeUndefined();
     expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/user.getSettings`)).toBeUndefined();
     expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${FEED},${ORDINARY}`)).toBeUndefined();
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/${MODELS},${ORDINARY}`)).toBeUndefined();
+    expect(rewriteFor(rewrites, `${GO_TRANSPORT_URL}/model.getAllPagedSimple`)).toBeUndefined();
+  });
+
+  it('sends /api/trpc-go/model.getAll back to /api/trpc/model.getAll (literal paths)', async () => {
+    const rewrites = await loadRewrites();
+    expect(rewriteFor(rewrites, '/api/trpc-go/model.getAll')?.destination).toBe(
+      '/api/trpc/model.getAll'
+    );
+    expect(rewriteFor(rewrites, '/api/trpc-go/image.getImagesAsPostsInfinite')?.destination).toBe(
+      '/api/trpc/image.getImagesAsPostsInfinite'
+    );
   });
 });
 
@@ -166,5 +189,96 @@ describe('feedGoTransport', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].method).toBe('POST');
     expect(sent[0].url).not.toContain(GO_TRANSPORT_URL);
+  });
+});
+
+/**
+ * `feedGoTransportModelGetAll`: the same transport for `model.getAll`, behind its OWN flag. Literal
+ * paths, so a change to the shared constants cannot move these expectations with them.
+ */
+describe('feedGoTransportModelGetAll', () => {
+  it('OFF (the default): model.getAll goes to /api/trpc as before', async () => {
+    signIn();
+    await callQuery(MODELS, MODELS_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].method).toBe('GET');
+    expect(sent[0].url).toContain('/api/trpc/model.getAll?');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
+  });
+
+  it('ON, signed in: model.getAll goes to /api/trpc-go/model.getAll as a GET', async () => {
+    signIn();
+    setFeedGoTransportModelGetAllEnabled(true);
+    await callQuery(MODELS, MODELS_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].method).toBe('GET');
+    expect(sent[0].url).toContain('/api/trpc-go/model.getAll?');
+    expect(sent[0].url).toContain('input=');
+  });
+
+  it('ON, signed in, in the batch cohort: still unbatched on the Go path', async () => {
+    signIn();
+    setTrpcBatchingEnabled(true);
+    setFeedGoTransportModelGetAllEnabled(true);
+    await callQuery(MODELS, MODELS_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toContain('/api/trpc-go/model.getAll?');
+    expect(sent[0].url).not.toContain('batch=1');
+  });
+
+  it('OFF, in the batch cohort: model.getAll stays unbatched on /api/trpc', async () => {
+    signIn();
+    setTrpcBatchingEnabled(true);
+    await callQuery(MODELS, MODELS_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toContain('/api/trpc/model.getAll?');
+    expect(sent[0].url).not.toContain('batch=1');
+  });
+
+  it('ON, signed out: model.getAll stays on /api/trpc (edge-cacheable path)', async () => {
+    setFeedGoTransportModelGetAllEnabled(true);
+    await callQuery(MODELS, MODELS_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toContain('/api/trpc/model.getAll?');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
+  });
+
+  it('ON, signed in: an input too large for a GET stays on /api/trpc as POST', async () => {
+    signIn();
+    setFeedGoTransportModelGetAllEnabled(true);
+    await callQuery(MODELS, {
+      ...MODELS_INPUT,
+      excludedTagIds: Array.from({ length: 800 }, (_, i) => i),
+    });
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].method).toBe('POST');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
+  });
+
+  it('ON: the gallery feed is not moved (it has its own flag)', async () => {
+    signIn();
+    setFeedGoTransportModelGetAllEnabled(true);
+    await callQuery(FEED, FEED_INPUT);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].url).toContain('/api/trpc/image.getImagesAsPostsInfinite?');
+    expect(sent[0].url).not.toContain('/api/trpc-go');
+  });
+
+  it('the gallery flag ON does not move model.getAll', async () => {
+    signIn();
+    setFeedGoTransportEnabled(true);
+    await callQuery(MODELS, MODELS_INPUT);
+    await callQuery(FEED, FEED_INPUT);
+
+    expect(sent).toHaveLength(2);
+    expect(sent[0].url).toContain('/api/trpc/model.getAll?');
+    expect(sent[1].url).toContain('/api/trpc-go/image.getImagesAsPostsInfinite?'); // positive control
   });
 });
