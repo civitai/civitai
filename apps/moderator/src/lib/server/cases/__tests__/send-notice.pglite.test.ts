@@ -12,8 +12,15 @@ const { hashAddress, sendBatch, sendNotice, MAX_CONSECUTIVE_FAILURES } = await i
   '../send-notice'
 );
 const { readBrake } = await import('../brake');
-const { batchCounts, exportUnsent, importBatch, importSentJsonl, undoImport, ImportRefusedError } =
-  await import('../backlog-import');
+const {
+  batchCounts,
+  exportState,
+  exportUnsent,
+  importBatch,
+  importSentJsonl,
+  undoImport,
+  ImportRefusedError,
+} = await import('../backlog-import');
 const { batchPreview } = await import('../cases.service');
 type SendDeps = import('../send-notice').SendDeps;
 
@@ -209,7 +216,7 @@ describe('sendNotice', () => {
       return { messageId: '<x@relay>' };
     });
     expect(await sendNotice(first.id, deps())).toBe('unknown');
-    expect(pauseSends).toHaveBeenCalledWith('system', expect.stringContaining('was sent'));
+    expect(pauseSends).toHaveBeenCalledWith('system', expect.stringContaining('message <x@relay>'));
   });
 
   it('refuses to send to an address that no longer matches its hash', async () => {
@@ -326,6 +333,22 @@ describe('the batch', () => {
     expect(await notices()).toHaveLength(3);
   });
 
+  it('holds the batch while it is out with the fallback, until its sent.jsonl comes back', async () => {
+    expect(await exportState('backlog-test', { db })).toBe('never');
+    await exportUnsent('backlog-test', { actorId: 1, db });
+    expect(await exportState('backlog-test', { db })).toBe('outstanding');
+    await importSentJsonl('backlog-test', '', { actorId: 1, db });
+    expect(await exportState('backlog-test', { db })).toBe('closed');
+  });
+
+  it('refuses to undo a batch that was ever exported for the fallback', async () => {
+    await exportUnsent('backlog-test', { actorId: 1, db });
+    await expect(undoImport('backlog-test', { db })).rejects.toThrow(/exported/);
+    await importSentJsonl('backlog-test', '', { actorId: 1, db });
+    await expect(undoImport('backlog-test', { db })).rejects.toThrow(/exported/);
+    expect(await notices()).toHaveLength(3);
+  });
+
   it('logs who read the personal data before an undo deletes those events', async () => {
     await batchPreview('backlog-test', { actorId: 7, db });
     await undoImport('backlog-test', { db });
@@ -340,7 +363,7 @@ describe('the batch', () => {
   it('exports unsent rows without addresses, and takes back only those the fallback sent', async () => {
     const [first] = await notices();
     await sendNotice(first.id, deps());
-    const unsent = await exportUnsent('backlog-test', { db });
+    const unsent = await exportUnsent('backlog-test', { actorId: 1, db });
     expect(unsent).toHaveLength(2);
     expect(JSON.stringify(unsent)).not.toContain('@example.test');
 

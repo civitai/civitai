@@ -151,9 +151,11 @@
         download
         data-sveltekit-reload
         onclick={(e) => {
-          if (!confirm('Exporting pauses in-app sends until the Mod Lead resumes them. Export?'))
-            e.preventDefault();
-        }}>Export unsent rows (pauses sends)</a
+          const ask =
+            'Exporting holds in-app sends of this batch until its sent.jsonl is imported, ' +
+            'and the batch can no longer be undone. Export?';
+          if (!confirm(ask)) e.preventDefault();
+        }}>Export unsent rows for the fallback</a
       >
       <form
         method="POST"

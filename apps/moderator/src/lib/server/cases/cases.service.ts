@@ -3,6 +3,7 @@ import { sql, type Kysely } from 'kysely';
 import { moderatorDbStatus, storeUnavailableMessage } from '$lib/moderator-db-status';
 import { logAxiomError } from '../axiom';
 import { getSysRedis } from '../redis';
+import { exportState, exportUnsent } from './backlog-import';
 import { pauseSends } from './brake';
 import { casesDb, noticesOfBatch, type CasesDb } from './cases.db';
 import { readPiiLockdown, type PiiLockdown } from './pii-lockdown';
@@ -104,10 +105,17 @@ const runningKey = (batchId: string) =>
  * doubling the pace. The claim on each row already stops a double send. A run that dies on an error
  * pauses sends: a person looks before anything else goes out.
  */
-export async function startBatchSend(batchId: string): Promise<'started' | 'already-running'> {
+export async function startBatchSend(
+  batchId: string
+): Promise<'started' | 'already-running' | 'export-outstanding'> {
   const redis = getSysRedis();
   const got = await redis.set(runningKey(batchId), new Date().toISOString(), { NX: true, EX: 900 });
   if (!got) return 'already-running';
+  // Checked under the lock the export also takes, so the two can't interleave.
+  if ((await exportState(batchId).catch(() => 'outstanding' as const)) === 'outstanding') {
+    await redis.del(runningKey(batchId));
+    return 'export-outstanding';
+  }
   void sendBatch(batchId, defaultSendDeps())
     .catch(async (e) => {
       await pauseSends('system', `the send of batch ${batchId} stopped on an error`).catch(
@@ -117,6 +125,21 @@ export async function startBatchSend(batchId: string): Promise<'started' | 'alre
     })
     .finally(() => redis.del(runningKey(batchId)).catch(() => undefined));
   return 'started';
+}
+
+/**
+ * Export the batch's unsent rows for the fallback sender, under the batch's run lock: refused while a
+ * send of it runs, and no send can start until it is recorded.
+ */
+export async function startExport(batchId: string, actorId: number) {
+  const redis = getSysRedis();
+  const got = await redis.set(runningKey(batchId), new Date().toISOString(), { NX: true, EX: 300 });
+  if (!got) return 'running' as const;
+  try {
+    return await exportUnsent(batchId, { actorId });
+  } finally {
+    await redis.del(runningKey(batchId)).catch(() => undefined);
+  }
 }
 
 export async function isBatchRunning(batchId: string) {

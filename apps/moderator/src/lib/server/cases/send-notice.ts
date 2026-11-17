@@ -193,9 +193,22 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
       .where('status', '=', 'sending')
       .executeTakeFirst();
     if (Number(res.numUpdatedRows) !== 1)
-      return unknownOutcome(deps, `notice ${row.id} was sent but its row has gone or moved`);
+      return unknownOutcome(
+        deps,
+        `notice ${row.id} was sent (message ${messageId}) but its row has gone or moved`
+      );
   } catch {
-    return unknownOutcome(deps, `notice ${row.id} was sent but could not be marked sent`);
+    // Keep the relay's id on the row if the database allows it: it is what a person looks up.
+    await deps.db
+      .updateTable('case_notice')
+      .set({ error: 'SentUnrecorded', message_id: messageId })
+      .where('id', '=', row.id)
+      .execute()
+      .catch(() => undefined);
+    return unknownOutcome(
+      deps,
+      `notice ${row.id} was sent (message ${messageId}) but could not be marked sent`
+    );
   }
   return 'sent';
 }

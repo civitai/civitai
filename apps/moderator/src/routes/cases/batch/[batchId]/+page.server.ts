@@ -47,7 +47,13 @@ export const actions: Actions = {
     if (brake.paused) return fail(409, { scope: 'send', error: 'Sends are paused.' });
     const blocked = await caseDataBlocked().catch(() => 'The case tables cannot be reached.');
     if (blocked) return fail(503, { scope: 'send', error: blocked });
-    return { scope: 'send', started: (await startBatchSend(batchId)) === 'started' };
+    const outcome = await startBatchSend(batchId);
+    if (outcome === 'export-outstanding')
+      return fail(409, {
+        scope: 'send',
+        error: 'This batch is out with the fallback sender. Import its sent.jsonl first.',
+      });
+    return { scope: 'send', started: outcome === 'started' };
   }),
   importSent: requiresGrant('cases.act', async ({ params, request, locals }) => {
     const batchId = params.batchId ?? '';

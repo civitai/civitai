@@ -59,6 +59,8 @@ export const actions: Actions = {
     const input = parseForm(batchSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { scope: 'undo', error: input });
     try {
+      const blocked = await caseDataBlocked();
+      if (blocked) return fail(503, { scope: 'undo', error: blocked });
       return { scope: 'undo', ...(await undoImport(input.batchId)) };
     } catch (e) {
       return caseActionFailure('undo', e);

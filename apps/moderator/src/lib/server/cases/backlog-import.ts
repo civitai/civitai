@@ -180,13 +180,27 @@ export async function importBatch(
  * Delete one batch, children first, in one transaction. Refused once any of its notices has left
  * `pending`: from then on the rows are the record of what was sent.
  *
- * The notices are locked first, so a send can't claim one between the check and the delete: a claim
- * that got there first shows as `sending` and refuses the undo, and one that comes after finds no row.
- * The batch's events go with it; who read its personal data is logged before they do.
+ * Also refused once the batch was ever exported for the fallback sender: those rows may have been sent
+ * there, and a re-import would give them new ids that its sent.jsonl can't match.
+ *
+ * The cases and notices are locked first. A send can't claim a notice between the check and the
+ * delete (a claim that got there first shows as `sending` and refuses the undo; one after finds no
+ * row), and a preview can't add a `pii_read` event (its foreign key waits on the case lock). The
+ * batch's events go with it; who read its personal data is logged before they do.
  */
 export async function undoImport(batchId: string, { db = casesDb() }: { db?: CasesDb } = {}) {
   return db.transaction().execute(async (tx) => {
     const cases = tx.selectFrom('case_record').select('id').where('import_batch_id', '=', batchId);
+    await tx
+      .selectFrom('case_record')
+      .select('id')
+      .where('import_batch_id', '=', batchId)
+      .forUpdate()
+      .execute();
+    if ((await exportState(batchId, { db: tx as unknown as CasesDb })) !== 'never')
+      throw new ImportRefusedError(
+        `batch ${batchId} was exported for the fallback sender; it can't be undone`
+      );
     const locked = await tx
       .selectFrom('case_notice')
       .select('status')
@@ -288,18 +302,71 @@ export async function batchCounts(batchId: string, { db = casesDb() }: { db?: Ca
   });
 }
 
-/** The batch's unsent rows for the fallback script: ids only, no addresses (the script has its own). */
-export async function exportUnsent(batchId: string, { db = casesDb() }: { db?: CasesDb } = {}) {
-  return noticesOfBatch(db, batchId)
-    .select([
-      'n.id as rowId',
-      'n.notice_id as noticeId',
-      'n.recipient_role as recipientRole',
-      'c.public_ref as caseRef',
-    ])
-    .where('n.status', 'in', SENDABLE)
-    .orderBy('n.id')
+export type ExportState = 'never' | 'outstanding' | 'closed';
+
+/**
+ * Whether the batch's unsent rows are out with the fallback sender. `outstanding` from an export until
+ * its sent.jsonl is imported; the app sends nothing of the batch meanwhile, because those rows still
+ * read as unsent.
+ */
+export async function exportState(
+  batchId: string,
+  { db = casesDb() }: { db?: CasesDb } = {}
+): Promise<ExportState> {
+  const last = await db
+    .selectFrom('case_event as e')
+    .innerJoin('case_record as c', 'c.id', 'e.case_id')
+    .select('e.type')
+    .where('c.import_batch_id', '=', batchId)
+    .where('e.type', 'in', ['exported', 'export_closed'])
+    .orderBy('e.at', 'desc')
+    .orderBy('e.id', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return !last ? 'never' : last.type === 'exported' ? 'outstanding' : 'closed';
+}
+
+/** One event on every case of the batch, in `tx`. */
+async function recordBatchEvent(tx: CasesDb, batchId: string, type: string, actorId: number) {
+  await tx
+    .insertInto('case_event')
+    .columns(['case_id', 'actor_id', 'type', 'data'])
+    .expression(
+      tx
+        .selectFrom('case_record')
+        .select([
+          'id',
+          sql<number>`${actorId}::int`.as('actor_id'),
+          sql<string>`${type}`.as('type'),
+          sql<string>`${JSON.stringify({ batchId })}::jsonb`.as('data'),
+        ])
+        .where('import_batch_id', '=', batchId)
+    )
     .execute();
+}
+
+/**
+ * The batch's unsent rows for the fallback script: ids only, no addresses (the script has its own).
+ * Records the export, which holds the batch's in-app sends until the sent.jsonl comes back. The caller
+ * holds the batch's run lock, so no send of it is mid-flight.
+ */
+export async function exportUnsent(
+  batchId: string,
+  { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
+) {
+  return db.transaction().execute(async (tx) => {
+    await recordBatchEvent(tx as unknown as CasesDb, batchId, 'exported', actorId);
+    return noticesOfBatch(tx as unknown as CasesDb, batchId)
+      .select([
+        'n.id as rowId',
+        'n.notice_id as noticeId',
+        'n.recipient_role as recipientRole',
+        'c.public_ref as caseRef',
+      ])
+      .where('n.status', 'in', SENDABLE)
+      .orderBy('n.id')
+      .execute();
+  });
 }
 
 const sentLineSchema = z.object({
@@ -311,7 +378,8 @@ const sentLineSchema = z.object({
 
 /**
  * Mark rows the fallback script sent. Matches on row id within the batch, and only moves a row that is
- * still `pending` or `failed`: a row already `sent` or `sending` is refused, never overwritten.
+ * still `pending` or `failed`: a row already `sent` or `sending` is refused, never overwritten. Closes
+ * the batch's export, so the app may send what the fallback didn't.
  */
 export async function importSentJsonl(
   batchId: string,
@@ -367,6 +435,7 @@ export async function importSentJsonl(
         })
         .execute();
     }
+    await recordBatchEvent(tx as unknown as CasesDb, batchId, 'export_closed', actorId);
     return { updated, refused };
   });
 }
