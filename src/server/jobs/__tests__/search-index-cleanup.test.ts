@@ -545,7 +545,10 @@ describe('search-index-cleanup: an index the run never reached is reported', () 
 
     await searchIndexCleanupJob.run({}).result;
 
-    expect(logged().find((p) => missedOf(p) !== undefined)).toBeUndefined();
+    // Matched on the message, not the payload, so a log that fires in any shape fails this.
+    expect(
+      logged().find((p) => String(p.message ?? '').startsWith('run ENDED BEFORE'))
+    ).toBeUndefined();
   });
 });
 
