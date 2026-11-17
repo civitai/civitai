@@ -3,8 +3,8 @@ import { HatTurfCardProvider, useHatTurfCard } from '~/components/HatTurf/HatTur
 import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfDetail } from '~/components/HatTurf/detail/useHatTurfDetail';
 import { FlagRaceContext } from '~/components/HatTurf/FlagRace/FlagRaceContext';
+import { useFlagRow } from '~/components/HatTurf/FlagRace/FlagRowProviders';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { trpc } from '~/utils/trpc';
 
 type DetailImage = { id: number; type: string };
 
@@ -28,21 +28,7 @@ export function HatTurfDetailProvider({
   const imageIds = useMemo(() => images.filter(takesHats).map((image) => image.id), [images]);
   // Today's flags, so a flag shows its flag badge and takes stacked hats here as on the home row.
   const features = useFeatureFlags();
-  const flagEvent = features.flagRace ? gate?.event : undefined;
-  // The home row's query and options, so the two share one edge-cached, viewer-agnostic answer.
-  const { data: flagSummary } = trpc.hatTurf.getFlags.useQuery(
-    { event: flagEvent ?? '' },
-    {
-      enabled: !!flagEvent,
-      refetchInterval: 30_000,
-      staleTime: 15_000,
-      trpc: { context: { skipBatch: true } },
-    }
-  );
-  const flagRow = useMemo(
-    () => (flagEvent && flagSummary ? { event: flagEvent, summary: flagSummary } : null),
-    [flagEvent, flagSummary]
-  );
+  const flagRow = useFlagRow(features.flagRace ? gate?.event : undefined);
   return (
     <FlagRaceContext.Provider value={flagRow}>
       <TurfSummaryProvider imageIds={imageIds} gate={gate}>
