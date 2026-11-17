@@ -1597,7 +1597,7 @@ describe('STANDING consent — an opted-in viewer, within their daily limit', ()
     expect(res.snapshot.workflowId).toBe(workflowId);
     expect(realSubmits()).toHaveLength(1);
     await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalled());
-    expect(h.recordScopeInvocation.mock.calls[0][0]).toMatchObject({
+    expect((h.recordScopeInvocation.mock.calls[0] as unknown[])[0]).toMatchObject({
       detail: { consentKind: 'standing' },
     });
   });
@@ -1606,7 +1606,7 @@ describe('STANDING consent — an opted-in viewer, within their daily limit', ()
     const quoteId = await confirmedQuote();
     await submit({ ...body(), quoteId });
     await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalled());
-    expect(h.recordScopeInvocation.mock.calls[0][0]).toMatchObject({
+    expect((h.recordScopeInvocation.mock.calls[0] as unknown[])[0]).toMatchObject({
       detail: { consentKind: 'click' },
     });
   });
