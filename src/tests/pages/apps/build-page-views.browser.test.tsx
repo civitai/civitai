@@ -57,6 +57,7 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantWorkspace', async () => {
 });
 vi.mock('~/components/Apps/AppsBuildBody', () => ({
   AppsBuildBody: () => <div data-testid="build-body" />,
+  AppsBuildRequestView: () => <div data-testid="request-view" />,
 }));
 vi.mock('~/components/Apps/AppsPageLayout', () => ({
   AppsPageLayout: ({ actions, children }: { actions?: ReactNode; children: ReactNode }) => (
@@ -124,6 +125,15 @@ describe('/apps/build — which view the page mounts', () => {
     await expect.element(page.getByTestId('workspace')).toBeInTheDocument();
     await warm.unmount();
     workspaceLoaded = true;
+  });
+
+  test('🔴 the request view mounts only the request view: no /apps layout, no build body', async () => {
+    renderWithProviders(<AppsBuildPage mode="request" />);
+    await expect.element(page.getByTestId('request-view')).toBeInTheDocument();
+    // The /apps chrome (its rail and nav queries) belongs to viewers who have /apps.
+    expect(seen('actions')).toBe(0);
+    expect(seen('build-body')).toBe(0);
+    expect(seen('workspace')).toBe(0);
   });
 
   test('the build view mounts the build body and never the workspace', async () => {

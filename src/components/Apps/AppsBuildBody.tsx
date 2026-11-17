@@ -1,4 +1,14 @@
-import { Alert, Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Collapse,
+  Container,
+  Divider,
+  Group,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconArrowRight, IconChevronDown, IconPlus, IconTerminal2 } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -297,6 +307,11 @@ export function AppsBuildBody() {
   // session and no query, so it is what a logged-out admitted viewer sees. It carries no
   // build route (no agent card, no CLI steps): this viewer has no builder access yet, so the
   // one action offered is Request access.
+  return <AppsBuildPitch onRequest={() => track('request_access', 'pitch')} />;
+}
+
+/** State A's content — the recruiting copy and the Request access panel. */
+function AppsBuildPitch({ onRequest }: { onRequest: () => void }) {
   return (
     <Stack gap="xl" data-testid="apps-build-pitch">
       <GetStartedBody />
@@ -312,10 +327,31 @@ export function AppsBuildBody() {
             App Assistant builds it with you. It is open to a small group while the platform is in
             beta — request access and tell us what you&apos;d like to make.
           </Text>
-          <AppAccessRequestPanel onRequest={() => track('request_access', 'pitch')} />
+          <AppAccessRequestPanel onRequest={onRequest} />
         </Stack>
       </Alert>
     </Stack>
+  );
+}
+
+/**
+ * `/apps/build` for a signed-in viewer the build gate refuses (the page's `request` mode): the
+ * pitch and the Request access panel, and nothing else. No `AppsPageLayout` and no build-state
+ * queries — this viewer has no `/apps` surface, so neither the rail nor `getNavSummary` belongs
+ * here.
+ */
+export function AppsBuildRequestView() {
+  const { trackAction } = useTrackEvent();
+  const onRequest = useCallback(() => {
+    trackAction({
+      type: 'AppsBuild_Action',
+      details: { action: 'request_access', state: 'pitch' },
+    }).catch(() => undefined);
+  }, [trackAction]);
+  return (
+    <Container size="lg" py="xl" data-testid="apps-build-request-view">
+      <AppsBuildPitch onRequest={onRequest} />
+    </Container>
   );
 }
 

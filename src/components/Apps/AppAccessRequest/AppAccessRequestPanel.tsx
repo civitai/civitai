@@ -9,7 +9,10 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useSession } from '~/providers/SessionProvider';
-import type { AppAccessRequestStatus } from '~/shared/constants/app-access-request.constants';
+import {
+  REQUEST_ACCESS_PARAM,
+  type AppAccessRequestStatus,
+} from '~/shared/constants/app-access-request.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -24,12 +27,6 @@ const STATUS_BADGE: Record<AppAccessRequestStatus, { label: string; color: strin
 export function openAppAccessRequestModal() {
   dialogStore.trigger({ id: 'app-access-request', component: AppAccessRequestModal });
 }
-
-/**
- * `/apps/build?request-access=1` opens the request form straight away. Linked from outside the site
- * (the CLI README), so the name is a public contract: keep it.
- */
-export const REQUEST_ACCESS_PARAM = 'request-access';
 
 /**
  * Acts on the deep link once the panel's state is known, then drops the param with a shallow
