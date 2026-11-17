@@ -40,8 +40,13 @@ ordinary vote in every way a player can see.
 ## Smites (`src/lib/server/smites`)
 
 - Smites live in the shared `NewOrderSmite` table; `voteWeight` already reads them.
-- Cleansing: correct votes settled by `payOutVotes` work smites off, and the tick lapses old ones (`expireSmites`) under the same
-  player-row lock order, never for a player whose reset is due.
+- A skill-check smite has size 25 (`SMITES.size`; the original game used 100): each correct vote settled by `payOutVotes` works
+  every active smite down by one, counted per vote even when one settlement pays several (`workOffSmites(…, total.correct)`), and
+  a smite at 0 is cleansed. The tick lapses old ones (`expireSmites`) under the same player-row lock order, never for a player
+  whose reset is due.
+- Progress shows to the player: `PlayerStatus.heartBack` (`heartBackOf`, the active smite with the fewest left) feeds the hearts'
+  tooltip, the rail ("12/25 to the next"), the home page's smite card and the Codex; a right skill-check answer while a smite is
+  active shows a "+1 toward your next heart" cue on `/play`.
 - Reset: the Knights app calls the main app's `POST /api/mod/knights/reset-player` (`x-webhook-token`), naming its smite limit.
   The endpoint reuses the single `resetPlayer` under a per-player lock and is safe to repeat. If the call fails the active smites
   are the pending record: `insertVote` refuses (`reset-pending`) and the tick retries (`resetPendingPlayers`) before it expires smites.

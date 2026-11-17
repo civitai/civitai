@@ -83,8 +83,11 @@
       </div>
       <div>
         <h3>Hearts</h3>
-        <p class="line"><HeartsRow {hearts} maxHearts={status.maxSmites} /></p>
-        <p class="sub">{hearts} of {status.maxSmites}</p>
+        <p class="line"><HeartsRow {hearts} maxHearts={status.maxSmites} heartBack={status.heartBack} /></p>
+        <p class="sub">
+          {hearts} of {status.maxSmites}{#if status.heartBack}
+            · {status.heartBack.done}/{status.heartBack.needed} to the next{/if}
+        </p>
       </div>
     </div>
   </section>

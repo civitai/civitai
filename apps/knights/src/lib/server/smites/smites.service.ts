@@ -23,6 +23,27 @@ export async function activeSmiteCount(db: Executor, playerId: number): Promise<
   return Number(row.n);
 }
 
+/**
+ * Progress toward the next heart back: right verdicts work every active smite down at once, so the one with the fewest left
+ * clears first. Null with no active smite.
+ */
+export async function heartBackOf(
+  db: Executor,
+  playerId: number
+): Promise<{ done: number; needed: number } | null> {
+  const row = await db
+    .selectFrom('NewOrderSmite')
+    .select(['size', 'remaining'])
+    .where('targetPlayerId', '=', playerId)
+    .where('cleansedAt', 'is', null)
+    .orderBy('remaining', 'asc')
+    .limit(1)
+    .executeTakeFirst();
+  if (!row) return null;
+  const needed = Math.max(row.size, row.remaining);
+  return { done: needed - row.remaining, needed };
+}
+
 /** Writes the penalty to the table both games read for vote weight. Returns the active count including it. */
 export async function issueSmite(
   trx: Executor,
@@ -61,16 +82,27 @@ export async function cleanseSmites(
     .execute();
 }
 
-/** One correct, graded vote works every active smite down by one, as the original game does; a smite at 0 is cleansed. */
-export async function workOffSmites(trx: Executor, playerId: number, now: Date): Promise<void> {
+/**
+ * Each correct, graded vote works every active smite down by one, as the original game does; `correct` is how many were settled
+ * together. A smite at 0 is cleansed.
+ */
+export async function workOffSmites(
+  trx: Executor,
+  playerId: number,
+  now: Date,
+  correct = 1
+): Promise<void> {
+  if (correct <= 0) return;
   await trx
     .updateTable('NewOrderSmite')
     .set({
-      remaining: sql<number>`"remaining" - 1`,
-      cleansedAt: sql<Date | null>`CASE WHEN "remaining" - 1 <= 0 THEN ${utc(now)} ELSE NULL END`,
+      remaining: sql<number>`GREATEST(0, "remaining" - ${correct})`,
+      cleansedAt: sql<Date | null>`CASE WHEN "remaining" - ${correct} <= 0 THEN ${utc(
+        now
+      )} ELSE NULL END`,
       cleansedReason: sql<
         string | null
-      >`CASE WHEN "remaining" - 1 <= 0 THEN 'Smite expired' ELSE NULL END`,
+      >`CASE WHEN "remaining" - ${correct} <= 0 THEN 'Smite expired' ELSE NULL END`,
     })
     .where('targetPlayerId', '=', playerId)
     .where('cleansedAt', 'is', null)

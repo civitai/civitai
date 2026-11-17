@@ -212,6 +212,8 @@ export type PostVoteDeps = {
   wait: (ms: number) => Promise<void>;
   /** A vote that came back as anything but recorded: the notice, and whether the page must be read again. */
   onFailure: (outcome: Extract<VoteOutcome, { ok: false }>) => void;
+  /** A recorded vote, with what the action returned (a skill check graded on the spot carries `check`). */
+  onSuccess?: (data: Record<string, unknown> | undefined) => void;
   /** After the vote has settled, whatever it came to. */
   onSettled: () => Promise<void>;
   timeoutMs?: number;
@@ -235,6 +237,7 @@ export async function postVote(key: string, deps: PostVoteDeps): Promise<void> {
   tracker.settle(key);
   if (!reached || isBusy(result)) tracker.release(key);
   if (!outcome.ok) onFailure(outcome);
+  else deps.onSuccess?.(result?.data);
   await onSettled();
 }
 

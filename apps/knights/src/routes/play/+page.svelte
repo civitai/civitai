@@ -395,6 +395,18 @@
     }
   });
 
+  // A right skill-check answer while a smite weighs on the player: a short cue that it counted toward the next heart.
+  let cue = $state<string | null>(null);
+  let cueTimer: ReturnType<typeof setTimeout> | undefined;
+  const CUE_MS = 2500;
+  function cheer(data: Record<string, unknown> | undefined) {
+    const check = data?.check as { verdict?: string } | undefined;
+    if (check?.verdict !== 'correct' || data.status.smites === 0) return;
+    cue = '+1 toward your next heart';
+    clearTimeout(cueTimer);
+    cueTimer = setTimeout(() => (cue = null), CUE_MS);
+  }
+
   function tell(message: string) {
     note = message;
     clearTimeout(noteTimer);
@@ -442,6 +454,7 @@
       },
       // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
       // against the data on screen until the refreshed data, which holds it, replaces it.
+      onSuccess: cheer,
       onSettled: async () => {
         if (counted && alive) landVote(inFlight, data.daily);
         counted = false;
@@ -616,6 +629,7 @@
       streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
+      heartBack={data.status.heartBack}
       onmore={() => (railSheetOpen = true)}
     />
   {:else if data.mode === 'apprentice'}
@@ -778,6 +792,8 @@
         {@render levelToast(true)}
         {#if note}
           <p class="nudge" role="status">{note}</p>
+        {:else if cue}
+          <p class="nudge cheer" role="status">{cue}</p>
         {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
@@ -953,6 +969,9 @@
     color: var(--io-parchment);
     font: 400 13px/1.3 var(--io-font-ui);
     text-align: center;
+  }
+  .nudge.cheer {
+    border-color: var(--io-gold);
   }
 
   .column {

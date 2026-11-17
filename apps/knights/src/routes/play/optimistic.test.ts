@@ -392,6 +392,30 @@ describe('postVote', () => {
       signal.addEventListener('abort', () => done({ reached: false, result: null }))
     );
 
+  it('hands a recorded vote its answer, and a refused one none', async () => {
+    const tracker = createVoteTracker();
+    const onSuccess = vi.fn();
+    const check = { verdict: 'correct', consequence: null, smites: 1, reset: false };
+    const results = [
+      { type: 'success', status: 200, data: { success: true, check } },
+      { type: 'failure', status: 409, data: { message: 'nope' } },
+    ];
+    for (const key of ['a', 'b']) {
+      tracker.claim(key, `t-${key}`);
+      await postVote(key, {
+        queue: createSerialQueue(),
+        tracker,
+        send: async () => ({ reached: true, result: results.shift()! }),
+        wait: async () => undefined,
+        onFailure: () => undefined,
+        onSuccess,
+        onSettled: async () => undefined,
+      });
+    }
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+    expect(onSuccess).toHaveBeenCalledWith({ success: true, check });
+  });
+
   it('gives up on a hung post, frees its item, and lets the votes queued behind it go out', async () => {
     const sends = [hangs, async () => ({ reached: true, result: ok })];
     const { tracker, failures, post } = setup(async (signal) => sends.shift()!(signal));

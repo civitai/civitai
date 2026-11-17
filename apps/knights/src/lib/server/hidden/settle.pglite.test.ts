@@ -134,6 +134,29 @@ describe('grading hidden checks', () => {
     expect(rows[1].cleansedAt).not.toBeNull();
   });
 
+  it('works a smite off by every right answer settled in one sweep, not once per sweep', async () => {
+    await seedPlayer(pg, 1);
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","remaining") VALUES (1,10),(1,2)`
+    );
+    await answer(1, await reference(10), '4');
+    await answer(1, await reference(11), '4', minutes(1));
+    await answer(1, await reference(12), '4', minutes(2));
+    await settle(minutes(40));
+    const rows = (
+      await pg.query<{ remaining: number; cleansedAt: Date | null }>(
+        `SELECT remaining, "cleansedAt" FROM "NewOrderSmite" ORDER BY id`
+      )
+    ).rows;
+    expect(rows[0]).toMatchObject({ remaining: 7, cleansedAt: null });
+    expect(rows[1]).toMatchObject({ remaining: 0 });
+    expect(rows[1].cleansedAt).not.toBeNull();
+  });
+
+  it('issues a skill-check smite that 25 right answers work off', async () => {
+    expect(SMITES.size).toBe(25);
+  });
+
   it('drops the gold of a wrong answer and warns the first time', async () => {
     await seedPlayer(pg, 1);
     await answer(1, await reference(10, '4'), '8');

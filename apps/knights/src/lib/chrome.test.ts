@@ -8,6 +8,7 @@ import {
   withVotesSent,
   withArticle,
   heartsLeft,
+  heartBackLine,
   nextRankLine,
   rankPill,
   restartLosses,
@@ -27,6 +28,18 @@ describe('heartsLeft', () => {
   it('is what the smites leave, never below zero', () => {
     expect(heartsLeft({ smites: 1, maxSmites: 3 })).toBe(2);
     expect(heartsLeft({ smites: 5, maxSmites: 3 })).toBe(0);
+  });
+});
+
+describe('heartBackLine', () => {
+  it('says how many more right verdicts win back the next heart', () => {
+    expect(heartBackLine({ done: 12, needed: 25 })).toBe(
+      '12 of 25 right verdicts to win back a heart'
+    );
+  });
+
+  it('says nothing with no heart to win back', () => {
+    expect(heartBackLine(null)).toBeNull();
   });
 });
 
