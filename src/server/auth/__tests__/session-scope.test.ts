@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CivitaiAuth from '@civitai/auth';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
@@ -247,6 +248,31 @@ describe('REST_SCOPE_ENFORCE', () => {
     const session = await resolve(bearerRequest(), { scope: TokenScope.ModelsRead });
     expect(session?.user?.isModerator).toBe(true);
     expect(decisionLogs().map(([entry]) => entry.payload.outcome)).toEqual(['moderator-withheld']);
+  });
+
+  it('logs the route with numeric and UUID segments as :id', async () => {
+    setEnv({ REST_SCOPE_ENFORCE: 'report' });
+    bearerKey(TokenScope.ModelsRead);
+    const req = bearerRequest();
+    req.url = '/api/v1/models/123/files/550e8400-e29b-41d4-a716-446655440000/latest?token=x';
+    await resolve(req, { scope: TokenScope.VaultRead });
+    expect(decisionLogs()[0][0].route).toBe('/api/v1/models/:id/files/:id/latest');
+  });
+
+  it('keys the api key id hash with the server secret', async () => {
+    setEnv({ REST_SCOPE_ENFORCE: 'report' });
+    const hashUnder = async (secret: string) => {
+      setEnv({ NEXTAUTH_SECRET: secret });
+      loggingMock.logToAxiom.mockClear();
+      bearerKey(TokenScope.ModelsRead);
+      await resolve(bearerRequest(), { scope: TokenScope.VaultRead });
+      return decisionLogs()[0][0].payload.apiKeyIdHash as string;
+    };
+    const first = await hashUnder('secret-one');
+    expect(first).toMatch(/^[0-9a-f]{16}$/);
+    expect(await hashUnder('secret-one')).toBe(first);
+    expect(await hashUnder('secret-two')).not.toBe(first);
+    expect(first).not.toBe(createHash('sha256').update('41').digest('hex').slice(0, 16));
   });
 
   it('off neither refuses nor logs', async () => {

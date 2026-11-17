@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { env } from '~/env/server';
 import { withholdsModerator, type BearerCredential } from '~/server/auth/full-user-credential';
 import { logToAxiom } from '~/server/logging/client';
@@ -47,6 +47,27 @@ function requiredBits(scope: SessionScope | undefined): number {
   return 'scope' in scope ? scope.scope : scope.anyOf.reduce((all, bit) => all | bit, 0);
 }
 
+const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The request path with numeric and UUID segments as `:id`, so one route logs as one value. */
+function routePattern(url: string | undefined): string | null {
+  const path = url?.split('?')[0];
+  if (!path) return null;
+  return path
+    .split('/')
+    .map((segment) => (/^\d+$/.test(segment) || UUID_SEGMENT.test(segment) ? ':id' : segment))
+    .join('/');
+}
+
+/** Keyed, so the log cannot be mapped back to a key id by hashing the small id range. */
+function apiKeyIdHash(apiKeyId: number | null | undefined): string | null {
+  if (apiKeyId == null) return null;
+  return createHmac('sha256', env.NEXTAUTH_SECRET)
+    .update(String(apiKeyId))
+    .digest('hex')
+    .slice(0, 16);
+}
+
 function logScopeDecision(
   req: ScopeRequest,
   context: ScopeContext,
@@ -54,7 +75,7 @@ function logScopeDecision(
   enforcement: RestScopeEnforcement,
   outcome: 'refused' | 'moderator-withheld'
 ) {
-  const route = req.url?.split('?')[0] ?? null;
+  const route = routePattern(req.url);
   const scopeKind =
     scope === undefined ? 'full' : typeof scope === 'string' ? scope : Object.keys(scope)[0];
   const key = `${route} ${scopeKind} ${requiredBits(scope)} ${outcome}`;
@@ -74,10 +95,7 @@ function logScopeDecision(
     payload: {
       outcome,
       scopeKind,
-      apiKeyIdHash:
-        context.apiKeyId != null
-          ? createHash('sha256').update(String(context.apiKeyId)).digest('hex').slice(0, 16)
-          : null,
+      apiKeyIdHash: apiKeyIdHash(context.apiKeyId),
     },
   });
 }
