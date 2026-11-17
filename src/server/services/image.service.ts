@@ -7266,6 +7266,11 @@ export async function createImageResources({
 
 // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
 // over a crucible's maxClipSeconds before the user spends a click on them.
+/** `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
+const notHeldForReviewWhere: Prisma.ImageWhereInput = {
+  OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
+};
+
 const myImagesSelect = {
   id: true,
   url: true,
@@ -7334,9 +7339,10 @@ export const getMyImages = async ({
   publishedOnly,
   includeEntryDrafts,
   userId,
+  isModerator,
   limit,
   cursor = 0,
-}: GetMyImagesInput & { userId: number }) => {
+}: GetMyImagesInput & { userId: number; isModerator?: boolean }) => {
   const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
   const type = {
     in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
@@ -7358,6 +7364,8 @@ export const getMyImages = async ({
           : publishedOnly
           ? publishedImageWhere()
           : {}),
+        // The unpublished path has no review gate of its own; these holds stay out of it too.
+        ...(isModerator ? {} : { AND: [notHeldForReviewWhere] }),
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

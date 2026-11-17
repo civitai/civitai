@@ -1,0 +1,69 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { startPglitePrisma } from '~/__tests__/pglite-prisma';
+import { MediaType } from '~/shared/utils/prisma/enums';
+
+// getMyImages' own `where`, run by Prisma against real Postgres (PGlite): a scanned image in a
+// published post that is held for review leaves its owner's list, and a moderator still sees it.
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+const { getMyImages } = await import('~/server/services/image.service');
+
+const OWNER = 10;
+const POST = 1000;
+const CLEAN = 1;
+const HELD_CSAM = 2;
+const HELD_MINOR = 3;
+const OTHER_REVIEW = 4;
+
+const SCHEMA = `
+  CREATE TYPE "ImageIngestionStatus" AS ENUM
+    ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+  CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+  CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamp(3));
+  CREATE TABLE "Image" (
+    id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, url text NOT NULL DEFAULT '',
+    meta jsonb, metadata jsonb NOT NULL DEFAULT '{}', "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+    type "MediaType" NOT NULL DEFAULT 'image', "nsfwLevel" int NOT NULL DEFAULT 1,
+    ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
+    "tosViolation" boolean NOT NULL DEFAULT false
+  );
+`;
+
+let harness: Awaited<ReturnType<typeof startPglitePrisma>>;
+beforeAll(async () => {
+  harness = await startPglitePrisma(SCHEMA);
+  await harness.pg.exec(`
+    INSERT INTO "Post" VALUES (${POST}, now() - interval '1 day');
+    INSERT INTO "Image" (id, "userId", "postId", "needsReview") VALUES
+      (${CLEAN}, ${OWNER}, ${POST}, NULL),
+      (${HELD_CSAM}, ${OWNER}, ${POST}, 'csam'),
+      (${HELD_MINOR}, ${OWNER}, ${POST}, 'minor'),
+      (${OTHER_REVIEW}, ${OWNER}, ${POST}, 'poi');
+  `);
+  dbMock.dbRead.image.findMany.mockImplementation(((
+    ...args: Parameters<typeof harness.prisma.image.findMany>
+  ) => harness.prisma.image.findMany(...args)) as never);
+});
+afterAll(() => harness.stop());
+
+const listedIds = async (isModerator?: boolean) => {
+  const { items } = await getMyImages({
+    userId: OWNER,
+    isModerator,
+    mediaTypes: [MediaType.image],
+    limit: 10,
+  });
+  return items.map((i) => i.id).sort();
+};
+
+describe('getMyImages: images held for review', () => {
+  it('leaves held images out of the owner list and keeps every other image', async () => {
+    expect(await listedIds()).toEqual([CLEAN, OTHER_REVIEW]);
+  });
+
+  it('still lists them for a moderator', async () => {
+    expect(await listedIds(true)).toEqual([CLEAN, HELD_CSAM, HELD_MINOR, OTHER_REVIEW]);
+  });
+});
