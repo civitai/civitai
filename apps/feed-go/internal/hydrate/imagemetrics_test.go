@@ -574,11 +574,6 @@ func (p *lockLogPipe) Del(ctx context.Context, keys ...string) *redis.IntCmd {
 	return p.Pipeliner.Del(ctx, keys...)
 }
 
-// The held lock is re-armed on every heartbeat tick while a populate runs, and the release waits for
-// an in-flight re-arm, so the DEL is the last write. The ticks are sent while the query is in flight:
-// the second send is taken only after the first re-arm finished, so exactly two re-arms precede the
-// DEL. The second re-arm is held 100 ms before it is recorded: the release waits it out, so the DEL
-// still comes last, while a release that did not wait would log its DEL first.
 // The heartbeat must re-arm before the lock it keeps alive can expire.
 func TestMetricLockHeartbeatUnderTTL(t *testing.T) {
 	if metricLockHeartbeat >= metricLockTTL {
@@ -586,6 +581,11 @@ func TestMetricLockHeartbeatUnderTTL(t *testing.T) {
 	}
 }
 
+// The held lock is re-armed on every heartbeat tick while a populate runs, and the release waits for
+// an in-flight re-arm, so the DEL is the last write. The ticks are sent while the query is in flight:
+// the second send is taken only after the first re-arm finished, so exactly two re-arms precede the
+// DEL. The second re-arm is held 100 ms before it is recorded: the release waits it out, so the DEL
+// still comes last, while a release that did not wait would log its DEL first.
 func TestMetricsMissLockHeartbeat(t *testing.T) {
 	ticks := make(chan time.Time)
 	old := metricHeartbeatTicks
