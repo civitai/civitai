@@ -358,6 +358,14 @@ export function isTrainingStepType(stepType: unknown): stepType is TrainingStepT
   return (TRAINING_STEP_TYPES as readonly unknown[]).includes(stepType);
 }
 
+/** A returned `$type` folded to its training spelling, or null. The orchestrator may echo
+ *  whatever casing was submitted, so reading output must not depend on it. */
+export function canonicalTrainingStepType(stepType: unknown): TrainingStepType | null {
+  if (typeof stepType !== 'string') return null;
+  const folded = stepType.toLowerCase();
+  return TRAINING_STEP_TYPES.find((t) => t.toLowerCase() === folded) ?? null;
+}
+
 /** An epoch whose checkpoint is ready — what the training publish wizard can be handed. */
 export type TrainedEpoch = { $type: TrainingStepType; epochNumber: number };
 
@@ -396,12 +404,13 @@ export function splitPassThroughStep(
   /** Subtrees nested past the walk cap, nulled rather than forwarded. */
   truncated: number;
 } {
-  if (!isTrainingStepType(stepType)) {
+  const trainingType = canonicalTrainingStepType(stepType);
+  if (!trainingType) {
     return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
   }
   const trainedEpochs: TrainedEpoch[] = [];
   const sampleUrls: string[] = [];
-  const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
+  const stripped = stripTrainingEpochs(trainingType, output, trainedEpochs, sampleUrls);
   const { media, rest, model3d, slots, truncated } = splitPassThroughStepOutput(stripped);
   // 🔴 These plain-string samples carry NO rating, and none will ever arrive, so as
   // output positions they are `neverRated`: restricted `'unrated'` wherever a rating
@@ -425,7 +434,7 @@ export function splitPassThroughStep(
       : undefined;
   const approved =
     typeof moderationStatus === 'string' && moderationStatus.toLowerCase() === 'approved';
-  if (!approved) return { media: [], rest, trainedEpochs: [], model3d, slots: [], truncated };
+  if (!approved) return { media: [], rest, trainedEpochs: [], model3d: [], slots: [], truncated };
   return { media, rest, trainedEpochs, model3d, slots, truncated };
 }
 
@@ -435,8 +444,8 @@ export function splitPassThroughStep(
  * for the legacy type, the plain-string samples lifted to media instead.
  */
 const STRIPPED_EPOCH_KEYS: Record<TrainingStepType, readonly string[]> = {
-  training: ['model'],
-  imageResourceTraining: ['blobUrl', 'blobName', 'sampleImages'],
+  training: ['model', 'traceUrl'],
+  imageResourceTraining: ['blobUrl', 'blobName', 'sampleImages', 'traceUrl'],
 };
 
 function hasReadyCheckpoint(stepType: TrainingStepType, epoch: Record<string, unknown>): boolean {

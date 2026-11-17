@@ -9,7 +9,7 @@ import type {
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
   getStepByOrchestratorType,
-  isTrainingStepType,
+  canonicalTrainingStepType,
   NATIVE_STEP_OUTPUT_KEY,
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
@@ -889,7 +889,7 @@ export function classifySucceededWithoutMedia(
     if (step.status !== 'succeeded') continue;
     const member = submittedSteps ? resolveBlockWorkflowStep(submittedSteps, step.name) : null;
     if (member && (member.suppressOutput || isRepeatStepType(step.$type))) continue;
-    if (isTrainingStepType(step.$type)) continue;
+    if (canonicalTrainingStepType(step.$type) !== null) continue;
     const registered = getStepByOrchestratorType(step.$type);
     let label: string;
     if (registered) {
@@ -932,7 +932,7 @@ function hasBlockTrainingStep(workflow: Workflow): boolean {
   const submittedSteps = readBlockWorkflowSteps(workflow.metadata);
   return (workflow.steps ?? []).some(
     (step) =>
-      isTrainingStepType(step.$type) &&
+      canonicalTrainingStepType(step.$type) !== null &&
       (step.name === BLOCK_STEP_NAME ||
         (submittedSteps !== null && resolveBlockWorkflowStep(submittedSteps, step.name) !== null))
   );
@@ -1094,7 +1094,7 @@ export function projectAppWorkflowWithPositions(
     if (member?.suppressOutput) {
       // Still report a suppressed training step's ready epochs: `suppressOutput`
       // hides images, and a checkpoint is never one.
-      if (isTrainingStepType(step.$type)) {
+      if (canonicalTrainingStepType(step.$type) !== null) {
         trainedEpochs.push(
           ...splitPassThroughStep(step.$type, (step as unknown as { output?: unknown }).output)
             .trainedEpochs

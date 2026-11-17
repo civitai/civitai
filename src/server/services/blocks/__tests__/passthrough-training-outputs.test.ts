@@ -268,6 +268,37 @@ describe('trainedEpochs', () => {
     expect(snap.trainedEpochs).toHaveLength(2);
   });
 
+  it.each([
+    ['Training', trainingOutput, [SAMPLE_1A, SAMPLE_1B, SAMPLE_2A, CKPT_1]],
+    ['TRAINING', trainingOutput, [SAMPLE_1A, SAMPLE_1B, SAMPLE_2A, CKPT_1]],
+    ['ImageResourceTraining', imageResourceTrainingOutput, [LEGACY_SAMPLE_URL, LEGACY_CKPT_URL]],
+  ] as const)(
+    'holds a `%s` run under review whatever the `$type` casing',
+    ($type, output, urls) => {
+      const snap = snapshotFromWorkflow(
+        workflow($type, { ...output(), moderationStatus: 'underReview' }),
+        TEST_OUTPUT_CEILING
+      );
+      const wire = JSON.stringify(snap);
+      for (const url of urls) expect(wire).not.toContain(url);
+    }
+  );
+
+  it('forwards no epoch trace url, approved or not', () => {
+    const TRACE = 'https://blobs.example/trace-epoch-1.log';
+    for (const [$type, output] of [
+      ['training', trainingOutput()],
+      ['imageResourceTraining', imageResourceTrainingOutput()],
+    ] as const) {
+      const withTrace = {
+        ...output,
+        epochs: output.epochs.map((e) => ({ ...e, traceUrl: TRACE })),
+      };
+      const snap = snapshotFromWorkflow(workflow($type, withTrace), TEST_OUTPUT_CEILING);
+      expect(JSON.stringify(snap)).not.toContain(TRACE);
+    }
+  });
+
   it('accumulates across two training steps rather than keeping the last', () => {
     const wf = workflow('training', trainingOutput());
     (wf.steps as unknown[]).push({
