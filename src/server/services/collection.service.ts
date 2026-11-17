@@ -1273,12 +1273,24 @@ export const saveItemInCollections = async ({
           );
         }
 
+        // An existing entry's tag is changed only by its author or a manager; anyone else's re-save
+        // keeps it as it is (the upsert below enforces the same against the row it hits). Not folded
+        // into `unwrittenCollectionIds`: skipping the entry checks for an item already there would
+        // answer whether it is there.
+        // A system tag (one that isn't among the collection's category tags, e.g. judging state) is
+        // kept for everyone, as `setCollectionItemsTag` keeps it.
+        const existing = existingItemsByCollection.get(collectionId);
+        const hasSystemTag =
+          existing?.tagId != null && !inputTags.some((t) => t.tag.id === existing.tagId);
+        const keepsTag =
+          !!existing && (hasSystemTag || (existing.addedById !== userId && !permission.manage));
+
         return {
           addedById: userId,
           collectionId,
           status,
           [itemKey]: input[itemKey],
-          tagId,
+          tagId: keepsTag ? existing.tagId : tagId,
         };
       })
     )
@@ -1288,6 +1300,9 @@ export const saveItemInCollections = async ({
   let removedCount = 0;
 
   if (data.length > 0) {
+    const managedCollectionIds = data
+      .filter((d) => permissionsMap.get(d.collectionId)?.manage)
+      .map((d) => d.collectionId);
     transactions.push(
       dbWrite.$executeRaw`
       INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(
@@ -1308,7 +1323,19 @@ export const saveItemInCollections = async ({
       )
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
-        DO UPDATE SET "tagId" = EXCLUDED."tagId";
+        DO UPDATE SET "tagId" = EXCLUDED."tagId"
+        WHERE (
+          "CollectionItem"."addedById" = EXCLUDED."addedById"
+          OR "CollectionItem"."collectionId" = ANY(${managedCollectionIds}::int[])
+        ) AND (
+          "CollectionItem"."tagId" IS NULL
+          OR EXISTS (
+            SELECT 1 FROM "TagsOnCollection" tc
+            WHERE tc."collectionId" = "CollectionItem"."collectionId"
+              AND tc."tagId" = "CollectionItem"."tagId"
+              AND NOT tc."filterableOnly"
+          )
+        );
     `
     );
   }
