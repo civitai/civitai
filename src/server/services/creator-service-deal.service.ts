@@ -255,6 +255,9 @@ export async function getDealParties(dealId: number, userId: number, isModerator
   return deal;
 }
 
+const notTakingRequests = () =>
+  throwBadRequestError("This offering isn't taking requests right now");
+
 const sellerExists = (seller: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "User" u
   WHERE u."id" = ${seller} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
@@ -374,8 +377,8 @@ export async function requestServiceDeal({
   await assertCreatorShopVisible({ userId: offering.sellerId, viewerId: buyerId });
   if (offering.sellerId === buyerId) throw throwBadRequestError('You cannot buy your own service');
   if (offering.blocked) throw throwBadRequestError('You cannot request this service');
-  if (offering.sellerMuted)
-    throw throwBadRequestError("This offering isn't taking requests right now");
+  // One answer with the capacity refusal below, so the response alone does not single out a mute.
+  if (offering.sellerMuted) throw notTakingRequests();
   // After the visibility and block checks, which answer as if the service did not exist: a hidden
   // service must not be revealed as mature.
   if (!serviceRequestAllowed({ ...offering, servableLevels, consentLevels }))
@@ -384,7 +387,7 @@ export async function requestServiceDeal({
       message: 'This service delivers mature content. Turn it on in your browsing settings first.',
     });
   if (offering.maxOpenDeals !== null && offering.open >= offering.maxOpenDeals)
-    throw throwBadRequestError('This service is not taking new requests right now');
+    throw notTakingRequests();
   if (
     offering.price !== expectedPrice ||
     offering.revisionsIncluded !== expectedRevisionsIncluded ||

@@ -488,7 +488,9 @@ describe('request', () => {
     await q(`DELETE FROM "UserEngagement"`);
     await q(`UPDATE "ServiceOffering" SET "maxOpenDeals" = 1`);
     await request();
-    await expect(request({ buyerId: STRANGER })).rejects.toThrow(/not taking new requests/);
+    await expect(request({ buyerId: STRANGER })).rejects.toThrow(
+      expect.objectContaining({ message: "This offering isn't taking requests right now" })
+    );
     expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 
