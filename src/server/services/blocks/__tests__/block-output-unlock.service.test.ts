@@ -121,6 +121,7 @@ const request = (claims: OutputUnlockClaims = RED_MATURE, position = 1) => ({
   workflowId: WF,
   position,
   viewerUserId: VIEWER,
+  mint: null,
   claims,
 });
 
@@ -356,7 +357,7 @@ describe("'ceiling' and 'unrated': never charged", () => {
   const sfwSiteRefused = () => workflow([image('r1', 'r')]);
 
   it('the SFW DOMAIN keeping a rated output out: link out to civitai.red, no charge', async () => {
-    expect(planBlockOutputUnlock(sfwSiteRefused(), SFW_DOMAIN, 0)).toStrictEqual({
+    expect(planBlockOutputUnlock(sfwSiteRefused(), SFW_DOMAIN, 0, null)).toStrictEqual({
       kind: 'link-out',
       position: 0,
       message: OUTPUT_UNLOCK_LINK_OUT_MESSAGE,
@@ -371,7 +372,7 @@ describe("'ceiling' and 'unrated': never charged", () => {
   });
 
   it("'unrated' on an SFW domain is treated exactly like 'ceiling': link out, no charge", async () => {
-    const plan = planBlockOutputUnlock(unratedSample(), SFW_DOMAIN, 0);
+    const plan = planBlockOutputUnlock(unratedSample(), SFW_DOMAIN, 0, null);
     expect(plan).toStrictEqual({
       kind: 'link-out',
       position: 0,
@@ -384,7 +385,7 @@ describe("'ceiling' and 'unrated': never charged", () => {
 
   it("the viewer's own level cutting it on red: unavailable, pointing at their settings, not at red", async () => {
     const lockedOnRed = () => workflow([image('r1', 'r')], { allowMatureContent: true });
-    expect(planBlockOutputUnlock(lockedOnRed(), RED_VIEWER_SFW, 0)).toStrictEqual({
+    expect(planBlockOutputUnlock(lockedOnRed(), RED_VIEWER_SFW, 0, null)).toStrictEqual({
       kind: 'unavailable',
       position: 0,
       message: OUTPUT_UNLOCK_SETTINGS_MESSAGE,
@@ -398,7 +399,7 @@ describe("'ceiling' and 'unrated': never charged", () => {
   });
 
   it("'unrated' with the viewer's own level cutting it on red: the same settings pointer", () => {
-    expect(planBlockOutputUnlock(unratedSample(), RED_VIEWER_SFW, 0)).toStrictEqual({
+    expect(planBlockOutputUnlock(unratedSample(), RED_VIEWER_SFW, 0, null)).toStrictEqual({
       kind: 'unavailable',
       position: 0,
       message: OUTPUT_UNLOCK_SETTINGS_MESSAGE,
@@ -434,7 +435,7 @@ describe('🔴 no price, no offer', () => {
   it('missing transactions: unavailable, never pay, and the unlock asks the orchestrator nothing', async () => {
     const noTransactions = () =>
       workflow([image('pg0', 'pg'), image('r1', 'r')], { transactions: undefined });
-    expect(planBlockOutputUnlock(noTransactions(), RED_MATURE, 1)).toStrictEqual({
+    expect(planBlockOutputUnlock(noTransactions(), RED_MATURE, 1, null)).toStrictEqual({
       kind: 'unavailable',
       position: 1,
       message: "We couldn't work out the price for this unlock. Try again shortly.",
@@ -449,7 +450,7 @@ describe('🔴 no price, no offer', () => {
 
   it('an empty transaction list: unavailable', () => {
     const empty = workflow([image('pg0', 'pg'), image('r1', 'r')], { transactions: { list: [] } });
-    expect(planBlockOutputUnlock(empty, RED_MATURE, 1)).toStrictEqual({
+    expect(planBlockOutputUnlock(empty, RED_MATURE, 1, null)).toStrictEqual({
       kind: 'unavailable',
       position: 1,
       message: "We couldn't work out the price for this unlock. Try again shortly.",
@@ -460,7 +461,7 @@ describe('🔴 no price, no offer', () => {
     const yellowOnly = workflow([image('pg0', 'pg'), image('r1', 'r')], {
       transactions: { list: [{ type: 'debit', amount: 157, accountType: 'yellow' }] },
     });
-    expect(planBlockOutputUnlock(yellowOnly, RED_MATURE, 1)).toMatchObject({
+    expect(planBlockOutputUnlock(yellowOnly, RED_MATURE, 1, null)).toMatchObject({
       kind: 'unavailable',
     });
   });

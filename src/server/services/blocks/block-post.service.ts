@@ -481,10 +481,11 @@ export async function resolveOwnedWorkflowOutputs(input: {
   >[0];
   assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: input.appId });
 
-  const { workflow: projected, positions } = projectAppWorkflowWithPositions(
-    workflow,
-    input.ceiling
-  );
+  // No mint: the post fetches each position's media itself.
+  const { workflow: projected, positions } = projectAppWorkflowWithPositions(workflow, {
+    ...input.ceiling,
+    mint: null,
+  });
 
   // 🔴 TERMINALITY GATE — the invariant that makes the preview and the write
   // agree on WHICH IMAGES. A still-running workflow can gain an output between

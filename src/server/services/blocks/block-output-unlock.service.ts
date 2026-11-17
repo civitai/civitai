@@ -16,6 +16,7 @@ import {
   assertBlockWorkflowTaggedForApp,
 } from '~/server/services/blocks/block-workflow-access';
 import { snapshotFromWorkflow } from '~/server/services/blocks/workflow.service';
+import type { BlockMediaMint } from '~/server/services/blocks/block-output-mint';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
@@ -120,9 +121,10 @@ export type OutputUnlockPlan =
 function outputAt(
   workflow: Workflow,
   ceiling: BlockOutputCeiling,
-  position: number
+  position: number,
+  mint: BlockMediaMint | null = null
 ): { snapshot: BlockWorkflowSnapshot; output: BlockWorkflowOutput | undefined } {
-  const snapshot = snapshotFromWorkflow(workflow, ceiling);
+  const snapshot = snapshotFromWorkflow(workflow, { ...ceiling, mint });
   return { snapshot, output: snapshot.outputs?.[position] };
 }
 
@@ -156,9 +158,16 @@ export function unlockPriceFromTransactions(
 export function planBlockOutputUnlock(
   workflow: Workflow,
   claims: OutputUnlockClaims,
-  position: number
+  position: number,
+  /** Mints the snapshot the app receives; the planning reads below never reach the app. */
+  mint: BlockMediaMint | null
 ): OutputUnlockPlan {
-  const { snapshot, output } = outputAt(workflow, blockOutputCeilingFromClaims(claims), position);
+  const { snapshot, output } = outputAt(
+    workflow,
+    blockOutputCeilingFromClaims(claims),
+    position,
+    mint
+  );
   if (!output) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: `output ${position} does not exist` });
   }
@@ -227,6 +236,8 @@ export type OutputUnlockRequest = {
   position: number;
   viewerUserId: number;
   claims: OutputUnlockClaims;
+  /** `resolveBlockOutputView(claims).mint`: null while serving is off for the viewer. */
+  mint: BlockMediaMint | null;
 };
 
 export type OutputUnlockPreview =
@@ -251,7 +262,7 @@ export async function previewBlockOutputUnlock(
     userId: request.viewerUserId,
   });
   const workflow = await readOwnedWorkflow(request, deps);
-  const plan = planBlockOutputUnlock(workflow, request.claims, request.position);
+  const plan = planBlockOutputUnlock(workflow, request.claims, request.position, request.mint);
   // The preview is a price, never a channel for output: no snapshot leaves it.
   if (plan.kind === 'not-restricted') return { kind: 'not-restricted', position: plan.position };
   if (plan.kind !== 'pay') return plan;
@@ -295,7 +306,7 @@ export async function unlockBlockOutput(
   let keepLock = false;
   try {
     const workflow = await readOwnedWorkflow(request, deps);
-    const plan = planBlockOutputUnlock(workflow, request.claims, request.position);
+    const plan = planBlockOutputUnlock(workflow, request.claims, request.position, request.mint);
     if (plan.kind === 'not-restricted') {
       return { outcome: 'not-restricted', snapshot: plan.snapshot, charged: NOTHING_CHARGED };
     }
@@ -331,7 +342,8 @@ export async function unlockBlockOutput(
     const after = outputAt(
       await deps.readWorkflow(),
       blockOutputCeilingFromClaims(request.claims),
-      request.position
+      request.position,
+      request.mint
     );
 
     if (!after.output || !isUnrestrictedOutput(after.output)) {

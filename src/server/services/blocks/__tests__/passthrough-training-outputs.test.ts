@@ -25,7 +25,7 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
 import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
 
 /** Every browsing level, so no fixture output is above the ceiling. */
-const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31 };
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, mint: null };
 
 const CKPT_1 = 'https://blobs.example/ckpt-epoch-1.safetensors';
 const CKPT_2 = 'https://blobs.example/ckpt-epoch-2.safetensors';
