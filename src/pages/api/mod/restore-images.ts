@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { chunk } from 'lodash-es';
 import { Tracker } from '~/server/clickhouse/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { handleUnblockImages } from '~/server/services/image.service';
 import { BlockedReason } from '~/server/common/enums';
 import { WebhookEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -22,7 +22,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     const { imageIds, userId, batchSize, force } = schema.parse(req.body);
 
-    const found = await dbRead.image.findMany({
+    // The primary: the replica can lag a CSAM block, and this split is what the response and Tracker report.
+    const found = await dbWrite.image.findMany({
       where: { id: { in: imageIds } },
       select: {
         nsfwLevel: true,

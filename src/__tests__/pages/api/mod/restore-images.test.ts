@@ -33,7 +33,7 @@ const row = (id: number, blockedFor: string | null) => ({
 });
 
 const found = (rows: ReturnType<typeof row>[]) =>
-  vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue(rows as never);
+  vi.mocked(dbMock.dbWrite.image.findMany).mockResolvedValue(rows as never);
 
 const restore = async (imageIds: number[]) => {
   const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
@@ -59,6 +59,16 @@ describe('/api/mod/restore-images', () => {
   });
 
   it('restores nothing when every image is CSAM-blocked', async () => {
+    found([row(1, 'CSAM')]);
+
+    const body = await restore([1]);
+
+    expect(h.unblock).not.toHaveBeenCalled();
+    expect(body).toEqual({ images: 0, skipped: [1] });
+  });
+
+  it('skips an image the replica has not yet seen CSAM-blocked', async () => {
+    vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([row(1, 'moderated')] as never);
     found([row(1, 'CSAM')]);
 
     const body = await restore([1]);
