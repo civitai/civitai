@@ -21,7 +21,6 @@ import {
   readComFaceIntentModel,
   recordComFaceIntent,
   reusableComFaceIntent,
-  suppressComFaceIntentRelock,
 } from '~/server/services/model-com-face-intent.service';
 
 export { getOwnTriggerWords };
@@ -192,7 +191,6 @@ export async function checkComFaceIntentVerdict({
 export type ComFaceIntentWrites = {
   record: typeof recordComFaceIntent;
   lock: typeof lockForComFaceIntent;
-  suppressRelock: (modelId: number, textHash: string) => Promise<unknown>;
 };
 
 /**
@@ -200,18 +198,13 @@ export type ComFaceIntentWrites = {
  * check, stored only when it read the model's stored listing (a draft is judged, never stored, so it
  * cannot replace a ruled verdict). A detection of the model's own stored listing on a mature model locks its nsfw
  * rating (`lockForComFaceIntent`), which the owner can dispute; that includes a stored detection
- * first made while the model was not mature, unless a moderator has ruled on its rating since the
- * model's previous stored verdict.
+ * first made while the model was not mature, unless a moderator has ruled on its rating since.
  * `disputable`: the nsfw lock is now the intent check's. Nothing is read or stored unless `userId`
  * owns the model. `writes` replaces how the verdict is stored and the lock added (e.g. no-ops).
  */
 export async function resolveComFaceIntent(
   { modelId, userId, ...listing }: ComFaceIntentListing & { modelId?: number; userId?: number },
-  writes: ComFaceIntentWrites = {
-    record: recordComFaceIntent,
-    lock: lockForComFaceIntent,
-    suppressRelock: suppressComFaceIntentRelock,
-  }
+  writes: ComFaceIntentWrites = { record: recordComFaceIntent, lock: lockForComFaceIntent }
 ): Promise<ComFaceIntentVerdict & { disputable?: boolean }> {
   const found = modelId && userId ? await readComFaceIntentModel(modelId) : null;
   const model = found && found.userId === userId ? found : null;
@@ -250,16 +243,9 @@ export async function resolveComFaceIntent(
 
   // Locked only for the text the model lists now, never for an unsaved edit or a draft.
   if (storedHash !== textHash || !model.nsfw) return verdict;
-  // Not locked over a moderator's nsfw ruling (an unlock from the model form) made since the last
-  // verdict stored, of any text: a fresh verdict on edited text counts back to the one it replaces.
-  // shortcut: that ruling also covers the edit after it; a ruling stamped with its text is the fix.
-  const recordedAt = meta?.comFaceIntent?.at ? new Date(meta.comFaceIntent.at) : null;
-  if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) {
-    // The fresh verdict just stored is newer than the ruling, so the next save would lock this
-    // text after all: suppressed as a moderator's unlock does.
-    if (!stored) await writes.suppressRelock(model.id, textHash);
-    return verdict;
-  }
+  // A stored detection a moderator has ruled past (an unlock from the model form) is not re-applied.
+  const recordedAt = stored && meta?.comFaceIntent?.at ? new Date(meta.comFaceIntent.at) : null;
+  if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) return verdict;
 
   const locked = await writes.lock(model.id, textHash).catch((error: Error) => {
     logToAxiom({

@@ -92,13 +92,8 @@ export async function recordHeldBack(
 
 /** One face through the face-save path. A dry run swaps in writes that touch nothing. */
 export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
-  const {
-    getOwnTriggerWords,
-    recordComFaceIntent,
-    lockForComFaceIntent,
-    comFaceIntentTextHash,
-    suppressComFaceIntentRelock,
-  } = await import('~/server/services/model-com-face-intent.service');
+  const { getOwnTriggerWords, recordComFaceIntent, lockForComFaceIntent, comFaceIntentTextHash } =
+    await import('~/server/services/model-com-face-intent.service');
   const { resolveComFaceIntent } = await import('~/server/services/model-sfw-face.service');
   const { moderatorRuledNsfwSince } = await import('~/server/services/rating-review.entities');
 
@@ -140,7 +135,6 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   const writes: ComFaceIntentWrites = {
     record: !apply ? async () => undefined : heldBack ? recordHeldBack : recordComFaceIntent,
     lock,
-    suppressRelock: apply ? suppressComFaceIntentRelock : async () => 0,
   };
   const verdict = await resolveComFaceIntent(
     { ...listing, modelId: face.id, userId: face.userId },
