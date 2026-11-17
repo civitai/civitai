@@ -280,6 +280,19 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		}
 		targetUserID = id
 	}
+	if in.CollectionID != 0 {
+		// getModelsRaw checks the collection after the tag and creator lookups (so an unknown creator
+		// is still Node's 404) and before the cursor is parsed: a collection the viewer may not read
+		// is an empty page with no lookahead, whatever the cursor says. Read on every page, as Node
+		// reads it on every getModelsRaw call of its loop.
+		read, err := collectionReadable(ctx, d.DB, in.CollectionID, viewerID)
+		if err != nil {
+			return nil, err
+		}
+		if !read {
+			return &page{items: []any{}}, nil
+		}
+	}
 	q := PageQuery{
 		Take: in.Limit, Cursor: cursor, Sort: in.Sort, BrowsingLevel: level, ViewerID: viewerID,
 		IsModerator: isMod, Archived: in.Archived, DisablePoi: raw.disablePoi, DisableMinor: raw.disableMinor,
@@ -289,6 +302,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		AllowDerivatives: in.AllowDerivatives, AllowDifferentLicense: in.AllowDifferentLicense,
 		AllowNoCredit: in.AllowNoCredit, EarlyAccess: in.EarlyAccess, PaidAccess: in.PaidAccess,
 		HidePaid: in.HidePaid, OnSale: in.OnSale, ExcludedUserIDs: in.ExcludedUserIDs, FileFormats: in.FileFormats,
+		CollectionID: in.CollectionID, CollectionTagID: in.CollectionTagID,
 	}
 	if in.Period != "AllTime" && in.PeriodMode != "stats" {
 		q.PeriodCutoff = decreaseDate(now, in.Period)
@@ -338,7 +352,8 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		rows = rows[:len(rows)-1]
 	}
 	showSfwFace := level != 0 && level&table.Levels.NSFW == 0
-	hidePrivateModels := in.Username == "" && in.User == ""
+	// `!ids && !username && !user && !followed && !collectionId` (ids and followed fall back).
+	hidePrivateModels := in.Username == "" && in.User == "" && in.CollectionID == 0
 	items := make([]*feedItem, 0, len(rows))
 	for i := range rows {
 		if it := buildFeedItem(&rows[i], in, raw, hy, gates, showSfwFace, hidePrivateModels); it != nil {

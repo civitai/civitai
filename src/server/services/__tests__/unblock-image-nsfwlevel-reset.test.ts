@@ -26,6 +26,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const capturedQueryRaw: string[] = [];
 const capturedExecRaw: string[] = [];
+// $queryRaw and $executeRaw together, in call order.
+const capturedRawInOrder: string[] = [];
 const capturedExecUnsafe: string[] = [];
 const capturedClickhouse: string[] = [];
 
@@ -68,6 +70,7 @@ const mockFindMany = dbRead.image.findMany;
 dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
   const sql = Array.isArray(strings) ? strings.join(' ? ') : String(strings);
   capturedQueryRaw.push(sql);
+  capturedRawInOrder.push(sql);
   // The appeal ruling's image write (`settleResolvedAppeals`) reads postId+pHash back; seed a pHash
   // so the approved-path phash unblock (bulkRemoveBlockedImages) has something to remove.
   if (/RETURNING "postId", "pHash"/.test(sql))
@@ -79,7 +82,9 @@ dbWrite.$executeRawUnsafe.mockImplementation((sql: string) => {
   return Promise.resolve(0);
 });
 dbWrite.$executeRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
-  capturedExecRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
+  const sql = Array.isArray(strings) ? strings.join(' ? ') : String(strings);
+  capturedExecRaw.push(sql);
+  capturedRawInOrder.push(sql);
   return Promise.resolve(0);
 });
 // Canonical `findUnique` already answers null and `findMany` already answers []; pinned anyway so
@@ -265,6 +270,18 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
   it('queues the models and articles of the unblocked images', async () => {
     await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ minorImageIds: [128489949] });
+  });
+
+  it("checks for an earlier review before writing this unblock's own review row", async () => {
+    capturedRawInOrder.length = 0;
+    await handleUnblockImages({ ids: [128489949], moderatorId: 9, removeMinorFlag: false } as any);
+
+    const rescan = capturedRawInOrder.findIndex((sql) => sql.includes('FROM "ModActivity" m'));
+    const ownReview = capturedRawInOrder.findIndex((sql) =>
+      sql.includes('INSERT INTO "ModActivity"')
+    );
+    expect(rescan).toBeGreaterThanOrEqual(0);
+    expect(ownReview).toBeGreaterThan(rescan);
   });
 });
 
@@ -575,9 +592,12 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
 describe('handleUnblockImages — minor queue Accept truth table', () => {
   it('clears the minor flag on mature images and keeps it on safe ones', async () => {
     const pg = new PGlite();
-    await pg.exec(`CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL,
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error');
+      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL,
       minor boolean NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
-      "scannedAt" timestamp, ingestion text)`);
+      "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);
+      CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);`);
     const levels: [number, boolean][] = [
       [0, true],
       [1, true],

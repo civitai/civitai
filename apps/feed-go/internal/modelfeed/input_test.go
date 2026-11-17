@@ -59,7 +59,15 @@ func ptrInt(n int) *int { return &n }
 func TestParseFallbacks(t *testing.T) {
 	for _, c := range []struct{ input, reason string }{
 		{`{"json":{"query":"x"}}`, "input-query"},
-		{`{"json":{"collectionId":5}}`, "input-collectionId"},
+		// collectionId and collectionTagId are z.number(): anything else, null included, is a 400; a
+		// number that is not an int4 integer is not ported.
+		{`{"json":{"collectionId":5.5}}`, "model-collection-id"},
+		{`{"json":{"collectionId":3000000000}}`, "model-collection-id"},
+		{`{"json":{"collectionId":5,"collectionTagId":1.5}}`, "model-collection-id"},
+		{`{"json":{"collectionId":"5"}}`, "input-invalid"},
+		{`{"json":{"collectionId":null}}`, "input-invalid"},
+		{`{"json":{"collectionTagId":"x"}}`, "input-invalid"},
+		{`{"json":{"collectionId":5,"sort":"Recently Added"}}`, "model-sort-recently-added"},
 		{`{"json":{"hidden":true}}`, "input-hidden"},
 		{`{"json":{"followed":true}}`, "input-followed"},
 		{`{"json":{"newCreators":true}}`, "input-newCreators"},
@@ -96,6 +104,28 @@ func TestParseIgnoresFalsyUnsupportedKeys(t *testing.T) {
 	_, err := parseJSON(t, `{"json":{"query":"","collectionId":0,"hidden":false,"status":[],"pending":false}}`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
+	}
+}
+
+// collectionId and collectionTagId as getModelsRaw reads them: a tag only with a collection, 0 as no
+// filter, a negative id kept (Node binds it; no collection holds it).
+func TestParseCollection(t *testing.T) {
+	for raw, want := range map[string][2]int{
+		`{"json":{"collectionId":42}}`:                                   {42, 0},
+		`{"json":{"collectionId":42,"collectionTagId":88}}`:              {42, 88},
+		`{"json":{"collectionId":42,"collectionTagId":0}}`:               {42, 0},
+		`{"json":{"collectionTagId":88}}`:                                {0, 0},
+		`{"json":{"collectionId":0,"collectionTagId":1.5}}`:              {0, 0},
+		`{"json":{"collectionId":-3}}`:                                   {-3, 0},
+		`{"json":{"collectionId":42,"collectionItemStatus":["REVIEW"]}}`: {42, 0},
+	} {
+		in, err := parseJSON(t, raw)
+		if err != nil {
+			t.Fatalf("%s: %v (reason %q)", raw, err, fallback.Reason(err))
+		}
+		if got := [2]int{in.CollectionID, in.CollectionTagID}; got != want {
+			t.Errorf("%s: collection, tag = %v, want %v", raw, got, want)
+		}
 	}
 }
 

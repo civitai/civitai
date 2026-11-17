@@ -196,10 +196,32 @@ describe('isClickupTaskUrl, HQ links', () => {
   });
 
   it.each([
+    [
+      'an id with underscores, as HQ issues them now',
+      'https://hq.civitai.com/t/abc_def_9xyz',
+      'abc_def_9xyz',
+    ],
+    ['an id with a hyphen', 'https://hq.civitai.com/t/abc-def-9xyz', 'abc-def-9xyz'],
+    [
+      'an id of exactly 100 characters',
+      `https://hq.civitai.com/t/${'a'.repeat(100)}`,
+      'a'.repeat(100),
+    ],
+  ])('accepts %s, and the matcher reads the same id back', (_label, input, id) => {
+    expect(isClickupTaskUrl(input)).toBe(true);
+    expect(clickupTaskIdFromUrl(input)).toBe(id);
+  });
+
+  it.each([
     ['a task sub-path, whose last segment is not the task', 'https://hq.civitai.com/t/868kfwm3j/x'],
+    ['a two-segment id path', 'https://hq.civitai.com/t/a/b'],
     ['an HQ page that is not a task', 'https://hq.civitai.com/868kfwm3j'],
+    ['no id', 'https://hq.civitai.com/t/'],
+    ['an id over 100 characters', `https://hq.civitai.com/t/${'a'.repeat(101)}`],
+    ['an upper-cased underscored id', 'https://hq.civitai.com/t/ABC_DEF_9XYZ'],
+    ['an underscored id on a non-HQ host', 'https://example.com/t/abc_def_9xyz'],
     ['a team-style ClickUp path on the HQ host', 'https://hq.civitai.com/t/8459928/868kfwm3j'],
-    ['a hyphenated id', 'https://hq.civitai.com/t/DEV-1234'],
+    ['an upper-cased custom id', 'https://hq.civitai.com/t/DEV-1234'],
     // HQ ids are lower-case and completions match case-sensitively, so this would never close.
     ['an upper-cased id', 'https://hq.civitai.com/t/868KFWM3J'],
     ['another civitai host', 'https://civitai.com/t/868kfwm3j'],

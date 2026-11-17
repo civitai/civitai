@@ -262,7 +262,7 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
         name: 'handle-auctions',
         type: 'error',
         message: `Error running winners`,
-        data: { auctionId: auctionRow.id },
+        payload: { auctionId: auctionRow.id },
       });
     }
   }
@@ -545,7 +545,7 @@ export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: Wi
                 name: 'handle-auctions',
                 type: 'error',
                 message: `Failed to refund bid`,
-                data: { tid },
+                payload: { tid },
                 error: err.message,
                 cause: err.cause,
                 stack: err.stack,
@@ -559,7 +559,7 @@ export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: Wi
             name: 'handle-auctions',
             type: 'error',
             message: `Failed to run refund`,
-            data: { tid },
+            payload: { tid },
             error: err.message,
             cause: err.cause,
             stack: err.stack,
@@ -574,7 +574,7 @@ export const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: Wi
         name: 'handle-auctions',
         type: 'warning',
         message: `Failed to refund user for lost bid`,
-        data: { lostBid },
+        payload: { lostBid },
       });
     } else {
       // Mark refunded

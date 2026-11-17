@@ -86,6 +86,10 @@ import {
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
 import {
+  containsPrivateMediaUrl,
+  valueContainsPrivateMediaUrl,
+} from '~/server/services/apps/shared-private-media-urls';
+import {
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
   checkSharedWithdrawRateLimit,
@@ -1660,6 +1664,15 @@ async function incrementSharedCounterUnmetered(
     }
   };
 
+  if (moderationMode !== 'enforce' && containsPrivateMediaUrl(key)) {
+    throw tagSharedStorageOutcome(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Content contains a blocked link (counterKey)',
+      }),
+      'moderation_blocked'
+    );
+  }
   let outcome = await runIncrement(moderationMode === 'enforce');
   if (!outcome) {
     // Enforce, and this increment would create the key: scan it now, with no transaction open.
@@ -1955,6 +1968,13 @@ async function assertSharedValueSafeAndSerialize(params: {
   // A thunk, so shadow mode parses off the request path too (inside the deferred scan).
   const readStoredData = () =>
     value.data === undefined ? undefined : (JSON.parse(serialized) as { data?: unknown }).data;
+  // Refused in every mode; under `enforce` the scan below records it.
+  if (mode !== 'enforce' && valueContainsPrivateMediaUrl(JSON.parse(serialized))) {
+    throw tagSharedStorageOutcome(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Content contains a blocked link (data)' }),
+      'moderation_blocked'
+    );
+  }
   if (mode === 'enforce') {
     const scan = await enforceScan(
       () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),
