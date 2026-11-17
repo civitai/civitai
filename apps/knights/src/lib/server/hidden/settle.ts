@@ -35,6 +35,16 @@ export async function gradeHiddenVotes(
 ): Promise<{ outcomes: CheckOutcome[]; xp: XpDelta[]; resetFor: number[] }> {
   if (due.length === 0) return { outcomes: [], xp: [], resetFor: [] };
 
+  // Player rows first, in id order, before any reference image: the vote path holds its player row when it grades, so both
+  // paths lock player then reference and cannot deadlock. A no-op for a player this transaction already holds.
+  await trx
+    .selectFrom('NewOrderPlayer')
+    .select('userId')
+    .where('userId', 'in', [...new Set(due.map((v) => v.playerId))])
+    .orderBy('userId', 'asc')
+    .forUpdate()
+    .execute();
+
   // A check whose image has since gone (removed, blocked, unpublished) is not graded: nothing is paid or penalised.
   const known = new Map(
     (

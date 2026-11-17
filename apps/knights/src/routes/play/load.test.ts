@@ -42,6 +42,7 @@ const seenStore = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }));
 vi.mock('$lib/server/seen-runtime', () => ({ seenStore }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
   pickHiddenCheck,
   answerHiddenCheck: vi.fn(),
   readHiddenNotices,

@@ -42,6 +42,7 @@
     postVote,
     refillCount,
     refusedNote,
+    skillCheckCue,
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
@@ -400,24 +401,34 @@
   let cue = $state<string | null>(null);
   let cueTimer: ReturnType<typeof setTimeout> | undefined;
   const CUE_MS = 2500;
-  function cheer(data: Record<string, unknown> | undefined) {
-    const check = data?.check as { verdict?: string } | undefined;
-    if (check?.verdict !== 'correct' || data.status.smites === 0) return;
-    cue = '+1 toward your next heart';
+  function cheer(result: Record<string, unknown> | undefined, smitesBefore: number) {
+    const next = skillCheckCue(result, smitesBefore);
+    if (!next) return;
+    cue = next;
     clearTimeout(cueTimer);
     cueTimer = setTimeout(() => (cue = null), CUE_MS);
   }
+  function clearCue() {
+    cue = null;
+    clearTimeout(cueTimer);
+  }
+  onDestroy(() => {
+    clearTimeout(noteTimer);
+    clearTimeout(cueTimer);
+  });
 
   // A refused background vote's note stays until the next judgment or until dismissed: the player has moved on by the time
   // it arrives, and a note that vanished after five seconds let a press pass for a counted vote.
   let sticky = $state(false);
   function tell(message: string) {
+    clearCue();
     note = message;
     sticky = false;
     clearTimeout(noteTimer);
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
   }
   function stick(message: string) {
+    clearCue();
     note = message;
     sticky = true;
     clearTimeout(noteTimer);
@@ -433,6 +444,8 @@
   const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
   function post(action: URL, body: FormData, key: string, counted: boolean) {
+    // Read at the press: by the time the answer lands, the page data may already hold this vote's effect.
+    const smitesBefore = data.status.smites;
     const uncount = () => {
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
@@ -469,7 +482,7 @@
       },
       // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
       // against the data on screen until the refreshed data, which holds it, replaces it.
-      onSuccess: cheer,
+      onSuccess: (result) => cheer(result, smitesBefore),
       onSettled: async () => {
         if (counted && alive) landVote(inFlight, data.daily);
         counted = false;
@@ -807,8 +820,8 @@
         {/key}
         {@render levelToast(true)}
         {#if note}
-          <p class="nudge" class:sticky role="status">
-            {note}
+          <p class="nudge" class:sticky>
+            <span role="status">{note}</span>
             {#if sticky}
               <button type="button" class="nudge-close" aria-label="Dismiss" onclick={unstick}>×</button>
             {/if}

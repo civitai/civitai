@@ -8,6 +8,7 @@ import { metrics } from '$lib/server/metrics';
 import {
   answerHiddenCheck,
   dismissHiddenNotices,
+  hiddenItemId,
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { DISMISS_FAILED } from '$lib/notice-copy';
@@ -226,20 +227,25 @@ type ParsedVote = {
 async function readVote({
   request,
   locals,
-}: VoteEvent): Promise<{ failure: ActionFailure<{ message: string }> } | ParsedVote> {
+}: VoteEvent): Promise<
+  { failure: ActionFailure<{ message: string }>; reason?: string } | ParsedVote
+> {
   const form = await request.formData();
   const token = form.get('item');
   const answer = form.get('answer');
   const reasonField = form.get('blockReason');
-  if (typeof token !== 'string' || typeof answer !== 'string') {
-    return { failure: fail(400, { message: 'Pick an answer.' }) };
+  if (typeof token !== 'string') {
+    return { failure: fail(400, { message: 'Pick an answer.' }), reason: 'bad-token' };
+  }
+  if (typeof answer !== 'string') {
+    return { failure: fail(400, { message: 'Pick an answer.' }), reason: 'bad-answer' };
   }
   if (reasonField !== null && typeof reasonField !== 'string') {
-    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }), reason: 'bad-block-reason' };
   }
   const blockReason = reasonField === '' ? null : reasonField;
   if (blockReason !== null && !isBlockReason(blockReason)) {
-    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }), reason: 'bad-block-reason' };
   }
   let ref: ReturnType<typeof openItem>;
   try {
@@ -252,12 +258,26 @@ async function readVote({
       }),
     };
   }
-  if (!ref) return { failure: fail(400, { message: 'Pick an answer.' }) };
+  if (!ref) return { failure: fail(400, { message: 'Pick an answer.' }), reason: 'bad-token' };
   const itemId = ref.id;
   if (ref.kind === 'yesno' && blockReason !== null) {
-    return { failure: fail(400, { message: BLOCK_REASON_TEXT }) };
+    return { failure: fail(400, { message: BLOCK_REASON_TEXT }), reason: 'bad-block-reason' };
   }
   return { ref, answer, blockReason, itemId };
+}
+
+const kindOf = (ref: ParsedVote['ref']) =>
+  ref.kind === 'hidden' ? 'hidden_check' : ref.kind === 'yesno' ? 'yesno' : 'rating';
+
+/** Logs and meters a refused vote under its ledger item id: a hidden check's is the negative of its reference id. */
+function refused(reason: string, vote: Pick<ParsedVote, 'ref' | 'itemId'> | null, userId: number) {
+  metrics.voteRefused(
+    reason,
+    vote ? kindOf(vote.ref) : 'unknown',
+    userId,
+    vote ? (vote.ref.kind === 'hidden' ? hiddenItemId(vote.itemId) : vote.itemId) : null,
+    'vote'
+  );
 }
 
 async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
@@ -293,13 +313,12 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
             },
             queueDeps
           );
-    const kind = ref.kind === 'hidden' ? 'hidden_check' : ref.kind === 'yesno' ? 'yesno' : 'rating';
     if (result.status === 'limited') {
-      metrics.voteRefused('limited', kind, locals.user.id, itemId);
+      refused('limited', { ref, itemId }, locals.user.id);
       return limitedFailure(result.until);
     }
     if (result.status === 'rejected') {
-      metrics.voteRefused(result.reason, kind, locals.user.id, itemId);
+      refused(result.reason, { ref, itemId }, locals.user.id);
       return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
         message: REJECTION_TEXT[result.reason],
       });
@@ -316,25 +335,41 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
 export const actions: Actions = {
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
-    if ((await getStanding(db, event.locals.user.id)).muted) return mutedFailure();
-    if (!(await consented(event.locals.user.id))) return consentFailure();
+    const userId = event.locals.user.id;
+    if ((await getStanding(db, userId)).muted) {
+      refused('muted', null, userId);
+      return mutedFailure();
+    }
+    if (!(await consented(userId))) {
+      refused('no-consent', null, userId);
+      return consentFailure();
+    }
     const parsed = await readVote(event);
-    if ('failure' in parsed) return parsed.failure;
-    const outcome = await voteGate.guard(
-      event.locals.user.id,
-      queueDeps.now(),
-      () => recordVote(parsed, event),
-      { moderator: event.locals.user.isModerator }
-    );
+    if ('failure' in parsed) {
+      if (parsed.reason) refused(parsed.reason, null, userId);
+      return parsed.failure;
+    }
+    const outcome = await voteGate.guard(userId, queueDeps.now(), () => recordVote(parsed, event), {
+      moderator: event.locals.user.isModerator,
+    });
     if (!('until' in outcome)) return outcome;
+    refused(outcome.busy ? 'busy' : 'limited', parsed, userId);
     return outcome.busy ? busyFailure() : limitedFailure(outcome.until);
   },
 
   // Moves a player past an item without judging it: no vote, pay, accuracy or Watch credit, and it is not served to them
   // again. Every kind of item is handled and answered alike, so a skip does not show what the item was.
   skip: async ({ request, locals }) => {
-    if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
-    if (!(await consented(locals.user.id))) return consentFailure();
+    const skipRefused = (reason: string) =>
+      metrics.voteRefused(reason, 'unknown', locals.user.id, null, 'skip');
+    if ((await getStanding(db, locals.user.id)).muted) {
+      skipRefused('muted');
+      return mutedFailure();
+    }
+    if (!(await consented(locals.user.id))) {
+      skipRefused('no-consent');
+      return consentFailure();
+    }
     const token = (await request.formData()).get('item');
     let ref: ReturnType<typeof openItem> = null;
     try {
@@ -342,7 +377,10 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights: the feed cannot be served', { error });
     }
-    if (!ref) return fail(400, { message: 'That one cannot be skipped.' });
+    if (!ref) {
+      skipRefused('bad-token');
+      return fail(400, { message: 'That one cannot be skipped.' });
+    }
     await recordSkip(skipStore, locals.user.id, ref, queueDeps.now());
     return { success: true };
   },

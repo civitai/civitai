@@ -38,6 +38,20 @@ const FAILED_NOTICE = 'Your judgment could not be recorded.';
 
 const NOT_COUNTED = 'That judgment was not counted.';
 
+export const HEART_CUE = '+1 toward your next heart';
+
+/**
+ * The cue a recorded vote earns: a right skill check while a smite weighed on the player when they answered (`smitesBefore`,
+ * read at the press, since the page data may already be fresher).
+ */
+export function skillCheckCue(
+  result: Record<string, unknown> | undefined,
+  smitesBefore: number
+): string | null {
+  const check = result?.check as { verdict?: unknown } | undefined;
+  return check?.verdict === 'correct' && smitesBefore > 0 ? HEART_CUE : null;
+}
+
 /** A background vote the server refused: by then the player has moved on, so the note says the press did not count. */
 export const refusedNote = (message: string) =>
   message === NETWORK_NOTICE || message.includes(NOT_COUNTED)
@@ -244,9 +258,15 @@ export async function postVote(key: string, deps: PostVoteDeps): Promise<void> {
   const outcome = describeOutcome(result);
   tracker.settle(key);
   if (!reached || isBusy(result)) tracker.release(key);
-  if (!outcome.ok) onFailure(outcome);
-  else deps.onSuccess?.(result?.data);
-  await onSettled();
+  // A throwing handler must not skip the settle: it lands the vote and reads the page again.
+  try {
+    if (!outcome.ok) onFailure(outcome);
+    else deps.onSuccess?.(result?.data);
+  } catch (error) {
+    console.error('knights: a vote handler failed', error);
+  } finally {
+    await onSettled();
+  }
 }
 
 /**

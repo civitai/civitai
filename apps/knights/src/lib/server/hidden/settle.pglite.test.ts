@@ -480,3 +480,24 @@ describe('an answer one level off the reference', () => {
     ).toMatchObject({ check: { verdict: 'failed' } });
   });
 });
+
+describe('lock order', () => {
+  it('locks the players before it touches a reference image, the order the vote path takes them', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await answer(2, await reference(10, '4'), '4');
+    await answer(1, await reference(11, '4'), '16', minutes(1));
+    const spy = vi.spyOn(pg, 'query');
+    await settle(minutes(40));
+    const sql = spy.mock.calls.map(([text]) => String(text));
+    spy.mockRestore();
+
+    const playerLock = sql.findIndex(
+      (q) => /from "NewOrderPlayer"/i.test(q) && /for update/i.test(q)
+    );
+    const referenceWrite = sql.findIndex((q) => /update "KnightsReferenceImage"/i.test(q));
+    expect(playerLock).toBeGreaterThan(-1);
+    expect(playerLock).toBeLessThan(referenceWrite);
+    expect(sql[playerLock]).toMatch(/order by "userId"/i);
+  });
+});

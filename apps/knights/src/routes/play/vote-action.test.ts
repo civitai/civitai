@@ -29,6 +29,7 @@ vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: feedSecretMock, reset
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
   answerHiddenCheck,
   pickHiddenCheck: vi.fn(),
   readHiddenNotices: vi.fn(),
@@ -213,8 +214,28 @@ describe('vote action', () => {
     await submit({ item: queueItem(3), answer: '4' });
     await submit({ item: hiddenItem(5), answer: '8' });
 
-    expect(voteRefused).toHaveBeenNthCalledWith(1, 'not-open', 'rating', 7, 3);
-    expect(voteRefused).toHaveBeenNthCalledWith(2, 'already-voted', 'hidden_check', 7, 5);
+    expect(voteRefused).toHaveBeenNthCalledWith(1, 'not-open', 'rating', 7, 3, 'vote');
+    // A hidden check is logged under its ledger id, the negative of its reference id.
+    expect(voteRefused).toHaveBeenNthCalledWith(2, 'already-voted', 'hidden_check', 7, -5, 'vote');
+  });
+
+  it('records a vote the Redis gate turns away, busy or limited', async () => {
+    guard.mockResolvedValueOnce({ until: new Date('2026-12-15T12:01:00Z'), busy: true });
+    await submit({ item: queueItem(3), answer: '4' });
+    guard.mockResolvedValueOnce({ until: new Date('2026-12-15T12:01:00Z') });
+    await submit({ item: hiddenItem(5), answer: '4' });
+
+    expect(voteRefused).toHaveBeenNthCalledWith(1, 'busy', 'rating', 7, 3, 'vote');
+    expect(voteRefused).toHaveBeenNthCalledWith(2, 'limited', 'hidden_check', 7, -5, 'vote');
+  });
+
+  it('records a muted player and a token that does not open', async () => {
+    getStanding.mockResolvedValueOnce({ banned: false, muted: true });
+    await submit({ item: queueItem(3), answer: '4' });
+    await submit({ item: 'not-a-token', answer: '4' });
+
+    expect(voteRefused).toHaveBeenNthCalledWith(1, 'muted', 'unknown', 7, null, 'vote');
+    expect(voteRefused).toHaveBeenNthCalledWith(2, 'bad-token', 'unknown', 7, null, 'vote');
   });
 
   it('records nothing for a vote that was recorded', async () => {
