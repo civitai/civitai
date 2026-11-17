@@ -6,7 +6,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
-/** Adds to the showcase at the top of the profile. */
 export function useAddToTopShowcase(entityType: Props['entityType']) {
   const utils = trpc.useUtils();
   const mutation = trpc.userProfile.addEntityToShowcase.useMutation({
@@ -42,7 +41,6 @@ export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
   const currentUser = useCurrentUser();
   const { add } = useAddToTopShowcase(entityType);
 
-  // An image can also go to one of the owner's Images sections.
   const offersSections = entityType === 'Image' && features.profileShowcases && !!currentUser;
   const { data: user, isLoading } = trpc.userProfile.get.useQuery(
     { username: currentUser?.username ?? '' },

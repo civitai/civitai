@@ -1,16 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ImageService from '~/server/services/image.service';
+import type * as SearchIndex from '~/server/search-index';
+import type * as Blocklist from '~/server/services/blocklist.service';
+import type * as ScamScanQueue from '~/server/services/text-scan/scam-scan-queue';
 
-vi.mock('~/server/services/image.service', () => ({
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageService>()),
   enqueueImageIngestion: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/search-index', () => ({
+vi.mock('~/server/search-index', async (importOriginal) => ({
+  ...(await importOriginal<typeof SearchIndex>()),
   usersSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
 }));
-vi.mock('~/server/services/blocklist.service', () => ({
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof Blocklist>()),
   throwOnBlockedUserContent: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/services/text-scan/scam-scan-queue', () => ({ queueScamScan: vi.fn() }));
+vi.mock('~/server/services/text-scan/scam-scan-queue', async (importOriginal) => ({
+  ...(await importOriginal<typeof ScamScanQueue>()),
+  queueScamScan: vi.fn(),
+}));
 
 import { addToShowcaseSection } from '~/server/services/user-profile.service';
 import type { ShowcaseSectionSchema } from '~/server/schema/user-profile.schema';
