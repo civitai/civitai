@@ -155,9 +155,6 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 			out[id] = rec
 		}
 	}
-	if c.memoized(cache) {
-		c.remember(cache, todo, records) // MUTANT M1
-	}
 	return out, nil
 }
 
@@ -173,7 +170,7 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 		return lookup(ctx, ids)
 	}
 	kept := make(map[int]jspack.Obj, len(ids))
-	rest := c.fromRecent(cache, ids, kept)
+	rest := ids // MUTANT M2: no recheck of recent inside the flight
 	if len(rest) == 0 {
 		return kept, nil
 	}
@@ -181,6 +178,7 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 	if err != nil {
 		return nil, err
 	}
+	c.remember(cache, rest, records)
 	if len(kept) == 0 {
 		return records, nil
 	}
