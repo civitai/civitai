@@ -73,6 +73,7 @@ import router from 'next/router';
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
 import { ManageServicesPanel } from '~/components/CreatorShop/Services/ManageServicesPanel';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
+import { BUYER_DISCLOSURE_INTRO } from '~/shared/constants/creator-service-terms.constants';
 
 // component-setup's router stub is one shared object: set its route per test.
 const managePage = (query: Record<string, string>) =>
@@ -107,6 +108,7 @@ describe("the owner's service card", () => {
     await expect
       .element(dialog.getByText('One painted portrait of your character.'))
       .toBeInTheDocument();
+    await expect.element(dialog.getByText(BUYER_DISCLOSURE_INTRO)).toBeInTheDocument();
     await expect.element(dialog.getByRole('button', { name: 'Request' })).toBeDisabled();
     await expect.element(dialog.getByRole('link', { name: 'Manage' })).not.toBeInTheDocument();
     await expect.element(dialog.getByText('owner-menu')).not.toBeInTheDocument();
@@ -123,6 +125,8 @@ describe('the manage page opened from a card', () => {
         props: { offering },
       })
     );
+    // The stub router never drops ?edit, so a re-render (switching tabs) must not open a second form.
+    await page.getByRole('tab', { name: 'Closed' }).click();
     expect(state.trigger).toHaveBeenCalledTimes(1);
     expect(router.replace).toHaveBeenCalledWith(
       { pathname: '/user/[username]/shop/manage', query: { username: 'mei', tab: 'services' } },
@@ -134,6 +138,13 @@ describe('the manage page opened from a card', () => {
   test('opens no form for a seller who cannot sell, and still drops ?edit', async () => {
     managePage({ username: 'mei', tab: 'services', edit: '3' });
     state.canSell = false;
+    renderWithProviders(<ManageServicesPanel />);
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
+    expect(state.trigger).not.toHaveBeenCalled();
+  });
+
+  test("opens no form for an id that isn't one of the seller's, and still drops ?edit", async () => {
+    managePage({ username: 'mei', tab: 'services', edit: '999' });
     renderWithProviders(<ManageServicesPanel />);
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
     expect(state.trigger).not.toHaveBeenCalled();
