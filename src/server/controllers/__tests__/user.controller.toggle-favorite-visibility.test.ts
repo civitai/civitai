@@ -59,6 +59,7 @@ describe('toggleFavoriteHandler', () => {
   it('lets staff favorite it', async () => {
     await favorite(66, true, true);
     expect(toggleReview).toHaveBeenCalledTimes(1);
+    expect(toggleBookmarked).toHaveBeenCalledWith(expect.objectContaining({ isModerator: true }));
   });
 
   it('still lets the user unfavorite it', async () => {

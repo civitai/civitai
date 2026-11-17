@@ -1852,7 +1852,6 @@ export const upsertCollection = async ({
     throw throwBadRequestError('3D model collections cannot be contests');
   }
 
-  // The first item, if any, is written below with the collection.
   for (const [itemKey, itemId] of [
     ['imageId', imageId],
     ['postId', collectionItem.postId],

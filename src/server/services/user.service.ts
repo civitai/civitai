@@ -1,4 +1,7 @@
-import type { CollectionItemKey } from '~/server/services/collection-item-visibility';
+import {
+  assertCollectionItemsVisibleToViewer,
+  type CollectionItemKey,
+} from '~/server/services/collection-item-visibility';
 import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
@@ -3494,10 +3497,6 @@ export const toggleBookmarked = async ({
     });
     metricsEngine?.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
-    // Imported here: collection-item-visibility reaches user.service again through image.service.
-    const { assertCollectionItemsVisibleToViewer } = await import(
-      '~/server/services/collection-item-visibility'
-    );
     await assertCollectionItemsVisibleToViewer({
       itemKey: entityProp as CollectionItemKey,
       ids: [entityId],
