@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
@@ -43,5 +44,27 @@ func TestMissCompute(t *testing.T) {
 	c = missCompute(&config.Config{ComputeMisses: true, CacheWriteBack: true}, primary, nil, blocked, addons)
 	if !c.WriteBack || c.Primary != primary {
 		t.Fatalf("write-back = %+v, want the primary handed over", c)
+	}
+}
+
+// The metric-hash misses get a ClickHouse reader only when one is configured; a URL the reader
+// refuses is an error that names neither the URL nor the credentials, and no reader (feed-go still
+// starts and those misses fall back).
+func TestMetricsReader(t *testing.T) {
+	if r, err := metricsReader(&config.Config{}); r != nil || err != nil {
+		t.Fatalf("unconfigured = %v, %v; want no reader, no error", r, err)
+	}
+	r, err := metricsReader(&config.Config{ClickHouseURL: "https://ch.example.test:8443", ClickHouseUsername: "u", ClickHouseMaxInFlight: 2})
+	if err != nil || r == nil {
+		t.Fatalf("configured = %v, %v; want a reader", r, err)
+	}
+	for _, bad := range []string{"ch.example.test:8443", "https://user:secret-pw@ch.example.test", "ftp://ch.example.test", "http://%zz"} {
+		r, err := metricsReader(&config.Config{ClickHouseURL: bad, ClickHouseUsername: "u"})
+		if r != nil || err == nil {
+			t.Fatalf("%q = %v, %v; want no reader and an error", bad, r, err)
+		}
+		if msg := err.Error(); strings.Contains(msg, "secret-pw") || strings.Contains(msg, "ch.example.test") {
+			t.Fatalf("%q: the error %q names the URL", bad, msg)
+		}
 	}
 }

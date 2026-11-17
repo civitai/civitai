@@ -240,6 +240,8 @@ func TestPresenceReadFailures(t *testing.T) {
 // model frames and decorations are not page caches: their reasons are the computation's own.
 func TestMissReason(t *testing.T) {
 	plain, computed := &Sources{}, &Sources{Compute: &MissCompute{}}
+	r := testkit.NewRedis()
+	withCH := &Sources{Cache: r, Compute: &MissCompute{ClickHouse: &fakeCH{}}}
 	for _, c := range PageCaches {
 		if got := plain.MissReason(c.Name); got != c.Reason {
 			t.Errorf("no computation: %s = %q, want %q", c.Name, got, c.Reason)
@@ -261,7 +263,20 @@ func TestMissReason(t *testing.T) {
 			t.Errorf("computed: %s = %q, want %q", name, got, w)
 		}
 	}
-	for _, s := range []*Sources{plain, computed} {
+	// The metric hashes are computed only with a ClickHouse reader (and the cache it reads them from).
+	if got := withCH.MissReason(CacheMetrics); got != "" {
+		t.Errorf("with a ClickHouse reader: metrics = %q, want \"\"", got)
+	}
+	if got := (&Sources{Compute: &MissCompute{ClickHouse: &fakeCH{}}}).MissReason(CacheMetrics); got != "metrics-miss" {
+		t.Errorf("a reader but no cache client: metrics = %q, want metrics-miss", got)
+	}
+	if got := (&Sources{Cache: r, Compute: &MissCompute{}}).MissReason(CacheMetrics); got != "metrics-miss" {
+		t.Errorf("no reader: metrics = %q, want metrics-miss", got)
+	}
+	if got := withCH.MissReason(CacheTagIDs); got != "" {
+		t.Errorf("with a ClickHouse reader: tag-ids = %q, want \"\"", got)
+	}
+	for _, s := range []*Sources{plain, computed, withCH} {
 		if s.MissReason("nope") != "" {
 			t.Error("an unknown cache has a reason")
 		}

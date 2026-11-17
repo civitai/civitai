@@ -22,6 +22,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -72,6 +73,21 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 		c.Primary = primary
 	}
 	return c
+}
+
+// metricsReader is the ClickHouse reader the metric-hash misses are computed with: nil when it is not
+// configured (cfg.ClickHouseURL empty) or its URL is invalid, so feed-go starts and those misses fall
+// back (`metrics-miss`). The error is for the startup log; it never names the URL or credentials.
+func metricsReader(cfg *config.Config) (hydrate.ClickHouse, error) {
+	if cfg.ClickHouseURL == "" {
+		return nil, nil
+	}
+	c, err := chread.New(chread.Config{URL: cfg.ClickHouseURL, Username: cfg.ClickHouseUsername, Password: cfg.ClickHousePassword,
+		MaxInFlight: cfg.ClickHouseMaxInFlight})
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // primaryMaxConns bounds the primary pool, used only by the write-back miss lookups (DESIGN.md §3.1).
@@ -136,10 +152,19 @@ func run(log *slog.Logger) error {
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	addons := &feed.AddonSource{Sys: sys}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
+	reader, err := metricsReader(cfg)
+	if err != nil {
+		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
+	}
+	if sources.Compute != nil && reader != nil {
+		sources.Compute.ClickHouse = reader
+		sources.Compute.MetricsTimeout = cfg.ClickHouseTimeout
+	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack,
-		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative)
+		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative, "clickhouse_metrics", sources.Compute != nil && sources.Compute.ClickHouse != nil,
+		"FEED_GO_CLICKHOUSE_TIMEOUT_MS", cfg.ClickHouseTimeout.Milliseconds(), "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", cfg.ClickHouseMaxInFlight)
 	degraded := &server.RevocationDegradedReporter{Log: log, Counter: metrics.RevocationDegraded}
 	// SESSION_REVOCATION_CACHE=off|0|false turns the marker record off (the plain fail-open), as in the app.
 	var markers *auth.MarkerCache

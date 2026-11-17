@@ -86,7 +86,7 @@ Supported today:
 | Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
 | Gallery gates | settings from cache, held level, taken-down models; page-1 pinned posts (narrowed to the version, pinned-first ordering); the page-1 sponsored post (see below) | a settings key Node would rebuild; a sponsored post for a viewer whose `creator-promotions` value is unknown here (`sponsored-post`); two or more live runs on one version (`sponsored-rotation`, Node picks one at random); a failed promotion lookup (`sponsored-lookup`); a payload or gallery level this service does not read as Node does (`sponsored-data`) |
 | Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
-| Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails; computed misses (§3.1) on user cosmetics, image frames, tag ids and event decorations | misses on metric hashes (`metrics-miss`); a failed miss computation (`<reason>-failed`) |
+| Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails; computed misses (§3.1) on user cosmetics, image frames, tag ids and event decorations, and with a ClickHouse reader on metric hashes | misses on metric hashes without a ClickHouse reader (`metrics-miss`); a failed miss computation (`<reason>-failed`) |
 | Flags | see §8 | the index path without `FEED_SERVICE_URL` (`index-feed-unconfigured`) |
 
 **First page of a version gallery** (`internal/feed/firstpage.go`, `promotion.go`), in the handler's
@@ -197,9 +197,10 @@ internal/fallback    the fallback error and its reasons
   and put back in the feed's order. Not ported: `hydrateWithReadRescue` (an empty hydrate
   is retried on another replica this service does not reach — it falls back instead), and the
   `feed-service-degrade` breaker and last-good page (every failed call falls back).
-- **ClickHouse:** not read. Metric counts come from the watcher-fed Redis hashes; a missing hash (Node
-  populates it from ClickHouse) falls back (`metrics-miss`, counted in `feed_go_fallback_total` like
-  every reason).
+- **ClickHouse:** read only for a missing metric hash, and only when a reader is configured
+  (`CLICKHOUSE_HOST` + `CLICKHOUSE_USERNAME`, §3.1). Metric counts come from the watcher-fed Redis
+  hashes; a missing hash is computed with Node's own populate query, or without a reader falls back
+  (`metrics-miss`, counted in `feed_go_fallback_total` like every reason).
 
 ### 3.1 Cache misses this service computes
 
@@ -239,10 +240,47 @@ keeps `NX`, as Node's does, so it never replaces the stale value), and serves th
 id whose lock is held; with write-back off it recomputes every stale id (nothing is written, so
 there is no write to guard). Without the computation a stale entry is served, as before.
 
-Not computed: `metrics-miss` (Node's `MetricService.populate`, `event-engine-common/services/metrics.ts`,
-sums `entityMetricDailyAgg_v2` in ClickHouse, which this service has no client for: there is no
-Postgres copy of those totals to read instead, so the miss stays a fallback rather than an
-approximation), and on the REST endpoint `image-resources-miss` (Node picks a replica by write lag). On
+**Metric hashes** (`metrics-miss`, `metrics:Image:<id>`, read by `getImageMetricsObject` on every
+image endpoint). Node's `MetricService.fetch` (`event-engine-common/services/metrics.ts`, the pinned
+submodule) fills a missing hash from ClickHouse; `internal/hydrate/imagemetrics.go` ports its miss
+half. Only with a ClickHouse reader (`internal/chread`: the HTTP interface, stdlib only, every query a
+GET so ClickHouse runs it read-only; `CLICKHOUSE_HOST`, `CLICKHOUSE_USERNAME`, `CLICKHOUSE_PASSWORD`,
+the Node app's names); without one the miss falls back (`metrics-miss`) as before.
+
+- The query is Node's, byte for byte (`fetchFromClickhouse` over `buildPerDaySource`: `sum(total)` of
+  `entityMetricDailyAgg_v2` per image and metric type, `HAVING value > 0`), in batches of 1000, as
+  JSONEachRow with `output_format_json_quote_64bit_integers=0`, with Node's per-query settings: the
+  point-lookup ones (`max_threads=1`, `max_execution_time=6`, `timeout_overflow_mode=throw`) for at
+  most 100 ids none of which is marked `metrics:timeout:Image:<id>`, `max_threads=1` alone when one
+  is, none past 100.
+- Every requested image is answered, as fetch's zero fill answers it: its summed counts, every other
+  count 0, `statsUnknown: false`. A count this service cannot hold exactly (fractional, past 2^53)
+  fails the lookup instead.
+- The populate lock `metrics:lock:Image:<id>`: an id another process is populating is waited on as
+  Node's fetch waits (the hash re-read every 200 ms, up to 15 times; one that never lands is all
+  zeros), never queried again. With write-back on the lock is taken (`SET NX`, 10 s), re-armed every
+  5 s while the populate runs and released after (left to expire after a server timeout, whose
+  capped lookup also marks its ids `metrics:timeout`, 12 h); with it off it is only read (`EXISTS`).
+- Write-back on: each hash is written with `hReplaceStampedEx`, the Lua script Node evaluates (same
+  text): the hash replaced whole, `_populatedAt` now (or aged to refresh soon when the event engine
+  marked a recent event), 12 h, or `{notFound: '1'}` for 5 min. That populate runs detached from the
+  request, as Node's un-aborted read: when the request's bound ends first the request falls back and
+  the populate still fills the cache.
+- Bounds: one page's lookup is bounded by `FEED_GO_CLICKHOUSE_TIMEOUT_MS` (default 2000, at most half
+  the request budget; Node's is `CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS`, 3000), and a pod sends at most
+  `FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT` reads at once (default 4); a read past it is refused at once.
+  A failed, refused or late read falls back `metrics-miss-failed` (Node then answers those images
+  from the cache, i.e. `statsUnknown: true`; Go leaves that answer to Node).
+- The kept answer (`lookupShared`, write-back off) holds a computed count for 10 s; a reaction in that
+  window is not in it (Node's own hash takes the watcher's increments; a §9 divergence).
+- Not ported (cache HITS, unchanged here): the TTL slide on 10% of hits and the background refresh
+  of a hash older than an hour.
+
+`testdata/golden/metrics/populate.json` records what the real `MetricService.fetch` did on each miss
+case (`gen-metrics.mjs` runs it through tsx over recording fakes: the SQL, settings, answer, and the
+cache before and after); `TestMetricsMissGolden` holds Go to it with write-back on and off.
+
+Not computed: on the REST endpoint `image-resources-miss` (Node picks a replica by write lag). On
 model.getAll the other cache misses still fall back (§15.2). `input-techniques` is an input shape, not
 a cache miss: it stays an unsupported fallback.
 
@@ -611,8 +649,8 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
      cosmetic records) or, with the miss computation on (`FEED_GO_COMPUTE_MISSES`, default on), by
      computing it (user cosmetics, image frames, tag ids, event decorations, and on model.getAll the
      model frames and decorations: `hydrate.MissCaches`);
-   - `would_miss`: a cache Go falls back on missed — with the computation on, metric hashes (the
-     five per-image caches above too with it off) — or before hydration the session user
+   - `would_miss`: a cache Go falls back on missed — with the computation on, metric hashes when no
+     ClickHouse reader is configured (the five per-image caches above too with it off) — or before hydration the session user
      (`session-cache-miss` / `-cleared`), the gallery settings (`gallery-settings-miss` /
      `-stale`) or, for `image.getInfinite`, the blocked-tag list (`blocked-tags-miss` / `-stale`);
    - `raced`: as `would_serve`, but some present entry was filled at or after the request began
@@ -772,8 +810,8 @@ will show.
 - feed-service failures and non-200 answers, a hydrate that empties a page, and the cursors Node
   answers with a 400 (§3);
 - a failed miss computation (§3.1, `<reason>-failed`; for tag ids also a browsing gate this service
-  cannot read when a row needs it), cache misses on metric hashes (ClickHouse populate not ported,
-  `metrics-miss`), session users (auth hub fetch not ported), gallery settings (rebuild not ported);
+  cannot read when a row needs it), cache misses on metric hashes without a ClickHouse reader
+  (`metrics-miss`), session users (auth hub fetch not ported), gallery settings (rebuild not ported);
 - bearer tokens, two session cookies, verified crawlers, POST (`methodOverride`) requests;
 - public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
 
@@ -782,7 +820,8 @@ empty page, as Node does, rather than falling back (which would run the same slo
 on Node). A metric hash holding only the `notFound` marker is a KNOWN image with zero counts
 (`statsUnknown: false`): `getImageMetricsObject` gives every id whose hash exists an entry on both
 its arms, so `toImageV2Stats` only reports `statsUnknown: true` when the ClickHouse read failed and
-no hash was cached — a case this service falls back on (`metrics-miss`) instead of answering.
+no hash was cached — a case this service falls back on (`metrics-miss` without a reader,
+`metrics-miss-failed` when its own read fails) instead of answering.
 
 **Divergences of the miss computations (§3.1):**
 - with write-back off, the frame and event-decoration lookups read the replica; Node's read the
@@ -975,7 +1014,7 @@ measurement that identified this one), read over the same window for
   the fallback-reason rate beside it;
 - run both reads over the same windows and compare medians across several windows, not one;
 - note what Go does **not** pay yet: cache write-back (off by default), auth-hub fetches, ClickHouse
-  populates of metric hashes, and model.getAll's cache misses — misses Node pays and Go falls back
+  populates of metric hashes while no reader is configured, and model.getAll's cache misses — misses Node pays and Go falls back
   on — while Go now pays the miss computations of §3.1; `feed_go_cache_miss_total{cache,result}`
   counts them. In shadow the misses look rare because Node filled the keys moments before the sample
   was computed (§3), so their frequency is not measured here; a serving estimate must add them from
@@ -1011,10 +1050,12 @@ None of this is in this PR.
   service) once serving. `FEED_GO_FRAME_CACHE_NEGATIVE` mirrors a live flag: the deployment must set
   it to `frame-cache-negative`'s production value (and change it when the flag changes), or frame
   markers are read and written differently from Node (§8). `FEED_GO_CACHE_WRITEBACK` stays off until
-  the operator decides; turning it on also needs `DATABASE_URL`, the primary (§3.1).
+  the operator decides; turning it on also needs `DATABASE_URL`, the primary (§3.1). The metric-hash
+  misses need `CLICKHOUSE_HOST`, `CLICKHOUSE_USERNAME`, `CLICKHOUSE_PASSWORD` (§3.1): a credential
+  scoped to SELECT on what the populate reads (the client is read-only either way).
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
   Redis Sentinels), the JWKS endpoint, the image feed service, the primary (only with write-back on),
-  and (serving) the Node service.
+  ClickHouse's HTTP endpoint (only with a reader configured), and (serving) the Node service.
 - **Monitoring:** a scrape of `:9090/metrics`; a dashboard of §10's queries and the shadow results.
 - **Flags:** the Node-side shadow sample percentage, and later the client transport flag. Created OFF.
 
@@ -1029,8 +1070,8 @@ Honest estimate, in order:
    run against production data yet.
 3. **Cut fallbacks that matter by volume** — in fallback-rate order (pinned and sponsored posts were
    ported on 2026-11-14; the user-cosmetics, frame and event-decoration miss paths on
-   2026-11-15, the tag-ids, model-frame and model-decoration ones after, §3.1). Left: the metric-hash
-   ClickHouse populate.
+   2026-11-15, the tag-ids, model-frame and model-decoration ones after, and the metric-hash
+   ClickHouse populate, §3.1). Left: a ClickHouse credential for the deployment.
 4. **Flags** — a Flipt evaluation client so the env mirrors go away (a few days).
 5. **Serving** — the client transport flag PR, a small cohort, then ramp while watching error rate,
    latency and the Node-side CPU drop. A week of ramp. The per-pod concurrency cap is in place

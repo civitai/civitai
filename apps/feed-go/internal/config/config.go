@@ -108,6 +108,18 @@ type Config struct {
 	// the frame and event-decoration miss lookups then read it as Node's do (DESIGN.md §3.1).
 	PrimaryDatabaseURL string
 
+	// The ClickHouse reader the image metric-hash misses are computed with (DESIGN.md §3.1), under the
+	// Node app's variable names: CLICKHOUSE_HOST (the HTTP(S) endpoint), CLICKHOUSE_USERNAME,
+	// CLICKHOUSE_PASSWORD. Read only with ComputeMisses, and only when the host and the username
+	// are both set (Node's shouldConnect); otherwise those misses fall back (`metrics-miss`).
+	ClickHouseURL, ClickHouseUsername, ClickHousePassword string
+	// ClickHouseTimeout is FEED_GO_CLICKHOUSE_TIMEOUT_MS (default 2000): the bound of one page's
+	// metrics lookup, at most half of RequestBudget. Past it the page falls back.
+	ClickHouseTimeout time.Duration
+	// ClickHouseMaxInFlight is FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT (default 4): the ClickHouse reads one
+	// pod sends at once; a read past it falls back at once (`metrics-miss-failed`).
+	ClickHouseMaxInFlight int
+
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
 	AllowedOriginHosts map[string]bool
@@ -178,6 +190,13 @@ func Load() (*Config, error) {
 	if c.CacheWriteBack {
 		c.PrimaryDatabaseURL = os.Getenv("DATABASE_URL")
 	}
+	if c.ComputeMisses && os.Getenv("CLICKHOUSE_HOST") != "" && os.Getenv("CLICKHOUSE_USERNAME") != "" {
+		c.ClickHouseURL = os.Getenv("CLICKHOUSE_HOST")
+		c.ClickHouseUsername = os.Getenv("CLICKHOUSE_USERNAME")
+		c.ClickHousePassword = os.Getenv("CLICKHOUSE_PASSWORD")
+	}
+	c.ClickHouseTimeout = min(time.Duration(positiveIntEnv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", 2000))*time.Millisecond, c.RequestBudget/2)
+	c.ClickHouseMaxInFlight = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", 4)
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	rules, err := ParseRegionRules(os.Getenv("REGION_RESTRICTION_CONFIG"))
 	if err != nil {
