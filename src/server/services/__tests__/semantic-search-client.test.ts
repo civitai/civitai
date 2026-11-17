@@ -110,6 +110,17 @@ describe('the content gate', () => {
     expect(sent[0].must_not).toContainEqual({ key: 'textNsfw', match: { value: true } });
     expect(sent[1].must_not).not.toContainEqual({ key: 'textNsfw', match: { value: true } });
   });
+
+  it('ranks only within an id list when one is given', async () => {
+    await searchServiceSource('articles')({
+      query: { text: 'x' },
+      filter: { gate: { kind: 'level', nsfwLevels: [1] }, ids: [3, 5] },
+      offset: 0,
+      limit: 10,
+      viewer: { isModerator: false },
+    });
+    expect(sent[0].must).toContainEqual({ has_id: [3, 5] });
+  });
 });
 
 describe('collectPage', () => {

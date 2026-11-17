@@ -236,11 +236,11 @@ func TestTagIDsMissRepeatsShareOneLookup(t *testing.T) {
 }
 
 // Which caches keep their answers in process: with write-back off every computed cache but the image
-// meta (tag ids, model frames and model decorations included), with it on none.
+// meta (tag ids, model frames, model decorations and version showcases included), with it on none.
 func TestMemoizedCaches(t *testing.T) {
 	off, on := &MissCompute{}, &MissCompute{WriteBack: true}
 	want := map[string]bool{MissUserCosmetics: true, MissImageFrames: true, MissEventDecorations: true, MissImageMeta: false,
-		MissTagIDs: true, MissModelFrames: true, MissModelDecorations: true}
+		MissTagIDs: true, MissModelFrames: true, MissModelDecorations: true, MissVersionImages: true}
 	if len(want) != len(MissCaches) {
 		t.Fatalf("MissCaches %v; this test enumerates %d", MissCaches, len(want))
 	}

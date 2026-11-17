@@ -100,6 +100,18 @@ export const APP_FEEDBACK_READERS =
  * `*_feedback_app_listing`. A value added here and not there fails the owner's write with a
  * constraint violation; `feedback.schema.test.ts` reads the CHECK back out of the SQL and compares.
  */
+/**
+ * The moderator triage status, `Feedback.status`, as the `Feedback_status_check` CHECK in
+ * `20260813180000_feedback` allows it. Shared so the moderator queue and the main app's triage API
+ * validate one list: a value only one of them accepts is a write the database refuses.
+ */
+export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
+
+export type FeedbackTriageStatus = (typeof FEEDBACK_STATUSES)[number];
+
+/** Longest text one triage API call may append to the moderator-internal `triageNote`. */
+export const FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH = 2000;
+
 export const FEEDBACK_OWNER_STATUSES = ['acknowledged', 'resolved', 'wont_fix'] as const;
 
 export type FeedbackOwnerStatus = (typeof FEEDBACK_OWNER_STATUSES)[number];
