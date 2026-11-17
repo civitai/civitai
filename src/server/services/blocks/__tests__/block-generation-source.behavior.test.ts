@@ -148,7 +148,7 @@ function persist(
     imageIndex: 0,
     getWorkflow: async () => wf,
     // Every browsing level: no fixture output is above the ceiling.
-    ceiling: { maxBrowsingLevel: 31 },
+    ceiling: { maxBrowsingLevel: 31, serving: false },
     ...over,
   });
 }
@@ -406,6 +406,43 @@ describe('ownership: refused before anything is fetched or written', () => {
       message: GENERATION_SOURCE_INDEX_OUT_OF_RANGE_MESSAGE,
     });
     expect(createImage).not.toHaveBeenCalled();
+  });
+
+  describe('🔴 serving on: persist refuses what the poll restricts', () => {
+    const SERVING = { maxBrowsingLevel: 31, serving: true };
+    const withNa = () =>
+      workflow({
+        steps: [
+          {
+            $type: 'textToImage',
+            output: {
+              images: [
+                { url: ALLOWED_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'na' },
+                { url: SECOND_OUTPUT, available: true, width: 640, height: 320, nsfwLevel: 'pg' },
+              ],
+            },
+          },
+        ],
+      });
+
+    it('an output rated `na` is refused, and nothing is fetched or written', async () => {
+      await expect(persist({ imageIndex: 0, ceiling: SERVING }, withNa())).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'output 0 is restricted',
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(createImage).not.toHaveBeenCalled();
+    });
+
+    it('CONTROL: the rated output beside it persists', async () => {
+      await persist({ imageIndex: 1, ceiling: SERVING }, withNa());
+      expect(createImage).toHaveBeenCalledTimes(1);
+    });
+
+    it('CONTROL: with serving off the `na` output persists', async () => {
+      await persist({ imageIndex: 0 }, withNa());
+      expect(createImage).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
