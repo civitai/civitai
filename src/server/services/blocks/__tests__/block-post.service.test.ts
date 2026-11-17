@@ -48,7 +48,7 @@ const ACTOR = {
   appBlockId: 'apb_alpha',
   browsingLevel: BROWSING,
   // Every browsing level, so no fixture output is restricted.
-  outputCeiling: { maxBrowsingLevel: 31 },
+  outputCeiling: { maxBrowsingLevel: 31, serving: false },
 };
 
 /** A row shaped like the raw `Image` SELECT, scanned-clean and within the ceiling. */
@@ -775,6 +775,56 @@ describe('🔴 a RESTRICTED output keeps its position, and naming it is REFUSED'
       'BAD_REQUEST',
       'output 0 is restricted'
     );
+  });
+
+  describe('🔴 serving on: the post refuses what the poll restricts', () => {
+    const SERVING_ACTOR = { ...ACTOR, outputCeiling: { maxBrowsingLevel: 31, serving: true } };
+    const neverRatedVideo = () => ({
+      status: 'succeeded',
+      tags: [`app-block:${APP_ID}`],
+      steps: [
+        {
+          $type: 'videoGen',
+          name: 'block-step',
+          input: { engine: 'kling' },
+          output: { video: { id: 'v', type: 'video', url: RESTRICTED_URL, available: true } },
+        },
+      ],
+    });
+    const post = (actor: typeof ACTOR, workflow: unknown, imageIndexes: number[]) =>
+      resolveBlockPostSources({
+        sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes }],
+        actor,
+        getWorkflow: vi.fn().mockResolvedValue(workflow),
+      });
+
+    it('an output rated `na` is refused', async () => {
+      await expectRejection(
+        post(SERVING_ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [0]),
+        'BAD_REQUEST',
+        'output 0 is restricted'
+      );
+    });
+
+    it('an unrated video from a never-rated engine is refused', async () => {
+      await expectRejection(
+        post(SERVING_ACTOR, neverRatedVideo(), [0]),
+        'BAD_REQUEST',
+        'output 0 is restricted'
+      );
+    });
+
+    it('CONTROL: the rated output beside it posts', async () => {
+      const out = await post(SERVING_ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [
+        1,
+      ]);
+      expect(out).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
+    });
+
+    it('CONTROL: with serving off the `na` output posts', async () => {
+      const out = await post(ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [0]);
+      expect(out).toStrictEqual([{ kind: 'workflow', url: RESTRICTED_URL, width: 7, height: 9 }]);
+    });
   });
 
   it('an OMITTED imageIndexes skips the restricted output and posts the rest', async () => {

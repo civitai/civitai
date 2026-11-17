@@ -28,6 +28,7 @@ const ANY_VIEWER = 1 | 2 | 4 | 8 | 16;
 // An SFW app token (green/blue host): PG | PG13.
 const SFW = {
   ...blockOutputCeilingFromClaims({ maxBrowsingLevel: 1 | 2, viewerBrowsingLevel: ANY_VIEWER }),
+  serving: false,
   mint: null,
 };
 // A mature app token (red host): PG through XXX.
@@ -36,6 +37,7 @@ const MATURE = {
     maxBrowsingLevel: 1 | 2 | 4 | 8 | 16,
     viewerBrowsingLevel: ANY_VIEWER,
   }),
+  serving: false,
   mint: null,
 };
 

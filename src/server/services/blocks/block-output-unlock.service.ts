@@ -16,7 +16,7 @@ import {
   assertBlockWorkflowTaggedForApp,
 } from '~/server/services/blocks/block-workflow-access';
 import { snapshotFromWorkflow } from '~/server/services/blocks/workflow.service';
-import type { BlockMediaMint } from '~/server/services/blocks/block-output-mint';
+import type { BlockOutputView } from '~/server/services/blocks/block-output-mint';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
@@ -112,9 +112,10 @@ export type OutputUnlockPlan =
   | { kind: 'not-restricted'; position: number; snapshot: BlockWorkflowSnapshot };
 
 /**
- * The snapshot at `ceiling` and its output at `position`. The ONE call into
- * `snapshotFromWorkflow` in this module (ledgered in
- * `block-output-restriction.producer-ledger.test.ts`). Only the call with the token's own
+ * The output at `position` as the unlock DECIDES on it (never minted), and the snapshot the
+ * app is SHOWN (minted when `view.mint` is set). Deciding on the unminted output keeps a
+ * host-side mint failure from reading as "not released" after a paid lift, and lets a retry
+ * see the released output and mint again with no second charge. Only the token's own
  * ceiling ever reaches the app; the domain-only and all-ratings calls in
  * {@link planBlockOutputUnlock} decide where to send the viewer and are then discarded.
  */
@@ -122,11 +123,24 @@ function outputAt(
   workflow: Workflow,
   ceiling: BlockOutputCeiling,
   position: number,
-  mint: BlockMediaMint | null = null
+  view: OutputUnlockView = NO_SERVING
 ): { snapshot: BlockWorkflowSnapshot; output: BlockWorkflowOutput | undefined } {
-  const snapshot = snapshotFromWorkflow(workflow, { ...ceiling, mint });
-  return { snapshot, output: snapshot.outputs?.[position] };
+  const decided = snapshotAt(workflow, { ...ceiling, serving: view.serving, mint: null });
+  const shown = view.mint
+    ? snapshotAt(workflow, { ...ceiling, serving: view.serving, mint: view.mint })
+    : decided;
+  return { snapshot: shown, output: decided.outputs?.[position] };
 }
+
+/** The ONE call into `snapshotFromWorkflow` in this module (ledgered in
+ * `block-output-restriction.producer-ledger.test.ts`). */
+function snapshotAt(workflow: Workflow, view: BlockOutputView): BlockWorkflowSnapshot {
+  return snapshotFromWorkflow(workflow, view);
+}
+
+/** `resolveBlockOutputView(claims)` without its ceiling: the serving rules and mint. */
+export type OutputUnlockView = Pick<BlockOutputView, 'serving' | 'mint'>;
+const NO_SERVING: OutputUnlockView = { serving: false, mint: null };
 
 /** Shown, or unlockable by paying: either way the viewer could see it under that ceiling. */
 function viewable(output: BlockWorkflowOutput | undefined): boolean {
@@ -159,14 +173,13 @@ export function planBlockOutputUnlock(
   workflow: Workflow,
   claims: OutputUnlockClaims,
   position: number,
-  /** Mints the snapshot the app receives; the planning reads below never reach the app. */
-  mint: BlockMediaMint | null
+  view: OutputUnlockView
 ): OutputUnlockPlan {
   const { snapshot, output } = outputAt(
     workflow,
     blockOutputCeilingFromClaims(claims),
     position,
-    mint
+    view
   );
   if (!output) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: `output ${position} does not exist` });
@@ -236,8 +249,8 @@ export type OutputUnlockRequest = {
   position: number;
   viewerUserId: number;
   claims: OutputUnlockClaims;
-  /** `resolveBlockOutputView(claims).mint`: null while serving is off for the viewer. */
-  mint: BlockMediaMint | null;
+  /** From `resolveBlockOutputView(claims)`: `{ serving: false, mint: null }` while off. */
+  view: OutputUnlockView;
 };
 
 export type OutputUnlockPreview =
@@ -262,7 +275,7 @@ export async function previewBlockOutputUnlock(
     userId: request.viewerUserId,
   });
   const workflow = await readOwnedWorkflow(request, deps);
-  const plan = planBlockOutputUnlock(workflow, request.claims, request.position, request.mint);
+  const plan = planBlockOutputUnlock(workflow, request.claims, request.position, request.view);
   // The preview is a price, never a channel for output: no snapshot leaves it.
   if (plan.kind === 'not-restricted') return { kind: 'not-restricted', position: plan.position };
   if (plan.kind !== 'pay') return plan;
@@ -306,7 +319,7 @@ export async function unlockBlockOutput(
   let keepLock = false;
   try {
     const workflow = await readOwnedWorkflow(request, deps);
-    const plan = planBlockOutputUnlock(workflow, request.claims, request.position, request.mint);
+    const plan = planBlockOutputUnlock(workflow, request.claims, request.position, request.view);
     if (plan.kind === 'not-restricted') {
       return { outcome: 'not-restricted', snapshot: plan.snapshot, charged: NOTHING_CHARGED };
     }
@@ -343,7 +356,7 @@ export async function unlockBlockOutput(
       await deps.readWorkflow(),
       blockOutputCeilingFromClaims(request.claims),
       request.position,
-      request.mint
+      request.view
     );
 
     if (!after.output || !isUnrestrictedOutput(after.output)) {

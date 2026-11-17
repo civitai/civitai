@@ -23,6 +23,7 @@ import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restriction';
 import type { BlockOutputWorkflowFacts } from './block-output-restriction';
 import {
+  applyServingRules,
   isPrivateGenerationWorkflow,
   mintBlockOutput,
   type BlockOutputView,
@@ -334,8 +335,11 @@ function classifyOutputs(
       // that does arrive still meets every ceiling check.
       unratedDelivered: neverRatedVideo && m.type === 'video',
     });
-    return view.mint && mintStep
-      ? mintBlockOutput(output, m, mintStep, { ...view, mint: view.mint })
+    if (view.mint && mintStep) {
+      return mintBlockOutput(output, m, mintStep, { ...view, mint: view.mint });
+    }
+    return view.serving
+      ? applyServingRules(output, m, { neverRatedVideoStep: neverRatedVideo })
       : output;
   });
 }

@@ -17,11 +17,18 @@ import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
 export type BlockMediaMint = { userId: number; appBlockId: string };
 
 /**
- * What every app-facing workflow producer takes: the viewer's output ceiling, and the
- * mint context, or `null` for flag off and for server-side reads (publish, post) that
- * fetch the media themselves and must keep the orchestrator url.
+ * The viewer's output ceiling plus whether host media serving is on for them. With
+ * `serving`, outputs the media route would refuse are restricted on every path (poll,
+ * publish, post, persist), so all of them name the same positions as usable.
  */
-export type BlockOutputView = BlockOutputCeiling & { mint: BlockMediaMint | null };
+export type BlockOutputRules = BlockOutputCeiling & { serving: boolean };
+
+/**
+ * What every workflow producer takes: the rules, and the mint context, present only for
+ * an app-facing read while serving is on. Server-side reads (publish, post, persist) that
+ * fetch the media themselves pass `mint: null` and keep the orchestrator url.
+ */
+export type BlockOutputView = BlockOutputRules & { mint: BlockMediaMint | null };
 
 /** The facts one output position contributes to its ticket. */
 export type BlockOutputMintSlot = {
@@ -40,29 +47,40 @@ export type BlockOutputMintStep = {
 const MINTABLE_TYPES: ReadonlySet<string> = new Set(['image', 'video', 'audio', 'model3d']);
 
 /**
- * One classified output, as the app receives it while serving is on: a `{ url }` entry
- * becomes a ticket url plus a `mediaRef`; anything else is returned as it is.
- *
- * Fails closed where the media route would refuse what the poll calls visible, so the
- * two never disagree on a ticket the host hands out:
+ * While serving is on, restricts what the media route would refuse, so no path calls it
+ * usable:
  *   - a video from a never-rated engine step: the route hides it on the step flag alone;
- *   - an output rated `na`: the route reads a blob `NA` as never scanned and hides it;
- *   - an orchestrator url with no consumer blob id, an unknown media type, or a seal
- *     that fails: no ticket can be issued.
- * The ticket's level is the poll's own ceiling, so one number decides both.
+ *   - an output rated `na`: the route reads a blob `NA` as never scanned and hides it.
+ */
+export function applyServingRules(
+  output: BlockWorkflowOutput,
+  slot: BlockOutputMintSlot,
+  step: Pick<BlockOutputMintStep, 'neverRatedVideoStep'>
+): BlockWorkflowOutput {
+  if (!('url' in output)) return output;
+  if (mediaTypeOf(slot.type) === 'video' && step.neverRatedVideoStep) return UNRATED;
+  if (slot.nsfwLevel?.trim().toLowerCase() === 'na') return UNRATED;
+  return output;
+}
+
+/**
+ * One classified output, as the app receives it while serving is on: after
+ * {@link applyServingRules}, a `{ url }` entry becomes a ticket url plus a `mediaRef`.
+ * An orchestrator url with no consumer blob id, an unknown media type, or a seal that
+ * fails is restricted: no ticket can be issued. The ticket's level is the poll's own
+ * ceiling, so one number decides both.
  */
 export function mintBlockOutput(
-  output: BlockWorkflowOutput,
+  classified: BlockWorkflowOutput,
   slot: BlockOutputMintSlot,
   step: BlockOutputMintStep,
   view: BlockOutputView & { mint: BlockMediaMint }
 ): BlockWorkflowOutput {
+  const output = applyServingRules(classified, slot, step);
   if (!('url' in output)) return output;
 
   const mediaType = mediaTypeOf(slot.type);
   if (!mediaType) return UNRECOGNISED;
-  if (mediaType === 'video' && step.neverRatedVideoStep) return UNRATED;
-  if (slot.nsfwLevel?.trim().toLowerCase() === 'na') return UNRATED;
 
   const blobId = getConsumerBlobId(slot.url);
   if (!blobId) return UNRECOGNISED;

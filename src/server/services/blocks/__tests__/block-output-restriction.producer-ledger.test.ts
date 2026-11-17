@@ -34,14 +34,18 @@ const HOME = 'src/server/services/blocks/workflow.service.ts';
 const TOKEN = 'blockOutputCeilingFromClaims(claims)';
 /** The token's ceiling plus the viewer's mint context: what an app-facing read passes. */
 const VIEW = 'awaitresolveBlockOutputView(claims)';
-/** The token's ceiling with no mint: a read that fetches the media server-side, or has none. */
-const NO_MINT = '{...blockOutputCeilingFromClaims(claims),mint:null}';
+/** The token's serving rules with no mint: a read that fetches the media server-side. */
+const RULES = 'awaitresolveBlockOutputRules(claims)';
+const RULES_NO_MINT = '{...(awaitresolveBlockOutputRules(claims)),mint:null}';
+/** No outputs to judge (an estimate): the ceiling alone, serving off. */
+const NO_OUTPUTS = '{...blockOutputCeilingFromClaims(claims),serving:false,mint:null}';
 
 const LEDGER: Record<string, string> = {
   'src/server/routers/blocks.router.ts::pollWorkflow::snapshotFromWorkflow': VIEW,
   'src/server/routers/blocks.router.ts::cancelWorkflow::snapshotFromWorkflow': VIEW,
   'src/server/routers/blocks.router.ts::submitWorkflow::snapshotFromWorkflow': VIEW,
-  'src/server/routers/blocks.router.ts::estimateBlockWorkflowCell::snapshotFromWorkflow': NO_MINT,
+  'src/server/routers/blocks.router.ts::estimateBlockWorkflowCell::snapshotFromWorkflow':
+    NO_OUTPUTS,
   'src/server/routers/blocks.router.ts::submitCustomComfyWorkflow::snapshotFromWorkflow': VIEW,
   'src/server/routers/blocks.router.ts::submitStepWorkflow::snapshotFromWorkflow': VIEW,
   'src/server/routers/blocks.router.ts::submitPassThroughStepWorkflow::snapshotFromWorkflow': VIEW,
@@ -51,17 +55,16 @@ const LEDGER: Record<string, string> = {
   'src/server/routers/blocks.router.ts::queryAppWorkflows::projectAppWorkflow': 'outputView',
   'src/server/routers/blocks.router.ts::cancelAppWorkflow::projectAppWorkflow': VIEW,
   'src/server/routers/blocks.router.ts::publishGenerationOutputs::projectAppWorkflowWithPositions':
-    NO_MINT,
+    RULES_NO_MINT,
   'src/server/services/blocks/block-post.service.ts::resolveOwnedWorkflowOutputs::projectAppWorkflowWithPositions':
     '{...input.ceiling,mint:null}',
   'src/server/services/blocks/workflow.service.ts::projectAppWorkflow::projectAppWorkflowWithPositions':
     'view',
-  // `mint` is the request's `resolveBlockOutputView(claims).mint` on the snapshot the app
-  // receives, and null on the planning reads.
-  'src/server/services/blocks/block-output-unlock.service.ts::outputAt::snapshotFromWorkflow':
-    '{...ceiling,mint}',
+  // `outputAt` builds the view: the request's serving rules, minted only for what is shown.
+  'src/server/services/blocks/block-output-unlock.service.ts::snapshotAt::snapshotFromWorkflow':
+    'view',
   'src/server/services/app-assistant/app-activity.service.ts::generationOf::projectAppWorkflow':
-    '{...blockOutputCeilingFromClaims({}),mint:null}',
+    '{...blockOutputCeilingFromClaims({}),serving:false,mint:null}',
 };
 
 /**
@@ -75,7 +78,7 @@ const OBJECT_LEDGER: Record<string, string> = {
   'src/server/services/blocks/block-generation-source.service.ts::persistWithin::resolveOwnedWorkflowOutputs':
     'input.ceiling',
   'src/server/routers/blocks.router.ts::persistGenerationSource::persistBlockGenerationSource':
-    TOKEN,
+    RULES,
 };
 
 /**
@@ -85,8 +88,8 @@ const OBJECT_LEDGER: Record<string, string> = {
  * annotation (`outputCeiling: BlockOutputCeiling;`) is a declaration, not a value.
  */
 const OUTPUT_CEILING_LEDGER: Record<string, string> = {
-  'src/server/routers/blocks.router.ts::previewPostFromApp': TOKEN,
-  'src/server/routers/blocks.router.ts::createPostFromApp': TOKEN,
+  'src/server/routers/blocks.router.ts::previewPostFromApp': RULES,
+  'src/server/routers/blocks.router.ts::createPostFromApp': RULES,
 };
 
 function scanOutputCeilingValues() {

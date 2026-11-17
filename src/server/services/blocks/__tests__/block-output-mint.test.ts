@@ -48,6 +48,7 @@ const viewAt = (viewerLevel: number, minting = true) => ({
     maxBrowsingLevel: allBrowsingLevelsFlag,
     viewerBrowsingLevel: viewerLevel,
   }),
+  serving: minting,
   mint: minting ? { userId: VIEWER, appBlockId: APP } : null,
 });
 const SERVING = viewAt(allBrowsingLevelsFlag);
@@ -397,7 +398,7 @@ describe('parity: classifyBlockOutput and deriveOutputGate over one fixture tabl
       ),
       { url, type: 'image', nsfwLevel: row.rating },
       { workflowId: 'wf_m', privateGen: false, neverRatedVideoStep: false },
-      { maxBrowsingLevel: row.level, mint: { userId: VIEWER, appBlockId: APP } }
+      { maxBrowsingLevel: row.level, serving: true, mint: { userId: VIEWER, appBlockId: APP } }
     );
     const poll: Verdict = 'url' in polled ? 'visible' : 'pending' in polled ? 'pending' : 'hidden';
 

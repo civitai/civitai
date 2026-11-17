@@ -37,7 +37,7 @@ import { getBlockGatedImagesByIds } from '../block-gated-images.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** Every browsing level, so no fixture output is above the ceiling. */
-const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, mint: null };
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
 
 /**
  * A `$type` the step registry does not know and `workflow.service` does not

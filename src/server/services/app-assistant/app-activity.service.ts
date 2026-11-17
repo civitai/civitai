@@ -76,6 +76,7 @@ export function generationOf(workflow: Workflow): GenerationActivity {
   // ceiling does not move it; the fail-closed one (PG) is passed.
   const projected = projectAppWorkflow(workflow, {
     ...blockOutputCeilingFromClaims({}),
+    serving: false,
     mint: null,
   });
   return {

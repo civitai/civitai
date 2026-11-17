@@ -19,7 +19,7 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
-import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
+import type { BlockOutputRules } from '~/server/services/blocks/block-output-mint';
 import {
   BLOCK_POST_APP_ID_META_KEY,
   BLOCK_POST_MAX_IMAGES,
@@ -106,11 +106,11 @@ export type BlockPostActor = {
   /** The viewer's resolved browsing ceiling, for the published-image clamp. */
   browsingLevel: number;
   /**
-   * The TOKEN's output ceiling (`blockOutputCeilingFromClaims(claims)`). It decides
-   * which output positions are RESTRICTED (and so refused); it does not change the
-   * index space, which is the stable positions of `AppWorkflow.outputs`.
+   * The TOKEN's output rules (`resolveBlockOutputRules(claims)`). They decide which
+   * output positions are RESTRICTED (and so refused), as the poll does; they do not
+   * change the index space, which is the stable positions of `AppWorkflow.outputs`.
    */
-  outputCeiling: BlockOutputCeiling;
+  outputCeiling: BlockOutputRules;
 };
 
 /** One resolved image, ready to be adopted or materialised. */
@@ -467,7 +467,7 @@ export async function resolveOwnedWorkflowOutputs(input: {
   workflowId: string;
   getWorkflow: (workflowId: string) => Promise<unknown>;
   /** The token's output ceiling — see `BlockPostActor.outputCeiling`. */
-  ceiling: BlockOutputCeiling;
+  ceiling: BlockOutputRules;
 }): Promise<OwnedWorkflowOutputSlot[]> {
   const owned = await blockWorkflowOwnedByAppUser({
     userId: input.userId,

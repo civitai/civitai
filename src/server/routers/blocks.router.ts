@@ -282,7 +282,10 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
-import { resolveBlockOutputView } from '~/server/services/blocks/block-media-serving';
+import {
+  resolveBlockOutputRules,
+  resolveBlockOutputView,
+} from '~/server/services/blocks/block-media-serving';
 import {
   collectBlockStepTypes,
   isRepeatStepType,
@@ -1929,9 +1932,7 @@ async function readMyConfirmWithinLimit(
   appBlockId: string
 ): Promise<number | null> {
   try {
-    const { readConfirmWithinLimit } = await import(
-      '~/server/services/blocks/scope-grant.service'
-    );
+    const { readConfirmWithinLimit } = await import('~/server/services/blocks/scope-grant.service');
     return await readConfirmWithinLimit(user.id, appBlockId, 'read');
   } catch {
     return null;
@@ -6365,7 +6366,7 @@ export const blocksRouter = router({
       // available output that is not restricted.
       // No mint: publish fetches each position's media itself.
       const { positions } = projectAppWorkflowWithPositions(workflow, {
-        ...blockOutputCeilingFromClaims(claims),
+        ...(await resolveBlockOutputRules(claims)),
         mint: null,
       });
       const shape = (idx: number) => {
@@ -6611,7 +6612,7 @@ export const blocksRouter = router({
           appBlockId: claims.appBlockId,
           workflowId: input.workflowId,
           imageIndex: input.imageIndex,
-          ceiling: blockOutputCeilingFromClaims(claims),
+          ceiling: await resolveBlockOutputRules(claims),
           // Lazily, so the durable ownership row is checked before an orchestrator token is minted.
           getWorkflow: async (workflowId) =>
             getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
@@ -6874,7 +6875,7 @@ export const blocksRouter = router({
           appId: claims.appId,
           appBlockId: claims.appBlockId,
           browsingLevel: resolveViewerBrowsingLevel(claims),
-          outputCeiling: blockOutputCeilingFromClaims(claims),
+          outputCeiling: await resolveBlockOutputRules(claims),
         },
         sources: input.sources,
         title: input.title,
@@ -7035,7 +7036,7 @@ export const blocksRouter = router({
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         browsingLevel: resolveViewerBrowsingLevel(claims),
-        outputCeiling: blockOutputCeilingFromClaims(claims),
+        outputCeiling: await resolveBlockOutputRules(claims),
       };
 
       // ── AUDIT SCOPE. Everything below runs INSIDE `recordOutcome`, so a
@@ -7625,8 +7626,8 @@ export const blocksRouter = router({
           position: input.position,
           viewerUserId: auth.userId,
           claims: auth.claims,
-          // A preview returns no snapshot.
-          mint: null,
+          // A preview returns no snapshot, so nothing is minted.
+          view: { serving: (await resolveBlockOutputRules(auth.claims)).serving, mint: null },
         },
         deps
       );
@@ -7649,7 +7650,7 @@ export const blocksRouter = router({
           position: input.position,
           viewerUserId: auth.userId,
           claims: auth.claims,
-          mint: (await resolveBlockOutputView(auth.claims)).mint,
+          view: await resolveBlockOutputView(auth.claims),
           expectedTotal: input.expectedTotal,
         },
         deps
@@ -11148,7 +11149,7 @@ async function estimateBlockWorkflowCell(
     snapshot: snapshotFromWorkflow(
       whatIfResult,
       // An estimate has no outputs to mint.
-      { ...blockOutputCeilingFromClaims(claims), mint: null },
+      { ...blockOutputCeilingFromClaims(claims), serving: false, mint: null },
       {
         modelSubstitutions,
         additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
