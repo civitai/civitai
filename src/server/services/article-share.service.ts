@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isServableBodyImage, removeBodyMedia } from '~/server/utils/article-body-media';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { isMinorMatureImage } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 import { isDefined } from '~/utils/type-guards';
@@ -307,11 +308,13 @@ function readSharedArticleRow(id: number) {
       status: true,
       ingestion: true,
       user: { select: { ...userWithCosmeticsSelect, bannedAt: true, muted: true } },
-      coverImage: { select: imageSelect },
-      bannerImage: { select: imageSelect },
+      coverImage: { select: { ...imageSelect, minor: true } },
+      bannerImage: { select: { ...imageSelect, minor: true } },
     },
   });
 }
+
+const withoutMinor = <T extends { minor: boolean | null }>({ minor: _minor, ...image }: T) => image;
 
 /** Only what the read-only view renders. */
 function toSharedArticle(
@@ -340,7 +343,9 @@ function toSharedArticle(
   const showCover =
     !!coverImage &&
     !withheldByModel.has(coverImage.id) &&
-    servableArticleImage(coverImage) !== null;
+    servableArticleImage(coverImage) !== null &&
+    // A link holder is never exempt: no cover, and not the banner in its place.
+    !isMinorMatureImage(coverImage);
   return {
     id,
     title,
@@ -361,7 +366,7 @@ function toSharedArticle(
     coverImage:
       showCover && coverImage
         ? {
-            ...coverImage,
+            ...withoutMinor(coverImage),
             nsfwLevel: coverImage.nsfwLevel as NsfwLevel,
             meta: coverImage.meta as ImageMetaProps,
             metadata: coverImage.metadata as ImageMetadata,

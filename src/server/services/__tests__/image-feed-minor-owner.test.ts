@@ -292,6 +292,9 @@ describe('getAllImages restricted minor images, with the minor setting off', () 
   });
 
   it('applies no such clause for a moderator', async () => {
+    // The same read for a stranger carries it, so the pattern still finds the clause.
+    expect((await getAllImagesStatement({ id: STRANGER })).text).toMatch(RESTRICTED_MINOR);
+    queryWithTimeoutMock.mockClear();
     const stmt = await getAllImagesStatement({ id: STRANGER, isModerator: true });
     expect(stmt.text).not.toMatch(RESTRICTED_MINOR);
   });

@@ -67,6 +67,39 @@ describe('articles search index', () => {
     expect(records).toHaveLength(0);
   });
 
+  const restricted = (id: number) => ({ ...image(id, 4), minor: true });
+
+  it('🔴 indexes an article without a restricted minor cover, and not with its banner', async () => {
+    const [record] = await recordsOf({
+      articles: [article({ coverImage: restricted(10), bannerImage: image(11, 1) })],
+      cosmetics: {},
+    });
+    expect(record).toBeDefined();
+    expect(record?.coverImage).toBeUndefined();
+  });
+
+  it('🔴 leaves out a banner-only article whose banner is a restricted minor image', async () => {
+    const records = await recordsOf({
+      articles: [article({ coverImage: null, bannerImage: restricted(11) })],
+      cosmetics: {},
+    });
+    expect(records).toHaveLength(0);
+  });
+
+  it('keeps a minor-flagged PG-13 cover and an unflagged R cover, without the flag (control)', async () => {
+    for (const cover of [
+      { ...image(10, 2), minor: true },
+      { ...image(10, 4), minor: false },
+    ]) {
+      const [record] = await recordsOf({
+        articles: [article({ coverImage: cover, bannerImage: null })],
+        cosmetics: {},
+      });
+      expect(record?.coverImage).toMatchObject({ id: 10 });
+      expect(record?.coverImage).not.toHaveProperty('minor');
+    }
+  });
+
   it('keeps the cover when there is one', async () => {
     const [record] = await recordsOf({
       articles: [article({ coverImage: image(10, 1), bannerImage: image(11, 1) })],

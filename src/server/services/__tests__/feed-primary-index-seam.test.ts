@@ -308,6 +308,10 @@ describe("the feed service's page hydrate, for restricted minor images", () => {
   });
 
   it('applies no such clause for a moderator', async () => {
+    // The same hydrate for a stranger carries it, so the pattern still finds the clause.
+    const stranger = await hydrateStatement({ id: 42, isModerator: false });
+    expect([...stranger.text.matchAll(RESTRICTED_MINOR)]).toHaveLength(1);
+    pg.statements = [];
     const stmt = await hydrateStatement({ id: 42, isModerator: true });
     expect([...stmt.text.matchAll(RESTRICTED_MINOR)]).toHaveLength(0);
   });

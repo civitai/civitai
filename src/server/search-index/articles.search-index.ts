@@ -4,8 +4,9 @@ import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilis
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import { hasBlockMarker, isMinorMatureImage } from '~/server/common/image-visibility';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
@@ -71,6 +72,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
+const withoutMinor = <T extends { minor?: boolean | null }>({ minor: _minor, ...image }: T) =>
+  image;
+
 export const transformData = async ({
   articles,
   cosmetics,
@@ -81,8 +85,11 @@ export const transformData = async ({
   /** Cover or banner images their model withholds: a withheld cover leaves no card image. */
   modelWithheldImageIds?: Set<number>;
 }) => {
+  // A restricted minor image is withheld like one its model withholds: the index has no viewer.
+  const withheld = (image: NonNullable<Article['coverImage']>) =>
+    modelWithheldImageIds.has(image.id) || isMinorMatureImage(image);
   const servable = (image: Article['coverImage']) =>
-    image && !modelWithheldImageIds.has(image.id) ? servableArticleImage(image) : null;
+    image && !withheld(image) ? servableArticleImage(image) : null;
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
       // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
@@ -90,10 +97,7 @@ export const transformData = async ({
       const cover = articleRecord.coverImage;
       if (cover && (hasBlockMarker(cover) || cover.needsReview)) return null;
       // As on the feed card, a withheld cover does not fall back to the banner.
-      const coverImage =
-        cover && modelWithheldImageIds.has(cover.id)
-          ? null
-          : servable(cover) ?? servable(bannerImage);
+      const coverImage = cover && withheld(cover) ? null : servable(cover) ?? servable(bannerImage);
       if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
@@ -122,7 +126,7 @@ export const transformData = async ({
         tags: tags.map((articleTag) => articleTag.tag),
         coverImage: coverImage
           ? {
-              ...coverImage,
+              ...withoutMinor(coverImage),
               // Lift the cover image nsfwLevel to the article's aggregate so
               // front-end filters (ImageGuard blur, browsingLevel mask) reflect
               // the article's true rating whenever content images, userNsfwLevel,
@@ -146,9 +150,11 @@ export const transformData = async ({
 
 export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>['records'][number];
 
+const coverSelect = { select: { ...imageSelect, minor: true } };
 const articleSelect = {
   ...articleDetailSelect,
-  bannerImage: articleDetailSelect.coverImage,
+  coverImage: coverSelect,
+  bannerImage: coverSelect,
   stats: {
     select: {
       favoriteCountAllTime: true,

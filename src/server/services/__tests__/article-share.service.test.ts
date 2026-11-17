@@ -368,6 +368,51 @@ describe('getArticleByShareToken: cover and viewer', () => {
     expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
   });
 
+  // A minor-flagged image the minor content rule restricts: never to a link holder.
+  describe('a restricted minor cover or banner', () => {
+    // No image is one its model withholds, whatever an earlier test answered.
+    beforeEach(() => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    });
+
+    it('🔴 shows no cover, and not the banner, when the cover is a restricted minor image', async () => {
+      articles({ coverImage: cover({ minor: true, nsfwLevel: 4 }), bannerImage: cover({ id: 6 }) });
+      const result = await read();
+      expect(result.status).toBe('ok');
+      expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+    });
+
+    it('🔴 with no cover, shows no banner that is a restricted minor image', async () => {
+      articles({ coverImage: null, bannerImage: cover({ id: 6, minor: true, nsfwLevel: 4 }) });
+      const result = await read();
+      expect(result.status).toBe('ok');
+      expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+    });
+
+    it.each([
+      ['a minor-flagged cover rated PG-13', { minor: true, nsfwLevel: 2 }],
+      ['an unflagged cover rated R', { minor: false, nsfwLevel: 4 }],
+    ])('shows %s, without the flag (control)', async (_, over) => {
+      articles({ coverImage: cover(over) });
+      const result = await read();
+      const shown = result.status === 'ok' ? result.article.coverImage : undefined;
+      expect(shown?.id).toBe(5);
+      expect(shown).not.toHaveProperty('minor');
+    });
+
+    it('reads the flag for the cover and the banner', async () => {
+      articles({ coverImage: cover({}) });
+      await read();
+      const select = vi.mocked(dbMock.dbWrite.article.findUnique).mock.calls.at(-1)?.[0]
+        ?.select as {
+        coverImage: { select: { minor?: boolean } };
+        bannerImage: { select: { minor?: boolean } };
+      };
+      expect(select.coverImage.select.minor).toBe(true);
+      expect(select.bannerImage.select.minor).toBe(true);
+    });
+  });
+
   it('refuses a signed-in viewer the author has blocked', async () => {
     vi.mocked(amIBlockedByUser).mockResolvedValueOnce(true);
     expect(await read(STRANGER)).toEqual({ status: 'unavailable' });
