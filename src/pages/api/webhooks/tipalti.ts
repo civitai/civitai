@@ -113,7 +113,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // processed unguarded.
       if (event.id) {
         const key = `${REDIS_KEYS.WEBHOOKS.TIPALTI_EVENT}:${event.id}` as const;
-        const claimed = await redis
+        const claimed: string | null = await redis
           .set(key, EVENT_PROCESSING, { EX: TIPALTI_SIGNATURE_LIFETIME_SECONDS, NX: true })
           .catch((error: Error) => {
             logToAxiom(
