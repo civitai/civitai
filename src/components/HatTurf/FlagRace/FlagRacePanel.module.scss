@@ -165,12 +165,18 @@
     color: #5c5f66;
   }
 
+  // Stacked but wide: on the title's line, at the right.
   @container (min-width: 640px) {
-    flex: 0 1 300px;
-    margin-left: auto;
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 1;
+    width: 300px;
   }
 
   @container (min-width: 1200px) {
+    position: static;
+    width: auto;
     order: 1;
     flex: none;
     margin: auto 0 0;
@@ -185,7 +191,6 @@
 // so a wide stacked panel fills its width. Side by side, the bar's children are the panel's own,
 // with the way in last.
 .bar {
-  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -204,10 +209,6 @@
   align-items: center;
   gap: 6px;
 
-  @container (min-width: 640px) and (max-width: 1199px) {
-    flex-basis: 100%;
-  }
-
   @container (min-width: 1200px) {
     flex-direction: column;
     align-items: flex-start;
@@ -216,6 +217,8 @@
 }
 
 .held {
+  position: relative;
+
   @container (min-width: 640px) and (max-width: 1199px) {
     display: flex;
     align-items: center;
