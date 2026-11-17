@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -173,6 +174,54 @@ func TestLookupRecheckedInFlight(t *testing.T) {
 		if got := l.calls.Load(); got != tc.want {
 			t.Fatalf("%s: %d lookups, want %d", tc.cache, got, tc.want)
 		}
+	}
+}
+
+// When the in-flight recheck answers only some ids, the flight looks up the rest and answers the
+// union. The second caller (ids 10-13) is held in beforeFlight, past its first check, while a first
+// caller for the subset 10-11 runs to the end and keeps its answers. The second caller's flight then
+// finds 10-11 kept, looks up only 12-13, and must still answer all of its found ids (13 has no row).
+func TestLookupRecheckedInFlightMergesKept(t *testing.T) {
+	c := &MissCompute{Now: func() time.Time { return pageNow }}
+	var calls [][]int
+	lookup := func(_ context.Context, ids []int) (map[int]jspack.Obj, error) {
+		calls = append(calls, slices.Sorted(slices.Values(ids)))
+		out := map[int]jspack.Obj{}
+		for _, id := range ids {
+			if id != 13 {
+				out[id] = jspack.O("id", id, "v", id*7)
+			}
+		}
+		return out, nil
+	}
+	ctx := context.Background()
+	var hooks atomic.Int32
+	var first map[int]jspack.Obj
+	var firstErr error
+	c.beforeFlight = func() {
+		if hooks.Add(1) == 1 {
+			first, firstErr = c.lookupShared(ctx, MissUserCosmetics, []int{11, 10}, lookup)
+		}
+	}
+	second, err := c.lookupShared(ctx, MissUserCosmetics, []int{13, 10, 12, 11}, lookup)
+	if err != nil || firstErr != nil {
+		t.Fatalf("errors %v and %v", firstErr, err)
+	}
+	wantCalls := [][]int{{10, 11}, {12, 13}}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("lookups %v, want %v: the second flight must look up only the ids the recheck did not answer", calls, wantCalls)
+	}
+	wantFirst := map[int]jspack.Obj{10: jspack.O("id", 10, "v", 70), 11: jspack.O("id", 11, "v", 77)}
+	if !reflect.DeepEqual(first, wantFirst) {
+		t.Fatalf("first caller answered %v, want %v", first, wantFirst)
+	}
+	wantSecond := map[int]jspack.Obj{
+		10: jspack.O("id", 10, "v", 70),
+		11: jspack.O("id", 11, "v", 77),
+		12: jspack.O("id", 12, "v", 84),
+	}
+	if !reflect.DeepEqual(second, wantSecond) {
+		t.Fatalf("second caller answered %v, want %v: the rechecked ids must be merged with the looked-up rest", second, wantSecond)
 	}
 }
 
