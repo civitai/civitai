@@ -3773,6 +3773,7 @@ async function approveRequestUnderClaim(
     appBlockId = existingAppBlock.id;
     repoUrl = existingAppBlock.repoUrl ?? '';
     // What the app runs under now, put back if the final hold check finds a late hold.
+    // primary: the rollback snapshot must match the row this approve is about to overwrite.
     const prior = await dbWrite.appBlock.findUnique({
       where: { id: appBlockId },
       select: {
@@ -3784,6 +3785,7 @@ async function approveRequestUnderClaim(
         trustTier: true,
       },
     });
+    // primary: the scope ceiling restored on a late hold must be the one this approve raises.
     const client = await dbWrite.oauthClient.findUnique({
       where: { id: existingAppBlock.appId },
       select: { allowedScopes: true },
