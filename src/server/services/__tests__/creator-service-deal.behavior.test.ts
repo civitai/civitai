@@ -497,11 +497,26 @@ describe('request', () => {
   it.each([
     ['banned', `"bannedAt" = now()`],
     ['deleted', `"deletedAt" = now()`],
-    ['muted', `muted = true`],
   ])('refuses a request to a %s seller, before any charge', async (_name, set) => {
     await q(`UPDATE "User" SET ${set} WHERE id = $1`, [SELLER]);
     await expect(request()).rejects.toThrow(/Service not found/);
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses a request to a muted seller as not taking requests, before any charge', async () => {
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    await expect(request()).rejects.toThrow(
+      expect.objectContaining({ message: "This offering isn't taking requests right now" })
+    );
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+  });
+
+  it('takes the same request once the seller is no longer muted', async () => {
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    await expect(request()).rejects.toThrow();
+    await q(`UPDATE "User" SET muted = false WHERE id = $1`, [SELLER]);
+    await expect(request()).resolves.toMatchObject({ id: expect.any(Number) });
   });
 
   it('refuses a request when the shop is not visible to the buyer', async () => {

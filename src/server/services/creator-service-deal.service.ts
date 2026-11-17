@@ -255,11 +255,16 @@ export async function getDealParties(dealId: number, userId: number, isModerator
   return deal;
 }
 
-/** The storefront's rule for who may sell (P1): a banned, deleted or muted seller sells nothing. */
-const sellerInGoodStanding = (seller: Prisma.Sql) => Prisma.sql`EXISTS (
+const sellerExists = (seller: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "User" u
-  WHERE u."id" = ${seller} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND u."muted" = false
+  WHERE u."id" = ${seller} AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
 )`;
+const sellerMuted = (seller: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "User" u WHERE u."id" = ${seller} AND u."muted"
+)`;
+/** The storefront's rule for who may sell (P1): a banned, deleted or muted seller sells nothing. */
+const sellerInGoodStanding = (seller: Prisma.Sql) =>
+  Prisma.sql`(${sellerExists(seller)} AND NOT ${sellerMuted(seller)})`;
 
 const notBlockedBetween = (buyer: Prisma.Sql, seller: Prisma.Sql) => Prisma.sql`NOT EXISTS (
   SELECT 1 FROM "UserEngagement" ue
@@ -296,6 +301,7 @@ type OfferingRow = {
   deliveryDays: number;
   blocked: boolean;
   sellerOk: boolean;
+  sellerMuted: boolean;
   showable: boolean;
   maxNsfwLevel: number;
 };
@@ -351,7 +357,8 @@ export async function requestServiceDeal({
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
-      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk",
+      ${sellerExists(Prisma.sql`o."sellerId"`)} AS "sellerOk",
+      ${sellerMuted(Prisma.sql`o."sellerId"`)} AS "sellerMuted",
       ${offeringShowable} AS "showable", ${offeringLevel} AS "maxNsfwLevel"
     FROM "ServiceOffering" o WHERE o."id" = ${offeringId}::int`;
   // A mature service on a domain that does not serve it is hidden there, so it is not found.
@@ -367,6 +374,8 @@ export async function requestServiceDeal({
   await assertCreatorShopVisible({ userId: offering.sellerId, viewerId: buyerId });
   if (offering.sellerId === buyerId) throw throwBadRequestError('You cannot buy your own service');
   if (offering.blocked) throw throwBadRequestError('You cannot request this service');
+  if (offering.sellerMuted)
+    throw throwBadRequestError("This offering isn't taking requests right now");
   // After the visibility and block checks, which answer as if the service did not exist: a hidden
   // service must not be revealed as mature.
   if (!serviceRequestAllowed({ ...offering, servableLevels, consentLevels }))
