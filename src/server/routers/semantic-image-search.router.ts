@@ -45,11 +45,18 @@ const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
   return next({ ctx: { ownImagesOf: ctx.user!.id as number | undefined } });
 });
 
+// The picker's page size.
+const OWN_IMAGES_PAGE = 25;
 // Only what the picker sends; anything else on this path is dropped.
 const ownImagesInput = (
   { query, limit, browsingLevel }: SemanticImageSearchInput,
   userId: number
-): SemanticImageSearchInput => ({ query, limit, browsingLevel, userIds: [userId] });
+): SemanticImageSearchInput => ({
+  query,
+  limit: Math.min(limit, OWN_IMAGES_PAGE),
+  browsingLevel,
+  userIds: [userId],
+});
 
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));

@@ -597,6 +597,18 @@ describe('the query audit and the browsing level', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('audits the own-images query at one level, whatever level is asked for', async () => {
+    const { source } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: SAFE }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(h.includesInappropriate).toHaveBeenCalledWith(expect.anything(), true);
+  });
+
   it('recomputes the add-ons at the narrowed level', async () => {
     vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([
       { type: 'none', nsfwLevels: [4, 8, 16], excludedTagIds: [9200] },

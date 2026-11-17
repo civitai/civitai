@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { getAllImages } from '~/server/services/image.service';
@@ -108,7 +109,8 @@ export async function searchSemanticImages({
     index: 'images_semantic',
     track,
     context: () => ({
-      browsingLevel,
+      // With refuseNarrowing the verdict is taken at one level, whatever level is asked for.
+      browsingLevel: refuseNarrowing ? allBrowsingLevelsFlag : browsingLevel,
       disablePoi: addons.disablePoi,
       isModerator: user?.isModerator,
     }),

@@ -127,6 +127,11 @@ describe('semanticImageSearch router — own images without the flag', () => {
     expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(true);
   });
 
+  it('caps the page size at the picker’s', async () => {
+    await caller().search({ query: 'kuro', usernames: ['fox'], limit: 100 });
+    expect(h.search.mock.calls[0][0].input.limit).toBe(25);
+  });
+
   it('answers in the same shape whatever the search found, with no timing', async () => {
     h.search.mockResolvedValue({ items: [{ id: 1 }], nextCursor: 50, correctedQuery: 'kuro' });
     const result = await caller().search({ query: 'kuro', usernames: ['fox'] });
