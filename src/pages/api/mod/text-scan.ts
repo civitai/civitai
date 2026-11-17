@@ -57,7 +57,6 @@ export default defineModeratorEndpoint('textScan.harness', {
       input.key === INTENT_PROMPT_KEY &&
       !ctx.actor.permissions?.includes(INTENT_PROMPT_PUBLISH_PERMISSION)
     ) {
-      // Without the key's own grant, only a restore: an unrevoked earlier version by a current holder.
       const holders = (await getSystemPermissions())[INTENT_PROMPT_PUBLISH_PERMISSION] ?? [];
       const restorable = await isRestorableTextScanPrompt({
         key: input.key,
