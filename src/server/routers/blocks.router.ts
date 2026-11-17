@@ -15891,18 +15891,8 @@ async function submitConfirmedQuoteWorkflow(opts: {
     });
   }
 
-  if (arm.kind === 'step') recordConfirmedStepSubmit(standing ? 'standing' : 'click');
-  // Per app, which the counter cannot carry as a label: the jobs that ran without a confirm.
-  if (standing) {
-    logToAxiom({
-      name: 'block-confirmed-step-standing',
-      type: 'info',
-      userId,
-      appBlockId: claims.appBlockId,
-      quoteId,
-      workflowId: submitted.id ?? null,
-      chargedBuzz: jobBuzz,
-    });
+  if (arm.kind === 'step') {
+    recordConfirmedStepSubmit(submitFailureAppBlockLabel(claims), standing ? 'standing' : 'click');
   }
   const genResult = { snapshot };
   await finalizeGenIdempotency(genClaimKey, genResult);

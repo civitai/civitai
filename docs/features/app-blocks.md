@@ -1053,7 +1053,7 @@ same page host, so the owner sees the same confirm.
    `/apps/activity`, revoking spending, or "Ask me each job" there turns the opt-in off.
    Raising the limit from the raise dialog keeps it; that dialog then says "Jobs up to N Buzz
    that fit within the new limit will run without asking." Each submit records `consentKind: 'click' |
-   'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{consent}`
+   'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{app_block_id,consent}`
    counts both. The per-app aggregate cap and velocity limit still apply.
 
 A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
