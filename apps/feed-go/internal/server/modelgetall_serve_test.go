@@ -70,9 +70,6 @@ func TestServeModelGetAllOffProxiesWithoutComputing(t *testing.T) {
 	if w.Code != http.StatusTeapot || *proxied != 1 || *computes != 0 {
 		t.Fatalf("off: code=%d proxied=%d computes=%d, want 418, 1, 0", w.Code, *proxied, *computes)
 	}
-	if n := fallbackCount(t, reg, "model-getall-off"); n != 1 {
-		t.Fatalf("model-getall-off fallbacks = %v, want 1", n)
-	}
 	if n, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"feed_endpoint": EndpointModelGetAll, "mode": "serve", "reason": "model-getall-off"}); n != 1 {
 		t.Fatalf("the off fallback is not counted under model-getall: %v", n)
 	}
