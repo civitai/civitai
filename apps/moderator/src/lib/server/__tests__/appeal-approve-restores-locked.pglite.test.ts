@@ -60,7 +60,8 @@ CREATE TABLE "Image" (
 ${SET_ASIDE_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
@@ -214,5 +215,31 @@ describe('a restore that recomputes the level: models index', () => {
     await restore();
 
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+  });
+});
+
+describe('a restore that leaves the image with no rating', () => {
+  // As the real recompute does for an image with no live tags: it leaves the row as it is.
+  beforeEach(async () => {
+    await db.exec(`CREATE OR REPLACE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID
+      LANGUAGE SQL AS $$ SELECT $$;`);
+  });
+
+  const queued = async () =>
+    (
+      await db.query(
+        `SELECT 1 FROM "JobQueue" WHERE "type" = 'ImageScan' AND "entityType" = 'Image' AND "entityId" = $1`,
+        [IMAGE_ID]
+      )
+    ).rows.length;
+
+  it.each([
+    ['an approved appeal', approve],
+    ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
+  ])('%s sends it back to the scanner instead of leaving it Scanned', async (_, restore) => {
+    await restore();
+
+    expect(await imageRow()).toEqual({ ingestion: 'Rescan', nsfwLevel: 0, nsfwLevelLocked: false });
+    expect(await queued()).toBe(1);
   });
 });

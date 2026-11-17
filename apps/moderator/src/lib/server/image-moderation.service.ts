@@ -73,6 +73,27 @@ const recompute = async (imageId: number) => {
   await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
 };
 
+// The recompute rates an image from its live tags, so one with none (blocked before its scan landed,
+// or whose review tags an accept just disabled) stays at level 0. Rather than leave it Scanned with no
+// rating, send it back to the scanner, as the main app's rescanUnratedImages does.
+const rescanIfUnrated = async (imageId: number) => {
+  const queued = await dbWrite
+    .updateTable('Image')
+    .set({ ingestion: 'Rescan' })
+    .where('id', '=', imageId)
+    .where('ingestion', '=', 'Scanned')
+    .where('nsfwLevel', '=', 0)
+    .where('blockedFor', 'is', null)
+    .returning('id')
+    .executeTakeFirst();
+  if (!queued) return;
+  await dbWrite
+    .insertInto('JobQueue')
+    .values({ type: 'ImageScan', entityType: 'Image', entityId: imageId })
+    .onConflict((oc) => oc.columns(['entityType', 'entityId', 'type']).doNothing())
+    .execute();
+};
+
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
 // unblock. Zeroes the level and drops the lock; the caller must run recompute afterwards.
 const resetBlockedNsfwLevel = (imageId: number) =>
@@ -190,6 +211,7 @@ export async function acceptImage({
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+  await rescanIfUnrated(imageId);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
@@ -741,6 +763,7 @@ export async function resolveImageAppeal({
       await resetBlockedNsfwLevel(imageId);
     }
     await recompute(imageId);
+    await rescanIfUnrated(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
     if (restored) await trackImageRestore({ imageId, actorUserId: userId });
   } else {

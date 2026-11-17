@@ -1552,8 +1552,9 @@ export async function updateNsfwLevel(ids: number | number[]) {
 // Blocking force-sets nsfwLevel=Blocked and may leave the rating lock on; the recompute
 // (update_nsfw_levels_new) skips locked rows, so a Blocked-locked row can never be restored
 // by updateNsfwLevel alone. Reset+unlock only the Blocked rows (never-corrupted locks are
-// preserved), then recompute — untagged rows fall to Unrated and re-derive on rescan.
-// Used by both unblock paths (handleUnblockImages and report.service resolveEntityAppeal).
+// preserved), then recompute; a row the recompute leaves unrated goes back to the scanner.
+// Used by every unblock path: handleUnblockImages, report.service resolveEntityAppeal and the
+// account-deletion restore.
 export async function resetBlockedNsfwLevel(ids: number | number[]) {
   if (!Array.isArray(ids)) ids = [ids];
   ids = [...new Set(ids)];
@@ -1564,6 +1565,31 @@ export async function resetBlockedNsfwLevel(ids: number | number[]) {
     WHERE id IN (${Prisma.join(ids)}) AND "nsfwLevel" = ${NsfwLevel.Blocked};
   `;
   await updateNsfwLevel(ids);
+  await rescanUnratedImages(ids);
+}
+
+/**
+ * The recompute rates an image from its live tags, so one with none (blocked before its scan
+ * landed, or whose review tags were just disabled) stays at level 0. Rather than leave it Scanned
+ * with no rating, send it back to the scanner, which rates it.
+ */
+export async function rescanUnratedImages(ids: number[]) {
+  if (!ids.length) return;
+  const queued = await dbWrite.$queryRaw<{ id: number }[]>`
+    UPDATE "Image" SET ingestion = ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+    WHERE id = ANY(${ids}::int[])
+      AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+      AND "nsfwLevel" = 0
+      AND "blockedFor" IS NULL
+    RETURNING id
+  `;
+  if (!queued.length) return;
+  await dbWrite.$executeRaw`
+    INSERT INTO "JobQueue" (type, "entityType", "entityId")
+    SELECT 'ImageScan'::"JobQueueType", 'Image'::"EntityType", id
+    FROM unnest(${queued.map(({ id }) => id)}::int[]) AS id
+    ON CONFLICT DO NOTHING
+  `;
 }
 
 /**

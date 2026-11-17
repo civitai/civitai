@@ -619,6 +619,7 @@ export async function resolveScanOutcome({
     toUpdate.scannedAt = now;
   else toUpdate.scannedAt = image.scannedAt;
 
+  const ratingLocked = image.nsfwLevelLocked && image.nsfwLevel !== 0;
   if (audit.blockedFor) {
     // A block outranks a locked rating: it is a ToS decision, not a rating.
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
@@ -628,8 +629,9 @@ export async function resolveScanOutcome({
     toUpdate.ingestion = ImageIngestionStatus.Scanned;
     toUpdate.needsReview = reviewKey;
     toUpdate.blockedFor = null;
-    // Respect a manually-locked nsfw level — never overwrite it from the scan.
-    toUpdate.nsfwLevel = image.nsfwLevelLocked ? image.nsfwLevel : audit.nsfwLevel;
+    // Respect a manually-locked nsfw level — never overwrite it from the scan. A lock on no rating
+    // (level 0) is not a rating, so the scan's level stands and the lock is dropped in the write.
+    toUpdate.nsfwLevel = ratingLocked ? image.nsfwLevel : audit.nsfwLevel;
   }
 
   // Moderation rules can block the image, hold it for review, or annotate its
@@ -717,6 +719,7 @@ export async function resolveScanOutcome({
         ELSE ${scanLevel}::int END,
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
         ELSE ${(toUpdate.needsReview as string) ?? null} END,
+      "nsfwLevelLocked" = "nsfwLevelLocked" AND "nsfwLevel" <> 0,
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
@@ -776,7 +779,7 @@ export async function resolveScanOutcome({
     `.catch(() => []); // the verdict has landed: a failed read-back must not turn it into a scan error
     ingestion = row?.ingestion ?? ingestion;
   }
-  if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {
+  if (scanLevel !== NsfwLevel.Blocked && !ratingLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
     try {
