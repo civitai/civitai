@@ -488,7 +488,7 @@ func (s *Sources) heartbeatMetricLocks(ctx context.Context, ids []int) func() {
 	}()
 	return func() {
 		close(stop)
-		// MUTANT M2: wg.Wait() removed
+		wg.Wait()
 	}
 }
 
