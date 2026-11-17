@@ -158,16 +158,17 @@ const crucibleForViewer = async ({
   // On green a non-SFW crucible is returned so the page can point to the mature site; its adult
   // text stays off green.
   const canPreview = !!ctx.user?.isModerator || crucible?.userId === ctx.user?.id;
-  if (crucible && ctx.features?.isGreen && crucible.textNsfw && !canPreview)
-    return { ...crucible, name: 'Crucible', description: null };
-  // A background image that hasn't passed its scan falls back to the cover for everyone else.
-  if (
-    crucible?.heroImage &&
-    crucible.heroImage.ingestion !== ImageIngestionStatus.Scanned &&
-    !canPreview
-  )
-    return { ...crucible, heroImage: null };
-  return crucible;
+  // A background image that hasn't passed its scan, or has no rating, falls back to the cover for
+  // everyone else.
+  const withheldHero =
+    !!crucible?.heroImage &&
+    (crucible.heroImage.ingestion !== ImageIngestionStatus.Scanned ||
+      crucible.heroImage.nsfwLevel === 0) &&
+    !canPreview;
+  const served = crucible && withheldHero ? { ...crucible, heroImage: null } : crucible;
+  if (served && ctx.features?.isGreen && served.textNsfw && !canPreview)
+    return { ...served, name: 'Crucible', description: null };
+  return served;
 };
 
 export const createCrucibleHandler = async ({
