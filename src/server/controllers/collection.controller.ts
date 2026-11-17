@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { omit } from 'lodash-es';
 import { TRPCError } from '@trpc/server';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
@@ -626,11 +627,14 @@ export const collectionItemsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
+  const fullAccess = isSessionOrFullUserKey(ctx);
   const result = await getCollectionItemsByCollectionId({
     input,
     user: ctx.user,
     coverage: await coverageAudience(ctx.user ?? undefined),
     requireRead: true,
+    asModerator: !!ctx.user?.isModerator && fullAccess,
+    asOwner: fullAccess,
   });
 
   return {
