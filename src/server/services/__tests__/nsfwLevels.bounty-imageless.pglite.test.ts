@@ -16,7 +16,6 @@ vi.setConfig({ hookTimeout: 60_000 });
 const { updateBountyNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { bountiesSearchIndex } = await import('~/server/search-index/bounties.search-index');
 
-// The recompute's own SQL on real tables. Ids are invented.
 const IMAGELESS = 1;
 const WITH_IMAGE = 2;
 const db = { pg: null as unknown as PGlite };
