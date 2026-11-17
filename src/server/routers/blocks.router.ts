@@ -1932,7 +1932,9 @@ async function readMyConfirmWithinLimit(
   appBlockId: string
 ): Promise<number | null> {
   try {
-    const { readConfirmWithinLimit } = await import('~/server/services/blocks/scope-grant.service');
+    const { readConfirmWithinLimit } = await import(
+      '~/server/services/blocks/scope-grant.service'
+    );
     return await readConfirmWithinLimit(user.id, appBlockId, 'read');
   } catch {
     return null;

@@ -466,7 +466,7 @@ export async function resolveOwnedWorkflowOutputs(input: {
   appBlockId: string;
   workflowId: string;
   getWorkflow: (workflowId: string) => Promise<unknown>;
-  /** The token's output ceiling — see `BlockPostActor.outputCeiling`. */
+  /** The token's output rules — see `BlockPostActor.outputCeiling`. */
   ceiling: BlockOutputRules;
 }): Promise<OwnedWorkflowOutputSlot[]> {
   const owned = await blockWorkflowOwnedByAppUser({

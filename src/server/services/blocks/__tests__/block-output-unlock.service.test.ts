@@ -510,11 +510,55 @@ describe('🔴 serving on: the unlock decides on the released output, not on its
   });
 
   it('a retry after that sees the output released: it mints again and charges nothing', async () => {
-    const f = fakes([UNLOCKED]);
+    const f = fakes([
+      () => workflow([blob('pg0', 'pg'), blob('r1', 'r')], { allowMatureContent: true }),
+    ]);
     const result = await unlockBlockOutput(servingRequest(), f);
     expect(result.outcome).toBe('not-restricted');
     expect(result.charged).toStrictEqual({ unlockBuzz: 0 });
     expect(f.liftRestriction).not.toHaveBeenCalled();
+    const output = result.snapshot.outputs?.[1] as { url: string; mediaRef?: string };
+    expect(output.url.startsWith('/api/v1/blocks/media/')).toBe(true);
+    expect(typeof output.mediaRef).toBe('string');
+  });
+
+  /** A never-rated engine's video, rated R, on a workflow whose paying pool refused mature content. */
+  const neverRatedR = () =>
+    workflow([], {
+      steps: [
+        {
+          $type: 'videoGen',
+          name: BLOCK_STEP_NAME,
+          status: 'succeeded',
+          metadata: {},
+          input: { engine: 'kling' },
+          output: { video: { ...blob('v1', 'r'), type: 'video' } },
+        },
+      ],
+    });
+
+  it('an output the serving rules restrict once released is never offered for pay, and nothing is charged', async () => {
+    expect(planBlockOutputUnlock(neverRatedR(), RED_MATURE, 0, SERVING)).toMatchObject({
+      kind: 'unavailable',
+      message: 'This output cannot be shown here.',
+    });
+    const f = fakes([neverRatedR]);
+    await expect(
+      unlockBlockOutput({ ...request(RED_MATURE, 0), view: SERVING, expectedTotal: TOTAL }, f)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(f.liftRestriction).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: with serving off the same output is released and charged as before', async () => {
+    expect(planBlockOutputUnlock(neverRatedR(), RED_MATURE, 0, NO_VIEW)).toMatchObject({
+      kind: 'pay',
+    });
+    const released = () => ({ ...neverRatedR(), allowMatureContent: true } as Wf);
+    const f = fakes([neverRatedR, released]);
+    const result = await unlockBlockOutput({ ...request(RED_MATURE, 0), expectedTotal: TOTAL }, f);
+    expect(result.outcome).toBe('unlocked');
+    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE });
+    expect(f.liftRestriction).toHaveBeenCalledTimes(1);
   });
 
   it('CONTROL: a lift the orchestrator did not release still reports nothing charged', async () => {
@@ -531,6 +575,8 @@ describe('🔴 serving on: the unlock decides on the released output, not on its
     ]);
     const result = await unlockBlockOutput(servingRequest(), f);
     expect(result.outcome).toBe('unlocked');
+    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE });
+    expect(f.liftRestriction).toHaveBeenCalledTimes(1);
     const output = result.snapshot.outputs?.[1] as { url: string; mediaRef?: string };
     expect(output.url.startsWith('/api/v1/blocks/media/')).toBe(true);
     expect(typeof output.mediaRef).toBe('string');

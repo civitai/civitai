@@ -111,9 +111,9 @@ export { WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY, readModelSubstitutionsFromMe
  * surfaced — pending/blocked blobs are dropped rather than sending dead links
  * the block would render as broken images.
  *
- * 🔴 `view` IS REQUIRED, and that is the guard: it is the calling token's maturity
- * ceiling (`blockOutputCeilingFromClaims(claims)`), and every available output is
- * passed through `classifyBlockOutput` with it. A RESTRICTED output is reported on
+ * 🔴 `view` IS REQUIRED, and that is the guard: its ceiling is the calling token's
+ * maturity ceiling, and every available output is passed through `classifyBlockOutput`
+ * with it. A RESTRICTED output is reported on
  * `outputs` (and `steps[].outputs`) in position, with no url, and is left out of
  * `imageUrls`, `steps[].imageUrls` and `model3dOutputs`. See `outputs` in
  * `schema/blocks/workflow.schema`. Its `mint` (`resolveBlockOutputView`) turns every
@@ -1080,9 +1080,9 @@ export type AppWorkflow = {
  * 🔴 `view` IS REQUIRED for the same reason as on `snapshotFromWorkflow`: the
  * calling token's maturity ceiling decides which outputs are RESTRICTED, and a
  * restricted output's url is in neither `images` nor `model3dOutputs`. Every
- * consumer — the listing, the cancel reply, publish and post — must pass the
- * calling token's ceiling, so the `images` a block indexed is the `images` the
- * server resolves its `imageIndexes` against.
+ * consumer — the listing, the cancel reply, publish, post and persist — passes the
+ * calling token's ceiling and serving rules, so the positions a block indexed are the
+ * positions the server resolves its `imageIndexes` against.
  */
 export function projectAppWorkflow(workflow: Workflow, view: BlockOutputView): AppWorkflow {
   return projectAppWorkflowWithPositions(workflow, view).workflow;
