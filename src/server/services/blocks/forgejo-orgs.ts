@@ -84,7 +84,7 @@ export function resolveForgejoOrgs(e: OrgEnv): ForgejoOrgs {
   return { ...orgs, error: null };
 }
 
-/** This process's orgs. Every reader imports these; nothing else names an org. */
+/** This process's orgs, resolved once at module load. Every reader imports these; nothing else names an org. */
 export const FORGEJO_ORGS: ForgejoOrgs = resolveForgejoOrgs(env);
 export const FORGEJO_ORG = FORGEJO_ORGS.apps;
 export const FORGEJO_REVIEW_ORG = FORGEJO_ORGS.review;
