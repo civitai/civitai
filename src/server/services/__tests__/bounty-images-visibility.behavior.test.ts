@@ -55,7 +55,8 @@ const image = (id: number, over: Partial<ImageRow> = {}): ImageRow => ({
   ...over,
 });
 
-// One image per bounty (bounty id = image id), so each bounty's result is that image or nothing.
+// One image per bounty (bounty id = image id), so each bounty's result is that image or nothing,
+// except TWO_IMAGES, which holds two clean images.
 const CLEAN = 1;
 const BLOCKED_FOR = 2;
 const UNRATED = 3;
@@ -63,6 +64,10 @@ const MINOR_R = 4; // minor-flagged, rated R: restricted by the minor content ru
 const HELD = 5;
 const UNSCANNED = 6;
 const OTHERS_HELD = 7;
+const RESTRICTED_R = 8; // rated R, made with a base model that restricts mature images
+const TWO_IMAGES = 20;
+const FIRST_OF_TWO = 21;
+const SECOND_OF_TWO = 22;
 const images: ImageRow[] = [
   image(CLEAN),
   image(BLOCKED_FOR, { blockedFor: 'tos' }),
@@ -71,10 +76,13 @@ const images: ImageRow[] = [
   image(HELD, { needsReview: 'poi' }),
   image(UNSCANNED, { ingestion: 'Pending' }),
   image(OTHERS_HELD, { userId: OTHER_UPLOADER, needsReview: 'minor' }),
+  image(RESTRICTED_R, { nsfwLevel: 4, modelRestricted: true }),
+  image(FIRST_OF_TWO),
+  image(SECOND_OF_TWO),
 ];
 const connections = images.map((i) => ({
   imageId: i.id,
-  entityId: i.id,
+  entityId: i.id > TWO_IMAGES ? TWO_IMAGES : i.id,
   entityType: 'Bounty',
   image: { ...i, tags: [] as never[] },
 }));
@@ -181,5 +189,36 @@ describe.each(Object.keys(readers) as (keyof typeof readers)[])('%s', (reader) =
 
   it("serves another uploader's held image to a moderator", async () => {
     expect(await imagesOf(OTHERS_HELD, viewers.moderator)).toEqual([OTHERS_HELD]);
+  });
+
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'withholds a base-model restricted mature image from the %s',
+    async (who) => {
+      expect(await imagesOf(RESTRICTED_R, viewers[who])).toEqual([]);
+    }
+  );
+
+  it('serves a base-model restricted mature image to its owner', async () => {
+    expect(await imagesOf(RESTRICTED_R, viewers.owner)).toEqual([RESTRICTED_R]);
+  });
+
+  it('serves every visible image of a bounty', async () => {
+    expect((await imagesOf(TWO_IMAGES, viewers.stranger)).sort()).toEqual([
+      FIRST_OF_TWO,
+      SECOND_OF_TWO,
+    ]);
+  });
+});
+
+describe('getImagesForBounties over several bounties', () => {
+  it("groups each bounty's visible images under its id", async () => {
+    const grouped = await getImagesForBounties({
+      bountyIds: [CLEAN, BLOCKED_FOR, HELD, TWO_IMAGES],
+      ...viewers.stranger,
+    });
+    const ids = Object.fromEntries(
+      Object.entries(grouped).map(([bountyId, list]) => [bountyId, list.map((i) => i.id).sort()])
+    );
+    expect(ids).toEqual({ [CLEAN]: [CLEAN], [TWO_IMAGES]: [FIRST_OF_TWO, SECOND_OF_TWO] });
   });
 });
