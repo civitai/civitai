@@ -439,14 +439,20 @@ func (q *PageQuery) Build() (SQL, error) {
         WHERE ci."modelId" = mm."modelId"
         AND ci."collectionId" = ` + b.arg(q.CollectionID) + `
         AND `
+		// MUTANT (review follow-up to #9288, reverted in the next commits): swap the viewer and
+		// collection-tag binds when both are set, to show which golden check sees it.
+		addedBy, tagBind := q.ViewerID, q.CollectionTagID
+		if q.ViewerID != 0 && q.CollectionTagID != 0 {
+			addedBy, tagBind = tagBind, addedBy
+		}
 		if q.ViewerID != 0 {
-			clause += `(ci."status" = 'ACCEPTED'::"CollectionItemStatus" OR (ci."status" = 'REVIEW'::"CollectionItemStatus" AND ci."addedById" = ` + b.arg(q.ViewerID) + `))`
+			clause += `(ci."status" = 'ACCEPTED'::"CollectionItemStatus" OR (ci."status" = 'REVIEW'::"CollectionItemStatus" AND ci."addedById" = ` + b.arg(addedBy) + `))`
 		} else {
 			clause += `ci."status" = 'ACCEPTED'::"CollectionItemStatus"`
 		}
 		if q.CollectionTagID != 0 {
 			clause += `
-        AND ci."tagId" = ` + b.arg(q.CollectionTagID)
+        AND ci."tagId" = ` + b.arg(tagBind)
 		}
 		and = append(and, clause+`
       )`)
