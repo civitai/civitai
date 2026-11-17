@@ -228,6 +228,12 @@ const DECLARED_MIGRATIONS: Record<string, DeclaredMigration> = {
       },
     ],
   },
+  // Widens the column to bigint (scopes past bit 30). A type change grants nothing: every row keeps
+  // its value, so it declares no grant, and its one live reference is the ALTER COLUMN.
+  '20271117180000_widen_token_scopes_bigint': {
+    liveReferences: 1,
+    grants: [],
+  },
 };
 
 /**
