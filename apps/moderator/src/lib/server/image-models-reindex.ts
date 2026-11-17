@@ -19,16 +19,23 @@ type ImageChildTagChanges = {
  * For this app's tag and level writes: drops the cached tags and showcase images of the models whose
  * posts hold these images, then queues those models for a models-index rewrite. Never throws: it runs
  * after the tag or level write has committed. A failed attempt, the queue call included, is retried
- * once; a second failure is logged and the requeue is dropped.
+ * once; a second failure is logged, with the image and model ids, and the requeue is dropped.
  */
 export async function queueModelsForImageChildTagChanges(
   changes: ImageChildTagChanges
 ): Promise<void> {
   for (let attempt = 1; ; attempt++) {
+    const found: Found = {};
     try {
-      return await queueModels(changes);
+      return await queueModels(changes, found);
     } catch (error) {
-      logError(error);
+      void logAxiomError(error, {
+        name: 'image-models-reindex',
+        attempt,
+        dropped: attempt >= ATTEMPTS,
+        imageIds: found.imageIds ?? changedImageIds(changes),
+        modelIds: found.modelIds,
+      });
       if (attempt >= ATTEMPTS) return;
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     }
@@ -39,7 +46,17 @@ const ATTEMPTS = 2;
 const RETRY_DELAY_MS = 1000;
 const logError = (error: unknown) => void logAxiomError(error, { name: 'image-models-reindex' });
 
-async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) {
+/** What an attempt resolved before it failed, for the error log. */
+type Found = { imageIds?: number[]; modelIds?: number[] };
+
+const changedImageIds = ({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) => [
+  ...new Set([...tagWrites.map((x) => x.imageId), ...levelImageIds]),
+];
+
+async function queueModels(
+  { tagWrites = [], levelImageIds = [] }: ImageChildTagChanges,
+  found: Found
+) {
   const imageIds = new Set(tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId));
 
   const levelOnly = [...new Set(levelImageIds)].filter((id) => !imageIds.has(id));
@@ -55,6 +72,7 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
   }
 
   if (!imageIds.size) return;
+  found.imageIds = [...imageIds];
   const rows = await dbWrite
     .selectFrom('Image as i')
     .innerJoin('Post as p', 'p.id', 'i.postId')
@@ -64,6 +82,7 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
     .where('i.id', 'in', [...imageIds])
     .execute();
   if (!rows.length) return;
+  found.modelIds = [...new Set(rows.map((r) => r.modelId))];
 
   const modelVersionIds = [...new Set(rows.map((r) => r.modelVersionId).filter(isId))].sort(
     (a, b) => a - b
@@ -76,7 +95,7 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
   await syncSearchIndexBulk(
     {
       entityType: 'model',
-      entityIds: [...new Set(rows.map((r) => r.modelId))],
+      entityIds: found.modelIds,
       action: 'update',
     },
     { strict: true }

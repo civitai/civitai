@@ -143,6 +143,27 @@ describe('spoke queueModelsForImageChildTagChanges', () => {
     expect(logAxiomError).toHaveBeenCalledTimes(1);
   });
 
+  it('logs the image and model ids when both attempts fail', async () => {
+    vi.useFakeTimers();
+    vi.mocked(syncSearchIndexBulk).mockRejectedValue(new Error('main app down'));
+    try {
+      const run = queueModelsForImageChildTagChanges({
+        tagWrites: [{ imageId: 1, tagId: CHILD_TAG }],
+      });
+      await vi.runAllTimersAsync();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(syncSearchIndexBulk).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(logAxiomError).mock.calls.at(-1)?.[1]).toMatchObject({
+      dropped: true,
+      imageIds: [1],
+      modelIds: [100],
+    });
+  });
+
   it('retries a failed read once, then queues', async () => {
     vi.useFakeTimers();
     failNextQuery = true;
