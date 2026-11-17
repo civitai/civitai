@@ -194,6 +194,15 @@ describe('getModelShowcaseImages: the version and its model', () => {
     expect(await servedMature()).toEqual([]);
   });
 
+  // An owner-stored gallery level above the hold cap must not widen it: the cap wins.
+  it.each([
+    ['a minor model', `minor = true`],
+    ['a SFW-only model', `"sfwOnly" = true`],
+  ])('serves nothing mature for %s whose stored gallery level allows it', async (_label, set) => {
+    await harness.pg.exec(`UPDATE "Model" SET ${set}, "gallerySettings" = '{"level": 31}'`);
+    expect(await servedMature()).toEqual([]);
+  });
+
   it('serves nothing for a version that does not exist', async () => {
     await harness.pg.exec(`DELETE FROM "ModelVersion"`);
     expect(await servedMature()).toEqual([]);
