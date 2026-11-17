@@ -948,10 +948,11 @@ function refusePrivateMedia(
  * chose it, the document key — in the app's shared-data moderation mode
  * (`resolveSharedDataModerationMode`):
  *
- * - `off`: nothing is scanned or recorded.
+ * - `off`: nothing is scanned or recorded; only an orchestrator media link is refused.
  * - `shadow`: nothing is scanned NOW. The returned `AfterCommit` schedules each scan through
  *   `scheduleSharedDataShadow`, the legacy surface's own shadow path: after the write, off the
- *   request path, recorded with mode `shadow`, never refusing, never alerting. A scanner failure
+ *   request path, recorded with mode `shadow`, never refusing, never alerting (except an
+ *   orchestrator media link, refused as in `off`, with the scans still scheduled). A scanner failure
  *   is logged there and reaches nobody. The caller runs it only once the store has committed, so a
  *   write that fails records nothing.
  * - `enforce`: scanned inline, before the write. A scan that cannot run is refused as retryable
@@ -971,8 +972,8 @@ async function moderate(
   resolvedMode?: SharedDataModerationMode
 ): Promise<AfterCommit> {
   const mode = resolvedMode ?? (await resolveSharedDataModerationMode(access.ctx.appId));
-  // Refused in every mode. Under `enforce` the scan below runs first, so a minor or POI hit in
-  // the same write still takes precedence and is recorded.
+  // Refused in every mode; under `enforce` a minor/POI hit in the same write is refused and
+  // recorded first.
   const privateMedia = privateMediaField(input);
   if (mode === 'off') {
     if (privateMedia) refusePrivateMedia(access, user, privateMedia);

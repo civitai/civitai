@@ -672,32 +672,63 @@ describe('C1 cross-user overwrite', () => {
     expect((insert![1] as unknown[])[0]).not.toBe('victim-key');
   });
 
-  it('append refuses an orchestrator media link in data, whatever the moderation mode', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('author_user_id') && sql.includes('count(*)'))
-        return { rows: [{ n: '0' }], rowCount: 1 };
-      if (sql.includes('.quota'))
-        return {
-          rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
-          rowCount: 1,
-        };
-      return { rows: [], rowCount: 0 };
-    });
-    await expect(
-      caller().append({
-        blockToken: 't',
-        value: {
-          title: 'idea',
-          data: { img: 'https://orchestration.civitai.com/v2/consumer/blobs/LEG1.png?sig=s' },
-        },
-      } as never)
-    ).rejects.toThrow(/blocked link/);
-    const insert = (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+  const LEGACY_SHADOW_FLAG = 'app-blocks-shared-data-moderation';
+  const legacyMode = (mode: 'off' | 'shadow') =>
+    mockIsFlipt.mockImplementation(async (flag: string) =>
+      mode === 'shadow' ? flag === LEGACY_SHADOW_FLAG : false
+    );
+  const sharedInsert = () =>
+    (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
       c[0].includes('INSERT INTO "app_app_voting".shared_kv')
     );
-    expect(insert).toBeUndefined();
-  });
+
+  it.each(['off', 'shadow'] as const)(
+    'append refuses an orchestrator media link in data (%s)',
+    async (mode) => {
+      legacyMode(mode);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('author_user_id') && sql.includes('count(*)'))
+          return { rows: [{ n: '0' }], rowCount: 1 };
+        if (sql.includes('.quota'))
+          return {
+            rows: [
+              { used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) },
+            ],
+            rowCount: 1,
+          };
+        return { rows: [], rowCount: 0 };
+      });
+      await expect(
+        caller().append({
+          blockToken: 't',
+          value: {
+            title: 'idea',
+            data: { img: 'https://orchestration.civitai.com/v2/consumer/blobs/LEG1.png?sig=s' },
+          },
+        } as never)
+      ).rejects.toThrow(/blocked link/);
+      expect(sharedInsert()).toBeUndefined();
+    }
+  );
+
+  it.each(['off', 'shadow'] as const)(
+    'increment refuses an orchestrator host as the counter key (%s)',
+    async (mode) => {
+      legacyMode(mode);
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockClient.query.mockClear();
+      await expect(
+        incrementSharedCounter('t', 'orchestration-new.civitai.com')
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringMatching(/blocked link \(counterKey\)/),
+      });
+      expect(
+        (mockClient.query.mock.calls as Array<[string]>).some((c) => c[0].includes('INSERT'))
+      ).toBe(false);
+    }
+  );
 
   it('a key append generated is refused as a counter key, so a counter cannot share it', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());

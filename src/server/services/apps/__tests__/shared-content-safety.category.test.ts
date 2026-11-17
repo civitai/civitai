@@ -252,6 +252,6 @@ describe('assertSharedTextSafe — orchestrator media links', () => {
         body: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/width=450/1.jpeg',
         userId: 1,
       })
-    ).resolves.toBeDefined();
+    ).resolves.toMatchObject({ title: 'my set' });
   });
 });
