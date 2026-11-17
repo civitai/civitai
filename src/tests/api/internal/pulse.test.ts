@@ -103,7 +103,7 @@ describe('POST /api/internal/pulse', () => {
   });
 
   it('dispatches Tracker.view with the full parsed payload on a same-origin request', async () => {
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = makeReq({ host: 'civitai.com', origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 
@@ -119,7 +119,7 @@ describe('POST /api/internal/pulse', () => {
     // so Next's body parser hands the handler an OBJECT, not a string. A naive
     // JSON.parse(req.body) would throw on the object → 400 → drop EVERY production
     // view. This must dispatch the insert exactly like the string path.
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput, objectBody: true });
     const res = makeRes();
 
@@ -131,7 +131,7 @@ describe('POST /api/internal/pulse', () => {
   });
 
   it('preserves false/0-valued fields (nsfw:false, nsfwLevel:0) in the insert', async () => {
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const body = { type: 'ModelView', entityType: 'Model', entityId: 7, nsfw: false, nsfwLevel: 0 };
     const req = makeReq({ origin: 'https://civitai.com', body });
     const res = makeRes();
@@ -144,7 +144,7 @@ describe('POST /api/internal/pulse', () => {
   });
 
   it('accepts the referer host as the origin fallback', async () => {
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = makeReq({
       host: 'civitai.com',
       referer: 'https://civitai.com/models/1',
@@ -159,7 +159,7 @@ describe('POST /api/internal/pulse', () => {
   });
 
   it('rejects a cross-origin request (host mismatch) with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = makeReq({ host: 'civitai.com', origin: 'https://evil.example', body: validInput });
     const res = makeRes();
 
@@ -170,7 +170,7 @@ describe('POST /api/internal/pulse', () => {
   });
 
   it('rejects a request with no origin/referer with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = makeReq({ host: 'civitai.com', body: validInput });
     const res = makeRes();
 
@@ -181,7 +181,7 @@ describe('POST /api/internal/pulse', () => {
   });
 
   it('rejects an unparseable body with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: '{not json' });
     const res = makeRes();
 
@@ -192,7 +192,7 @@ describe('POST /api/internal/pulse', () => {
   });
 
   it('rejects schema-invalid input (bad enum) with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = makeReq({
       origin: 'https://civitai.com',
       body: { type: 'NotAView', entityType: 'Image', entityId: 1 },
@@ -207,7 +207,7 @@ describe('POST /api/internal/pulse', () => {
 
   it('short-circuits to 200 in dev without inserting', async () => {
     devStore.isDev = true;
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 

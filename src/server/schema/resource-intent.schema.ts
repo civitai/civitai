@@ -323,7 +323,7 @@ export const resourceIntentResponseSchema = z.strictObject({
    * computation did, which `docs/resource-intent-primitive.md`'s closing
    * condition names as a requirement. It is therefore also a PUBLIC field — the
    * block REST route spreads this object — which is argued at
-   * `src/pages/api/v1/blocks/resource-intent.ts`, not here.
+   * `src/server/api-routes/v1/blocks/resource-intent.ts`, not here.
    *
    * ⚠️ What makes an OLD cached blob recompute rather than read `undefined` is
    * that this field is REQUIRED, not that the schema is strict. (An earlier draft

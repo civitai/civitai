@@ -27,7 +27,7 @@ const { getTestData, getHtml, send } = vi.hoisted(() => ({
 
 vi.mock('~/server/email/templates', () => ({ knownEmail: { getTestData, getHtml, send } }));
 
-const handler = (await import('~/pages/api/testing/email/[template]')).default;
+const handler = (await import('~/server/api-routes/testing/email/[template]')).default;
 
 function call(query: Record<string, string>) {
   const req = { method: 'GET', query, headers: {} } as never;

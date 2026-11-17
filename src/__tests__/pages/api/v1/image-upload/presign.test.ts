@@ -41,8 +41,8 @@ vi.mock('~/server/services/image-upload-action.service', async (importOriginal) 
   trackImageUpload: m.track,
 }));
 
-import imageUpload from '~/pages/api/v1/image-upload';
-import imageUploadMultipart from '~/pages/api/v1/image-upload/multipart';
+import imageUpload from '~/server/api-routes/v1/image-upload';
+import imageUploadMultipart from '~/server/api-routes/v1/image-upload/multipart';
 import { UPLOAD_KEY_UNRECORDED_MESSAGE } from '~/server/services/image-url-ownership';
 
 function makeRes() {

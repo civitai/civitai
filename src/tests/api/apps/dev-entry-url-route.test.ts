@@ -62,7 +62,7 @@ vi.mock('~/server/services/blocks/dev-tunnel-session', async (importOriginal) =>
 });
 
 const { env } = await import('~/env/server');
-const handler = (await import('~/pages/api/apps/dev/entry-url')).default as unknown as (
+const handler = (await import('~/server/api-routes/apps/dev/entry-url')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse
 ) => Promise<void>;

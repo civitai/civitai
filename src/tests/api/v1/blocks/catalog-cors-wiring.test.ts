@@ -63,7 +63,7 @@ describe('block catalog endpoints — opaque-origin CORS wiring (PR #2681)', () 
     { timeout: 60000 },
     async () => {
       // Import order: models, images, tools → captured in that order.
-      await import('~/pages/api/v1/blocks/models');
+      await import('~/server/api-routes/v1/blocks/models');
       await import('~/pages/api/v1/blocks/images');
       // The tool surface (#398 AC5) is called DIRECTLY from the sandboxed iframe
       // during a tool-calling loop, so it needs the same opaque-origin opt-in —

@@ -66,8 +66,8 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import removeHandler from '~/pages/api/mod/user/remove-reactions';
-import countHandler from '~/pages/api/mod/user/reactions';
+import removeHandler from '~/server/api-routes/mod/user/remove-reactions';
+import countHandler from '~/server/api-routes/mod/user/reactions';
 
 const TARGET = 8675309;
 const NAME = 'not_a_real_user';

@@ -39,7 +39,7 @@ vi.mock('~/server/db/kyselyDb', () => {
 vi.mock('~/server/services/feedback.service', () => ({ createFeedback }));
 vi.mock('~/server/services/feedback-hq.service', () => ({ fileFeedbackToHq }));
 
-import handler from '~/pages/api/mod/feedback/ticket-bug';
+import handler from '~/server/api-routes/mod/feedback/ticket-bug';
 
 function call(input: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body: input, query: {} } as unknown as Parameters<

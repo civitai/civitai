@@ -47,22 +47,22 @@ const routes: { name: string; method: string; load: () => Promise<{ default: unk
   {
     name: 'generation/workflows/[workflowId]/status-update',
     method: 'GET',
-    load: () => import('~/pages/api/generation/workflows/[workflowId]/status-update'),
+    load: () => import('~/server/api-routes/generation/workflows/[workflowId]/status-update'),
   },
   {
     name: 'orchestrator/refreshBlobs',
     method: 'POST',
-    load: () => import('~/pages/api/orchestrator/refreshBlobs'),
+    load: () => import('~/server/api-routes/orchestrator/refreshBlobs'),
   },
   {
     name: 'orchestrator/blobRatings',
     method: 'POST',
-    load: () => import('~/pages/api/orchestrator/blobRatings'),
+    load: () => import('~/server/api-routes/orchestrator/blobRatings'),
   },
   {
     name: 'orchestrator/getConsumerBlobUploadUrl',
     method: 'GET',
-    load: () => import('~/pages/api/orchestrator/getConsumerBlobUploadUrl'),
+    load: () => import('~/server/api-routes/orchestrator/getConsumerBlobUploadUrl'),
   },
 ];
 

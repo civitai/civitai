@@ -22,7 +22,7 @@ import {
  * volumes by hand.
  *
  * `instrumentationRegistry` is pinned on `globalThis`, so it is the same object in every
- * graph, and `src/pages/api/metrics.ts` already merges it into the scrape response.
+ * graph, and `src/server/api-routes/metrics.ts` already merges it into the scrape response.
  *
  * These cases assert the WIRING (which registry), not the arithmetic. A test that only
  * checked `counter.inc()` moves a number would have passed throughout the outage.

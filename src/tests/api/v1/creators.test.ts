@@ -31,7 +31,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 // and mapCreatorItem (getEdgeUrl) are kept REAL so the handler's production
 // classification + mapping logic runs unmodified.
 
-import handler from '~/pages/api/v1/creators';
+import handler from '~/server/api-routes/v1/creators';
 
 function createMocks({ query = {} }: { query?: Record<string, string | string[]> }) {
   const req = {

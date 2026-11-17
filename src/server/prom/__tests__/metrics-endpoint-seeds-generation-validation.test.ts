@@ -39,7 +39,7 @@ describe('/api/metrics publishes the generation refusal series', () => {
   });
 
   it('seeds one zero-valued series per surface on import', async () => {
-    await import('~/pages/api/metrics');
+    await import('~/server/api-routes/metrics');
 
     const metric = client.register.getSingleMetric(METRIC);
     expect(

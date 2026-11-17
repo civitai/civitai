@@ -55,7 +55,7 @@ describe('/api/v1/blocks/gated-images — withBlockScope wiring', () => {
     'opts into allowOpaqueOrigin, declares no requiredScope, fails CLOSED on an approval-lookup failure, and carries its own endpoint label',
     { timeout: 60000 },
     async () => {
-      await import('~/pages/api/v1/blocks/gated-images');
+      await import('~/server/api-routes/v1/blocks/gated-images');
 
       // Positive control: report the pair, never the zero. A capture array that
       // stayed empty would make every assertion below vacuously true.

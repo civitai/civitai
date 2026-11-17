@@ -122,7 +122,7 @@ function makeRes(): JsonRes {
 }
 
 const loadEndpoint = async () =>
-  (await import('~/pages/api/admin/clear-cache-by-pattern')).default as (
+  (await import('~/server/api-routes/admin/clear-cache-by-pattern')).default as (
     req: unknown,
     res: unknown
   ) => Promise<void>;

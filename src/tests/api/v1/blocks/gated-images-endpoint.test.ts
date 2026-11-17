@@ -68,7 +68,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   handleEndpointError: mockHandleEndpointError,
 }));
 
-import { baseHandler } from '~/pages/api/v1/blocks/gated-images';
+import { baseHandler } from '~/server/api-routes/v1/blocks/gated-images';
 
 function fakeClaims(): BlockTokenClaims {
   return {

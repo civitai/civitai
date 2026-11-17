@@ -39,7 +39,7 @@ vi.mock('~/server/webhooks/training-moderation.webhooks', () => ({
 }));
 
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
-import { updateRecords } from '~/pages/api/webhooks/resource-training';
+import { updateRecords } from '~/server/api-routes/webhooks/resource-training';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 

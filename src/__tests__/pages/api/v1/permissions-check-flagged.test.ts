@@ -19,7 +19,7 @@ vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: mockGetSessionUserById },
 }));
 
-import permissionsHandler from '~/pages/api/v1/permissions/check';
+import permissionsHandler from '~/server/api-routes/v1/permissions/check';
 
 /**
  * The generation permission answered for a version of a model flagged `poi`: true only for the

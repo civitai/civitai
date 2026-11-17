@@ -32,7 +32,7 @@ async function walk(dir) {
   return files.flat();
 }
 
-/** `src/pages/api/mod/homeblock/create.ts` -> `/api/mod/homeblock/create`. */
+/** `src/server/api-routes/mod/homeblock/create.ts` -> `/api/mod/homeblock/create`. */
 function routePath(file) {
   const rel = relative(join(ROOT, 'src', 'pages'), file).split(sep).join('/');
   return '/' + rel.replace(/\.ts$/, '').replace(/\/index$/, '');

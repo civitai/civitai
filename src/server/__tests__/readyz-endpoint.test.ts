@@ -107,7 +107,7 @@ beforeEach(async () => {
   vi.resetModules();
   // A warm pod, written onto the shared global before the modules read it.
   globalThis.__civitaiWarmState = { ready: true, state: 'warmed-ok', durationMs: 1 };
-  handler = (await import('~/pages/api/readyz')).default as never;
+  handler = (await import('~/server/api-routes/readyz')).default as never;
   runHealthChecks.mockClear();
   fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('readyz must not fetch'));
 });
@@ -161,7 +161,7 @@ describe('/api/readyz reads warm state written by a separate module instance', (
 
   it('flips to 200 when the other instance finishes warmup (warmer disabled)', async () => {
     vi.resetModules();
-    const routeHandler = (await import('~/pages/api/readyz')).default as never;
+    const routeHandler = (await import('~/server/api-routes/readyz')).default as never;
     expect((await call(routeHandler))._status()).toBe(503);
 
     vi.resetModules();
@@ -175,7 +175,7 @@ describe('/api/readyz reads warm state written by a separate module instance', (
   // Warmup must still complete and flip warm, or readyz would be 503 forever on that server.
   it('flips to 200 when warmup is enabled and every warm route 404s (standalone server shape)', async () => {
     vi.resetModules();
-    const routeHandler = (await import('~/pages/api/readyz')).default as never;
+    const routeHandler = (await import('~/server/api-routes/readyz')).default as never;
     expect((await call(routeHandler))._status()).toBe(503);
 
     process.env.WARMUP_ENABLED = 'true';

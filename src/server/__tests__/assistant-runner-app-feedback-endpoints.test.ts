@@ -39,9 +39,9 @@ vi.mock('~/server/services/blocks/app-feedback.service', () => ({
 }));
 
 const { signRunGrant } = await import('~/server/services/app-assistant/assistant-runner-tokens');
-const reviewRoute = (await import('~/pages/api/internal/app-assistant/app-feedback/review'))
+const reviewRoute = (await import('~/server/api-routes/internal/app-assistant/app-feedback/review'))
   .default;
-const userRoute = (await import('~/pages/api/internal/app-assistant/app-feedback/user')).default;
+const userRoute = (await import('~/server/api-routes/internal/app-assistant/app-feedback/user')).default;
 
 // TEST-ONLY values: a key pair generated for this run and a placeholder secret.
 const SECRET = 'test-only-runner-secret-for-feedback';

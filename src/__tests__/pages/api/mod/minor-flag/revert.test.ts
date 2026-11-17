@@ -23,7 +23,7 @@ vi.mock('~/server/services/minor-hash.service', async (importOriginal) => ({
   revertMinorHashAutoFlag: mockRevert,
 }));
 
-import handler from '~/pages/api/mod/minor-flag/revert';
+import handler from '~/server/api-routes/mod/minor-flag/revert';
 
 let responseBody: unknown;
 function call(body: Record<string, unknown>) {

@@ -74,7 +74,7 @@ vi.mock('~/server/services/app-assistant/app-assistant.service', async (importOr
 
 const db = dbMock.dbRead;
 const { signRunGrant } = await import('~/server/services/app-assistant/assistant-runner-tokens');
-const listingRoute = (await import('~/pages/api/internal/app-assistant/cover/listing')).default;
+const listingRoute = (await import('~/server/api-routes/internal/app-assistant/cover/listing')).default;
 
 // TEST-ONLY values: a key pair generated for this run and a placeholder secret.
 const SECRET = 'test-only-runner-secret-for-covers';

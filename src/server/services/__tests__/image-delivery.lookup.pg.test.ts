@@ -60,7 +60,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
 
-import handler from '~/pages/api/internal/image-delivery/[id]';
+import handler from '~/server/api-routes/internal/image-delivery/[id]';
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
 // Every id is distinct, and none equals another field's value.

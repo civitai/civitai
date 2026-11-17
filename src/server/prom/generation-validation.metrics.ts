@@ -54,7 +54,7 @@ export const generationValidationRefusedCounter = registerCounterWithLabels({
  * is per surface, and the sentinel `none` for the other two labels cannot collide with a real
  * emit, which always carries a clamped workflow and a real field key.
  *
- * 🔴 SEEDING ALONE IS NOT ENOUGH. Nothing calls this except `src/pages/api/metrics.ts`; the
+ * 🔴 SEEDING ALONE IS NOT ENOUGH. Nothing calls this except `src/server/api-routes/metrics.ts`; the
  * only production path into the counter itself is a refusal, which by definition has already
  * happened. Both halves are required and neither works alone — the lesson the substitution
  * metric's own comment records after shipping without the second one.

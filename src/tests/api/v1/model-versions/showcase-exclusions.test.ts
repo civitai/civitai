@@ -183,16 +183,16 @@ async function call(route: Route, host: string) {
   const res = fakeRes();
   const headers = { host };
   if (route === 'id') {
-    const handler = (await import('~/pages/api/v1/model-versions/[id]')).default as any;
+    const handler = (await import('~/server/api-routes/v1/model-versions/[id]')).default as any;
     await handler({ method: 'GET', query: { id: String(VERSION), nsfw: 'true' }, headers }, res);
     return { res, version: res.body };
   }
   if (route === 'by-hash') {
-    const handler = (await import('~/pages/api/v1/model-versions/by-hash/[hash]')).default as any;
+    const handler = (await import('~/server/api-routes/v1/model-versions/by-hash/[hash]')).default as any;
     await handler({ method: 'GET', query: { hash: 'a'.repeat(64), nsfw: 'true' }, headers }, res);
     return { res, version: res.body };
   }
-  const handler = (await import('~/pages/api/v1/model-versions/by-hash')).default as any;
+  const handler = (await import('~/server/api-routes/v1/model-versions/by-hash')).default as any;
   await handler({ method: 'POST', query: {}, body: ['A'.repeat(64)], headers }, res);
   return { res, version: res.body?.[0] };
 }

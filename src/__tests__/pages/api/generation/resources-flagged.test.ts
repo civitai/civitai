@@ -21,7 +21,7 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   getServerAuthSession: vi.fn(async () => (session.user ? { user: session.user } : null)),
 }));
 
-import handler from '~/pages/api/generation/resources';
+import handler from '~/server/api-routes/generation/resources';
 
 /** `GET /api/generation/resources` leaves out resources of a model flagged `poi`. */
 

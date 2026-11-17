@@ -126,7 +126,7 @@ const FILE = {
   virusScanResult: 'Success',
 };
 
-const handler = (await import('~/pages/api/v1/model-versions/mini/[id]')).default as unknown as (
+const handler = (await import('~/server/api-routes/v1/model-versions/mini/[id]')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse
 ) => Promise<void>;

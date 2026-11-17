@@ -82,10 +82,10 @@ vi.mock('~/server/utils/get-server-stripe', () => ({
   getServerStripe: async () => stripeRef.current,
 }));
 
-import cancelHandler from '~/pages/api/mod/user/membership-cancel';
-import cancelPreviewHandler from '~/pages/api/mod/user/membership-cancel-preview';
-import resyncHandler from '~/pages/api/mod/user/membership-resync';
-import resyncPreviewHandler from '~/pages/api/mod/user/membership-resync-preview';
+import cancelHandler from '~/server/api-routes/mod/user/membership-cancel';
+import cancelPreviewHandler from '~/server/api-routes/mod/user/membership-cancel-preview';
+import resyncHandler from '~/server/api-routes/mod/user/membership-resync';
+import resyncPreviewHandler from '~/server/api-routes/mod/user/membership-resync-preview';
 
 type Handler = typeof cancelHandler;
 

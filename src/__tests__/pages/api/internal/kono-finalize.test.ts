@@ -17,7 +17,7 @@ vi.mock('~/server/services/games/new-order.service', () => ({
   leaveQueuesAfterModeratorRating: mocks.leaveQueues,
 }));
 
-import handler from '~/pages/api/internal/kono-finalize';
+import handler from '~/server/api-routes/internal/kono-finalize';
 
 describe('kono-finalize', () => {
   it('settles pending votes and leaves the queues even after v1 is retired', async () => {

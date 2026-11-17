@@ -86,7 +86,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 const { env } = await import('~/env/server');
 await import('~/pages/apps/dev/[blockId]');
-const endpoint = (await import('~/pages/api/apps/dev/entry-url')).default as unknown as (
+const endpoint = (await import('~/server/api-routes/apps/dev/entry-url')).default as unknown as (
   req: unknown,
   res: unknown
 ) => Promise<void>;

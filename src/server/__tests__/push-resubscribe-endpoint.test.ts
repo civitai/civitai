@@ -34,7 +34,7 @@ vi.mock('~/server/services/notification.service', () => ({
   deletePushSubscription,
 }));
 
-const handler = (await import('~/pages/api/push/resubscribe')).default as unknown as (
+const handler = (await import('~/server/api-routes/push/resubscribe')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,
   user: SessionUser

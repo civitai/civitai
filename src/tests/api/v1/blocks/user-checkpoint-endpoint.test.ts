@@ -53,7 +53,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 // eslint-disable-next-line import/first
-import setHandler from '~/pages/api/v1/blocks/user-checkpoint/set';
+import setHandler from '~/server/api-routes/v1/blocks/user-checkpoint/set';
 
 function createMocks(opts: { method?: string; body?: unknown; authorization?: string } = {}) {
   const headers: Record<string, string> = {};

@@ -49,7 +49,7 @@ vi.mock('~/server/utils/public-api-rate-limit', () => ({
 }));
 
 import { TRPCError } from '@trpc/server';
-import collectionHandler from '~/pages/api/v1/collections/[id]';
+import collectionHandler from '~/server/api-routes/v1/collections/[id]';
 import { GENERIC_SERVER_ERROR_MESSAGE as GENERIC_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 type Handler = (req: unknown, res: unknown, user: unknown) => Promise<unknown>;

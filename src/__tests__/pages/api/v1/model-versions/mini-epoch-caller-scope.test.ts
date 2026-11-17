@@ -50,7 +50,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
     },
 }));
 
-import handler from '~/pages/api/v1/model-versions/mini/[id]';
+import handler from '~/server/api-routes/v1/model-versions/mini/[id]';
 import {
   EPOCH_URL,
   GRANTEE_ID,

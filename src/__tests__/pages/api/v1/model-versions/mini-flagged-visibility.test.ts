@@ -25,7 +25,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       handler(req, res, currentUser.value),
 }));
 
-import handler from '~/pages/api/v1/model-versions/mini/[id]';
+import handler from '~/server/api-routes/v1/model-versions/mini/[id]';
 
 const VERSION_ID = 555;
 const OWNER_ID = 4242;

@@ -31,7 +31,7 @@ type Counts = { catch: number; await: number };
  * the entry when they go.
  */
 const FROZEN_BASELINE: Record<string, Counts> = {
-  'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts': { catch: 1, await: 0 },
+  'src/server/api-routes/orchestrator/getConsumerBlobUploadUrl.ts': { catch: 1, await: 0 },
   'src/server/http/orchestrator/orchestrator.caller.ts': { catch: 1, await: 0 },
   'src/server/jobs/sync-generator-loaded-resources.ts': { catch: 1, await: 0 },
   'src/server/orchestrator/get-orchestrator-token.ts': { catch: 2, await: 0 },

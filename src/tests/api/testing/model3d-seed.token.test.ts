@@ -6,7 +6,7 @@ const { mockGetSession } = vi.hoisted(() => ({ mockGetSession: vi.fn() }));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: mockGetSession }));
 
-import handler from '~/pages/api/testing/model3d-seed';
+import handler from '~/server/api-routes/testing/model3d-seed';
 
 async function call(secret: string | undefined, token: string) {
   setEnv({ WEBHOOK_TOKEN: secret });

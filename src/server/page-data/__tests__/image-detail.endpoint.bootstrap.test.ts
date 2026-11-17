@@ -102,7 +102,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   getLiveNow: vi.fn(async () => false),
 }));
 
-const handler = (await import('~/pages/api/page-data/images/[imageId]')).default;
+const handler = (await import('~/server/api-routes/page-data/images/[imageId]')).default;
 const { resolveSettingsBootstrapForRender, resolveSettingsBootstrapSeeds } = await import(
   '~/server/services/settings-bootstrap.service'
 );

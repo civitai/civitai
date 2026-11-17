@@ -17,9 +17,9 @@ const ALLOWLIST = [
   // Write or report the column itself — the raw fact, before the rule.
   'src/server/services/generator-loaded.service.ts',
   'src/server/jobs/sync-generator-loaded-resources.ts',
-  'src/pages/api/webhooks/resource-availability.ts',
-  'src/pages/api/testing/generator-loaded.ts',
-  'src/pages/api/testing/orchestrator-loaded.ts',
+  'src/server/api-routes/webhooks/resource-availability.ts',
+  'src/server/api-routes/testing/generator-loaded.ts',
+  'src/server/api-routes/testing/orchestrator-loaded.ts',
   // Field declarations and raw projections, not readings.
   'src/server/redis/resource-data.redis.ts',
   // An inline Prisma select, same as the selector modules below it — declaring the field so

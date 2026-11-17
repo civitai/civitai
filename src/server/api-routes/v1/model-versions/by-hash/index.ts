@@ -6,7 +6,7 @@ import {
   getVersionShowcaseImages,
   prepareModelVersionResponse,
   showcaseVariesByRegion,
-} from '~/pages/api/v1/model-versions/[id]';
+} from '~/server/api-routes/v1/model-versions/[id]';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { showsSfwFace } from '~/shared/utils/model-sfw-face';

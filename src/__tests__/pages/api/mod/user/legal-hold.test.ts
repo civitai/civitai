@@ -48,7 +48,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/legal-hold';
+import handler from '~/server/api-routes/mod/user/legal-hold';
 
 const TARGET = 990100034;
 const CLEAR = {

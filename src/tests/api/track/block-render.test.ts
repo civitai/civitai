@@ -141,7 +141,7 @@ describe('POST /api/track/block-render', () => {
 
   it('stamps isAnon:true server-side for an anonymous viewer (no session)', async () => {
     sessionStore.session = null;
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 
@@ -154,7 +154,7 @@ describe('POST /api/track/block-render', () => {
 
   it('stamps isAnon:false server-side for a logged-in viewer (has session.user)', async () => {
     sessionStore.session = { user: { id: 42 } };
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 
@@ -167,7 +167,7 @@ describe('POST /api/track/block-render', () => {
   it('IGNORES a client-smuggled isAnon/userId in the body (schema strips + server overrides)', async () => {
     // Anon session, but the client tries to spoof an authed render.
     sessionStore.session = null;
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({
       origin: 'https://civitai.com',
       body: { ...validInput, isAnon: false, userId: 9999 },
@@ -187,7 +187,7 @@ describe('POST /api/track/block-render', () => {
 
   it('dispatches when Next pre-parsed the body to an OBJECT (application/json — the real browser path)', async () => {
     sessionStore.session = null;
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput, objectBody: true });
     const res = makeRes();
 
@@ -199,7 +199,7 @@ describe('POST /api/track/block-render', () => {
   });
 
   it('accepts the referer host as the origin fallback', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({
       host: 'civitai.com',
       referer: 'https://civitai.com/models/1',
@@ -214,7 +214,7 @@ describe('POST /api/track/block-render', () => {
   });
 
   it('rejects a cross-origin request (host mismatch) with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({ host: 'civitai.com', origin: 'https://evil.example', body: validInput });
     const res = makeRes();
 
@@ -225,7 +225,7 @@ describe('POST /api/track/block-render', () => {
   });
 
   it('rejects a request with no origin/referer with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({ host: 'civitai.com', body: validInput });
     const res = makeRes();
 
@@ -236,7 +236,7 @@ describe('POST /api/track/block-render', () => {
   });
 
   it('rejects an unparseable body with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: '{not json' });
     const res = makeRes();
 
@@ -247,7 +247,7 @@ describe('POST /api/track/block-render', () => {
   });
 
   it('rejects schema-invalid input (missing required id) with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({
       origin: 'https://civitai.com',
       // appBlockId missing → 400
@@ -263,7 +263,7 @@ describe('POST /api/track/block-render', () => {
 
   it('short-circuits to 200 in dev without inserting', async () => {
     devStore.isDev = true;
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 
@@ -308,7 +308,7 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
 
   it('increments result=ok with error_class=none on a status-less beacon AND keeps status/errorClass out of the CH insert', async () => {
     const before = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({ origin: 'https://civitai.com', body: validInput });
     const res = makeRes();
 
@@ -324,7 +324,7 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
 
   it('increments result=error with the sent error_class label when the beacon carries status:"error"', async () => {
     const before = await renderCounterValue('apb_test', 'app.page', 'error', 'timeout');
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({
       origin: 'https://civitai.com',
       body: { ...validInput, status: 'error', errorClass: 'timeout' },
@@ -339,7 +339,7 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
   });
 
   it('preserves each KNOWN error_class on the label', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     for (const ec of [
       'fatal',
       'no_token',
@@ -385,7 +385,7 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
       'error',
       'token_lost_midsession'
     );
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const res = makeRes();
 
     await handler(
@@ -415,7 +415,7 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
     // The discriminator must not be `status === 'error'`. A mount that never
     // rendered emits exactly one beacon, and that beacon represents a real
     // attempted render that analytics must keep counting.
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
 
     await handler(
       makeReq({
@@ -434,7 +434,7 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
 
   it('clamps an UNKNOWN error_class to "other" (bounds the label) and still strips it from the CH insert', async () => {
     const before = await renderCounterValue('apb_test', 'app.page', 'error', 'other');
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({
       origin: 'https://civitai.com',
       body: { ...validInput, status: 'error', errorClass: 'attacker_garbage_zzz' },
@@ -454,7 +454,7 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
   it('clamps an UNKNOWN app_block_id to "other" (bounds the label) and preserves a known one', async () => {
     const beforeOther = await renderCounterValue('other', 'app.page', 'ok');
     const beforeKnown = await renderCounterValue('apb_test', 'app.page', 'ok');
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
 
     // Unknown/unapproved app id from a scripted client → bucketed to 'other'.
     const unknownReq = makeReq({
@@ -474,7 +474,7 @@ describe('POST /api/track/block-render — civitai_app_block_renders_total count
 
   it('clamps an unknown slot_id to "other" to bound label cardinality', async () => {
     const before = await renderCounterValue('apb_test', 'other', 'ok');
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const req = makeReq({
       origin: 'https://civitai.com',
       body: { ...validInput, slotId: 'totally.unknown.slot' },
@@ -521,7 +521,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
   it('observes the launch on an `ok` beacon that carries timings', async () => {
     const beforeTotal = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
     const beforeInit = await histCount(LAUNCH_PHASE, { phase: 'init_wait' });
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
 
     await handler(
       makeReq({ origin: 'https://civitai.com', body: { ...validInput, timings } }) as any,
@@ -542,7 +542,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
   it('🔴 one beacon still yields exactly ONE renders_total increment and ONE ClickHouse row', async () => {
     const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
     const beforeLaunch = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
 
     await handler(
       makeReq({ origin: 'https://civitai.com', body: { ...validInput, timings } }) as any,
@@ -561,7 +561,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    * go through the shared `blockRenderTrackerPayload` allowlist.
    */
   it('🔴 never forwards `timings` to the ClickHouse insert', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
 
     await handler(
       makeReq({ origin: 'https://civitai.com', body: { ...validInput, timings } }) as any,
@@ -597,7 +597,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    */
   /** The REST half of the `hello` allowlist pair — see the tRPC sibling. */
   it('🔴 accepts `hello` and keeps it out of the ClickHouse insert (REST writer)', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const withHello = { ...timings, hello: true };
 
     // The half that can go red at base: the strip assertion below passes even on
@@ -620,7 +620,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
   });
 
   it('🔴 accepts `initPosts` and keeps it out of the ClickHouse insert (REST writer)', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const withPosts = { ...timings, initPosts: 4 };
 
     // 🔴 THE HALF OF THIS TEST THAT CAN GO RED, and it has to be stated
@@ -658,7 +658,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    */
   it('🔴 observes initPosts on the prom side while ClickHouse stays unchanged', async () => {
     const before = await histCount(LAUNCH_INIT_POSTS, {});
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
 
     await handler(
       makeReq({
@@ -673,7 +673,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
   });
 
   it('🔴 does NOT observe initPosts for an `error` or `secondary` beacon', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const body = { ...validInput, timings: { ...timings, initPosts: 4 } };
     const before = await histCount(LAUNCH_INIT_POSTS, {});
 
@@ -705,7 +705,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    * here is otherwise indistinguishable from a metric wired to nothing.
    */
   it('🔴 does NOT observe a launch for an `error` beacon, even if timings are attached', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const before = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
 
     await handler(
@@ -726,7 +726,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
   });
 
   it('🔴 does NOT observe a launch for a `secondary` teardown beacon', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const before = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
 
     await handler(
@@ -759,7 +759,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    * gate with an input the first half cannot reject.
    */
   it('🔴 does NOT observe a launch for a secondary beacon that is also `ok`', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const before = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
 
     await handler(
@@ -784,7 +784,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
   });
 
   it('clamps an unknown app_block_id to "other" on the launch histogram too', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const before = await histCount(LAUNCH_TOTAL, { app_block_id: 'other' });
 
     await handler(
@@ -806,7 +806,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    * add-on must be strictly subordinate to the analytics event it rides on.
    */
   it('🔴 a malformed `timings` still records the impression — it does not 400 the beacon', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
     const beforeLaunch = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
     const res = makeRes();
@@ -835,7 +835,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    * no error.
    */
   it('records the impression normally when the beacon carries NO timings at all', async () => {
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const beforeRender = await renderCounterValue('apb_test', 'app.page', 'ok', 'none');
     const beforeLaunch = await histCount(LAUNCH_TOTAL, { app_block_id: 'apb_test' });
     const res = makeRes();
@@ -861,7 +861,7 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    */
   it('LOGS an unknown appBlockId but still records the impression', async () => {
     mockLogToAxiom.mockClear();
-    const handler = (await import('~/pages/api/track/block-render')).default;
+    const handler = (await import('~/server/api-routes/track/block-render')).default;
     const unknown = { ...validInput, appBlockId: 'apb_not_a_real_app' };
     const res = makeRes();
 

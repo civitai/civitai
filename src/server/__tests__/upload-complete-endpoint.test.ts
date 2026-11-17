@@ -54,7 +54,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 // NOTE: lives under src/server/__tests__ (not beside the handler) — Next.js scans
 // every .ts under src/pages/api as an API route and its route-type validator
 // rejects a test module.
-import handler from '~/pages/api/upload/complete';
+import handler from '~/server/api-routes/upload/complete';
 // Mocked in ~/__tests__/setup as vi.fn(); imported here so the LOG PAYLOAD is assertable.
 import { logToAxiom } from '~/server/logging/client';
 // The enforcement gate is read off the (mocked) server env; toggled per test below.

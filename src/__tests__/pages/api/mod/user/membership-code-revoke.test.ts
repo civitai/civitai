@@ -57,7 +57,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/membership-code-revoke';
+import handler from '~/server/api-routes/mod/user/membership-code-revoke';
 
 const TARGET = 8675309;
 const VALID = { userId: TARGET, code: 'MB-ABCD-EF12' };

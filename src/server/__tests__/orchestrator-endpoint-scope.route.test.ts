@@ -55,25 +55,25 @@ const routes: {
     name: 'generation/workflows/[workflowId]/status-update',
     scope: TokenScope.AIServicesRead,
     method: 'GET',
-    load: () => import('~/pages/api/generation/workflows/[workflowId]/status-update'),
+    load: () => import('~/server/api-routes/generation/workflows/[workflowId]/status-update'),
   },
   {
     name: 'orchestrator/refreshBlobs',
     scope: TokenScope.AIServicesRead,
     method: 'POST',
-    load: () => import('~/pages/api/orchestrator/refreshBlobs'),
+    load: () => import('~/server/api-routes/orchestrator/refreshBlobs'),
   },
   {
     name: 'orchestrator/blobRatings',
     scope: TokenScope.AIServicesRead,
     method: 'POST',
-    load: () => import('~/pages/api/orchestrator/blobRatings'),
+    load: () => import('~/server/api-routes/orchestrator/blobRatings'),
   },
   {
     name: 'orchestrator/getConsumerBlobUploadUrl',
     scope: TokenScope.AIServicesWrite,
     method: 'GET',
-    load: () => import('~/pages/api/orchestrator/getConsumerBlobUploadUrl'),
+    load: () => import('~/server/api-routes/orchestrator/getConsumerBlobUploadUrl'),
   },
 ];
 

@@ -15,7 +15,7 @@ vi.mock('~/server/services/notification-email.service', async (importOriginal) =
 }));
 
 const { getEmailUnsubscribeUrl } = await import('~/server/services/notification-email.service');
-const handler = (await import('~/pages/api/notifications/email-unsubscribe'))
+const handler = (await import('~/server/api-routes/notifications/email-unsubscribe'))
   .default as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
 const DEAL = 'service-deal-requested';

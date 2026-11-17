@@ -134,8 +134,8 @@ let _b2ImageProbeS3Client: S3Client | null = null;
  * paths.
  *
  * 🔴 WHY NOT JUST SET `maxAttempts` ON {@link getB2ImageS3Client}: that client is SHARED by
- * the live upload-completion endpoints (`src/pages/api/upload/complete.ts`,
- * `src/pages/api/upload/abort.ts`), the announcement media check
+ * the live upload-completion endpoints (`src/server/api-routes/upload/complete.ts`,
+ * `src/server/api-routes/upload/abort.ts`), the announcement media check
  * (`src/server/jobs/announcement-media-check.ts`) and the server-side upload/delete paths.
  * Those WANT the SDK's retries (3 attempts) — a transient 500 there loses a user's bytes.
  * Taking retries away from all of them to bound a telemetry probe would be a production change

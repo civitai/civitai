@@ -16,8 +16,8 @@ vi.mock('~/server/utils/model-gift-endpoint', async (importOriginal) => ({
       handler(req, res, { id: 7, isModerator: false }),
 }));
 
-import linkClaims from '~/pages/api/v1/model-versions/[id]/gifts/[giftId]/claims';
-import batchClaims from '~/pages/api/v1/model-versions/[id]/gifts/batch/[batchId]/claims';
+import linkClaims from '~/server/api-routes/v1/model-versions/[id]/gifts/[giftId]/claims';
+import batchClaims from '~/server/api-routes/v1/model-versions/[id]/gifts/batch/[batchId]/claims';
 
 async function call(
   handler: (req: NextApiRequest, res: NextApiResponse) => unknown,

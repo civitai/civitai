@@ -62,10 +62,10 @@ const { signRunGrant, signRunnerViewerToken } = await import(
 const { DEV_TUNNEL_IDLE_SECONDS, reapExpiredDevTunnels } = await import(
   '~/server/services/blocks/dev-tunnel.service'
 );
-const startRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/start')).default;
-const keepaliveRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/keepalive'))
+const startRoute = (await import('~/server/api-routes/internal/app-assistant/dev-tunnel/start')).default;
+const keepaliveRoute = (await import('~/server/api-routes/internal/app-assistant/dev-tunnel/keepalive'))
   .default;
-const stopRoute = (await import('~/pages/api/internal/app-assistant/dev-tunnel/stop')).default;
+const stopRoute = (await import('~/server/api-routes/internal/app-assistant/dev-tunnel/stop')).default;
 
 // TEST-ONLY values: a key pair generated for this run, a placeholder secret and host key.
 const SECRET = 'test-only-runner-secret-for-tunnels';

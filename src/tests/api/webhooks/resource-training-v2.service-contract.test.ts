@@ -88,7 +88,7 @@ vi.mock('~/server/webhooks/training-moderation.webhooks', () => ({
   queueNewTrainingModerationWebhook: vi.fn(() => Promise.resolve()),
 }));
 
-import handler from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
+import handler from '~/server/api-routes/webhooks/resource-training-v2/[modelVersionId]';
 import {
   PermanentTrainingWebhookError,
   TrainingRecordNotFoundError,

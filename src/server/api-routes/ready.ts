@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { isProd } from '~/env/other';
 import { isWarm, getWarmState, getWarmDurationMs, didFailOpenTimeout } from '~/server/warmup';
-import { runHealthChecks } from '~/pages/api/health';
+import { runHealthChecks } from '~/server/api-routes/health';
 import { ProbeEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 

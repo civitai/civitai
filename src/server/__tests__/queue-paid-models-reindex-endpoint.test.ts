@@ -33,7 +33,7 @@ vi.mock('~/server/services/paid-access.service', () => ({ queryGatedModelIds }))
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate } }));
 vi.mock('~/server/search-index/SearchIndexUpdate', () => ({ SearchIndexUpdate: { getQueue } }));
 
-const handler = (await import('~/pages/api/admin/temp/queue-paid-models-reindex')).default;
+const handler = (await import('~/server/api-routes/admin/temp/queue-paid-models-reindex')).default;
 
 const queued = (q: { content: number[] }) => ({ ...q, commit: async () => undefined });
 

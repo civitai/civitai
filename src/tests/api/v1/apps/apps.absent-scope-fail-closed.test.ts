@@ -104,8 +104,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: mockIsFlipt,
 }));
 
-import listHandler from '~/pages/api/v1/apps/index';
-import detailHandler from '~/pages/api/v1/apps/[slug]';
+import listHandler from '~/server/api-routes/v1/apps/index';
+import detailHandler from '~/server/api-routes/v1/apps/[slug]';
 
 type Handler = (req: unknown, res: unknown, user: unknown) => Promise<unknown>;
 

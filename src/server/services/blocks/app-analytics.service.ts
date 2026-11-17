@@ -593,7 +593,7 @@ export async function getMyAppAnalytics({
     //     🔴 THE `source` MARKER STRUCTURALLY COULD NOT REACH IT: different store, different
     //     writer, and — measured — NEITHER writer sees a block token at all. The row is
     //     written from a CLIENT beacon (`components/AppBlocks/sendBlockRender.ts` →
-    //     `pages/api/track/block-render.ts`) and from `track.router.ts`. So the closure is a
+    //     `server/api-routes/track/block-render.ts`) and from `track.router.ts`. So the closure is a
     //     predicate over the SESSION — `blocks/private-run-impression.service.ts` — applied
     //     at the insert in BOTH writers, which suppresses the row instead of marking it.
     //     Reasoning, the shape that was rejected and why, and the over-filtering bound:

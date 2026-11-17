@@ -21,7 +21,7 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
  * tradeoff), so this suite pins the ENTRY-gate behaviour, not full protection.
  */
 
-import handler from '~/pages/api/internal/dev-tunnel-gate';
+import handler from '~/server/api-routes/internal/dev-tunnel-gate';
 
 const SECRET = 'test-nextauth-secret-cccccccccccccccccccc';
 const HOST = 'dev-0123456789abcdef.civit.ai';

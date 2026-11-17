@@ -31,7 +31,7 @@ vi.mock('~/server/trpc', async (importOriginal) => ({
   },
 }));
 
-import handler from '~/pages/api/v1/models/com-face';
+import handler from '~/server/api-routes/v1/models/com-face';
 import {
   COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
   COM_FACE_REFUSED_EDIT_MESSAGE,

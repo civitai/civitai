@@ -24,8 +24,8 @@ vi.mock('~/server/services/knights/shop.service', () => ({
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: unknown) => handler }));
 
 // The real `WebhookEndpoint`: the token check is the endpoints' only authentication.
-const { default: membership } = await import('~/pages/api/mod/knights/shop/membership');
-const { default: cosmetics } = await import('~/pages/api/mod/knights/shop/cosmetics');
+const { default: membership } = await import('~/server/api-routes/mod/knights/shop/membership');
+const { default: cosmetics } = await import('~/server/api-routes/mod/knights/shop/cosmetics');
 const { BuzzMembershipRefusedError } = await import('~/server/services/subscriptions.service');
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => unknown;

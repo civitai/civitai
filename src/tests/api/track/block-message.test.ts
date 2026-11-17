@@ -104,7 +104,7 @@ async function bridgeCounterValue(labels: {
 }
 
 async function post(body: unknown) {
-  const handler = (await import('~/pages/api/track/block-message')).default;
+  const handler = (await import('~/server/api-routes/track/block-message')).default;
   const req = makeReq({ origin: 'https://civitai.com', body });
   const res = makeRes();
   await handler(req as any, res);
@@ -296,7 +296,7 @@ describe('POST /api/track/block-message — the bridge outcome counter', () => {
     // that strip Origin" refactor breaks. An allow-on-absent rule is satisfied by
     // sending nothing at all, so it would bound no one — on a public,
     // unauthenticated endpoint. Without this case that refactor lands green.
-    const handler = (await import('~/pages/api/track/block-message')).default;
+    const handler = (await import('~/server/api-routes/track/block-message')).default;
     const res = makeRes();
     await handler(makeReq({ body: { events: [event()] } }) as any, res);
     expect(res.status).toHaveBeenCalledWith(400);
@@ -306,7 +306,7 @@ describe('POST /api/track/block-message — the bridge outcome counter', () => {
   it('refuses a SUFFIX-matching origin, not just an unrelated one', async () => {
     // A `.endsWith()` refactor of the host comparison passes the `evil.example`
     // case below and fails only this one.
-    const handler = (await import('~/pages/api/track/block-message')).default;
+    const handler = (await import('~/server/api-routes/track/block-message')).default;
     const res = makeRes();
     await handler(
       makeReq({ origin: 'https://evil.civitai.com', body: { events: [event()] } }) as any,
@@ -326,7 +326,7 @@ describe('POST /api/track/block-message — the bridge outcome counter', () => {
       outcome: 'handled',
     };
     const before = await bridgeCounterValue(labels);
-    const handler = (await import('~/pages/api/track/block-message')).default;
+    const handler = (await import('~/server/api-routes/track/block-message')).default;
     const res = makeRes();
     await handler(
       makeReq({
@@ -340,7 +340,7 @@ describe('POST /api/track/block-message — the bridge outcome counter', () => {
   });
 
   it('refuses a cross-origin beacon', async () => {
-    const handler = (await import('~/pages/api/track/block-message')).default;
+    const handler = (await import('~/server/api-routes/track/block-message')).default;
     const res = makeRes();
     await handler(
       makeReq({ origin: 'https://evil.example', body: { events: [event()] } }) as any,
@@ -360,7 +360,7 @@ describe('POST /api/track/block-message — the bridge outcome counter', () => {
       outcome: 'rate_limited',
     };
     const before = await bridgeCounterValue(labels);
-    const handler = (await import('~/pages/api/track/block-message')).default;
+    const handler = (await import('~/server/api-routes/track/block-message')).default;
     const res = makeRes();
     await handler(
       makeReq({

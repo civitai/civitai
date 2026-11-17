@@ -164,7 +164,7 @@ vi.mock('~/server/redis/caches', () => ({
 }));
 
 import mintHandler from '~/pages/api/v1/download-links/index';
-import revokeHandler from '~/pages/api/v1/download-links/[linkId]';
+import revokeHandler from '~/server/api-routes/v1/download-links/[linkId]';
 import linkHandler from '~/pages/api/download/l/[id]';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
 import { clearGateReadCache } from '~/server/services/download-link/generation-fetch.service';

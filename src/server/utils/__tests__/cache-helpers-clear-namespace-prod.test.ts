@@ -199,7 +199,7 @@ describe('admin cache-clear namespace scoping — production (no namespace)', ()
   });
 
   it('the endpoint passes the caller glob through unchanged', async () => {
-    const handler = (await import('~/pages/api/admin/clear-cache-by-pattern')).default as (
+    const handler = (await import('~/server/api-routes/admin/clear-cache-by-pattern')).default as (
       req: unknown,
       res: unknown
     ) => Promise<void>;
@@ -213,7 +213,7 @@ describe('admin cache-clear namespace scoping — production (no namespace)', ()
   });
 
   it('the endpoint reports the caller patterns verbatim on the multi-pattern path', async () => {
-    const handler = (await import('~/pages/api/admin/clear-cache-by-pattern')).default as (
+    const handler = (await import('~/server/api-routes/admin/clear-cache-by-pattern')).default as (
       req: unknown,
       res: unknown
     ) => Promise<void>;
@@ -236,7 +236,7 @@ describe('admin cache-clear namespace scoping — production (no namespace)', ()
   // Mechanism only: system keys are unprefixed everywhere, so there is nothing for the namespace
   // to do here. Not a containment claim for the sys target — see `cacheNamespacePrefix`.
   it('the endpoint leaves the sys target alone and hits the sys client', async () => {
-    const handler = (await import('~/pages/api/admin/clear-cache-by-pattern')).default as (
+    const handler = (await import('~/server/api-routes/admin/clear-cache-by-pattern')).default as (
       req: unknown,
       res: unknown
     ) => Promise<void>;
@@ -251,7 +251,7 @@ describe('admin cache-clear namespace scoping — production (no namespace)', ()
   });
 
   it('preserves the SSE event sequence and payload shape', async () => {
-    const handler = (await import('~/pages/api/admin/clear-cache-by-pattern')).default as (
+    const handler = (await import('~/server/api-routes/admin/clear-cache-by-pattern')).default as (
       req: unknown,
       res: unknown
     ) => Promise<void>;

@@ -87,7 +87,7 @@ export function createPartStallWatchdog(onStall: () => void) {
  * `/api/upload/abort` body so the server-side `s3-upload-abort` event can say WHY the
  * client stopped — the field whose absence forced the 2026-09 image-upload investigation
  * to ask users for devtools screenshots. Caller-shaped input is sanitized again
- * server-side (see `sanitizeClientFailure` in `src/pages/api/upload/abort.ts`); this
+ * server-side (see `sanitizeClientFailure` in `src/server/api-routes/upload/abort.ts`); this
  * side only ever produces the five shapes below.
  *
  * A user cancel maps to `client-aborted` ahead of every other reading: the cancel trips

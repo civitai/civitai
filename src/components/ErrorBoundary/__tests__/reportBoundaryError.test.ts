@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { reportBoundaryError } from '~/components/ErrorBoundary/reportBoundaryError';
-import { applicationErrorSchema } from '~/pages/api/application-error';
+import { applicationErrorSchema } from '~/server/api-routes/application-error';
 
 /** A resolved-promise `fetch` double, so the reporter's fire-and-forget `.catch` has a target. */
 const okFetch = () =>

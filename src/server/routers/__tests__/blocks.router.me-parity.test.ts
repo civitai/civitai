@@ -234,7 +234,7 @@ vi.mock('~/server/middleware.trpc', async () => {
   return { rateLimit: () => middleware(async ({ next }) => next()) };
 });
 
-import restHandler from '~/pages/api/v1/blocks/me';
+import restHandler from '~/server/api-routes/v1/blocks/me';
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';

@@ -14,7 +14,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
 
-import handler from '~/pages/api/admin/rescan-images';
+import handler from '~/server/api-routes/admin/rescan-images';
 
 const runRequest = async (imageIds: string) => {
   const req = { method: 'GET', query: { imageIds } } as unknown as NextApiRequest;

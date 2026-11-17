@@ -145,7 +145,7 @@ vi.mock('~/server/redis/caches', () => ({
 
 // Static import: model.service's cold transform belongs in collection, not in one test's budget
 // (see get-models-raw.transient-503.test.ts).
-import handler from '~/pages/api/v1/blocks/models';
+import handler from '~/server/api-routes/v1/blocks/models';
 import toolsHandler from '~/pages/api/v1/blocks/tools';
 import { resolveModelSearchIds } from '~/server/services/model-search.service';
 

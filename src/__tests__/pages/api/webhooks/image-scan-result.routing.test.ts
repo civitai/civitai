@@ -38,7 +38,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
 }));
 vi.mock('~/server/utils/webhook-debounce', () => ({ fanOutArticleImageUpdates: vi.fn() }));
 
-import handler from '~/pages/api/webhooks/image-scan-result';
+import handler from '~/server/api-routes/webhooks/image-scan-result';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const call = async (body: unknown) => {

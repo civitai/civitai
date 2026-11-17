@@ -18,7 +18,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   OrchestratorEndpoint: (handler: unknown) => handler,
 }));
 
-const handler = (await import('~/pages/api/orchestrator/getConsumerBlobUploadUrl'))
+const handler = (await import('~/server/api-routes/orchestrator/getConsumerBlobUploadUrl'))
   .default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,

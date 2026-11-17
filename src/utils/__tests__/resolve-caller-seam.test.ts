@@ -216,8 +216,8 @@ describe('storage-resolver attribution call-site ledger', () => {
   it('every resolveDownloadUrl call names its caller and actor', () => {
     expect(scan('resolveDownloadUrl')).toEqual({
       'pages/api/download/vault/[vaultItemId].ts': ['vault|derived'],
-      'pages/api/internal/get-presigned-url.ts': ['internal-presigned|internal'],
-      'pages/api/mod/training-data/resolve.ts': ['training-data|derived'],
+      'server/api-routes/internal/get-presigned-url.ts': ['internal-presigned|internal'],
+      'server/api-routes/mod/training-data/resolve.ts': ['training-data|derived'],
       'server/controllers/model.controller.ts': ['link|derived', 'link|derived'],
       'server/services/download-link/download-link.service.ts': ['other|internal'],
       'server/services/file.service.ts': ['threaded'],
@@ -235,7 +235,7 @@ describe('storage-resolver attribution call-site ledger', () => {
   it('every getFileForModelVersion call names the caller it resolves for', () => {
     expect(scan('getFileForModelVersion')).toEqual({
       'pages/api/download/models/[modelVersionId].ts': ['download-route|derived'],
-      'pages/api/v1/model-files/[id]/tensor-metadata.ts': ['other|derived'],
+      'server/api-routes/v1/model-files/[id]/tensor-metadata.ts': ['other|derived'],
       'server/services/csam.service-new.ts': ['other|internal'],
       'server/services/csam.service.ts': ['other|internal'],
       'server/services/resource-file.service.ts': ['other|derived'],

@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest';
  * 🔴 KNOWN UN-LEDGERED SERVER-SIDE FETCHES OF A CALLER-INFLUENCED URL, recorded so this file
  * cannot be read as an exhaustive inventory of the hazard class:
  *  - `src/server/utils/og-image-helpers.ts` — `fetch()` on a `getEdgeUrl(image.url, …)`,
- *    reached from the public `src/pages/api/og.tsx`. Whether every `Image.url` reaching it can
+ *    reached from the public `src/server/api-routes/og.tsx`. Whether every `Image.url` reaching it can
  *    be attacker-chosen is NOT established.
  * It is not in scope for this change. It is listed because a guard whose description is
  * wider than its body is worse than no guard. (Chat link previews used to be listed here; they
@@ -90,7 +90,7 @@ const GATED_FUNNELS: [string, string][] = [
   ['server/services/video-dimensions.ts', 'probeVideoDimensions → orchestrator videoMetadata'],
   ['server/services/creator-shop.service.ts', 'validateArtwork → fetch() from the WEB pod'],
   ['server/controllers/user.controller.ts', 'verifyAvatar'],
-  ['pages/api/media/ingest/[mediaId].ts', 'the ingest route maps the refusal to a status'],
+  ['server/api-routes/media/ingest/[mediaId].ts', 'the ingest route maps the refusal to a status'],
   [
     'server/services/csam-original-image.ts',
     'readOriginalImage → fetch() of a stored full URL (csam-original-image.test.ts)',

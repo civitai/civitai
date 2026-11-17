@@ -43,7 +43,7 @@ vi.mock('~/server/services/resource-residency.service', async (importOriginal) =
   bustResourceResidency: bustResidency,
 }));
 
-const handler = (await import('~/pages/api/webhooks/resource-availability')).default;
+const handler = (await import('~/server/api-routes/webhooks/resource-availability')).default;
 
 type Event = { air: string; workersAvailable: number; loaded?: boolean };
 

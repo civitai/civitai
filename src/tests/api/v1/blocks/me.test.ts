@@ -123,7 +123,7 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...a: unknown[]) => mockCheckRateLimit(...a),
 }));
 
-import handler from '~/pages/api/v1/blocks/me';
+import handler from '~/server/api-routes/v1/blocks/me';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindUnique = dbMock.dbWrite.user.findUnique;
 

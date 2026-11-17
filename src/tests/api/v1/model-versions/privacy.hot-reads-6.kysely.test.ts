@@ -98,7 +98,7 @@ function modelVersion() {
 }
 
 const prepare = async () =>
-  (await import('~/pages/api/v1/model-versions/[id]')).prepareModelVersionResponse(
+  (await import('~/server/api-routes/v1/model-versions/[id]')).prepareModelVersionResponse(
     modelVersion(),
     new URL('https://civitai.com'),
     [],

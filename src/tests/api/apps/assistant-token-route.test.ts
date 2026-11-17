@@ -24,7 +24,7 @@ vi.mock('~/server/services/app-assistant/app-assistant.service', () => ({
   mintAppAssistantToken: mint,
 }));
 
-const handler = (await import('~/pages/api/apps/assistant/token')).default as unknown as (
+const handler = (await import('~/server/api-routes/apps/assistant/token')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse
 ) => Promise<void>;

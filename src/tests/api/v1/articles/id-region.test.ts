@@ -30,7 +30,7 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 import '~/__tests__/mocks/db.mock';
 import { TRPCError } from '@trpc/server';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
-import handler from '~/pages/api/v1/articles/[id]';
+import handler from '~/server/api-routes/v1/articles/[id]';
 
 const { PG, PG13, R, X } = NsfwLevel;
 

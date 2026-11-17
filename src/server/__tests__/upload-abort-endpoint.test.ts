@@ -38,7 +38,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => ({ user: { id: 42, bannedAt: null } })),
 }));
 
-import handler from '~/pages/api/upload/abort';
+import handler from '~/server/api-routes/upload/abort';
 // Mocked in ~/__tests__/setup as vi.fn(); imported here so it can be made to REJECT.
 import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';

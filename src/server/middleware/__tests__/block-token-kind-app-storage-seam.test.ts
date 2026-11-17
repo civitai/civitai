@@ -204,7 +204,7 @@ describe('block-token kind × app storage — the seam the manifest guard closes
     // would not discriminate.
     it('DISCRIMINATES: blocks/me.ts (claims-only) is not in the set', () => {
       const me = stripComments(
-        readFileSync(path.join(REPO_SRC, 'pages/api/v1/blocks/me.ts'), 'utf8')
+        readFileSync(path.join(REPO_SRC, 'server/api-routes/v1/blocks/me.ts'), 'utf8')
       );
       expect(me).toContain('blockClaims');
       expect(me.includes('(bearer(req)')).toBe(false);

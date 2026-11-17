@@ -49,7 +49,7 @@ import { logToAxiom } from '~/server/logging/client';
  * written from the verified token claim (`blocks/scope-activity-predicate.ts`). That could
  * not be reused: different store, different writer, and NEITHER writer sees a block token —
  * the row comes from a client beacon (`components/AppBlocks/sendBlockRender.ts` →
- * `pages/api/track/block-render.ts`) and from `track.router.ts`.
+ * `server/api-routes/track/block-render.ts`) and from `track.router.ts`.
  *
  * ── THE TWO SHAPES, AND WHY THIS ONE ─────────────────────────────────────────
  * (a) SUPPRESS THE INSERT on a private-run mount. (b) Carry a marker through the beacon

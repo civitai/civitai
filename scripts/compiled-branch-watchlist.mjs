@@ -127,7 +127,7 @@ export const COMPILED_BRANCH_WATCHLIST = [
   {
     id: 'block-token-subject-refusal',
     // MOVED 2026-09-18 out of `src/server/routers/blocks.router.ts`. The function is now
-    // shared with the REST route `src/pages/api/v1/blocks/me.ts`, which cannot import a
+    // shared with the REST route `src/server/api-routes/v1/blocks/me.ts`, which cannot import a
     // tRPC router — so it lives in a service and BOTH doors call it. This field is a PIN:
     // the move made both anchors below resolve to zero lines in the old module until it
     // was updated here, which is the failure to expect if it is ever moved again.

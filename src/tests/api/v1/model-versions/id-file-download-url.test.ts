@@ -211,7 +211,7 @@ const VAE_FILE = {
 };
 
 async function prepare(vaeId?: number) {
-  const mod = await import('~/pages/api/v1/model-versions/[id]');
+  const mod = await import('~/server/api-routes/v1/model-versions/[id]');
   return mod.prepareModelVersionResponse(
     { ...modelVersion(), vaeId } as any,
     new URL('https://civitai.com'),
@@ -366,7 +366,7 @@ describe('GET /api/v1/model-versions/by-hash/[hash] — same shaper, same pin', 
   });
 
   async function invokeByHash(host = 'civitai.com') {
-    const mod = await import('~/pages/api/v1/model-versions/by-hash/[hash]');
+    const mod = await import('~/server/api-routes/v1/model-versions/by-hash/[hash]');
     const handler = mod.default as (req: any, res: any) => Promise<void>;
     const res: any = {
       headers: {} as Record<string, string>,

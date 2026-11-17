@@ -13,7 +13,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
 
-import handler from '~/pages/api/admin/temp/backfill-model-permission-snapshots';
+import handler from '~/server/api-routes/admin/temp/backfill-model-permission-snapshots';
 import {
   PERMISSION_FIELDS,
   modelEventsQuery,

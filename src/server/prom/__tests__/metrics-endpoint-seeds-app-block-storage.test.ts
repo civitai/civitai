@@ -50,7 +50,7 @@ describe('/api/metrics publishes the App Blocks storage series', () => {
   });
 
   it('CONTROL 2: loading the module registers them but publishes NO series', async () => {
-    await import('~/pages/api/metrics');
+    await import('~/server/api-routes/metrics');
 
     // Registered (so the names resolve) and empty (so the next case is measuring the handler
     // call, not module evaluation). This is what fails if the seeding is moved back to module
@@ -64,7 +64,7 @@ describe('/api/metrics publishes the App Blocks storage series', () => {
   });
 
   it('🔴 serving one scrape publishes all 90 of them', async () => {
-    const mod = await import('~/pages/api/metrics');
+    const mod = await import('~/server/api-routes/metrics');
     const handler = mod.default as unknown as (
       req: unknown,
       res: {
@@ -90,7 +90,7 @@ describe('/api/metrics publishes the App Blocks storage series', () => {
   });
 
   it('🔴 the same scrape publishes the 230 shared storage series', async () => {
-    const mod = await import('~/pages/api/metrics');
+    const mod = await import('~/server/api-routes/metrics');
     const handler = mod.default as unknown as (
       req: unknown,
       res: { setHeader: (k: string, v: string) => void; send: (body: string) => void }

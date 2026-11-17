@@ -21,7 +21,7 @@ describe('/api/metrics publishes the App Block build-outcome series', () => {
   });
 
   it('loading the page module seeds all 22 series at 0', async () => {
-    await import('~/pages/api/metrics');
+    await import('~/server/api-routes/metrics');
     const metric = client.register.getSingleMetric(NAME) as unknown as {
       get(): Promise<{ values: { value: number }[] }>;
     };

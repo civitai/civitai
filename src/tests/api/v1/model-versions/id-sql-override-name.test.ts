@@ -111,7 +111,7 @@ afterAll(async () => {
 });
 
 async function getVersion() {
-  const mod = await import('~/pages/api/v1/model-versions/[id]');
+  const mod = await import('~/server/api-routes/v1/model-versions/[id]');
   const handler = mod.default as unknown as (
     req: NextApiRequest,
     res: NextApiResponse,

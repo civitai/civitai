@@ -105,7 +105,7 @@ vi.mock('~/server/utils/region-blocking', () => ({
   isRegionRestricted: () => false,
 }));
 
-import handler from '~/pages/api/v1/model-versions/by-hash/index';
+import handler from '~/server/api-routes/v1/model-versions/by-hash/index';
 
 const HASH = 'A'.repeat(64);
 

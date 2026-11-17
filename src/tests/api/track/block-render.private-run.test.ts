@@ -142,7 +142,7 @@ function makeReq(body: unknown) {
 
 /** Drive the BEACON writer. Returns the number of `blockRenders` inserts it produced. */
 async function viaBeacon(body: unknown): Promise<number> {
-  const handler = (await import('~/pages/api/track/block-render')).default;
+  const handler = (await import('~/server/api-routes/track/block-render')).default;
   const res = makeRes();
   await (handler as (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>)(
     makeReq(body),

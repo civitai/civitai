@@ -20,7 +20,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import handler from '~/pages/api/mod/bounty-entry-file/reblock-check';
+import handler from '~/server/api-routes/mod/bounty-entry-file/reblock-check';
 
 /**
  * Who may re-block and what the request must carry. What the re-block writes is covered against a

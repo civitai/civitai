@@ -54,7 +54,7 @@ vi.mock('~/env/server', () => ({
   ),
 }));
 
-import handler from '~/pages/api/mod/adjust-tag-level';
+import handler from '~/server/api-routes/mod/adjust-tag-level';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const runRequest = (query: Record<string, string>) => {

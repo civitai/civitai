@@ -55,7 +55,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
-import handler from '~/pages/api/v1/posts/[id]';
+import handler from '~/server/api-routes/v1/posts/[id]';
 
 const PUBLIC_CACHE = 'public, s-maxage=300, stale-while-revalidate=150';
 

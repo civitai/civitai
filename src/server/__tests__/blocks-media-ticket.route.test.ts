@@ -6,7 +6,7 @@ const { resolveBlockMediaFetch } = vi.hoisted(() => ({ resolveBlockMediaFetch: v
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: unknown) => handler }));
 vi.mock('~/server/services/blocks/block-media-serving', () => ({ resolveBlockMediaFetch }));
 
-const handler = (await import('~/pages/api/v1/blocks/media/[ticket]')).default as unknown as (
+const handler = (await import('~/server/api-routes/v1/blocks/media/[ticket]')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse
 ) => Promise<void>;

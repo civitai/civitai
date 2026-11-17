@@ -293,8 +293,8 @@ const ROUTES: Record<string, RouteSpec> = {
     body: { key: 'k', value: 1 },
     scope: 'apps:storage:write',
   },
-  'src/pages/api/v1/blocks/buzz.ts': {
-    load: () => import('~/pages/api/v1/blocks/buzz'),
+  'src/server/api-routes/v1/blocks/buzz.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/buzz'),
     method: 'GET',
     scope: 'buzz:read:self',
   },
@@ -316,31 +316,31 @@ const ROUTES: Record<string, RouteSpec> = {
     method: 'GET',
     scope: 'collections:read:self',
   },
-  'src/pages/api/v1/blocks/entitlements.ts': {
-    load: () => import('~/pages/api/v1/blocks/entitlements'),
+  'src/server/api-routes/v1/blocks/entitlements.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/entitlements'),
     method: 'GET',
     scope: 'goods:read:self',
   },
-  'src/pages/api/v1/blocks/gated-images.ts': {
-    load: () => import('~/pages/api/v1/blocks/gated-images'),
+  'src/server/api-routes/v1/blocks/gated-images.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/gated-images'),
     method: 'GET',
     query: { ids: '1' },
     scope: null,
   },
-  'src/pages/api/v1/blocks/workflow-media.ts': {
-    load: () => import('~/pages/api/v1/blocks/workflow-media'),
+  'src/server/api-routes/v1/blocks/workflow-media.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/workflow-media'),
     method: 'POST',
     body: { refs: ['bm1.not-a-ref'] },
     scope: null,
   },
-  'src/pages/api/v1/blocks/generation-resources.ts': {
-    load: () => import('~/pages/api/v1/blocks/generation-resources'),
+  'src/server/api-routes/v1/blocks/generation-resources.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/generation-resources'),
     method: 'GET',
     query: { ids: '1' },
     scope: null,
   },
-  'src/pages/api/v1/blocks/generation-samplers.ts': {
-    load: () => import('~/pages/api/v1/blocks/generation-samplers'),
+  'src/server/api-routes/v1/blocks/generation-samplers.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/generation-samplers'),
     method: 'GET',
     scope: null,
   },
@@ -355,18 +355,18 @@ const ROUTES: Record<string, RouteSpec> = {
     method: 'GET',
     scope: null,
   },
-  'src/pages/api/v1/blocks/me.ts': {
-    load: () => import('~/pages/api/v1/blocks/me'),
+  'src/server/api-routes/v1/blocks/me.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/me'),
     method: 'GET',
     scope: 'user:read:self',
   },
-  'src/pages/api/v1/blocks/models.ts': {
-    load: () => import('~/pages/api/v1/blocks/models'),
+  'src/server/api-routes/v1/blocks/models.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/models'),
     method: 'GET',
     scope: null,
   },
-  'src/pages/api/v1/blocks/resource-intent.ts': {
-    load: () => import('~/pages/api/v1/blocks/resource-intent'),
+  'src/server/api-routes/v1/blocks/resource-intent.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/resource-intent'),
     method: 'POST',
     body: { prompt: 'a cat' },
     scope: null,
@@ -435,8 +435,8 @@ const ROUTES: Record<string, RouteSpec> = {
     body: { key: 'k' },
     scope: 'apps:storage:shared:write',
   },
-  'src/pages/api/v1/blocks/sub-listings/mine.ts': {
-    load: () => import('~/pages/api/v1/blocks/sub-listings/mine'),
+  'src/server/api-routes/v1/blocks/sub-listings/mine.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/sub-listings/mine'),
     method: 'GET',
     scope: 'apps:store:items:write',
   },
@@ -452,8 +452,8 @@ const ROUTES: Record<string, RouteSpec> = {
     body: {},
     scope: 'apps:store:items:write',
   },
-  'src/pages/api/v1/blocks/tip-allowance.ts': {
-    load: () => import('~/pages/api/v1/blocks/tip-allowance'),
+  'src/server/api-routes/v1/blocks/tip-allowance.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/tip-allowance'),
     method: 'GET',
     scope: 'social:tip:self',
   },
@@ -478,8 +478,8 @@ const ROUTES: Record<string, RouteSpec> = {
     query: { path: ['prefs', 'k'] },
     scope: 'apps:storage',
   },
-  'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
-    load: () => import('~/pages/api/v1/blocks/user-checkpoint/set'),
+  'src/server/api-routes/v1/blocks/user-checkpoint/set.ts': {
+    load: () => import('~/server/api-routes/v1/blocks/user-checkpoint/set'),
     method: 'POST',
     body: { versionId: 1 },
     scope: null,
@@ -514,8 +514,8 @@ const ROUTES: Record<string, RouteSpec> = {
     body: { body: WORKFLOW_BODY, idempotencyKey: 'idem_char' },
     scope: 'ai:write:budgeted',
   },
-  'src/pages/api/v1/models/[id].ts': {
-    load: () => import('~/pages/api/v1/models/[id]'),
+  'src/server/api-routes/v1/models/[id].ts': {
+    load: () => import('~/server/api-routes/v1/models/[id]'),
     method: 'GET',
     query: { id: '7' },
     scope: 'models:read:self',
@@ -1582,7 +1582,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['apps:storage:write']
     ),
   },
-  'src/pages/api/v1/blocks/buzz.ts': {
+  'src/server/api-routes/v1/blocks/buzz.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -2144,7 +2144,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['collections:read:self']
     ),
   },
-  'src/pages/api/v1/blocks/entitlements.ts': {
+  'src/server/api-routes/v1/blocks/entitlements.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -2286,7 +2286,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['goods:read:self']
     ),
   },
-  'src/pages/api/v1/blocks/gated-images.ts': {
+  'src/server/api-routes/v1/blocks/gated-images.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -2428,7 +2428,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       []
     ),
   },
-  'src/pages/api/v1/blocks/workflow-media.ts': {
+  'src/server/api-routes/v1/blocks/workflow-media.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -2570,7 +2570,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       []
     ),
   },
-  'src/pages/api/v1/blocks/generation-resources.ts': {
+  'src/server/api-routes/v1/blocks/generation-resources.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -2717,7 +2717,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
   // admitted cells are PASSED rather than pinned verbatim here; its shape and contents are
   // pinned in `src/tests/api/v1/blocks/generation-samplers-endpoint.test.ts`. No limiter: the
   // route is deliberately not rate-limited (see its header), so `rate limited` is served.
-  'src/pages/api/v1/blocks/generation-samplers.ts': {
+  'src/server/api-routes/v1/blocks/generation-samplers.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -3003,7 +3003,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       []
     ),
   },
-  'src/pages/api/v1/blocks/me.ts': {
+  'src/server/api-routes/v1/blocks/me.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -3151,7 +3151,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['user:read:self']
     ),
   },
-  'src/pages/api/v1/blocks/models.ts': {
+  'src/server/api-routes/v1/blocks/models.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -3241,7 +3241,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       []
     ),
   },
-  'src/pages/api/v1/blocks/resource-intent.ts': {
+  'src/server/api-routes/v1/blocks/resource-intent.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -4980,7 +4980,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['apps:storage:shared:write']
     ),
   },
-  'src/pages/api/v1/blocks/sub-listings/mine.ts': {
+  'src/server/api-routes/v1/blocks/sub-listings/mine.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -5378,7 +5378,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['apps:store:items:write']
     ),
   },
-  'src/pages/api/v1/blocks/tip-allowance.ts': {
+  'src/server/api-routes/v1/blocks/tip-allowance.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -6019,7 +6019,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['apps:storage']
     ),
   },
-  'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
+  'src/server/api-routes/v1/blocks/user-checkpoint/set.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
     'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': X(
@@ -6954,7 +6954,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['ai:write:budgeted']
     ),
   },
-  'src/pages/api/v1/models/[id].ts': {
+  'src/server/api-routes/v1/models/[id].ts': {
     'no bearer': PASSED(false, [], [], null),
     'wrong method, no bearer': PASSED(false, [], [], null),
     'non-JWT bearer (OAuth tokens off)': PASSED(false, [], [], null),
@@ -7057,7 +7057,7 @@ describe('withBlockScope REST routes — characterisation table', () => {
       .sort();
     // Positive control on the derivation itself: it must find a known route, so an empty
     // walk (wrong cwd, wrong root) cannot read as "the table covers everything".
-    expect(derived).toContain('src/pages/api/v1/blocks/me.ts');
+    expect(derived).toContain('src/server/api-routes/v1/blocks/me.ts');
     expect(derived).toEqual(Object.keys(ROUTES).sort());
     expect(Object.keys(EXPECTED).sort()).toEqual(Object.keys(ROUTES).sort());
   });

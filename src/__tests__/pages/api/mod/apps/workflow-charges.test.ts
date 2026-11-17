@@ -78,7 +78,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorFeeEnabled: vi.fn(async () => true),
 }));
 
-import handler from '~/pages/api/mod/apps/workflow-charges';
+import handler from '~/server/api-routes/mod/apps/workflow-charges';
 import {
   planAppWorkflowRefunds,
   SKIP_REASONS,

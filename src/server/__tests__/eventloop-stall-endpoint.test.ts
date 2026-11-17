@@ -35,7 +35,7 @@ function mockRes() {
 
 describe('synthetic stall endpoint gating', () => {
   it('404s and never stalls when the env gate is unset', async () => {
-    const mod = await import('~/pages/api/testing/eventloop-stall');
+    const mod = await import('~/server/api-routes/testing/eventloop-stall');
     const res = mockRes();
 
     const startedAt = Date.now();
@@ -58,7 +58,7 @@ describe('synthetic stall endpoint gating', () => {
     // called, there is no wrapped stall handler in this build at all.
     webhookEndpoint.mockClear();
 
-    await import('~/pages/api/testing/eventloop-stall');
+    await import('~/server/api-routes/testing/eventloop-stall');
 
     expect(webhookEndpoint).not.toHaveBeenCalled();
   });
@@ -67,7 +67,7 @@ describe('synthetic stall endpoint gating', () => {
     webhookEndpoint.mockClear();
     process.env[GATE] = 'true';
 
-    await import('~/pages/api/testing/eventloop-stall');
+    await import('~/server/api-routes/testing/eventloop-stall');
 
     expect(webhookEndpoint).toHaveBeenCalledTimes(1);
   });
@@ -76,7 +76,7 @@ describe('synthetic stall endpoint gating', () => {
     for (const value of ['1', 'yes', 'TRUE', 'false', '']) {
       vi.resetModules();
       process.env[GATE] = value;
-      const mod = await import('~/pages/api/testing/eventloop-stall');
+      const mod = await import('~/server/api-routes/testing/eventloop-stall');
       const res = mockRes();
 
       await mod.default({ query: {}, body: {} } as never, res as never);
@@ -89,7 +89,7 @@ describe('synthetic stall endpoint gating', () => {
     // Without this the 404 tests above would pass just as happily against an
     // endpoint that is broken in some unrelated way.
     process.env[GATE] = 'true';
-    const mod = await import('~/pages/api/testing/eventloop-stall');
+    const mod = await import('~/server/api-routes/testing/eventloop-stall');
     const res = mockRes();
 
     await mod.default({ query: {}, body: { durationMs: 60, mode: 'spin' } } as never, res as never);
@@ -105,7 +105,7 @@ describe('synthetic stall endpoint gating', () => {
     // endpoint pins the loop indefinitely and crosses the liveness threshold — a
     // bounded primitive that is unbounded in aggregate is not bounded.
     process.env[GATE] = 'true';
-    const mod = await import('~/pages/api/testing/eventloop-stall');
+    const mod = await import('~/server/api-routes/testing/eventloop-stall');
 
     const first = mockRes();
     await mod.default(
@@ -133,7 +133,7 @@ describe('synthetic stall endpoint gating', () => {
     // Purely on the resolver. Driving this through the handler would mean actually
     // hard-locking the thread for the clamped ceiling, which is a 10s test that also
     // starves whatever else the suite is running in parallel.
-    const { resolveStallRequest } = await import('~/pages/api/testing/eventloop-stall');
+    const { resolveStallRequest } = await import('~/server/api-routes/testing/eventloop-stall');
 
     const clamped = (durationMs: unknown) => {
       const parsed = resolveStallRequest({ durationMs, mode: 'spin' });
@@ -150,7 +150,7 @@ describe('synthetic stall endpoint gating', () => {
   });
 
   it('stalls for AT LEAST the requested duration in both modes', async () => {
-    const { stall } = await import('~/pages/api/testing/eventloop-stall');
+    const { stall } = await import('~/server/api-routes/testing/eventloop-stall');
 
     // Deliberately short. This is the only test in the repo that pins a core on
     // purpose, and it runs inside an 885-file parallel suite alongside tests whose

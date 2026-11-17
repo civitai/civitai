@@ -129,10 +129,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 
 import imagesHandler from '~/pages/api/v1/images/index';
-import generationDataHandler from '~/pages/api/generation/data';
-import generationResourcesHandler from '~/pages/api/generation/resources';
+import generationDataHandler from '~/server/api-routes/generation/data';
+import generationResourcesHandler from '~/server/api-routes/generation/resources';
 import downloadModelRoute from '~/pages/api/download/models/[modelVersionId]';
-import tensorMetadataRoute from '~/pages/api/v1/model-files/[id]/tensor-metadata';
+import tensorMetadataRoute from '~/server/api-routes/v1/model-files/[id]/tensor-metadata';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockKeyValueFindUnique = dbMock.dbRead.keyValue.findUnique;
 const mockModelFileFindUnique = dbMock.dbRead.modelFile.findUnique;

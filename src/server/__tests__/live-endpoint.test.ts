@@ -73,7 +73,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
     },
 }));
 
-import liveHandler from '~/pages/api/live';
+import liveHandler from '~/server/api-routes/live';
 
 beforeEach(() => {
   vi.clearAllMocks();

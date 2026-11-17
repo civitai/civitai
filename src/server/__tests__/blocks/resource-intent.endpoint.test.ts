@@ -64,7 +64,7 @@ vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
   isRegionRestricted: (region: unknown) => mockIsRegionRestricted(region),
 }));
 
-const handler = (await import('~/pages/api/v1/blocks/resource-intent')).default;
+const handler = (await import('~/server/api-routes/v1/blocks/resource-intent')).default;
 
 const CLAIMS = {
   sub: 'user:1',

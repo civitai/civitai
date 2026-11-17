@@ -41,7 +41,7 @@ vi.mock('~/server/services/app-assistant/preview-errors.service', () => ({
 }));
 
 const { signRunGrant } = await import('~/server/services/app-assistant/assistant-runner-tokens');
-const route = (await import('~/pages/api/internal/app-assistant/app-activity')).default;
+const route = (await import('~/server/api-routes/internal/app-assistant/app-activity')).default;
 
 // TEST-ONLY values: a key pair generated for this run and a placeholder secret.
 const SECRET = 'test-only-runner-secret-for-activity';

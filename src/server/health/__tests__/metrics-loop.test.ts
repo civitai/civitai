@@ -42,7 +42,7 @@ vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 import { instrumentationRegistry } from '@civitai/telemetry/client';
 import client from 'prom-client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import healthHandler, { resetHealthCheckReuseForTests } from '~/pages/api/health';
+import healthHandler, { resetHealthCheckReuseForTests } from '~/server/api-routes/health';
 import {
   getLastProbeRunStartedAt,
   resetProbeRunStampForTests,

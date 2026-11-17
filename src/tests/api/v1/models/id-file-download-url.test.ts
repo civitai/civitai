@@ -204,7 +204,7 @@ function fakeRes() {
 }
 
 async function invoke(id: string, host = 'civitai.com') {
-  const mod = await import('~/pages/api/v1/models/[id]');
+  const mod = await import('~/server/api-routes/v1/models/[id]');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   const req = {
     method: 'GET',

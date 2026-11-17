@@ -65,7 +65,7 @@ const ROUTES: Array<{
 }> = [
   {
     name: 'POST claim',
-    path: '~/pages/api/v1/model-versions/gifts/claim',
+    path: '~/server/api-routes/v1/model-versions/gifts/claim',
     method: 'POST',
     query: {},
     body: { code: 'cvg_abc', userId: 999 },
@@ -75,7 +75,7 @@ const ROUTES: Array<{
   },
   {
     name: 'GET list',
-    path: '~/pages/api/v1/model-versions/[id]/gifts/index',
+    path: '~/server/api-routes/v1/model-versions/[id]/gifts/index',
     method: 'GET',
     query: { id: '5' },
     service: 'listGiftLinks',
@@ -83,7 +83,7 @@ const ROUTES: Array<{
   },
   {
     name: 'POST mint',
-    path: '~/pages/api/v1/model-versions/[id]/gifts/index',
+    path: '~/server/api-routes/v1/model-versions/[id]/gifts/index',
     method: 'POST',
     query: { id: '5' },
     body: { count: 3 },
@@ -92,7 +92,7 @@ const ROUTES: Array<{
   },
   {
     name: 'POST link',
-    path: '~/pages/api/v1/model-versions/[id]/gifts/link',
+    path: '~/server/api-routes/v1/model-versions/[id]/gifts/link',
     method: 'POST',
     query: { id: '5' },
     body: { maxRedemptions: 4 },
@@ -101,7 +101,7 @@ const ROUTES: Array<{
   },
   {
     name: 'DELETE one',
-    path: '~/pages/api/v1/model-versions/[id]/gifts/[giftId]',
+    path: '~/server/api-routes/v1/model-versions/[id]/gifts/[giftId]',
     method: 'DELETE',
     query: { id: '5', giftId: '9' },
     service: 'revokeGiftLinks',
@@ -109,7 +109,7 @@ const ROUTES: Array<{
   },
   {
     name: 'DELETE batch',
-    path: '~/pages/api/v1/model-versions/[id]/gifts/batch/[batchId]',
+    path: '~/server/api-routes/v1/model-versions/[id]/gifts/batch/[batchId]',
     method: 'DELETE',
     query: { id: '5', batchId: BATCH },
     service: 'revokeGiftLinks',
@@ -117,7 +117,7 @@ const ROUTES: Array<{
   },
   {
     name: 'DELETE claim',
-    path: '~/pages/api/v1/model-versions/[id]/gifts/[giftId]/claims/[userId]',
+    path: '~/server/api-routes/v1/model-versions/[id]/gifts/[giftId]/claims/[userId]',
     method: 'DELETE',
     query: { id: '5', giftId: '9', userId: '20' },
     service: 'removeGiftClaim',

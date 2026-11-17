@@ -7,7 +7,7 @@ import type { SessionUser } from '~/types/session';
  * THE App-Blocks kill-switch for every BLOCK-TOKEN-authed runtime caller, on BOTH
  * front doors — the tRPC bridge procs in `blocks.router.ts`
  * (estimate/submit/poll/cancelWorkflow, updateUserSettings, `getMyViewer`, …) and
- * the REST handler `src/pages/api/v1/blocks/me.ts`.
+ * the REST handler `src/server/api-routes/v1/blocks/me.ts`.
  *
  * 🔴 WHY IT LIVES IN A SERVICE RATHER THAN IN `blocks.router.ts`, WHERE IT USED TO.
  * `/api/v1/blocks/me` and `blocks.getMyViewer` are two front doors to ONE capability

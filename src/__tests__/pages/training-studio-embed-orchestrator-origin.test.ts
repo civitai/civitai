@@ -35,7 +35,7 @@ const BROWSER_FACING = [
   // Builds the element's host config.
   'pages/training-studio/index.tsx',
   // Its JSON response goes straight to the page.
-  'pages/api/training-studio/host.ts',
+  'server/api-routes/training-studio/host.ts',
 ];
 
 /**

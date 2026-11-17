@@ -31,7 +31,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
     res.status(500).json({ error: 'handled' }),
 }));
 
-import handler from '~/pages/api/v1/announcements';
+import handler from '~/server/api-routes/v1/announcements';
 
 const OK_USER = { id: 7, onboarding: 0xff, muted: false, isModerator: false };
 

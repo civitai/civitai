@@ -41,7 +41,7 @@ vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
   getModerationAdapter,
 }));
 
-import handler from '~/pages/api/webhooks/text-moderation-result';
+import handler from '~/server/api-routes/webhooks/text-moderation-result';
 
 const PROMPT_HASH = 'b'.repeat(64);
 const shadowMarker = {

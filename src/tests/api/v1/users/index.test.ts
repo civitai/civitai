@@ -34,7 +34,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 // module load are tolerated (no real connection opens in test).
 
 // 2. Import the handler after the mocks are defined.
-import handler from '~/pages/api/v1/users/index';
+import handler from '~/server/api-routes/v1/users/index';
 
 // 3. Helper to mock NextApiRequest/Response (mirrors the images handler test).
 function createMocks({ query = {} }: { query?: Record<string, string | string[]> }) {

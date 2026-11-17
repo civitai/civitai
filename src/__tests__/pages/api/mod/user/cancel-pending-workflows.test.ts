@@ -27,7 +27,7 @@ vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({
   cancelPendingWorkflows,
 }));
 
-import handler from '~/pages/api/mod/user/cancel-pending-workflows';
+import handler from '~/server/api-routes/mod/user/cancel-pending-workflows';
 
 async function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

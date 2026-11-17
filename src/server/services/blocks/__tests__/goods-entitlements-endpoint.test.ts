@@ -36,7 +36,7 @@ vi.mock('~/server/utils/block-goods-rate-limit', async (importOriginal) => ({
   checkBlockGoodReadRateLimit: mockRateLimit,
 }));
 
-import { baseHandler } from '~/pages/api/v1/blocks/entitlements';
+import { baseHandler } from '~/server/api-routes/v1/blocks/entitlements';
 
 const VIEWER = 42;
 const APP_BLOCK_ID = 'apb_TESTBLOCK';

@@ -9,7 +9,7 @@ vi.mock('~/server/services/creator-milestone-share.service', async (importOrigin
   getMilestoneShareCard,
 }));
 
-import handler from '~/pages/api/og';
+import handler from '~/server/api-routes/og';
 
 type CapturedRes = NextApiResponse & {
   _status: number;

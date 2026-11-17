@@ -32,7 +32,7 @@
  * because `deepRedact` carries Faro-specific tuning.
  *
  * 🔴 This module exists because a THIRD copy was about to be written. It lived in
- * `src/pages/api/media/ingest/[mediaId].ts` and that file's comment asked the next caller to
+ * `src/server/api-routes/media/ingest/[mediaId].ts` and that file's comment asked the next caller to
  * reach for a shared module rather than grow another facility; `services/ai/jev.ts` is that
  * next caller. If you need a fourth, import this — do not re-derive the two mechanics above.
  */

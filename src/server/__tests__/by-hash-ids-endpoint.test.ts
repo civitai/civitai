@@ -6,7 +6,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: Function) => handler,
 }));
 
-import handler from '~/pages/api/v1/model-versions/by-hash/ids';
+import handler from '~/server/api-routes/v1/model-versions/by-hash/ids';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindMany = dbMock.dbRead.modelFile.findMany;
 

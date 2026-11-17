@@ -98,7 +98,7 @@ beforeEach(() => {
 /**
  * Synthetic v4 uuids — the shape `createFeedbackSchema` now REQUIRES of an image id,
  * and the shape both mint paths emit (`randomUUID()`, in the presign at
- * `src/pages/api/v1/image-upload/index.ts` and in the relay's own server-side mint in
+ * `src/server/api-routes/v1/image-upload/index.ts` and in the relay's own server-side mint in
  * `src/utils/s3-utils.ts`). Not keys copied out of production: this repo is public and
  * a real id is a live object key in our store.
  */

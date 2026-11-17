@@ -211,7 +211,7 @@ import { verifyReviewAccessToken } from '~/server/services/blocks/review-session
  * reach the gate".
  *
  * ── SCOPE: THE SIBLING GATE IS NOT UPDATED ──
- * `src/pages/api/internal/dev-tunnel-gate.ts` carries the same dest-only
+ * `src/server/api-routes/internal/dev-tunnel-gate.ts` carries the same dest-only
  * classification this file used to have, and several comments in and around it
  * describe the two gates as identical. As of this change they are NOT, in three
  * ways: that gate has no PATH arm, it does not case-fold the dest, and it treats an

@@ -15,7 +15,7 @@ vi.mock('~/server/services/orchestrator/training/studio-withheld', () => ({
   studioWithheldWorkflowIds: (...args: unknown[]) => studioWithheldWorkflowIds(...args),
 }));
 
-const handler = (await import('~/pages/api/training-studio/model-status')).default as unknown as (
+const handler = (await import('~/server/api-routes/training-studio/model-status')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,
   user: SessionUser

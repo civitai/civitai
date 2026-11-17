@@ -30,7 +30,7 @@ vi.mock('~/server/services/user-hub.service', async (importOriginal) => ({
   getHubCardData,
 }));
 
-import handler from '~/pages/api/og';
+import handler from '~/server/api-routes/og';
 
 type CapturedRes = NextApiResponse & {
   _status: number;

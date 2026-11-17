@@ -69,8 +69,8 @@ vi.mock('~/server/services/app-hibernation/hibernation-deps', async (importOrigi
 }));
 
 const { signRunGrant } = await import('~/server/services/app-assistant/assistant-runner-tokens');
-const listRoute = (await import('~/pages/api/internal/app-assistant/sleeping-apps')).default;
-const wakeRoute = (await import('~/pages/api/internal/app-assistant/wake-seed')).default;
+const listRoute = (await import('~/server/api-routes/internal/app-assistant/sleeping-apps')).default;
+const wakeRoute = (await import('~/server/api-routes/internal/app-assistant/wake-seed')).default;
 const { beginHibernation, commitHibernation } = await import(
   '~/server/services/app-hibernation/app-hibernation.service'
 );

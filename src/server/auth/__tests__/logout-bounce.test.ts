@@ -9,7 +9,7 @@ const HUB = 'https://auth.civitai.com';
 async function logout(host: string, env: { hub?: string } = { hub: HUB }) {
   if (env.hub) process.env.AUTH_JWT_ISSUER = env.hub;
   else delete process.env.AUTH_JWT_ISSUER;
-  const { default: handler } = await import('~/pages/api/auth/logout');
+  const { default: handler } = await import('~/server/api-routes/auth/logout');
   const res = {
     headers: {} as Record<string, string | string[]>,
     location: undefined as string | undefined,
@@ -104,7 +104,7 @@ describe('main-app logout names the browser to the hub', () => {
       createSessionTokenClient: () => ({ revoke }),
     }));
     process.env.AUTH_JWT_ISSUER = HUB;
-    const { default: handler } = await import('~/pages/api/auth/logout');
+    const { default: handler } = await import('~/server/api-routes/auth/logout');
     const cookies = {
       'civ-token': 'tok',
       '__Secure-civ-token': 'tok',

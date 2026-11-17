@@ -48,7 +48,7 @@ vi.mock('~/server/utils/region-blocking', () => ({
 }));
 
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
-import handler from '~/pages/api/v1/model-versions/by-hash/[hash]';
+import handler from '~/server/api-routes/v1/model-versions/by-hash/[hash]';
 
 const { PG, PG13, R, X } = NsfwLevel;
 

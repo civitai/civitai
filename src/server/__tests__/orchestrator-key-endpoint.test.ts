@@ -42,7 +42,7 @@ vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
   generateSecretHash: (key: string) => `hash-of-${key}`,
 }));
 
-const handler = (await import('~/pages/api/user/orchestrator-key')).default;
+const handler = (await import('~/server/api-routes/user/orchestrator-key')).default;
 
 type Account = { id: number; bannedAt: Date | null; deletedAt: Date | null };
 type KeyRow = {

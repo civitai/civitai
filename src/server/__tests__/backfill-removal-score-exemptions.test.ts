@@ -30,7 +30,7 @@ import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as PgDb from '~/server/db/pgDb';
 import type * as UpdateUserScore from '~/server/jobs/update-user-score';
 import type * as Exemptions from '~/server/services/removal-score-exemption.service';
-import handler from '~/pages/api/admin/temp/backfill-removal-score-exemptions';
+import handler from '~/server/api-routes/admin/temp/backfill-removal-score-exemptions';
 import { removalWeight } from '~/shared/utils/creator-removal-weights';
 import { REMOVAL_SCORE_WINDOW_DAYS } from '~/shared/constants/creator-journey.constants';
 

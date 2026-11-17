@@ -27,7 +27,7 @@ vi.mock('~/server/services/blocks/app-source-repo.service', () => ({
 }));
 
 const { signRunGrant } = await import('~/server/services/app-assistant/assistant-runner-tokens');
-const route = (await import('~/pages/api/internal/app-assistant/source-save')).default;
+const route = (await import('~/server/api-routes/internal/app-assistant/source-save')).default;
 
 // TEST-ONLY values: a key pair generated for this run and a placeholder secret.
 const SECRET = 'test-only-runner-secret-for-source-save';

@@ -27,7 +27,7 @@ vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/db/kyselyDb', () => ({ kyselyWrite: { tag: 'write' } }));
 vi.mock('~/server/services/knights/enqueue.service', () => ({ enqueueKnightsItems: mockEnqueue }));
 
-import handler from '~/pages/api/mod/knights/enqueue';
+import handler from '~/server/api-routes/mod/knights/enqueue';
 
 async function call(body: Record<string, unknown>, method = 'POST') {
   const req = { method, headers: {}, body, query: {} } as Parameters<typeof handler>[0];

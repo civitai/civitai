@@ -17,7 +17,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { ImageIngestionUrlBlockedError } from '~/server/utils/image-scan-url';
-import handler, { redactSecrets } from '~/pages/api/media/ingest/[mediaId]';
+import handler, { redactSecrets } from '~/server/api-routes/media/ingest/[mediaId]';
 
 /**
  * Tests live outside the pages tree: every .ts/.tsx under src/pages/** is enumerated by

@@ -18,7 +18,7 @@ const SDK_CALLS: Record<string, string[]> = {
 
 // Callers of getConsumerBlobUploadUrlService, the token each passes, and its binding.
 const SERVICE_CALLS: Record<string, string[]> = {
-  'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts': ['token <- (not bound locally)'],
+  'src/server/api-routes/orchestrator/getConsumerBlobUploadUrl.ts': ['token <- (not bound locally)'],
   // Creator Services video previews: the seller's own token, from the preview job.
   'src/server/services/creator-service-deal-video-preview.ts': [
     'token <- await getOrchestratorToken(sellerId).catch(restrictedAsRejection)',
@@ -33,7 +33,7 @@ const SERVICE_CALLS: Record<string, string[]> = {
 const UPSTREAM: [file: string, source: string][] = [
   // OrchestratorEndpoint hands its handler the caller's own token.
   [
-    'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts',
+    'src/server/api-routes/orchestrator/getConsumerBlobUploadUrl.ts',
     'OrchestratorEndpoint( async function handler(req, res, user, token) {',
   ],
   // The App Blocks batch presign procedure: the token subject's own token.

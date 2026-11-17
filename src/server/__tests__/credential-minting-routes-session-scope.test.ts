@@ -89,32 +89,32 @@ const routes: {
   {
     name: 'GET /api/user/orchestrator-key',
     path: '/api/user/orchestrator-key',
-    handler: (await import('~/pages/api/user/orchestrator-key')).default as unknown as Handler,
+    handler: (await import('~/server/api-routes/user/orchestrator-key')).default as unknown as Handler,
     minted: () => mintApiKey,
   },
   {
     name: 'GET /api/training-studio/host',
     path: '/api/training-studio/host',
-    handler: (await import('~/pages/api/training-studio/host')).default as unknown as Handler,
+    handler: (await import('~/server/api-routes/training-studio/host')).default as unknown as Handler,
     minted: () => getOrchestratorToken,
   },
   {
     name: '/api/apps/assistant/token',
     path: '/api/apps/assistant/token',
-    handler: (await import('~/pages/api/apps/assistant/token')).default as unknown as Handler,
+    handler: (await import('~/server/api-routes/apps/assistant/token')).default as unknown as Handler,
     minted: () => mintAppAssistantToken,
   },
   {
     name: 'GET /api/apps/assistant/run-grant',
     path: '/api/apps/assistant/run-grant',
-    handler: (await import('~/pages/api/apps/assistant/run-grant')).default as unknown as Handler,
+    handler: (await import('~/server/api-routes/apps/assistant/run-grant')).default as unknown as Handler,
     minted: () => signRunGrant,
     query: { conversationId: 'c1', idempotencyKey: 'k1' },
   },
   {
     name: 'GET /api/apps/assistant/runner-viewer-token',
     path: '/api/apps/assistant/runner-viewer-token',
-    handler: (await import('~/pages/api/apps/assistant/runner-viewer-token'))
+    handler: (await import('~/server/api-routes/apps/assistant/runner-viewer-token'))
       .default as unknown as Handler,
     minted: () => signRunnerViewerToken,
   },

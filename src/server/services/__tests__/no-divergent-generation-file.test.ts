@@ -23,7 +23,7 @@ const AIR_ALLOWLIST = [
   'src/server/services/generation/generation.service.ts',
   // What the orchestrator reads. Default pick is getGenerationFile; an explicit modelFileId adds
   // `+<fileId>`, and the epoch arm addresses an orchestrator-hosted file, not a civitai one.
-  'src/pages/api/v1/model-versions/mini/[id].ts',
+  'src/server/api-routes/v1/model-versions/mini/[id].ts',
   // Client display of the file the viewer selected, and training inputs — not generation.
   'src/components/Model/ModelURN/ModelURN.tsx',
   'src/components/Resource/Forms/TrainingSelectFile.tsx',
@@ -33,7 +33,7 @@ const AIR_ALLOWLIST = [
 
 const AIR_CALLS_PER_FILE: Record<string, number> = {
   'src/server/services/generation/generation.service.ts': 1,
-  'src/pages/api/v1/model-versions/mini/[id].ts': 2,
+  'src/server/api-routes/v1/model-versions/mini/[id].ts': 2,
 };
 
 /** Surfaces that pick a generation file, which must never fall back to `getPrimaryFile`. */ const GENERATION_FILE_READERS =
@@ -105,7 +105,7 @@ describe('the generation file is chosen in one place', () => {
 
   it.each([
     'src/server/services/generation/generation.service.ts',
-    'src/pages/api/v1/model-versions/mini/[id].ts',
+    'src/server/api-routes/v1/model-versions/mini/[id].ts',
   ])('%s picks its generation file with getGenerationFile', (rel) => {
     expect(read(rel)).toMatch(/\bgetGenerationFile\(/);
   });

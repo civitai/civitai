@@ -68,7 +68,7 @@ function fakeRes() {
 }
 
 async function invoke(method: string) {
-  const mod = await import('~/pages/api/v1/blocks/generation-samplers');
+  const mod = await import('~/server/api-routes/v1/blocks/generation-samplers');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   const req = {
     method,

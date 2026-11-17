@@ -40,7 +40,7 @@ import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
  * still leaving generous room above any real completion.
  *
  * The repo's own debug endpoint independently bounds its wait with `.max(120)`
- * (`src/pages/api/testing/xguard-test.ts`), which sits under this.
+ * (`src/server/api-routes/testing/xguard-test.ts`), which sits under this.
  */
 const MAX_WAIT_SECONDS = 150;
 

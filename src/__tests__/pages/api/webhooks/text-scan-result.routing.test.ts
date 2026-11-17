@@ -18,7 +18,7 @@ vi.mock('~/server/services/text-scan/category', () => ({
   TEXT_CATEGORY_CALLBACK_PASS: 'category',
 }));
 
-import handler from '~/pages/api/webhooks/text-scan-result';
+import handler from '~/server/api-routes/webhooks/text-scan-result';
 
 const call = (query: Record<string, string>) =>
   (handler as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>)(

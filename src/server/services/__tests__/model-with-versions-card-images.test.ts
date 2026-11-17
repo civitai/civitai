@@ -413,7 +413,7 @@ describe('the REST handlers, for an anonymous caller', () => {
   });
 
   it('GET /api/v1/models/{id}', async () => {
-    const body = await call('~/pages/api/v1/models/[id]', `/api/v1/models/${MODEL}`, {
+    const body = await call('~/server/api-routes/v1/models/[id]', `/api/v1/models/${MODEL}`, {
       id: String(MODEL),
     });
     expect(imageUrls(body)).toEqual(['u1', 'u4']);
@@ -439,7 +439,7 @@ describe('the REST handlers, for an anonymous caller', () => {
       viewerBrowsingLevel: allBrowsingLevelsFlag,
       domain: 'red',
     };
-    const body = await call('~/pages/api/v1/blocks/models', '/api/v1/blocks/models', {});
+    const body = await call('~/server/api-routes/v1/blocks/models', '/api/v1/blocks/models', {});
     expect(imageUrls(body.items.find((m: { id: number }) => m.id === MODEL))).toEqual(['u1', 'u4']);
   });
 });

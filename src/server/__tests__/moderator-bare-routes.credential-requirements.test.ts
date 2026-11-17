@@ -30,13 +30,13 @@ const routes: { name: string; method: string; path: string; handler: Handler }[]
     name: 'POST /api/testing/model3d-seed',
     method: 'POST',
     path: '/api/testing/model3d-seed',
-    handler: (await import('~/pages/api/testing/model3d-seed')).default as unknown as Handler,
+    handler: (await import('~/server/api-routes/testing/model3d-seed')).default as unknown as Handler,
   },
   {
     name: 'GET /api/media/ingest/[mediaId]',
     method: 'GET',
     path: '/api/media/ingest/not-a-number',
-    handler: (await import('~/pages/api/media/ingest/[mediaId]')).default as unknown as Handler,
+    handler: (await import('~/server/api-routes/media/ingest/[mediaId]')).default as unknown as Handler,
   },
 ];
 

@@ -43,7 +43,7 @@ dbMock.dbWrite.$queryRaw.mockImplementation((async (...a: Parameters<Raw['queryR
   return rows.map((r) => (typeof r.id === 'number' ? { ...r, id: BigInt(r.id) } : r));
 }) as never);
 
-const { default: handler } = await import('~/pages/api/mod/label-store/predictions');
+const { default: handler } = await import('~/server/api-routes/mod/label-store/predictions');
 
 const IMAGE = 501;
 const OWNER = 11;

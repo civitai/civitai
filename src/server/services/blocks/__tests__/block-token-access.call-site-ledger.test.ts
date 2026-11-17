@@ -131,7 +131,7 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
       'parseSubjectUserId(claims.sub) on claims verified by the caller — authorizeBlockBridgeToken on the bridge, withBlockScope on REST',
     why: 'The shared body of blocks.getWorkflowMedia and GET /api/v1/blocks/workflow-media, gated in the shared body for the same reason as the gated image read: the two transports cannot disagree about whether the kill switch ran.',
   },
-  'src/pages/api/v1/blocks/me.ts': {
+  'src/server/api-routes/v1/blocks/me.ts': {
     calls: 1,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims stamped by withBlockScope',
     why: 'The REST twin of blocks.getMyViewer. Joined this set when its hardcoded isModerator literal was dropped in favour of the Flipt gate; sharing this exact function is what makes the two doors agree.',
@@ -219,7 +219,7 @@ describe('assertAppBlocksEnabledForTokenUser — production call-site ledger', (
     // 5 → 6: `block-media-serving.ts` (the workflow media read body).
     expect(consumers.length).toBe(6);
     expect(
-      importsSharedGate(readFileSync(join(ROOT, 'src/pages/api/v1/blocks/me.ts'), 'utf8'))
+      importsSharedGate(readFileSync(join(ROOT, 'src/server/api-routes/v1/blocks/me.ts'), 'utf8'))
     ).toBe(true);
   });
 });

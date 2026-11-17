@@ -307,7 +307,7 @@ vi.mock('~/server/prom/client', () => ({
   // without it.
   trpcClientReadCapabilityRequests: promMetricStub(),
   // Also re-exported rather than declared here, and NOT a metric — it is the real cross-graph
-  // Registry that `src/pages/api/metrics.ts` scrapes and now also registers its own failure counter
+  // Registry that `src/server/api-routes/metrics.ts` scrapes and now also registers its own failure counter
   // on, at MODULE scope. Omitting it means any suite that merely IMPORTS that page throws
   // `No "instrumentationRegistry" export is defined on the "~/server/prom/client" mock` during
   // module evaluation — which is not a failure of the thing under test, and is invisible until some

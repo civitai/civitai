@@ -4,7 +4,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * 🔴 THIS FILE IS NAMED FOR A DECISION, NOT FOR A FUNCTION. READ IT BEFORE DELETING THE
- * `trackModActivity` CALL IN `src/pages/api/mod/user/delete.ts`.
+ * `trackModActivity` CALL IN `src/server/api-routes/mod/user/delete.ts`.
  *
  * Most `defineModeratorEndpoint`s leave the `ModActivity` row to the moderator app's `logAction`, so
  * this endpoint writing its own looks like an inconsistency to remove, and removing it is the defect
@@ -64,7 +64,7 @@ vi.mock('~/server/services/moderator.service', () => ({
 }));
 vi.mock('~/server/services/moderator-grants', () => ({ hasModeratorGrant: async () => true }));
 
-import handler from '~/pages/api/mod/user/delete';
+import handler from '~/server/api-routes/mod/user/delete';
 
 const MODERATOR = 990000007;
 const OTHER_MODERATOR = 990005550;

@@ -12,7 +12,7 @@ vi.mock('~/server/services/blocks/block-media-serving', () => ({
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({ checkBlockCatalogRateLimit }));
 
-const { baseHandler } = await import('~/pages/api/v1/blocks/workflow-media');
+const { baseHandler } = await import('~/server/api-routes/v1/blocks/workflow-media');
 const { WORKFLOW_MEDIA_MAX_REFS } = await import(
   '~/shared/constants/block-workflow-media.constants'
 );

@@ -58,7 +58,7 @@ function fakeRes() {
 }
 
 async function loadHandler() {
-  const mod = await import('~/pages/api/metrics');
+  const mod = await import('~/server/api-routes/metrics');
   return mod.default as unknown as Handler;
 }
 

@@ -106,7 +106,7 @@ const impressionEvent = {
 };
 
 async function importHandler() {
-  return (await import('~/pages/api/track/batch')).default;
+  return (await import('~/server/api-routes/track/batch')).default;
 }
 
 describe('POST /api/track/batch', () => {

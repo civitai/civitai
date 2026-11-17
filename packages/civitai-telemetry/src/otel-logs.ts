@@ -46,7 +46,7 @@ type MixedObject = Record<string, any>;
 // the one instrument designed to make the bridge's failure legible completely mute.
 //
 // `instrumentationRegistry` is pinned on `globalThis` precisely so it crosses that
-// boundary, and `src/pages/api/metrics.ts` already merges it into the scrape. This is the
+// boundary, and `src/server/api-routes/metrics.ts` already merges it into the scrape. This is the
 // same trap, and the same cure, as the event-loop long-task metrics (PR #2451); see the
 // WHY note on `instrumentationRegistry` above.
 //

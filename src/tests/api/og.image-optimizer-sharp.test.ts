@@ -114,7 +114,7 @@ vi.mock('~/server/db/client', () => ({
   dbKV: {},
 }));
 
-import handler from '~/pages/api/og';
+import handler from '~/server/api-routes/og';
 
 type CapturedRes = NextApiResponse & {
   _status: number;

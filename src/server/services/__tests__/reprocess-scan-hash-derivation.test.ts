@@ -62,7 +62,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   ModEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
 
-import handler from '~/pages/api/mod/reprocess-scan';
+import handler from '~/server/api-routes/mod/reprocess-scan';
 
 const mockDbWrite = dbMock.dbWrite;
 

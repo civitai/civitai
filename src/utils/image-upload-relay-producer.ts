@@ -17,7 +17,7 @@
  * 🔴 THIS IS CALLER-SUPPLIED INPUT AND IT BECOMES A PROMETHEUS LABEL. Every value that
  * reaches the counter must come from `sanitizeImageUploadRelayProducer` below, which
  * rebuilds it from scratch against a closed set rather than passing it through — the same
- * shape as `sanitizeClientFailure` in `src/pages/api/upload/abort.ts`. Without that, a
+ * shape as `sanitizeClientFailure` in `src/server/api-routes/upload/abort.ts`. Without that, a
  * caller could mint an unbounded number of label values, and prom-client retains every
  * distinct label set in the Node heap for the life of the process.
  */

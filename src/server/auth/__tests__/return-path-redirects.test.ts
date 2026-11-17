@@ -31,8 +31,8 @@ vi.mock('~/server/utils/url-helpers', async (importOriginal) => ({
   getBaseUrl: () => BASE_URL,
 }));
 
-import postLogin from '~/pages/api/auth/post-login';
-import logout from '~/pages/api/auth/logout';
+import postLogin from '~/server/api-routes/auth/post-login';
+import logout from '~/server/api-routes/auth/logout';
 
 function createMocks(query: Record<string, unknown>) {
   const req = { cookies: {}, headers: { host: 'civitai.example' }, query } as never;

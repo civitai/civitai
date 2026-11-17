@@ -87,7 +87,7 @@ const page = (await import('~/pages/images/[imageId]')) as unknown as {
     props?: { trpcState?: unknown; adsGated?: boolean; session?: unknown };
   }>;
 };
-const handler = (await import('~/pages/api/page-data/images/[imageId]')).default;
+const handler = (await import('~/server/api-routes/page-data/images/[imageId]')).default;
 
 let previousBaseUrl: string | undefined;
 beforeAll(() => {

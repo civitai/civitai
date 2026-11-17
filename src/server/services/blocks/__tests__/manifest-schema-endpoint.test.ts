@@ -96,7 +96,7 @@ beforeEach(() => {
 describe('GET /api/blocks/manifest-schema', () => {
   it('serves the canonical public/schemas/app-block/v1.json verbatim', async () => {
     const canonical = JSON.parse(readFileSync(CANONICAL_PATH, 'utf8'));
-    const { default: handler } = await import('~/pages/api/blocks/manifest-schema');
+    const { default: handler } = await import('~/server/api-routes/blocks/manifest-schema');
     const res = makeRes();
     await handler(makeReq(), res);
 
@@ -113,7 +113,7 @@ describe('GET /api/blocks/manifest-schema', () => {
   });
 
   it('sets CORS + public-cache headers', async () => {
-    const { default: handler } = await import('~/pages/api/blocks/manifest-schema');
+    const { default: handler } = await import('~/server/api-routes/blocks/manifest-schema');
     const res = makeRes();
     await handler(makeReq(), res);
 

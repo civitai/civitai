@@ -103,7 +103,7 @@ function makeRes() {
   };
 }
 async function invoke(appBlockId: string, file: string) {
-  const handler = (await import('~/pages/api/blocks/screenshot/[appBlockId]/[file]')).default;
+  const handler = (await import('~/server/api-routes/blocks/screenshot/[appBlockId]/[file]')).default;
   const res = makeRes();
   await handler(makeReq(appBlockId, file), res);
   return res;

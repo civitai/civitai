@@ -246,7 +246,7 @@ export type AppBlockEndpoint =
   | 'sub_listings_mine';
 // NOTE ON THE BUZZ SELF-READS — one of the four is back, three are not.
 //
-// 'buzz' IS in the union above, because `src/pages/api/v1/blocks/buzz.ts` exists
+// 'buzz' IS in the union above, because `src/server/api-routes/v1/blocks/buzz.ts` exists
 // again: the balance readout was RESTORED as a `withBlockScope` REST route so a
 // block can read its viewer's balance by direct fetch, without a page host in
 // the middle (the bridge requires one, which leaves model-slot and

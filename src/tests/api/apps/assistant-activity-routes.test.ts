@@ -45,9 +45,9 @@ vi.mock('~/server/services/app-assistant/preview-errors.service', async (importO
 }));
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
-const activityRoute = (await import('~/pages/api/apps/assistant/activity'))
+const activityRoute = (await import('~/server/api-routes/apps/assistant/activity'))
   .default as unknown as Handler;
-const errorsRoute = (await import('~/pages/api/apps/dev/preview-errors'))
+const errorsRoute = (await import('~/server/api-routes/apps/dev/preview-errors'))
   .default as unknown as Handler;
 
 async function call(handler: Handler, req: { method: string; query?: unknown; body?: unknown }) {

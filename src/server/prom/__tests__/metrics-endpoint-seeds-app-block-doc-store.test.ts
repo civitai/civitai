@@ -31,7 +31,7 @@ vi.mock('~/server/db/appdataDb', () => ({
 
 describe('/api/metrics publishes the document-store series', () => {
   it('🔴 one scrape publishes the seeded counters and the evaluated enabled gauge', async () => {
-    const mod = await import('~/pages/api/metrics');
+    const mod = await import('~/server/api-routes/metrics');
     const handler = mod.default as unknown as (
       req: unknown,
       res: { setHeader: (k: string, v: string) => void; send: (body: string) => void }

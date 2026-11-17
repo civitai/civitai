@@ -40,7 +40,7 @@ import '~/__tests__/mocks/db.mock';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 import articles from '~/pages/api/v1/articles/index';
 import collections from '~/pages/api/v1/collections/index';
-import article from '~/pages/api/v1/articles/[id]';
+import article from '~/server/api-routes/v1/articles/[id]';
 
 const PUBLIC_CACHE = 'public, s-maxage=300, stale-while-revalidate=150';
 const NO_STORE = 'private, no-store';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildMetadataPatch } from '~/pages/api/admin/temp/backfill-scheduled-challenge-themes';
+import { buildMetadataPatch } from '~/server/api-routes/admin/temp/backfill-scheduled-challenge-themes';
 import { challengeMetadataSchema, parseChallengeMetadata } from '~/server/schema/challenge.schema';
 
 // 🔴 challengeMetadataSchema declares resourceConcept as an optional STRING. A null fails the whole

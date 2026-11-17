@@ -18,7 +18,7 @@
 // Two separate writers apply this to a live index, and they must stay in agreement — which is why
 // the list lives here rather than inside either of them:
 //   - `onIndexSetup` in ./models.search-index.ts, reached only by `reset()` against `<index>_NEW`
-//   - `src/pages/api/admin/temp/apply-models-index-displayed-attributes.ts`, the only way to
+//   - `src/server/api-routes/admin/temp/apply-models-index-displayed-attributes.ts`, the only way to
 //     apply it to the LIVE index without a full rebuild
 export const modelsDisplayedAttributes = [
   'id',
@@ -77,7 +77,7 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   // Ranking-only: `isOfficial:desc` in ./ranking-rules.ts. No search consumer reads it off a hit —
   // `resource-select.service.ts` reads `isOfficial` from the DB.
   'isOfficial',
-  // Written by the OTHER writer into this same index: `src/pages/api/mod/search/models-update.ts`
+  // Written by the OTHER writer into this same index: `src/server/api-routes/mod/search/models-update.ts`
   // pushes `{ id, flags }`, so `flags` is a top-level key this list must account for even though
   // `models.search-index.ts` never emits it. No models filterable entry references it and no
   // consumer reads it off a hit.

@@ -50,8 +50,8 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: async (_user: unknown, id: string) => held.has(id),
 }));
 
-import evidenceHandler from '~/pages/api/mod/creator-services/dispute-evidence';
-import reviewHandler from '~/pages/api/mod/creator-services/dispute-review';
+import evidenceHandler from '~/server/api-routes/mod/creator-services/dispute-evidence';
+import reviewHandler from '~/server/api-routes/mod/creator-services/dispute-review';
 
 const MODERATOR = 990000007;
 const REVIEW = {

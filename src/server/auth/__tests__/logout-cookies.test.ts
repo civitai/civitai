@@ -35,7 +35,7 @@ describe('buildLogoutCookies', () => {
     headers.some((h) => h.startsWith(`${name}=;`) && /Max-Age=0/i.test(h));
 
   it('clears the device cookie (both secure + non-secure prefixes)', async () => {
-    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const { buildLogoutCookies } = await import('../../../server/api-routes/auth/logout');
     const headers = buildLogoutCookies(undefined);
 
     // The core M2 assertion: the device cookie is cleared under both prefixes.
@@ -44,7 +44,7 @@ describe('buildLogoutCookies', () => {
   });
 
   it('still clears the session + legacy + orchestrator cookies', async () => {
-    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const { buildLogoutCookies } = await import('../../../server/api-routes/auth/logout');
     const headers = buildLogoutCookies(undefined);
 
     // hub session cookie — both prefixes
@@ -61,13 +61,13 @@ describe('buildLogoutCookies', () => {
   // marker's 60s TTL leaves it set while civ-token is (correctly) gone, and /api/auth/authorize false-fires its
   // "cookie didn't stick" recovery — the "We couldn't sign you in" page on civitai.red.
   it('clears the post-login loop-recovery marker (civ_postlogin)', async () => {
-    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const { buildLogoutCookies } = await import('../../../server/api-routes/auth/logout');
     const headers = buildLogoutCookies(undefined);
     expect(clears(headers, POST_LOGIN_MARKER)).toBe(true);
   });
 
   it('also de-cruds the ancillary next-auth cookies (CSRF / callback-url / state / pkce / nonce)', async () => {
-    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const { buildLogoutCookies } = await import('../../../server/api-routes/auth/logout');
     const headers = buildLogoutCookies(undefined);
 
     // None authenticate, but logout should fully de-crud the browser. Both dev + secure-prefixed names.
@@ -85,7 +85,7 @@ describe('buildLogoutCookies', () => {
   // The host-only `__Host-` session and device cookies live on this host only, so only this host's logout can
   // clear them. Control: before this change neither name appears in the list.
   it('clears the host-only session and device cookies, host-only and Secure', async () => {
-    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const { buildLogoutCookies } = await import('../../../server/api-routes/auth/logout');
     const headers = buildLogoutCookies('civitai.com');
     for (const name of ['__Host-civ-token', '__Host-civ-device']) {
       const scoped = headers.filter((h) => h.startsWith(`${name}=;`));
@@ -101,7 +101,7 @@ describe('buildLogoutCookies', () => {
   // logout cleared over `.{full-host}` (`.stage.civitai.com`) — which does NOT match `civitai.com` — so the
   // cookies survived sign-out. Assert we now clear the session AND device cookies over the registrable domain.
   it('clears the session + device cookies over the registrable domain on a subdomain host', async () => {
-    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const { buildLogoutCookies } = await import('../../../server/api-routes/auth/logout');
     const headers = buildLogoutCookies('stage.civitai.com');
 
     // civ-token + civ-device, plus the legacy session cookie (clearLegacyCookies now also scopes to the
@@ -128,7 +128,7 @@ describe('buildLogoutCookies', () => {
   it('IGNORES AUTH_COOKIE_DOMAIN — never scopes a clear to the hub env var', async () => {
     process.env.AUTH_COOKIE_DOMAIN = '.civitai.red';
     vi.resetModules();
-    const { buildLogoutCookies } = await import('../../../pages/api/auth/logout');
+    const { buildLogoutCookies } = await import('../../../server/api-routes/auth/logout');
     const headers = buildLogoutCookies('civitai.com');
 
     // No Set-Cookie may carry the override value.

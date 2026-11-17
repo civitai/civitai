@@ -89,7 +89,7 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 // It sits alongside, never instead of, the model licensing fee and the lineage
 // fee already on a generation. Each party charges for its own contribution; the
 // orchestrator already charges the sum of a `fees[]` array and settles each
-// entry separately (see `src/pages/api/v1/model-versions/mini/[id].ts`). Slice 1
+// entry separately (see `src/server/api-routes/v1/model-versions/mini/[id].ts`). Slice 1
 // computes this app's own entry and stops there.
 //
 // 🔴 ── `baseGenerationBuzz` IS `WorkflowCost.base`, NOT `WorkflowCost.total` ──

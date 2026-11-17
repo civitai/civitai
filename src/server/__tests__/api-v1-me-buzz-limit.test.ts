@@ -34,7 +34,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
 const { setApiKeyBuzzLimit } = await import('~/server/services/api-key.service');
-const handler = (await import('~/pages/api/v1/me')).default as unknown as (
+const handler = (await import('~/server/api-routes/v1/me')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,
   user: SessionUser

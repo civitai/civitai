@@ -29,7 +29,7 @@ vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
   generateSecretHash: (key: string) => key,
 }));
 
-import permissionsHandler from '~/pages/api/v1/permissions/check';
+import permissionsHandler from '~/server/api-routes/v1/permissions/check';
 
 const VERSION = 100;
 const ASKED = 7;

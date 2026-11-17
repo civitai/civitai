@@ -56,7 +56,7 @@ vi.mock('~/server/auth/civ-cookie', () => ({
   hasAnyLegacyCookie: vi.fn(() => false),
   cookieDomainForHost: vi.fn(() => '.civitai.test'),
 }));
-import handler from '~/pages/api/auth/callback';
+import handler from '~/server/api-routes/auth/callback';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 

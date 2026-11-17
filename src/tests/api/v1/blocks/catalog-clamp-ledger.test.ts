@@ -28,10 +28,10 @@ const ROOTS = ['src/pages/api/v1/blocks', 'src/server/services/blocks'].map((r) 
 const VIEWER_CLAMP_CALLERS = [
   'src/pages/api/v1/blocks/collections/[id]/index.ts',
   'src/pages/api/v1/blocks/collections/index.ts',
-  'src/pages/api/v1/blocks/generation-resources.ts',
+  'src/server/api-routes/v1/blocks/generation-resources.ts',
   'src/pages/api/v1/blocks/images.ts',
-  'src/pages/api/v1/blocks/models.ts',
-  'src/pages/api/v1/blocks/resource-intent.ts',
+  'src/server/api-routes/v1/blocks/models.ts',
+  'src/server/api-routes/v1/blocks/resource-intent.ts',
   'src/pages/api/v1/blocks/tools.ts',
 ];
 

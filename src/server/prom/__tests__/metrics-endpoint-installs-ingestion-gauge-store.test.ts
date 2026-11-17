@@ -15,7 +15,7 @@ describe('/api/metrics installs the shared image-ingestion gauge store', () => {
   });
 
   it('loading the page module installs a store', async () => {
-    await import('~/pages/api/metrics');
+    await import('~/server/api-routes/metrics');
 
     expect(vi.mocked(setIngestionGaugeSharedStore)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(setIngestionGaugeSharedStore).mock.calls[0][0]).toEqual({

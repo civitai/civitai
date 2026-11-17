@@ -14,7 +14,7 @@ vi.mock('~/server/utils/model-gift-endpoint', () => ({
       handler(req, res, { id: 7, isModerator: true }),
 }));
 
-import handler from '~/pages/api/v1/model-versions/gifts';
+import handler from '~/server/api-routes/v1/model-versions/gifts';
 
 function call(query: Record<string, string>) {
   const res = { statusCode: 0, body: undefined as unknown } as {

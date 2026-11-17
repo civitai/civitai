@@ -244,7 +244,7 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
   //
   //  * It is caller-supplied input on a route that accepts a raw body, and it becomes a
   //    Prometheus LABEL. Rebuilt from scratch against a closed set (the same shape as
-  //    `sanitizeClientFailure` in `src/pages/api/upload/abort.ts`), so nothing a caller
+  //    `sanitizeClientFailure` in `src/server/api-routes/upload/abort.ts`), so nothing a caller
   //    sends can mint a label value; see `~/utils/image-upload-relay-producer`.
   //  * Reading it before `runRelay` is what lets the `catch` below attribute a
   //    `handler_error`. Derived inside `runRelay` it would be unavailable on exactly the

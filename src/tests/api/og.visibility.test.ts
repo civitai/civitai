@@ -41,7 +41,7 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   getFeatureFlagsAsync,
 }));
 
-import handler from '~/pages/api/og';
+import handler from '~/server/api-routes/og';
 
 const FALLBACK_CACHE = 'public, max-age=3600, s-maxage=3600';
 const CARD_CACHE = 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400';

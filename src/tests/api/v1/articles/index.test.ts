@@ -58,7 +58,7 @@ vi.mock('~/server/utils/region-blocking', () => ({
 }));
 
 import listHandler from '~/pages/api/v1/articles/index';
-import detailHandler from '~/pages/api/v1/articles/[id]';
+import detailHandler from '~/server/api-routes/v1/articles/[id]';
 
 function createMocks({
   query = {},

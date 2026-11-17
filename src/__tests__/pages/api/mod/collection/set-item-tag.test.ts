@@ -23,7 +23,7 @@ vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   setCollectionItemsTag: mockSetTag,
 }));
 
-import handler from '~/pages/api/mod/collection/set-item-tag';
+import handler from '~/server/api-routes/mod/collection/set-item-tag';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

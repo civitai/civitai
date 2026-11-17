@@ -98,7 +98,7 @@ describe('beacon handlers → beacon-go shadow sampler', () => {
   });
 
   it('ping: the sample carries the pageViews row', async () => {
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     const req = {
       method: 'POST',
       url: '/api/internal/ping',
@@ -114,7 +114,7 @@ describe('beacon handlers → beacon-go shadow sampler', () => {
   });
 
   it('pulse: the sample waits for the un-awaited view and carries the views row', async () => {
-    const handler = (await import('~/pages/api/internal/pulse')).default;
+    const handler = (await import('~/server/api-routes/internal/pulse')).default;
     const req = {
       method: 'POST',
       url: '/api/internal/pulse',

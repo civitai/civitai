@@ -107,7 +107,7 @@ import {
  * path in is `recordGenerationModelSubstitution`, which by definition runs only
  * once a substitution has already happened. So the metric was absent until the
  * first event on that pod — exactly the ambiguity the seeding exists to remove.
- * The missing half is the side-effect call in `src/pages/api/metrics.ts`
+ * The missing half is the side-effect call in `src/server/api-routes/metrics.ts`
  * (mirroring `~/server/prom/challenge.metrics` two lines above it, which is
  * there for the same reason). Both halves are required; neither works alone.
  *

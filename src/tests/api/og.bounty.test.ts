@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import handler from '~/pages/api/og';
+import handler from '~/server/api-routes/og';
 
 type CapturedRes = NextApiResponse & {
   _status: number;

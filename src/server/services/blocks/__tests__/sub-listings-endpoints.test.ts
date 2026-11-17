@@ -31,7 +31,7 @@ vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOrigina
 
 import { baseHandler as upsertHandler } from '~/pages/api/v1/blocks/sub-listings/upsert';
 import { baseHandler as withdrawHandler } from '~/pages/api/v1/blocks/sub-listings/withdraw';
-import { baseHandler as mineHandler } from '~/pages/api/v1/blocks/sub-listings/mine';
+import { baseHandler as mineHandler } from '~/server/api-routes/v1/blocks/sub-listings/mine';
 import { SubListingError } from '~/server/services/blocks/app-sub-listing.service';
 
 const VIEWER = 42;

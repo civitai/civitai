@@ -34,7 +34,7 @@ const { resolveCatalogCaller } = await import(
 );
 const { SubListingError } = await import('~/server/services/blocks/app-sub-listing.service');
 const { baseHandler: itemHandler } = await import('~/pages/api/v1/catalog/items/[externalId]');
-const { baseHandler: listHandler } = await import('~/pages/api/v1/catalog/items/index');
+const { baseHandler: listHandler } = await import('~/server/api-routes/v1/catalog/items/index');
 
 const OWNER = 1;
 const CLIENT = 'client-games';

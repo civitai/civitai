@@ -22,7 +22,7 @@ vi.mock('~/server/utils/url-helpers', async (orig) => ({
   getBaseUrl: () => 'https://civitai.example',
 }));
 
-import handler from '~/pages/api/auth/post-login';
+import handler from '~/server/api-routes/auth/post-login';
 
 function createMocks(query: Record<string, string>) {
   const req = { cookies: {}, headers: { host: 'civitai.example' }, query } as never;

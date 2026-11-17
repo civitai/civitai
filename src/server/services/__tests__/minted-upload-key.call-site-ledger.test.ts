@@ -17,8 +17,8 @@ const scan = scanSource(process.cwd(), {
 });
 
 const UPLOAD_ROUTES = [
-  'src/pages/api/v1/image-upload/index.ts',
-  'src/pages/api/v1/image-upload/multipart/index.ts',
+  'src/server/api-routes/v1/image-upload/index.ts',
+  'src/server/api-routes/v1/image-upload/multipart/index.ts',
   'src/pages/api/v1/image-upload/relay-chunked.ts',
   'src/pages/api/v1/image-upload/relay.ts',
 ];

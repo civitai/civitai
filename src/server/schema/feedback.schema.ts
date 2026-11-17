@@ -75,8 +75,8 @@ const feedbackContextSchema = z.object({
    * `randomUUID()`. There are THREE, enumerated rather than sampled — the
    * enumeration is the load-bearing half of the argument, so a partial one would
    * not support the conclusion:
-   *   1. `src/pages/api/v1/image-upload/index.ts`           — the presign
-   *   2. `src/pages/api/v1/image-upload/multipart/index.ts`  — multipart
+   *   1. `src/server/api-routes/v1/image-upload/index.ts`           — the presign
+   *   2. `src/server/api-routes/v1/image-upload/multipart/index.ts`  — multipart
    *   3. `uploadImageBufferToStore` (`src/utils/s3-utils.ts`) — the relay fallback
    * (Deliberately no line numbers: this enumeration is load-bearing, and a `:19`
    * rots on the next unrelated edit to a file nobody thinks to re-check.)

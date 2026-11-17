@@ -16,7 +16,7 @@ vi.mock('~/server/services/usage-limits.service', async (importOriginal) => ({
   getUsageLimits,
 }));
 
-const handler = (await import('~/pages/api/v1/me/limits')).default as unknown as (
+const handler = (await import('~/server/api-routes/v1/me/limits')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,
   user: SessionUser

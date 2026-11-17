@@ -63,7 +63,7 @@ vi.mock('~/server/services/commentv3/moderation.service', () => ({
   bulkSetCommentV3TosViolation: (...a: unknown[]) => setTos(...(a as [])),
 }));
 
-import handler from '~/pages/api/mod/comment/remove-as-tos';
+import handler from '~/server/api-routes/mod/comment/remove-as-tos';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';

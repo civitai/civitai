@@ -40,7 +40,7 @@ describe('/api/auth/login-popup', () => {
   });
 
   it('302s to a server-built hub login URL that routes back through this spoke to /login/popup-done', async () => {
-    const handler = (await import('~/pages/api/auth/login-popup')).default;
+    const handler = (await import('~/server/api-routes/auth/login-popup')).default;
     const { req, res } = mockReqRes({ cb: '/models/1', reason: 'image-gen' });
     handler(req, res as unknown as NextApiResponse);
 
@@ -59,7 +59,7 @@ describe('/api/auth/login-popup', () => {
   it('500 when the hub is not configured', async () => {
     delete process.env.AUTH_JWT_ISSUER;
     vi.resetModules();
-    const handler = (await import('~/pages/api/auth/login-popup')).default;
+    const handler = (await import('~/server/api-routes/auth/login-popup')).default;
     const { req, res } = mockReqRes({ cb: '/' });
     handler(req, res as unknown as NextApiResponse);
     expect(res.statusCode).toBe(500);

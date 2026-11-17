@@ -37,7 +37,7 @@ vi.mock('~/server/services/creator-removals.service', async (importOriginal) => 
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as UpdateUserScore from '~/server/jobs/update-user-score';
 import type * as CreatorRemovals from '~/server/services/creator-removals.service';
-import handler from '~/pages/api/admin/temp/recompute-removal-scores';
+import handler from '~/server/api-routes/admin/temp/recompute-removal-scores';
 
 function call(query: Record<string, string>) {
   let status = 200;

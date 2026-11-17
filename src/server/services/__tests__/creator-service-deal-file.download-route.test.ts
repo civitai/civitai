@@ -27,7 +27,7 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   },
 }));
 const { default: handler } = (await import(
-  '../../../pages/api/service-deals/files/[fileId]/download'
+  '../../../server/api-routes/service-deals/files/[fileId]/download'
 )) as unknown as {
   default: (req: unknown, res: unknown, user: unknown) => Promise<unknown>;
 };

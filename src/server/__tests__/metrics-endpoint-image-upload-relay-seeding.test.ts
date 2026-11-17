@@ -22,7 +22,7 @@ import { IMAGE_UPLOAD_RELAY_PRODUCERS } from '~/utils/image-upload-relay-produce
  * every pod it never runs.
  *
  * So without the explicit `ensureRegisterImageUploadRelayMetrics()` call in
- * `src/pages/api/metrics.ts`, a scrape returns NO relay series at all, PromQL answers
+ * `src/server/api-routes/metrics.ts`, a scrape returns NO relay series at all, PromQL answers
  * `no data`, and that is indistinguishable from "the instrument was never wired" — the
  * exact ambiguity this counter was added to remove, since the question it exists to
  * settle is "has this fallback ever rescued anyone?".
@@ -67,7 +67,7 @@ function fakeRes() {
 }
 
 async function scrape(): Promise<string> {
-  const mod = await import('~/pages/api/metrics');
+  const mod = await import('~/server/api-routes/metrics');
   const handler = mod.default as unknown as Handler;
   const { res, state } = fakeRes();
   await handler({}, res);

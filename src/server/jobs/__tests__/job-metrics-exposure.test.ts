@@ -12,7 +12,7 @@ import client from 'prom-client';
 // The app shim's only unsafe part is the DB-pool glue it builds at module scope; the two
 // job metrics come from '@civitai/telemetry/client', which imports nothing but prom-client.
 // Substituting the real package therefore gives real metrics on prom-client's real default
-// registry — the same registry `src/pages/api/metrics.ts` renders — so every assertion
+// registry — the same registry `src/server/api-routes/metrics.ts` renders — so every assertion
 // below reads actual Prometheus exposition text rather than a mock's call log.
 vi.mock('~/server/prom/client', async () => await import('@civitai/telemetry/client'));
 

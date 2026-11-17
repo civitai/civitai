@@ -48,7 +48,7 @@ describe('/api/auth/connect', () => {
   });
 
   it('302s to the hub link URL built from the server AUTH_JWT_ISSUER (no client hub var)', async () => {
-    const handler = (await import('~/pages/api/auth/connect')).default;
+    const handler = (await import('~/server/api-routes/auth/connect')).default;
     const { req, res } = mockReqRes({ provider: 'discord', returnUrl: '/user/account#accounts' });
     handler(req, res as unknown as NextApiResponse);
 
@@ -65,7 +65,7 @@ describe('/api/auth/connect', () => {
   });
 
   it('collapses an unsafe returnUrl to the origin root (no open redirect)', async () => {
-    const handler = (await import('~/pages/api/auth/connect')).default;
+    const handler = (await import('~/server/api-routes/auth/connect')).default;
     const { req, res } = mockReqRes({ provider: 'github', returnUrl: 'https://evil.com' });
     handler(req, res as unknown as NextApiResponse);
     const returned = new URL(
@@ -79,7 +79,7 @@ describe('/api/auth/connect', () => {
   // the linked-endpoint test supplies its own cookie fixture — without this, deleting the call below leaves
   // every test in both files green while the post-link sync is dead in production.
   it('sets the one-shot link cookie that /api/auth/linked consumes', async () => {
-    const handler = (await import('~/pages/api/auth/connect')).default;
+    const handler = (await import('~/server/api-routes/auth/connect')).default;
     const { req, res } = mockReqRes({ provider: 'discord', returnUrl: '/user/account' });
     handler(req, res as unknown as NextApiResponse);
 
@@ -94,7 +94,7 @@ describe('/api/auth/connect', () => {
   // On https the cookie rides a cross-registrable-domain return (civitai.red → hub → civitai.red), where Lax
   // and host-only scoping are both known to drop it — see the bridge cookie this mirrors.
   it('scopes the cookie for the cross-site return when the request is https', async () => {
-    const handler = (await import('~/pages/api/auth/connect')).default;
+    const handler = (await import('~/server/api-routes/auth/connect')).default;
     const { req, res } = mockReqRes({ provider: 'discord', returnUrl: '/' }, 'www.civitai.red');
     (req.headers as Record<string, string>)['x-forwarded-proto'] = 'https';
     handler(req, res as unknown as NextApiResponse);
@@ -108,7 +108,7 @@ describe('/api/auth/connect', () => {
   });
 
   it('400 when provider is missing', async () => {
-    const handler = (await import('~/pages/api/auth/connect')).default;
+    const handler = (await import('~/server/api-routes/auth/connect')).default;
     const { req, res } = mockReqRes({});
     handler(req, res as unknown as NextApiResponse);
     expect(res.statusCode).toBe(400);
@@ -117,7 +117,7 @@ describe('/api/auth/connect', () => {
   it('500 when the hub is not configured', async () => {
     delete process.env.AUTH_JWT_ISSUER;
     vi.resetModules();
-    const handler = (await import('~/pages/api/auth/connect')).default;
+    const handler = (await import('~/server/api-routes/auth/connect')).default;
     const { req, res } = mockReqRes({ provider: 'discord' });
     handler(req, res as unknown as NextApiResponse);
     expect(res.statusCode).toBe(500);

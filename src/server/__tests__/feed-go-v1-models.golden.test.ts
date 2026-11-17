@@ -343,7 +343,7 @@ beforeAll(async () => {
   // Read at module scope by [id].ts (the origin cache's TTL, getBaseUrl()): set before its import.
   setEnv({ IS_DATAPACKET: true, NEXTAUTH_URL: BASE_URL });
   listHandler = (await import('~/pages/api/v1/models/index')).default as any;
-  detailHandler = (await import('~/pages/api/v1/models/[id]')).default as any;
+  detailHandler = (await import('~/server/api-routes/v1/models/[id]')).default as any;
 }, 180_000);
 
 const fixtures = loadFixtures();

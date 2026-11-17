@@ -23,7 +23,7 @@ vi.mock('~/server/integrations/freshdesk', () => ({
   upsertContact: vi.fn(),
 }));
 
-const handler = (await import('~/pages/api/auth/freshdesk')).default as unknown as (
+const handler = (await import('~/server/api-routes/auth/freshdesk')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse
 ) => Promise<void>;

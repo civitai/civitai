@@ -14,7 +14,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/server/services/system-cache', () => ({ addSystemPermission, removeSystemPermission }));
 vi.mock('~/server/auth/session-invalidation', () => ({ refreshSession }));
 
-import handler from '~/pages/api/admin/permission';
+import handler from '~/server/api-routes/admin/permission';
 
 async function grant(key: string) {
   let body: unknown;

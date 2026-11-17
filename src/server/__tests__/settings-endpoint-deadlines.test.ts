@@ -101,7 +101,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   getUserFollows: h.follows,
 }));
 
-import handler from '~/pages/api/user/settings';
+import handler from '~/server/api-routes/user/settings';
 import { resolveSettingsBootstrapForRender } from '~/server/services/settings-bootstrap.service';
 import { setSessionCookie } from '~/server/auth/civ-cookie';
 // The unit setup replaces this export with a spy (src/__tests__/setup.ts).
@@ -509,7 +509,7 @@ describe('settings bootstrap during a server render — domain resolution', () =
 
   // The route as the browser reaches it, on `host`.
   async function routeAnswer(host: string) {
-    const { default: freshHandler } = await import('~/pages/api/user/settings');
+    const { default: freshHandler } = await import('~/server/api-routes/user/settings');
     const json = vi.fn();
     const res = { status: vi.fn(() => res), json, setHeader: vi.fn(), end: vi.fn() };
     const done = (

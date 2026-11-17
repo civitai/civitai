@@ -74,7 +74,7 @@ describe('the SHARED B2 image client is untouched by that', () => {
   it('still retries — this is the negative control for the assertion above', async () => {
     /**
      * 🔴 If this ever reads 1, someone bounded the probe by taking retries away from
-     * `src/pages/api/upload/complete.ts`, `src/pages/api/upload/abort.ts`,
+     * `src/server/api-routes/upload/complete.ts`, `src/server/api-routes/upload/abort.ts`,
      * `src/server/jobs/announcement-media-check.ts` and the server-side upload/delete
      * paths, where a transient 5xx losing a retry loses a user's bytes. It is also what
      * makes the probe assertion non-vacuous: without it, "the probe client has 1 attempt"

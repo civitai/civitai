@@ -97,9 +97,9 @@ it('only /api/live, /api/ready and /api/health use ProbeEndpoint', () => {
     .filter((f) => /\bProbeEndpoint\b/.test(fs.readFileSync(path.join(src, f), 'utf8')))
     .sort();
   expect(users).toEqual([
-    'pages/api/health.ts',
-    'pages/api/live.ts',
-    'pages/api/ready.ts',
+    'server/api-routes/health.ts',
+    'server/api-routes/live.ts',
+    'server/api-routes/ready.ts',
     'server/utils/endpoint-helpers.ts',
   ]);
   // Naming it is not enough: each health route must export it, or its probes start failing.

@@ -44,7 +44,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => ({ user: { id: 42, bannedAt: null } })),
 }));
 
-import handler from '~/pages/api/upload/sign-part';
+import handler from '~/server/api-routes/upload/sign-part';
 import { UploadType } from '~/server/common/enums';
 import { buildUploadKey } from '~/utils/upload-key';
 // Mocked in ~/__tests__/setup as vi.fn(); imported so log ORDER is observable and the logger

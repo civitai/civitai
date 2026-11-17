@@ -317,7 +317,7 @@ describe('the App Blocks limiter population', () => {
       'src/server/routers/apps-shared.router.ts',
       'src/server/services/apps/doc-store-api.ts',
       'src/server/services/blocks/app-sub-listing.service.ts',
-      'src/pages/api/v1/blocks/models.ts',
+      'src/server/api-routes/v1/blocks/models.ts',
       'src/pages/api/v1/blocks/goods/purchase.ts',
     ]) {
       expect(files.has(f), `${f} has no limiter call the walk can see`).toBe(true);

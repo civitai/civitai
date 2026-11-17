@@ -76,7 +76,7 @@ const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
       why: 'a poi/minor lock forces nsfw off and restricts disputes, so a stale marker never reads',
     },
   },
-  'src/pages/api/admin/temp/migrate-profanity-nsfw.ts': {
+  'src/server/api-routes/admin/temp/migrate-profanity-nsfw.ts': {
     lockWrites: 8,
     decision: {
       kind: 'exempt',

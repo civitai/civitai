@@ -15,7 +15,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/server/services/user-preferences.service', () => ({ getAllHiddenForUser }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession }));
 
-import handler from '~/pages/api/user/getHiddenPreferences';
+import handler from '~/server/api-routes/user/getHiddenPreferences';
 
 const run = async (query: Record<string, string>) => {
   const req = { method: 'GET', query } as unknown as NextApiRequest;

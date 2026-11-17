@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { schema as deliverPrepaidBuzzSchema } from '~/pages/api/admin/deliver-prepaid-buzz';
-import { schema as permissionSchema } from '~/pages/api/admin/permission';
-import { schema as giftMembershipSchema } from '~/pages/api/testing/gift-membership';
-import { schema as referralsSchema } from '~/pages/api/testing/referrals';
+import { schema as deliverPrepaidBuzzSchema } from '~/server/api-routes/admin/deliver-prepaid-buzz';
+import { schema as permissionSchema } from '~/server/api-routes/admin/permission';
+import { schema as giftMembershipSchema } from '~/server/api-routes/testing/gift-membership';
+import { schema as referralsSchema } from '~/server/api-routes/testing/referrals';
 
 /**
  * These four endpoints parse their schema against `req.query` (two of them against

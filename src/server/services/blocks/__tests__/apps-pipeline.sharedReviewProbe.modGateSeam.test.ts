@@ -10,7 +10,7 @@ import { verifyReviewAccessToken } from '~/server/services/blocks/review-session
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 
-import modGateHandler from '~/pages/api/internal/mod-gate';
+import modGateHandler from '~/server/api-routes/internal/mod-gate';
 
 /**
  * SEAM: the shared-server review reachability probe (`waitForReviewHostReachable` with

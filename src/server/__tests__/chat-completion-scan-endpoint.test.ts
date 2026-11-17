@@ -18,7 +18,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   setTextScanWebSearchRollout: vi.fn(),
 }));
 
-const { default: handler } = await import('~/pages/api/testing/chat-completion-scan');
+const { default: handler } = await import('~/server/api-routes/testing/chat-completion-scan');
 const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
   '~/server/services/text-scan/harness'
 );

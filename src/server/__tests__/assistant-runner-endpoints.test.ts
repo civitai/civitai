@@ -40,8 +40,8 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 const { verifyRunGrant, signRunGrant, signRunnerViewerToken } = await import(
   '~/server/services/app-assistant/assistant-runner-tokens'
 );
-const mintRoute = (await import('~/pages/api/internal/app-assistant/runner-token')).default;
-const grantRoute = (await import('~/pages/api/apps/assistant/run-grant')).default;
+const mintRoute = (await import('~/server/api-routes/internal/app-assistant/runner-token')).default;
+const grantRoute = (await import('~/server/api-routes/apps/assistant/run-grant')).default;
 
 // TEST-ONLY values: a key pair generated for this run, and a placeholder secret.
 const SECRET = 'test-only-runner-secret';

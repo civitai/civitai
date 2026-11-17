@@ -25,8 +25,8 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   getFeatureFlagsLazy: mockFeatureFlagsLazy,
 }));
 
-import generationDataHandler from '~/pages/api/generation/data';
-import generationResourcesHandler from '~/pages/api/generation/resources';
+import generationDataHandler from '~/server/api-routes/generation/data';
+import generationResourcesHandler from '~/server/api-routes/generation/resources';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 const PG = 1;

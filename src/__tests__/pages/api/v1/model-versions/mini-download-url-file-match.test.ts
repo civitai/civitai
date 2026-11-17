@@ -99,7 +99,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 import { Air } from '@civitai/orchestration-client';
-import handler from '~/pages/api/v1/model-versions/mini/[id]';
+import handler from '~/server/api-routes/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { modelVersionToAir } from '~/server/utils/resource-air';

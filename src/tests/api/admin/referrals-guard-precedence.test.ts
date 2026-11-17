@@ -19,7 +19,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 // eslint-disable-next-line import/first
-import referralsHandler from '~/pages/api/testing/referrals';
+import referralsHandler from '~/server/api-routes/testing/referrals';
 
 type Captured = { status?: number; body?: unknown };
 

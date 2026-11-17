@@ -104,7 +104,7 @@ describe('POST /api/internal/ping', () => {
   });
 
   it('dispatches Tracker.pageView on a well-formed same-origin request (200)', async () => {
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     const req = makeReq({
       host: 'civitai.com',
       referer: 'https://civitai.com/models/1',
@@ -128,7 +128,7 @@ describe('POST /api/internal/ping', () => {
   });
 
   it('returns 400 (not 500) on a malformed referer header, no insert', async () => {
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     // `new URL('://')` throws TypeError — the raw-500 landmine. Host is present
     // and valid so we isolate the referer-parse throw.
     const req = makeReq({ host: 'civitai.com', referer: '://not a url', body: validBody });
@@ -142,7 +142,7 @@ describe('POST /api/internal/ping', () => {
   });
 
   it('returns 400 (not 500) on a malformed body, no insert', async () => {
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     // Passes the referer/host guard, then JSON.parse('{not json') throws.
     const req = makeReq({
       host: 'civitai.com',
@@ -159,7 +159,7 @@ describe('POST /api/internal/ping', () => {
   });
 
   it('returns 400 (not 500) on an empty body, no insert', async () => {
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     // Empty/undefined body — JSON.parse(undefined) → SyntaxError.
     const req = makeReq({ host: 'civitai.com', referer: 'https://civitai.com/models/1' });
     const res = makeRes();
@@ -171,7 +171,7 @@ describe('POST /api/internal/ping', () => {
   });
 
   it('rejects a cross-origin request (host mismatch) with 400 and no insert', async () => {
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     const req = makeReq({
       host: 'civitai.com',
       referer: 'https://evil.example/models/1',
@@ -186,7 +186,7 @@ describe('POST /api/internal/ping', () => {
   });
 
   it('returns 200 without inserting when the path does not match a known pathname', async () => {
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     const body = JSON.stringify({ duration: 5000, path: '/unknown/path' });
     const req = makeReq({ host: 'civitai.com', referer: 'https://civitai.com/unknown/path', body });
     const res = makeRes();
@@ -201,7 +201,7 @@ describe('POST /api/internal/ping', () => {
     // The parse guards must catch ONLY the referer/body throws — a real failure
     // in the insert path must still surface (reject), not become a 400.
     mockPageView.mockRejectedValueOnce(new Error('clickhouse down'));
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     const req = makeReq({
       host: 'civitai.com',
       referer: 'https://civitai.com/models/1',
@@ -215,7 +215,7 @@ describe('POST /api/internal/ping', () => {
 
   it('short-circuits to 200 in dev without inserting', async () => {
     devStore.isDev = true;
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     const req = makeReq({
       host: 'civitai.com',
       referer: 'https://civitai.com/models/1',
@@ -256,7 +256,7 @@ describe('POST /api/internal/ping — body shape', () => {
   });
 
   async function post(body: unknown) {
-    const handler = (await import('~/pages/api/internal/ping')).default;
+    const handler = (await import('~/server/api-routes/internal/ping')).default;
     const req = makeReq({
       host: 'civitai.com',
       referer: 'https://civitai.com/models/1',

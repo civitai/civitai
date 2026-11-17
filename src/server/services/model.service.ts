@@ -7038,7 +7038,7 @@ export async function getModelsWithVersions({
               // fail-open degraded path hands one shared `files` array to every concurrent
               // reader of that version — a `push` here would leak this VAE into other in-flight
               // requests (and, via the 180s origin response cache on
-              // `src/pages/api/v1/models/[id].ts`, into every later reader of that model id).
+              // `src/server/api-routes/v1/models/[id].ts`, into every later reader of that model id).
               // The next statement rebuilds the list with `.map()` anyway, so nothing downstream
               // wanted the mutation.
               const files = [...(groupedFiles[version.id]?.files ?? []), ...vaeFile];

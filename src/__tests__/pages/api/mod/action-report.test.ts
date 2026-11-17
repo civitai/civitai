@@ -13,7 +13,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
 
-const { default: handler } = await import('~/pages/api/mod/action-report');
+const { default: handler } = await import('~/server/api-routes/mod/action-report');
 
 const post = (body: Record<string, unknown>) => {
   const res = { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };

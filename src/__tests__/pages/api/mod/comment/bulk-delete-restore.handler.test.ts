@@ -25,8 +25,8 @@ vi.mock('~/server/services/commentv3/moderation.service', async (importOriginal)
   bulkClearCommentV3TosViolation: clearTos,
 }));
 
-import bulkDeleteHandler from '~/pages/api/mod/comment/bulk-delete';
-import restoreHandler from '~/pages/api/mod/comment/restore-from-tos';
+import bulkDeleteHandler from '~/server/api-routes/mod/comment/bulk-delete';
+import restoreHandler from '~/server/api-routes/mod/comment/restore-from-tos';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 

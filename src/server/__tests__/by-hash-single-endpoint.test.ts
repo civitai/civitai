@@ -13,7 +13,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 
 // Avoid pulling the heavy model-version response graph.
-vi.mock('~/pages/api/v1/model-versions/[id]', () => ({
+vi.mock('~/server/api-routes/v1/model-versions/[id]', () => ({
   resModelVersionDetails: mockResDetails,
 }));
 
@@ -21,7 +21,7 @@ vi.mock('~/server/selectors/modelVersion.selector', () => ({
   getModelVersionApiSelect: {},
 }));
 
-import handler from '~/pages/api/v1/model-versions/by-hash/[hash]';
+import handler from '~/server/api-routes/v1/model-versions/by-hash/[hash]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindFirst = dbMock.dbRead.modelFile.findFirst;
 

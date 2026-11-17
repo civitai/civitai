@@ -48,10 +48,10 @@ vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   getServerAuthSession: async () => ({ user: { id: 1, isModerator: true } }),
 }));
 
-import switchHandler from '~/pages/api/auth/switch';
-import impersonateHandler from '~/pages/api/auth/impersonate';
+import switchHandler from '~/server/api-routes/auth/switch';
+import impersonateHandler from '~/server/api-routes/auth/impersonate';
 import oauthProxy from '~/pages/api/auth/oauth/[...path]';
-import accountsHandler from '~/pages/api/auth/accounts';
+import accountsHandler from '~/server/api-routes/auth/accounts';
 
 const JSON_TYPE = { 'content-type': 'application/json' };
 const FORM_TYPE = { 'content-type': 'application/x-www-form-urlencoded' };

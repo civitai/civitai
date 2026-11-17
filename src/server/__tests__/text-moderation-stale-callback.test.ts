@@ -31,7 +31,7 @@ vi.mock('~/server/services/moderation-adapters', async (importOriginal) => ({
   getModerationAdapter,
 }));
 
-import handler from '~/pages/api/webhooks/text-moderation-result';
+import handler from '~/server/api-routes/webhooks/text-moderation-result';
 import { recordTextScanSuccess } from '~/server/services/text-scan/record';
 
 const ARTICLE = 41;

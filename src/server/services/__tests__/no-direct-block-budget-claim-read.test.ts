@@ -152,7 +152,7 @@ const ALLOWED_FORMS: AllowedForm[] = [
   {
     name: 'read-surface projection',
     re: /buzzBudget:\s*claims\.buzzBudget\s*\?\?\s*null/g,
-    files: ['server/routers/blocks.router.ts', 'pages/api/v1/blocks/me.ts'],
+    files: ['server/routers/blocks.router.ts', 'server/api-routes/v1/blocks/me.ts'],
     count: 2,
     why:
       'The two doors that REPORT the number to the block (`blocks.getMyViewer` and ' +

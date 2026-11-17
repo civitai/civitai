@@ -96,7 +96,7 @@ beforeEach(() => {
 
 describe('GET /api/internal/image-delivery/[id]', () => {
   it('returns the media type alongside hideMeta for a VIDEO row', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     dbReadQueryRaw.mockImplementation(
       respondWithRows([
         { id: 77, url: VIDEO_URL, hideMeta: true, type: 'video', mimeType: 'video/mp4' },
@@ -113,7 +113,7 @@ describe('GET /api/internal/image-delivery/[id]', () => {
   });
 
   it('returns the media type alongside hideMeta for an IMAGE row', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     dbReadQueryRaw.mockImplementation(
       respondWithRows([
         { id: 42, url: IMAGE_URL, hideMeta: false, type: 'image', mimeType: 'image/jpeg' },
@@ -130,7 +130,7 @@ describe('GET /api/internal/image-delivery/[id]', () => {
   });
 
   it('serializes an absent mimeType as an explicit null key, not a dropped field', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     dbReadQueryRaw.mockImplementation(
       respondWithRows([
         { id: 3, url: 'legacy/old.jpeg', hideMeta: false, type: 'image', mimeType: null },
@@ -147,7 +147,7 @@ describe('GET /api/internal/image-delivery/[id]', () => {
   });
 
   it('is additive — the response still carries every field it carried before', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     dbReadQueryRaw.mockImplementation(
       respondWithRows([
         { id: 42, url: IMAGE_URL, hideMeta: false, type: 'image', mimeType: 'image/jpeg' },
@@ -172,7 +172,7 @@ describe('GET /api/internal/image-delivery/[id]', () => {
    * only on the value.
    */
   it('emits the media type under the literal JSON key "type"', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     dbReadQueryRaw.mockImplementation(
       respondWithRows([
         { id: 77, url: VIDEO_URL, hideMeta: true, type: 'video', mimeType: 'video/mp4' },
@@ -191,7 +191,7 @@ describe('GET /api/internal/image-delivery/[id]', () => {
   });
 
   it('emits "image" for an image so the caller can tell the two apart', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     dbReadQueryRaw.mockImplementation(
       respondWithRows([
         { id: 42, url: IMAGE_URL, hideMeta: false, type: 'image', mimeType: 'image/jpeg' },
@@ -208,7 +208,7 @@ describe('GET /api/internal/image-delivery/[id]', () => {
   // --- Invariant guards (NOT regression coverage): these pass on the pre-change code too.
   // They pin the error shape the widening must not disturb.
   it('[invariant] still 404s an unknown url', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     dbReadQueryRaw.mockImplementation(respondWithRows([]));
     const res = makeRes();
 
@@ -219,7 +219,7 @@ describe('GET /api/internal/image-delivery/[id]', () => {
   });
 
   it('[invariant] still 400s a request with no id, without querying', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     const res = makeRes();
 
     await handler({ method: 'GET', query: {} } as unknown as NextApiRequest, res);
@@ -229,7 +229,7 @@ describe('GET /api/internal/image-delivery/[id]', () => {
   });
 
   it('reads through Kysely, never the Prisma query engine', async () => {
-    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    const handler = (await import('~/server/api-routes/internal/image-delivery/[id]')).default;
     dbReadQueryRaw.mockImplementation(
       respondWithRows([
         { id: 42, url: IMAGE_URL, hideMeta: false, type: 'image', mimeType: 'image/jpeg' },

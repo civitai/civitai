@@ -36,12 +36,12 @@ const GLOBS = ['src/**/*.{ts,tsx}'];
 const EXEMPT = ['src/server/redis/client.ts'];
 
 const BASELINE: Counts = {
-  'src/pages/api/testing/fee-allowance-boost.ts': 1,
-  'src/pages/api/testing/redis-cluster.ts': 1,
+  'src/server/api-routes/testing/fee-allowance-boost.ts': 1,
+  'src/server/api-routes/testing/redis-cluster.ts': 1,
   'src/pages/api/v1/blocks/dev-token.ts': 2,
   'src/pages/api/v1/blocks/submissions.ts': 2,
   'src/pages/api/v1/blocks/withdraw.ts': 2,
-  'src/pages/api/webhooks/freshdesk.ts': 1,
+  'src/server/api-routes/webhooks/freshdesk.ts': 1,
   'src/pages/api/webhooks/hq.ts': 1,
   'src/pages/api/webhooks/stripe.ts': 1,
   'src/server/auth/session-invalidation.ts': 2,

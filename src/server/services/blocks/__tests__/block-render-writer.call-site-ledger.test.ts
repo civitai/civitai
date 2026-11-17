@@ -79,7 +79,7 @@ describe('the blockRenders writer set — instrument validation', () => {
     // A broken walk, or a regex that matches nothing, would make every assertion below
     // vacuously true. Prove the instrument works before reading its verdict.
     expect(FILES.length).toBeGreaterThan(500);
-    expect(FILES).toContain('src/pages/api/track/block-render.ts');
+    expect(FILES).toContain('src/server/api-routes/track/block-render.ts');
     expect(FILES).toContain('src/server/routers/track.router.ts');
     expect(FILES).toContain('src/server/clickhouse/tracker.ts');
     expect(callersOf('blockRenderTrackerPayload').length).toBeGreaterThan(0);
@@ -131,7 +131,7 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
    */
   const WRITERS = [
     // The REST beacon. What every browser host uses, at BLOCK_READY, once per host mount.
-    'src/pages/api/track/block-render.ts',
+    'src/server/api-routes/track/block-render.ts',
     // The legacy tRPC procedure. No prom counter, no histogram — a ClickHouse writer only,
     // reachable by a bearer/API-key caller who never runs the browser beacon.
     'src/server/routers/track.router.ts',
@@ -249,7 +249,7 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     // A control on the neighbouring rule: if this stopped being true, the writer would be
     // taking viewer identity from the client and the gate's derivation argument would be
     // resting on something that no longer holds.
-    expect(CODE.get('src/pages/api/track/block-render.ts')!).toContain('isAnon: !session?.user');
+    expect(CODE.get('src/server/api-routes/track/block-render.ts')!).toContain('isAnon: !session?.user');
     expect(CODE.get('src/server/routers/track.router.ts')!).toContain('isAnon: !ctx.user');
   });
 

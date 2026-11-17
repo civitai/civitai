@@ -19,7 +19,7 @@ vi.mock('~/server/services/generation/generation.service', () => ({
   getResourceData: mockGetResourceData,
 }));
 
-import handler from '~/pages/api/v1/blocks/generation-resources';
+import handler from '~/server/api-routes/v1/blocks/generation-resources';
 
 /** Block resource rehydrate leaves out resources of a model flagged `poi`. */
 

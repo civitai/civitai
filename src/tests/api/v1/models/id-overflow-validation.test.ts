@@ -76,8 +76,8 @@ vi.mock('~/env/server', () => ({
 }));
 
 // The REAL exported schemas (only the service/db graph around them is mocked).
-import { schema as modelsSchema } from '~/pages/api/v1/models/[id]';
-import { schema as miniSchema } from '~/pages/api/v1/model-versions/mini/[id]';
+import { schema as modelsSchema } from '~/server/api-routes/v1/models/[id]';
+import { schema as miniSchema } from '~/server/api-routes/v1/model-versions/mini/[id]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -134,7 +134,7 @@ function fakeRes() {
 }
 
 async function invokeModels(id: string) {
-  const mod = await import('~/pages/api/v1/models/[id]');
+  const mod = await import('~/server/api-routes/v1/models/[id]');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   const req = {
     method: 'GET',

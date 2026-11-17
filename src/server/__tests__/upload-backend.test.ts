@@ -72,7 +72,7 @@ vi.mock('~/utils/s3-utils', () => ({
 // handler) on purpose — Next.js scans every .ts file under src/pages/api as an
 // API route, and its build-time route-type validator rejects a test module
 // (no default ApiRouteConfig export), failing `next build`.
-import handler from '~/pages/api/upload';
+import handler from '~/server/api-routes/upload';
 import { UploadType } from '~/server/common/enums';
 // Mocked in ~/__tests__/setup as vi.fn(); imported here so the ORDER of the log relative to
 // the response is observable, and so it can be made to REJECT.

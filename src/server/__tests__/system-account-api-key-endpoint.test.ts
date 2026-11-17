@@ -39,7 +39,7 @@ vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
 }));
 
 const logToAxiom = loggingMock.logToAxiom;
-const handler = (await import('~/pages/api/admin/system-account-api-key')).default;
+const handler = (await import('~/server/api-routes/admin/system-account-api-key')).default;
 
 type UserRow = {
   id: number;

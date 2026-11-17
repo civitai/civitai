@@ -139,7 +139,7 @@ function fakeRes() {
 }
 
 async function namesFromModelsById() {
-  const mod = await import('~/pages/api/v1/models/[id]');
+  const mod = await import('~/server/api-routes/v1/models/[id]');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   const req = {
     method: 'GET',
@@ -154,7 +154,7 @@ async function namesFromModelsById() {
 }
 
 async function namesFromModelVersionsById() {
-  const mod = await import('~/pages/api/v1/model-versions/[id]');
+  const mod = await import('~/server/api-routes/v1/model-versions/[id]');
   const body = await mod.prepareModelVersionResponse(
     {
       id: VERSION_ID,

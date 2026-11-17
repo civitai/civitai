@@ -179,7 +179,7 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     allowOpaqueOrigin: true,
   },
   {
-    module: '~/pages/api/v1/blocks/entitlements',
+    module: '~/server/api-routes/v1/blocks/entitlements',
     requiredScope: 'goods:read:self',
     allowOpaqueOrigin: true,
   },
@@ -196,7 +196,7 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     allowOpaqueOrigin: true,
   },
   {
-    module: '~/pages/api/v1/blocks/sub-listings/mine',
+    module: '~/server/api-routes/v1/blocks/sub-listings/mine',
     requiredScope: 'apps:store:items:write',
     allowOpaqueOrigin: true,
   },
@@ -206,7 +206,7 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   // (transactions / accounts / daily-compensation) remain host-mediated tRPC
   // MUTATIONS (blocks.getMyBuzz*) with no REST route and nothing to guard.
   {
-    module: '~/pages/api/v1/blocks/buzz',
+    module: '~/server/api-routes/v1/blocks/buzz',
     requiredScope: 'buzz:read:self',
     allowOpaqueOrigin: true,
   },
@@ -288,7 +288,7 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   // never listed here. It is the exact miss this file exists to prevent, and it
   // sat unnoticed because the list was purely hand-maintained.
   {
-    module: '~/pages/api/v1/blocks/tip-allowance',
+    module: '~/server/api-routes/v1/blocks/tip-allowance',
     requiredScope: 'social:tip:self',
     allowOpaqueOrigin: true,
   },
@@ -301,7 +301,7 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
   // ledger. The pin is what makes the current posture visible and a silent flip
   // loud. (me.ts's own header says "CORS: handled in withBlockScope from
   // BLOCK_ALLOWED_ORIGINS", which is consistent with omission rather than intent.)
-  { module: '~/pages/api/v1/blocks/me', requiredScope: 'user:read:self', allowOpaqueOrigin: false },
+  { module: '~/server/api-routes/v1/blocks/me', requiredScope: 'user:read:self', allowOpaqueOrigin: false },
   // The WORKFLOW surface. Same opaque-origin argument as the shared writes, and it
   // bites hardest of all here: a block whose catalog renders but whose Generate
   // button 405s on the preflight is the most confusing failure this platform can
@@ -474,7 +474,7 @@ describe('scoped block endpoints — opaque-origin CORS wiring', () => {
     );
     // And the comment strip must actually bite: models.ts documents "No
     // requiredScope" in prose and must NOT be pulled in by its own doc comment.
-    expect(derived.map((d) => d.module)).not.toContain('~/pages/api/v1/blocks/models');
+    expect(derived.map((d) => d.module)).not.toContain('~/server/api-routes/v1/blocks/models');
   });
 
   it('ENDPOINTS IS every scoped v1/blocks route — both directions', () => {

@@ -40,7 +40,7 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
     hatted.has(`${entityType}:${entityId}`),
 }));
 
-import handler from '~/pages/api/track/batch';
+import handler from '~/server/api-routes/track/batch';
 
 const CREATED = new Date('2026-01-02T00:00:00Z');
 const BANNED = new Date('2026-03-04T00:00:00Z');

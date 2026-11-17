@@ -88,8 +88,8 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as FliptClient from '~/server/flipt/client';
-import listHandler from '~/pages/api/v1/apps/index';
-import detailHandler from '~/pages/api/v1/apps/[slug]';
+import listHandler from '~/server/api-routes/v1/apps/index';
+import detailHandler from '~/server/api-routes/v1/apps/[slug]';
 
 type Handler = (req: unknown, res: unknown, user: unknown) => Promise<unknown>;
 

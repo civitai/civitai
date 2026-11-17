@@ -14,7 +14,7 @@ vi.mock('~/server/utils/og-image-helpers', async (importOriginal) => ({
   fetchImageAsDataUri,
 }));
 
-import handler from '~/pages/api/og';
+import handler from '~/server/api-routes/og';
 
 const image = (url: string) => ({ url, nsfwLevel: 1, type: 'image', width: 100, height: 100 });
 const banner = (ingestion: string, needsReview: string | null = null) => ({

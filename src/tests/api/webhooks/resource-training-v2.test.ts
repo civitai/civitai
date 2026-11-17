@@ -101,7 +101,7 @@ vi.mock('~/server/signals/wrapper', () => ({
 vi.mock('~/server/webhooks/training-moderation.webhooks', () => ({
   queueNewTrainingModerationWebhook: vi.fn(() => Promise.resolve()),
 }));
-import handler from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
+import handler from '~/server/api-routes/webhooks/resource-training-v2/[modelVersionId]';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockLogToAxiom = loggingMock.logToAxiom;

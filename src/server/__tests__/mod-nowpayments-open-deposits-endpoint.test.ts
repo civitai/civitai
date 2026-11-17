@@ -24,7 +24,7 @@ vi.mock('~/server/services/nowpayments.service', () => ({
 }));
 
 const { default: handler } = (await import(
-  '~/pages/api/mod/nowpayments/open-deposits'
+  '~/server/api-routes/mod/nowpayments/open-deposits'
 )) as unknown as {
   default: (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;
 };

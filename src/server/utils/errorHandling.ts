@@ -491,7 +491,7 @@ const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
 // (c) IDENTIFIER characters. A bare `includes` treats these codes as substrings, and
 //     ordinary camelCase identifiers embed them — `epipe` inside `sourcePipeline`,
 //     `etimedout` inside `responseTimedOut` (this repo already spells `deadlineTimedOut`
-//     in `src/pages/api/health.ts`). A `Code: 47` missing-column error naming such a
+//     in `src/server/api-routes/health.ts`). A `Code: 47` missing-column error naming such a
 //     column would otherwise classify as a transport fault and be swallowed. `a-z0-9_`
 //     also stops `UND_ERR_SOCKET` matching inside `some_und_err_socket_thing`.
 //

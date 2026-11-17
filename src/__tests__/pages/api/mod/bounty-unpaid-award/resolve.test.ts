@@ -23,7 +23,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/services/bounty.service', () => ({ resolveUnpaidBountyAward: mockResolve }));
 
-import handler from '~/pages/api/mod/bounty-unpaid-award/resolve';
+import handler from '~/server/api-routes/mod/bounty-unpaid-award/resolve';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

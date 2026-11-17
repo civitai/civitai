@@ -39,7 +39,7 @@ import type {
   BlockQuoteGrantRecord,
 } from '~/server/services/blocks/block-quote-grant.service';
 // THE App-Blocks kill-switch for a block-token subject. Lives in a service, not here,
-// because `src/pages/api/v1/blocks/me.ts` is its other caller and a Next API route must
+// because `src/server/api-routes/v1/blocks/me.ts` is its other caller and a Next API route must
 // not import this router. See that module's docblock for why a second copy is banned.
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
 import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
@@ -9377,7 +9377,7 @@ export const blocksRouter = router({
    * db read — the ban/mute lookup hits the PRIMARY, so a hammering block must be
    * bounded) → the /blocks/me identity read.
    *
-   * ## WHAT THIS SHARES WITH `src/pages/api/v1/blocks/me.ts`, AND WHAT IT DOES NOT
+   * ## WHAT THIS SHARES WITH `src/server/api-routes/v1/blocks/me.ts`, AND WHAT IT DOES NOT
    *
    * 🔴 THIS BLOCK SAID THE TWO MIRRORED EACH OTHER "EXACTLY" AND THAT WAS FALSE FOR
    * MONTHS. `me.ts` carried a hardcoded `if (!user.isModerator) → 403` and NO

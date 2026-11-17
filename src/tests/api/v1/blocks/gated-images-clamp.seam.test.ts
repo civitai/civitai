@@ -89,7 +89,7 @@ vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { baseHandler } from '~/pages/api/v1/blocks/gated-images';
+import { baseHandler } from '~/server/api-routes/v1/blocks/gated-images';
 
 const queryRaw = dbMock.dbRead.$queryRaw;
 

@@ -89,7 +89,7 @@ import { signReviewAccessToken } from '~/server/services/blocks/review-session';
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 
-import handler from '~/pages/api/internal/mod-gate';
+import handler from '~/server/api-routes/internal/mod-gate';
 
 const SECRET = 'test-nextauth-secret-bbbbbbbbbbbbbbbbbbbb';
 const HOST = 'review-0123456789abcdef.civit.ai';

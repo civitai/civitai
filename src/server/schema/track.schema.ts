@@ -329,7 +329,7 @@ export const blockRenderSchema = z.object({
  * 🔴 THE SINGLE STRIP POINT FOR THE `blockRenders` CLICKHOUSE PAYLOAD.
  *
  * There are TWO writers of that table — the REST beacon
- * (`src/pages/api/track/block-render.ts`) and the `track.blockRender` tRPC
+ * (`src/server/api-routes/track/block-render.ts`) and the `track.blockRender` tRPC
  * procedure (`src/server/routers/track.router.ts`) — and every prom-only /
  * observability field added to `blockRenderSchema` has to be removed on BOTH.
  * Patching one is a SILENT half-fix: the field falls through the other's

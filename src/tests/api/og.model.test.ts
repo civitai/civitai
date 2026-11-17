@@ -9,7 +9,7 @@ vi.mock('~/server/utils/og-image-helpers', async (importOriginal) => ({
   fetchImageAsDataUri,
 }));
 
-import handler from '~/pages/api/og';
+import handler from '~/server/api-routes/og';
 
 const OWNER_ID = 10;
 const VERSION_ID = 20;

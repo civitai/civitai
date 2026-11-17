@@ -83,7 +83,7 @@ vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: any) => h }));
 const { mockAccounts } = vi.hoisted(() => ({ mockAccounts: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({ getUserBuzzAccounts: mockAccounts }));
 
-import handler from '~/pages/api/v1/blocks/buzz';
+import handler from '~/server/api-routes/v1/blocks/buzz';
 
 function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
   return {

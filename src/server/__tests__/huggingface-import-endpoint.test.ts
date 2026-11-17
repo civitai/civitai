@@ -25,7 +25,7 @@ vi.mock('~/server/services/huggingface-import.service', async (importOriginal) =
 
 import { IMPORT_SYSTEM_USER_ID } from '~/server/services/huggingface-import.service';
 
-const handler = (await import('~/pages/api/admin/huggingface-import')).default;
+const handler = (await import('~/server/api-routes/admin/huggingface-import')).default;
 
 const dbRead = dbMock.dbRead;
 

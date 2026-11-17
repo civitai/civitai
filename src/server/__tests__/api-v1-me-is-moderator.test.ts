@@ -9,7 +9,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
 
-const handler = (await import('~/pages/api/v1/me')).default as unknown as (
+const handler = (await import('~/server/api-routes/v1/me')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,
   user: SessionUser

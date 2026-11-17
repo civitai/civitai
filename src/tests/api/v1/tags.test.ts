@@ -34,7 +34,7 @@ vi.mock('~/server/routers', () => ({ appRouter: {} }));
 // NOTE: isClientAbortError (~/server/utils/errorHandling) and getPaginationLinks
 // are kept REAL so the handler's production classification logic runs unmodified.
 
-import handler from '~/pages/api/v1/tags';
+import handler from '~/server/api-routes/v1/tags';
 
 function createMocks({ query = {} }: { query?: Record<string, string | string[]> }) {
   const req = {

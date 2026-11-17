@@ -235,7 +235,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
           // fake wrapped route failed this guard as `.ts` and passed it as `.tsx`.
         } else if (/\.(t|j)sx?$/.test(entry.name) && !/\.test\.(t|j)sx?$/.test(entry.name)) {
           const src = readFileSync(child, 'utf8');
-          // The wrap must reach the DEFAULT EXPORT — `src/pages/api/v1/me.ts`
+          // The wrap must reach the DEFAULT EXPORT — `src/server/api-routes/v1/me.ts`
           // merely names the middleware in a comment explaining why it is not
           // wrapped. Both spellings count: the direct
           // `export default withBlockScope(...)`, and the indirect

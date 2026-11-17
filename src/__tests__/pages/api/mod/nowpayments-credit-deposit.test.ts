@@ -18,7 +18,7 @@ vi.mock('~/server/services/nowpayments-credit.service', () => ({
   previewDepositCredit,
 }));
 
-const { default: handler } = await import('~/pages/api/mod/nowpayments/credit-deposit');
+const { default: handler } = await import('~/server/api-routes/mod/nowpayments/credit-deposit');
 
 const send = async (method: string, { query = {}, body }: { query?: object; body?: unknown }) => {
   const req = Object.assign(new EventEmitter(), {

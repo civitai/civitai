@@ -101,7 +101,7 @@ function fakeRes() {
 }
 
 async function invoke(query: Record<string, unknown>, method = 'GET') {
-  const mod = await import('~/pages/api/v1/blocks/generation-resources');
+  const mod = await import('~/server/api-routes/v1/blocks/generation-resources');
   const handler = mod.default as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
   const req = {
     method,

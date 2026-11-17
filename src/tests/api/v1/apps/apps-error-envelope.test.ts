@@ -78,7 +78,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { TRPCError } from '@trpc/server';
-import detailHandler from '~/pages/api/v1/apps/[slug]';
+import detailHandler from '~/server/api-routes/v1/apps/[slug]';
 import { GENERIC_SERVER_ERROR_MESSAGE as GENERIC_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 type Handler = (req: unknown, res: unknown, user: unknown) => Promise<unknown>;

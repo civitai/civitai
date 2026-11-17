@@ -16,7 +16,7 @@ vi.mock('~/server/services/account-standing.service', async (importOriginal) => 
   getAccountStanding: (userId: number) => getAccountStanding(userId),
 }));
 
-const handler = (await import('~/pages/api/v1/me')).default as unknown as (
+const handler = (await import('~/server/api-routes/v1/me')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,
   user: SessionUser

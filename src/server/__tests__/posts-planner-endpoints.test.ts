@@ -40,7 +40,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
         : res.status(405).json({ error: 'Method not allowed' }),
 }));
 
-import plannerRoute from '~/pages/api/v1/posts/planner/[action]';
+import plannerRoute from '~/server/api-routes/v1/posts/planner/[action]';
 
 const target = new Date(Date.now() + 5 * 86_400_000);
 

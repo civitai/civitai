@@ -11,7 +11,7 @@ vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: { updateSettings: mockUpdateSettings },
 }));
 
-import handler from '~/pages/api/testing/blocks';
+import handler from '~/server/api-routes/testing/blocks';
 
 async function setBudget(buzzBudgetPerGen: number) {
   let statusCode = 0;

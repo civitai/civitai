@@ -20,7 +20,7 @@ vi.mock('~/server/auth/oauth-bridge', () => ({
   }),
 }));
 
-import handler from '~/pages/api/auth/authorize';
+import handler from '~/server/api-routes/auth/authorize';
 import { sessionCookieName } from '@civitai/auth';
 import { POST_LOGIN_MARKER, LOGIN_RETRY_COOKIE } from '../civ-cookie';
 

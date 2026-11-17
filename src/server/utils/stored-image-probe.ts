@@ -88,7 +88,7 @@ export type StoredImageHead =
  * strictly worse than the tampering this check exists to catch.
  *
  * Same budget, and the same reasoning, as the post-completion probe in
- * `~/pages/api/upload/complete.ts`; taken from there rather than picked afresh so
+ * `~/server/api-routes/upload/complete.ts`; taken from there rather than picked afresh so
  * the two probes against this store cannot drift apart. `AbortSignal.timeout` is
  * constructed ONCE per `send()` and shared across the SDK's retries, so this is a
  * single WALL-CLOCK deadline for the whole operation, not a per-attempt budget —

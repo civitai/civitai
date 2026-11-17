@@ -9,7 +9,7 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
   setTextScanLabelMode: vi.fn(),
 }));
 
-const { default: handler } = await import('~/pages/api/testing/chat-completion-scan');
+const { default: handler } = await import('~/server/api-routes/testing/chat-completion-scan');
 const { setTextScanLabelMode } = await import('~/server/services/text-scan/prompt');
 
 function call(body: unknown) {

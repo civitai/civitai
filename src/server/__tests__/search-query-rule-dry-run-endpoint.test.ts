@@ -33,7 +33,7 @@ vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
 }));
 
 const { setQueryRuleReaderForTests } = await import('~/server/services/search-query-rules');
-const handler = (await import('~/pages/api/mod/search-query-rule-dry-run')).default;
+const handler = (await import('~/server/api-routes/mod/search-query-rule-dry-run')).default;
 
 // Synthetic token: on no real list.
 const POI = 'zqvoxpoitoken';

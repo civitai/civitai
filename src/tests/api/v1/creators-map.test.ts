@@ -21,7 +21,7 @@ vi.mock('~/client-utils/edge-url', () => ({
     `edge:${src}:${opts?.width}:${opts?.name ?? ''}`,
 }));
 
-import { mapCreatorItem } from '~/pages/api/v1/creators';
+import { mapCreatorItem } from '~/server/api-routes/v1/creators';
 
 const ORIGIN = 'https://civitai.com';
 

@@ -452,7 +452,7 @@ describe('joinCreatorsProgram', () => {
   // Same shape as the five sites in the issue's PR, and the same COLUMN as
   // `completeOnboardingHandler`: the `onboarding` bitmask is written by the raw UPDATE above, then
   // the session cache is busted. Reachable from tRPC `creatorProgram.joinCreatorsProgram`
-  // (protectedProcedure) and `pages/api/v1/creator-program/join.ts`, so an unreachable cache redis
+  // (protectedProcedure) and `server/api-routes/v1/creator-program/join.ts`, so an unreachable cache redis
   // used to hand the user a 500 for a membership they had already joined — and the client's retry
   // re-runs a requirements check that now passes against a row that already has the flag set.
   const armJoin = () => {

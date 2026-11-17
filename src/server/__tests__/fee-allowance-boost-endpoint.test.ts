@@ -28,7 +28,7 @@ vi.mock('~/server/services/creator-membership.service', () => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { OnboardingSteps } from '~/server/common/enums';
-import handler from '~/pages/api/testing/fee-allowance-boost';
+import handler from '~/server/api-routes/testing/fee-allowance-boost';
 
 const KEY = REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST;
 

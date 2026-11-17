@@ -50,7 +50,7 @@
 // per-pod child — a handful of events spread across a large fleet is a vanishingly
 // small per-second number and a threshold on it is unreadable. Note that `increase()`
 // itself is fine here, and specifically BECAUSE of the seeding below plus its caller in
-// `src/pages/api/metrics.ts`: every child is materialised at 0 on a pod's first scrape,
+// `src/server/api-routes/metrics.ts`: every child is materialised at 0 on a pod's first scrape,
 // so a later relay is a visible 0 -> 1 delta rather than a series that springs into
 // existence already at 1 and never moves again. That is the failure the neighbouring
 // `~/server/metrics/generation-model-substitution.metrics.ts` documents for the
@@ -248,7 +248,7 @@ const HELP =
  *
  * 🔴 SEEDING ALONE IS NOT ENOUGH. Something must CALL this at scrape time or the module
  * is never evaluated on a pod that has not relayed — which is every pod, almost always.
- * The other half is the explicit call in `src/pages/api/metrics.ts`. Both halves are
+ * The other half is the explicit call in `src/server/api-routes/metrics.ts`. Both halves are
  * required; neither works alone.
  *
  * Idempotent: get-or-create returns the existing counter, and `inc(…, 0)` is a no-op on

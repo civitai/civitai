@@ -32,7 +32,7 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { InvalidCursorError } from '~/server/services/creator-engagement.service';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
-import handler from '~/pages/api/v1/creator/engagement';
+import handler from '~/server/api-routes/v1/creator/engagement';
 
 const CALLER = 101;
 

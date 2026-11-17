@@ -154,7 +154,7 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'Upserts a row of the viewer’s OWN per-app KV, and the only route on this surface that CONSUMES A BUDGET: it spends the viewer’s 2MB / per-user row sub-budget and the app’s 50MB / 1M-row ceiling. A suspended app left reachable here could keep writing into a signed-in user’s store after the takedown and, worse, could fill their per-user quota so that the app they actually want to use cannot write — a denial that outlives the suspension and that the victim cannot diagnose. It is NOT classed SPEND: it moves no Buzz and no money ledger, only a storage budget.',
   },
-  'src/pages/api/v1/blocks/buzz.ts': {
+  'src/server/api-routes/v1/blocks/buzz.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'The viewer’s own spendable Buzz balances — getUserBuzzAccounts keyed on the verified token subject, projected to { blue, green, yellow }. A suspended app would otherwise keep reading a signed-in user’s live wallet: how much free Buzz they hold, how much purchased Buzz they hold, and therefore what they can afford. No anonymous caller receives any of that, and the numbers move with the viewer’s spending, so a retained balance read is also a per-user activity signal a takedown is meant to stop.',
   },
@@ -170,19 +170,19 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Collection discovery AND the viewer’s own collection list — the second half is viewer data an anonymous caller does not receive.',
   },
-  'src/pages/api/v1/blocks/gated-images.ts': {
+  'src/server/api-routes/v1/blocks/gated-images.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'The per-viewer gated image read — the REST twin of GET_IMAGES_BY_IDS. It shares "no requiredScope" with images.ts and nothing else, and the difference is the corpus: not the public catalog but the rows carrying metadata.blockPublishedAppId = THIS token’s appId, i.e. the calling app’s OWN published outputs. What it returns per id is then decided against the VERIFIED subject — their maxBrowsingLevel ceiling, their blocked-users / blocked-tags sets, and the one owner branch that shows an author their own not-yet-rated image — so it is viewer-scoped twice over. It is also the only route on this surface that MINTS A MODERATED EDGE URL for bytes the caller cannot otherwise reach: the raw storage key never leaves the server, so a `visible` entry hands out a url nothing else could construct. A suspended app left reachable here would keep serving its users’ generated images — including, on the owner path, unrated ones no scan has cleared — after the takedown, which is exactly the retained reach a suspension exists to end. Anon is refused inside the shared body (parseSubjectUserId → UNAUTHORIZED), so nothing here is reachable without a signed-in subject.',
   },
-  'src/pages/api/v1/blocks/workflow-media.ts': {
+  'src/server/api-routes/v1/blocks/workflow-media.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'The REST twin of GET_WORKFLOW_MEDIA: stored workflow media refs become media URLs judged for the VERIFIED subject (their browsing level, privateGen ownership), and a ref opens only for the appBlockId that stored it. Each visible entry hands out a ticket URL for bytes the caller cannot otherwise reach, so a suspended app left reachable here would keep serving its users generated clips. Anon is refused inside the shared body.',
   },
-  'src/pages/api/v1/blocks/generation-resources.ts': {
+  'src/server/api-routes/v1/blocks/generation-resources.ts': {
     exposure: 'READ_PUBLIC',
     why: 'Public, maturity-clamped resource data. Thinnest gate of the set: no requiredScope, so no scope check and no context binding either.',
   },
-  'src/pages/api/v1/blocks/generation-samplers.ts': {
+  'src/server/api-routes/v1/blocks/generation-samplers.ts': {
     exposure: 'READ_PUBLIC',
     why: 'The generator’s per-family sampler options, derived from the generation graph: static configuration that is identical for every caller. No requiredScope, no catalog content (so no maturity clamp to apply), nothing viewer-scoped, nothing written.',
   },
@@ -190,15 +190,15 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_PUBLIC',
     why: 'The public, maturity-clamped image catalog. No requiredScope.',
   },
-  'src/pages/api/v1/blocks/me.ts': {
+  'src/server/api-routes/v1/blocks/me.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Viewer identity (id, username, status) and the token’s buzzBudget. Gated on the `app-blocks-enabled` Flipt audience, evaluated against the TOKEN subject via the same shared assertAppBlocksEnabledForTokenUser its tRPC twin blocks.getMyViewer calls — a GA posture, not a takedown check. It used to be gated on a hardcoded isModerator literal instead, which the twin never had; that divergence was resolved 2026-09-18 by dropping the literal.',
   },
-  'src/pages/api/v1/blocks/models.ts': {
+  'src/server/api-routes/v1/blocks/models.ts': {
     exposure: 'READ_PUBLIC',
     why: 'The public, maturity-clamped model catalog. No requiredScope.',
   },
-  'src/pages/api/v1/blocks/resource-intent.ts': {
+  'src/server/api-routes/v1/blocks/resource-intent.ts': {
     exposure: 'READ_PUBLIC',
     why: 'Jev resource-intent suggestions: public, maturity-clamped resource data projected through projectSafeGenerationResource — no requiredScope, nothing viewer-scoped, nothing written. It costs vendor LLM spend per call (the reason it keeps the default fail-closed 503 on an approval-lookup failure, unlike its READ_PUBLIC siblings), but the RESPONSE discloses only what the catalog routes disclose.',
   },
@@ -250,11 +250,11 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'The document store, every operation behind one catch-all: it reads the viewer’s PRIVATE documents, reads and writes the app’s SHARED documents (public within the app, attributed to the viewer), sets marks and counters other users see, and files reports. A suspended app left reachable here could keep reading a signed-in user’s stored data, keep publishing under their name and keep moving public tallies after the takedown. ALREADY refused before this gate as well, by delegation: its resolver (apps/doc-store-access.ts) takes the strict approval read (resolveStrictAppBlockApproval) and gives an app that is not approved no storage at all.',
   },
-  'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
+  'src/server/api-routes/v1/blocks/user-checkpoint/set.ts': {
     exposure: 'WRITE',
     why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
   },
-  'src/pages/api/v1/blocks/entitlements.ts': {
+  'src/server/api-routes/v1/blocks/entitlements.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Lists the DIGITAL GOODS the viewer owns from THIS app — the goodId, the manifest-sourced payload and the grant time of every entitlement the app has sold them. Scoped to claims.appBlockId in the query, so it discloses nothing about what the viewer bought elsewhere, which is why it is not a broader read; but a suspended app left reachable here keeps reading a signed-in user’s purchase history with this app after the takedown, and the payload is whatever that app chose to put on the entitlement.',
   },
@@ -270,11 +270,11 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'Takes the viewer’s own store item out of the App Store. Bounded to the caller’s own rows, but a suspended app left reachable here could still pull its users’ approved cards in a loop, and an approved card cannot come back without another moderator review.',
   },
-  'src/pages/api/v1/blocks/sub-listings/mine.ts': {
+  'src/server/api-routes/v1/blocks/sub-listings/mine.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Lists the viewer’s own store items for this app with their review status and any moderator reason. Scoped to the calling app and the token subject, but the reasons are moderator-written text about that user, which a suspended app should not keep reading.',
   },
-  'src/pages/api/v1/blocks/tip-allowance.ts': {
+  'src/server/api-routes/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'A read, but of the money counter: it discloses the viewer’s live { cap, spent, remaining } tip allowance.',
   },
@@ -306,7 +306,7 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_PUBLIC',
     why: 'GET returns a static in-process tool registry; POST runs a catalog search on the same clamped path models.ts serves.',
   },
-  'src/pages/api/v1/models/[id].ts': {
+  'src/server/api-routes/v1/models/[id].ts': {
     exposure: 'READ_PUBLIC',
     why: 'Dual-auth. With no block JWT this is a plain PublicEndpoint, so the body a block receives here is byte-for-byte what an unauthenticated caller can already fetch: refusing it removes NO exposure. It inherits the gate to keep one rule in one place.',
   },
@@ -336,7 +336,7 @@ function mustFailClosedRoutes(): string[] {
  * `not_approved`, which carries 100% of the gate's protective value, is NOT opt-outable.
  *
  * 🔴 WHY THIS IS A DECLARED LEDGER AND NOT DERIVED FROM `requiredScope`. That proxy was
- * tried first and it is WRONG on the most important entry: `src/pages/api/v1/models/[id].ts`
+ * tried first and it is WRONG on the most important entry: `src/server/api-routes/v1/models/[id].ts`
  * DECLARES `requiredScope: 'models:read:self'` and is nevertheless the clearest no-exposure
  * route in the table — it is dual-auth, so an anonymous caller already receives the same
  * body. Meanwhile the four unscoped catalog routes are a WEAKER version of the argument
@@ -355,24 +355,24 @@ function mustFailClosedRoutes(): string[] {
  * for the merge blocker that repair closed. The only value the type admits is `'serve'`.
  */
 const LOOKUP_FAILURE_SERVE_RATIONALE: Record<string, string> = {
-  'src/pages/api/v1/blocks/generation-resources.ts':
+  'src/server/api-routes/v1/blocks/generation-resources.ts':
     'Public, maturity-clamped resource data; no requiredScope, nothing viewer-scoped, nothing written. The clamp rides the token’s own signed claim, not the approval row.',
-  'src/pages/api/v1/blocks/generation-samplers.ts':
+  'src/server/api-routes/v1/blocks/generation-samplers.ts':
     'Static generator configuration, identical for every caller; no requiredScope, nothing viewer-scoped, nothing written. A suspended app reaching it learns the sampler names the public generator page already shows.',
   'src/pages/api/v1/blocks/images.ts':
     'Public, maturity-clamped image catalog; no requiredScope, nothing viewer-scoped, nothing written.',
-  'src/pages/api/v1/blocks/models.ts':
+  'src/server/api-routes/v1/blocks/models.ts':
     'Public, maturity-clamped model catalog; no requiredScope, nothing viewer-scoped, nothing written.',
   'src/pages/api/v1/blocks/tools.ts':
     'GET is a static in-process registry; POST is a catalog search on the same clamped path models.ts serves. No requiredScope, nothing viewer-scoped, nothing written.',
-  'src/pages/api/v1/models/[id].ts':
+  'src/server/api-routes/v1/models/[id].ts':
     'Dual-auth: the block-JWT branch differs from the anonymous one only in skipping the origin cache — same builder, same arguments, same body. An unauthenticated caller already gets this at 200, so refusing it on a replica blip removes NO exposure and costs a 503.',
 };
 
 /**
  * 🔴 ROUTES THAT NAME THE WRAPPER IN PROSE ONLY, i.e. that DECIDED NOT TO USE IT. This
  * ledger exists because the first version of this file had no such concept and flagged
- * `src/pages/api/v1/me.ts` as an unwrapped route — a false positive off a substring
+ * `src/server/api-routes/v1/me.ts` as an unwrapped route — a false positive off a substring
  * match, from a file whose comment explains at length why it is deliberately not wrapped.
  *
  * Deleting the entry would have been the cheap fix and the wrong one. `/api/v1/me` is a
@@ -383,7 +383,7 @@ const LOOKUP_FAILURE_SERVE_RATIONALE: Record<string, string> = {
  * without someone writing down why.
  */
 const DELIBERATELY_UNWRAPPED: Record<string, string> = {
-  'src/pages/api/v1/me.ts':
+  'src/server/api-routes/v1/me.ts':
     'NOT a block route. AuthedEndpoint (session cookie / API key / OAuth token). Wrapping it would dead-code the block path — the inner session check 401s before block claims do anything — so blocks use the dedicated /api/v1/blocks/me, which IS wrapped. Nothing here reads a block token, so there is no app to approve.',
 };
 
@@ -1351,7 +1351,7 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/app-storage/list.ts',
     'src/pages/api/v1/blocks/app-storage/quota.ts',
     'src/pages/api/v1/blocks/app-storage/set.ts',
-    'src/pages/api/v1/blocks/buzz.ts',
+    'src/server/api-routes/v1/blocks/buzz.ts',
     'src/pages/api/v1/blocks/collections/[id]/follow.ts',
     'src/pages/api/v1/blocks/collections/[id]/index.ts',
     'src/pages/api/v1/blocks/collections/index.ts',
@@ -1363,18 +1363,18 @@ describe('no unguarded block-REST token verification', () => {
     // `visible` entry hands out a minted edge url for bytes that are otherwise
     // unreachable — so a suspended app left serving it keeps delivering its
     // users' generated images after the takedown.
-    'src/pages/api/v1/blocks/gated-images.ts',
+    'src/server/api-routes/v1/blocks/gated-images.ts',
     // Its media sibling: stored workflow media refs become viewer-bound media
     // URLs, so a suspended app left serving it keeps delivering generated clips.
-    'src/pages/api/v1/blocks/workflow-media.ts',
+    'src/server/api-routes/v1/blocks/workflow-media.ts',
     // The DIGITAL GOODS pair. `goods/purchase.ts` is the third SPEND route this
     // table has ever carried and `entitlements.ts` reads the viewer's purchase
     // history with the app. Neither may opt out: a suspended app reaching the
     // first keeps charging signed-in viewers and paying its own owner, and one
     // reaching the second keeps reading what it sold them.
-    'src/pages/api/v1/blocks/entitlements.ts',
+    'src/server/api-routes/v1/blocks/entitlements.ts',
     'src/pages/api/v1/blocks/goods/purchase.ts',
-    'src/pages/api/v1/blocks/me.ts',
+    'src/server/api-routes/v1/blocks/me.ts',
     'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',
     'src/pages/api/v1/blocks/shared-storage/increment.ts',
@@ -1389,17 +1389,17 @@ describe('no unguarded block-REST token verification', () => {
     // The document store: viewers' private documents, shared writes, marks and reports.
     'src/pages/api/v1/blocks/storage/[[...path]].ts',
     // App Store items: two writes of public store cards and the author's own status read.
-    'src/pages/api/v1/blocks/sub-listings/mine.ts',
+    'src/server/api-routes/v1/blocks/sub-listings/mine.ts',
     'src/pages/api/v1/blocks/sub-listings/upsert.ts',
     'src/pages/api/v1/blocks/sub-listings/withdraw.ts',
-    'src/pages/api/v1/blocks/tip-allowance.ts',
+    'src/server/api-routes/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
     // The per-viewer checkpoint override write. WRITE, so it may not opt out: a
     // suspended app reaching it keeps steering which Checkpoint a signed-in
     // viewer's future generations anchor to, and the row it writes OUTLIVES the
     // takedown — `resolveBlockCheckpoint` consults the viewer override ahead of
     // the publisher's own default on every subsequent submit.
-    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+    'src/server/api-routes/v1/blocks/user-checkpoint/set.ts',
     // The five workflow routes. `submit.ts` is the second SPEND route this table
     // has ever carried; the other four are WRITE / READ_VIEWER_SCOPED. None may
     // opt out: a suspended app reaching any of them keeps spending, stopping or
@@ -1993,15 +1993,15 @@ describe('the approval predicate is not open-coded a second time', () => {
    * below then verifies mechanically.
    */
   const ANY_TOKEN_ROUTES = [
-    'src/pages/api/v1/blocks/gated-images.ts',
-    'src/pages/api/v1/blocks/generation-resources.ts',
-    'src/pages/api/v1/blocks/generation-samplers.ts',
+    'src/server/api-routes/v1/blocks/gated-images.ts',
+    'src/server/api-routes/v1/blocks/generation-resources.ts',
+    'src/server/api-routes/v1/blocks/generation-samplers.ts',
     'src/pages/api/v1/blocks/images.ts',
-    'src/pages/api/v1/blocks/models.ts',
-    'src/pages/api/v1/blocks/resource-intent.ts',
+    'src/server/api-routes/v1/blocks/models.ts',
+    'src/server/api-routes/v1/blocks/resource-intent.ts',
     'src/pages/api/v1/blocks/tools.ts',
-    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
-    'src/pages/api/v1/blocks/workflow-media.ts',
+    'src/server/api-routes/v1/blocks/user-checkpoint/set.ts',
+    'src/server/api-routes/v1/blocks/workflow-media.ts',
   ];
 
   it('POSITIVE CONTROL: the any-token population is derived and equals its ledger', () => {

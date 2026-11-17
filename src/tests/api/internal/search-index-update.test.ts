@@ -16,7 +16,7 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   imagesMetricsSearchIndex: { queueUpdate: metricsQueue },
 }));
 
-const handler = (await import('~/pages/api/internal/search-index-update')).default as unknown as (
+const handler = (await import('~/server/api-routes/internal/search-index-update')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse
 ) => Promise<void>;

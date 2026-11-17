@@ -72,7 +72,7 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
   applySourceMaps: mockApplySourceMaps,
 }));
 
-const importHandler = async () => (await import('~/pages/api/application-error')).default;
+const importHandler = async () => (await import('~/server/api-routes/application-error')).default;
 
 /** The host this fixture pretends the app was served from. */
 const HOST = 'example.test';

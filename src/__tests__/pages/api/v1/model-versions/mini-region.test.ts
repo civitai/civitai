@@ -38,7 +38,7 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
-import handler from '~/pages/api/v1/model-versions/mini/[id]';
+import handler from '~/server/api-routes/v1/model-versions/mini/[id]';
 
 const { PG, PG13, R, X } = NsfwLevel;
 const VERSION_ID = 555;

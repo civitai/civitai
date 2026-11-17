@@ -83,7 +83,7 @@ const {
   expireUserApiKeys,
   setApiKeyBuzzLimit,
 } = await import('~/server/services/api-key.service');
-const orchestratorKeyRoute = (await import('~/pages/api/user/orchestrator-key'))
+const orchestratorKeyRoute = (await import('~/server/api-routes/user/orchestrator-key'))
   .default as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 
 // ---------------------------------------------------------------------------------------------

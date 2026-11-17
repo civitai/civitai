@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
-import { resModelVersionDetails } from '~/pages/api/v1/model-versions/[id]';
+import { resModelVersionDetails } from '~/server/api-routes/v1/model-versions/[id]';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';

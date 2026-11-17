@@ -80,7 +80,7 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: mockRateLimit,
 }));
 
-import handlerDefault from '~/pages/api/v1/blocks/tip-allowance';
+import handlerDefault from '~/server/api-routes/v1/blocks/tip-allowance';
 
 function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
   return {

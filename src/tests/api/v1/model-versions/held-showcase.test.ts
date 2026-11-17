@@ -128,7 +128,7 @@ function modelVersion() {
 }
 
 async function prepare(images?: unknown[]) {
-  const mod = await import('~/pages/api/v1/model-versions/[id]');
+  const mod = await import('~/server/api-routes/v1/model-versions/[id]');
   return mod.prepareModelVersionResponse(
     modelVersion(),
     new URL('https://civitai.com'),

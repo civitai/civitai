@@ -105,8 +105,8 @@ import healthHandler, {
   resetHealthCheckReuseForTests,
   runHealthChecks,
   runHealthChecksReusingCleanRun,
-} from '~/pages/api/health';
-import readyHandler from '~/pages/api/ready';
+} from '~/server/api-routes/health';
+import readyHandler from '~/server/api-routes/ready';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // A never-aborted signal so runHealthChecks runs the full check set.

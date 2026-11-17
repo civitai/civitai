@@ -2,7 +2,7 @@ import { getEdgeUrl, videoStillEdgeOptions } from '~/client-utils/edge-url';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
- * Helpers for the OG-image endpoint (`src/pages/api/og.tsx`).
+ * Helpers for the OG-image endpoint (`src/server/api-routes/og.tsx`).
  *
  * The card embeds the entity's cover image via `<img src={remoteUrl}>`, which
  * @vercel/og's `ImageResponse` (satori) fetches INTERNALLY with NO timeout. On a

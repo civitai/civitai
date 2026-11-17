@@ -73,7 +73,7 @@ const hold = dbMock.dbWrite.textScanHold;
 const updateMany = hold.updateMany;
 const findFirst = hold.findFirst;
 
-import handler from '~/pages/api/mod/text-scan/csam-hold/resolve';
+import handler from '~/server/api-routes/mod/text-scan/csam-hold/resolve';
 
 function call(body: Record<string, unknown>) {
   const req = { method: 'POST', headers: {}, body, query: {} } as Parameters<typeof handler>[0];

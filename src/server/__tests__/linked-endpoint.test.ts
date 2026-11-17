@@ -13,7 +13,7 @@ const { mockSync, mockSession } = vi.hoisted(() => ({
 
 vi.mock('~/server/jobs/apply-discord-roles', () => ({ syncUserDiscordLeaderboardRoles: mockSync }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: mockSession }));
-import handler from '~/pages/api/auth/linked';
+import handler from '~/server/api-routes/auth/linked';
 import '~/__tests__/mocks/logging.mock';
 
 function mockReqRes(query: Record<string, string>, cookies: Record<string, string> = {}) {

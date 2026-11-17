@@ -357,7 +357,7 @@ function discoverWriterFiles(): {
 } {
   // 🔴 ENUMERATED WITH `readdirSync`, NOT `globSync`, AND THE SWAP CLOSED A REAL BLIND SPOT
   // THAT THIS FILE'S OWN VOLUME ASSERTION FOUND. `globSync` skips DOT-DIRECTORIES: measured,
-  // it missed `src/pages/api/.well-known/openid-configuration.ts` — one file, but the hole is
+  // it missed `src/server/api-routes/.well-known/openid-configuration.ts` — one file, but the hole is
   // a whole naming convention, and a writer added under any dot-directory would have been
   // invisible to this ledger. `readdirSync` sees them. The instrument that decides what MUST
   // be read has to be the complete one.

@@ -16,8 +16,8 @@ vi.mock('~/server/auth/civ-cookie', async (importOriginal) => ({
   cookieDomainForHost: vi.fn(() => 'civitai.red'),
 }));
 
-import handler from '~/pages/api/auth/callback';
-import authorize from '~/pages/api/auth/authorize';
+import handler from '~/server/api-routes/auth/callback';
+import authorize from '~/server/api-routes/auth/authorize';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const STATE = 's'.repeat(32);

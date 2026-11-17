@@ -33,7 +33,7 @@ vi.mock('~/server/services/pricing-slot.service', () => ({
 vi.mock('~/server/services/subscriptions.service', () => ({ getCapTier: vi.fn() }));
 vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlags: vi.fn(() => ({})) }));
 
-import handler from '~/pages/api/v1/model-versions/early-access';
+import handler from '~/server/api-routes/v1/model-versions/early-access';
 
 const PAST_THE_TOKEN_GATE = 'reached the monetization rules';
 

@@ -154,7 +154,7 @@ function isCsamArchiveOutcome(v: unknown): v is CsamArchiveOutcome {
  * 🔴 SEEDING ALONE IS NOT ENOUGH. `ensureRegister…` has no caller on the archive
  * path before the first archive, so the series would still be absent until an
  * event happened. The other half is the side-effect call in
- * `src/pages/api/metrics.ts`, which runs on the first scrape. Both halves are
+ * `src/server/api-routes/metrics.ts`, which runs on the first scrape. Both halves are
  * required; neither works alone.
  *
  * Idempotent: `getOrCreateCounter` returns the existing counter and `inc(…, 0)` is

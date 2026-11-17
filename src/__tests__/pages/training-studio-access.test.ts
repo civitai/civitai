@@ -29,7 +29,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
       handler(req, res, caller.user),
 }));
 
-import handler from '~/pages/api/training-studio/access';
+import handler from '~/server/api-routes/training-studio/access';
 
 const allowed = { id: 7, onboarding: OnboardingSteps.Buzz, emailVerified: new Date() };
 

@@ -58,10 +58,10 @@ vi.mock('~/server/utils/region-blocking', () => ({
   isRegionRestricted: () => false,
 }));
 
-import versionHandler from '~/pages/api/v1/model-versions/[id]';
-import byHashHandler from '~/pages/api/v1/model-versions/by-hash/[hash]';
-import byHashBatchHandler from '~/pages/api/v1/model-versions/by-hash/index';
-import byHashIdsHandler from '~/pages/api/v1/model-versions/by-hash/ids';
+import versionHandler from '~/server/api-routes/v1/model-versions/[id]';
+import byHashHandler from '~/server/api-routes/v1/model-versions/by-hash/[hash]';
+import byHashBatchHandler from '~/server/api-routes/v1/model-versions/by-hash/index';
+import byHashIdsHandler from '~/server/api-routes/v1/model-versions/by-hash/ids';
 
 const OWNER = 7;
 const FLAGGED_MODEL = 77;

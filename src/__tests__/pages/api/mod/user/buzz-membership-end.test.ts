@@ -57,7 +57,7 @@ vi.mock('~/server/services/moderator-grants', () => ({
   hasModeratorGrant: (...a: unknown[]) => hasModeratorGrant(...a),
 }));
 
-import handler from '~/pages/api/mod/user/buzz-membership-end';
+import handler from '~/server/api-routes/mod/user/buzz-membership-end';
 const TARGET = 8675309;
 const VALID = { userId: TARGET, reason: 'Buzz refunded by support' };
 

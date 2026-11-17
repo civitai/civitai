@@ -30,7 +30,7 @@ const EXEMPT = ['src/server/utils/fetch-timeout.ts'];
 
 const BASELINE: Counts = {
   'src/pages/api/internal/blocks/git-push.ts': 1,
-  'src/pages/api/upload/complete.ts': 1,
+  'src/server/api-routes/upload/complete.ts': 1,
   'src/server/auth/preview-access.ts': 1,
   'src/server/beacon/beacon-go-shadow.ts': 1,
   'src/server/clickhouse/tracker.ts': 1,

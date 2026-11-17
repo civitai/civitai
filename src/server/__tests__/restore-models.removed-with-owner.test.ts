@@ -9,7 +9,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   JobEndpoint: (handler: unknown) => handler,
 }));
 
-const restoreModels = (await import('~/pages/api/internal/restore-models')).default;
+const restoreModels = (await import('~/server/api-routes/internal/restore-models')).default;
 
 const MODEL = 3;
 let lockedMeta: Record<string, unknown>;

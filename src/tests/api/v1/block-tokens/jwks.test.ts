@@ -53,7 +53,7 @@ vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { getJwks: mockGetJwks },
 }));
 
-import handler from '~/pages/api/v1/block-tokens/jwks';
+import handler from '~/server/api-routes/v1/block-tokens/jwks';
 
 function makeRes() {
   const res = {

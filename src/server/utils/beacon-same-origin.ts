@@ -1,8 +1,8 @@
 /**
  * The same-origin guard the telemetry beacons use.
  *
- * Lifted VERBATIM from the three beacons that already ship it — `src/pages/api/internal/pulse.ts`,
- * `src/pages/api/track/block-render.ts` and `src/pages/api/track/batch.ts` — whose own comments call
+ * Lifted VERBATIM from the three beacons that already ship it — `src/server/api-routes/internal/pulse.ts`,
+ * `src/server/api-routes/track/block-render.ts` and `src/server/api-routes/track/batch.ts` — whose own comments call
  * it "the established beacon pattern". Extracted rather than copied a fourth time so the predicate
  * has one spelling and one test suite. The three existing call sites still open-code it; replacing
  * their copies with this function is a behaviour-preserving change to the busiest endpoint in the

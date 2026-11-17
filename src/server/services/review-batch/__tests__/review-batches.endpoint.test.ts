@@ -35,7 +35,7 @@ vi.mock('~/server/services/review-batch/review-batch.service', () => ({
   mintReviewBatch: mockMint,
 }));
 
-const { default: handler } = await import('~/pages/api/mod/review-batches');
+const { default: handler } = await import('~/server/api-routes/mod/review-batches');
 
 const SECRET = 'words only the card holds';
 

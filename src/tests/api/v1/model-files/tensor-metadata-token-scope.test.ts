@@ -48,7 +48,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 
 let handler: (req: NextApiRequest, res: NextApiResponse) => Promise<void> | void;
 beforeAll(async () => {
-  handler = (await import('~/pages/api/v1/model-files/[id]/tensor-metadata')).default as never;
+  handler = (await import('~/server/api-routes/v1/model-files/[id]/tensor-metadata')).default as never;
 }, 120000);
 
 async function call(user: Record<string, unknown>, context?: Record<string, unknown>) {

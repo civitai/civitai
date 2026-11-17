@@ -11,7 +11,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * own module, and the only production path in is
  * `recordGenerationModelSubstitution` — which by definition runs only AFTER a
  * substitution has happened. So without a module-scope call from
- * `src/pages/api/metrics.ts`, `…{surface="api"}` reads `no data` on a pod until
+ * `src/server/api-routes/metrics.ts`, `…{surface="api"}` reads `no data` on a pod until
  * its first API substitution: indistinguishable from an unwired instrument, on a
  * metric whose entire job is to be read as a gate. Two components, each fine
  * alone, broken together.
@@ -49,7 +49,7 @@ describe('/api/metrics registers + seeds the substitution counter at module load
   });
 
   it('🔴 after loading the page module, all 12 series exist at 0', async () => {
-    await import('~/pages/api/metrics');
+    await import('~/server/api-routes/metrics');
 
     const metric = client.register.getSingleMetric(METRIC) as unknown as
       | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }

@@ -62,7 +62,7 @@ beforeEach(() => {
  * `../flipt-eval-cache.metrics` directly proves the module registers — it CANNOT
  * prove anything reaches it in production. These counters have no emitter on the
  * request path; the only way they exist on a pod is the module-scope side-effect
- * import in `src/pages/api/metrics.ts`. Deleting that line left the whole
+ * import in `src/server/api-routes/metrics.ts`. Deleting that line left the whole
  * `src/server/metrics/` suite green (131/131), i.e. registered-but-unreached —
  * this repo's documented #1 metric-death mode, and exactly what the sibling seam
  * tests for substitutions exist to catch.
@@ -73,7 +73,7 @@ beforeEach(() => {
  */
 describe('flipt eval-cache metrics — the /api/metrics seam', () => {
   it('is registered by loading the module that serves the scrape', async () => {
-    await import('~/pages/api/metrics');
+    await import('~/server/api-routes/metrics');
     for (const name of [
       'civitai_app_flipt_eval_cache_hits_total',
       'civitai_app_flipt_eval_cache_misses_total',
