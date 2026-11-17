@@ -9,10 +9,10 @@ import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
 export default defineModeratorEndpoint('postText.moderate', {
   summary: 'Refuse, restore, or hold for csam review one storyline text.',
-  returns: '{ textId, postId, action, changed, holdId? }',
+  returns: '{ textId, postId, action, changed, stillRefused?, holdId? }',
   notes: [
     '`refuse` hides the text from every reader until a moderator restores it; no scan verdict lifts it. The text and the rest of its post are kept.',
-    "`restore` lifts a moderator's refusal. Refused with CONFLICT while the text is held for csam review or kept by a CSAM report or evidence hold.",
+    "`restore` lifts a moderator's refusal; a refusal the text scan made stands (`stillRefused`). Refused with CONFLICT while the text is held for csam review or kept by a CSAM report or evidence hold.",
     '`hold` opens a Pending csam hold on the text, decided in the CSAM text-hold queue, and hides it meanwhile.',
     '`changed` is false when the text was already in the requested state.',
     'Resolves no report: the caller sets the report status.',
@@ -58,6 +58,7 @@ export default defineModeratorEndpoint('postText.moderate', {
       postId: result.postId,
       action: input.action,
       changed: result.changed,
+      ...(result.stillRefused !== undefined ? { stillRefused: result.stillRefused } : {}),
       affected: { postTextIds: [input.textId], postIds: [result.postId] },
     };
   },

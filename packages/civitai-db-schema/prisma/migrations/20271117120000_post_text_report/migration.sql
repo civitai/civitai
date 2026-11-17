@@ -1,11 +1,13 @@
 -- Reporting a single storyline text, and a moderator's refusal of one.
 --
--- Additive only: a new table and a defaulted column, no enum value. Apply it BEFORE the code that
+-- Additive only: a new table and two defaulted columns, no enum value. Apply it BEFORE the code that
 -- reads them deploys (the post report queue and the text scan name both). Every step is re-runnable.
 SET lock_timeout = '3s';
 
 -- A moderator's refusal, kept apart from the scan's so a later clean verdict does not lift it.
 ALTER TABLE "PostText" ADD COLUMN IF NOT EXISTS "refusedByModerator" BOOLEAN NOT NULL DEFAULT false;
+-- The scan's own refusal while a moderator's covers it, so a restore puts the scan's verdict back.
+ALTER TABLE "PostText" ADD COLUMN IF NOT EXISTS "refusedByScan" BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS "PostTextReport" (
     "reportId" INTEGER NOT NULL,

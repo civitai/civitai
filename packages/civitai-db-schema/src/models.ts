@@ -7037,6 +7037,7 @@ export interface PostText {
   refused: boolean;
   csamHeld: boolean;
   refusedByModerator: boolean;
+  refusedByScan: boolean;
   createdAt: Date;
   updatedAt: Date;
   reports?: PostTextReport[];

@@ -39,7 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   canAccess.mockReturnValue(true);
   getReportPostTextId.mockResolvedValue({ postTextId: TEXT, ...tos });
-  moderatePostText.mockResolvedValue({ ok: true, changed: true });
+  moderatePostText.mockResolvedValue({ ok: true, changed: true, stillRefused: false });
   setReportStatus.mockResolvedValue({ ok: true, changed: true });
 });
 
@@ -109,6 +109,14 @@ describe('restoring a refused text', () => {
   it('restores and dismisses the report', async () => {
     expect(await run('restoreText')).toEqual({ success: true, textAction: 'Text restored' });
     expect(setReportStatus).toHaveBeenCalledWith(expect.objectContaining({ status: 'Unactioned' }));
+  });
+
+  it("says so when the scan's own refusal still hides the text", async () => {
+    moderatePostText.mockResolvedValueOnce({ ok: true, changed: true, stillRefused: true });
+    expect(await run('restoreText')).toEqual({
+      success: true,
+      textAction: 'Restored, but the scan still refuses it',
+    });
   });
 
   it('leaves the report as it is when there was nothing to restore', async () => {

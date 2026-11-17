@@ -87,6 +87,26 @@ describe('applyPostTextTextScan', () => {
     ]);
   });
 
+  // Under a moderator's refusal the scan keeps its own verdict apart, for a restore to fall back to.
+  it("keeps the scan's verdict in refusedByScan while a moderator's refusal stands", async () => {
+    await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: true, minor: false }) as never);
+    expect(dataWith('refusedByScan')).toEqual([
+      {
+        where: { id: ID, refusedByModerator: true, refusedByScan: false },
+        data: { refusedByScan: true },
+      },
+    ]);
+
+    vi.clearAllMocks();
+    await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: false, minor: false }) as never);
+    expect(dataWith('refusedByScan')).toEqual([
+      {
+        where: { id: ID, content: TEXT.content, refusedByModerator: true, refusedByScan: true },
+        data: { refusedByScan: false },
+      },
+    ]);
+  });
+
   it('holds on a csam verdict, and no clean verdict ever clears the hold', async () => {
     await applyPostTextTextScan(
       args({ nsfw: NsfwLevel.PG, poi: false, minor: false, csam: true }) as never

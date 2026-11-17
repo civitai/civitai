@@ -1,9 +1,11 @@
 import { sql } from 'kysely';
-import { dbWrite } from '~/server/db/client';
 import { kyselyWrite } from '~/server/db/kyselyDb';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { updatePostNsfwLevels } from '~/server/services/nsfwLevels.service';
-import { CSAM_HOLD_TEXT_CHARS, lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import {
+  CSAM_HOLD_TEXT_CHARS,
+  csamHoldLockKey,
+} from '~/server/services/text-scan/actions/csam-hold';
 import { postTextTextScanSubject } from '~/server/services/text-scan/profiles/post-text.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { composeUserText } from '~/server/services/text-scan/segment';
@@ -20,7 +22,7 @@ const restorableText = sql<boolean>`NOT t."csamHeld"
   AND NOT post_text_held(t.id, t."csamHeld", t."postId", t."userId")`;
 
 export type PostTextModerationResult =
-  | { ok: true; postId: number; changed: boolean }
+  | { ok: true; postId: number; changed: boolean; stillRefused?: boolean }
   | { ok: false; postId: number; error: 'held' };
 
 /**
@@ -37,8 +39,14 @@ export async function refusePostText({
 }): Promise<PostTextModerationResult | null> {
   const updated = await kyselyWrite
     .updateTable('PostText as t')
+    // `refused` is the scan's alone until now: kept in `refusedByScan` for a restore to fall back to.
     // `updatedAt` is when its words last changed, which a refusal does not.
-    .set({ refused: true, refusedByModerator: true, updatedAt: sql`t."updatedAt"` })
+    .set({
+      refusedByScan: sql`t.refused`,
+      refused: true,
+      refusedByModerator: true,
+      updatedAt: sql`t."updatedAt"`,
+    })
     .where('t.id', '=', textId)
     .where('t.refusedByModerator', '=', false)
     .returning('t.postId')
@@ -58,7 +66,7 @@ export async function refusePostText({
 /**
  * Lifts a moderator's refusal, unless the text is held for csam review or kept by a CSAM report:
  * those are decided in the CSAM queue, never here. Checked in the same statement as the write, so a
- * hold raised meanwhile still refuses it. A refusal the scan made is lifted with it.
+ * hold raised meanwhile still refuses it. A refusal the scan made stands (`stillRefused`).
  */
 export async function restorePostText({
   textId,
@@ -69,11 +77,16 @@ export async function restorePostText({
 }): Promise<PostTextModerationResult | null> {
   const updated = await kyselyWrite
     .updateTable('PostText as t')
-    .set({ refused: false, refusedByModerator: false, updatedAt: sql`t."updatedAt"` })
+    .set({
+      refused: sql`t."refusedByScan"`,
+      refusedByScan: false,
+      refusedByModerator: false,
+      updatedAt: sql`t."updatedAt"`,
+    })
     .where('t.id', '=', textId)
     .where('t.refusedByModerator', '=', true)
     .where(restorableText)
-    .returning('t.postId')
+    .returning(['t.postId', 't.refused'])
     .executeTakeFirst();
   if (!updated) {
     const row = await kyselyWrite
@@ -93,7 +106,7 @@ export async function restorePostText({
     activity: 'restore',
   });
   await updatePostNsfwLevels([updated.postId]);
-  return { ok: true, postId: updated.postId, changed: true };
+  return { ok: true, postId: updated.postId, changed: true, stillRefused: updated.refused };
 }
 
 async function unchanged(textId: number): Promise<PostTextModerationResult | null> {
@@ -120,23 +133,33 @@ export async function holdPostTextForCsam({
   moderatorId: number;
   reportId?: number;
 }): Promise<{ postId: number; holdId: number; changed: boolean } | null> {
-  const result = await dbWrite.$transaction(async (tx) => {
-    await lockCsamHold(tx, 'PostText', textId);
-    const text = await tx.postText.findUnique({
-      where: { id: textId },
-      select: { postId: true, userId: true, content: true },
-    });
+  const result = await kyselyWrite.transaction().execute(async (trx) => {
+    // The scan's hold writer and a decision take the same lock (`lockCsamHold`).
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${csamHoldLockKey(
+      'PostText'
+    )}), ${textId}::int)`.execute(trx);
+    const text = await trx
+      .selectFrom('PostText')
+      .select(['postId', 'userId', 'content'])
+      .where('id', '=', textId)
+      .executeTakeFirst();
     if (!text) return null;
 
-    const pending = await tx.textScanHold.findFirst({
-      where: { entityType: 'PostText', entityId: textId, label: 'csam', status: 'Pending' },
-      select: { id: true },
-    });
+    const pending = await trx
+      .selectFrom('TextScanHold')
+      .select('id')
+      .where('entityType', '=', 'PostText')
+      .where('entityId', '=', textId)
+      .where('label', '=', 'csam')
+      .where('status', '=', 'Pending')
+      .executeTakeFirst();
     let holdId = pending?.id;
     if (!holdId) {
       const subject = postTextTextScanSubject(text);
-      const hold = await tx.textScanHold.create({
-        data: {
+      const meta = { kind: 'moderator', moderatorId, ...(reportId ? { reportId } : {}) };
+      const hold = await trx
+        .insertInto('TextScanHold')
+        .values({
           entityType: 'PostText',
           entityId: textId,
           label: 'csam',
@@ -144,24 +167,21 @@ export async function holdPostTextForCsam({
           userId: text.userId > 0 ? text.userId : null,
           text: sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS)),
           reason: reportId ? `Moderator hold from report #${reportId}` : 'Moderator hold',
-          meta: { kind: 'moderator', moderatorId, ...(reportId ? { reportId } : {}) },
-        },
-        select: { id: true },
-      });
+          meta: sql`${JSON.stringify(meta)}::jsonb`,
+          updatedAt: sql`now()`,
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
       holdId = hold.id;
     }
-    await tx.postText.update({
-      where: { id: textId },
-      data: { csamHeld: true },
-      select: { id: true },
-    });
-    if (!pending)
-      await trackModActivity(
-        moderatorId,
-        { entityType: 'postText', entityId: textId, activity: 'csamHold' },
-        tx
-      );
+    await trx.updateTable('PostText').set({ csamHeld: true }).where('id', '=', textId).execute();
     return { postId: text.postId, holdId, changed: !pending };
   });
+  if (result?.changed)
+    await trackModActivity(moderatorId, {
+      entityType: 'postText',
+      entityId: textId,
+      activity: 'csamHold',
+    });
   return result;
 }

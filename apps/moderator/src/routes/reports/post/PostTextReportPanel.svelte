@@ -66,6 +66,7 @@
       <Badge variant="destructive">held for CSAM review</Badge>
     {:else if text.refusedByModerator}
       <Badge variant="destructive">refused by a moderator</Badge>
+      {#if text.refusedByScan}<Badge variant="destructive">and by the scan</Badge>{/if}
     {:else if text.refused}
       <Badge variant="destructive">refused by the scan</Badge>
     {/if}

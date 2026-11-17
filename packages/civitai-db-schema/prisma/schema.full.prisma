@@ -11227,6 +11227,9 @@ model PostText {
   /// A moderator refused it from a report: `refused` stays set until a moderator restores it, and no
   /// scan verdict lifts it.
   refusedByModerator Boolean @default(false)
+  /// The scan's own refusal while a moderator's covers it (`refused` is then the moderator's): what a
+  /// restore falls back to. False whenever `refusedByModerator` is.
+  refusedByScan      Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   reports   PostTextReport[]

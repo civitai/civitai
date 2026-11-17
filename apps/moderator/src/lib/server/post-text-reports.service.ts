@@ -24,6 +24,7 @@ export async function getReportedPostTexts(
       't.content',
       't.refused',
       't.refusedByModerator',
+      't.refusedByScan',
       sql<boolean | null>`t."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th
         WHERE th."entityType" = 'PostText' AND th."entityId" = t.id AND th.label = 'csam'
           AND th.status IN ('Pending', 'Confirmed'))`.as('held'),
@@ -53,6 +54,7 @@ export async function getReportedPostTexts(
         text: r.content == null ? null : htmlToText(r.content),
         refused: !!r.refused,
         refusedByModerator: !!r.refusedByModerator,
+        refusedByScan: !!r.refusedByScan,
         held: !!r.held,
       },
     ])
@@ -76,7 +78,7 @@ export async function moderatePostText(input: {
   action: PostTextAction;
   reason: string;
   reportId: number;
-}): Promise<{ ok: true; changed: boolean } | { ok: false; error: string }> {
+}): Promise<{ ok: true; changed: boolean; stillRefused: boolean } | { ok: false; error: string }> {
   const result = await callModEndpoint('post-text/moderate', input, 'Moderate text');
   if (!result.ok) {
     // A timeout, dropped socket or server error may come after the main app made the write.
@@ -88,5 +90,9 @@ export async function moderatePostText(input: {
         : result.error,
     };
   }
-  return { ok: true, changed: result.body.changed === true };
+  return {
+    ok: true,
+    changed: result.body.changed === true,
+    stillRefused: result.body.stillRefused === true,
+  };
 }

@@ -5263,6 +5263,11 @@ export type PostText = {
    * scan verdict lifts it.
    */
   refusedByModerator: Generated<boolean>;
+  /**
+   * The scan's own refusal while a moderator's covers it (`refused` is then the moderator's): what a
+   * restore falls back to. False whenever `refusedByModerator` is.
+   */
+  refusedByScan: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

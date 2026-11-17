@@ -63,7 +63,7 @@ CREATE TABLE "PostText" (
   "id" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL, "userId" INTEGER NOT NULL,
   "index" INTEGER NOT NULL, "content" TEXT NOT NULL,
   "refused" BOOLEAN NOT NULL DEFAULT false, "refusedByModerator" BOOLEAN NOT NULL DEFAULT false,
-  "csamHeld" BOOLEAN NOT NULL DEFAULT false
+  "refusedByScan" BOOLEAN NOT NULL DEFAULT false, "csamHeld" BOOLEAN NOT NULL DEFAULT false
 );
 CREATE TABLE "TextScanHold" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -157,6 +157,7 @@ describe('getReportedPostTexts', () => {
       text: 'First words.',
       refused: false,
       refusedByModerator: false,
+      refusedByScan: false,
       held: false,
     });
     expect(texts.get(300)).toMatchObject({

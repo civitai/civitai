@@ -12,6 +12,8 @@ export type ReportedPostText = {
   text: string | null;
   refused: boolean;
   refusedByModerator: boolean;
+  /** The scan refuses it too, under the moderator's refusal: a restore leaves it hidden. */
+  refusedByScan: boolean;
   /** Held for csam review: decided in the CSAM text-hold queue, never from a report. */
   held: boolean;
 };

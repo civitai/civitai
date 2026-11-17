@@ -18,9 +18,15 @@ type RowWhere = {
   nsfwLevelBelow?: number;
   rated?: true;
   refused?: boolean;
-  refusedByModerator?: false;
+  refusedByModerator?: boolean;
+  refusedByScan?: boolean;
 };
-type RowData = { nsfwLevel?: number; refused?: boolean; csamHeld?: boolean };
+type RowData = {
+  nsfwLevel?: number;
+  refused?: boolean;
+  csamHeld?: boolean;
+  refusedByScan?: boolean;
+};
 
 /** A short authored text with its own rating and refusal, rated by the scan. */
 type ScannedTextTable = {
@@ -39,13 +45,23 @@ type ScannedTextTable = {
    * longer has must not rate it: that would show the new text at the old text's rating.
    */
   unratedHides?: boolean;
-  /** The row also carries a moderator's refusal (`refusedByModerator`), which no verdict lifts. */
+  /**
+   * The row also carries a moderator's refusal (`refusedByModerator`), which no verdict lifts. While
+   * it stands, the scan's own verdict is kept in `refusedByScan`, for a restore to fall back to.
+   */
   moderatorRefusal?: true;
   /** Recomputes whatever the row's level and refusal feed, after every verdict. */
   afterVerdict?: (id: number) => Promise<unknown>;
 };
 
-const whereOf = ({ content, nsfwLevelBelow, rated, refused, refusedByModerator }: RowWhere) => ({
+const whereOf = ({
+  content,
+  nsfwLevelBelow,
+  rated,
+  refused,
+  refusedByModerator,
+  refusedByScan,
+}: RowWhere) => ({
   ...(content !== undefined ? { content } : {}),
   ...(nsfwLevelBelow !== undefined || rated
     ? {
@@ -57,6 +73,7 @@ const whereOf = ({ content, nsfwLevelBelow, rated, refused, refusedByModerator }
     : {}),
   ...(refused !== undefined ? { refused } : {}),
   ...(refusedByModerator !== undefined ? { refusedByModerator } : {}),
+  ...(refusedByScan !== undefined ? { refusedByScan } : {}),
 });
 
 async function applyScannedTextScan(
@@ -90,17 +107,24 @@ async function applyScannedTextScan(
   const refuse =
     !!outcome.poi?.detected ||
     isMinorContentRestricted({ minor: !!outcome.minor?.detected, nsfwLevel: level });
-  if (refuse) await table.update(entityId, { refused: false }, { refused: true });
-  else if (current && outcome.poi && outcome.minor)
-    await table.update(
-      entityId,
-      {
-        ...pinned,
-        refused: true,
-        ...(table.moderatorRefusal ? { refusedByModerator: false } : {}),
-      },
-      { refused: false }
-    );
+  const mod = table.moderatorRefusal ? { refusedByModerator: false } : {};
+  if (refuse) {
+    await table.update(entityId, { refused: false }, { refused: true });
+    if (table.moderatorRefusal)
+      await table.update(
+        entityId,
+        { refusedByModerator: true, refusedByScan: false },
+        { refusedByScan: true }
+      );
+  } else if (current && outcome.poi && outcome.minor) {
+    await table.update(entityId, { ...pinned, refused: true, ...mod }, { refused: false });
+    if (table.moderatorRefusal)
+      await table.update(
+        entityId,
+        { ...pinned, refusedByModerator: true, refusedByScan: true },
+        { refusedByScan: false }
+      );
+  }
 
   await table.afterVerdict?.(entityId);
 }

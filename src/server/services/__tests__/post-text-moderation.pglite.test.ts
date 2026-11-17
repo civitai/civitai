@@ -13,11 +13,12 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 let pg: PGlite;
 vi.mock('~/server/db/kyselyDb', () => ({ kyselyWrite: pgliteKysely(() => pg) }));
-vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: vi.fn() }));
+const trackModActivity = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 const updatePostNsfwLevels = vi.hoisted(() => vi.fn(async () => []));
 vi.mock('~/server/services/nsfwLevels.service', () => ({ updatePostNsfwLevels }));
 
-const { refusePostText, restorePostText } = await import(
+const { holdPostTextForCsam, refusePostText, restorePostText } = await import(
   '~/server/services/post-text-moderation.service'
 );
 const { postTextGateRowSql } = await import('~/server/services/post-text-hold');
@@ -41,8 +42,9 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "TextScanHold" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-  "label" TEXT NOT NULL, "status" TEXT NOT NULL,
-  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
+  "label" TEXT NOT NULL, "status" TEXT NOT NULL DEFAULT 'Pending', "textHash" TEXT,
+  "userId" INTEGER, "text" TEXT, "reason" TEXT, "meta" JSONB,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP(3)
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 `;
@@ -148,6 +150,7 @@ describe('restorePostText', () => {
       ok: true,
       postId: POST,
       changed: true,
+      stillRefused: false,
     });
     expect(await row(reported)).toMatchObject({ refused: false, refusedByModerator: false });
     expect(await hiddenFromReaders(reported)).toBe(false);
@@ -178,6 +181,29 @@ describe('restorePostText', () => {
     expect(await row(reported)).toMatchObject({ refused: true, refusedByModerator: true });
   });
 
+  it("puts back a refusal the scan made before the moderator's: readers still do not see it", async () => {
+    await restorePostText({ textId: reported, moderatorId: 2 });
+    await pg.query(`UPDATE "PostText" SET refused = true WHERE id = $1`, [reported]);
+    await refusePostText({ textId: reported, moderatorId: 2 });
+
+    expect(await restorePostText({ textId: reported, moderatorId: 2 })).toEqual({
+      ok: true,
+      postId: POST,
+      changed: true,
+      stillRefused: true,
+    });
+    expect(await row(reported)).toMatchObject({ refused: true, refusedByModerator: false });
+    expect(await hiddenFromReaders(reported)).toBe(true);
+  });
+
+  it("puts back a refusal the scan made under the moderator's", async () => {
+    await pg.query(`UPDATE "PostText" SET "refusedByScan" = true WHERE id = $1`, [reported]);
+    expect(await restorePostText({ textId: reported, moderatorId: 2 })).toMatchObject({
+      stillRefused: true,
+    });
+    expect(await hiddenFromReaders(reported)).toBe(true);
+  });
+
   it("does not lift a refusal no moderator made (the scan's)", async () => {
     await pg.query(`UPDATE "PostText" SET "refusedByModerator" = false WHERE id = $1`, [reported]);
 
@@ -187,5 +213,68 @@ describe('restorePostText', () => {
       changed: false,
     });
     expect(await row(reported)).toMatchObject({ refused: true });
+  });
+});
+
+describe('holdPostTextForCsam', () => {
+  const holds = async () =>
+    (
+      await pg.query<{
+        id: number;
+        entityId: number;
+        status: string;
+        userId: number;
+        text: string;
+        textHash: string;
+        meta: unknown;
+      }>(
+        `SELECT id, "entityId", status, "userId", text, "textHash", meta FROM "TextScanHold" ORDER BY id`
+      )
+    ).rows;
+
+  it('opens a pending csam hold on the words, sets csamHeld, and hides the text', async () => {
+    const result = await holdPostTextForCsam({ textId: reported, moderatorId: 2, reportId: 300 });
+
+    const [hold] = await holds();
+    expect(result).toEqual({ postId: POST, holdId: hold.id, changed: true });
+    expect(hold).toMatchObject({
+      entityId: reported,
+      status: 'Pending',
+      userId: AUTHOR,
+      text: expect.stringContaining('The reported words.'),
+      textHash: expect.stringMatching(/\S/),
+      meta: { kind: 'moderator', moderatorId: 2, reportId: 300 },
+    });
+    expect(
+      (await pg.query(`SELECT "csamHeld" FROM "PostText" WHERE id = $1`, [reported])).rows
+    ).toEqual([{ csamHeld: true }]);
+    expect(await hiddenFromReaders(reported)).toBe(true);
+    expect(await hiddenFromReaders(sibling)).toBe(false);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a text already held in its pending hold, and records the hold once', async () => {
+    const first = await holdPostTextForCsam({ textId: reported, moderatorId: 2 });
+    const second = await holdPostTextForCsam({ textId: reported, moderatorId: 3 });
+
+    expect(second).toEqual({ postId: POST, holdId: first?.holdId, changed: false });
+    expect(await holds()).toHaveLength(1);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds words an earlier hold dismissed', async () => {
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('PostText', $1, 'csam', 'Dismissed')`,
+      [reported]
+    );
+    expect(await holdPostTextForCsam({ textId: reported, moderatorId: 2 })).toMatchObject({
+      changed: true,
+    });
+    expect((await holds()).map((h) => h.status)).toEqual(['Dismissed', 'Pending']);
+  });
+
+  it('is null for a text that is gone, and holds nothing', async () => {
+    expect(await holdPostTextForCsam({ textId: 9999, moderatorId: 2 })).toBeNull();
+    expect(await holds()).toEqual([]);
   });
 });

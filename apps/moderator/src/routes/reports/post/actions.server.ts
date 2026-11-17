@@ -72,7 +72,10 @@ const textAction =
       userId: locals.user.id,
       ip: getClientAddress(),
     });
-    const done = TEXT_ACTION_DONE[action][result.changed ? 0 : 1];
+    const done =
+      action === 'restore' && result.stillRefused
+        ? 'Restored, but the scan still refuses it'
+        : TEXT_ACTION_DONE[action][result.changed ? 0 : 1];
     if (!ruled.ok)
       return fail(410, { scope: 'text', error: `${done}, but ${ruled.error}`, gone: true });
     return { success: true, textAction: done };
