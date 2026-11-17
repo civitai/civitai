@@ -1,0 +1,321 @@
+import { PGlite } from '@electric-sql/pglite';
+import { readFileSync } from 'fs';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import path from 'path';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { UnseenNotifications, UnseenNotificationsInput } from '@civitai/notifications';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { sendEmail } from '~/server/email/client';
+import type * as DbHelpers from '~/server/db/db-helpers';
+import type * as NotificationsClient from '~/server/notifications/client';
+import type * as DetailFetchers from '~/server/notifications/detail-fetchers';
+import type * as SilenceAges from '~/server/notifications/silence-check-ages';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+
+vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+const h = vi.hoisted(() => ({
+  pg: null as unknown as import('@electric-sql/pglite').PGlite,
+  kv: new Map<string, unknown>(),
+  unseen: vi.fn(),
+}));
+
+vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn(), isEmailConfigured: () => true }));
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof DbHelpers>()),
+  dbKV: {
+    get: async (key: string, defaultValue?: unknown) =>
+      h.kv.has(key) ? h.kv.get(key) : defaultValue,
+    set: async (key: string, value: unknown) => {
+      h.kv.set(key, JSON.parse(JSON.stringify(value)));
+    },
+  },
+}));
+vi.mock('~/server/notifications/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsClient>()),
+  notifications: { queryUnseenNotifications: h.unseen },
+}));
+// The digest renders from each row's own `details`, so the main-DB enrichment has nothing to add.
+vi.mock('~/server/notifications/detail-fetchers', async (importOriginal) => ({
+  ...(await importOriginal<typeof DetailFetchers>()),
+  populateNotificationDetails: async () => undefined,
+}));
+vi.mock('~/server/notifications/silence-check-ages', async (importOriginal) => ({
+  ...(await importOriginal<typeof SilenceAges>()),
+  silenceCheckTypeAges: async () => [
+    { type: 'new-comment', firstSeen: '2026-01-01T00:00:00.000Z' },
+    { type: 'new-mention', firstSeen: '2026-01-01T00:00:00.000Z' },
+  ],
+}));
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof EndpointHelpers>()),
+  PublicEndpoint: (handler: unknown) => handler,
+}));
+
+const { DIGEST_CURSOR_KEY, DIGEST_ITEM_LIMIT, runMissedNotificationDigest } = await import(
+  '~/server/services/notification-digest.service'
+);
+const { getEmailUnsubscribeUrl } = await import('~/server/services/notification-email.service');
+const { MISSED_DIGEST_EMAIL_TYPE } = await import('~/server/notifications/missed-digest.constants');
+const unsubscribe = (await import('~/pages/api/notifications/email-unsubscribe'))
+  .default as unknown as (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
+
+const MIGRATIONS = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations'
+);
+const migration = (dir: string) =>
+  readFileSync(path.join(MIGRATIONS, dir, 'migration.sql'), 'utf8');
+
+const NOW = new Date('2026-11-16T12:00:00.000Z');
+const DAY = 24 * 60 * 60 * 1000;
+const daysAgo = (n: number) => new Date(NOW.getTime() - n * DAY);
+const db = pgliteKysely(() => h.pg);
+
+// [id, email, verified, deleted]
+const USERS: Array<[number, string | null, boolean, boolean]> = [
+  [1, 'one@example.com', true, false], // unseen notifications: emailed
+  [2, 'two@example.com', true, false], // nothing unseen
+  [3, 'three@example.com', true, false], // opted out of the digest
+  [4, 'four@example.com', false, false], // address never verified
+  [5, 'five@example.com', true, false], // turned every notification off
+  [6, 'six@example.com', true, false], // sent a digest two days ago
+  [7, 'seven@example.com', true, true], // deleted
+  [8, null, false, false], // no address
+  [9, 'nine@example.com', true, false], // sent one six and a half days ago
+];
+
+const item = (id: number, message: string) => ({
+  id,
+  type: 'system-message',
+  category: 'Other' as const,
+  details: { message, url: `/images/${id}` },
+  createdAt: daysAgo(1),
+});
+
+/** What the notifications app answers: users 1, 6 and 9 have unseen notifications. */
+function unseenFor(input: UnseenNotificationsInput): UnseenNotifications[] {
+  const all: UnseenNotifications[] = [
+    {
+      userId: 1,
+      total: 14,
+      floor: false,
+      items: Array.from({ length: DIGEST_ITEM_LIMIT }, (_, i) => item(100 + i, `Reply #${i}`)),
+    },
+    { userId: 6, total: 1, floor: false, items: [item(200, 'Six')] },
+    { userId: 9, total: 1, floor: false, items: [item(300, 'Nine')] },
+  ];
+  const asked = new Set(input.users.map((u) => u.userId));
+  return all.filter((u) => asked.has(u.userId));
+}
+
+beforeAll(async () => {
+  h.pg = new PGlite();
+  await h.pg.exec(`
+    CREATE TABLE "User" ("id" integer PRIMARY KEY, "email" text, "emailVerified" timestamp(3),
+      "deletedAt" timestamp(3), "bannedAt" timestamp(3));
+    CREATE TABLE "UserNotificationSettings" ("id" serial PRIMARY KEY, "userId" integer NOT NULL,
+      "type" text NOT NULL, "disabledAt" timestamp(3) NOT NULL DEFAULT now());
+  `);
+  await h.pg.exec(migration('20261203120000_user_email_notification_opt_out'));
+  const raw = pgliteRaw(h.pg);
+  dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+});
+
+afterAll(async () => {
+  await h.pg.close();
+});
+
+async function seed({ withDigestTable = true } = {}) {
+  await h.pg.exec(`
+    DROP TABLE IF EXISTS "UserNotificationDigest";
+    TRUNCATE "UserEmailNotificationOptOut", "UserNotificationSettings";
+    DELETE FROM "User";
+  `);
+  if (withDigestTable) await h.pg.exec(migration('20271117150000_user_notification_digest'));
+  for (const [id, email, verified, deleted] of USERS)
+    await h.pg.query(
+      `INSERT INTO "User" (id, email, "emailVerified", "deletedAt") VALUES ($1, $2, $3, $4)`,
+      [id, email, verified ? '2026-01-01' : null, deleted ? '2026-06-01' : null]
+    );
+  await h.pg.query(`INSERT INTO "UserEmailNotificationOptOut" ("userId", type) VALUES (3, $1)`, [
+    MISSED_DIGEST_EMAIL_TYPE,
+  ]);
+  await h.pg.exec(`
+    INSERT INTO "UserNotificationSettings" ("userId", type, "disabledAt") VALUES
+      (5, 'new-comment', '2026-06-01'), (5, 'new-mention', '2026-06-01'),
+      (2, 'new-comment', '2026-06-01');
+  `);
+  if (withDigestTable)
+    await h.pg.query(
+      `INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt") VALUES (6, $1), (9, $2)`,
+      [daysAgo(2).toISOString().replace('Z', ''), daysAgo(6.5).toISOString().replace('Z', '')]
+    );
+}
+
+let clock = NOW;
+const run = (deps: Parameters<typeof runMissedNotificationDigest>[0] = {}) =>
+  runMissedNotificationDigest({
+    now: () => clock,
+    sleep: async () => undefined,
+    read: db,
+    write: db,
+    batchSize: 4,
+    inRollout: async () => true,
+    ...deps,
+  });
+
+const mailedTo = () =>
+  vi
+    .mocked(sendEmail)
+    .mock.calls.map(([mail]) => mail.to)
+    .sort();
+
+beforeEach(async () => {
+  clock = NOW;
+  h.kv.clear();
+  vi.mocked(sendEmail).mockReset();
+  h.unseen.mockReset();
+  h.unseen.mockImplementation(async (input: UnseenNotificationsInput) => unseenFor(input));
+  await seed();
+});
+
+describe('who gets the weekly digest', () => {
+  it('emails only users with unseen notifications, and counts every skip by its reason', async () => {
+    const result = await run();
+    expect(mailedTo()).toEqual(['nine@example.com', 'one@example.com']);
+    expect(result).toMatchObject({
+      idle: null,
+      considered: 8,
+      emailed: 2,
+      failed: 0,
+      cycleDone: true,
+      skipped: {
+        'no-verified-email': 2,
+        'opted-out': 1,
+        'not-in-rollout': 0,
+        'all-notifications-off': 1,
+        'recently-sent': 1,
+        'none-unseen': 1,
+        unrenderable: 0,
+      },
+    });
+  });
+
+  it('asks only about eligible users, leaves out the types already emailed, and never re-lists a sent item', async () => {
+    await run();
+    const asked = h.unseen.mock.calls.flatMap(
+      ([input]) => (input as UnseenNotificationsInput).users
+    );
+    expect(asked.map((u) => u.userId).sort()).toEqual([1, 2, 9]);
+    // A user never sent one starts a week back; a user sent one since starts where it left off.
+    expect(asked.find((u) => u.userId === 1)!.since).toEqual(daysAgo(7));
+    expect(asked.find((u) => u.userId === 9)!.since).toEqual(daysAgo(6.5));
+    const excluded = (h.unseen.mock.calls[0]![0] as UnseenNotificationsInput).excludeTypes;
+    expect(excluded).toContain('service-deal-requested');
+    expect(excluded).not.toContain('system-message');
+  });
+
+  it('skips users outside the flag rollout before asking about them', async () => {
+    const result = await run({ inRollout: async (id) => id !== 1 });
+    expect(mailedTo()).toEqual(['nine@example.com']);
+    expect(result.skipped['not-in-rollout']).toBe(1);
+    const asked = h.unseen.mock.calls.flatMap(
+      ([input]) => (input as UnseenNotificationsInput).users
+    );
+    expect(asked.map((u) => u.userId)).not.toContain(1);
+  });
+
+  it('sends one per user per week: a second run that week does nothing, even from a lost cursor', async () => {
+    await run();
+    vi.mocked(sendEmail).mockReset();
+
+    clock = new Date(NOW.getTime() + 3 * 60 * 60 * 1000);
+    expect((await run()).idle).toBe('cycle-done');
+
+    h.kv.delete(DIGEST_CURSOR_KEY);
+    const rerun = await run();
+    expect(rerun.emailed).toBe(0);
+    expect(rerun.skipped['recently-sent']).toBe(3);
+    expect(sendEmail).not.toHaveBeenCalled();
+
+    // The next pass starts a week after the last one did (that was the lost-cursor rerun's).
+    clock = new Date(NOW.getTime() + 8 * DAY);
+    await run();
+    expect(mailedTo()).toEqual(['nine@example.com', 'one@example.com', 'six@example.com']);
+  });
+
+  it('sends nothing while the digest table is missing', async () => {
+    await seed({ withDigestTable: false });
+    const result = await run();
+    expect(result.idle).toBe('table-missing');
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('stops at the per-run send cap and the next run carries on from there', async () => {
+    const first = await run({ maxSends: 1 });
+    expect(first).toMatchObject({ emailed: 1, stopped: 'send-cap', cycleDone: false });
+    expect(mailedTo()).toEqual(['one@example.com']);
+
+    const second = await run({ maxSends: 1 });
+    expect(second.emailed).toBe(1);
+    expect(mailedTo()).toEqual(['nine@example.com', 'one@example.com']);
+  });
+
+  it('a failed send is not recorded, so the user is tried again on the next pass', async () => {
+    vi.mocked(sendEmail).mockRejectedValueOnce(new Error('boom'));
+    const result = await run();
+    expect(result.failed).toBe(1);
+    const rows = await h.pg.query<{ userId: number }>(
+      `SELECT "userId" FROM "UserNotificationDigest" ORDER BY "userId"`
+    );
+    // User 1 failed (first in id order); 9 was sent; 6 kept its earlier row.
+    expect(rows.rows.map((r) => r.userId)).toEqual([6, 9]);
+  });
+});
+
+describe('the digest email', () => {
+  it('lists the newest ten with "and N more", and links each item and the notifications page', async () => {
+    await run();
+    const mail = vi
+      .mocked(sendEmail)
+      .mock.calls.map(([m]) => m)
+      .find((m) => m.to === 'one@example.com')!;
+    expect(mail.subject).toBe("You have 14 notifications you haven't seen");
+    expect(mail.text).toContain('- Reply #0\n  http://localhost:3000/images/100');
+    expect(mail.text).toContain('- Reply #9');
+    expect(mail.text).toContain('and 4 more');
+    expect(mail.text).toContain('See all notifications: http://localhost:3000/user/notifications');
+    expect(mail.html).toContain('href="http://localhost:3000/images/109"');
+    expect(mail.html).toContain('href="http://localhost:3000/user/notifications"');
+    expect(mail.headers?.['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
+    expect(mail.headers?.['List-Unsubscribe']).toContain(`t=${MISSED_DIGEST_EMAIL_TYPE}`);
+  });
+
+  it('a one-click unsubscribe turns the digest off for that user', async () => {
+    const query = Object.fromEntries(
+      new URL(getEmailUnsubscribeUrl(1, MISSED_DIGEST_EMAIL_TYPE)).searchParams
+    );
+    let status = 0;
+    const res = {
+      status(code: number) {
+        status = code;
+        return res;
+      },
+      setHeader: () => res,
+      send: () => res,
+    } as unknown as NextApiResponse;
+    await unsubscribe(
+      { method: 'POST', query, body: {}, headers: {} } as unknown as NextApiRequest,
+      res
+    );
+    expect(status).toBe(200);
+
+    const result = await run();
+    expect(mailedTo()).toEqual(['nine@example.com']);
+    expect(result.skipped['opted-out']).toBe(2);
+  });
+});
