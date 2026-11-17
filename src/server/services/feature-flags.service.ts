@@ -514,6 +514,10 @@ const featureFlags = createFeatureFlags({
   newsroom: ['public'],
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
+  // Kill switch for the main app's retracted-media route and the UI that loads from it. On for
+  // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
+  // `mod-retracted-media` in Flipt, disabled, to turn it off.
+  modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
