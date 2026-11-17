@@ -185,6 +185,55 @@ describe('a connection lost during the statement is retried', () => {
       }),
     ]);
   });
+
+  it('logs the pooler auth failure code when the retries are exhausted on it', async () => {
+    h.failures = Array.from({ length: DB_RETRY_BACKOFF_MS.length + 1 }, () =>
+      pgError('28P01', 'password authentication failed for user "app"')
+    );
+
+    await settle(notificationExists('k4'));
+
+    const lines = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([d]) => d as Record<string, unknown>)
+      .filter((d) => d.name === 'notification.dbRetry');
+    expect(lines).toEqual([
+      expect.objectContaining({ outcome: 'exhausted', cause: { name: 'Error', code: '28P01' } }),
+    ]);
+    expect(JSON.stringify(lines)).not.toContain('password authentication');
+  });
+
+  it('logs one line when a retry ends in an error that is not retried', async () => {
+    h.failures = [adminShutdown(), pgError('42P01', 'relation "x" does not exist', 'ERROR')];
+
+    const r = await settle(notificationExists('k5'));
+
+    expect(r.ok).toBe(false);
+    expect(h.statements).toHaveLength(2);
+    const lines = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([d]) => d as Record<string, unknown>)
+      .filter((d) => d.name === 'notification.dbRetry');
+    expect(lines).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        outcome: 'failed',
+        retries: 1,
+        cause: { name: 'Error', code: '42P01' },
+      }),
+    ]);
+  });
+
+  it('logs nothing when the first error is not retried', async () => {
+    h.failures = [pgError('42P01', 'relation "x" does not exist', 'ERROR')];
+
+    await settle(notificationExists('k6'));
+
+    const lines = vi
+      .mocked(logToAxiom)
+      .mock.calls.filter(([d]) => (d as Record<string, unknown>).name === 'notification.dbRetry');
+    expect(lines).toEqual([]);
+  });
 });
 
 describe('createNotification survives a switchover', () => {

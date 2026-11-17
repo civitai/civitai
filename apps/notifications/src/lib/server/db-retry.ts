@@ -41,14 +41,15 @@ export function isTransientDbConnectionError(err: unknown): boolean {
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export type DbRetryResult = 'recovered' | 'exhausted';
+/** `failed`: a retry ran, then the call failed with an error that is not retried. */
+export type DbRetryResult = 'recovered' | 'exhausted' | 'failed';
 
 export interface DbRetryOptions {
   backoffMs?: readonly number[];
   sleep?: (ms: number) => Promise<void>;
   /** [0, 1); each delay is its base scaled by 0.5 + random() (±50%), so callers do not retry in step. */
   random?: () => number;
-  /** Called once when a retried call settles: recovered, or exhausted with `err` rethrown. */
+  /** Called once when a retried call settles: recovered, or exhausted/failed with `err` rethrown. */
   onResult?: (result: DbRetryResult, retries: number, err?: unknown) => void;
 }
 
@@ -78,7 +79,10 @@ export async function withDbRetry<T>(fn: () => Promise<T>, opts: DbRetryOptions 
       if (attempt > 0) report('recovered', attempt);
       return value;
     } catch (err) {
-      if (!isTransientDbConnectionError(err)) throw err;
+      if (!isTransientDbConnectionError(err)) {
+        if (attempt > 0) report('failed', attempt, err);
+        throw err;
+      }
       if (attempt >= backoff.length) {
         if (attempt > 0) report('exhausted', attempt, err);
         throw err;
@@ -88,8 +92,19 @@ export async function withDbRetry<T>(fn: () => Promise<T>, opts: DbRetryOptions 
   }
 }
 
+// { name, code } only: an error message can carry a host. dbUnavailableCause does not know the
+// pooler's 28P01 or a non-connection error, so those fall back to the error's own name and code.
+function retryCause(err: unknown): { name: string; code: string } | undefined {
+  const known = dbUnavailableCause(err);
+  if (known || !err || typeof err !== 'object') return known;
+  const e = err as { name?: unknown; code?: unknown };
+  return {
+    name: typeof e.name === 'string' ? e.name : 'Error',
+    code: typeof e.code === 'string' ? e.code : '',
+  };
+}
+
 function logDbRetry(result: DbRetryResult, retries: number, err?: unknown) {
-  // dbUnavailableCause is { name, code } only: an error message can carry a host.
   void Promise.resolve(
     logToAxiom({
       type: result === 'recovered' ? 'info' : 'warning',
@@ -97,7 +112,7 @@ function logDbRetry(result: DbRetryResult, retries: number, err?: unknown) {
       message: `DB statement ${result} after ${retries} retries`,
       outcome: result,
       retries,
-      ...(err ? { cause: dbUnavailableCause(err) } : {}),
+      ...(err ? { cause: retryCause(err) } : {}),
     })
   ).catch(() => undefined);
 }
