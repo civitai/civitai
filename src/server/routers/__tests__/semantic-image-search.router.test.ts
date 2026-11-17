@@ -124,6 +124,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
       browsingLevel: 3,
       userIds: [7],
     });
+    expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(true);
   });
 
   it('answers in the same shape whatever the search found, with no timing', async () => {
@@ -166,6 +167,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
     await caller().search({ query: 'kuro', usernames: ['vixen'] });
     const { input } = h.search.mock.calls[0][0];
     expect(input.usernames).toEqual(['vixen']);
+    expect(h.search.mock.calls[0][0].refuseNarrowing).toBe(false);
     expect(input.userIds).toBeUndefined();
   });
 });

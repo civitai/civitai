@@ -54,6 +54,7 @@ export async function searchSemanticImages({
   domain,
   track,
   candidateSource = searchServiceCandidates,
+  refuseNarrowing = false,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
@@ -61,6 +62,8 @@ export async function searchSemanticImages({
   domain?: DomainColor;
   track?: QueryTracker;
   candidateSource?: CandidateSource;
+  /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
+  refuseNarrowing?: boolean;
 }) {
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
@@ -113,7 +116,7 @@ export async function searchSemanticImages({
   });
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  const queryRefused = verdictLevel === 'refuse';
+  const queryRefused = verdictLevel === 'refuse' || (refuseNarrowing && !!refusal);
   if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);

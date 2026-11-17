@@ -73,6 +73,7 @@ export const semanticImageSearchRouter = router({
         user: ctx.user,
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
+        refuseNarrowing: !!ownImagesOf,
       });
       const latencyMs = Date.now() - started;
 

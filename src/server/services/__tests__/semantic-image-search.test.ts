@@ -582,6 +582,21 @@ describe('the query audit and the browsing level', () => {
     );
   });
 
+  // The showcase picker's own-images search refuses where the general search narrows.
+  it('refuses a minor query on the own-images search, at an NSFW level with the clamp off', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const result = await searchSemanticImages({
+      input: textQuery({ browsingLevel: ALL_LEVELS }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(calls).toHaveLength(0);
+  });
+
   it('recomputes the add-ons at the narrowed level', async () => {
     vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([
       { type: 'none', nsfwLevels: [4, 8, 16], excludedTagIds: [9200] },
