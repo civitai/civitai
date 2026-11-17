@@ -12,11 +12,9 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   queueImageSearchIndexUpdate: vi.fn(() => Promise.resolve()),
 }));
-vi.mock('~/server/services/article-cover-reindex', () => ({
-  queueArticlesForCoverImages: vi.fn(async () => undefined),
-}));
 vi.mock('~/server/services/image-models-reindex.service', () => ({
   queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueArticlesAndComicsForImages: vi.fn(async () => undefined),
 }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -28,7 +26,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
 import { toggleImageFlag, updateImagesFlag } from '~/server/services/image.service';
-import { queueArticlesForCoverImages } from '~/server/services/article-cover-reindex';
+import { queueArticlesAndComicsForImages } from '~/server/services/image-models-reindex.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const IMAGE_ID = 88;
@@ -55,26 +53,26 @@ describe('a scan result, which writes the minor flag', () => {
         typeof applyIngestionSideEffects
       >[0]['outcome'],
     });
-    expect(queueArticlesForCoverImages).toHaveBeenCalledWith([IMAGE_ID]);
+    expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([IMAGE_ID]);
   });
 });
 
 describe("a moderator's minor flag write", () => {
   it('queues the articles the images cover', async () => {
     await updateImagesFlag({ ids: [IMAGE_ID, 89], flag: 'minor', value: true });
-    expect(queueArticlesForCoverImages).toHaveBeenCalledWith([IMAGE_ID, 89]);
+    expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([IMAGE_ID, 89]);
   });
 
   it('queues the articles a toggled image covers', async () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue({ minor: false } as never);
     await toggleImageFlag({ id: IMAGE_ID, flag: 'minor' });
-    expect(queueArticlesForCoverImages).toHaveBeenCalledWith([IMAGE_ID]);
+    expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([IMAGE_ID]);
   });
 
   it('queues nothing for a poi flag write (control)', async () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue({ poi: false } as never);
     await updateImagesFlag({ ids: [IMAGE_ID], flag: 'poi', value: true });
     await toggleImageFlag({ id: IMAGE_ID, flag: 'poi' });
-    expect(queueArticlesForCoverImages).not.toHaveBeenCalled();
+    expect(queueArticlesAndComicsForImages).not.toHaveBeenCalled();
   });
 });

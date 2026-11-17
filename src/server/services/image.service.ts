@@ -497,9 +497,8 @@ export async function purgeResizeCache({
               message: 'image-cacher invalidate answered 429 (busy); not done',
               imageKey: url,
               scope,
-              retract,
               status: res.status,
-              retryAfter: res.headers.get('retry-after') ?? undefined,
+              payload: { retract, retryAfter: res.headers.get('retry-after') ?? undefined },
             });
             return 'busy';
           }
@@ -1364,7 +1363,7 @@ export async function handleUnblockImages({
       dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       // A minor-queue accept rewrites "minor", which no trigger watches.
-      queueArticlesForCoverImagesLazy(ids),
+      queueArticlesAndComicsForImagesLazy(ids),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
@@ -6226,7 +6225,7 @@ async function afterImageNsfwLevelSet({
     // The version showcase is cached for a day and filtered by level when it is built.
     postId ? bustCachesForPosts(postId) : undefined,
   ]);
-  if (postId) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
   if (status) {
     await dbWrite.imageRatingRequest.updateMany({
       where: { imageId: id, status: 'Pending' },
@@ -6422,10 +6421,8 @@ export async function raiseOwnImageNsfwLevel({
   if (!raised) return false;
 
   await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
-  if (raised.postId) {
-    await updatePostNsfwLevel(raised.postId);
-    await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
-  }
+  if (raised.postId) await updatePostNsfwLevel(raised.postId);
+  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
   return true;
@@ -6623,7 +6620,7 @@ export async function resolveIngestionError({
     ids: [id],
     action: SearchIndexUpdateQueueAction.Update,
   });
-  if (image.postId) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
 
   await trackModActivity(userId, {
     entityType: 'image',
@@ -7646,9 +7643,11 @@ export async function bustImageModRulesCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
 }
 
-// Imported at the call: article-cover-reindex reaches image.service through the search-index barrel.
-const queueArticlesForCoverImagesLazy = async (imageIds: number[]) =>
-  (await import('~/server/services/article-cover-reindex')).queueArticlesForCoverImages(imageIds);
+// Imported at the call, keeping the search-index side out of image.service's import graph.
+const queueArticlesAndComicsForImagesLazy = async (imageIds: number[]) =>
+  (await import('~/server/services/image-models-reindex.service')).queueArticlesAndComicsForImages(
+    imageIds
+  );
 
 export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
   const image = await dbRead.image.findUnique({
@@ -7663,7 +7662,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.refresh(id);
-  if (flag === 'minor') await queueArticlesForCoverImagesLazy([id]);
+  if (flag === 'minor') await queueArticlesAndComicsForImagesLazy([id]);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7683,7 +7682,7 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.refresh(ids);
-  if (flag === 'minor') await queueArticlesForCoverImagesLazy(ids);
+  if (flag === 'minor') await queueArticlesAndComicsForImagesLazy(ids);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(

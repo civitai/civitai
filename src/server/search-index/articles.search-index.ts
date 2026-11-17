@@ -21,6 +21,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = ARTICLES_SEARCH_INDEX;
@@ -88,7 +89,9 @@ export const transformData = async ({
 }) => {
   // A restricted minor image is withheld like one its model withholds: the index has no viewer.
   const withheld = (image: NonNullable<Article['coverImage']>) =>
-    modelWithheldImageIds.has(image.id) || isMinorMatureImage(image);
+    modelWithheldImageIds.has(image.id) ||
+    isMinorMatureImage(image) ||
+    isTaggedMatureImage({ nsfwLevel: image.nsfwLevel, tags: image.tags.map((x) => x.tag.id) });
   const servable = (image: Article['coverImage']) =>
     image && !withheld(image) ? servableArticleImage(image) : null;
   const records = articles

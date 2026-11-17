@@ -884,14 +884,15 @@ type CrucibleVisibilityRow = {
   ingestion: CrucibleIngestionStatus;
   image: {
     ingestion: ImageIngestionStatus;
+    nsfwLevel: number;
     needsReview: string | null;
     tosViolation: boolean;
   } | null;
 };
 
 /**
- * Until its text and cover pass their scans, and while its cover is in review or marked a ToS
- * violation, only its creator and moderators see a crucible. List surfaces apply the same cover
+ * Until its text and cover pass their scans, while its cover is unrated or in review or marked a
+ * ToS violation, only its creator and moderators see a crucible. List surfaces apply the same cover
  * rule (crucibleCoverListedWhere).
  */
 export const isCrucibleHiddenByScan = (
@@ -902,6 +903,7 @@ export const isCrucibleHiddenByScan = (
   crucible.userId !== viewerId &&
   (crucible.ingestion !== CrucibleIngestionStatus.Scanned ||
     crucible.image?.ingestion !== ImageIngestionStatus.Scanned ||
+    crucible.image.nsfwLevel === 0 ||
     crucible.image.needsReview != null ||
     crucible.image.tosViolation);
 
@@ -6171,7 +6173,6 @@ export const getUserActiveCrucibles = async ({
           image: {
             select: {
               url: true,
-              nsfwLevel: true,
               ...crucibleCoverScanSelect,
             },
           },

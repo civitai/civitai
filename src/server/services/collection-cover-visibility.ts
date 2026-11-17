@@ -19,11 +19,12 @@ const baseModelAllowedSql = Prisma.sql`(
 )`;
 
 /**
- * Scanned, not awaiting review, not removed or a ToS violation, allowed by its base model: as SQL
- * over `"Image" i`.
+ * Scanned, rated, not awaiting review, not removed or a ToS violation, allowed by its base model:
+ * as SQL over `"Image" i`.
  */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
+  AND i."nsfwLevel" != 0
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i."tosViolation" IS NOT TRUE

@@ -35,8 +35,10 @@ import { normalizeText } from '~/utils/normalize-text';
 import { styleTags, tagsNeedingReview } from '~/libs/tags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
-import { queueArticlesForCoverImages } from '~/server/services/article-cover-reindex';
+import {
+  queueArticlesAndComicsForImages,
+  queueModelsForImageChildTagChanges,
+} from '~/server/services/image-models-reindex.service';
 import {
   tagIdsForImagesCache,
   tagCacheByName,
@@ -1208,8 +1210,8 @@ export async function applyIngestionSideEffects({
       action: SearchIndexUpdateQueueAction.Update,
     });
     // The scan writes "minor", which no trigger watches.
-    await queueArticlesForCoverImages([image.id]);
-    if (image.postId) await queueModelsForImageChildTagChanges({ levelImageIds: [image.id] });
+    await queueArticlesAndComicsForImages([image.id]);
+    await queueModelsForImageChildTagChanges({ levelImageIds: [image.id] });
 
     // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.
     try {

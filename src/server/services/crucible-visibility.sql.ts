@@ -7,17 +7,18 @@ import {
 } from '~/shared/utils/prisma/enums';
 
 /**
- * Crucible `c` and its cover `i` have both passed their scans, and the cover is neither in review
- * nor a ToS violation: every list surface requires it. getCrucibles builds the same rule as a
+ * Crucible `c` and its cover `i` have both passed their scans, and the cover is rated, neither in
+ * review nor a ToS violation: every list surface requires it. getCrucibles builds the same rule as a
  * Prisma filter (crucibleCoverListedWhere).
  */
 export const crucibleScannedSql = Prisma.sql`c.ingestion = ${CrucibleIngestionStatus.Scanned}::"CrucibleIngestionStatus"
   AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-  AND i."needsReview" IS NULL AND NOT i."tosViolation"`;
+  AND i."nsfwLevel" != 0 AND i."needsReview" IS NULL AND NOT i."tosViolation"`;
 
 /** The cover half of crucibleScannedSql, as a Prisma filter on the crucible's `image`. */
 export const crucibleCoverListedWhere = {
   ingestion: ImageIngestionStatus.Scanned,
+  nsfwLevel: { notIn: [0] },
   needsReview: null,
   tosViolation: false,
 } satisfies Prisma.ImageWhereInput;
@@ -41,6 +42,7 @@ export const crucibleSemanticEligibleWhere: Prisma.Sql[] = [
 /** The cover fields isCrucibleHiddenByScan reads: select them wherever it is called. */
 export const crucibleCoverScanSelect = {
   ingestion: true,
+  nsfwLevel: true,
   needsReview: true,
   tosViolation: true,
 } satisfies Prisma.ImageSelect;

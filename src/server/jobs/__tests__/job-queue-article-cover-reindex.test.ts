@@ -2,14 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Every write to Image."nsfwLevel", from any app, lands in update-nsfw-levels through the image
- * trigger (`image_nsfw_level_change`). That job hands the images to the article cover reindex, so an
+ * trigger (`image_nsfw_level_change`). That job hands the images to queueArticlesAndComicsForImages, so an
  * article's search document follows its cover's rating even when the article's own level holds.
  */
 
-const { queueArticlesForCoverImages } = vi.hoisted(() => ({
-  queueArticlesForCoverImages: vi.fn(async () => undefined),
+const { queueArticlesAndComicsForImages } = vi.hoisted(() => ({
+  queueArticlesAndComicsForImages: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/services/article-cover-reindex', () => ({ queueArticlesForCoverImages }));
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueArticlesAndComicsForImages,
+}));
 vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: vi.fn() },
@@ -65,13 +67,13 @@ describe('update-nsfw-levels: article covers', () => {
       [9, EntityType.Post],
     ]);
     await runJob();
-    expect(queueArticlesForCoverImages).toHaveBeenCalledWith([501, 502]);
+    expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([501, 502]);
   });
 
   it('hands over no images when none were re-rated (control)', async () => {
     queue([[9, EntityType.Post]]);
     await runJob();
-    const ids = queueArticlesForCoverImages.mock.calls.flatMap((call) => call[0] as number[]);
+    const ids = queueArticlesAndComicsForImages.mock.calls.flatMap((call) => call[0] as number[]);
     expect(ids).toEqual([]);
   });
 });

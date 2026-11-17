@@ -18,7 +18,7 @@ import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { createJob } from './job';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
-import { queueArticlesForCoverImages } from '~/server/services/article-cover-reindex';
+import { queueArticlesAndComicsForImages } from '~/server/services/image-models-reindex.service';
 
 const jobQueueMap = {
   [EntityType.Image]: 'imageIds',
@@ -93,7 +93,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
     });
     // Every write to Image."nsfwLevel", from any app, lands here through the image trigger. An
     // article's document follows its cover's rating even when the article's own level holds.
-    await queueArticlesForCoverImages(jobQueueIds.imageIds);
+    await queueArticlesAndComicsForImages(jobQueueIds.imageIds);
 
     const postIds = uniq([...jobQueueIds.postIds, ...relatedEntities.postIds]);
     const articleIds = uniq([...jobQueueIds.articleIds, ...relatedEntities.articleIds]);

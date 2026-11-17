@@ -115,9 +115,11 @@ const UNRESTRICTED_R = 220; // stranger's R image on an unrestricted base model
 const VIEWER_RESTRICTED_R = 221; // the viewer's own R image on a restricted base model
 const RESTRICTED_X = 222; // stranger's X image on a restricted base model
 const RESTRICTED_XXX = 223; // stranger's XXX image on a restricted base model
-const MINOR_R = 224; // the viewer's minor-flagged image rated R, on a published public post
-const MINOR_PG13 = 225; // the viewer's minor-flagged image rated PG-13, on the same post
-const UNFLAGGED_R = 226; // the viewer's image rated R with no minor flag set (NULL)
+const UNRATED = 224; // stranger's scanned image on a published post that has no rating
+const VIEWER_UNRATED = 225; // the viewer's own scanned image that has no rating
+const MINOR_R = 226; // the viewer's minor-flagged image rated R, on a published public post
+const MINOR_PG13 = 227; // the viewer's minor-flagged image rated PG-13, on the same post
+const UNFLAGGED_R = 228; // the viewer's image rated R with no minor flag set (NULL)
 
 beforeAll(async () => {
   const schema = `
@@ -194,6 +196,7 @@ beforeAll(async () => {
       (${OTHER_MANAGER_UPLOAD}, ${OTHER_MANAGER}, NULL, 'Scanned', NULL, NULL);
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${REMOVED_LEVEL}, ${STRANGER}, 1, 32);
     INSERT INTO "Image" ("id", "userId", "postId", "ingestion") VALUES (${PENDING_SCAN}, ${STRANGER}, 1, 'Pending');
+    INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel") VALUES (${UNRATED}, ${STRANGER}, 1, 0), (${VIEWER_UNRATED}, ${VIEWER}, 5, 0);
     INSERT INTO "Image" ("id", "userId", "postId", "nsfwLevel", "minor") VALUES
       (${MINOR_R}, ${VIEWER}, 5, 4, true),
       (${MINOR_PG13}, ${VIEWER}, 5, 2, true),
@@ -249,6 +252,7 @@ describe('which covers a stranger is shown', () => {
     ["the upload of another collection's manager", OTHER_MANAGER_UPLOAD],
     ['an image rated at the removed level', REMOVED_LEVEL],
     ['an image still being scanned', PENDING_SCAN],
+    ['an image with no rating', UNRATED],
     ['an image on a taken-down model', TAKEN_DOWN_MODEL],
     ['an R image on a restricted base model', RESTRICTED_R],
     ['an X image on a restricted base model', RESTRICTED_X],
@@ -260,6 +264,11 @@ describe('which covers a stranger is shown', () => {
   it("shows the image's owner their own removed image, and nobody else", async () => {
     expect(await servable(VIEWER_REMOVED, { id: VIEWER })).toBe(true);
     expect(await servable(VIEWER_REMOVED, { id: STRANGER })).toBe(false);
+  });
+
+  it("shows the image's owner their own unrated image, and nobody else", async () => {
+    expect(await servable(VIEWER_UNRATED, { id: VIEWER })).toBe(true);
+    expect(await servable(VIEWER_UNRATED, { id: STRANGER })).toBe(false);
   });
 
   it('shows staff any cover', async () => {

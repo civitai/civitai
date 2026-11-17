@@ -8,6 +8,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/image-models-reindex.service', () => ({
   queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+  queueArticlesAndComicsForImages: vi.fn(async () => undefined),
 }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -54,10 +55,10 @@ describe('applyIngestionSideEffects: models index', () => {
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
-  it('skips an image on no post', async () => {
+  it('hands over an image on no post too: it may be an article cover', async () => {
     await applyIngestionSideEffects({ image: image(null), outcome: scanned });
 
-    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 });
 
@@ -84,12 +85,12 @@ describe('resolveIngestionError: models index', () => {
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
-  it('skips an image on no post', async () => {
+  it('hands over an image on no post too', async () => {
     arm(null);
 
     await resolveIngestionError({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
 
-    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 });
 
@@ -113,12 +114,20 @@ describe('level setters: models index', () => {
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
-  it("an owner's raise skips an image on no post", async () => {
+  it('a Knights level hands over an image on no post too', async () => {
+    updatedPost(null);
+
+    await setImageNsfwLevelFromKnights({ id: IMAGE_ID, nsfwLevel: 8, userId: 7 });
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+  });
+
+  it("an owner's raise hands over an image on no post too", async () => {
     updatedPost(null);
 
     await raiseOwnImageNsfwLevel({ id: IMAGE_ID, nsfwLevel: 4, userId: 7 });
 
-    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 
   it('a recompute hands its images over', async () => {

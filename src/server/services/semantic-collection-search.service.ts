@@ -180,9 +180,8 @@ export async function searchSemanticCollections({
   logToAxiom({
     type: 'info',
     name: 'semantic-collection-search',
-    returned: search.state.returned,
     hydrated,
-    shown: page.items.length,
+    payload: { returned: search.state.returned, shown: page.items.length },
   });
 
   audit.candidates(search.state.first);

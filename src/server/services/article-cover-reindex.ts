@@ -39,38 +39,3 @@ export async function queueModelArticlesReindex(modelId: number) {
     });
   }
 }
-
-/** The articles whose cover or banner is one of these images. Both columns are uniquely indexed. */
-export async function getArticleIdsCoveredByImages(imageIds: number[]) {
-  const ids = [...new Set(imageIds)].filter((id) => Number.isInteger(id) && id > 0);
-  if (!ids.length) return [];
-  const rows = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT a.id FROM "Article" a WHERE a."coverId" = ANY(${ids}::int[])
-    UNION
-    SELECT a.id FROM "Article" a WHERE a."bannerId" = ANY(${ids}::int[])
-  `;
-  return rows.map((row) => Number(row.id));
-}
-
-/**
- * Rebuild the search documents of the articles whose cover or banner is one of these images, after
- * a change to an image's rating or minor flag: the document drops a restricted minor cover
- * (`isMinorMatureImage`) and takes it back once it is not. Never throws; a failure is logged.
- */
-export async function queueArticlesForCoverImages(imageIds: number[]) {
-  try {
-    const ids = await getArticleIdsCoveredByImages(imageIds);
-    for (const batch of chunk(ids, 500))
-      await articlesSearchIndex.queueUpdate(
-        batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
-        { reason: 'cover-image-change' }
-      );
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'cover-image-articles-index-enqueue-failed',
-      message: error instanceof Error ? error.message : 'unknown',
-      count: imageIds.length,
-    });
-  }
-}

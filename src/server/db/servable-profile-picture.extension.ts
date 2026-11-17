@@ -3,8 +3,8 @@ import { servableProfilePicture } from '~/server/services/profile-picture.servab
 
 /**
  * A user's `profilePicture`, read through Prisma's nested select (`simpleUserSelect` and every copy
- * of it), comes back as `null` unless `servableProfilePicture` serves it: Scanned and not flagged
- * `csam`. Stricter than `servableProfilePictureSql`, which also admits moderator-locked ratings.
+ * of it), comes back as `null` unless `servableProfilePicture` serves it: Scanned, rated and not
+ * flagged `csam`. Stricter than `servableProfilePictureSql`, which also admits moderator-locked ratings.
  * `User.profilePicture` is the only relation of that name, so the match is by key: a spread or
  * hand-built copy of the select is caught too.
  *
@@ -23,7 +23,7 @@ const READ_OPERATIONS = [
 const PICTURE_KEY = 'profilePicture';
 
 type Args = Record<string, unknown>;
-const CHECKED_FIELDS = ['ingestion', 'needsReview'] as const;
+const CHECKED_FIELDS = ['ingestion', 'nsfwLevel', 'needsReview'] as const;
 type CheckedField = (typeof CHECKED_FIELDS)[number];
 type Leaf = { added: CheckedField[] };
 type Plan = Map<string, Plan | Leaf>;
@@ -109,7 +109,7 @@ export function applyProfilePicturePlan(result: unknown, plan: Plan): void {
     if (!isObject(picture)) continue;
     if (
       !servableProfilePicture(
-        picture as { ingestion: string | null },
+        picture as { ingestion: string | null; nsfwLevel: number | null },
         picture.needsReview as string | null
       )
     )

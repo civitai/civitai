@@ -1120,6 +1120,24 @@ export const saveItemInCollections = async ({
     ...upsertCollectionItems.map((c) => c.collectionId),
     ...removeFromCollectionIds,
   ]);
+  // Batch fetch all permissions upfront instead of in the loop (N queries → 1 query), adds and removes
+  // together — they're one round trip over the same table whether or not this request does both.
+  const permissionsArray = await getUserCollectionPermissionsByIds({
+    ids: touchedCollectionIds,
+    userId,
+    isModerator,
+  });
+  const permissionsMap = new Map(permissionsArray.map((p) => [p.collectionId, p]));
+  // An add to a collection the caller can't write is dropped before anything below looks at it: the
+  // checks that follow differ by whether the item is already there, and must not answer that for
+  // someone who couldn't have written it.
+  const canWrite = (collectionId: number) => {
+    const permission = permissionsMap.get(collectionId);
+    return !!permission && (permission.write || permission.writeReview);
+  };
+  upsertCollectionItems = upsertCollectionItems.filter((c) => canWrite(c.collectionId));
+  const writableCollections = collections.filter((c) => canWrite(c.id));
+
   const existingItems = await dbRead.collectionItem.findMany({
     where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
     select: { id: true, collectionId: true, tagId: true, addedById: true, note: true },
@@ -1130,12 +1148,19 @@ export const saveItemInCollections = async ({
   // Callers may send the item's whole desired membership rather than just the additions, and re-running
   // the contest gates on an existing entry fails the save to an UNRELATED collection as soon as one of
   // those entries sits in a contest whose submission window has closed (or whose per-user cap it already
-  // counts against). A tag CHANGE is a real write, so it still validates.
+  // counts against). A tag CHANGE is a real write, so it still validates. Only for an entry the caller
+  // added or a collection whose items they can read: skipping the gates otherwise would tell a
+  // submit-only caller whether someone else's item is already in.
   const unwrittenCollectionIds = new Set(
     upsertCollectionItems
       .filter((upsert) => {
         const item = existingItemsByCollection.get(upsert.collectionId);
-        return item && (upsert.tagId ?? null) === (item.tagId ?? null);
+        return (
+          item &&
+          (upsert.tagId ?? null) === (item.tagId ?? null) &&
+          (item.addedById === userId ||
+            canReadCollectionItems(permissionsMap.get(upsert.collectionId)))
+        );
       })
       .map((upsert) => upsert.collectionId)
   );
@@ -1149,7 +1174,7 @@ export const saveItemInCollections = async ({
   }
 
   // Check if any contest collections are involved and validate ONCE
-  const contestCollections = collections.filter(
+  const contestCollections = writableCollections.filter(
     (c) => c.mode === CollectionMode.Contest && !unwrittenCollectionIds.has(c.id)
   );
   if (contestCollections.length > 0) {
@@ -1167,7 +1192,7 @@ export const saveItemInCollections = async ({
   }
 
   // Check if any featured collections are involved and validate ONCE
-  const featuredCollections = collections.filter(
+  const featuredCollections = writableCollections.filter(
     (c) =>
       c.userId === -1 && !c.mode && c.name.includes('Featured') && !unwrittenCollectionIds.has(c.id)
   );
@@ -1177,15 +1202,6 @@ export const saveItemInCollections = async ({
       [`${itemKey}s`]: [input[itemKey]],
     });
   }
-
-  // Batch fetch all permissions upfront instead of in the loop (N queries → 1 query), adds and removes
-  // together — they're one round trip over the same table whether or not this request does both.
-  const permissionsArray = await getUserCollectionPermissionsByIds({
-    ids: touchedCollectionIds,
-    userId,
-    isModerator,
-  });
-  const permissionsMap = new Map(permissionsArray.map((p) => [p.collectionId, p]));
 
   // Submitting to a collection you don't already follow follows it — but that's a side effect of the
   // entry landing, so it's collected here and applied after the write. Doing it inline left a user
@@ -1257,12 +1273,24 @@ export const saveItemInCollections = async ({
           );
         }
 
+        // An existing entry's tag is changed only by its author or a manager; anyone else's re-save
+        // keeps it as it is (the upsert below enforces the same against the row it hits). Not folded
+        // into `unwrittenCollectionIds`: skipping the entry checks for an item already there would
+        // answer whether it is there.
+        // A system tag (one that isn't among the collection's category tags, e.g. judging state) is
+        // kept for everyone, as `setCollectionItemsTag` keeps it.
+        const existing = existingItemsByCollection.get(collectionId);
+        const hasSystemTag =
+          existing?.tagId != null && !inputTags.some((t) => t.tag.id === existing.tagId);
+        const keepsTag =
+          !!existing && (hasSystemTag || (existing.addedById !== userId && !permission.manage));
+
         return {
           addedById: userId,
           collectionId,
           status,
           [itemKey]: input[itemKey],
-          tagId,
+          tagId: keepsTag ? existing.tagId : tagId,
         };
       })
     )
@@ -1272,6 +1300,9 @@ export const saveItemInCollections = async ({
   let removedCount = 0;
 
   if (data.length > 0) {
+    const managedCollectionIds = data
+      .filter((d) => permissionsMap.get(d.collectionId)?.manage)
+      .map((d) => d.collectionId);
     transactions.push(
       dbWrite.$executeRaw`
       INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(
@@ -1292,7 +1323,19 @@ export const saveItemInCollections = async ({
       )
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
-        DO UPDATE SET "tagId" = EXCLUDED."tagId";
+        DO UPDATE SET "tagId" = EXCLUDED."tagId"
+        WHERE (
+          "CollectionItem"."addedById" = EXCLUDED."addedById"
+          OR "CollectionItem"."collectionId" = ANY(${managedCollectionIds}::int[])
+        ) AND (
+          "CollectionItem"."tagId" IS NULL
+          OR EXISTS (
+            SELECT 1 FROM "TagsOnCollection" tc
+            WHERE tc."collectionId" = "CollectionItem"."collectionId"
+              AND tc."tagId" = "CollectionItem"."tagId"
+              AND NOT tc."filterableOnly"
+          )
+        );
     `
     );
   }
@@ -1386,12 +1429,13 @@ export const saveItemInCollections = async ({
     }
   }
 
-  // Excluding `unwrittenCollectionIds` keeps a no-op re-save from reading as a second submission.
+  // Only a new entry is a submission: a re-save of one already there (same tag, or a tag change)
+  // must not read as a second one.
   const reviewCollectionIds = uniq(
     data
       .filter((d) => d.status === CollectionItemStatus.REVIEW)
       .map((d) => d.collectionId)
-      .filter((id) => !unwrittenCollectionIds.has(id))
+      .filter((id) => !existingItemsByCollection.has(id))
   );
   await notifyCollectionSubmissionReceived({
     collections: collections.filter((c) => reviewCollectionIds.includes(c.id)),
