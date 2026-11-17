@@ -70,6 +70,7 @@ vi.mock('~/server/services/csam.service-new', async (importOriginal) => ({
 }));
 
 const { bulkAddBlockedImages } = await import('~/server/services/image.service');
+const { logToAxiom } = await import('~/server/logging/client');
 const { createExternalCsamReportHandler, fileCsamReport } = await import(
   '~/server/controllers/csam.controller'
 );
@@ -183,6 +184,22 @@ describe('fileCsamReport', () => {
 
     expect(bulkAddBlockedImages).toHaveBeenCalledWith(
       expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+    );
+  });
+
+  it('logs the removal failure when the blocklist write fails too', async () => {
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    softDeleteUser.mockRejectedValueOnce(new Error('ban failed'));
+    vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
+    vi.mocked(logToAxiom).mockClear();
+
+    await expect(file(OWNER, [IMAGE])).rejects.toThrow('no ClickHouse client');
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'removing the reported account failed',
+        error: 'ban failed',
+      })
     );
   });
 });

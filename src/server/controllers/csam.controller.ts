@@ -147,6 +147,16 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     if (userId !== -1 && !removed) await softDeleteUser({ id: userId, userId: reportedById });
   } catch (error) {
     removalError = error;
+    // Logged here: a failing blocklist write below would replace this error.
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      important: true,
+      message: 'removing the reported account failed',
+      userId,
+      reportedById,
+      error: (error as Error)?.message,
+    });
   }
   // Written whether or not the removal succeeded, and throws on failure so the filing shows it.
   await bulkAddBlockedImages({
