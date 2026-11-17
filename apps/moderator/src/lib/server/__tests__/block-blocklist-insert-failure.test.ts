@@ -56,8 +56,8 @@ describe('the blocklist insert on an image block', () => {
     ]);
   });
 
-  // Ruled by the Moderation Lead: a CSAM entry that fails to write is reported to the moderator,
-  // not swallowed, so they can retry. The block itself has already committed by then.
+  // A CSAM entry that fails to write is reported to the moderator, not swallowed, so they can
+  // retry. The block itself has already committed by then.
   it('reports a failed CSAM insert to the caller, after the other effects ran, and logs it', async () => {
     insert.mockImplementation(async ({ table }) => {
       if (table === 'blocked_images') throw new Error('Socket hang up after 3 retries');

@@ -153,8 +153,8 @@ describe('fileCsamReport', () => {
     expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: MOD });
   });
 
-  // Ruled: the message must stop a re-file, which can create a second report. A 500's message
-  // is replaced before it reaches the moderator, so this has to stay a 503 with this text.
+  // The message must stop a re-file, which can create a second report. A 500's message is
+  // replaced before it reaches the moderator, so this has to stay a 503 with this text.
   it('tells the moderator not to file again when the blocklist write throws, after one filing', async () => {
     dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
@@ -249,8 +249,7 @@ describe('fileCsamReport', () => {
   });
 });
 
-// Ruled main parity: a first filing of any type writes its images' hashes (createCsamReport did on
-// main), a supplemental only for an Image report. Widening or narrowing this needs a new ruling.
+// A first filing of any type writes its images' hashes; a supplemental only for an Image report.
 describe('fileCsamReport blocklist scope by report type', () => {
   beforeEach(() => {
     dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);

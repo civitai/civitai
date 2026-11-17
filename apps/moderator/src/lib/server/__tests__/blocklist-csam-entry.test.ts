@@ -78,9 +78,9 @@ beforeEach(() => {
   logToAxiom.mockClear();
 });
 
-// Deliberately a SQL-text assertion, ruled: the lookup takes each hash's newest row with argMax
-// and needs no FINAL and no query setting (the app's ClickHouse user may not be allowed one,
-// which would fail every lookup). Keep it unless that ruling changes.
+// Deliberately a SQL-text assertion: the lookup takes each hash's newest row with argMax and
+// needs no FINAL and no query setting (the app's ClickHouse user may not be allowed one, which
+// would fail every lookup).
 it('reads the newest row per hash with argMax, with no FINAL or query setting', async () => {
   await addImagesToBlocklist([tosImage(CSAM_HASH)]);
 

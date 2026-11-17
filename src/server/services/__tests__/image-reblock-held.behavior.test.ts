@@ -316,8 +316,8 @@ describe('setTosViolationHandler on an image removed with its block reason kept'
 });
 
 describe('blocking an image under the review flag again', () => {
-  // Ruled by the Moderation Lead: only a confirmed CSAM removal writes a CSAM entry; the review flag
-  // alone writes TOS, every time it is blocked.
+  // Only a confirmed CSAM removal writes a CSAM entry; the review flag alone writes TOS, every
+  // time it is blocked.
   it('writes a TOS blocklist entry each time it is blocked under the flag alone', async () => {
     await tosBlock(FLAGGED_LIVE);
     await tosBlock(FLAGGED_LIVE);

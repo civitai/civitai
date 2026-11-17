@@ -274,8 +274,8 @@ describe('blocking an image already removed with its block reason kept', () => {
 });
 
 describe('blocking an image under review that is not removed yet', () => {
-  // Ruled by the Moderation Lead: only a confirmed CSAM removal writes a CSAM entry, so the review
-  // flag alone writes TOS, which a later clear-and-accept can lift.
+  // Only a confirmed CSAM removal writes a CSAM entry; the review flag alone writes TOS, which a
+  // later clear-and-accept can lift.
   it('removes it and keeps the flag, with a TOS blocklist entry', async () => {
     await block(FLAGGED_LIVE);
 
@@ -371,8 +371,8 @@ describe('accepting from a review queue', () => {
     expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
   });
 
-  // Ruled by the Moderation Lead: an explicit unblock used to lift this; a CSAM block is now lifted
-  // only through its own review. Do not restore the old expectation.
+  // A CSAM block is lifted only through its own review, never by an explicit unblock. Do not
+  // restore the old expectation.
   it('is not overridden by an explicit unblock when the reason is CSAM', async () => {
     await expect(
       acceptImage({ imageId: HELD, userId: 2, restoreRemoved: true })
