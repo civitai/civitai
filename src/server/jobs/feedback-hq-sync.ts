@@ -22,7 +22,7 @@ const log = (data: Record<string, unknown>) =>
 async function readRows(ids: number[]): Promise<FeedbackSyncRow[]> {
   if (!ids.length) return [];
   return dbWrite.$queryRaw<FeedbackSyncRow[]>(Prisma.sql`
-    SELECT f."id", f."status", f."handledById",
+    SELECT f."id", f."area", f."status", f."handledById",
            CASE WHEN jsonb_typeof(f."context"->'hq') = 'object'
              THEN f."context"->'hq'->>'id' END AS "hqTaskId"
     FROM "Feedback" f
@@ -36,6 +36,13 @@ async function readRows(ids: number[]): Promise<FeedbackSyncRow[]> {
  * `feedback-hq-sync.service.ts` for the mapping and what it never touches). Off unless the
  * `feedback-hq-sync` flag is on AND `HQ_FEEDBACK_SYNC_TOKEN` and `CIVITAI_MODERATION_USER_ID` are
  * set; the writes are attributed to that account.
+ *
+ * 🔴 THE TOKEN IS BROADER THAN THIS JOB. HQ issues no app- or collection-scoped server credential:
+ * a collection's `{app: "feedback"}` grant applies only to an HQ app frame acting for a signed-in
+ * member, and the off-ladder scopes (`intake`, `projects`, `agents`, …) each open fixed routes, none
+ * of them the data API. So the narrowest token that reads `feedback_items` and `tasks` is a member's
+ * ladder `read` token, which also reads recordings and transcripts — set it only on the deployment
+ * that runs jobs. A dedicated off-ladder HQ scope for these two reads would be the narrow fix.
  */
 export const feedbackHqSyncJob = createJob(
   'feedback-hq-sync',

@@ -311,6 +311,12 @@ export type FeedbackTriageRequest = z.infer<typeof feedbackTriageRequest>;
 
 export const feedbackTriageInput = feedbackTriageRequest.extend({
   userId: z.number().int().positive(),
+  /**
+   * The handler the caller read, when it must not overwrite a row someone else has re-stamped since
+   * (the HQ sync): `null` matches only an unhandled row. Absent = not checked. Not on the public
+   * route's input: a moderator acting is the one doing the re-stamping.
+   */
+  expectedHandledById: z.number().int().positive().nullable().optional(),
 });
 export type FeedbackTriageInput = z.infer<typeof feedbackTriageInput>;
 

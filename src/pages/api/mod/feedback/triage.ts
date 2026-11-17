@@ -15,7 +15,7 @@ export default defineModeratorEndpoint('feedback.triage', {
     'Pass the status you last read as `expectedStatus`: a report that has moved since is not changed (409). Read it again before retrying.',
     `\`noteAppend\` (at most ${FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH} characters) is added below the internal triage note; it never replaces it.`,
     'No HQ task link is taken here: the HQ status sync records it. A request carrying `hqTaskUrl` is refused (400).',
-    'With `status` equal to `expectedStatus`, only the note is written; who triaged it, and when, stay as they were.',
+    'With `status` equal to `expectedStatus`, `noteAppend` is required (400 without it) and only the note is written; who triaged it, and when, stay as they were.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   // The link is the sync's to record. Refused rather than silently dropped, so a caller that sends
@@ -30,6 +30,14 @@ export default defineModeratorEndpoint('feedback.triage', {
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'Setting a feedback status needs the "feedback.status.set" moderator permission.',
+      });
+
+    // Keeping the status with nothing to add would re-stamp who decided and when, restart the
+    // platform reopen count, and write an audit row for a decision nobody made.
+    if (input.status === input.expectedStatus && input.noteAppend === undefined)
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'status equals expectedStatus and there is no noteAppend: nothing to write.',
       });
 
     const outcome = await setFeedbackTriage({ ...input, actorId: ctx.actor.id });

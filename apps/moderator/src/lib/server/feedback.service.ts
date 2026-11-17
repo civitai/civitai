@@ -566,6 +566,12 @@ export async function triageFeedback(input: {
   noteAppend?: string;
   /** The HQ task tracking this report, recorded as `context.hq` (the shape the panel links). */
   hqTask?: { id: string; url: string };
+  /**
+   * Scope the write on the handler too, not just the status: `null` matches only an unhandled row,
+   * `undefined` does not check. For an automated caller that decided from a handler it read — a
+   * moderator's same-status save re-stamps `handledById` without moving the status.
+   */
+  expectedHandledById?: number | null;
   moderatorId: number;
 }): Promise<TriageResult> {
   if (input.note !== undefined && input.noteAppend !== undefined)
@@ -633,6 +639,11 @@ export async function triageFeedback(input: {
     })
     .where('id', '=', input.id)
     .where('status', '=', input.expectedStatus);
+  if (input.expectedHandledById !== undefined)
+    update =
+      input.expectedHandledById === null
+        ? update.where('handledById', 'is', null)
+        : update.where('handledById', '=', input.expectedHandledById);
   /**
    * 🔴 Area, `server` and the resolution being edited are checked in the same statement, never taken
    * from the form: a resolution on another area is a stray key nothing reads, `jsonb_set` under a

@@ -39,11 +39,20 @@ import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
  */
 
 export const MAX_MERGE_HOPS = 1;
+/**
+ * One run's bounds, well inside the job's 10-minute lock: a run past either stops where it is,
+ * counts `stopped_early`, and the next run (15 minutes on) starts over. Rows at `new` are worked
+ * first, so a cap can delay a `reviewed` row's advance but never leave a new row unseen behind it.
+ */
+export const RUN_DEADLINE_MS = 5 * 60_000;
+export const MAX_TASK_READS_PER_RUN = 500;
 
 export type HqTaskRow = { status: string; closed?: string | null; merged_into?: string | null };
 
 export type FeedbackSyncRow = {
   id: number;
+  /** `Feedback.area`, checked against the area HQ recorded for the link. */
+  area: string;
   status: string;
   handledById: number | null;
   /** `context.hq.id`, or null when the row records no HQ task. */
@@ -56,16 +65,25 @@ export type TaskTarget =
   | { unresolved: 'task_missing' | 'unknown_done_status' | 'merge_too_deep' };
 
 export type SyncDeps = {
-  listLinks: () => Promise<{ feedbackId: number; taskId: string }[]>;
+  listLinks: () => Promise<HqFeedbackLink[]>;
   readRows: (ids: number[]) => Promise<FeedbackSyncRow[]>;
   /** null: HQ does not show the task. Throws on any other failure. */
   readTask: (id: string) => Promise<HqTaskRow | null>;
-  triage: (request: FeedbackTriageRequest) => Promise<FeedbackTriageOutcome>;
+  /** The shared triage write, scoped on the status AND the handler the sync read. */
+  triage: (
+    request: FeedbackTriageRequest & { expectedHandledById: number | null }
+  ) => Promise<FeedbackTriageOutcome>;
   /** The account the sync's writes are attributed to. */
   actorId: number;
   count: (event: FeedbackHqSyncEvent, n?: number) => void;
   log: (data: Record<string, unknown>) => void;
+  /** Defaults: `Date.now`, RUN_DEADLINE_MS, MAX_TASK_READS_PER_RUN. */
+  clock?: () => number;
+  deadlineMs?: number;
+  maxTaskReads?: number;
 };
+
+export type HqFeedbackLink = { feedbackId: number; taskId: string; area?: string };
 
 export type SyncSummary = {
   links: number;
@@ -78,6 +96,9 @@ export type SyncSummary = {
   unresolved: number;
   hqReadFailures: number;
   writeFailures: number;
+  areaMismatches: number;
+  /** Why the run stopped before its last row, or null when it did not. */
+  stoppedEarly: 'deadline' | 'task_cap' | null;
 };
 
 const RANK: Record<string, number> = { new: 0, reviewed: 1, actioned: 2, dismissed: 2 };
@@ -128,9 +149,15 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
     unresolved: 0,
     hqReadFailures: 0,
     writeFailures: 0,
+    areaMismatches: 0,
+    stoppedEarly: null,
   };
+  const clock = deps.clock ?? Date.now;
+  const deadlineMs = deps.deadlineMs ?? RUN_DEADLINE_MS;
+  const maxTaskReads = deps.maxTaskReads ?? MAX_TASK_READS_PER_RUN;
+  const startedAt = clock();
 
-  let links: { feedbackId: number; taskId: string }[];
+  let links: HqFeedbackLink[];
   try {
     links = await deps.listLinks();
   } catch (error) {
@@ -141,14 +168,24 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
   }
 
   // One task per feedback row: the first link wins, as HQ keys `feedback_items` on the feedback id.
-  const taskFor = new Map<number, string>();
-  for (const link of links)
-    if (!taskFor.has(link.feedbackId)) taskFor.set(link.feedbackId, link.taskId);
-  summary.links = taskFor.size;
-  if (!taskFor.size) return summary;
+  const linkFor = new Map<number, HqFeedbackLink>();
+  for (const link of links) if (!linkFor.has(link.feedbackId)) linkFor.set(link.feedbackId, link);
+  summary.links = linkFor.size;
+  if (!linkFor.size) return summary;
 
-  const rows = await deps.readRows([...taskFor.keys()]);
-  summary.rows = rows.length;
+  const read = await deps.readRows([...linkFor.keys()]);
+  summary.rows = read.length;
+  // New rows first (stable otherwise): see RUN_DEADLINE_MS.
+  const rows = [
+    ...read.filter((r) => r.status === 'new'),
+    ...read.filter((r) => r.status !== 'new'),
+  ];
+
+  let taskReads = 0;
+  const readTask = (id: string) => {
+    taskReads++;
+    return deps.readTask(id);
+  };
 
   const targets = new Map<string, TaskTarget | 'failed'>();
   const targetFor = async (taskId: string) => {
@@ -156,7 +193,7 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
     if (cached) return cached;
     let target: TaskTarget | 'failed';
     try {
-      target = await resolveTaskTarget(taskId, deps.readTask);
+      target = await resolveTaskTarget(taskId, readTask);
     } catch (error) {
       target = 'failed';
       summary.hqReadFailures++;
@@ -174,7 +211,10 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
   ) => {
     let outcome: FeedbackTriageOutcome;
     try {
-      outcome = await deps.triage(request);
+      // 🔴 Scoped on the handler read at the start of the run as well as the status: a moderator's
+      // same-status save re-stamps `handledById` without moving the status, and the sync must not
+      // then act on a "sync-set" row that is now the moderator's (above all: dismiss it).
+      outcome = await deps.triage({ ...request, expectedHandledById: row.handledById });
     } catch (error) {
       summary.writeFailures++;
       deps.count('write_failed');
@@ -212,8 +252,27 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
     );
 
   for (const row of rows) {
-    const taskId = taskFor.get(row.id);
-    if (!taskId || !(row.status in RANK)) continue;
+    if (clock() - startedAt > deadlineMs) {
+      summary.stoppedEarly = 'deadline';
+      break;
+    }
+    const entry = linkFor.get(row.id);
+    if (!entry || !(row.status in RANK)) continue;
+    const taskId = entry.taskId;
+    // The link must be about this row: a feedback id HQ recorded under another area is a stale or
+    // mistyped link, and acting on it would write a verdict onto someone else's report.
+    if (entry.area !== row.area) {
+      summary.areaMismatches++;
+      deps.count('area_mismatch');
+      deps.log({
+        type: 'warning',
+        step: 'area',
+        feedbackId: row.id,
+        linkArea: entry.area ?? null,
+        area: row.area,
+      });
+      continue;
+    }
     const link = hqTaskFromUrl(`${HQ_TASK_URL_PREFIX}${taskId}`);
     if (!link) {
       summary.unresolved++;
@@ -233,6 +292,10 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
       continue;
     }
 
+    if (!targets.has(taskId) && taskReads >= maxTaskReads) {
+      summary.stoppedEarly = 'task_cap';
+      break;
+    }
     const target = await targetFor(taskId);
     if (target === 'failed') continue;
     if ('unresolved' in target) {
@@ -273,6 +336,10 @@ export async function runFeedbackHqSync(deps: SyncDeps): Promise<SyncSummary> {
     } else if (stampable) await stamp(row, link.url);
   }
 
+  if (summary.stoppedEarly) {
+    deps.count('stopped_early');
+    deps.log({ type: 'warning', step: 'run', stoppedEarly: summary.stoppedEarly, taskReads });
+  }
   return summary;
 }
 
@@ -336,20 +403,28 @@ export function createHqFeedbackReader({
   return {
     async listLinks() {
       const where = encodeURIComponent(JSON.stringify({ task: { not: null } }));
-      const links: { feedbackId: number; taskId: string }[] = [];
+      const links: HqFeedbackLink[] = [];
       let cursor: string | undefined;
       for (let page = 0; page < MAX_PAGES; page++) {
         const res = await get(
-          `/api/v1/data/feedback_items?where=${where}&fields=feedback_id,task&limit=${PAGE_LIMIT}${
+          `/api/v1/data/feedback_items?where=${where}&fields=feedback_id,task,area&limit=${PAGE_LIMIT}${
             cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
           }`
         );
         if (!res.ok) throw new Error(`HQ answered ${res.status} listing feedback items`);
         const body = (await res.json()) as { rows?: unknown[]; next?: unknown };
         for (const row of body.rows ?? []) {
-          const { feedback_id, task } = (row ?? {}) as { feedback_id?: unknown; task?: unknown };
+          const { feedback_id, task, area } = (row ?? {}) as {
+            feedback_id?: unknown;
+            task?: unknown;
+            area?: unknown;
+          };
           if (Number.isInteger(feedback_id) && typeof task === 'string' && task)
-            links.push({ feedbackId: feedback_id as number, taskId: task });
+            links.push({
+              feedbackId: feedback_id as number,
+              taskId: task,
+              area: typeof area === 'string' ? area : undefined,
+            });
         }
         if (typeof body.next !== 'string' || !body.next) return links;
         cursor = body.next;

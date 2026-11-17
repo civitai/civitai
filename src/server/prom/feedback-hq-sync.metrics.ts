@@ -33,6 +33,10 @@ export const FEEDBACK_HQ_SYNC_EVENTS = [
   'hq_read_failed',
   // The triage write itself failed (the moderator app did not answer); retried next run.
   'write_failed',
+  // The link's area is not the row's (or HQ recorded none); the row was skipped.
+  'area_mismatch',
+  // A run stopped at its deadline or its task-read cap; the next run starts over.
+  'stopped_early',
 ] as const;
 export type FeedbackHqSyncEvent = (typeof FEEDBACK_HQ_SYNC_EVENTS)[number];
 
@@ -40,7 +44,7 @@ const HELP =
   'Feedback triage status sync from HQ tasks. event: moved_reviewed / moved_actioned / ' +
   'moved_dismissed (a row moved), stamped (only the HQ link recorded), conflict (the row moved ' +
   'meanwhile; not written), gone, human_set (a moderator reviewed it and the task is wontfix; not dismissed), merge_followed, ' +
-  'unresolved (the task outcome could not be read as a status), hq_read_failed, write_failed. ' +
+  'unresolved (the task outcome could not be read as a status), hq_read_failed, write_failed, area_mismatch, stopped_early. ' +
   'Per-pod counter; ' +
   'read with range functions.';
 

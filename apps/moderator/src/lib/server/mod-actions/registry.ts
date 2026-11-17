@@ -110,11 +110,12 @@ const relabelBuildBatch: ModAction<z.infer<typeof relabelBuildBatchInput>> = {
  */
 const feedbackTriage: ModAction<z.infer<typeof feedbackTriageInput>> = {
   schema: feedbackTriageInput,
-  handler: ({ id, status, expectedStatus, noteAppend, hqTaskUrl, userId }) =>
+  handler: ({ id, status, expectedStatus, expectedHandledById, noteAppend, hqTaskUrl, userId }) =>
     triageFeedback({
       id,
       status,
       expectedStatus,
+      expectedHandledById,
       noteAppend,
       // The schema already refused anything else; null cannot reach here.
       hqTask: hqTaskUrl ? hqTaskFromUrl(hqTaskUrl) ?? undefined : undefined,
