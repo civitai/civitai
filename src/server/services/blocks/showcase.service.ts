@@ -2,8 +2,10 @@ import { dbRead } from '~/server/db/client';
 import { publicPostImageWhere } from '~/server/selectors/image.selector';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
-import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -128,8 +130,8 @@ export interface ShowcaseImage {
  *   - per row, `classifyGatedImageForViewer`: the moderation flags the other
  *     public block reads hide on.
  *
- * Nothing is served for a version or model that is not published, is Private,
- * or is taken down; a minor or SFW-only model's images are held to its gallery
+ * Nothing is served for a version or model that is not published (or is
+ * scheduled), is a POI model, is Private, or is taken down; a minor or SFW-only model's images are held to its gallery
  * level, as on the model page.
  *
  * Returns an empty array when the version has no images yet — block UI
@@ -144,8 +146,11 @@ export async function getModelShowcaseImages(
     select: {
       status: true,
       availability: true,
+      publishedAt: true,
       model: {
         select: {
+          userId: true,
+          poi: true,
           status: true,
           availability: true,
           mode: true,
@@ -157,11 +162,18 @@ export async function getModelShowcaseImages(
     },
   });
   const model = version?.model;
+  // The model page's rules, with no viewer: the block is shared, so no owner or moderator view.
   if (
     !version ||
     !model ||
-    version.status !== ModelStatus.Published ||
-    model.status !== ModelStatus.Published ||
+    !canViewModelVersionStatus({
+      viewer: null,
+      ownerId: model.userId,
+      modelStatus: model.status,
+      versionStatus: version.status,
+      publishedAt: version.publishedAt,
+    }) ||
+    !canViewPoiModel(model.poi, model.userId, null) ||
     version.availability === Availability.Private ||
     model.availability === Availability.Private ||
     isModelWithheld(model)

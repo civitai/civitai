@@ -35,7 +35,10 @@ beforeEach(() => {
   mockDbRead.modelVersion.findUnique.mockResolvedValue({
     status: 'Published',
     availability: 'Public',
+    publishedAt: null,
     model: {
+      userId: 9,
+      poi: false,
       status: 'Published',
       availability: 'Public',
       mode: null,

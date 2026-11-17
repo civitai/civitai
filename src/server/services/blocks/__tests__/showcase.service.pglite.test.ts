@@ -44,13 +44,14 @@ const SCHEMA = `
     'UnpublishedViolation', 'GatherInterest', 'Deleted');
   CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
   CREATE TABLE "Model" (
-    id int PRIMARY KEY, status "ModelStatus" NOT NULL DEFAULT 'Published',
+    id int PRIMARY KEY, "userId" int NOT NULL DEFAULT 9, poi boolean NOT NULL DEFAULT false, status "ModelStatus" NOT NULL DEFAULT 'Published',
     availability "Availability" NOT NULL DEFAULT 'Public', mode "ModelModifier",
     minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false,
     "gallerySettings" jsonb NOT NULL DEFAULT '{}'
   );
   CREATE TABLE "ModelVersion" (
     id int PRIMARY KEY, "modelId" int NOT NULL, status "ModelStatus" NOT NULL DEFAULT 'Published',
+    "publishedAt" timestamp(3),
     availability "Availability" NOT NULL DEFAULT 'Public'
   );
   CREATE TABLE "ImageResourceNew" (
@@ -183,6 +184,11 @@ describe('getModelShowcaseImages: the version and its model', () => {
     ['a Private model', `UPDATE "Model" SET availability = 'Private'`],
     ['an unpublished version', `UPDATE "ModelVersion" SET status = 'Unpublished'`],
     ['a Private version', `UPDATE "ModelVersion" SET availability = 'Private'`],
+    ['a POI model', `UPDATE "Model" SET poi = true`],
+    [
+      'a version scheduled to publish later',
+      `UPDATE "ModelVersion" SET "publishedAt" = now() + interval '1 day'`,
+    ],
   ])('serves nothing mature for %s', async (_label, sql) => {
     await harness.pg.exec(sql);
     expect(await servedMature()).toEqual([]);
