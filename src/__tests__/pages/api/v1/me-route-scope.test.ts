@@ -129,9 +129,7 @@ describe.each([{ allowBanned: false }, { allowBanned: true }])(
     it('AuthedEndpoint answers 403 without running the handler', async () => {
       oauthToken(TokenScope.ModelsRead);
       seen.mockClear();
-      const res = await call(
-        AuthedEndpoint(async (_req, r) => void seen() ?? r.status(200).json({}), ['GET'], route)
-      );
+      const res = await call(AuthedEndpoint(async () => void seen(), ['GET'], route));
       expect(res.statusCode).toBe(403);
       expect(seen).not.toHaveBeenCalled();
     });
@@ -139,13 +137,7 @@ describe.each([{ allowBanned: false }, { allowBanned: true }])(
     it('MixedAuthEndpoint runs the handler as anonymous', async () => {
       oauthToken(TokenScope.ModelsRead);
       seen.mockClear();
-      await call(
-        MixedAuthEndpoint(
-          async (_req, r, user) => void seen(user) ?? r.status(200).json({}),
-          ['GET'],
-          route
-        )
-      );
+      await call(MixedAuthEndpoint(async (_req, _res, user) => void seen(user), ['GET'], route));
       expect(seen).toHaveBeenCalledWith(undefined);
     });
   }
