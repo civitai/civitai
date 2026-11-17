@@ -2324,7 +2324,6 @@ const getAllImagesUncaptured = async (
   let cacheTime = 0;
   let isPersonalized = false;
   const userId = user?.id;
-  // A narrow-scope key is neither a moderator nor the owner here: it reads as a signed-in viewer.
   const isModerator = input.asModerator ?? user?.isModerator ?? false;
   const ownerId = input.asOwner === false ? undefined : userId;
   // Moderators opting into the "pending review" collection filter get the same

@@ -1,3 +1,4 @@
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from '~/server/createContext';
 import type * as ImageService from '~/server/services/image.service';
@@ -94,7 +95,7 @@ describe('Hat Turf sorts on the image feed', () => {
   });
 
   it.each([
-    ['a scoped key', { tokenScope: 4 }, false],
+    ['a scoped key', { tokenScope: TokenScope.ModelsRead }, false],
     ['a session (control)', {}, true],
   ])(
     "hydrates a moderator's page on %s with moderator and owner views: %s",

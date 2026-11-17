@@ -2077,7 +2077,6 @@ export const getCollectionItemsByCollectionId = async ({
   const isModerator = asModerator ?? user?.isModerator ?? false;
   // Ownership and contributor rights follow the user even on a scoped key: it is their own
   // collection. The item reads inside still get no owner or moderator view.
-  // The model and article reads take a user, not flags: a scoped key reads them signed out.
   const itemsViewer = !asOwner
     ? undefined
     : user && isModerator !== !!user.isModerator

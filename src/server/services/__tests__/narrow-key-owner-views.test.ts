@@ -128,9 +128,13 @@ describe('the post feed on a narrow-scope key', () => {
     expect(values.filter((v) => v === VIEWER).length).toBeGreaterThan(1);
   });
 
-  it("refuses a narrow key the owner's drafts", async () => {
-    const { sql } = await postsSql({ user: owner, asOwner: false, draftOnly: true });
-    expect(sql).toMatch(/p\."publishedAt" (<|<=) NOW\(\)|p\."publishedAt" IS NOT NULL/);
+  it("refuses a narrow key the owner's drafts (session control: drafts asked for)", async () => {
+    const narrow = await postsSql({ user: owner, asOwner: false, draftOnly: true });
+    expect(narrow.sql).toContain('p."publishedAt" <= NOW()');
+    expect(narrow.sql).not.toMatch(/AND\s+p\."publishedAt" IS NULL/);
+
+    const session = await postsSql({ user: owner, draftOnly: true });
+    expect(session.sql).toMatch(/AND\s+p\."publishedAt" IS NULL/);
   });
 
   it('gives a moderator no moderator view (session control: Private shown)', async () => {

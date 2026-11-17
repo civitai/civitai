@@ -612,8 +612,9 @@ export const getPostsInfinite = async ({
           ? getImagesForPosts({
               postIds: postsRaw.map((x) => x.id),
               // excludedIds: excludedImageIds,
-              // A request that may not act as a moderator fetches images as anyone would.
-              user: user && { ...user, isModerator },
+              // Images are fetched with the request's own rights: a scoped key (no `ownerId`) as
+              // a signed-out viewer, so it gets no owner carve-out either.
+              user: ownerId !== undefined && user ? { ...user, isModerator } : undefined,
               browsingLevel,
               pending,
               disablePoi,
