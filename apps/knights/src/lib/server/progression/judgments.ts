@@ -92,11 +92,14 @@ export async function listJudgments(
     filter = 'all',
   }: { page: number; pageSize?: number; filter?: JudgmentFilter }
 ): Promise<{ judgments: Judgment[]; hasMore: boolean }> {
-  // Hidden checks have no queue item, so they carry no settled answer and read like any other vote.
+  // A hidden check (negative item id) has no queue item: its settled answer is its reference image's.
   const votes = db
     .selectFrom('KnightsVote as v')
     .innerJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
     .leftJoin('KnightsQueueItem as it', 'it.id', 'v.itemId')
+    .leftJoin('KnightsReferenceImage as ref', (join) =>
+      join.on(sql<SqlBool>`v."itemId" < 0 AND ref.id = -v."itemId"`)
+    )
     .leftJoin('Image as img', 'img.id', 'v.imageId')
     .leftJoin('Post as p', 'p.id', 'img.postId')
     .leftJoin('NewOrderPlayer as pl', 'pl.userId', 'v.playerId')
@@ -114,9 +117,10 @@ export async function listJudgments(
       'q.prompt',
       'it.prompt as itemPrompt',
       'q.options',
+      // Closed carries a value only when a moderator ruled it; an expired item has none.
       sql<
         string | null
-      >`CASE WHEN it.status IN ('Resolved', 'Consensus') THEN it."resolvedValue" END`.as(
+      >`CASE WHEN it.status IN ('Resolved', 'Consensus', 'Closed') THEN it."resolvedValue" ELSE ref.answer END`.as(
         'resolved'
       ),
       'img.url as imageKey',

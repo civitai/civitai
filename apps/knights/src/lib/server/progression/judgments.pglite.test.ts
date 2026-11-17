@@ -254,8 +254,12 @@ describe('listJudgments', () => {
       expect(byItem.get(open)?.verdictLabel).toBeNull();
     });
 
-    it('says nothing about a hidden check, which has no queue item', async () => {
+    it('names the known answer on a wrong skill check', async () => {
       await seedImage(pg, 40);
+      await pg.exec(
+        `INSERT INTO "KnightsReferenceImage" ("id","imageId","pool","answer","source","questionKey")
+         VALUES (7,40,'hiddenCheck','8','harvested','knights.image.nsfwLevel')`
+      );
       await pg.exec(
         `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold","xp","verdict","settledAt")
          VALUES (-7,1,now(),'knights.image.nsfwLevel',40,'Knight','4',1,100,10,'failed',now())`
@@ -263,7 +267,24 @@ describe('listJudgments', () => {
 
       const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
 
-      expect(row).toMatchObject({ status: 'wrong', verdictLabel: null });
+      expect(row.status).toBe('wrong');
+      expect(row.verdictLabel).toBeTruthy();
+      expect(row.verdictLabel).not.toBe(row.answerLabel);
+    });
+
+    it('names the level a moderator ruled on a closed item', async () => {
+      const id = await judge(13, new Date('2026-12-15T09:00:00Z'));
+      await pg.exec(
+        `UPDATE "KnightsVote" SET verdict='failed', "settledAt"=now() WHERE "itemId"=${id}`
+      );
+      await pg.exec(
+        `UPDATE "KnightsQueueItem" SET status='Closed', reason='moderator-ruled', "resolvedValue"='2' WHERE id=${id}`
+      );
+
+      const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
+
+      expect(row.verdictLabel).toBeTruthy();
+      expect(row.verdictLabel).not.toBe(row.answerLabel);
     });
   });
 
