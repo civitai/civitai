@@ -1106,10 +1106,14 @@ async function hydrateGalleryImages({
   imageIds,
   browsingLevel,
   user,
+  asModerator,
+  asOwner,
 }: {
   imageIds: number[];
   browsingLevel: number;
   user?: SessionUser;
+  asModerator: boolean;
+  asOwner: boolean;
 }) {
   if (!imageIds.length) return new Map<number, RemixGalleryEntry['image']>();
 
@@ -1120,6 +1124,8 @@ async function hydrateGalleryImages({
     limit: imageIds.length,
     browsingLevel,
     user,
+    asModerator,
+    asOwner,
     period: MetricTimeframe.AllTime,
     periodMode: 'published',
     sort: ImageSort.Newest,
@@ -1162,6 +1168,8 @@ export async function getRemixGallery({
   cursor,
   limit = REMIX_GALLERY_PAGE_SIZE,
   user,
+  asModerator = false,
+  asOwner = false,
 }: {
   hostImageId: number;
   browsingLevel: number;
@@ -1169,6 +1177,9 @@ export async function getRemixGallery({
   limit?: number;
   /** The viewer, so the hydration applies their blocks and hidden preferences. */
   user?: SessionUser;
+  /** The request's views (`credentialViews`): without them the hydration reads as a plain viewer. */
+  asModerator?: boolean;
+  asOwner?: boolean;
 }) {
   const parsed = parseGalleryCursor(cursor);
   const seed = parsed?.seed ?? remixGalleryShuffleSeed();
@@ -1225,6 +1236,8 @@ export async function getRemixGallery({
     imageIds: page.map((row) => row.imageId),
     browsingLevel,
     user,
+    asModerator,
+    asOwner,
   });
 
   return {
