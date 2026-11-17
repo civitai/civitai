@@ -35,7 +35,9 @@ const SCHEMA = `
     id int PRIMARY KEY, "postId" int, url text NOT NULL DEFAULT '', width int, height int,
     meta jsonb, "nsfwLevel" int NOT NULL DEFAULT ${PG},
     ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
-    "tosViolation" boolean NOT NULL DEFAULT false
+    "tosViolation" boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
+    minor boolean NOT NULL DEFAULT false, "acceptableMinor" boolean NOT NULL DEFAULT false,
+    "blockedFor" text
   );
   CREATE TABLE "ImageResourceNew" (
     "imageId" int NOT NULL, "modelVersionId" int NOT NULL, strength int,
@@ -90,6 +92,18 @@ describe('getModelShowcaseImages: which images the block may serve', () => {
   ] as const)('leaves out an image %s', async (_label, postId, needsReview, tos) => {
     await image(CLEAN, PUBLISHED, null);
     await image(EXCLUDED, postId, needsReview, tos);
+    expect(await servedIds()).toEqual([CLEAN]);
+  });
+
+  it.each([
+    ['flagged poi', `poi = true`],
+    ['flagged minor', `minor = true`],
+    ['marked acceptable minor', `"acceptableMinor" = true`],
+    ['hard-blocked', `"blockedFor" = 'moderated'`],
+  ])('leaves out an image %s, with no review state left', async (_label, set) => {
+    await image(CLEAN, PUBLISHED, null);
+    await image(EXCLUDED, PUBLISHED, null);
+    await harness.pg.exec(`UPDATE "Image" SET ${set} WHERE id = ${EXCLUDED}`);
     expect(await servedIds()).toEqual([CLEAN]);
   });
 

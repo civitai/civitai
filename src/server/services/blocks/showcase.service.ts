@@ -1,6 +1,7 @@
 import { dbRead } from '~/server/db/client';
 import { publicPostImageWhere } from '~/server/selectors/image.selector';
 import { getImageMetricsObject } from '~/server/services/image.service';
+import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -149,6 +150,13 @@ export async function getModelShowcaseImages(
           height: true,
           meta: true,
           nsfwLevel: true,
+          ingestion: true,
+          needsReview: true,
+          poi: true,
+          minor: true,
+          tosViolation: true,
+          acceptableMinor: true,
+          blockedFor: true,
         },
       },
     },
@@ -188,11 +196,10 @@ export async function getModelShowcaseImages(
     const img = row.image;
     if (!img || seen.has(img.id)) continue;
     seen.add(img.id);
-    // Browsing-level gate: drop any image whose nsfwLevel isn't in the
-    // viewer's allowed levels BEFORE the MAX cap, so a wall of NSFW top
-    // images doesn't starve a SFW viewer of the SFW ones further down.
-    // `Flags.intersects(0, …)` is false → unrated (nsfwLevel = 0) is excluded.
-    if (!Flags.intersects(img.nsfwLevel, allowedBrowsingLevel)) continue;
+    // The public block image gate (moderation flags, then level), before the MAX cap so a wall
+    // of hidden top images doesn't starve the viewer. Unrated (nsfwLevel = 0) is `pending`,
+    // which is not served.
+    if (classifyGatedImageForViewer(img, allowedBrowsingLevel).status !== 'visible') continue;
     const reactions = reactionByImage.get(img.id) ?? 0;
     flat.push({ img, reactions });
   }
