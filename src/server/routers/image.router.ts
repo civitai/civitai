@@ -253,9 +253,7 @@ export const imageRouter = router({
   getMyImages: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getMyImagesInput)
-    .query(({ input, ctx }) =>
-      getMyImages({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
-    ),
+    .query(({ input, ctx }) => getMyImages({ ...input, userId: ctx.user.id })),
   getAppealState: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)

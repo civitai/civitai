@@ -7339,10 +7339,9 @@ export const getMyImages = async ({
   publishedOnly,
   includeEntryDrafts,
   userId,
-  isModerator,
   limit,
   cursor = 0,
-}: GetMyImagesInput & { userId: number; isModerator?: boolean }) => {
+}: GetMyImagesInput & { userId: number }) => {
   const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
   const type = {
     in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
@@ -7364,8 +7363,9 @@ export const getMyImages = async ({
           : publishedOnly
           ? publishedImageWhere()
           : {}),
-        // The unpublished path has no review gate of its own; these holds stay out of it too.
-        ...(isModerator ? {} : { AND: [notHeldForReviewWhere] }),
+        // The unpublished path has no review gate of its own; these holds stay out of it too,
+        // for moderators as well: they review held media in the mod tools.
+        AND: [notHeldForReviewWhere],
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

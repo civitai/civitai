@@ -4,7 +4,7 @@ import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 // getMyImages' own `where`, run by Prisma against real Postgres (PGlite): a scanned image in a
-// published post that is held for review leaves its owner's list, and a moderator still sees it.
+// published post that is held for review leaves its owner's list.
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -48,10 +48,9 @@ beforeAll(async () => {
 });
 afterAll(() => harness.stop());
 
-const listedIds = async (isModerator?: boolean, publishedOnly?: boolean) => {
+const listedIds = async (publishedOnly?: boolean) => {
   const { items } = await getMyImages({
     userId: OWNER,
-    isModerator,
     publishedOnly,
     mediaTypes: [MediaType.image],
     limit: 10,
@@ -65,10 +64,6 @@ describe('getMyImages: images held for review', () => {
   });
 
   it('leaves them out of the published-only list the image pickers ask for', async () => {
-    expect(await listedIds(undefined, true)).toEqual([CLEAN]);
-  });
-
-  it('still lists them for a moderator', async () => {
-    expect(await listedIds(true)).toEqual([CLEAN, HELD_CSAM, HELD_MINOR, OTHER_REVIEW]);
+    expect(await listedIds(true)).toEqual([CLEAN]);
   });
 });
