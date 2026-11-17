@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { ImageScanFailureClass } from '~/server/services/image-scan-failure';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 
@@ -108,10 +110,29 @@ export const imageReviewedSql = (alias = 'i') => {
   )`;
 };
 
+/** Review holds not served even to the image's owner; their other review states stay visible to them. */
+const OWNER_HIDDEN_REVIEWS = ['csam', 'minor'];
+
+/** Not under an owner-hidden review hold. `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
+export const notHeldForReviewWhere = (): Prisma.ImageWhereInput => ({
+  OR: [{ needsReview: null }, { needsReview: { notIn: OWNER_HIDDEN_REVIEWS } }],
+});
+
+/** `notHeldForReviewWhere` as SQL over `Image` aliased `i`. */
+export const notHeldForReviewSql = () =>
+  Prisma.sql`(i."needsReview" IS NULL OR i."needsReview" NOT IN (${Prisma.join(
+    OWNER_HIDDEN_REVIEWS
+  )}))`;
+
+/** Held to the request's servable levels: a capped request gets no unrated upload either. */
+export const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
+  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
+
 /**
  * What a signed-in non-moderator's `pending` read requires of another user's image, over `Image`
  * aliased `i`: not awaiting moderator review, not `acceptableMinor`, and reviewed if rated. The
- * viewer's own images are exempt. Unrated images still need the read's own level check to show.
+ * viewer's own images are exempt, but for owner-hidden review holds (`notHeldForReviewSql`).
+ * Unrated images still need the read's own level check to show.
  * `acceptableMinorAlso` admits further images past the `acceptableMinor` check only.
  */
 export const pendingOthersImageConditions = (
@@ -123,6 +144,7 @@ export const pendingOthersImageConditions = (
     acceptableMinorAlso ? Prisma.sql` OR ${acceptableMinorAlso}` : Prisma.empty
   })`,
   Prisma.sql`(i."userId" = ${userId} OR i."nsfwLevel" = 0 OR ${imageReviewedSql()})`,
+  notHeldForReviewSql(),
 ];
 
 /**

@@ -190,7 +190,7 @@ async function sees(viewer: Viewer) {
 }
 
 const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
-  ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
+  ['awaiting review', { image: { '"needsReview"': `'poi'` } }],
   ['not yet scanned', { image: { ingestion: `'Pending'` } }],
   [
     'with a mod-locked rating from a Knights vote whose scan errored',
@@ -206,7 +206,7 @@ const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
     'removed at ingestion, even with a locked rating',
     { image: { ingestion: `'Blocked'`, '"nsfwLevelLocked"': 'true' } },
   ],
-  ['awaiting review, with no post', { image: { '"needsReview"': `'minor'` }, post: null }],
+  ['awaiting review, with no post', { image: { '"needsReview"': `'poi'` }, post: null }],
   [
     'rated Blocked, with no post',
     { image: { '"nsfwLevelLocked"': 'false', '"nsfwLevel"': '32' }, post: null },
@@ -352,13 +352,33 @@ describe('getImageGenerationData visibility', () => {
   });
 
   it('serves an unreviewed image to a manager of the collection its post was submitted to', async () => {
-    await seed({ image: { '"needsReview"': `'minor'` }, post: { '"collectionId"': '7' } });
+    await seed({ image: { '"needsReview"': `'poi'` }, post: { '"collectionId"': '7' } });
     await db.exec(
       `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[]),
         (7, ${VIEWER}, ARRAY['ADD']::"CollectionContributorPermission"[])`
     );
     expect(await sees({ userId: MANAGER })).toBe(true);
     expect(await sees(OTHER)).toBe(false);
+  });
+
+  // Moderation rule: an image held for csam or minor review is served to moderators only, not
+  // even to its owner or a manager of the collection its post was submitted to.
+  describe.each(['csam', 'minor'])('an image held for %s review', (hold) => {
+    beforeEach(async () => {
+      await seed({ image: { '"needsReview"': `'${hold}'` }, post: { '"collectionId"': '7' } });
+      await db.exec(
+        `INSERT INTO "CollectionContributor" VALUES (7, ${MANAGER}, ARRAY['MANAGE']::"CollectionContributorPermission"[])`
+      );
+    });
+
+    it('is not found for its owner or a manager of the collection', async () => {
+      expect(await sees(SELF)).toBe(false);
+      expect(await sees({ userId: MANAGER })).toBe(false);
+    });
+
+    it('is served to a moderator', async () => {
+      expect(await sees(MOD)).toBe(true);
+    });
   });
 
   it.each(['Pending', 'Error'])(
@@ -377,7 +397,7 @@ describe('getImageGenerationData visibility', () => {
   it("does not serve it to a manager when the post's author does not own the image", async () => {
     // Another user's unreviewed image in OWNER's post: OWNER chose the collection, not its owner.
     await seed({
-      image: { '"needsReview"': `'minor'`, '"userId"': String(VIEWER) },
+      image: { '"needsReview"': `'poi'`, '"userId"': String(VIEWER) },
       post: { '"collectionId"': '7' },
     });
     await db.exec(
@@ -627,7 +647,7 @@ describe('getImageGenerationData source media', () => {
 
   it('withholds a source the viewer could not open', async () => {
     await seedEdit(1);
-    await db.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 2`);
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = 2`);
     expect(await linksFor(OTHER, {})).toBe(false);
     expect(await linksFor({ userId: SOURCE_OWNER }, {})).toBe(true);
     await db.exec(`

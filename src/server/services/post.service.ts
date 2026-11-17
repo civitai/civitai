@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { notHeldForReviewWhere, servableLevelWhere } from '~/server/common/image-visibility';
 import {
   onStorySparkLost,
   onStorySparkPostsHidden,
@@ -795,11 +796,17 @@ export type PostEditImageDetail = PostDetailEditable['images'][number] & { index
 export type PostEditTextDetail = PostDetailEditable['texts'][number];
 export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 
-export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+type PostEditInput = GetByIdInput & {
+  user: SessionUser;
+  /** `requestServableLevels(ctx)`: the editor takes no level, so the domain cap is applied here. */
+  servableLevels: number;
+};
+
+export const getPostEditDetail = async ({ id, user, servableLevels }: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user }),
+    getPostEditImages({ id, user, servableLevels }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -957,10 +964,13 @@ async function getPostEditTexts(postId: number) {
   });
 }
 
-export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+export const getPostEditImages = async ({ id, user, servableLevels }: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
-    where: { postId: id },
+    where: {
+      postId: id,
+      AND: [user.isModerator ? {} : notHeldForReviewWhere(), servableLevelWhere(servableLevels)],
+    },
     select: editPostImageSelect,
   });
   return combinePostEditImageData(images, user);

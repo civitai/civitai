@@ -33,6 +33,9 @@ const viewers = {
 const RATED = 101;
 const UNRATED = 102;
 const UNRATED_PENDING = 103;
+const HELD_CSAM = 104;
+const HELD_MINOR = 105;
+const OTHER_REVIEW = 106;
 
 let db: PGlite;
 
@@ -50,8 +53,11 @@ beforeAll(async () => {
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     INSERT INTO "Image" (id, "nsfwLevel", ingestion) VALUES
       (${RATED}, 1, 'Scanned'), (${UNRATED}, 0, 'Scanned'), (${UNRATED_PENDING}, 0, 'Pending');
+    INSERT INTO "Image" (id, "needsReview") VALUES
+      (${HELD_CSAM}, 'csam'), (${HELD_MINOR}, 'minor'), (${OTHER_REVIEW}, 'poi');
     INSERT INTO "ImageConnection" VALUES
-      (${RATED}, 1, 'BountyEntry'), (${UNRATED}, 2, 'BountyEntry'), (${UNRATED_PENDING}, 3, 'BountyEntry');
+      (${RATED}, 1, 'BountyEntry'), (${UNRATED}, 2, 'BountyEntry'), (${UNRATED_PENDING}, 3, 'BountyEntry'),
+      (${HELD_CSAM}, 4, 'BountyEntry'), (${HELD_MINOR}, 5, 'BountyEntry'), (${OTHER_REVIEW}, 6, 'BountyEntry');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -87,4 +93,21 @@ describe('getImagesByEntity', () => {
       expect(await imageOf(3, viewers[who])).toEqual([]);
     }
   );
+
+  // Moderation rule: an owner is never shown their own image held for csam or minor review; any
+  // other review state stays theirs to see. Moderators see all of them.
+  it.each([
+    ['held for csam review', 4],
+    ['held for minor review', 5],
+  ])(
+    'withholds from the owner their own image %s, and serves it to a moderator',
+    async (_l, entry) => {
+      expect(await imageOf(entry, viewers.owner)).toEqual([]);
+      expect(await imageOf(entry, viewers.moderator)).toHaveLength(1);
+    }
+  );
+
+  it('serves the owner their own image under another review', async () => {
+    expect(await imageOf(6, viewers.owner)).toEqual([OTHER_REVIEW]);
+  });
 });

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { Sql } from '@prisma/client/runtime/library';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PostService from '~/server/services/post.service';
@@ -752,7 +753,11 @@ describe('getPlannerPostDetail', () => {
     getPostEditDetail.mockResolvedValue(editDetail({ user: { id: 99 } }));
 
     await expect(
-      getPlannerPostDetail({ id: 11, user: { ...OWNER, isModerator: true } })
+      getPlannerPostDetail({
+        id: 11,
+        user: { ...OWNER, isModerator: true },
+        servableLevels: allBrowsingLevelsFlag,
+      })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(getPostResources).not.toHaveBeenCalled();
   });
@@ -760,7 +765,11 @@ describe('getPlannerPostDetail', () => {
   it('returns the description as plain text and no stats while the post is scheduled', async () => {
     getPostEditDetail.mockResolvedValue(editDetail());
 
-    const detail = await getPlannerPostDetail({ id: 11, user: OWNER });
+    const detail = await getPlannerPostDetail({
+      id: 11,
+      user: OWNER,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(detail.description).toBe('Hello there & welcome\nSecond');
     expect(detail.description).not.toMatch(/<[a-z]/);
@@ -779,7 +788,11 @@ describe('getPlannerPostDetail', () => {
       11: { likeCount: 5, heartCount: 4, laughCount: 2, cryCount: 1, commentCount: 3 },
     });
 
-    const detail = await getPlannerPostDetail({ id: 11, user: OWNER });
+    const detail = await getPlannerPostDetail({
+      id: 11,
+      user: OWNER,
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(detail.stats).toEqual({ reactions: 12, comments: 3 });
   });
