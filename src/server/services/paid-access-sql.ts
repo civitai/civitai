@@ -18,3 +18,20 @@ import { Prisma } from '@prisma/client';
 export const paidAccessLiveSql = Prisma.sql`pa."entityType" = 'ModelVersion'
       AND (pa."endsAt" IS NULL OR pa."endsAt" > NOW())
       AND mv.status = 'Published'::"ModelStatus"`;
+
+/**
+ * The model in `modelId` has a Published version with no live gate: what Hide Paid keeps a model for.
+ * Interpolate a column reference, e.g. `Prisma.sql\`m.id\``. The inner `pa`/`mv` aliases shadow any outer ones,
+ * so the caller's own `mv` is safe to pass in.
+ */
+export const freePublishedVersionExistsSql = (modelId: Prisma.Sql) => Prisma.sql`EXISTS (
+      SELECT 1 FROM "ModelVersion" fv
+      WHERE fv."modelId" = ${modelId}
+        AND fv.status = 'Published'::"ModelStatus"
+        AND NOT EXISTS (
+          SELECT 1 FROM "PaidAccess" pa
+          JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+          WHERE ${paidAccessLiveSql}
+            AND mv.id = fv.id
+        )
+    )`;
