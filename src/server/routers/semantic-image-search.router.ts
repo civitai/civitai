@@ -1,7 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
-import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 import {
   type SemanticImageSearchInput,
   semanticImageSearchSchema,
@@ -38,7 +37,7 @@ const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
     usernames?.length === 1 &&
     usernames[0].toLowerCase() === username &&
     !userIds &&
-    // The picker sends a text query and reads one page.
+    // No paging or image-similarity search on this path.
     !cursor &&
     !imageId;
   if (!ownOnly) throw new TRPCError({ code: 'FORBIDDEN' });
@@ -46,7 +45,6 @@ const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
   return next({ ctx: { ownImagesOf: ctx.user!.id as number | undefined } });
 });
 
-// The picker's page size.
 const OWN_IMAGES_PAGE = 25;
 // Only what the picker sends; anything else on this path is dropped.
 const ownImagesInput = (
@@ -60,19 +58,11 @@ const ownImagesInput = (
 });
 
 // The own-images path has its own, lower limit: the picker needs no more.
-const OWN_IMAGES_RATE_LIMIT = { limit: 20, period: 60 };
-const ownImagesRateLimit = middleware(async ({ ctx, path, next }) => {
-  if (!(ctx as { ownImagesOf?: number }).ownImagesOf) return next();
-  const recordAttempt = await claimRateLimitAttempt({
-    rules: [OWN_IMAGES_RATE_LIMIT],
-    keyName: `${path.replace('.', ':')}:own`,
-    scope: path,
-    user: ctx.user,
-    req: ctx.req,
-  });
-  await recordAttempt();
-  return next();
-});
+const ownImagesRateLimit = rateLimit(
+  { limit: 20, period: 60 },
+  (_, ctx) => !!(ctx as { ownImagesOf?: number }).ownImagesOf,
+  { sharedKey: 'semanticImageSearch:search:own' }
+);
 
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
@@ -102,8 +92,8 @@ export const semanticImageSearchRouter = router({
       });
       const latencyMs = Date.now() - started;
 
-      // Logged as searched, so the row says what ran.
       if (!input.cursor) {
+        // Logged as searched, so the row says what ran.
         const { query, imageId, cursor, limit, ...filters } = searched;
         void ctx.track
           .search({

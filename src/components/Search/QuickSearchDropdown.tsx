@@ -60,7 +60,6 @@ const meilisearch = withUserHydration(
 );
 // The semantic search is flag-protected on the server: without `imageSearch` it rejects (except an
 // owner's search of their own images), and the resilient wrapper turns that into an empty dropdown.
-// Meilisearch has no images index.
 const semanticMeilisearch = withUserHydration(
   createResilientSearchClient(
     withSemanticComicSearch(
