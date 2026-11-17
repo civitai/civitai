@@ -25,6 +25,8 @@ import {
 
 type Row = {
   id: number;
+  title: string;
+  description: string;
   status: ServiceOfferingStatus;
   maxNsfwLevel: number;
   price: number;
@@ -58,6 +60,10 @@ function matches(value: unknown, filter: unknown): boolean {
         return (arg as unknown[]).some((clause) => matches(value, clause));
       case 'AND':
         return (arg as unknown[]).every((clause) => matches(value, clause));
+      case 'contains':
+        return (value as string).toLowerCase().includes((arg as string).toLowerCase());
+      case 'mode':
+        return arg === 'insensitive';
       case 'lte':
         return (value as number) <= (arg as number);
       case 'in':
@@ -103,6 +109,8 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
   const id = nextId++;
   return {
     id,
+    title: `Offering ${id}`,
+    description: 'Custom work.',
     status: ServiceOfferingStatus.Active,
     maxNsfwLevel: NsfwLevel.PG13,
     price: 1000,
@@ -126,7 +134,7 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
 
 let table: Row[] = [];
 const feedIds = async (
-  opts: { browsingLevel?: number; servable?: number; viewerId?: number } = {}
+  opts: { browsingLevel?: number; servable?: number; viewerId?: number; query?: string } = {}
 ) => {
   const { items } = await getServiceOfferingFeed({
     sort: 'newest',
@@ -273,5 +281,54 @@ describe('services feed', () => {
       if (!cursor) break;
     }
     expect(seen).toEqual(expected);
+  });
+
+  describe('with a search query', () => {
+    it('keeps only offerings whose title or description matches, ignoring case', async () => {
+      const byTitle = row({ title: 'Anime LoRA training' });
+      const byDescription = row({ description: 'I train a LoRA on your character.' });
+      const other = row({ title: 'Logo design', description: 'Vector logos.' });
+      table = [byTitle, byDescription, other];
+      expect(await feedIds({ query: 'lora' })).toEqual([byDescription.id, byTitle.id]);
+      expect(await feedIds({})).toEqual([other.id, byDescription.id, byTitle.id]);
+    });
+
+    it('never returns a mature match on civitai.com, and does on civitai.red', async () => {
+      const pg = row({ title: 'Portrait commission' });
+      const x = row({ title: 'Portrait commission, mature', maxNsfwLevel: NsfwLevel.X });
+      table = [pg, x];
+      const query = 'portrait';
+      // civitai.com serves nothing mature, whatever the viewer browses at.
+      expect(
+        await feedIds({
+          query,
+          browsingLevel: allBrowsingLevelsFlag,
+          servable: sfwBrowsingLevelsFlag,
+        })
+      ).toEqual([pg.id]);
+      // civitai.red, browsing X: the same query finds it.
+      expect(
+        await feedIds({
+          query,
+          browsingLevel: allBrowsingLevelsFlag,
+          servable: allBrowsingLevelsFlag,
+        })
+      ).toEqual([x.id, pg.id]);
+    });
+
+    it('keeps the listing rule for a match whose cover is still being checked', async () => {
+      const pending = row({
+        title: 'Portrait commission',
+        coverImageId: 1,
+        coverImage: {
+          ingestion: ImageIngestionStatus.Pending,
+          needsReview: null,
+          tosViolation: false,
+          nsfwLevel: NsfwLevel.PG,
+        },
+      });
+      table = [pending];
+      expect(await feedIds({ query: 'portrait' })).toEqual([]);
+    });
   });
 });

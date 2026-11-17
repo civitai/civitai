@@ -364,6 +364,7 @@ export async function getServiceOfferingFeed({
   servable,
   viewerId,
   sort,
+  query,
   cursor,
   limit,
 }: GetServiceOfferingFeedInput & {
@@ -376,6 +377,20 @@ export async function getServiceOfferingFeed({
   const rows = await dbRead.serviceOffering.findMany({
     where: {
       ...listable,
+      // Added to the listing rule's own AND, never in place of it.
+      AND: [
+        ...listable.AND,
+        ...(query
+          ? [
+              {
+                OR: [
+                  { title: { contains: query, mode: 'insensitive' as const } },
+                  { description: { contains: query, mode: 'insensitive' as const } },
+                ],
+              },
+            ]
+          : []),
+      ],
       seller: {
         ...listable.seller,
         // The card links to the storefront, which is addressed by username.

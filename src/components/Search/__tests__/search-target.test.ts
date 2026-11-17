@@ -68,6 +68,15 @@ describe('the feed search flag on its own', () => {
     expect(feedSearchPathname(articlesOnly, 'articles')).toBe('/articles');
   });
 
+  it('filters /services in place under its own flag, only from the default target', () => {
+    const servicesOnly = { servicesFeedSearch: true };
+    expect(searchesFeedInPlace(servicesOnly, 'models', '/services')).toBe(true);
+    expect(searchesFeedInPlace({ modelFeedSearch: true }, 'models', '/services')).toBe(false);
+    // An explicit pick of another index still searches that index.
+    expect(searchesFeedInPlace(servicesOnly, 'users', '/services')).toBe(false);
+    expect(searchesFeedInPlace(servicesOnly, 'models', '/models')).toBe(false);
+  });
+
   it('sends /search/images to the feed under feedSearch, even without imageSearch', () => {
     expect(legacyImageSearchDestination(feedOnly)).toBe('images-feed');
     expect(legacyImageSearchDestination({ imageSearch: true, feedSearch: true })).toBe(

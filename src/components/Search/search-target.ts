@@ -29,7 +29,7 @@ export function resolveSearchTarget(
 
 type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
 type FeedSearchFlags = Partial<
-  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch'>
+  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch' | 'servicesFeedSearch'>
 >;
 
 /**
@@ -54,12 +54,22 @@ export function feedSearchPathname(features: FeedSearchFlags, index: SearchIndex
   return feed && features[feed.flag] ? feed.pathname : undefined;
 }
 
+// Feeds with no search index of their own. The bar's target there is the default it falls back to
+// (`models`), so only that target filters the feed; picking another one still searches it.
+const INDEXLESS_FEED_SEARCH = {
+  '/services': 'servicesFeedSearch',
+} as const satisfies Record<string, keyof FeedSearchFlags>;
+
 /** The header bar filters the feed it is on in place, rather than opening a search page. */
 export const searchesFeedInPlace = (
   features: FeedSearchFlags,
   index: SearchIndexKey,
   pathname: string
-) => feedSearchPathname(features, index) === pathname;
+) => {
+  if (feedSearchPathname(features, index) === pathname) return true;
+  const flag = INDEXLESS_FEED_SEARCH[pathname as keyof typeof INDEXLESS_FEED_SEARCH];
+  return !!flag && !!features[flag] && index === 'models';
+};
 
 /** Where /search/images sends a viewer: the images feed, the models search, or nowhere (it stays). */
 export function legacyImageSearchDestination(
