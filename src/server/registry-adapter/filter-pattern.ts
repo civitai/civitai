@@ -49,9 +49,9 @@ export const FILTER_PATTERN_MAX_LENGTH = 1024;
  * Largest size a pattern may have, counted as {@link translateFilterPattern} says. Matching is
  * linear in the input with a factor of the size (the NFA can hold one thread per instruction), so
  * the size, not the length, is what a match costs: `.{1000}` written 146 times fits in 1022
- * characters, is size 146 000, and took ~0.7 s against a 10 000-character string. A literal
- * pattern's size is its length, so this also bounds literals below the length bound. What a
- * pattern at this bound costs is measured at `FILTER_PATTERNS_MAX_TOTAL_SIZE` (`json-schema.ts`).
+ * characters and is size 146 000. A literal pattern's size is its length, so this also bounds
+ * literals below the length bound. How the sizes bound a filter's pattern work is at
+ * `FILTER_MAX_PATTERN_PLACES` (`json-schema.ts`).
  */
 export const FILTER_PATTERN_MAX_SIZE = 256;
 
@@ -372,14 +372,9 @@ function translate(pattern: string): { re2: string; size: number } {
  * ~5-8 MB. A DFA over its budget clears its cache and, if that happens too often, re2js runs the
  * pattern on its NFA instead, in the same linear time the size bounds already assume.
  *
- * Measured, through ajv: 40 live two-pattern filters, each run once over 50 bodies of ~840
- * characters of English-like text, retained ~6.7 MB at 32 KiB against ~520 MB at the default (and
- * ~107 MB at the default with the predicates dropped, the filter cache only). Realistic patterns
- * (a `^urn:schema:civitai.com:` prefix, a slug, a date, a five-word alternation, a word pattern)
- * ran at the default's speed or faster; the auditor's `e[^.]{120}\.` pair, whose DFA needs
- * megabytes, ran ~10x slower (~7 ms per 42 000 characters, the NFA's speed); the hostile
- * `[ab]{0,125}b[ab]{125}c` in two places took about half as long. At 8 KiB a five-word
- * alternation ran ~11x slower, so 32 KiB is the smallest budget measured that kept them fast.
+ * 32 KiB is the smallest budget measured that kept realistic patterns (a
+ * `^urn:schema:civitai.com:` prefix, a slug, a five-word alternation) at the default's speed;
+ * smaller budgets ran them markedly slower, so do not lower it.
  */
 export const FILTER_PATTERN_DFA_BYTES = 32 * 1024;
 
@@ -430,9 +425,9 @@ function enforcesBound(dfa: Re2jsDfa | null | undefined): boolean {
 const SELF_TEST_PATTERN = '[ab]*a[ab]{20}$';
 
 /**
- * 256 code points of `a` and `b` from a fixed seed. Measured: it makes a 32 KiB DFA for
- * {@link SELF_TEST_PATTERN} clear its cache once (128 do too, 64 do not), in ~0.2 ms with the
- * compile; its 21st code point from the end is `b`, so the pattern does not match.
+ * 256 code points of `a` and `b` from a fixed seed: long enough that a
+ * {@link FILTER_PATTERN_DFA_BYTES} DFA for {@link SELF_TEST_PATTERN} clears its cache at least
+ * once. Its 21st code point from the end is `b`, so the pattern does not match.
  */
 const SELF_TEST_INPUT = (() => {
   let x = 1;
@@ -474,8 +469,8 @@ export function dfaSelfTest(): boolean {
  * keeps the lazy one, which it then uses for every match. re2js is pinned exactly (`package.json`).
  * The pattern is refused ({@link FilterPatternError}, so `bad_request`) rather than applied with an
  * unbounded DFA when the installed DFA does not hold the bound in its enforced fields
- * ({@link enforcesBound}), or when {@link dfaSelfTest} fails; the self-test runs on every compile
- * (~0.2 ms), so nothing about it is cached or depends on which pattern was compiled first.
+ * ({@link enforcesBound}), or when {@link dfaSelfTest} fails; the self-test runs on every compile,
+ * so nothing about it is cached or depends on which pattern was compiled first.
  */
 function boundDfa(compiled: RE2JS): void {
   if (!enforcesBound(installBoundedDfa(compiled)) || !dfaSelfTest()) {
