@@ -29,7 +29,8 @@ vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
-vi.mock('$lib/server/smites/runtime', () => ({ resetDeps: {} }));
+const resetDeps = vi.hoisted(() => ({} as { acolyteSmites?: () => boolean }));
+vi.mock('$lib/server/smites/runtime', () => ({ resetDeps }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({}) }));
 vi.mock('$lib/server/hidden/settle', () => ({ settleHiddenChecks }));
 vi.mock('$lib/server/smites/smites.service', () => ({ expireSmites, resetPendingPlayers }));
@@ -229,6 +230,29 @@ describe('POST /api/jobs/tick', () => {
     expect(expireSmites).toHaveBeenCalled();
     expect(response.status).toBe(500);
   });
+
+  it.each([
+    [false, true],
+    [true, false],
+  ])(
+    'with Acolyte smites %s, holds wrong-answer resets and their expiry: %s, reading the switch once for both',
+    async (on, held) => {
+      escalateExpired.mockResolvedValue({ escalated: 0 });
+      applyPendingResolutions.mockResolvedValue({ applied: 0 });
+      // A switch that flips between reads: both steps must still agree.
+      let reads = 0;
+      resetDeps.acolyteSmites = () => (reads++ === 0 ? on : !on);
+      try {
+        await run();
+      } finally {
+        delete resetDeps.acolyteSmites;
+      }
+      expect(resetPendingPlayers.mock.calls[0][1].acolyteSmites()).toBe(on);
+      expect(expireSmites).toHaveBeenCalledWith(expect.anything(), expect.any(Date), {
+        holdAcolyteWrongAnswer: held,
+      });
+    }
+  );
 
   it('retries resets before it expires smites', async () => {
     escalateExpired.mockResolvedValue({ escalated: 0 });
