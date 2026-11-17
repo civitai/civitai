@@ -5,11 +5,16 @@ import { casesPglite } from './cases-pglite.harness';
 
 const redis = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn(), del: vi.fn() }));
 vi.mock('../../redis', () => ({ getSysRedis: () => redis }));
+const logToAxiom = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('../../axiom', () => ({ logToAxiom, logAxiomError: vi.fn() }));
 
-const { hashAddress, sendBatch, sendNotice } = await import('../send-notice');
+const { hashAddress, sendBatch, sendNotice, MAX_CONSECUTIVE_FAILURES } = await import(
+  '../send-notice'
+);
 const { readBrake } = await import('../brake');
 const { batchCounts, exportUnsent, importBatch, importSentJsonl, undoImport, ImportRefusedError } =
   await import('../backlog-import');
+const { batchPreview } = await import('../cases.service');
 type SendDeps = import('../send-notice').SendDeps;
 
 let pg: PGlite;
@@ -24,6 +29,7 @@ const deps = (over: Partial<SendDeps> = {}): SendDeps => ({
   sleep: async () => undefined,
   readBrake: async () => ({ paused: false }),
   pauseSends,
+  lockdownOk: async () => true,
   alert,
   from: 'Notices <notices@example.test>',
   replyTo: 'inbox@example.test',
@@ -80,7 +86,9 @@ beforeEach(async () => {
   ({ pg, db } = await casesPglite());
   send.mockReset().mockImplementation(async () => ({ messageId: `<${Math.random()}@relay>` }));
   alert.mockReset();
-  pauseSends.mockReset();
+  pauseSends.mockReset().mockResolvedValue(undefined);
+  alert.mockResolvedValue(undefined);
+  logToAxiom.mockClear();
   redis.get.mockReset();
 });
 afterEach(async () => {
@@ -173,6 +181,37 @@ describe('sendNotice', () => {
     expect(await sendNotice(first.id, deps())).toBe('sent');
   });
 
+  it('claims nothing while the read-only role can reach the case tables', async () => {
+    const [first] = await notices();
+    expect(await sendNotice(first.id, deps({ lockdownOk: async () => false }))).toBe('blocked');
+    expect(send).not.toHaveBeenCalled();
+    expect((await notices())[0].status).toBe('pending');
+  });
+
+  it('leaves a send that may have been delivered as sending, never retried, and pauses sends', async () => {
+    // A timeout after DATA: no SMTP reply, so the relay may have accepted it.
+    send.mockRejectedValueOnce(Object.assign(new Error('Timeout'), { code: 'ETIMEDOUT' }));
+    const [first] = await notices();
+    expect(await sendNotice(first.id, deps())).toBe('unknown');
+    const [row] = await notices();
+    expect(row.status).toBe('sending');
+    expect(row.error).toMatch(/^Unknown:/);
+    expect(pauseSends).toHaveBeenCalledWith('system', expect.stringContaining('may or may not'));
+    expect(await sendNotice(first.id, deps())).toBe('not-claimable');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark a delivered message failed when recording it as sent fails', async () => {
+    const [first] = await notices();
+    send.mockImplementationOnce(async () => {
+      // The row moves under the sender between the send and the `sent` write.
+      await db.deleteFrom('case_notice').where('id', '=', first.id).execute();
+      return { messageId: '<x@relay>' };
+    });
+    expect(await sendNotice(first.id, deps())).toBe('unknown');
+    expect(pauseSends).toHaveBeenCalledWith('system', expect.stringContaining('was sent'));
+  });
+
   it('refuses to send to an address that no longer matches its hash', async () => {
     const [first] = await notices();
     await db
@@ -213,9 +252,33 @@ describe('the batch', () => {
         : { paused: false as const };
     const result = await sendBatch('backlog-test', deps({ readBrake: brake }));
     expect(result).toEqual({
-      counts: { sent: 2, failed: 0, paused: 1, ceiling: 0, 'not-claimable': 0 },
+      counts: {
+        sent: 2,
+        failed: 0,
+        unknown: 0,
+        paused: 1,
+        ceiling: 0,
+        blocked: 0,
+        'not-claimable': 0,
+      },
       stoppedBy: 'paused',
     });
+  });
+
+  it('stops and pauses sends after repeated rejections by the relay', async () => {
+    send.mockRejectedValue(Object.assign(new Error('554 rejected'), { responseCode: 554 }));
+    const result = await sendBatch('backlog-test', deps());
+    // The batch holds exactly MAX_CONSECUTIVE_FAILURES notices.
+    expect(result.counts.failed).toBe(MAX_CONSECUTIVE_FAILURES);
+    expect(result.stoppedBy).toBe('failures');
+    expect(pauseSends).toHaveBeenCalledWith('system', expect.stringContaining('refused'));
+  });
+
+  it('stops the batch at the first send that may have been delivered', async () => {
+    send.mockRejectedValueOnce(new Error('socket hang up'));
+    const result = await sendBatch('backlog-test', deps());
+    expect(result).toMatchObject({ stoppedBy: 'unknown', counts: { unknown: 1, sent: 0 } });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('counts against the stated expected numbers, and a type with no expected count is never done', async () => {
@@ -250,6 +313,28 @@ describe('the batch', () => {
     await sendNotice(first.id, deps());
     await expect(undoImport('backlog-test', { db })).rejects.toBeInstanceOf(ImportRefusedError);
     expect(await notices()).toHaveLength(3);
+  });
+
+  it('refuses to undo a batch with a notice mid-send', async () => {
+    const [first] = await notices();
+    await db
+      .updateTable('case_notice')
+      .set({ status: 'sending' })
+      .where('id', '=', first.id)
+      .execute();
+    await expect(undoImport('backlog-test', { db })).rejects.toBeInstanceOf(ImportRefusedError);
+    expect(await notices()).toHaveLength(3);
+  });
+
+  it('logs who read the personal data before an undo deletes those events', async () => {
+    await batchPreview('backlog-test', { actorId: 7, db });
+    await undoImport('backlog-test', { db });
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'cases.undo.pii-reads',
+        reads: [expect.objectContaining({ actorId: 7, caseRef: expect.stringMatching(/^TD-/) })],
+      })
+    );
   });
 
   it('exports unsent rows without addresses, and takes back only those the fallback sent', async () => {

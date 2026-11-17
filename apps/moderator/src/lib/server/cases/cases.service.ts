@@ -3,7 +3,8 @@ import { sql, type Kysely } from 'kysely';
 import { moderatorDbStatus, storeUnavailableMessage } from '$lib/moderator-db-status';
 import { logAxiomError } from '../axiom';
 import { getSysRedis } from '../redis';
-import { casesDb, type CasesDb } from './cases.db';
+import { pauseSends } from './brake';
+import { casesDb, noticesOfBatch, type CasesDb } from './cases.db';
 import { readPiiLockdown, type PiiLockdown } from './pii-lockdown';
 import { defaultSendDeps, sendBatch } from './send-notice';
 
@@ -58,9 +59,7 @@ export async function batchPreview(
   batchId: string,
   { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
 ) {
-  const rows = await db
-    .selectFrom('case_notice as n')
-    .innerJoin('case_record as c', 'c.id', 'n.case_id')
+  const rows = await noticesOfBatch(db, batchId)
     .select([
       'n.id',
       'c.id as caseId',
@@ -75,7 +74,6 @@ export async function batchPreview(
       'n.attempted_at as attemptedAt',
       'n.sent_at as sentAt',
     ])
-    .where('c.import_batch_id', '=', batchId)
     .orderBy('n.id')
     .execute();
   const caseIds = [...new Set(rows.map((r) => r.caseId))];
@@ -98,19 +96,25 @@ export async function batchPreview(
 export const STALE_SENDING_MS = 10 * 60 * 1000;
 
 const runningKey = (batchId: string) =>
-  `${REDIS_SYS_KEYS.APP.CASES_SENDS_PAUSED}:running:${batchId}` as RedisKeyTemplateSys;
+  `${REDIS_SYS_KEYS.APP.CASES_SEND_RUNNING}:${batchId}` as RedisKeyTemplateSys;
 
 /**
  * Start sending a batch in the background (about 85 s for 170 messages at SES's pace) and return at
  * once; the page reads progress from the rows. A lock stops a second run of the same batch from
- * doubling the pace. The claim on each row already stops a double send.
+ * doubling the pace. The claim on each row already stops a double send. A run that dies on an error
+ * pauses sends: a person looks before anything else goes out.
  */
 export async function startBatchSend(batchId: string): Promise<'started' | 'already-running'> {
   const redis = getSysRedis();
   const got = await redis.set(runningKey(batchId), new Date().toISOString(), { NX: true, EX: 900 });
   if (!got) return 'already-running';
   void sendBatch(batchId, defaultSendDeps())
-    .catch((e) => logAxiomError(e, { name: 'cases.sendBatch', batchId }))
+    .catch(async (e) => {
+      await pauseSends('system', `the send of batch ${batchId} stopped on an error`).catch(
+        () => undefined
+      );
+      await logAxiomError(e, { name: 'cases.sendBatch', batchId });
+    })
     .finally(() => redis.del(runningKey(batchId)).catch(() => undefined));
   return 'started';
 }

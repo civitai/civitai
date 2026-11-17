@@ -2270,6 +2270,8 @@ export const REDIS_SYS_KEYS = {
     REVIEW_SHEET_SESSION: 'app:review-sheet:session',
     // The case engine's send brake: present = no case notice is sent. JSON { by, at, reason }.
     CASES_SENDS_PAUSED: 'app:cases:sends-paused',
+    // `app:cases:send-running:<batchId>` — held while one batch's send runs, so a second run can't double the pace.
+    CASES_SEND_RUNNING: 'app:cases:send-running',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.

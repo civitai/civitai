@@ -11,30 +11,32 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { dateTime, LINK_CLASS } from '$lib/format';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   type Result = { scope?: string; error?: string; cases?: number; notices?: number };
+  const PANEL = 'rounded-xl border border-dark-4 bg-dark-6 p-5';
   const result = $derived(form as Result | null);
 </script>
 
 <svelte:head><title>Takedown Cases</title></svelte:head>
 
 <div class="space-y-6 p-4">
-  <h1 class="text-xl font-semibold">Takedown cases</h1>
+  <h1 class="text-xl font-semibold text-white">Takedown cases</h1>
 
   {#if data.storeError}
-    <p class="rounded-md border border-destructive p-3 text-sm">{data.storeError}</p>
+    <ErrorAlert message={data.storeError} />
   {/if}
 
-  <section class="space-y-2 rounded-md border p-3">
+  <section class="space-y-2 {PANEL}">
     {#if data.brake.paused}
       <p class="text-sm">
         <Badge variant="destructive">Sends paused</Badge>
         {data.brake.reason} ({data.brake.by === 'system' ? 'automatic' : `user ${data.brake.by}`},
-        {data.brake.at})
+        {dateTime(data.brake.at)})
       </p>
       {#if data.grants.unpause}
         <form method="POST" action="?/resume" use:enhance>
@@ -52,9 +54,15 @@
   </section>
 
   {#if result?.error}
-    <p class="text-sm text-destructive">{result.error}</p>
+    <p class="text-sm text-red-300">{result.error}</p>
   {:else if result?.scope === 'import'}
-    <p class="text-sm">Imported {result.cases} cases and {result.notices} notices.</p>
+    <p class="text-sm text-dark-0">Imported {result.cases} cases and {result.notices} notices.</p>
+  {:else if result?.scope === 'undo'}
+    <p class="text-sm text-dark-0">Removed the import: {result.cases} cases.</p>
+  {:else if result?.scope === 'pause'}
+    <p class="text-sm text-dark-0">Sends paused.</p>
+  {:else if result?.scope === 'resume'}
+    <p class="text-sm text-dark-0">Sends resumed.</p>
   {/if}
 
   <Table>
@@ -78,7 +86,13 @@
           <TableCell>{dateTime(new Date(batch.importedAt))}</TableCell>
           <TableCell>
             {#if data.grants.act && batch.sent === 0}
-              <form method="POST" action="?/undo" use:enhance>
+              <form
+                method="POST"
+                action="?/undo"
+                use:enhance={({ cancel }) => {
+                  if (!confirm(`Delete every case and notice of ${batch.batchId}?`)) cancel();
+                }}
+              >
                 <input type="hidden" name="batchId" value={batch.batchId} />
                 <Button type="submit" variant="outline" size="sm">Undo import</Button>
               </form>

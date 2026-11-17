@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { casesDb, type CasesDb } from './cases.db';
+import { logToAxiom } from '../axiom';
+import { casesDb, noticesOfBatch, SENDABLE, type CasesDb } from './cases.db';
 import { CASE_TARGET_STATES } from './cases-tables';
 import { newPublicRef } from './public-ref';
 import { hashAddress } from './send-notice';
@@ -178,20 +179,34 @@ export async function importBatch(
 /**
  * Delete one batch, children first, in one transaction. Refused once any of its notices has left
  * `pending`: from then on the rows are the record of what was sent.
+ *
+ * The notices are locked first, so a send can't claim one between the check and the delete: a claim
+ * that got there first shows as `sending` and refuses the undo, and one that comes after finds no row.
+ * The batch's events go with it; who read its personal data is logged before they do.
  */
 export async function undoImport(batchId: string, { db = casesDb() }: { db?: CasesDb } = {}) {
   return db.transaction().execute(async (tx) => {
     const cases = tx.selectFrom('case_record').select('id').where('import_batch_id', '=', batchId);
-    const moved = await tx
+    const locked = await tx
       .selectFrom('case_notice')
-      .select(sql<number>`count(*)::int`.as('n'))
+      .select('status')
       .where('case_id', 'in', cases)
-      .where('status', '<>', 'pending')
-      .executeTakeFirstOrThrow();
-    if (moved.n > 0)
+      .forUpdate()
+      .execute();
+    const moved = locked.filter((n) => n.status !== 'pending').length;
+    if (moved > 0)
       throw new ImportRefusedError(
-        `${moved.n} notice(s) of batch ${batchId} are no longer pending; it can't be undone`
+        `${moved} notice(s) of batch ${batchId} are no longer pending; it can't be undone`
       );
+
+    const reads = await tx
+      .selectFrom('case_event as e')
+      .innerJoin('case_record as c', 'c.id', 'e.case_id')
+      .select(['c.public_ref as caseRef', 'e.actor_id as actorId', 'e.at'])
+      .where('c.import_batch_id', '=', batchId)
+      .where('e.type', '=', 'pii_read')
+      .execute();
+    if (reads.length) logToAxiom({ name: 'cases.undo.pii-reads', batchId, reads });
 
     await tx.deleteFrom('case_event').where('case_id', 'in', cases).execute();
     await tx.deleteFrom('case_notice').where('case_id', 'in', cases).execute();
@@ -248,11 +263,8 @@ export async function batchCounts(batchId: string, { db = casesDb() }: { db?: Ca
   const expected = ((def?.definition as { expected?: Record<string, number> } | undefined)
     ?.expected ?? {}) as Record<string, number>;
 
-  const rows = await db
-    .selectFrom('case_notice as n')
-    .innerJoin('case_record as c', 'c.id', 'n.case_id')
+  const rows = await noticesOfBatch(db, batchId)
     .select(['n.notice_id', 'n.status', sql<number>`count(*)::int`.as('n')])
-    .where('c.import_batch_id', '=', batchId)
     .groupBy(['n.notice_id', 'n.status'])
     .execute();
 
@@ -278,17 +290,14 @@ export async function batchCounts(batchId: string, { db = casesDb() }: { db?: Ca
 
 /** The batch's unsent rows for the fallback script: ids only, no addresses (the script has its own). */
 export async function exportUnsent(batchId: string, { db = casesDb() }: { db?: CasesDb } = {}) {
-  return db
-    .selectFrom('case_notice as n')
-    .innerJoin('case_record as c', 'c.id', 'n.case_id')
+  return noticesOfBatch(db, batchId)
     .select([
       'n.id as rowId',
       'n.notice_id as noticeId',
       'n.recipient_role as recipientRole',
       'c.public_ref as caseRef',
     ])
-    .where('c.import_batch_id', '=', batchId)
-    .where('n.status', 'in', ['pending', 'failed'])
+    .where('n.status', 'in', SENDABLE)
     .orderBy('n.id')
     .execute();
 }
@@ -335,7 +344,7 @@ export async function importSentJsonl(
         .updateTable('case_notice')
         .set({ status: 'sent', message_id: line.messageId, sent_at: line.sentAt, error: null })
         .where('id', '=', line.rowId)
-        .where('status', 'in', ['pending', 'failed'])
+        .where('status', 'in', SENDABLE)
         .where(
           'case_id',
           'in',
