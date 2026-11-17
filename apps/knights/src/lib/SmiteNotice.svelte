@@ -20,8 +20,9 @@
   </div>
   <p class="count">{hearts} of {maxSmites} hearts left</p>
   <p class="explain">
-    Judging in bad faith earns smites. Each smite costs a heart, and right judgments win hearts
-    back. Lose all {maxSmites} hearts and your career resets.
+    Now and then you'll judge an image that already has a known rating, so we can check your calls
+    still match the community's standards. Missing those earns smites. Each smite costs a heart, and
+    right judgments win hearts back. Lose all {maxSmites} hearts and your career resets.
   </p>
 </section>
 
