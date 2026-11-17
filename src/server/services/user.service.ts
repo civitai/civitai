@@ -2906,8 +2906,9 @@ export async function blockBannedUserImages(userId: number) {
 
 /** Never throws: the block has committed. Call-site import: post.service imports this module. */
 async function refreshOwnModelShowcases(userId: number) {
-  const { refreshShowcasesForUserModels } = await import('~/server/services/post.service');
-  await refreshShowcasesForUserModels(userId).catch(handleLogError);
+  await import('~/server/services/post.service')
+    .then(({ refreshShowcasesForUserModels }) => refreshShowcasesForUserModels(userId))
+    .catch(handleLogError);
 }
 
 export const toggleBan = async ({

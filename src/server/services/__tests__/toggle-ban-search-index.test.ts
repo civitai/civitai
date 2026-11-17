@@ -81,12 +81,17 @@ vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) =>
   syncReviewsOfMovedPosts,
 }));
 
-const { refreshShowcases } = vi.hoisted(() => ({
+const { refreshShowcases, postServiceLoad } = vi.hoisted(() => ({
   refreshShowcases: vi.fn(async (_userId: number) => undefined),
+  postServiceLoad: { fail: false },
 }));
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  refreshShowcasesForUserModels: refreshShowcases,
+  // A getter so a test can make loading the export throw, as a failed lazy import would.
+  get refreshShowcasesForUserModels() {
+    if (postServiceLoad.fail) throw new Error('post.service failed to load');
+    return refreshShowcases;
+  },
 }));
 
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
@@ -351,6 +356,20 @@ describe('toggleBan -> removeMedia', () => {
     refreshShowcases.mockRejectedValueOnce(new Error('redis down'));
     await expect(ban('Harassment', true)).resolves.toBeDefined();
     expect(moderatedBlocks()).toBe(1);
+  });
+
+  it('finishes the ban when loading the model requeue fails', async () => {
+    postServiceLoad.fail = true;
+    try {
+      await expect(ban('Harassment', true)).resolves.toBeDefined();
+    } finally {
+      postServiceLoad.fail = false;
+    }
+    expect(moderatedBlocks()).toBe(1);
+    // A throw here would abort the rest of the content removal (marker clear, avatar refresh).
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-remove-content' })
+    );
   });
 
   // 🔴 Do not delete as redundant with the cases above: `softDeleteUser` applies its own CSAM
