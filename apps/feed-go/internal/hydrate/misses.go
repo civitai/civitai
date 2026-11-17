@@ -34,7 +34,7 @@ const (
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
-	MissModelDecorations, MissVersionImages}
+	MissModelDecorations, MissVersionImages, MissMetrics}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -70,6 +70,14 @@ type MissCompute struct {
 	// WD14 also tagged); an error, or no TagGate, then fails that lookup (tag-ids-miss-failed) where
 	// Node, which rebuilds the blocked list from the database on a cache miss, would have had one.
 	TagGate func(context.Context) (map[int]bool, error)
+	// ClickHouse is the reader the image metric-hash misses are computed with (imagemetrics.go:
+	// MetricService's populate, its query and, with WriteBack, its locks and writes). nil (no
+	// FEED_GO_CLICKHOUSE_HOST / FEED_GO_CLICKHOUSE_USERNAME) leaves those misses falling back
+	// (`metrics-miss`).
+	ClickHouse ClickHouse
+	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS), held to at most
+	// metricsTimeoutMax (under Node's own budget); past it the page falls back (`metrics-miss-failed`).
+	MetricsTimeout time.Duration
 
 	// flight coalesces concurrent lookups of one cache and id set; recent keeps answers for a few
 	// seconds with write-back off (lookupShared).
@@ -82,6 +90,9 @@ type MissCompute struct {
 	sweeps    int
 	// beforeFlight, when set (tests), runs just before a lookup joins or starts its flight.
 	beforeFlight func()
+	// afterFlight, when set (tests), runs just after a lookup's flight returns, before its answer is
+	// read.
+	afterFlight func()
 	// Observe counts computed miss ids: cache is a MissXxx label, result "computed" or "error".
 	Observe func(cache, result string, n int)
 	// Now stamps `cachedAt` / `_populatedAt` (time.Now when nil).
@@ -139,7 +150,10 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 	if c.beforeFlight != nil {
 		c.beforeFlight()
 	}
-	v, err, _ := c.flight.Do(cache+":"+strings.Join(parts, ","), func() (any, error) { return lookup(ctx, todo) })
+	v, err, _ := c.flight.Do(cache+":"+strings.Join(parts, ","), func() (any, error) { return c.flightLookup(ctx, cache, todo, lookup) })
+	if c.afterFlight != nil {
+		c.afterFlight()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -149,10 +163,37 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 			out[id] = rec
 		}
 	}
-	if c.memoized(cache) {
-		c.remember(cache, todo, records)
-	}
 	return out, nil
+}
+
+// flightLookup is the body of one flight: it runs inside singleflight, so a caller that arrives
+// while it runs joins it. Both memo steps belong here, not around Do. singleflight drops the flight
+// from its map BEFORE Do returns, so an answer remembered after Do leaves a window in which a new
+// caller finds neither the flight nor the kept answer and queries again. Remembering inside the
+// flight closes that window. A caller that missed recent and then reached Do just after an earlier
+// flight ended starts a new flight, and the recheck here answers it from what that flight kept.
+func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
+	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) (map[int]jspack.Obj, error) {
+	if !c.memoized(cache) {
+		return lookup(ctx, ids)
+	}
+	kept := make(map[int]jspack.Obj, len(ids))
+	rest := c.fromRecent(cache, ids, kept)
+	if len(rest) == 0 {
+		return kept, nil
+	}
+	records, err := lookup(ctx, rest)
+	if err != nil {
+		return nil, err
+	}
+	c.remember(cache, rest, records)
+	if len(kept) == 0 {
+		return records, nil
+	}
+	for id, rec := range records {
+		kept[id] = rec
+	}
+	return kept, nil
 }
 
 // memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every

@@ -5116,6 +5116,38 @@ describe('a storyline started from an image', () => {
         });
       });
 
+      it('starts a new one when its chapter 1 is written while this start looks it up', async () => {
+        // Answers as Postgres would: a `setFirstChapter` that committed after the first lookup is
+        // seen by any later statement.
+        const steps: string[] = [];
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
+          const sql = strings.join('?');
+          if (sql.endsWith('FOR NO KEY UPDATE')) steps.push('lock');
+          if (!sql.includes('"sparkImageId" =')) return Promise.resolve([]);
+          steps.push('lookup');
+          // Only a lookup after the lock has waited out the chapter-1 writer sees its commit.
+          return Promise.resolve(steps.includes('lock') ? [] : [{ id: 9, title: 'First try' }]);
+        }) as never);
+
+        await expect(start()).resolves.toEqual({ id: 10, rootChapterId: null });
+        expect(steps).toEqual(['lookup', 'lock', 'lookup']);
+        expect(w.storyline.update).not.toHaveBeenCalled();
+        expect(w.storyline.create).toHaveBeenCalledOnce();
+      });
+
+      it('starts a new one when the lookup under the lock finds a different storyline', async () => {
+        let lookups = 0;
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+          Promise.resolve(
+            strings.join('?').includes('"sparkImageId" =')
+              ? [lookups++ === 0 ? { id: 9, title: 'First try' } : { id: 8, title: 'Older' }]
+              : []
+          )) as never);
+
+        await expect(start()).resolves.toEqual({ id: 10, rootChapterId: null });
+        expect(w.storyline.update).not.toHaveBeenCalled();
+      });
+
       it('still starts a new one when a published post is chapter 1', async () => {
         w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
         w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);

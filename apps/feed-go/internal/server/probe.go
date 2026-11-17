@@ -179,7 +179,7 @@ func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydra
 	if err != nil {
 		return err
 	}
-	ireq, err := s.prepareInfinite(ctx, r)
+	ireq, _, err := s.prepareInfinite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -189,23 +189,17 @@ func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydra
 	return err
 }
 
-// probeModelGetAll resolves a model.getAll page by running its serving path (prepareModelGetAll,
-// modelfeed.Serve) over the deployment's own deps, under hydrate.WithPresence(rec): a miss Go
-// computes (the model frames and decorations, the version showcases, the showcase images' tag ids) is
-// recorded on rec with its one lookup query and answered as no entry, never written back, and never
-// looked up except the showcases (read on the replica: a model without images is dropped, so "no
-// entry" would page on past where a serve stops); every other cache miss falls back, so the fallback
-// reason names the first cache Go falls back on that it found cold.
-// Each model page counts as a page checked. The path writes no other cache (no page-query cache)
-// and does query the replica as serving does (the page query, the basic users and profile pictures
-// on a miss): those replica reads are not counted, and no raced entry is recorded.
+// probeModelGetAll runs model.getAll's serving path under hydrate.WithPresence(rec): misses Go
+// computes are recorded on rec and never looked up, except the version showcases (read on the
+// replica: a model without images is dropped); any other cache miss falls back, and its reason is the
+// presence answer. Replica reads are not counted.
 func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
 	ctx = hydrate.WithPresence(ctx, rec)
 	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: req.Input, Headers: req.Headers})
 	if err != nil {
 		return err
 	}
-	mreq, err := s.prepareModelGetAll(ctx, r)
+	mreq, _, err := s.prepareModelGetAll(ctx, r)
 	if err != nil {
 		return err
 	}

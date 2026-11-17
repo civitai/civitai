@@ -51,7 +51,7 @@ func (s *Sources) V1Page(ctx context.Context, req V1PageRequest) (*V1Page, error
 			return nil, err
 		}
 	}
-	if out.Metrics, err = metrics.result(); err != nil {
+	if out.Metrics, err = metrics.result(ctx, s); err != nil {
 		return nil, err
 	}
 	if out.Resources, err = imageResourcesFrom(images, resources.Entries()); err != nil {

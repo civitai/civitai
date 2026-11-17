@@ -736,6 +736,7 @@ type Bundle = {
   capLimitsDegradedTotal: Counter<string>;
   spendCapRejectionsTotal: Counter<string>;
   confirmedQuoteOverchargeTotal: Counter<string>;
+  confirmedStepSubmitTotal: Counter<string>;
   succeededWithoutMediaTotal: Counter<string>;
   mediaVerdictTotal: Counter<string>;
   outputTruncatedTotal: Counter<string>;
@@ -1079,6 +1080,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_confirmed_quote_overcharge_total',
     'App Block submits of a viewer-CONFIRMED quote (kind=training: a training run; kind=step: a confirmed pass-through step) that the orchestrator billed ABOVE the price the viewer confirmed in host chrome. Expected zero; any increase is a viewer charged more than they agreed to. Detected after the charge (cannot be prevented at submit). Details (app, step type, workflow, both amounts) are on the block-confirmed-quote-overcharge log line.',
     ['kind']
+  );
+
+  const confirmedStepSubmitTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_confirmed_step_submit_total',
+    'Confirmed pass-through step submits that reached the orchestrator, per app (app_block_id, `dev` for dev tokens) and by how the viewer consented: consent=click (the per-job confirm) or consent=standing (their per-app opt-in, within their daily limit).',
+    ['app_block_id', 'consent']
   );
 
   // ── SUCCEEDED generations that DELIVERED NOTHING ─────────────────────────────
@@ -1588,6 +1596,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     capLimitsDegradedTotal,
     spendCapRejectionsTotal,
     confirmedQuoteOverchargeTotal,
+    confirmedStepSubmitTotal,
     succeededWithoutMediaTotal,
     mediaVerdictTotal,
     outputTruncatedTotal,
@@ -1841,6 +1850,20 @@ export function recordConfirmedQuoteOvercharge(kind: AppBlockConfirmedQuoteKind)
     confirmedQuoteOverchargeTotal.inc({ kind });
   } catch {
     /* instrument-only — never let a metrics error touch a charged submit */
+  }
+}
+
+export function recordConfirmedStepSubmit(
+  appBlockIdLabel: string,
+  consent: 'click' | 'standing'
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().confirmedStepSubmitTotal.inc({
+      app_block_id: appBlockIdLabel,
+      consent,
+    });
+  } catch {
+    /* instrument-only */
   }
 }
 

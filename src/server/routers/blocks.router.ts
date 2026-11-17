@@ -85,6 +85,7 @@ import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz
 import {
   recordAppBlockSubmitFailure,
   recordConfirmedQuoteOvercharge,
+  recordConfirmedStepSubmit,
   recordSucceededWithoutMedia,
   submitFailureAppBlockLabel,
   type AppBlockRateLimitBucket,
@@ -106,6 +107,7 @@ import {
   checkBlockUploadAppRateLimit,
   checkBlockGenerationSourceUserRateLimit,
   checkBlockUploadedGenerationSourceUserRateLimit,
+  claimBlockStandingSubmitSlot,
 } from '~/server/utils/block-catalog-rate-limit';
 import { withInFlightLimit } from '~/server/utils/in-flight-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -165,6 +167,7 @@ import {
 import {
   BLOCK_TRAINING_QUOTE_ID_REGEX,
   blockQuoteGrantConsentInputSchema,
+  blockStepQuoteStandingConsentInputSchema,
   blockEstimateBatchInputSchema,
   blockOutputUnlockConfirmInputSchema,
   blockOutputUnlockInputSchema,
@@ -448,6 +451,7 @@ import {
   opaqueInputUrlsIn,
   type GenerationInputPhase,
 } from '~/server/services/generation-input-urls';
+import { appUsesScannedSourceRows } from '~/server/services/blocks/source-scanned-rows';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
@@ -1914,6 +1918,25 @@ function consentBudgetRejection(
 const DAILY_LIMIT_READ_RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
 
 /** Fails closed: a Redis error reads as over the limit, which only keeps the dialog shut. */
+/**
+ * For the raise dialog's "run without asking" line; `null` on any error. Not flag-gated, like
+ * `getMyConfirmWithinLimit`: an opt-in kept through a flag rollback is still the viewer's, and
+ * re-arms with the flag, so raising the limit is still told what it means for those jobs.
+ */
+async function readMyConfirmWithinLimit(
+  user: SessionUser,
+  appBlockId: string
+): Promise<number | null> {
+  try {
+    const { readConfirmWithinLimit } = await import(
+      '~/server/services/blocks/scope-grant.service'
+    );
+    return await readConfirmWithinLimit(user.id, appBlockId, 'read');
+  } catch {
+    return null;
+  }
+}
+
 async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
   const key = `${REDIS_SYS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
   try {
@@ -2113,6 +2136,8 @@ async function resolveModelIdFromBlockInstance(blockInstanceId: string): Promise
 async function createBlockTextToImageStep(opts: {
   input: Record<string, unknown>;
   user: SessionUser;
+  /** The block token's `appBlockId` claim: the app the source gate reads its flags for. */
+  appBlockId: string;
   whatIf?: boolean;
   isGreen?: boolean;
 }) {
@@ -2132,7 +2157,11 @@ async function createBlockTextToImageStep(opts: {
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
     isWhatIf: opts.whatIf,
     isGreen: opts.isGreen,
-    inputGate: { entry: 'appBlocks', isApiCaller: false },
+    inputGate: {
+      entry: 'appBlocks',
+      isApiCaller: false,
+      appBlockLog: { appBlockId: opts.appBlockId, stepTypes: 'textToImage' },
+    },
   });
   // The block path is plain txt2img with no snippet fan-out, so the graph
   // always yields exactly one step. Fail closed if that invariant breaks rather
@@ -4164,7 +4193,114 @@ export const blocksRouter = router({
           input.appBlockId,
           limit.limit
         ),
+        confirmWithinLimitMaxJob: await readMyConfirmWithinLimit(ctx.user, input.appBlockId),
       };
+    }),
+
+  /**
+   * The viewer opts in, from the confirmed-step confirm, to running this app's above-budget jobs
+   * without asking while each fits what is left of their daily limit. With `buzzBudgetPerDay`, a
+   * viewer who has no limit sets one in the same write. Session only; never grants a scope.
+   */
+  optInConfirmWithinLimit: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(enforceAppBlocksFlag)
+    .input(
+      z
+        .object({
+          appBlockId: z.string().min(1).max(64),
+          // The price of the job the viewer is confirming: pricier jobs keep asking.
+          maxJobBuzz: z.number().int().min(1),
+          buzzBudgetPerDay: z
+            .number()
+            .int()
+            .min(BLOCK_CONSENT_BUDGET_MIN_PER_DAY)
+            .max(BLOCK_CONSENT_BUDGET_MAX_PER_DAY)
+            .optional(),
+        })
+        .refine((v) => v.buzzBudgetPerDay === undefined || v.buzzBudgetPerDay >= v.maxJobBuzz, {
+          message: 'the daily limit must cover the job',
+        })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user!.id;
+      const { isAppConfirmedStepWithinLimitEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (
+        !ctx.features.appBlocks ||
+        !(await isAppConfirmedStepWithinLimitEnabled({ user: ctx.user }))
+      ) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'This is not available' });
+      }
+      if (input.maxJobBuzz > BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'above the per-job maximum' });
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.status !== 'approved') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
+      }
+      const { optInConfirmWithinLimit, recordConsentLimitChange } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      const optedIn = await optInConfirmWithinLimit({
+        userId,
+        appBlockId: input.appBlockId,
+        maxJob: input.maxJobBuzz,
+        newLimit: input.buzzBudgetPerDay,
+      });
+      if (!optedIn) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Your limit for this app changed. Close this and try again.',
+        });
+      }
+      if (input.buzzBudgetPerDay !== undefined) {
+        await recordConsentLimitChange({
+          userId,
+          appBlockId: input.appBlockId,
+          previousLimit: null,
+          limit: optedIn.limit,
+        });
+      }
+      return { limit: optedIn.limit };
+    }),
+
+  /**
+   * The viewer's opt-in for one app on /apps/activity, with today's spend against the limit it
+   * runs within; `null` when not opted in. Not flag-gated, so an opt-in kept through a flag
+   * rollback stays visible and can be turned off.
+   */
+  getMyConfirmWithinLimit: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const { readConfirmWithinLimit, readConsentDailyLimit } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      const maxJob = await readConfirmWithinLimit(ctx.user!.id, input.appBlockId, 'read');
+      if (maxJob == null) return null;
+      const limit = await readConsentDailyLimit(ctx.user!.id, input.appBlockId, 0);
+      if (!limit) return null;
+      return { maxJob, limit: limit.limit, spentToday: limit.spentToday };
+    }),
+
+  /**
+   * Turns the opt-in off: from the next job on, every above-budget job asks again. Not gated on
+   * any flag, so a viewer can always undo it.
+   */
+  optOutConfirmWithinLimit: protectedProcedure
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const { optOutConfirmWithinLimit } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      await optOutConfirmWithinLimit(ctx.user!.id, input.appBlockId);
+      return { ok: true as const };
     }),
 
   /**
@@ -4173,6 +4309,7 @@ export const blocksRouter = router({
    * is set, and the new value is higher (`raiseConsentDailyLimit`).
    */
   raiseAppDailyLimit: protectedProcedure
+    .meta({ blockApiKeys: true })
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -6490,9 +6627,10 @@ export const blocksRouter = router({
    * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
    *
    * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
-   * runtime flag. Then `app-block-source-scanned-rows` must be on (FORBIDDEN otherwise), read as
-   * the generation gate reads it. Identity comes from the token, never the body; the url is the only thing the
-   * caller supplies, and the service accepts only a consumer blob on a trusted orchestrator host.
+   * runtime flag. Then `app-block-source-scanned-rows` must be on for the token's app (FORBIDDEN
+   * otherwise), read as the generation gate reads it (`appUsesScannedSourceRows`). Identity comes
+   * from the token, never the body; the url is the only thing the caller supplies, and the service
+   * accepts only a consumer blob on a trusted orchestrator host.
    *
    * BOUNDS: the per-user 60/h `rateLimit` (keyed on this path), then
    * `withUploadedGenerationSourceBounds`: an in-flight pool and an hourly bucket of its own, the
@@ -6527,9 +6665,8 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
-      // Only while the gate refuses blobs: the same flag, read the same way (global, no entity).
-      const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
-      if (!(await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS))) {
+      // Only while the gate refuses this app's blobs: the gate's own read, for the token's app.
+      if (!(await appUsesScannedSourceRows(claims.appBlockId))) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'picked generation sources are not enabled',
@@ -6539,7 +6676,12 @@ export const blocksRouter = router({
         const { persistUploadedGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
         );
-        return persistUploadedGenerationSource({ userId, appId: claims.appId, url: input.url });
+        return persistUploadedGenerationSource({
+          userId,
+          appId: claims.appId,
+          appBlockId: claims.appBlockId,
+          url: input.url,
+        });
       });
     }),
 
@@ -7442,6 +7584,19 @@ export const blocksRouter = router({
     }),
 
   /**
+   * The host's consent to a step quote for a viewer who opted in to running this app's jobs
+   * without asking (`previewQuoteGrant` reported `standing: true`). Any error means: draw the
+   * per-job confirm. A server without this procedure answers NOT_FOUND, which hosts treat the
+   * same way.
+   */
+  consentQuoteGrantStanding: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(blockStepQuoteStandingConsentInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      return consentQuoteGrantStandingFor(ctx, ctx.user.id, input);
+    }),
+
+  /**
    * ── OUTPUT UNLOCK: the host's own dialog for one restricted workflow output. ──
    *
    * `previewOutputUnlock` says what the host may offer for the output at `position`, judged
@@ -8127,6 +8282,7 @@ export const blocksRouter = router({
         preflight = await createBlockTextToImageStep({
           input: generateInput,
           user,
+          appBlockId: claims.appBlockId,
           whatIf: true,
         });
       } catch (error) {
@@ -8595,6 +8751,7 @@ export const blocksRouter = router({
           await createBlockTextToImageStep({
             input: generateInput,
             user,
+            appBlockId: claims.appBlockId,
             isGreen,
           });
         const submitted = await submitWorkflow({
@@ -10870,6 +11027,7 @@ async function estimateBlockWorkflowCell(
     built = await createBlockTextToImageStep({
       input: generateInput,
       user,
+      appBlockId: claims.appBlockId,
       whatIf: true,
     });
   } catch (error) {
@@ -15081,6 +15239,7 @@ async function previewQuoteGrantFor(
       ...shared,
       stepType: String(quote.stepType),
       fundingOrder: confirmedStepFundingOrder(claims, quote.accountType),
+      ...(await previewStandingConsent(claims, auth, quote.total, limit)),
     };
   }
   return {
@@ -15137,6 +15296,119 @@ async function consentQuoteGrantFor(
       code: 'NOT_FOUND',
       message: `${QUOTED_GRANT_COPY[kind].quoteNoun} quote not found or expired`,
     });
+  }
+  return { quoteId: updated.quoteId, total: updated.total, consented: true as const };
+}
+
+/**
+ * `standing`: may this job run without a prompt; `standingOffer`: should the confirm offer the
+ * opt-in. Both false on any error (the host draws the per-job confirm). A private run never
+ * qualifies: its spend has no daily-limit reservation.
+ */
+async function previewStandingConsent(
+  claims: BlockClaims,
+  auth: QuotedGrantAuth,
+  total: number,
+  limit: { exceeds: boolean } | null
+): Promise<{ standing: boolean; standingOffer: boolean }> {
+  const none = { standing: false, standingOffer: false };
+  if (claims.privateRun === true || total > BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB) return none;
+  try {
+    const { isAppConfirmedStepWithinLimitEnabled } = await import(
+      '~/server/services/app-blocks-flag'
+    );
+    if (!(await isAppConfirmedStepWithinLimitEnabled({ user: auth.user }))) return none;
+    const { readConfirmWithinLimit, resolveConsentSpendPosture } = await import(
+      '~/server/services/blocks/scope-grant.service'
+    );
+    const maxJob = await readConfirmWithinLimit(auth.userId, claims.appBlockId, 'read');
+    if (maxJob != null && total <= maxJob) {
+      return { standing: limit != null && !limit.exceeds, standingOffer: false };
+    }
+    if (limit) return { standing: false, standingOffer: !limit.exceeds };
+    const posture = await resolveConsentSpendPosture({
+      userId: auth.userId,
+      appBlockId: claims.appBlockId,
+      db: 'read',
+    });
+    return { standing: false, standingOffer: posture.kind === 'no-budget' };
+  } catch {
+    return none;
+  }
+}
+
+/**
+ * Records a STANDING consent to one step quote: no click, because the viewer opted in for this
+ * app and the job fits what is left of their daily limit. Session only, like the click. Every
+ * condition the preview reported is checked again here on the primary, then one burst slot is
+ * taken; any refusal tells the host to draw the per-job confirm instead.
+ */
+async function consentQuoteGrantStandingFor(
+  ctx: Context,
+  sessionUserId: number,
+  input: { blockToken: string; quoteId: string }
+) {
+  const { claims, auth } = await authorizeQuotedGrantConsentRequest(
+    'step',
+    input.blockToken,
+    ctx,
+    sessionUserId
+  );
+  const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rate.allowed) {
+    recordBridgeRateLimitRefusal(
+      'consentQuoteGrantStanding',
+      'catalog',
+      claims,
+      rate.retryAfterSeconds
+    );
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Rate limit exceeded, please retry shortly.',
+    });
+  }
+  const refuse = (message: string): never => {
+    throw new TRPCError({ code: 'FORBIDDEN', message });
+  };
+  if (claims.privateRun === true) refuse('a private run asks for each job');
+  const { isAppConfirmedStepWithinLimitEnabled } = await import(
+    '~/server/services/app-blocks-flag'
+  );
+  if (!(await isAppConfirmedStepWithinLimitEnabled({ user: auth.user }))) {
+    refuse('running jobs without asking is not enabled');
+  }
+  const binding = {
+    userId: auth.userId,
+    appBlockId: claims.appBlockId,
+    blockInstanceId: claims.blockInstanceId,
+  };
+  const [{ readStepQuote, recordStepQuoteStandingConsent }, scopeGrant, rateLimit] =
+    await Promise.all([
+      import('~/server/services/blocks/block-quote-grant.service'),
+      import('~/server/services/blocks/scope-grant.service'),
+      import('~/server/utils/block-catalog-rate-limit'),
+    ]);
+  const quote = await readStepQuote(input.quoteId, binding);
+  if (!quote) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'step quote not found or expired' });
+  }
+  if (quote.total > BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB)
+    refuse('this job is above the per-job maximum');
+  const maxJob = await scopeGrant.readConfirmWithinLimit(auth.userId, claims.appBlockId);
+  if (maxJob == null) refuse("you have not chosen to run this app's jobs without asking");
+  if (quote.total > maxJob!)
+    refuse('this job costs more than the jobs you chose to run without asking');
+  const limit = await scopeGrant.readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);
+  if (!limit || limit.exceeds) refuse('this job does not fit what is left of your daily limit');
+  if (!(await rateLimit.claimBlockStandingConsentSlot(auth.userId, claims.appBlockId))) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'too many jobs without asking in the last minute',
+    });
+  }
+  const updated = await recordStepQuoteStandingConsent(input.quoteId, binding, sessionUserId);
+  if (!updated) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'step quote not found or expired' });
   }
   return { quoteId: updated.quoteId, total: updated.total, consented: true as const };
 }
@@ -15280,11 +15552,15 @@ type QuotedGrantSubmitArm = {
     auth: QuotedGrantAuth,
     quoteId: string
   ) => Promise<{ externalId: string; onDefiniteSubmit: () => Promise<void> }>;
-  /** THE money gate: the per-job ceiling for this claimed quote, or the refusal. */
+  /**
+   * THE money gate: the per-job ceiling for this claimed quote, or the refusal. `standing`: the
+   * quote was consented by the viewer's opt-in, which holds only if the reservation has a
+   * daily-limit leg.
+   */
   ceiling: (
     quote: BlockQuoteGrantRecord,
     userId: number
-  ) => { ceiling: number } | { refusal: TRPCError };
+  ) => { ceiling: number; standing?: boolean } | { refusal: TRPCError };
   /** Resolve the step to quote and submit (and run the kind's own admission checks). */
   plan: (auth: QuotedGrantAuth, quote: BlockQuoteGrantRecord) => Promise<QuotedGrantSubmitPlan>;
 };
@@ -15349,6 +15625,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
   // Everything before a reservation. Any refusal releases the claim.
   let jobBuzz: number;
   let confirmedTotal: number;
+  let standing = false;
   let plan: QuotedGrantSubmitPlan;
   let token: string;
   try {
@@ -15365,6 +15642,17 @@ async function submitConfirmedQuoteWorkflow(opts: {
     // than a shadowed second copy.
     const grant = arm.ceiling(quote, userId);
     if ('refusal' in grant) throw grant.refusal;
+    standing = grant.standing === true;
+    // The burst bound on jobs that run without a confirm is taken HERE, when the job runs: a
+    // quote can be submitted long after its standing consent, so a slot taken at consent alone
+    // would let earlier-consented quotes be bunched. After the quote claim, so the slot is spent
+    // on a real attempt; fails closed (a store error refuses), and the quote is used up.
+    if (standing && !(await claimBlockStandingSubmitSlot(userId, claims.appBlockId))) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: 'too many jobs without asking in the last minute',
+      });
+    }
     if (quote.bodyHash !== (await arm.bodyHash())) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -15461,6 +15749,13 @@ async function submitConfirmedQuoteWorkflow(opts: {
         errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
+  }
+  // A standing consent is bounded by the viewer's daily limit; with no limit leg (the limit was
+  // removed since) nothing bounds it, so it is refused like an unconfirmed quote.
+  if (standing && !reservation.consent) {
+    await refundBlockBuzzReservation(reservation, jobBuzz);
+    await releaseGenIdempotency(genClaimKey);
+    throw new TRPCError({ code: 'FORBIDDEN', message: copy.notConfirmed });
   }
 
   // Per-app aggregate (daily Buzz + velocity). `claims.dev` is refused by the gate, so
@@ -15629,6 +15924,9 @@ async function submitConfirmedQuoteWorkflow(opts: {
     });
   }
 
+  if (arm.kind === 'step') {
+    recordConfirmedStepSubmit(submitFailureAppBlockLabel(claims), standing ? 'standing' : 'click');
+  }
   const genResult = { snapshot };
   await finalizeGenIdempotency(genClaimKey, genResult);
   // Only a DEFINITE submit advances the run identity; an ambiguous failure (above) does not.
@@ -15685,6 +15983,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
           step: plan.invocation.step,
           variant: plan.invocation.variant,
           ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+          ...(arm.kind === 'step' ? { consentKind: standing ? 'standing' : 'click' } : {}),
         },
         dev: claims.dev === true,
         privateRun: claims.privateRun === true,
@@ -15932,8 +16231,9 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
   body: PassThroughStepBody & { quoteId: string };
 }) {
   const { ctx, claims, body } = opts;
-  // Set by the preflight, read by the plan.
   let capOutput = false;
+  // Read again at submit so switching the opt-in off reaches the next job.
+  let standingMaxJob: number | null = null;
   return submitConfirmedQuoteWorkflow({
     ctx,
     claims,
@@ -15948,7 +16248,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       logFields: { stepType: body.$type },
       // Before anything that costs something: the platform denylist (the same rule as
       // the unconfirmed arm), then no training `$type` through this door, then the prompt gate.
-      preflight: async ({ userId }) => {
+      preflight: async ({ userId, user }) => {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
         const { isGreen } = resolveBlockMaturity(claims);
@@ -15958,16 +16258,35 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
         });
         await assertBlockTrainingModelsAllowed([body]);
         capOutput = (await checkAppStepResources(body.input)).capOutput;
+        const { isAppConfirmedStepWithinLimitEnabled } = await import(
+          '~/server/services/app-blocks-flag'
+        );
+        if (await isAppConfirmedStepWithinLimitEnabled({ user })) {
+          const { readConfirmWithinLimit } = await import(
+            '~/server/services/blocks/scope-grant.service'
+          );
+          standingMaxJob = await readConfirmWithinLimit(userId, claims.appBlockId);
+        }
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
         onDefiniteSubmit: async () => undefined,
       }),
       ceiling: (quote, userId) => {
-        const grant = blockConfirmedStepCeiling(claims, quote, userId);
+        // The shared grant check knows only a click; a standing consent stands in for one here.
+        const standing =
+          standingMaxJob != null &&
+          quote.total <= standingMaxJob &&
+          quote.consentedBy == null &&
+          quote.standingConsentBy === userId;
+        const grant = blockConfirmedStepCeiling(
+          claims,
+          standing ? { ...quote, consentedBy: userId } : quote,
+          userId
+        );
         return 'refusal' in grant
           ? { refusal: confirmedStepCeilingRefusal(grant.refusal) }
-          : { ceiling: grant.ceiling };
+          : { ceiling: grant.ceiling, standing };
       },
       plan: async () => {
         const step = buildPassThroughOrchestratorStep(body);

@@ -5,6 +5,7 @@ import { chunk } from 'lodash-es';
 import { Tracker } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import { handleUnblockImages } from '~/server/services/image.service';
+import { BlockedReason } from '~/server/common/enums';
 import { WebhookEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 
@@ -21,12 +22,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     const { imageIds, userId, batchSize, force } = schema.parse(req.body);
 
-    const images = await dbRead.image.findMany({
+    const found = await dbRead.image.findMany({
       where: { id: { in: imageIds } },
       select: {
         nsfwLevel: true,
         userId: true,
         id: true,
+        blockedFor: true,
         tags: {
           select: {
             tag: {
@@ -39,9 +41,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       },
     });
 
+    // Not restored here: a CSAM block is lifted only through the moderator CSAM review.
+    const skipped = found.filter((x) => x.blockedFor === BlockedReason.CSAM).map((x) => x.id);
+    const images = found.filter((x) => x.blockedFor !== BlockedReason.CSAM);
     const imageIdsToUpdate = images.map((x) => x.id);
     if (imageIdsToUpdate.length === 0) {
-      return res.status(200).json({ images: 0 });
+      return res.status(200).json({ images: 0, skipped });
     }
 
     const imageChunks = chunk(imageIdsToUpdate, batchSize); // Process images in chunks
@@ -73,6 +78,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({
       images: images.length,
+      skipped,
     });
   } catch (e) {
     return handleEndpointError(res, e);

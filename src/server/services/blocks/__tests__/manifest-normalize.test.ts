@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalIframeSrc, stampCanonicalIframeSrc } from '../manifest-normalize';
+import {
+  canonicalIframeSrc,
+  stampCanonicalIframeSrc,
+  trimManifestStringFields,
+} from '../manifest-normalize';
 
 describe('manifest-normalize', () => {
   describe('canonicalIframeSrc', () => {
@@ -48,6 +52,45 @@ describe('manifest-normalize', () => {
       const m: Record<string, unknown> = {};
       stampCanonicalIframeSrc(m, 'who-am-i', 'apps.example.test');
       expect((m.iframe as any).src).toBe('https://who-am-i.apps.example.test/');
+    });
+  });
+
+  describe('trimManifestStringFields', () => {
+    const TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
+    const REPO = 'https://github.com/example-org/example-app';
+
+    it('trims tagline and repository on both ends', () => {
+      const m: Record<string, unknown> = {
+        tagline: ` \t\n${' '.repeat(400)}${TAGLINE}${' '.repeat(400)}\n\t `,
+        repository: `\n  ${REPO}  \t`,
+      };
+      trimManifestStringFields(m);
+      expect(TAGLINE).toHaveLength(140);
+      expect(m.tagline).toBe(TAGLINE);
+      expect(m.repository).toBe(REPO);
+    });
+
+    it('leaves other string fields, non-string values and absent keys alone', () => {
+      const m: Record<string, unknown> = {
+        name: '  Padded Name  ',
+        description: '  padded description  ',
+        bugs: '  https://github.com/example-org/example-app/issues  ',
+        tagline: 42,
+      };
+      trimManifestStringFields(m);
+      expect(m).toEqual({
+        name: '  Padded Name  ',
+        description: '  padded description  ',
+        bugs: '  https://github.com/example-org/example-app/issues  ',
+        tagline: 42,
+      });
+      expect('repository' in m).toBe(false);
+    });
+
+    it('mutates and returns the same manifest object', () => {
+      const m: Record<string, unknown> = { tagline: ' x ' };
+      expect(trimManifestStringFields(m)).toBe(m);
+      expect(m.tagline).toBe('x');
     });
   });
 });

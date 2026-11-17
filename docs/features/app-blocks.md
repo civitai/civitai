@@ -236,7 +236,7 @@ fine-grained tool for ops.
 Several capabilities also have their own fail-closed flag, independent of
 `app-blocks-enabled`, that ships OFF with no moderator floor (an absent flag is
 off for everyone): `app-blocks-post-creation` (`posts:write:self`),
-`app-blocks-training-kind`, `app-blocks-confirmed-step` and
+`app-blocks-training-kind`, `app-blocks-confirmed-step`, `app-confirmed-step-within-limit` and
 `app-blocks-app-reactions` (`social:react:self`; off refuses both reaction
 procedures at once). See `src/server/services/app-blocks-flag.ts`.
 
@@ -1035,6 +1035,28 @@ same page host, so the owner sees the same confirm.
    default) is unaffected. On an owner's private run the submit reserves against the
    private-run cap instead of the daily counters, so there the host's check before the
    confirm is the only daily-limit check.
+
+4. **"Don't ask me each job" (opt-in, per app).** Behind `app-confirmed-step-within-limit`
+   (off by default). The confirm offers an unchecked checkbox. A viewer with a daily limit for
+   the app ticks it as is; a viewer with none sets a limit in the same step (suggested
+   `max(1,000, the job's price)`, never below the job's price). The price of the job on screen
+   becomes the highest price that may run unasked. After that, `blocks.previewQuoteGrant`
+   returns `standing: true` when the flag is on, the job costs no more than that ceiling, it
+   fits what is left of the limit today, and it is not a private run. The host then shows no
+   dialog. It calls `blocks.consentQuoteGrantStanding` (session only), which checks every
+   condition again on the primary and takes a slot from a per-(viewer, app) burst bound of 5
+   per 60 seconds. That bound fails closed when its store is unreachable. Any error from that
+   call, including NOT_FOUND from an older server, makes the host draw the confirm instead. The
+   submit accepts such a quote only with the flag on, the opt-in still in place at that price,
+   a daily-limit reservation to bound it, and a slot from a second bucket of the same size
+   taken at submit: a consented quote can be submitted later, so only the submit-time slot
+   bounds how many jobs run in a minute. A pricier job asks again, and ticking the box on
+   it raises the ceiling to its price. Re-consenting to spending, any limit change on
+   `/apps/activity`, revoking spending, or "Ask me each job" there turns the opt-in off.
+   Raising the limit from the raise dialog keeps it; that dialog then says "Jobs up to N Buzz
+   that fit within the new limit will run without asking." Each submit records `consentKind: 'click' |
+   'standing'` on its audit row, and `civitai_app_block_confirmed_step_submit_total{app_block_id,consent}`
+   counts both. The per-app aggregate cap and velocity limit still apply.
 
 A quote is single-use, bound to the viewer, app, install and exact body, expires after 15
 minutes, and is re-priced at submit; a higher re-price, or one that is no longer fixed, is

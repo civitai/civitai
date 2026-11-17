@@ -225,6 +225,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
     items,
     index,
     navigate: navigateTo,
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   const handleSettle = (settledIndex: number) => {
@@ -542,7 +543,11 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                     <IconShare3 {...sharedIconProps} />
                                   </LegacyActionIcon>
                                 </ShareButton>
-                                <TextSlideMenu postId={text.postId}>
+                                <TextSlideMenu
+                                  postId={text.postId}
+                                  textId={text.id}
+                                  authorId={textPost?.user.id}
+                                >
                                   <LegacyActionIcon {...sharedActionIconProps}>
                                     <IconDotsVertical {...sharedIconProps} />
                                   </LegacyActionIcon>
