@@ -143,27 +143,19 @@ func TestShadowRESTResponseIsUncompared(t *testing.T) {
 
 func TestExpectedResponseDiff(t *testing.T) {
 	cc := shadow.Diff{Category: "header:cache-control", Kind: "value"}
-	pub := map[string]string{"cache-control": "Public, max-age=60, s-maxage=60, stale-while-revalidate=30"}
-	priv := map[string]string{"cache-control": "max-age=0, private, no-cache"}
 	for _, c := range []struct {
-		name     string
-		endpoint string
-		d        shadow.Diff
-		ttl      *trpc.CacheTTL
-		node     map[string]string
-		want     bool
+		name string
+		d    shadow.Diff
+		want bool
 	}{
-		{"update required only from node", EndpointAsPosts, shadow.Diff{Category: "header:x-update-required", Kind: "missing-in-go"}, nil, nil, true},
-		{"update required only from go", EndpointAsPosts, shadow.Diff{Category: "header:x-update-required", Kind: "missing-in-node"}, nil, nil, false},
-		{"model-getall signed out: node public, go private", EndpointModelGetAll, cc, nil, pub, true},
-		{"model-getall: node private, go public", EndpointModelGetAll, cc, &trpc.SignedOutTTL, priv, false},
-		{"model-getall: go has a ttl", EndpointModelGetAll, cc, &trpc.SignedOutTTL, pub, false},
-		{"model-getall: node private differs", EndpointModelGetAll, cc, nil, priv, false},
-		{"as-posts cache-control is never expected", EndpointAsPosts, cc, nil, pub, false},
-		{"infinite cache-control is never expected", EndpointInfinite, cc, nil, pub, false},
-		{"a cache-tag is never expected", EndpointModelGetAll, shadow.Diff{Category: "header:cache-tag", Kind: "missing-in-go"}, nil, pub, false},
+		{"update required only from node", shadow.Diff{Category: "header:x-update-required", Kind: "missing-in-go"}, true},
+		{"update required only from go", shadow.Diff{Category: "header:x-update-required", Kind: "missing-in-node"}, false},
+		// Every tRPC compute (model.getAll's included) records the signed-out TTL when there is no
+		// session: a cache-control difference is a real one on every endpoint.
+		{"cache-control is never expected", cc, false},
+		{"a cache-tag is never expected", shadow.Diff{Category: "header:cache-tag", Kind: "missing-in-go"}, false},
 	} {
-		if got := expectedResponseDiff(c.endpoint, c.d, c.ttl, c.node); got != c.want {
+		if got := expectedResponseDiff(c.d); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}

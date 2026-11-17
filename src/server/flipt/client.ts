@@ -607,6 +607,10 @@ export enum FLIPT_FEATURE_FLAGS {
   GENERATION_INPUT_REFUSE_EXTERNAL_HOSTS = 'generation-input-refuse-external-hosts',
   // On: App Blocks generation sources must be scanned Image rows, so orchestrator blob urls from
   // apps are refused. Off (and unknown or unreachable): blob urls are accepted as before.
+  // EVALUATED PER APP like `app-blocks-storage-publish` (entityId = the app block id, NO context):
+  // ramp it with an ENTITY_ID segment of app block ids. Read ONLY through
+  // `appUsesScannedSourceRows` (`services/blocks/source-scanned-rows.ts`), so the host's picker,
+  // the copy and the generation gate answer the same for one app.
   APP_BLOCK_SOURCE_SCANNED_ROWS = 'app-block-source-scanned-rows',
   // On: App Blocks generation inputs on an external host are refused. Off (and unknown or
   // unreachable): they are allowed and each one is logged as `app-block-source-refusal`.

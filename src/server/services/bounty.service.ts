@@ -642,6 +642,7 @@ export const updateBountyById = async ({
   isModerator,
   addLockedProperties,
   blurbUses,
+  shownImageIds,
   ...data
 }: UpdateBountyInput & {
   userId: number;
@@ -800,6 +801,7 @@ export const updateBountyById = async ({
           entityType: 'Bounty',
           userId,
           keysCheckedFor,
+          shownImageIds,
         });
       }
 

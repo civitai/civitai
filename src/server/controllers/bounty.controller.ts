@@ -137,8 +137,7 @@ export const getInfiniteBountiesHandler = async ({
                   ? NsfwLevel.XXX
                   : Math.max(image.nsfwLefel, flagLevel),
             })),
-            ctx,
-            { ownerId: user?.id }
+            ctx
           );
           // if there are no images, we don't want to show the bounty
           if (!itemImages.length || !user) return null;
@@ -240,8 +239,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
               ...image,
               nsfwLevel: Math.max(image.nsfwLevel, ratedFlagLevel) as NsfwLevel,
             })),
-        ctx,
-        { ownerId: bounty.user?.id }
+        ctx
       ).map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,
@@ -345,8 +343,7 @@ export const getBountyEntriesHandler = async ({
             user,
             images: capNestedImages(
               images.filter((i) => i.entityId === entry.id && showsImage(i)),
-              ctx,
-              { ownerId: user.id }
+              ctx
             ).map((i) => ({
               ...i,
               tagIds: i.tags?.map((x) => x.id),

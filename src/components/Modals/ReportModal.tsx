@@ -65,6 +65,7 @@ const reports = [
       ReportEntity.Crucible,
       ReportEntity.Storyline,
       ReportEntity.ServiceOffering,
+      ReportEntity.PostText,
     ],
   },
   {
@@ -91,6 +92,7 @@ const reports = [
       ReportEntity.Crucible,
       ReportEntity.Storyline,
       ReportEntity.ServiceOffering,
+      ReportEntity.PostText,
     ],
   },
   {
@@ -118,6 +120,7 @@ const reports = [
       ReportEntity.Crucible,
       ReportEntity.Storyline,
       ReportEntity.ServiceOffering,
+      ReportEntity.PostText,
     ],
   },
   {
@@ -177,6 +180,7 @@ const reports = [
       ReportEntity.Crucible,
       ReportEntity.Storyline,
       ReportEntity.ServiceOffering,
+      ReportEntity.PostText,
     ],
   },
 ];

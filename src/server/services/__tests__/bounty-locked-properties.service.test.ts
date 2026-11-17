@@ -374,6 +374,33 @@ describe('updateBountyById on real rows: the stored level after an nsfw toggle',
   });
 });
 
+describe('upsertBounty — images the edit form was not shown', () => {
+  const upsert = (input: Record<string, unknown>) =>
+    upsertBounty({
+      isModerator: false,
+      ...baseUpdate,
+      startsAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      ...input,
+    } as never);
+
+  it('passes the ids the form was shown through to the image links', async () => {
+    await upsert({
+      images: [{ id: 1, url: '00000000-0000-4000-8000-000000000000' }],
+      shownImageIds: [1, 2],
+    });
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({
+      shownImageIds: [1, 2],
+    });
+  });
+
+  // Every image hidden by the domain's cap: the form shows none and must still save a name edit.
+  it('saves an edit whose form was shown no image', async () => {
+    await upsert({ name: 'Renamed', images: [], shownImageIds: [] });
+    expect(vi.mocked(updateEntityImages).mock.calls[0][0]).toMatchObject({ images: [] });
+  });
+});
+
 describe('upsertBounty — profanity filter vs stored locks', () => {
   // upsertBounty re-parses through updateBountyInputSchema, which requires at least one
   // image and an expiry in the future.
@@ -610,6 +637,11 @@ describe('upsertBounty — create path', () => {
 
   const chargedAccountTypes = () =>
     mockBuzzTransaction.mock.calls.at(-1)?.[0]?.fromAccountTypes ?? [];
+
+  it('refuses a new bounty with no image', async () => {
+    await expect(create({ images: [] })).rejects.toThrow(/At least one example image/);
+    expect(mockDbWrite.bounty.create).not.toHaveBeenCalled();
+  });
 
   it('checks the image upload keys before opening the transaction', async () => {
     await create();
