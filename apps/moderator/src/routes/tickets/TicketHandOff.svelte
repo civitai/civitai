@@ -15,7 +15,6 @@
   }: {
     ticketId: string;
     canEscalate: boolean;
-    /** The privacy route has its own grant and ships dark: without it the button is not shown at all. */
     canPrivacy: boolean;
     ondone: (what: string, data: Record<string, unknown> | undefined, status: number | null) => void;
   } = $props();

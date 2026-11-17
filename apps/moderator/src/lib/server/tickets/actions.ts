@@ -196,7 +196,6 @@ export function ticketActions(view: TicketView): Actions {
             );
           }),
 
-          // Ships dark behind its own grant.
           privacy: requiresGrant('tickets.privacy', async ({ request, locals }) => {
             if (!locals.grants['tickets.escalate'] || !locals.grants['tickets.reply'])
               return fail(403, {

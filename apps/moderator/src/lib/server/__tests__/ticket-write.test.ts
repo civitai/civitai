@@ -262,6 +262,16 @@ describe('fileBug', () => {
     expect(deps.status).not.toHaveBeenCalled();
   });
 
+  it('warns when the report was saved but did not reach HQ, so the moderator is not told it is queued', async () => {
+    const res = await setup({
+      fileBug: { status: 'ok', feedbackId: 41, hqUrl: null },
+    }).writer.fileBug('9', 'x', mod);
+    expect(res).toMatchObject({ ok: true, feedbackId: 41 });
+    expect((res as { warning?: string }).warning).toContain(
+      'Bug report #41 was saved, but it did NOT reach the dev queue in HQ'
+    );
+  });
+
   it('separates a certain refusal from a lost response', async () => {
     const no = await setup({
       fileBug: { status: 'error', message: 'forbidden', certain: true },

@@ -197,19 +197,25 @@ export function createTicketWriter(deps: WriteDeps) {
         ...(filed.hqUrl ? [`HQ: ${filed.hqUrl}`] : []),
       ];
       const noteError = await attribute(ticketId, lines);
+      const warnings: string[] = [];
+      // The HQ filing is what puts the report in the dev queue; it can be capped or down.
+      if (!filed.hqUrl)
+        warnings.push(
+          `Bug report #${filed.feedbackId} was saved, but it did NOT reach the dev queue in HQ — ask a developer to file it there.`
+        );
+      if (noteError)
+        warnings.push(
+          `Bug report #${
+            filed.feedbackId
+          } was filed, but the ticket note failed (${noteError}) — add "${lines.join(
+            ' '
+          )}" to the ticket by hand.`
+        );
       return {
         ok: true,
         statusChanged: false,
         feedbackId: filed.feedbackId,
-        ...(noteError
-          ? {
-              warning: `Bug report #${
-                filed.feedbackId
-              } was filed, but the ticket note failed (${noteError}) — add "${lines.join(
-                ' '
-              )}" to the ticket by hand.`,
-            }
-          : {}),
+        ...(warnings.length ? { warning: warnings.join(' ') } : {}),
       };
     },
 
@@ -252,7 +258,7 @@ export function createTicketWriter(deps: WriteDeps) {
         return failure(
           res,
           'The ticket was NOT sent to Legal',
-          'The ticket may or may not have been sent to Legal'
+          `The ticket may or may not have been sent to Legal. If it now carries the ${PRIVACY_REQUEST_TAG} tag, Legal has it and the acknowledgment still needs sending by hand`
         );
       }
       await deps.record(moderator.id, ticketNumber(ticketId), 'ticketPrivacy');
