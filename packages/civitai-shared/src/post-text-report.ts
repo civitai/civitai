@@ -1,7 +1,7 @@
 /**
  * The TOS violation a storyline text report names when it is about the sexualization of a minor.
- * Equal to the entry in the main app's `TOS_VIOLATIONS`; `post-text-report.test.ts` holds the two
- * together.
+ * Equal to the entry in the main app's `TOS_VIOLATIONS`; `src/server/__tests__/report-post-text.test.ts`
+ * holds the two together.
  */
 export const MINOR_SEXUALIZATION_VIOLATION = 'Child abuse and exploitation';
 
