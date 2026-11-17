@@ -25,6 +25,7 @@ const image = (id: number, nsfwLevel: number, needsReview: string | null = null)
   nsfwLevel,
   ingestion: 'Scanned',
   needsReview,
+  modelRestricted: false,
   meta: null,
   tags: [],
 });
@@ -94,6 +95,21 @@ describe('articles search index', () => {
       articles: [article({ coverImage: restricted(10), bannerImage: null, cover: 'key-10' })],
       cosmetics: {},
     });
+    expect(record).toHaveProperty('cover', null);
+  });
+
+  it('🔴 indexes an article without a cover restricted by its base model, nor its banner, or its legacy key', async () => {
+    const [record] = await recordsOf({
+      articles: [
+        article({
+          coverImage: { ...image(10, 4), modelRestricted: true },
+          bannerImage: image(11, 1),
+          cover: 'key-10',
+        }),
+      ],
+      cosmetics: {},
+    });
+    expect(record?.coverImage).toBeUndefined();
     expect(record).toHaveProperty('cover', null);
   });
 

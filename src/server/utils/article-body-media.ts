@@ -1,3 +1,5 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import sanitize from 'sanitize-html';
 import { isMinorMatureImage } from '~/server/common/image-visibility';
 import { keysIn } from '~/server/services/image-url-ownership';
@@ -5,15 +7,12 @@ import { servableArticleImage } from '~/shared/utils/article-card-image';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { extractCloudflareUuid } from '~/utils/article-helpers';
 
-export type ArticleBodyImageState = {
-  url: string;
-  nsfwLevel: number;
-  ingestion: string;
-  needsReview: string | null;
-  tosViolation: boolean;
-};
+export type ArticleBodyImageState = Pick<
+  Selectable<DB['Image']>,
+  'url' | 'nsfwLevel' | 'ingestion' | 'needsReview' | 'tosViolation' | 'modelRestricted'
+>;
 
-/** Scanned, not awaiting review and not a violation. */
+/** Scanned, rated, not awaiting review, not a violation and not restricted by its base model. */
 const isClearedBodyImage = (image: ArticleBodyImageState) =>
   servableArticleImage(image) !== null && !image.tosViolation;
 

@@ -468,11 +468,26 @@ That holds even when the app's deploy runs ahead of this service's.
   parity gap.
 - **Allowed without being schema keys:** for tRPC, `authed` (added by `authedCacheBypassLink` to every
   object input when signed in) and `direction` (added by an infinite query). The site client sends
-  both and zod strips both. For REST, `token` (the API key, which then falls back as `bearer-token`).
-  The web client builds each input from the filter stores, whose keys are all schema keys. Every
+  both and zod strips both. For `image.getInfinite` only, also `view`, `section`, `query` and
+  `similarTo` (`strippedURLKeys`): the keys of `imagesQueryParamSchema`, the images feeds' URL query,
+  that `getInfiniteImagesSchema` lacks. The site merges that query into the filter-store input, so
+  they arrive and zod strips them (the exception below). For REST, `token` (the API key, which then
+  falls back as `bearer-token`). Every other input key the web client sends is a schema key. Every
   query key seen on `/api/v1/images` is a schema key except a small tail of hand-written requests,
   which now fall back. Before this, `/api/v1/images` kept an unknown key in `nextPage` and answered;
   `nextPageURL` still does so for every key of the query.
+- **Exception: the stripped URL keys.** `view`, `section`, `query` and `similarTo` are
+  `imagesQueryParamSchema` URL keys that `getInfiniteImagesSchema` lacks, so zod strips them, and
+  `image.getInfinite` here ignores them as Node does rather than falling back. This deliberately
+  departs from the rule above that an unknown key falls back even when the app's deploy runs ahead
+  of this service's. The risk is the deploy gap: if one of the four becomes a
+  `getInfiniteImagesSchema` key and the web app deploys before feed-go, the running feed-go still
+  ignores it and answers as though it were absent. That is acceptable while `image.getInfinite` is
+  shadow-only, and must be re-checked before `image.getInfinite` serves. The guard is one-directional:
+  `TestStrippedURLKeysAreStrippedByZod` pins the list as literals and fails when
+  `getInfiniteImagesSchema` gains any of the four, which happens on the web PR that adds the key
+  (it regenerates `schemas.json`); the feed-go change that reads the key must ship first. A key
+  added to `imagesQueryParamSchema` alone is not detected and falls back as `input-unknown-key`.
 
 ## 6. How traffic reaches it
 

@@ -1,8 +1,7 @@
 import { AspectRatio, Badge, Box, Center, Checkbox, Loader } from '@mantine/core';
 import clsx from 'clsx';
-import { useCallback, useMemo } from 'react';
-import { create } from 'zustand';
-import { immer } from 'zustand/middleware/immer';
+import type { MouseEvent } from 'react';
+import { useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -15,35 +14,21 @@ import type { NormalizedStepMetadata } from '~/server/services/orchestrator';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
+import { createSelectionContext, createSelectionStore } from '~/store/createSelectionStore';
 import { isDefined } from '~/utils/type-guards';
 
 export type GeneratorImage = SelectedImage & {
   resources?: NormalizedStepMetadata['resources'];
 };
 
-type GeneratorSelectionState = {
-  selected: GeneratorImage[];
-  toggleSelected: (img: GeneratorImage) => void;
-  deselectAll: () => void;
-};
+export const generatorSelectionStore = createSelectionStore<GeneratorImage>({
+  getKey: (img) => img.url,
+  name: 'generator-media-select',
+});
 
-export const useGeneratorSelectionStore = create<GeneratorSelectionState>()(
-  immer((set) => ({
-    selected: [],
-    toggleSelected: (img) => {
-      set((state) => {
-        const idx = state.selected.findIndex((s) => s.url === img.url);
-        if (idx >= 0) state.selected.splice(idx, 1);
-        else state.selected.push({ ...img });
-      });
-    },
-    deselectAll: () => {
-      set((state) => {
-        state.selected = [];
-      });
-    },
-  }))
-);
+const generatorSelection = createSelectionContext<GeneratorImage>(generatorSelectionStore);
+export const useGeneratorSelection = generatorSelection.useSelection;
+const { useActions, useIsSelected, useRegisterOrder } = generatorSelection;
 
 export type GeneratorMediaCandidate = {
   type: 'image' | 'video' | 'audio';
@@ -53,6 +38,38 @@ export type GeneratorMediaCandidate = {
 };
 
 export type GeneratorEligibility = { eligible: boolean; reasons: string[] };
+
+type GeneratorBlob = ImageBlob | VideoBlob | AudioBlob;
+
+type PickerItem = {
+  image: GeneratorBlob;
+  selection: GeneratorImage;
+  eligibility: GeneratorEligibility;
+};
+
+function toCandidate(image: GeneratorBlob): GeneratorMediaCandidate {
+  let nsfwLevel: number | null = null;
+  if (typeof image.nsfwLevel === 'number') nsfwLevel = image.nsfwLevel;
+  else if (image.nsfwLevel)
+    nsfwLevel = orchestratorNsfwLevelMap[String(image.nsfwLevel).toLowerCase()] ?? null;
+
+  const resourceIds = (image.step.resources ?? [])
+    .map((r) => ('id' in r && typeof r.id === 'number' ? r.id : null))
+    .filter(isDefined);
+
+  return { type: image.type, nsfwLevel, resourceIds };
+}
+
+function toGeneratorImage(image: GeneratorBlob): GeneratorImage {
+  return {
+    url: image.url,
+    label: (image.step.params as { prompt?: string } | undefined)?.prompt ?? '',
+    type: image.type === 'video' ? 'video' : 'image',
+    meta: getStepMeta(image.step),
+    resources: image.step.resources,
+    generationWorkflowId: image.workflowId,
+  };
+}
 
 export function GeneratorMediaPicker({
   getEligibility,
@@ -73,15 +90,30 @@ export function GeneratorMediaPicker({
       { enabled: !!currentUser, ignoreFilters: true }
     );
 
-  const generatedMedia = useMemo(
+  const items = useMemo(
     () =>
-      data.flatMap((wf) =>
-        wf.succeededOutput.filter(
-          (x): x is ImageBlob | VideoBlob | AudioBlob =>
-            x.available && x.type !== 'model3d' && x.canUse('post')
+      data
+        .flatMap((wf) =>
+          wf.succeededOutput.filter(
+            (x): x is GeneratorBlob => x.available && x.type !== 'model3d' && x.canUse('post')
+          )
         )
-      ),
-    [data]
+        .map(
+          (image): PickerItem => ({
+            image,
+            selection: toGeneratorImage(image),
+            eligibility: getEligibility(toCandidate(image)),
+          })
+        ),
+    [data, getEligibility]
+  );
+
+  useRegisterOrder(
+    'generator-media',
+    useMemo(
+      () => items.filter((item) => item.eligibility.eligible).map((item) => item.selection),
+      [items]
+    )
   );
 
   if (isFetching && !isFetchingNextPage) {
@@ -93,18 +125,17 @@ export function GeneratorMediaPicker({
   }
 
   // Keep paging while there is more: a page can hold only outputs that can't be posted.
-  if (generatedMedia.length === 0 && !hasNextPage) {
+  if (items.length === 0 && !hasNextPage) {
     return <NoContent message="No generated images found. Create some images first!" />;
   }
 
   return (
     <Box mah={maxHeight} style={{ overflowY: 'auto' }}>
       <div className={clsx('grid gap-2 p-2', gridClassName)}>
-        {generatedMedia.map((img) => (
+        {items.map((item) => (
           <GeneratorImageCard
-            key={`${img.workflowId}_${img.stepName}_${img.id}`}
-            image={img}
-            getEligibility={getEligibility}
+            key={`${item.image.workflowId}_${item.image.stepName}_${item.image.id}`}
+            {...item}
           />
         ))}
       </div>
@@ -122,44 +153,13 @@ export function GeneratorMediaPicker({
   );
 }
 
-function GeneratorImageCard({
-  image,
-  getEligibility,
-}: {
-  image: ImageBlob | VideoBlob | AudioBlob;
-  getEligibility: (candidate: GeneratorMediaCandidate) => GeneratorEligibility;
-}) {
-  const stepParams = image.step.params;
-  const stepResources = image.step.resources;
-  const toggleSelected = useGeneratorSelectionStore((state) => state.toggleSelected);
-  const isSelected = useGeneratorSelectionStore(
-    useCallback((state) => state.selected.some((s) => s.url === image.url), [image.url])
-  );
+function GeneratorImageCard({ image, selection, eligibility }: PickerItem) {
+  const { select } = useActions();
+  const isSelected = useIsSelected(selection);
 
-  const eligibility = useMemo(() => {
-    let nsfwLevel: number | null = null;
-    if (typeof image.nsfwLevel === 'number') nsfwLevel = image.nsfwLevel;
-    else if (image.nsfwLevel)
-      nsfwLevel = orchestratorNsfwLevelMap[String(image.nsfwLevel).toLowerCase()] ?? null;
-
-    const resourceIds = (stepResources ?? [])
-      .map((r) => ('id' in r && typeof r.id === 'number' ? r.id : null))
-      .filter(isDefined);
-
-    return getEligibility({ type: image.type, nsfwLevel, resourceIds });
-  }, [getEligibility, image.nsfwLevel, image.type, stepResources]);
-
-  const handleClick = () => {
+  const handleClick = (e: MouseEvent) => {
     if (!eligibility.eligible) return;
-
-    toggleSelected({
-      url: image.url,
-      label: (stepParams as { prompt?: string } | undefined)?.prompt ?? '',
-      type: image.type === 'video' ? 'video' : 'image',
-      meta: getStepMeta(image.step),
-      resources: stepResources,
-      generationWorkflowId: image.workflowId,
-    });
+    select(selection, { shiftKey: e.shiftKey, checked: !isSelected });
   };
 
   return (

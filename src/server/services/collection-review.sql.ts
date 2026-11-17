@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
-import { imageReviewedSql, pendingOthersImageConditions } from '~/server/common/image-visibility';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  imageNotRestrictedSql,
+  imageReviewedSql,
+  pendingOthersImageConditions,
+} from '~/server/common/image-visibility';
 import { ArticleStatus, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -56,7 +59,7 @@ export const reviewQueueVisibleTargetSql = (levels: number) => Prisma.sql`(CASE
     JOIN "Post" rv_ip ON rv_ip.id = rv_i."postId"
     WHERE rv_i.id = ci."imageId"
       AND ((rv_i."nsfwLevel" & ${levels}) != 0 OR rv_i."nsfwLevel" = 0)
-      AND ((rv_i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT rv_i."modelRestricted")
+      AND ${imageNotRestrictedSql({ alias: 'rv_i' })}
       AND (rv_i."nsfwLevel" = 0 OR ${imageReviewedSql('rv_i')})
       AND rv_i."needsReview" IS NULL
       AND ((rv_i."nsfwLevel" != 0 AND NOT rv_i."acceptableMinor") OR ci."addedById" = rv_i."userId")

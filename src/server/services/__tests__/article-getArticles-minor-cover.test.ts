@@ -33,23 +33,29 @@ const row = {
   user: { id: AUTHOR, username: 'author', profilePictureId: null },
 };
 
-const coverImage = (minor: boolean) => ({
+const coverImage = (minor: boolean, modelRestricted = false) => ({
   id: COVER,
   userId: AUTHOR,
   url: 'cover-key',
   nsfwLevel: 4,
   minor,
+  modelRestricted,
   ingestion: 'Scanned',
   needsReview: null,
   tags: [],
 });
 
-const listedCover = async (minor: boolean, viewerId: number, rowOverrides = {}) => {
+const listedCover = async (
+  minor: boolean,
+  viewerId: number,
+  rowOverrides = {},
+  modelRestricted = false
+) => {
   dbMock.dbRead.$queryRaw.mockReset();
   dbMock.dbRead.$queryRaw
     .mockResolvedValueOnce([{ ...row, ...rowOverrides }])
     .mockResolvedValue([]);
-  dbMock.dbRead.image.findMany.mockResolvedValue([coverImage(minor)] as never);
+  dbMock.dbRead.image.findMany.mockResolvedValue([coverImage(minor, modelRestricted)] as never);
   const { items } = await getArticles({
     limit: 10,
     sort: ArticleSort.Newest,
@@ -75,6 +81,16 @@ describe('getArticles and a restricted minor cover', () => {
 
   it('keeps it for another viewer when the cover is not minor-flagged (control)', async () => {
     expect(await listedCover(false, STRANGER)).toBe('cover-key');
+  });
+});
+
+describe('getArticles and a cover restricted by its base model', () => {
+  it('🔴 clears the legacy cover key for another viewer', async () => {
+    expect(await listedCover(false, STRANGER, {}, true)).toBeNull();
+  });
+
+  it('keeps it for the owner (control)', async () => {
+    expect(await listedCover(false, AUTHOR, {}, true)).toBe('cover-key');
   });
 });
 

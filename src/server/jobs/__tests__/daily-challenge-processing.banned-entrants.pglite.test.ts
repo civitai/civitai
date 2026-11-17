@@ -4,9 +4,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as EngineRegistry from '~/server/games/daily-challenge/challenge-engine-registry';
 import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
+import type * as ChallengeRewards from '~/server/games/daily-challenge/challenge-rewards';
 import type * as DailyChallengeUtils from '~/server/games/daily-challenge/daily-challenge.utils';
 import type * as GenerativeContent from '~/server/games/daily-challenge/generative-content';
 import type * as Flipt from '~/server/flipt/client';
+import type * as BuzzService from '~/server/services/buzz.service';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import '~/__tests__/mocks/logging.mock';
 
@@ -16,7 +18,13 @@ import '~/__tests__/mocks/logging.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { mockGenerateReview, mockGetActiveChallenges, mockSaveReviewState } = vi.hoisted(() => ({
+const {
+  mockCreateBuzzTransactionMany,
+  mockGenerateReview,
+  mockGetActiveChallenges,
+  mockSaveReviewState,
+} = vi.hoisted(() => ({
+  mockCreateBuzzTransactionMany: vi.fn(),
   mockGenerateReview: vi.fn(),
   mockGetActiveChallenges: vi.fn(),
   mockSaveReviewState: vi.fn(),
@@ -62,6 +70,10 @@ vi.mock('~/server/games/daily-challenge/generative-content', async (importOrigin
   estimateBuzzCost: vi.fn().mockReturnValue(0),
   generateReview: mockGenerateReview,
 }));
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
+  createBuzzTransactionMany: mockCreateBuzzTransactionMany,
+}));
 vi.mock('~/server/services/commentv3/comment-write.service', () => ({
   writeJudgeComment: vi.fn().mockResolvedValue(undefined),
 }));
@@ -93,7 +105,10 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp);
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, url text, "nsfwLevel" int);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int, url text, "nsfwLevel" int,
+      "modelRestricted" boolean NOT NULL DEFAULT false
+    );
     CREATE TABLE "CollectionItem" (
       "collectionId" int, "imageId" int, "tagId" int, note text, status text,
       "reviewedAt" timestamp
@@ -157,7 +172,8 @@ function routeQueries() {
     ...values: unknown[]
   ) => {
     const sql = strings.join('?');
-    if (sql.includes('JOIN "User" u')) return runOnPglite(strings, ...values);
+    if (sql.includes('JOIN "User" u') || sql.includes('HAVING COUNT(*) >='))
+      return runOnPglite(strings, ...values);
     if (sql.includes('AS "exists"')) return [{ exists: false }];
     return [];
   }) as never);
@@ -198,7 +214,16 @@ beforeEach(() => {
   });
   mockGetActiveChallenges.mockResolvedValue([
     // The sample window opens at the challenge start.
-    { challengeId: 1, collectionId: 100, date: new Date(0), theme: 't', modelVersionIds: [] },
+    {
+      challengeId: 1,
+      collectionId: 100,
+      date: new Date(0),
+      theme: 't',
+      modelVersionIds: [],
+      // Out of reach in collection 100, so these cases never pay the entry prize.
+      entryPrizeRequirement: 99,
+      entryPrize: { buzz: 50, points: 0 },
+    },
   ]);
   routeQueries();
 });
@@ -238,5 +263,137 @@ describe('banned entrants', () => {
 
     await setBanned(null);
     expect(await reviewedImageIds()).toContain(4);
+  });
+});
+
+// A mature image made with a base model that restricts mature images is visible only to its
+// uploader, so it must not be judged, place, or be promoted into the field. Each case pairs a
+// restricted mature entry with an unrestricted mature control that does go through.
+describe('model-restricted mature entries', () => {
+  const R = 4;
+  const setImage = (ids: number[], nsfwLevel: number, modelRestricted: boolean) =>
+    db.query(
+      `UPDATE "Image" SET "nsfwLevel" = $1, "modelRestricted" = $2 WHERE id = ANY($3::int[])`,
+      [nsfwLevel, modelRestricted, ids]
+    );
+
+  beforeEach(async () => {
+    await setBanned(null);
+    await setImage([1, 2, 3, 4, 5, 6, 7, 8], 1, false);
+  });
+
+  it('are left out of the judged field; an unrestricted R entry stays in', async () => {
+    await setImage([1], R, true);
+    await setImage([2], R, false);
+    expect(await judgedUserIds()).toEqual([BANNED]);
+  });
+
+  it('are not handed to the judge: requested, sampled or owed', async () => {
+    // Odd ids (requested 3, sampled 5, owed 7) restricted; even ids are the unrestricted controls.
+    await setImage([3, 5, 7], R, true);
+    await setImage([4, 6, 8], R, false);
+    expect(await reviewedImageIds()).toEqual([4, 6, 8]);
+  });
+
+  it('are still judged when SFW, whatever the flag', async () => {
+    await setImage([3, 5, 7], 1, true);
+    expect(await reviewedImageIds()).toEqual([3, 4, 5, 6, 7, 8]);
+  });
+
+  describe('promoteChallengeEntries', () => {
+    const PROMOTE_COLLECTION = 200;
+    const RESTRICTED_R = 21;
+    const UNRESTRICTED_R = 22;
+    const RESTRICTED_SFW = 23;
+
+    beforeAll(async () => {
+      await db.exec(`
+        CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
+        ALTER TABLE "Image" ADD COLUMN "createdAt" timestamp NOT NULL DEFAULT now();
+        ALTER TABLE "CollectionItem" ADD COLUMN "reviewedById" int;
+        INSERT INTO "Image" (id, "userId", url, "nsfwLevel", "modelRestricted") VALUES
+          (${RESTRICTED_R}, ${CLEAN}, 'img-${RESTRICTED_R}', ${R}, true),
+          (${UNRESTRICTED_R}, ${CLEAN}, 'img-${UNRESTRICTED_R}', ${R}, false),
+          (${RESTRICTED_SFW}, ${CLEAN}, 'img-${RESTRICTED_SFW}', 1, true);
+        INSERT INTO "CollectionItem" ("collectionId", "imageId", status) VALUES
+          (${PROMOTE_COLLECTION}, ${RESTRICTED_R}, 'REVIEW'),
+          (${PROMOTE_COLLECTION}, ${UNRESTRICTED_R}, 'REVIEW'),
+          (${PROMOTE_COLLECTION}, ${RESTRICTED_SFW}, 'REVIEW');
+      `);
+    });
+
+    it('rejects a restricted R entry the challenge level allows; promotes the controls', async () => {
+      vi.mocked(dbMock.dbWrite.$executeRaw).mockImplementation(
+        (async (strings: TemplateStringsArray, ...values: unknown[]) =>
+          (await runOnPglite(strings, ...values)).length) as never
+      );
+      const { promoteChallengeEntries } = await vi.importActual<typeof ChallengeRewards>(
+        '~/server/games/daily-challenge/challenge-rewards'
+      );
+
+      await promoteChallengeEntries({
+        collectionId: PROMOTE_COLLECTION,
+        allowedNsfwLevel: 1 | R,
+        modelVersionIds: [],
+        challengeDate: new Date(0),
+        reviewerId: 1,
+      });
+
+      const { rows } = await db.query<{ imageId: number; status: string }>(
+        `SELECT "imageId", status FROM "CollectionItem" WHERE "collectionId" = $1 ORDER BY "imageId"`,
+        [PROMOTE_COLLECTION]
+      );
+      expect(rows).toEqual([
+        { imageId: RESTRICTED_R, status: 'REJECTED' },
+        { imageId: UNRESTRICTED_R, status: 'ACCEPTED' },
+        { imageId: RESTRICTED_SFW, status: 'ACCEPTED' },
+      ]);
+    });
+  });
+
+  describe('hourly entry-prize payout', () => {
+    const PAYOUT_COLLECTION = 300;
+    const PAID = 30;
+    const MIXED = 40;
+    const ALL_RESTRICTED = 50;
+
+    beforeAll(async () => {
+      // Every entry is recent and untagged. MIXED reaches the earner query through its one
+      // unrestricted entry; ALL_RESTRICTED has no unrestricted entry to get there at all.
+      await db.exec(`
+        INSERT INTO "User" VALUES
+          (${PAID}, 'paid', NULL), (${MIXED}, 'mixed', NULL), (${ALL_RESTRICTED}, 'restricted', NULL);
+        INSERT INTO "Image" (id, "userId", url, "nsfwLevel", "modelRestricted") VALUES
+          (31, ${PAID}, 'img-31', 1, false), (32, ${PAID}, 'img-32', ${R}, false),
+          (41, ${MIXED}, 'img-41', 1, false), (42, ${MIXED}, 'img-42', ${R}, true),
+          (51, ${ALL_RESTRICTED}, 'img-51', ${R}, true), (52, ${ALL_RESTRICTED}, 'img-52', ${R}, true);
+        INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "reviewedAt")
+          SELECT ${PAYOUT_COLLECTION}, id, 'ACCEPTED', now() FROM "Image" WHERE id BETWEEN 31 AND 52;
+      `);
+    });
+
+    it('pays only the entrant whose two counted entries are both unrestricted', async () => {
+      mockCreateBuzzTransactionMany.mockResolvedValue({ transactions: [], conflicts: [] });
+      mockGetActiveChallenges.mockResolvedValue([
+        {
+          challengeId: 3,
+          collectionId: PAYOUT_COLLECTION,
+          date: new Date(0),
+          theme: 't',
+          title: 't',
+          modelVersionIds: [],
+          entryPrizeRequirement: 2,
+          entryPrize: { buzz: 50, points: 0 },
+        },
+      ]);
+
+      await reviewEntries();
+
+      expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
+      const paidTo = (
+        mockCreateBuzzTransactionMany.mock.calls[0][0] as { toAccountId: number }[]
+      ).map((tx) => tx.toAccountId);
+      expect(paidTo).toEqual([PAID]);
+    });
   });
 });

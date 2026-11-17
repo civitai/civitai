@@ -16,11 +16,13 @@ export type HashDetail = {
   detail: {
     modelCoverUrl: string | null;
     modelCoverType: string | null;
+    modelCoverRestricted: boolean | null;
     modelCreatedAt: string | null;
     uploaderModelCount: number;
     uploaderJoinedAt: string | null;
     minorModelCoverUrl: string | null;
     minorModelCoverType: string | null;
+    minorModelCoverRestricted: boolean | null;
     minorModelStatus: string | null;
     minorModelMode: string | null;
     minorModelUnpublishedAt: string | null;

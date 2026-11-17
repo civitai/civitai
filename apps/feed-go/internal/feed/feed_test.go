@@ -83,6 +83,8 @@ func TestBuildModelVersionGalleryQuery(t *testing.T) {
 		`i."acceptableMinor" = FALSE`,
 		`(p."publishedAt" < now())`,
 		`irr."imageId" "cursorId"`,
+		`OR NOT i."modelRestricted" OR i."userId" = $`,
+		`IS NOT TRUE "restricted"`,
 	)
 	// The version filter wins over modelId: no ModelVersion join.
 	if strings.Contains(b.SQL, `mv."modelId"`) {
@@ -113,6 +115,9 @@ func TestBuildSignedOutAndOldest(t *testing.T) {
 		`interval '1 week'`)
 	if strings.Contains(b.SQL, `i."id" >=`) {
 		t.Fatal("a zero cursor adds no clause")
+	}
+	if strings.Contains(b.SQL, `OR NOT i."modelRestricted" OR`) {
+		t.Fatal("a signed-out viewer gets no restricted-image exception")
 	}
 	// Signed out: the availability carve-out binds NULL.
 	if !hasNil(b.Args) {
@@ -332,6 +337,15 @@ func TestBuildImagesEventDecoration(t *testing.T) {
 		}
 		if string(out) != want[img.ID] {
 			t.Errorf("image %d: got %s, want %s", img.ID, out, want[img.ID])
+		}
+	}
+}
+
+func TestBuildImageCarriesRestricted(t *testing.T) {
+	for _, restricted := range []bool{true, false} {
+		img := buildImage(RawImage{ID: 1, Restricted: restricted}, &Hydrated{})
+		if v, ok := img.Wire.Get("restricted"); !ok || v != restricted {
+			t.Fatalf("restricted on the wire = %v (present %v), want %v", v, ok, restricted)
 		}
 	}
 }

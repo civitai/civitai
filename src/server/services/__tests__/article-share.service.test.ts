@@ -339,6 +339,7 @@ describe('getArticleByShareToken: cover and viewer', () => {
     nsfwLevel: 1,
     ingestion: 'Scanned',
     needsReview: null,
+    modelRestricted: false,
     meta: null,
     metadata: null,
     tags: [],
@@ -446,7 +447,7 @@ describe('getArticleByShareToken: body images', () => {
       height: 10,
     };
     dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([
-      { image: { ...linked, ingestion: 'Scanned' } },
+      { image: { ...linked, ingestion: 'Scanned', modelRestricted: false } },
     ] as never);
 
     const result = await read();
@@ -478,7 +479,7 @@ describe('getArticleByShareToken: body images', () => {
         n
       ).repeat(12)}`;
     const content =
-      [1, 2, 3, 4, 5, 7, 8]
+      [1, 2, 3, 4, 5, 7, 8, 9]
         .map(
           (n) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid(n)}/x.jpeg">`
         )
@@ -497,6 +498,7 @@ describe('getArticleByShareToken: body images', () => {
         ingestion: 'Scanned',
         needsReview: null,
         tosViolation: false,
+        modelRestricted: false,
         ...extra,
       },
     });
@@ -509,6 +511,7 @@ describe('getArticleByShareToken: body images', () => {
       // A minor-flagged image the minor content rule restricts; 8, rated the same unflagged, stays.
       row(7, { minor: true, nsfwLevel: 4 }),
       row(8, { minor: false, nsfwLevel: 4 }),
+      row(9, { nsfwLevel: 4, modelRestricted: true }),
     ];
     // Only the fields the service selects come back, as from Prisma.
     dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) => {
@@ -524,8 +527,9 @@ describe('getArticleByShareToken: body images', () => {
     const sent = JSON.stringify(result);
     expect(sent).toContain(uuid(1));
     expect(sent).toContain(uuid(8));
-    for (const n of [2, 3, 4, 5, 6, 7]) expect(sent).not.toContain(uuid(n));
+    for (const n of [2, 3, 4, 5, 6, 7, 9]) expect(sent).not.toContain(uuid(n));
     expect(sent).not.toContain('"minor"');
+    expect(sent).not.toContain('"modelRestricted"');
     expect(sent).not.toContain('csam');
   });
 });
