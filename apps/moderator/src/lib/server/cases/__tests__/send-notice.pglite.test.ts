@@ -16,6 +16,7 @@ const {
   exportUnsent,
   importBatch,
   resolveSending,
+  retireNotice,
   importSentJsonl,
   undoImport,
   ImportRefusedError,
@@ -224,7 +225,7 @@ describe('sendNotice', () => {
       .set({ recipient_address: 'other@example.test' })
       .where('id', '=', first.id)
       .execute();
-    expect(await sendNotice(first.id, deps())).toBe('failed');
+    expect(await sendNotice(first.id, deps())).toBe('unsendable');
     expect(send).not.toHaveBeenCalled();
     expect((await notices())[0].error).toBe('AddressHashMismatch');
   });
@@ -260,6 +261,7 @@ describe('the batch', () => {
       counts: {
         sent: 2,
         failed: 0,
+        unsendable: 0,
         unknown: 0,
         paused: 1,
         ceiling: 0,
@@ -277,6 +279,46 @@ describe('the batch', () => {
     expect(result.counts.failed).toBe(MAX_CONSECUTIVE_FAILURES);
     expect(result.stoppedBy).toBe('failures');
     expect(pauseSends).toHaveBeenCalledWith('system', expect.stringContaining('refused'));
+  });
+
+  it('does not count rows that failed before toward the stop, so a re-run reaches the rest', async () => {
+    await db.updateTable('case_notice').set({ status: 'failed', error: 'Error:550' }).execute();
+    send.mockRejectedValue(Object.assign(new Error('550 rejected'), { responseCode: 550 }));
+    const result = await sendBatch('backlog-test', deps());
+    expect(result.stoppedBy).toBeUndefined();
+    expect(result.counts.failed).toBe(3);
+    expect(pauseSends).not.toHaveBeenCalled();
+  });
+
+  it('retires a failed notice for good: never sent, exported or counted again', async () => {
+    const [first] = await notices();
+    await expect(retireNotice('backlog-test', first.id, { actorId: 1, db })).rejects.toThrow(
+      /not a failed notice/
+    );
+    send.mockRejectedValueOnce(Object.assign(new Error('550'), { responseCode: 550 }));
+    expect(await sendNotice(first.id, deps())).toBe('failed');
+    await retireNotice('backlog-test', first.id, { actorId: 4, db });
+    expect(await sendNotice(first.id, deps())).toBe('not-claimable');
+    expect(
+      (await exportUnsent('backlog-test', { actorId: 1, db })).map((r) => r.rowId)
+    ).not.toContain(first.id);
+    const [event] = await db
+      .selectFrom('case_event')
+      .select(['actor_id', 'data'])
+      .where('type', '=', 'notice_retired')
+      .execute();
+    expect(event).toMatchObject({ actor_id: 4, data: { previousError: 'Error:550' } });
+  });
+
+  it('never retries an erased row, and does not count it as a relay refusal', async () => {
+    const [first] = await notices();
+    await db
+      .updateTable('case_notice')
+      .set({ body_snapshot: null })
+      .where('id', '=', first.id)
+      .execute();
+    expect(await sendNotice(first.id, deps())).toBe('unsendable');
+    expect(await sendNotice(first.id, deps())).toBe('not-claimable');
   });
 
   it('stops the batch at the first send that may have been delivered', async () => {

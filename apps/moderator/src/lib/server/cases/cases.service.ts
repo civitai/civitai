@@ -100,8 +100,7 @@ const runningKey = (batchId: string) =>
   `${REDIS_SYS_KEYS.APP.CASES_SEND_RUNNING}:${batchId}` as RedisKeyTemplateSys;
 
 /**
- * Start sending a batch in the background (about 85 s for 170 messages at SES's pace) and return at
- * once; the page reads progress from the rows. A lock stops a second run of the same batch from
+ * Start sending a batch in the background, at SES's pace, and return at once; the page reads progress from the rows. A lock stops a second run of the same batch from
  * doubling the pace. The claim on each row already stops a double send. A run that dies on an error
  * pauses sends: a person looks before anything else goes out.
  */

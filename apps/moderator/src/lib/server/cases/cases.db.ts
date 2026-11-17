@@ -1,3 +1,4 @@
+import { sql, type SqlBool } from 'kysely';
 import { getModeratorDb } from '../moderator-db';
 import type { CasesTables } from './cases-tables';
 
@@ -5,8 +6,22 @@ import type { CasesTables } from './cases-tables';
 export const casesDb = () => getModeratorDb().withTables<CasesTables>();
 export type CasesDb = ReturnType<typeof casesDb>;
 
-/** The statuses a notice can be sent from. Send, export and the fallback's sent.jsonl import all use it. */
-export const SENDABLE = ['pending', 'failed'] as const;
+/**
+ * `failed` errors a resend can't fix: the row was erased, its address no longer matches its hash, or a
+ * person retired it. Such a row is never sent, exported or retried again.
+ */
+export const RETIRED_ERRORS = ['Erased', 'AddressHashMismatch', 'Retired'] as const;
+
+/**
+ * A notice that may be sent: `pending`, or `failed` for a reason a resend can fix. Send, export and the
+ * fallback's sent.jsonl import all use it. `alias` is the table alias, if the query has one.
+ */
+export const sendable = (alias?: string) => {
+  const col = (c: string) => sql.ref(alias ? `${alias}.${c}` : c);
+  return sql<SqlBool>`(${col('status')} = 'pending' OR (${col('status')} = 'failed' AND (${col(
+    'error'
+  )} IS NULL OR ${col('error')} NOT IN (${sql.join([...RETIRED_ERRORS])}))))`;
+};
 
 /** An import batch id: the `batchId` of a backlog file. */
 export const BATCH_ID = /^[a-z0-9-]{3,60}$/;

@@ -10,9 +10,10 @@ import type { RequestHandler } from './$types';
  *
  * Exporting holds the batch's in-app sends until its sent.jsonl is imported: from here the fallback may
  * send these rows, and until then they still read as unsent, so a send from the app would repeat them.
- * Refused while a send of the batch runs.
+ * Refused while a send of the batch runs. A POST, because it changes state: SvelteKit's origin check
+ * covers form posts.
  */
-export const GET: RequestHandler = async ({ params, locals }) => {
+export const POST: RequestHandler = async ({ params, locals }) => {
   if (!locals.grants['cases.act']) error(403, denied('cases.act'));
   if (!BATCH_ID.test(params.batchId)) error(404, 'Unknown batch.');
   const rows = await withCaseData(() => startExport(params.batchId, locals.user.id));

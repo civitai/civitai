@@ -8,7 +8,7 @@ import {
 import { sql, type Kysely } from 'kysely';
 import { env } from '$env/dynamic/private';
 import { pauseSends, readBrake } from './brake';
-import { casesDb, noticesOfBatch, SENDABLE, type CasesDb } from './cases.db';
+import { casesDb, noticesOfBatch, sendable, type CasesDb } from './cases.db';
 import { readPiiLockdown } from './pii-lockdown';
 
 /** How a case notice's address is hashed: trimmed, lower-cased, sha256 hex. */
@@ -18,14 +18,15 @@ export function hashAddress(address: string) {
 
 export const DEFAULT_NOTICE_FROM = 'Civitai DMCA <notices@civitai.com>';
 export const DEFAULT_NOTICE_REPLY_TO = 'dmca@civitai.com';
-// Above the backlog batch (about 170), so the batch can't trip it by itself.
+// Above the size of the backlog batch, so the batch can't trip it by itself.
 export const DEFAULT_HOURLY_CEILING = 400;
 
 export type SendOutcome =
   | 'sent'
-  // Not delivered: the relay refused it with an SMTP reply, or it was never sent (erased, or the address
-  // no longer matches its hash). The row may be claimed again.
+  // Not delivered: the relay refused it with an SMTP reply. The row may be claimed again.
   | 'failed'
+  // Never sent and never will be: erased, or the address no longer matches its hash.
+  | 'unsendable'
   // It may have been delivered (a timeout, a dropped connection, or the `sent` write failed). The row is
   // left `sending` for a person to check, and sends are paused.
   | 'unknown'
@@ -129,7 +130,7 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
     .updateTable('case_notice')
     .set({ status: 'sending', attempted_at: sql`now()`, error: null })
     .where('id', '=', noticeId)
-    .where('status', 'in', SENDABLE)
+    .where(sendable())
     .returning(['id', 'recipient_address', 'address_hash', 'subject_snapshot', 'body_snapshot'])
     .executeTakeFirst();
   if (!row) return 'not-claimable';
@@ -141,7 +142,7 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
       .set({ status: 'failed', error: 'Erased' })
       .where('id', '=', row.id)
       .execute();
-    return 'failed';
+    return 'unsendable';
   }
   const { recipient_address: to, body_snapshot: body } = row;
 
@@ -151,7 +152,7 @@ export async function sendNotice(noticeId: number, deps: SendDeps): Promise<Send
       .set({ status: 'failed', error: 'AddressHashMismatch' })
       .where('id', '=', row.id)
       .execute();
-    return 'failed';
+    return 'unsendable';
   }
 
   let messageId: string;
@@ -236,7 +237,8 @@ export type BatchResult = {
 /**
  * Send every `pending`/`failed` notice of one import batch, oldest first, paced for SES's account-wide
  * rate. Stops at the first send the brake, the lockdown or the ceiling refuses, at the first send that
- * may or may not have been delivered, and (pausing sends) after MAX_CONSECUTIVE_FAILURES rejections.
+ * may or may not have been delivered, and (pausing sends) after MAX_CONSECUTIVE_FAILURES first-attempt
+ * rejections in a row.
  */
 export async function sendBatch(
   importBatchId: string,
@@ -245,14 +247,15 @@ export async function sendBatch(
 ): Promise<BatchResult> {
   const sleep: Sleep = deps.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const rows = await noticesOfBatch(deps.db, importBatchId)
-    .select('n.id')
-    .where('n.status', 'in', SENDABLE)
+    .select(['n.id', 'n.status'])
+    .where(sendable('n'))
     .orderBy('n.id')
     .execute();
 
   const counts: BatchResult['counts'] = {
     sent: 0,
     failed: 0,
+    unsendable: 0,
     unknown: 0,
     paused: 0,
     ceiling: 0,
@@ -260,11 +263,14 @@ export async function sendBatch(
     'not-claimable': 0,
   };
   let failedInARow = 0;
-  for (const [i, { id }] of rows.entries()) {
+  for (const [i, { id, status }] of rows.entries()) {
     if (i > 0) await sleep(minIntervalMs);
     const outcome = await sendNotice(id, deps);
     counts[outcome]++;
     if (isStop(outcome)) return { counts, stoppedBy: outcome };
+    // Only first attempts count: a row that failed before has already told us about itself, and on a
+    // re-run earlier failures sit next to each other once the sent rows between them are gone.
+    if (outcome === 'failed' && status === 'failed') continue;
     failedInARow = outcome === 'failed' ? failedInARow + 1 : 0;
     if (failedInARow >= MAX_CONSECUTIVE_FAILURES) {
       await deps.pauseSends('system', `${failedInARow} notices in a row were refused by the relay`);

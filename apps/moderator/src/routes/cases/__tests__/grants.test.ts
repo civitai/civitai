@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const brake = vi.hoisted(() => ({ pauseSends: vi.fn(), resumeSends: vi.fn(), readBrake: vi.fn() }));
 vi.mock('$lib/server/cases/brake', () => brake);
@@ -23,6 +23,8 @@ const event = (grants: Record<string, boolean>, form: Record<string, string> = {
     request: { formData: async () => new Map(Object.entries(form)) as unknown as FormData },
   } as never);
 
+beforeEach(() => vi.clearAllMocks());
+
 describe('/cases grants', () => {
   it('lets a cases.act holder pause but not resume', async () => {
     const act = { 'cases.act': true };
@@ -32,6 +34,12 @@ describe('/cases grants', () => {
     const refused = (await actions.resume!(event(act))) as { status: number };
     expect(refused.status).toBe(403);
     expect(brake.resumeSends).not.toHaveBeenCalled();
+  });
+
+  it('refuses pause without cases.act', async () => {
+    const refused = (await actions.pause!(event({}, { reason: 'x' }))) as { status: number };
+    expect(refused.status).toBe(403);
+    expect(brake.pauseSends).not.toHaveBeenCalled();
   });
 
   it('resumes only for a cases.unpause holder', async () => {

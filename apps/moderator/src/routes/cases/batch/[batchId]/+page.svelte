@@ -13,7 +13,6 @@
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { LINK_CLASS } from '$lib/format';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -118,6 +117,8 @@
     <p class="text-sm text-dark-0">
       {result.started ? 'Sending started.' : 'A send of this batch is already running.'}
     </p>
+  {:else if result?.scope === 'retire'}
+    <p class="text-sm text-dark-0">Row {result.rowId} retired.</p>
   {:else if result?.scope === 'resolve'}
     <p class="text-sm text-dark-0">Row {result.rowId} marked {result.outcome}.</p>
   {:else if result?.scope === 'importSent'}
@@ -149,18 +150,20 @@
           </Button>
         </form>
       {/if}
-      <a
-        class="text-sm {LINK_CLASS}"
-        href="/cases/batch/{data.batchId}/export"
-        download
+      <!-- A native post: the response is a file download, not an action result. -->
+      <form
+        method="POST"
+        action="/cases/batch/{data.batchId}/export"
         data-sveltekit-reload
-        onclick={(e) => {
+        onsubmit={(e) => {
           const ask =
             'Exporting holds in-app sends of this batch until its sent.jsonl is imported, ' +
             'and the batch can no longer be undone. Export?';
           if (!confirm(ask)) e.preventDefault();
-        }}>Export unsent rows for the fallback</a
+        }}
       >
+        <Button type="submit" variant="outline">Export unsent rows for the fallback</Button>
+      </form>
       <form
         method="POST"
         action="?/importSent"
@@ -189,6 +192,19 @@
             {#if row.error}<span class="text-red-300">{row.error}</span>{/if}
             {#if row.messageId}<span class="text-dark-2">message {row.messageId}</span>{/if}
           </div>
+          {#if data.canAct && row.status === 'failed' && row.error !== 'Retired'}
+            <form
+              method="POST"
+              action="?/retire"
+              use:enhance={({ cancel }) => {
+                if (!confirm('Never send this notice again?')) cancel();
+              }}
+              class="mt-2"
+            >
+              <input type="hidden" name="rowId" value={row.id} />
+              <Button type="submit" size="sm" variant="outline">Retire (never send)</Button>
+            </form>
+          {/if}
           {#if data.canAct && unknown(row)}
             <form method="POST" action="?/resolve" use:enhance class="mt-2 flex flex-wrap gap-2">
               <input type="hidden" name="rowId" value={row.id} />

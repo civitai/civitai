@@ -10,6 +10,7 @@ const imports = vi.hoisted(() => ({
   batchCounts: vi.fn(async () => []),
   importSentJsonl: vi.fn(),
   resolveSending: vi.fn(),
+  retireNotice: vi.fn(),
   ImportRefusedError: class extends Error {},
 }));
 vi.mock('$lib/server/cases/backlog-import', () => imports);
@@ -25,7 +26,7 @@ const service = vi.hoisted(() => ({
 vi.mock('$lib/server/cases/cases.service', () => service);
 
 const { load, actions } = await import('../batch/[batchId]/+page.server');
-const { GET } = await import('../batch/[batchId]/export/+server');
+const { POST } = await import('../batch/[batchId]/export/+server');
 
 const event = (grants: Record<string, boolean>, form: Record<string, string> = {}) =>
   ({
@@ -48,16 +49,17 @@ describe('/cases/batch grants', () => {
   });
 
   it('refuses send, importSent and resolve without cases.act', async () => {
-    for (const action of [actions.send!, actions.importSent!, actions.resolve!]) {
+    for (const action of [actions.send!, actions.importSent!, actions.resolve!, actions.retire!]) {
       expect(((await action(event({ 'cases.pii': true }))) as { status: number }).status).toBe(403);
     }
     expect(service.startBatchSend).not.toHaveBeenCalled();
     expect(imports.importSentJsonl).not.toHaveBeenCalled();
     expect(imports.resolveSending).not.toHaveBeenCalled();
+    expect(imports.retireNotice).not.toHaveBeenCalled();
   });
 
   it('refuses the export without cases.act, and records nothing', async () => {
-    await expect(GET(event({ 'cases.pii': true }))).rejects.toMatchObject({ status: 403 });
+    await expect(POST(event({ 'cases.pii': true }))).rejects.toMatchObject({ status: 403 });
     expect(service.startExport).not.toHaveBeenCalled();
     expect(brake.pauseSends).not.toHaveBeenCalled();
   });

@@ -1,6 +1,6 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { casesDb, noticesOfBatch, SENDABLE, STALE_SENDING_MS, type CasesDb } from './cases.db';
+import { casesDb, noticesOfBatch, sendable, STALE_SENDING_MS, type CasesDb } from './cases.db';
 import { CASE_TARGET_STATES } from './cases-tables';
 import { newPublicRef } from './public-ref';
 import { hashAddress } from './send-notice';
@@ -363,6 +363,49 @@ export async function resolveSending(
   });
 }
 
+/**
+ * A person retires a `failed` notice a resend can't fix (a bad address, say): it leaves the sendable
+ * set for good, so it no longer holds up the batch. Recorded as a `notice_retired` event with the
+ * error it had.
+ */
+export async function retireNotice(
+  batchId: string,
+  rowId: number,
+  { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
+) {
+  return db.transaction().execute(async (tx) => {
+    const prior = await tx
+      .selectFrom('case_notice')
+      .select(['id', 'case_id', 'error'])
+      .where('id', '=', rowId)
+      .where('status', '=', 'failed')
+      .where(
+        'case_id',
+        'in',
+        tx.selectFrom('case_record').select('id').where('import_batch_id', '=', batchId)
+      )
+      .forUpdate()
+      .executeTakeFirst();
+    if (!prior)
+      throw new ImportRefusedError(`row ${rowId} is not a failed notice of batch ${batchId}`);
+    await tx
+      .updateTable('case_notice')
+      .set({ error: 'Retired' })
+      .where('id', '=', prior.id)
+      .execute();
+    await tx
+      .insertInto('case_event')
+      .values({
+        case_id: prior.case_id,
+        actor_id: actorId,
+        type: 'notice_retired',
+        data: JSON.stringify({ noticeRowId: prior.id, previousError: prior.error }),
+      })
+      .execute();
+    return { rowId: prior.id };
+  });
+}
+
 export type ExportState = 'never' | 'outstanding' | 'closed';
 
 /**
@@ -424,7 +467,7 @@ export async function exportUnsent(
         'n.recipient_role as recipientRole',
         'c.public_ref as caseRef',
       ])
-      .where('n.status', 'in', SENDABLE)
+      .where(sendable('n'))
       .orderBy('n.id')
       .execute();
   });
@@ -473,7 +516,7 @@ export async function importSentJsonl(
         .updateTable('case_notice')
         .set({ status: 'sent', message_id: line.messageId, sent_at: line.sentAt, error: null })
         .where('id', '=', line.rowId)
-        .where('status', 'in', SENDABLE)
+        .where(sendable())
         .where(
           'case_id',
           'in',
