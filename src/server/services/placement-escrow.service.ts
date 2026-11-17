@@ -683,7 +683,9 @@ export async function settlePlacement({
    * `background` returns once the status flip commits and moves the Buzz after.
    * For a person waiting on a button: a slow Buzz call would otherwise hold the
    * request for up to `BUZZ_CALL_TIMEOUT_MS` per leg. The legs are already on
-   * disk, so `sweepUnpaidLegs` finishes one that fails or never starts.
+   * disk, so `sweepUnpaidLegs` pays one that fails or never starts. The accept
+   * reward is not retried: if this payout fails or the process stops first, the
+   * owner is paid by the sweep but never rewarded.
    */
   payout?: 'await' | 'background';
 }) {
