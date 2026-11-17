@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { childBrowsingTagIds } from '@civitai/shared';
+import { NsfwLevel } from '~/server/common/enums';
 
 /**
  * A model whose cover is someone else's image featured in its showcase: the search document gets
@@ -91,6 +93,27 @@ describe('the search document and a community cover', () => {
       images
     );
     expect(picked.map((image) => image.id)).toEqual([90, 1]);
+  });
+
+  it('leaves out a community cover that every search document excludes, like any other image', () => {
+    const childTag = childBrowsingTagIds[0];
+    const excluded = {
+      id: 90,
+      modelVersionId: 9,
+      availability: 'Public',
+      authorUsername: 'ann',
+      nsfwLevel: NsfwLevel.R,
+      tags: [childTag],
+    };
+    const picked = pickModelIndexImages(
+      { coverImageId: 90 },
+      [
+        { id: 10, baseModel: 'SDXL 1.0' },
+        { id: 9, baseModel: 'SDXL 1.0' },
+      ],
+      [owner(1, 10), excluded] as unknown as Images
+    );
+    expect(picked.map((image) => image.id)).toEqual([1]);
   });
 
   it("doesn't hoist an owner image from an older version, as before", () => {

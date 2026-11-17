@@ -247,8 +247,7 @@ type CoverColumns = { coverImageId: number | null; sfwCoverImageId: number | nul
 
 /**
  * The checks a showcase cover change runs before it is stored: the .com face text when the model
- * has a face and its .com cover is being set, then the covers themselves. The model editor
- * (`upsertModel`) runs the same two checks inline, within its own save.
+ * has a face and its .com cover is being set, then the covers themselves.
  */
 export async function assertCoverChange({
   model,

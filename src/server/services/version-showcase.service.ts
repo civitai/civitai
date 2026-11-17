@@ -97,7 +97,7 @@ const buildVersionShowcaseCache = () =>
     lookupFn: async (ids, fromWrite) => {
       const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('modelVersion', ids);
       const records: Record<number, CachedVersionShowcase> = {};
-      // Every id gets a record, so "this version has no showcase rows" is cached too.
+      // An empty record, so a version with no rows is cached too.
       for (const id of ids) records[id] = { modelVersionId: id, rows: [], community: [] };
 
       const rows = await db.$queryRaw<(VersionShowcaseRow & { modelVersionId: number })[]>`

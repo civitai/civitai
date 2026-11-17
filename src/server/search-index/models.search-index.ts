@@ -270,7 +270,10 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
         list,
         list.find((image) => image.id === coverId) ??
           // A featured community cover can sit on any of the model's versions.
-          images.find((image) => image.id === coverId && 'authorUsername' in image)
+          images.find(
+            (image) =>
+              image.id === coverId && 'authorUsername' in image && !isTaggedMatureImage(image)
+          )
       ),
     coveredVersionIds.flatMap((versionId) =>
       images.filter(
