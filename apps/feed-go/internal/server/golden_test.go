@@ -174,6 +174,7 @@ type goldenImage struct {
 	Minor             bool            `json:"minor"`
 	Poi               bool            `json:"poi"`
 	AcceptableMinor   bool            `json:"acceptableMinor"`
+	Restricted        bool            `json:"restricted"`
 	// Resources are the image's ImageResourceNew rows.
 	Resources []struct {
 		ModelVersionID int  `json:"modelVersionId"`
@@ -191,7 +192,7 @@ var goldenImageColumns = []string{
 	"id", "name", "url", "nsfwLevel", "width", "height", "hash", "hideMeta", "hasMeta", "hasPositivePrompt",
 	"onSite", "remixOfId", "createdAt", "sortAt", "mimeType", "type", "metadata", "ingestion", "blockedFor",
 	"scannedAt", "needsReview", "userId", "postId", "postTitle", "index", "publishedAt", "unpublishedAt",
-	"modelVersionId", "model3dId", "availability", "minor", "poi", "acceptableMinor", "cursorId",
+	"modelVersionId", "model3dId", "availability", "minor", "poi", "acceptableMinor", "restricted", "cursorId",
 }
 
 func goldenPtr[T any](p *T) any {
@@ -225,7 +226,7 @@ func (g goldenImage) row(cursor any) []any {
 		g.Type, goldenJSONVal(g.Metadata), g.Ingestion, goldenPtr(g.BlockedFor), goldenTimeVal(g.ScannedAt),
 		goldenPtr(g.NeedsReview), g.UserID, g.PostID, goldenPtr(g.PostTitle), goldenPtr(g.Index),
 		goldenTimeVal(g.PublishedAt), goldenPtr(g.UnpublishedAt), goldenPtr(g.ModelVersionID),
-		goldenPtr(g.Model3DID), g.Availability, g.Minor, g.Poi, g.AcceptableMinor, cursor,
+		goldenPtr(g.Model3DID), g.Availability, g.Minor, g.Poi, g.AcceptableMinor, g.Restricted, cursor,
 	}
 }
 

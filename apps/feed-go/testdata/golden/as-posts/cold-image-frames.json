@@ -367,6 +367,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -424,6 +425,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -477,6 +479,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -531,6 +534,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -584,6 +588,7 @@
         "minor": true,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -977,6 +982,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1062,6 +1068,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1176,6 +1183,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1304,6 +1312,7 @@
                 "model3dId": null,
                 "minor": true,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
