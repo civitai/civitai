@@ -1,11 +1,15 @@
 import { Menu } from '~/components/MantineOverlays';
 import { IconHeart } from '@tabler/icons-react';
+import { openAddToShowcaseModal } from '~/components/Dialog/triggers/add-to-showcase';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
-export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
+/** Adds to the showcase at the top of the profile. */
+export function useAddToTopShowcase(entityType: Props['entityType']) {
   const utils = trpc.useUtils();
-  const addToShowcaseMutation = trpc.userProfile.addEntityToShowcase.useMutation({
+  const mutation = trpc.userProfile.addEntityToShowcase.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: `${entityType} has been added to showcase` });
 
@@ -17,18 +21,40 @@ export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
     },
   });
 
-  const onClick = async () => {
-    await addToShowcaseMutation
-      .mutateAsync({
-        entityType,
-        entityId,
-      })
+  /** Resolves whether it was added. */
+  const add = (entityId: number) =>
+    mutation
+      .mutateAsync({ entityType, entityId })
+      .then(() => true)
       .catch((error) => {
         showErrorNotification({
           title: 'Unable to add to showcase',
           error: new Error(error.message),
         });
+        return false;
       });
+
+  return { add, isPending: mutation.isPending };
+}
+
+export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const { add } = useAddToTopShowcase(entityType);
+
+  // An image can also go to one of the owner's Images sections.
+  const offersSections = entityType === 'Image' && features.profileShowcases && !!currentUser;
+  const { data: user } = trpc.userProfile.get.useQuery(
+    { username: currentUser?.username ?? '' },
+    { enabled: offersSections }
+  );
+  const hasImageSections =
+    offersSections && !!user?.profile?.showcaseSections?.some((s) => s.type === 'Image');
+
+  const onClick = () => {
+    if (hasImageSections && currentUser?.username)
+      openAddToShowcaseModal({ props: { imageId: entityId, username: currentUser.username } });
+    else add(entityId);
   };
 
   return (
