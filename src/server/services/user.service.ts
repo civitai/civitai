@@ -1,4 +1,8 @@
 import {
+  assertCollectionItemsVisibleToViewer,
+  type CollectionItemKey,
+} from '~/server/services/collection-item-visibility';
+import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
@@ -3404,10 +3408,12 @@ export const toggleUserArticleEngagement = async ({
 export const toggleBookmarkedArticle = async ({
   articleId,
   userId,
+  isModerator,
 }: {
   articleId: number;
   userId: number;
-}) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId });
+  isModerator?: boolean;
+}) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId, isModerator });
 
 // TODO(model3d-workstream-E): wire CollectionType.Model3D through bookmark + metrics flow
 //   once model3dMetrics exists. For now Model3D bookmarks short-circuit before reaching
@@ -3436,11 +3442,13 @@ export const toggleBookmarked = async ({
   entityId,
   type,
   userId,
+  isModerator,
   setTo,
 }: {
   entityId: number;
   type: CollectionType;
   userId: number;
+  isModerator?: boolean;
   setTo?: boolean;
 }) => {
   let collection = await dbWrite.collection.findFirst({
@@ -3500,6 +3508,12 @@ export const toggleBookmarked = async ({
     });
     metricsEngine?.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: entityProp as CollectionItemKey,
+      ids: [entityId],
+      userId,
+      isModerator,
+    });
     // Race #2: the collection item is guarded by prod-only partial unique indexes
     // (`CollectionItem_model UNIQUE (collectionId, modelId) WHERE modelId IS NOT NULL`, and the
     // analogous image/post/article indexes — NOT in the Prisma schema). Concurrent bookmarks both

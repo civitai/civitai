@@ -461,6 +461,8 @@ function mapSubListingError(err: unknown): TRPCError {
  */
 function mapOffsiteError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
+  if (err instanceof Error && err.name === 'PublishRequestHeldError')
+    return new TRPCError({ code: 'PRECONDITION_FAILED', message: err.message, cause: err });
   if (
     err instanceof Error &&
     (err.name === 'OffsiteRequestError' ||
@@ -1452,6 +1454,8 @@ export const appListingsRouter = router({
           approvalNotes: input.approvalNotes,
           contentRating: input.contentRating,
           mediaSplit: input.mediaSplit,
+          holdOverrideReason: input.holdOverrideReason,
+          holdOverrideIds: input.holdOverrideIds,
         });
       } catch (err) {
         throw mapOffsiteError(err);
