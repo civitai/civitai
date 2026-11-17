@@ -2100,6 +2100,8 @@ export const getCollectionItemsByCollectionId = async ({
   imagesAsPublicCatalog = false,
   coverage,
   requireRead = false,
+  asModerator,
+  asOwner = true,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -2117,6 +2119,10 @@ export const getCollectionItemsByCollectionId = async ({
    * leave it off must check read themselves.
    */
   requireRead?: boolean;
+  /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
+  asModerator?: boolean;
+  /** Whether the request may see the user's own unpublished and private items; default true. */
+  asOwner?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2131,10 +2137,18 @@ export const getCollectionItemsByCollectionId = async ({
 
   const userPreferencesInput = userPreferencesSchema.parse(input);
 
+  const isModerator = asModerator ?? user?.isModerator ?? false;
+  // Ownership and contributor rights follow the user even on a scoped key: it is their own
+  // collection. The item reads inside still get no owner or moderator view.
+  const itemsViewer = !asOwner
+    ? undefined
+    : user && isModerator !== !!user.isModerator
+    ? { ...user, isModerator }
+    : user;
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
     userId: user?.id,
-    isModerator: user?.isModerator,
+    isModerator,
   });
 
   // Readers and managers see every item. A viewer who may only submit (the usual contest setup:
@@ -2412,7 +2426,7 @@ export const getCollectionItemsByCollectionId = async ({
       ? await (
           await modelService()
         ).getModelsWithImagesAndModelVersions({
-          user,
+          user: itemsViewer,
           coverage,
           input: {
             limit: modelIds.length,
@@ -2441,7 +2455,7 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ArticleSort.Newest,
           ...userPreferencesInput,
           browsingLevel: input.browsingLevel,
-          sessionUser: user,
+          sessionUser: itemsViewer,
           ids: articleIds,
           include: ['cosmetics'],
         })
@@ -2463,7 +2477,9 @@ export const getCollectionItemsByCollectionId = async ({
             ...userPreferencesInput,
             browsingLevel: input.browsingLevel,
             user: imagesAsPublicCatalog ? undefined : user,
-            ...(imagesAsPublicCatalog && { disablePoi: true, disableMinor: true }),
+            ...(imagesAsPublicCatalog
+              ? { disablePoi: true, disableMinor: true }
+              : { asModerator: isModerator, asOwner }),
             ids,
             headers: { src: 'getCollectionItemsByCollectionId' },
             includeBaseModel: true,
@@ -2499,6 +2515,8 @@ export const getCollectionItemsByCollectionId = async ({
           sort: PostSort.Newest,
           ...userPreferencesInput,
           user,
+          asModerator: isModerator,
+          asOwner,
           browsingLevel: input.browsingLevel,
           ids: postIds,
           include: ['cosmetics'],
