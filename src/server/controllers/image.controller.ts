@@ -659,6 +659,8 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImages({
         ...scopedInput,
         user,
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
@@ -808,6 +810,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         // Fetch the posts whole and narrow them with filterPinnedImagesToVersion
         // below. The ImageResourceNew join that modelVersionId triggers is an
         // inner join, so filtering it here drops media with no resource-detection
@@ -860,6 +864,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: sponsoredImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,

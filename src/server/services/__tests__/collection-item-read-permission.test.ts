@@ -123,6 +123,33 @@ describe('collection items of a collection the viewer may not read', () => {
     }
   });
 
+  it("answers a Private collection as missing to a moderator's narrow-scope key", async () => {
+    collectionIs({ read: 'Private' });
+    const narrow = getCollectionItemsByCollectionId({
+      input: { collectionId: COLLECTION_ID, limit: 10, browsingLevel: 3 } as never,
+      user: MOD as never,
+      requireRead: true,
+      asModerator: false,
+      asOwner: false,
+    });
+    expect(await errorOf(narrow)).toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockGetAllImages).not.toHaveBeenCalled();
+  });
+
+  it("reads an owner's narrow-scope key's images without owner or moderator views", async () => {
+    collectionIs({ read: 'Private' });
+    await getCollectionItemsByCollectionId({
+      input: { collectionId: COLLECTION_ID, limit: 10, browsingLevel: 3 } as never,
+      user: { id: OWNER } as never,
+      requireRead: true,
+      asModerator: false,
+      asOwner: false,
+    });
+    expect(mockGetAllImages).toHaveBeenCalledWith(
+      expect.objectContaining({ asModerator: false, asOwner: false })
+    );
+  });
+
   it('lists Public and Unlisted collections to anyone, signed out too (control)', async () => {
     for (const read of ['Public', 'Unlisted'])
       for (const user of [STRANGER, undefined]) {

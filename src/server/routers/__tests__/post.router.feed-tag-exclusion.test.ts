@@ -295,11 +295,11 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
       expect(othersUnrated()).toBe(true);
     });
 
-    it("does not reach a narrow-scope key: no private posts, no other user's unscanned post", async () => {
+    it('does not reach a narrow-scope key: no private posts, no unscanned post, its own included', async () => {
       await pendingFeed(true);
       expect(privateHidden()).toBe(true);
       expect(othersUnrated()).toBe(false);
-      expect(h.sql).toContain(`p."nsfwLevel" = 0 AND p."userId" =`);
+      expect(h.sql).not.toContain(`p."nsfwLevel" = 0 AND p."userId" =`);
     });
 
     const asModerator = async (apiKey: boolean | 'full', extra: Record<string, unknown>) =>

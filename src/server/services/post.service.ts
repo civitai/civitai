@@ -292,11 +292,14 @@ export const getPostsInfinite = async ({
   poiOnly,
   minorOnly,
   asModerator,
+  asOwner = true,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
   /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
   asModerator?: boolean;
+  /** Whether the request may see the user's own drafts, Private and scheduled posts; default true. */
+  asOwner?: boolean;
 }) => {
   const AND = [Prisma.sql`1 = 1`];
   const cacheTags: string[] = [];
@@ -304,6 +307,8 @@ export const getPostsInfinite = async ({
   const userId = user?.id;
   // One value for every moderator branch below: a narrow-scope key is not a moderator here.
   const isModerator = asModerator ?? user?.isModerator ?? false;
+  // A narrow-scope key is not the owner here either: every owner branch below reads `ownerId`.
+  const ownerId = asOwner ? userId : undefined;
   const includeCosmetics = !!include?.includes('cosmetics');
 
   let targetUser: number | undefined;
@@ -321,7 +326,7 @@ export const getPostsInfinite = async ({
     cacheTags.push(`posts-user:${targetUser}`);
   }
 
-  const isOwnerRequest = !!userId && targetUser === userId;
+  const isOwnerRequest = !!ownerId && targetUser === ownerId;
 
   if (!isOwnerRequest && !isModerator) {
     // Makes it so private posts are not shown to the public
@@ -356,7 +361,11 @@ export const getPostsInfinite = async ({
     });
     if (
       version &&
-      !canViewPoiModel(version.model.poi, version.model.userId, user && { ...user, isModerator })
+      !canViewPoiModel(
+        version.model.poi,
+        version.model.userId,
+        user && { ...user, isModerator, id: ownerId ?? null }
+      )
     )
       return { items: [] };
 
@@ -369,11 +378,11 @@ export const getPostsInfinite = async ({
   let collectionJoined = false;
   let collectionJoin = Prisma.empty;
   if (!canSeeUnpublished) {
-    if (scheduled && userId) {
+    if (scheduled && ownerId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
       // the image service carve-out (image.service.ts ~line 4060).
       AND.push(
-        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${userId} AND p."publishedAt" > NOW()))`
+        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${ownerId} AND p."publishedAt" > NOW()))`
       );
     } else {
       AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
@@ -424,12 +433,12 @@ export const getPostsInfinite = async ({
   // images and the image exclusions below are all served at the same level.
   if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
   if (browsingLevel) {
-    if (pending && (isModerator || userId)) {
+    if (pending && (isModerator || ownerId)) {
       if (isModerator) {
         AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
-      } else if (userId) {
+      } else if (ownerId) {
         AND.push(
-          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${userId}))`
+          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${ownerId}))`
         );
       }
     } else {
@@ -454,8 +463,8 @@ export const getPostsInfinite = async ({
       return { items: [] };
     }
 
-    const displayReviewItems = user?.id
-      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
+    const displayReviewItems = ownerId
+      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${ownerId})`
       : '';
 
     // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_post_idx is
@@ -583,7 +592,7 @@ export const getPostsInfinite = async ({
     minor?: boolean | null;
     tagIds?: number[];
   }) =>
-    (!!user && image.userId === user.id) ||
+    (!!ownerId && image.userId === ownerId) ||
     (!(imageRules.disablePoi && image.poi) &&
       !(imageRules.disableMinor && image.minor) &&
       !(image.tagIds ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
@@ -647,7 +656,7 @@ export const getPostsInfinite = async ({
         // remove unlisted resources the user has no access to:
         .filter((p) => {
           // Allow mods and owners to view all.
-          if (isModerator || p.userId === user?.id) return true;
+          if (isModerator || (!!ownerId && p.userId === ownerId)) return true;
 
           // Hide posts from unpublished model versions:
           if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {

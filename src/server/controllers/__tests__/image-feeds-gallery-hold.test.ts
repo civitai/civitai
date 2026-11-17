@@ -410,3 +410,24 @@ describe('image.getInfinite by image id', () => {
     expect(heldByPost).not.toHaveBeenCalled();
   });
 });
+
+describe('a narrow-scope key reads the feeds as a plain signed-in viewer', () => {
+  const credential = (tokenScope: number) => ({
+    apiKeyId: 1,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope,
+  });
+  it.each([
+    ['a scoped key', credential(TokenScope.ModelsRead), false],
+    ['a full-access key (control)', credential(TokenScope.Full), true],
+  ])('%s: owner and moderator views %s', async (_, key, elevated) => {
+    const viewer = { ...ctx(false, true), ...key } as unknown as Context;
+    await getInfiniteImagesHandler({ input: { postId: 100, include: [] } as never, ctx: viewer });
+    await getPostsInfiniteHandler({ input: { username: 'someone' } as never, ctx: viewer });
+
+    const view = { asModerator: elevated, asOwner: elevated };
+    expect(getAllImages).toHaveBeenCalledWith(expect.objectContaining(view));
+    expect(getPostsInfinite).toHaveBeenCalledWith(expect.objectContaining(view));
+  });
+});
