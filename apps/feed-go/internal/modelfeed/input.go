@@ -31,8 +31,8 @@ const (
 	SortRecentlyAdded  = "Recently Added"
 )
 
-// knownSorts are the ported sorts. Recently Added needs a collection (getModelsRaw throws without one,
-// and collections are not ported), so it falls back.
+// knownSorts are the ported sorts. Recently Added (getModelsRaw throws without a collection, and with
+// one it joins CollectionItem to order by the item id, which is not ported) falls back.
 var knownSorts = map[string]bool{
 	SortHot: true, SortHighestRated: true, SortMostDownloaded: true, SortMostLiked: true,
 	SortMostDiscussed: true, SortMostCollected: true, SortImageCount: true, SortNewest: true, SortOldest: true,
@@ -86,6 +86,10 @@ type Input struct {
 	DisableMinor          bool
 	ExcludedTagIDs        []int
 	ExcludedUserIDs       []int
+	// CollectionID is `collectionId` (0 = none: getModelsRaw's `if (collectionId)`); CollectionTagID is
+	// `collectionTagId`, read only with a collection (0 = none).
+	CollectionID    int
+	CollectionTagID int
 }
 
 // modelsSchema is model.getAll's allow-list and defaults (why: the inputschema package doc).
@@ -102,19 +106,20 @@ var modelsDefaults = struct{ sort, period, periodMode string }{
 var trpcTransportKeys = map[string]bool{"authed": true, "direction": true}
 
 // parsedKeys are the schema keys Parse reads; ignoredKeys the ones getModelsRaw never reads
-// (favorites, rating, excludedModelIds, excludedImageIds, collectionItemStatus, and collectionTagId
-// without a collection), as zod's strip and the destructuring leave them. With unsupportedKeys they
-// are every key of the schema (TestInputKeyLedger), so a key added to it must be classified.
+// (favorites, rating, excludedModelIds, excludedImageIds, and collectionItemStatus: getModelsRaw
+// builds its collection item filter without `statuses`), as zod's strip and the destructuring leave
+// them. With unsupportedKeys they are every key of the schema (TestInputKeyLedger), so a key added
+// to it must be classified.
 var (
 	parsedKeys = []string{
 		"limit", "cursor", "sort", "period", "periodMode", "browsingLevel", "tagname", "tag", "username",
 		"user", "types", "baseModels", "checkpointType", "allowCommercialUse", "allowDerivatives",
 		"allowDifferentLicense", "allowNoCredit", "earlyAccess", "paidAccess", "hidePaid", "onSale",
 		"fromPlatform", "archived", "fileFormats", "disablePoi", "disableMinor", "excludedTagIds",
-		"excludedUserIds",
+		"excludedUserIds", "collectionId", "collectionTagId",
 	}
 	ignoredKeys = []string{
-		"favorites", "rating", "excludedModelIds", "excludedImageIds", "collectionItemStatus", "collectionTagId",
+		"favorites", "rating", "excludedModelIds", "excludedImageIds", "collectionItemStatus",
 	}
 )
 
@@ -122,10 +127,10 @@ var (
 // value (isEmpty: not null, false, 0, "" or []), they make the request fall back with reason
 // `input-<key>`; `ids` falls back whenever it is present (Parse).
 var unsupportedKeys = []string{
-	// Meilisearch (`query`), collections, the viewer's engagements and follows, the new-creators board,
-	// id lists, moderator filters, drafts and pending images, the coverage filter, the featured list,
-	// a published-date range, an availability filter, page-based paging.
-	"query", "collectionId", "hidden", "followed", "newCreators", "ids", "modelVersionIds", "status",
+	// Meilisearch (`query`), the viewer's engagements and follows, the new-creators board, id lists,
+	// moderator filters, drafts and pending images, the coverage filter, the featured list, a
+	// published-date range, an availability filter, page-based paging.
+	"query", "hidden", "followed", "newCreators", "ids", "modelVersionIds", "status",
 	"needsReview", "pending", "supportsGeneration", "isFeatured", "availability", "publishedFrom",
 	"publishedTo", "poiOnly", "minorOnly", "page",
 }
@@ -176,6 +181,8 @@ func Parse(m map[string]any) (*Input, error) {
 	if v, ok := m["sort"]; ok && v != nil {
 		s, _ := v.(string)
 		if s == SortRecentlyAdded {
+			// With or without a collection: without one Node throws a 400, with one it orders by the
+			// collection item, which is not ported.
 			return nil, fallback.New("model-sort-recently-added")
 		}
 		if !knownSorts[s] {
@@ -291,7 +298,49 @@ func Parse(m map[string]any) (*Input, error) {
 	if in.ExcludedUserIDs, err = ints(m["excludedUserIds"]); err != nil {
 		return nil, err
 	}
+	if in.CollectionID, in.CollectionTagID, err = collectionKeys(m); err != nil {
+		return nil, err
+	}
 	return in, nil
+}
+
+// collectionKeys reads `collectionId` and `collectionTagId` (both `z.number().optional()`): a value
+// that is not a number, null included, is the schema's 400 (input-invalid). getModelsRaw tests each
+// for truthiness, so 0 is no filter, and binds it as it came; a collection id or tag id that is not
+// an int4 integer is not ported (model-collection-id: Postgres would compare it as a numeric, and no
+// row holds it). The tag is read only with a collection, as getModelsRaw reads it.
+func collectionKeys(m map[string]any) (collectionID, tagID int, err error) {
+	num := func(key string) (json.Number, bool, error) {
+		v, ok := m[key]
+		if !ok {
+			return "", false, nil
+		}
+		n, isNum := v.(json.Number)
+		if !isNum {
+			return "", false, fallback.Newf("input-invalid", "%s %v", key, v)
+		}
+		return n, true, nil
+	}
+	id, hasID, err := num("collectionId")
+	if err != nil {
+		return 0, 0, err
+	}
+	tag, hasTag, err := num("collectionTagId")
+	if err != nil {
+		return 0, 0, err
+	}
+	if !hasID || isEmpty(id) {
+		return 0, 0, nil
+	}
+	if collectionID, err = intIn(id, math.MinInt32, math.MaxInt32); err != nil {
+		return 0, 0, fallback.Newf("model-collection-id", "collectionId: %v", err)
+	}
+	if hasTag && !isEmpty(tag) {
+		if tagID, err = intIn(tag, math.MinInt32, math.MaxInt32); err != nil {
+			return 0, 0, fallback.Newf("model-collection-id", "collectionTagId: %v", err)
+		}
+	}
+	return collectionID, tagID, nil
 }
 
 // creatorName is `username || user`: the name the creator filter looks up ("" = no filter).

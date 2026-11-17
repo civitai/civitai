@@ -4384,6 +4384,25 @@ describe('orchestrator media links in shared data are refused in every moderatio
     expect((await call({ token: t, method: 'GET', path: '/posts/p9' })).status).toBe(404);
   });
 
+  it.each([
+    ['tab', 'https://orches\ttration.civitai.com/x'],
+    ['newline', 'https://orchestration.civitai\n.com/x'],
+    ['carriage return', 'https://orchestration.civi\rtai.com/x'],
+  ])('a host split by a %s is refused', async (_label, url) => {
+    h.moderationMode = 'off';
+    const r = await put({ img: url });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ category: 'link' });
+  });
+
+  it('a link in a document too large for the leaf walk is still refused', async () => {
+    h.moderationMode = 'off';
+    const pad = Array.from({ length: 1200 }, (_, i) => `p${i}`);
+    const r = await put({ pad, img: 'https://orchestration.civitai\n.com/x' });
+    expect(r.status).toBe(422);
+    expect((r.body as { details: unknown }).details).toMatchObject({ category: 'link' });
+  });
+
   it('names the nested field that holds the link', async () => {
     h.moderationMode = 'off';
     const r = await put({ a: 'ok', b: { c: BLOB } });

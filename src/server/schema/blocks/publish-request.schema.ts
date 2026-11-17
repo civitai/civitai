@@ -136,17 +136,37 @@ export const submitVersionSchema = z.object({
     .boolean()
     .nullish()
     .transform((v) => v ?? undefined),
+  // A GitHub Actions OIDC token for the run submitting this bundle (sent by the
+  // `civitai/app-submit-action` Action through `civitai app submit`). OPTIONAL: absent means
+  // the submit behaves exactly as before.
+  //
+  // Only a length cap here, no JWT shape check: with the `app-blocks-oidc-verified-submit` flag
+  // off the token is ignored entirely, so a value this schema refused would be a submit gate the
+  // flag cannot turn off. With the flag on, `verifyGithubActionsOidcToken` checks everything,
+  // and a token that fails refuses the submit.
+  //
+  // 🔴 A DIFFERENT TRUST LEVEL FROM `sourceCommit` / `sourceDirty` above: those are claims; a
+  // verified token yields the run facts GitHub signed (`actions_run_*`). Never alias between them.
+  // 🔴 A credential-shaped value: never log or echo it.
+  githubOidcToken: z
+    .string()
+    .min(1)
+    .max(16_384)
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;
 
 /**
- * Per-field hints for a `submitVersionSchema` rejection. Only the #4059
- * provenance fields appear here, on purpose — see below.
+ * Per-field hints for a `submitVersionSchema` rejection. Only the optional
+ * provenance fields (#4059's claim, and the GitHub Actions token) appear here, on
+ * purpose — see below.
  */
 const SUBMIT_VERSION_FIELD_HINTS: Record<string, string> = {
   sourceCommit: 'sourceCommit must be a 40-character lowercase hex git commit sha',
   sourceDirty: 'sourceDirty must be a boolean',
+  githubOidcToken: 'githubOidcToken must be a non-empty string of at most 16384 characters',
 };
 
 /** The message both submit routes have always returned for a parse failure. */
