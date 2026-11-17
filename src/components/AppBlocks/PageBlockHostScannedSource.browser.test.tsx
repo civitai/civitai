@@ -192,6 +192,8 @@ describe('PageBlockHost — a single OPEN_MEDIA_UPLOAD image (bytes mode)', () =
     postFromBlock('OPEN_MEDIA_UPLOAD', mediaReq('rq_on'));
     const reply = await oneReply(replies, 'MEDIA_UPLOAD_RESULT', 'rq_on');
     expect(h.upload).toHaveBeenCalledTimes(1);
+    // The flag is per app: the path query names the app by the same current token.
+    expect(h.query.mock.calls).toEqual([[{ blockToken: 'tok_abc' }]]);
     expect(h.persist.mock.calls).toEqual([[{ blockToken: 'tok_abc', url: uploadedUrls[0] }]]);
     expect(reply.selected).toEqual({
       kind: 'image',
@@ -267,6 +269,7 @@ describe('PageBlockHost — OPEN_MEDIA_UPLOAD picker mode (BlockMediaUploadModal
     });
     await userEvent.upload(input, new File([PNG.slice(0)], 'source.png', { type: 'image/png' }));
     const reply = await oneReply(replies, 'MEDIA_UPLOAD_RESULT', 'rq_media_pick');
+    expect(h.query.mock.calls).toEqual([[{ blockToken: 'tok_abc' }]]);
     expect(h.persist.mock.calls).toEqual([[{ blockToken: 'tok_abc', url: uploadedUrls[0] }]]);
     expect(reply.selected).toEqual({
       kind: 'image',

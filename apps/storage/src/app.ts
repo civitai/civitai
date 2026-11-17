@@ -12,6 +12,7 @@ import {
   presignMultipartInput,
   presignPartInput,
   presignPutInput,
+  purgeObjectVersionsInput,
   type S3MultipartErrorClass,
   type StorageBackend,
 } from '@civitai/storage';
@@ -106,6 +107,23 @@ export async function buildServer(): Promise<FastifyInstance> {
     route(deleteManyObjectsInput, async (body) => {
       await getBackendClient(body.backend).deleteManyObjects(body.keys, body.bucket);
       return { ok: true };
+    })
+  );
+
+  // Non-2xx unless a fresh listing after the deletes finds no version of the key left.
+  app.post(
+    '/objects/purge-versions',
+    route(purgeObjectVersionsInput, async (body, reply) => {
+      const result = await getBackendClient(body.backend).purgeObjectVersions(
+        body.key,
+        body.bucket
+      );
+      if (result.remaining === 0) return result;
+      app.log.error(
+        { backend: body.backend, key: body.key, ...result },
+        'purge-versions: versions remain after delete'
+      );
+      return reply.code(500).send({ error: 'Versions remain', ...result });
     })
   );
 

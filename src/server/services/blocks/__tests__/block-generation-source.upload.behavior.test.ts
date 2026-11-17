@@ -41,7 +41,9 @@ vi.mock('~/server/flipt/client', () => ({
     APP_BLOCK_SOURCE_SCANNED_ROWS: 'app-block-source-scanned-rows',
     APP_BLOCK_REFUSE_EXTERNAL_SOURCES: 'app-block-refuse-external-sources',
   },
-  isFlipt: async (flag: string) => flag === 'app-block-source-scanned-rows' && holder.scannedRows,
+  // A per-app rollout, as an ENTITY_ID segment answers: ON (while `scannedRows`) for app A only.
+  isFlipt: async (flag: string, entityId?: string) =>
+    flag === 'app-block-source-scanned-rows' && holder.scannedRows && entityId === 'apb_alpha',
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { $query: async () => [] } }));
 vi.mock('~/env/client', async (importOriginal) => {
@@ -102,6 +104,10 @@ const { BLOCK_IMAGE_MAX_BYTES } = await import('~/shared/constants/block-image-u
 
 const APP = 'appblk-alpha';
 const OTHER_APP = 'appblk-beta';
+/** App A's app block id: the flag is ON for it (see the `isFlipt` stand-in). */
+const APP_BLOCK = 'apb_alpha';
+/** App B's: the flag is OFF for it. */
+const OTHER_APP_BLOCK = 'apb_beta';
 const VIEWER = 42;
 const OTHER_USER = 7;
 /** A request budget long enough for the in-process fetch and store, short enough to wait out. */
@@ -118,7 +124,13 @@ const png = (width: number, height: number) =>
     .toBuffer();
 
 function persist(over: Partial<Parameters<typeof persistUploadedGenerationSource>[0]> = {}) {
-  return persistUploadedGenerationSource({ userId: VIEWER, appId: APP, url: BLOB_URL, ...over });
+  return persistUploadedGenerationSource({
+    userId: VIEWER,
+    appId: APP,
+    appBlockId: APP_BLOCK,
+    url: BLOB_URL,
+    ...over,
+  });
 }
 
 async function imageRow(id: number) {
@@ -143,10 +155,17 @@ const scan = (id: number, over = `ingestion = 'Scanned', "nsfwLevel" = 1`) =>
 async function gate(
   url: string,
   userId = VIEWER,
-  entry: 'appBlocks' | 'appBlocksWorkflow' = 'appBlocks'
+  entry: 'appBlocks' | 'appBlocksWorkflow' = 'appBlocks',
+  appBlockId = APP_BLOCK
 ) {
   try {
-    await assertGenerationInputsUsable({ urls: [url], userId, entry, isApiCaller: false });
+    await assertGenerationInputsUsable({
+      urls: [url],
+      userId,
+      entry,
+      isApiCaller: false,
+      appBlockLog: { appBlockId },
+    });
     return 'accepted';
   } catch (e) {
     return `refused: ${(e as Error).message}`;
@@ -194,6 +213,7 @@ beforeAll(async () => {
       availability text NOT NULL DEFAULT 'Public', "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
       "userId" int NOT NULL,
       url text NOT NULL,
       "postId" int,
@@ -541,6 +561,28 @@ describe('🔴 CLOSING CONDITION — app-block-source-scanned-rows ON, the real 
       const out = await persistAfterScan();
       expect(out.ready).toBe(true);
       expect(await gate(out.url, VIEWER, entry)).toBe('accepted');
+    }
+  );
+});
+
+describe('🔴 per app: the flag ON for app A and OFF for app B', () => {
+  it('A: the picked blob is refused, its pick is kept as a scanned row and accepted', async () => {
+    expect(await gate(BLOB_URL)).toBe(`refused: ${APP_SOURCE_NOT_ON_CIVITAI_MESSAGE}`);
+    const out = await persistAfterScan();
+    expect(out.ready).toBe(true);
+    expect(await gate(out.url)).toBe('accepted');
+  });
+
+  it('A: its picked source, still unscanned, is refused as pending', async () => {
+    const { out } = await persistPending();
+    expect(out.ready).toBe(false);
+    expect(await gate(out.url)).toBe(`refused: ${APP_SOURCE_PENDING_MESSAGE}`);
+  });
+
+  it.each(['appBlocks', 'appBlocksWorkflow'] as const)(
+    'B: the same blob is accepted on %s, as before the flag existed',
+    async (entry) => {
+      expect(await gate(BLOB_URL, VIEWER, entry, OTHER_APP_BLOCK)).toBe('accepted');
     }
   );
 });

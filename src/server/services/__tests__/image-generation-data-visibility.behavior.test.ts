@@ -493,7 +493,6 @@ describe('getImageGenerationData media links', () => {
 
   it.each([
     [2, true],
-    [0, false],
     [2 | 4, false],
   ])(
     'a signed-in viewer on the SFW domain, image rated %i: links kept is %s',
@@ -503,6 +502,13 @@ describe('getImageGenerationData media links', () => {
       expect(leaked(json)).toEqual(kept ? MARKERS : []);
     }
   );
+
+  it('refuses an unrated image to a signed-in viewer who does not own it', async () => {
+    await db.exec(`UPDATE "Image" SET "nsfwLevel" = 0`);
+    await expect(fetchFor(OTHER, { canViewNsfw: false })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
 
   it('keeps them for a signed-out viewer of a PG image', async () => {
     await db.exec(`UPDATE "Image" SET "nsfwLevel" = 1`);

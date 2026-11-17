@@ -47,6 +47,10 @@ vi.mock('../thumbnail-cache', async (importOriginal) => ({
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
+// The models-index requeue is covered in image-models-reindex.pglite.test.ts; this schema has no Post table.
+vi.mock('../image-models-reindex', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+}));
 
 const { acceptImage } = await import('../image-moderation.service');
 
@@ -70,7 +74,10 @@ CREATE TABLE "Image" (
   "scannedAt" TIMESTAMP(3)
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  PRIMARY KEY ("entityType", "entityId", "type"));
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "disabled" BOOLEAN);
+ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "scanJobs" JSONB;
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,

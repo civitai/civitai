@@ -61,8 +61,15 @@ describe('collection payload, against the real query', () => {
 describe('bounty payload, against the real query', () => {
   test('keeps visible, rated, unblocked, non-poi bounties of active unheld owners, with their feed fields', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
-    const pg = new PGlite();
+    // event-engine's node10 resolution can't see pglite's exports map, so the subpath is untyped.
+    const citextPath = '@electric-sql/pglite/contrib/citext';
+    const { citext } = (await import(citextPath)) as {
+      citext: import('@electric-sql/pglite').Extension;
+    };
+    // Tag.name is citext in prod; node-pg-style clients return a citext[] unparsed.
+    const pg = new PGlite({ extensions: { citext } });
     await pg.exec(`
+      CREATE EXTENSION citext;
       CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp,
         "deletedAt" timestamp);
       CREATE TABLE "Bounty" (id int PRIMARY KEY, name text, description text, type text, mode text,
@@ -70,7 +77,7 @@ describe('bounty payload, against the real query', () => {
         complete boolean, refunded boolean, poi boolean, availability text, "userId" int,
         nsfw boolean DEFAULT false);
       CREATE TABLE "BountyEntry" (id int PRIMARY KEY, "bountyId" int);
-      CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
+      CREATE TABLE "Tag" (id int PRIMARY KEY, name citext);
       CREATE TABLE "TagsOnBounty" ("bountyId" int, "tagId" int);
       CREATE TABLE "CsamReport" (id int PRIMARY KEY, "userId" int, details jsonb, images jsonb);
       CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);

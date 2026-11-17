@@ -1,4 +1,8 @@
 import {
+  assertCollectionItemsVisibleToViewer,
+  type CollectionItemKey,
+} from '~/server/services/collection-item-visibility';
+import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
@@ -1636,6 +1640,7 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
   // block's scope are the same set, which is what makes the wide form correct in this one place.
   await clearAccountDeletionImageMarkers({ userId: id });
   await refreshProfilePicturesForUsers([id]);
+  await refreshOwnModelShowcases(id);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -2022,7 +2027,10 @@ export const removeAllContent = async ({
     await deleteImages(
       images.map((i) => i.id),
       true,
-      { onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}` }
+      {
+        onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+        moderatorDelete: true,
+      }
     );
     await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (
       ${owned('Image')} AND NOT ${captureImageKeptSql('o')}
@@ -2881,6 +2889,28 @@ export class AlreadyBannedError extends Error {
   }
 }
 
+/** The ban's media block: every image of the user not already Blocked. Keeps an existing CSAM reason. */
+export async function blockBannedUserImages(userId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      ingestion = 'Blocked'::"ImageIngestionStatus",
+      "nsfwLevel" = ${NsfwLevel.Blocked},
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
+        ELSE ${BlockedReason.Moderated} END,
+      "updatedAt" = NOW()
+    WHERE "userId" = ${userId} AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+  `;
+  await refreshOwnModelShowcases(userId);
+}
+
+/** Never throws: the block has committed. Call-site import: post.service imports this module. */
+async function refreshOwnModelShowcases(userId: number) {
+  await import('~/server/services/post.service')
+    .then(({ refreshShowcasesForUserModels }) => refreshShowcasesForUserModels(userId))
+    .catch(handleLogError);
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -3129,14 +3159,7 @@ export const toggleBan = async ({
           });
         }
 
-        await dbWrite.image.updateMany({
-          where: { userId: id, ingestion: { not: 'Blocked' } },
-          data: {
-            ingestion: 'Blocked',
-            nsfwLevel: NsfwLevel.Blocked,
-            blockedFor: BlockedReason.Moderated,
-          },
-        });
+        await blockBannedUserImages(id);
 
         // Same reasoning as the CSAM block in `softDeleteUser`, but scoped to what this statement
         // actually blocked rather than to the account: a ban outranks a grace block, so the
@@ -3386,10 +3409,12 @@ export const toggleUserArticleEngagement = async ({
 export const toggleBookmarkedArticle = async ({
   articleId,
   userId,
+  isModerator,
 }: {
   articleId: number;
   userId: number;
-}) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId });
+  isModerator?: boolean;
+}) => toggleBookmarked({ entityId: articleId, type: CollectionType.Article, userId, isModerator });
 
 // TODO(model3d-workstream-E): wire CollectionType.Model3D through bookmark + metrics flow
 //   once model3dMetrics exists. For now Model3D bookmarks short-circuit before reaching
@@ -3418,11 +3443,13 @@ export const toggleBookmarked = async ({
   entityId,
   type,
   userId,
+  isModerator,
   setTo,
 }: {
   entityId: number;
   type: CollectionType;
   userId: number;
+  isModerator?: boolean;
   setTo?: boolean;
 }) => {
   let collection = await dbWrite.collection.findFirst({
@@ -3482,6 +3509,12 @@ export const toggleBookmarked = async ({
     });
     metricsEngine?.queueUpdate(entityId);
   } else if (!exists && setTo !== false) {
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: entityProp as CollectionItemKey,
+      ids: [entityId],
+      userId,
+      isModerator,
+    });
     // Race #2: the collection item is guarded by prod-only partial unique indexes
     // (`CollectionItem_model UNIQUE (collectionId, modelId) WHERE modelId IS NOT NULL`, and the
     // analogous image/post/article indexes — NOT in the Prisma schema). Concurrent bookmarks both

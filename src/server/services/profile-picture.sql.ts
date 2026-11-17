@@ -5,6 +5,7 @@ import type { ProfileImage } from '~/server/selectors/image.selector';
 /** When a profile picture may be served to anyone but its owner; any other picture is served as none. */
 export const servableProfilePictureSql = Prisma.sql`
   i.ingestion <> 'Blocked'::"ImageIngestionStatus"
+  AND i."nsfwLevel" != 0
   AND i."needsReview" IS DISTINCT FROM 'csam'
   AND ${imageReviewedSql('i')}
   AND ${imageNotRestrictedSql()}

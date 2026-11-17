@@ -97,6 +97,8 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       width: true,
       height: true,
       ingestion: true,
+      // Read by the crucible page handler, which drops it before responding.
+      needsReview: true,
       ...imageRestrictionSelect,
     },
   },

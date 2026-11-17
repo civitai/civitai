@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockDbRead, mockGetImageMetricsObject } = vi.hoisted(() => ({
   mockDbRead: {
     imageResourceNew: { findMany: vi.fn() },
+    modelVersion: { findUnique: vi.fn() },
   },
   mockGetImageMetricsObject: vi.fn(),
 }));
@@ -31,6 +32,21 @@ import { getModelShowcaseImages } from '../showcase.service';
 
 beforeEach(() => {
   mockDbRead.imageResourceNew.findMany.mockReset();
+  mockDbRead.modelVersion.findUnique.mockResolvedValue({
+    status: 'Published',
+    availability: 'Public',
+    publishedAt: null,
+    model: {
+      userId: 9,
+      poi: false,
+      status: 'Published',
+      availability: 'Public',
+      mode: null,
+      minor: false,
+      sfwOnly: false,
+      gallerySettings: {},
+    },
+  });
   mockGetImageMetricsObject.mockReset();
   // Derive reaction totals from the last findMany result. Each image's fixture
   // `metrics: [{ reactionCount }]` becomes reactionLike (the service sums the
@@ -90,6 +106,7 @@ function imageRow(
       height: 1024,
       meta,
       nsfwLevel: 1,
+      ingestion: 'Scanned',
       metrics: [{ reactionCount: reactions }],
       ...over,
     },
@@ -382,13 +399,11 @@ describe('getModelShowcaseImages', () => {
       // `undefined` must still fail closed to SFW: had the router passed the
       // 'blue'-defaulted ctx.domain, this viewer would now see R/X/XXX.
       const constants = await import('~/shared/constants/browsingLevel.constants');
-      const spy = vi
-        .spyOn(constants, 'domainBrowsingCeiling')
-        .mockImplementation((color) => {
-          if (color === 'blue' || color === 'red') return constants.allBrowsingLevelsFlag;
-          if (color == null) return constants.sfwBrowsingLevelsFlag; // fail closed
-          return constants.sfwBrowsingLevelsFlag;
-        });
+      const spy = vi.spyOn(constants, 'domainBrowsingCeiling').mockImplementation((color) => {
+        if (color === 'blue' || color === 'red') return constants.allBrowsingLevelsFlag;
+        if (color == null) return constants.sfwBrowsingLevelsFlag; // fail closed
+        return constants.sfwBrowsingLevelsFlag;
+      });
       try {
         mockDbRead.imageResourceNew.findMany.mockResolvedValue([...wideRows]);
         // Unresolved host → raw color undefined → passed through as undefined.
@@ -513,14 +528,17 @@ describe('getModelShowcaseImages', () => {
 
 describe('getModelShowcaseImages: restricted base model images', () => {
   // Applies the read's `image` where to the fixture rows, so the test sees what the query returns
-  // rather than which filter it was handed. Covers the operators that where uses.
+  // rather than which filter it was handed. Covers the operators that where uses; the post relation
+  // is left to the pglite suite.
   const matches = (row: Record<string, unknown>, where: Record<string, unknown>): boolean =>
     Object.entries(where).every(([key, cond]) => {
+      if (key === 'post') return true;
       if (key === 'OR') return (cond as Record<string, unknown>[]).some((w) => matches(row, w));
       if (key === 'AND') return (cond as Record<string, unknown>[]).every((w) => matches(row, w));
       const value = row[key];
       if (cond !== null && typeof cond === 'object') {
-        const op = cond as { not?: unknown; notIn?: unknown[] };
+        const op = cond as { not?: unknown; in?: unknown[]; notIn?: unknown[] };
+        if ('in' in op) return op.in!.includes(value);
         if ('notIn' in op) return !op.notIn!.includes(value);
         if ('not' in op) return value !== op.not;
         throw new Error(`unsupported where on ${key}`);
@@ -536,6 +554,7 @@ describe('getModelShowcaseImages: restricted base model images', () => {
       {
         ingestion: 'Scanned',
         tosViolation: false,
+        needsReview: null,
         postId: 1,
         userId: 7,
         modelRestricted: false,

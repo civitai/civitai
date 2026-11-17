@@ -336,7 +336,7 @@ describe('mini/[id] epoch arm, log', () => {
     await request({ authorization: 'Bearer some-user-key-value' });
     const logged = JSON.stringify(callerLogs());
     expect(callerLogs()).toHaveLength(2);
-    for (const entry of callerLogs())
+    for (const entry of callerLogs()) {
       expect(Object.keys(entry).sort()).toEqual([
         'authHeader',
         'callerClass',
@@ -344,11 +344,13 @@ describe('mini/[id] epoch arm, log', () => {
         'mode',
         'modelVersionId',
         'name',
-        'pick',
+        'payload',
         'resolvedAs',
         'type',
         'wouldRefuse',
       ]);
+      expect(Object.keys(entry.payload as object)).toEqual(['pick']);
+    }
     expect(logged).not.toContain(SERVICE_TOKEN.slice(0, 6));
     expect(logged).not.toContain('some-user');
     expect(logged).not.toMatch(/bearer/i);

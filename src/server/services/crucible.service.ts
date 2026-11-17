@@ -893,14 +893,15 @@ type CrucibleVisibilityRow = {
   ingestion: CrucibleIngestionStatus;
   image: {
     ingestion: ImageIngestionStatus;
+    nsfwLevel: number;
     needsReview: string | null;
     tosViolation: boolean;
   } | null;
 };
 
 /**
- * Until its text and cover pass their scans, and while its cover is in review or marked a ToS
- * violation, only its creator and moderators see a crucible. List surfaces apply the same cover
+ * Until its text and cover pass their scans, while its cover is unrated or in review or marked a
+ * ToS violation, only its creator and moderators see a crucible. List surfaces apply the same cover
  * rule (crucibleCoverListedWhere).
  */
 export const isCrucibleHiddenByScan = (
@@ -911,6 +912,7 @@ export const isCrucibleHiddenByScan = (
   crucible.userId !== viewerId &&
   (crucible.ingestion !== CrucibleIngestionStatus.Scanned ||
     crucible.image?.ingestion !== ImageIngestionStatus.Scanned ||
+    crucible.image.nsfwLevel === 0 ||
     crucible.image.needsReview != null ||
     crucible.image.tosViolation);
 
@@ -3639,7 +3641,8 @@ export type JudgingPairCount = {
  * entries query.
  * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
  * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
- * query off crucibles the judge never voted in, which the feed asks about most.
+ * query off crucibles where the judge has not yet voted on or dismissed a pair, which the feed asks
+ * about most.
  */
 export async function countJudgingPairs({
   crucibleIds,
@@ -6218,7 +6221,6 @@ export const getUserActiveCrucibles = async ({
           image: {
             select: {
               url: true,
-              nsfwLevel: true,
               modelRestricted: true,
               userId: true,
               ...crucibleCoverScanSelect,
@@ -6544,8 +6546,8 @@ export const getJudgingSuggestions = async ({
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })
   );
-  // countJudgingPairs skips crucibles the judge never voted in (judgedOnly), so estimate those from
-  // the raw entry count: an overestimate, fine for weighting.
+  // countJudgingPairs skips crucibles where the judge has neither voted nor dismissed (judgedOnly),
+  // so estimate those from the raw entry count: an overestimate, fine for weighting.
   return suggestions.map((crucible) => ({
     ...crucible,
     remainingPairs:

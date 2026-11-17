@@ -17,9 +17,14 @@ describe('parseGuardStatus', () => {
     expect([...(status.withholdResults ?? [])]).toEqual(['block:rule_a', 'rule_a+rule_b']);
   });
 
-  it('keys a guard with no artifact apart from any version', () => {
-    expect(parseGuardStatus({ mode: 'shadow', version: null }).key).toBe('shadow:none');
-  });
+  it.each(['none', '', 'null'])(
+    'keys a guard with no artifact apart from version %j',
+    (version) => {
+      expect(parseGuardStatus({ mode: 'shadow', version: null }).key).not.toBe(
+        parseGuardStatus({ mode: 'shadow', version }).key
+      );
+    }
+  );
 
   it('gives no withheld list when the service sends none, so every rule withholds', () => {
     expect(parseGuardStatus({ mode: 'enforce', version: 'v1' }).withholdResults).toBeNull();

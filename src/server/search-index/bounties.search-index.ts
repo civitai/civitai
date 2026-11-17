@@ -17,6 +17,8 @@ import { dbRead } from '~/server/db/client';
 import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
+import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
+import { NsfwLevel } from '~/server/common/enums';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -119,6 +121,8 @@ type BountyForSearchIndex = {
   details: Prisma.JsonObject | null;
   complete: boolean;
   nsfwLevel: number;
+  /** Marked mature by its creator: its images count as XXX, as the bounty feed treats them. */
+  nsfw: boolean;
   stats: {
     favoriteCountAllTime: number;
     trackCountAllTime: number;
@@ -165,19 +169,26 @@ export const transformData = async ({
   profilePictures: ProfileImage[];
 }) => {
   const records = bounties
-    .map(({ cosmetics, user, tags, images: bountyImages, nsfwLevel, ...bounty }) => {
+    .map(({ cosmetics, user, tags, images: bountyImages, nsfwLevel, nsfw, ...bounty }) => {
       if (!bountyImages) {
         return null;
       }
 
       const images = bountyImages
-        ? bountyImages.filter(isDefined).map((i) => ({
-            ...i,
-            tags: imageTags
-              .filter((t) => t.imageId === i.id)
-              .map((t) => ({ id: t.tagId, name: t.tag.name })),
-          }))
-        : [];
+        .filter(isDefined)
+        .map((i) => ({
+          ...i,
+          tags: imageTags
+            .filter((t) => t.imageId === i.id)
+            .map((t) => ({ id: t.tagId, name: t.tag.name })),
+        }))
+        .filter(
+          (i) =>
+            !isTaggedMatureImage({
+              nsfwLevel: nsfw ? NsfwLevel.XXX : i.nsfwLevel,
+              tags: i.tags.map((tag) => tag.id),
+            })
+        );
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
       return {
@@ -261,7 +272,8 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
         b."expiresAt",
         b."type",
         b."details",
-        b."complete"
+        b."complete",
+        b."nsfw"
         FROM "Bounty" b
         WHERE ${Prisma.join(where, ' AND ')}
       ), users AS MATERIALIZED (

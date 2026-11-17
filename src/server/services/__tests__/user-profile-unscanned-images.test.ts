@@ -34,6 +34,7 @@ const VISITOR = 88;
 const cover = (ingestion: string) => ({
   id: 1,
   url: `cover-${ingestion}`,
+  nsfwLevel: 1,
   name: null,
   type: 'image',
   needsReview: null,
@@ -115,6 +116,19 @@ describe('getUserWithProfile — unscanned cover and avatar', () => {
 
     expect(user.profile.coverImage?.url).toBe('cover-Scanned');
     expect(user.profilePicture?.url).toBe('avatar-Scanned');
+  });
+
+  it('withholds an unrated cover from a visitor and serves it to its owner', async () => {
+    setUser('Scanned');
+    (
+      kysely.user as { profile: { coverImage: { nsfwLevel: number } } }
+    ).profile.coverImage.nsfwLevel = 0;
+
+    const visitor = await getUserWithProfile({ id: OWNER, sessionUserId: VISITOR });
+    const owner = await getUserWithProfile({ id: OWNER, sessionUserId: OWNER });
+
+    expect(visitor.profile.coverImage).toBeNull();
+    expect(owner.profile.coverImage?.url).toBe('cover-Scanned');
   });
 
   it.each([

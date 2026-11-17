@@ -109,6 +109,27 @@ describe('article card covers', () => {
     expect(await feedCovers({ id: 6 })).toEqual([null, null, null]);
   });
 
+  it.each([
+    ['signed out', undefined],
+    ['another user', { id: 6 }],
+  ])('the feed carries no unrated cover to a viewer %s', async (_, viewer) => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(
+      STATES.map((_, i) => ({ ...coverOf(i), nsfwLevel: 0 })) as never
+    );
+    expect(await feedCovers(viewer)).toEqual([null, null, null]);
+  });
+
+  it('the feed carries an unrated cover to its author', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue(
+      STATES.map((_, i) => ({ ...coverOf(i), nsfwLevel: 0 })) as never
+    );
+    expect(await feedCovers({ id: AUTHOR })).toEqual([
+      'cover-Scanned',
+      'cover-Pending',
+      'cover-Error',
+    ]);
+  });
+
   it('Civitai News carries only a Scanned cover', async () => {
     const { articles } = await getCivitaiNews();
     expect(articles.map((a) => a.coverImage?.url ?? null)).toEqual(['cover-Scanned', null, null]);

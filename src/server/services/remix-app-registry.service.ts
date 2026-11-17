@@ -97,7 +97,7 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
       type: 'error',
       message: 'Skipped a remix app row that does not validate',
       blockId: row.blockId,
-      issues: parsed.error?.issues.slice(0, 5),
+      payload: { issues: parsed.error?.issues.slice(0, 5) },
     });
     return null;
   }
@@ -110,7 +110,7 @@ export function registerRow(row: RemixAppRow): RegisteredRemixApp | null {
       type: 'warning',
       message: 'A remix app row names an engine no longer on the allowlist',
       blockId: row.blockId,
-      issues: engineIssues,
+      payload: { issues: engineIssues },
     });
   return register({
     slug: row.blockId.slice(REMIX_BLOCK_ID_PREFIX.length),

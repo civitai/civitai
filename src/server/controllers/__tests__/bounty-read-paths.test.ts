@@ -10,7 +10,10 @@ import type * as UserService from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { childBrowsingTagIds } from '@civitai/shared';
+import { filterPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { NsfwLevel } from '~/server/common/enums';
+import { bountyNsfwFlagLevel } from '~/server/services/bounty-rated-level';
+import { upsertBountyEntryInputSchema } from '~/server/schema/bounty-entry.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const {
@@ -20,6 +23,7 @@ const {
   mockGetEntryById,
   mockGetEntryFiles,
   mockUpsertBounty,
+  mockUpsertEntry,
   mockDeleteBounty,
   mockBountyImages,
   mockImagesForBounties,
@@ -31,6 +35,7 @@ const {
   mockGetEntryById: vi.fn(async () => ({ id: 3, user: { id: 5 } })),
   mockGetEntryFiles: vi.fn(async () => []),
   mockUpsertBounty: vi.fn(),
+  mockUpsertEntry: vi.fn(async (_input: Record<string, unknown>) => ({ id: 3 })),
   mockDeleteBounty: vi.fn(),
   mockBountyImages: vi.fn(async (): Promise<unknown[]> => []),
   mockImagesForBounties: vi.fn(async (): Promise<Record<number, unknown[]>> => ({})),
@@ -53,6 +58,7 @@ vi.mock('~/server/services/bountyEntry.service', async (importOriginal) => ({
   getEntryById: mockGetEntryById,
   getBountyEntryFilteredFiles: mockGetEntryFiles,
   getBountyEntryEarnedBuzz: vi.fn(async () => []),
+  upsertBountyEntry: mockUpsertEntry,
 }));
 vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BountyService>()),
@@ -235,6 +241,59 @@ describe('bounty write responses', () => {
     expect(asMod).toEqual({ id: 9, name: 'B', details });
   });
 
+  // The headless submit never reads the entry's images, so its edit replaces the set; the web
+  // form's edit removes only what it was shown.
+  it.each([
+    ['submit', true],
+    ['upsert', undefined],
+  ])('an entry edit through %s replaces its images: %s', async (path, replaceImages) => {
+    const editor = {
+      user: { id: 5 },
+      ...uncapped,
+      track: { bountyEntry: vi.fn(async () => undefined) },
+    } as never;
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      userId: 99,
+      complete: false,
+      entries: [],
+    } as never);
+    const file = { url: 'https://example.com/f.zip', name: 'f.zip', sizeKB: 1 };
+    if (path === 'submit')
+      await submitBountyEntryHandler({
+        input: { id: 3, bountyId: 9, files: [file], imageUuids: ['u'] } as never,
+        ctx: editor,
+      });
+    else await upsertBountyEntryHandler({ input: { id: 3, bountyId: 9 } as never, ctx: editor });
+    expect(mockUpsertEntry.mock.calls[0][0]).toMatchObject({ replaceImages });
+  });
+
+  // Replace is decided by the route; a client that sends it to upsert gets the shown-ids rule.
+  it('the upsert route ignores a replaceImages sent by the client', async () => {
+    const sent = {
+      id: 3,
+      bountyId: 9,
+      files: [{ url: 'https://example.com/f.zip', name: 'f.zip', sizeKB: 1, metadata: {} }],
+      images: [],
+      replaceImages: true,
+    };
+    expect(upsertBountyEntryInputSchema.parse(sent)).not.toHaveProperty('replaceImages');
+
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      userId: 99,
+      complete: false,
+      entries: [],
+    } as never);
+    const editor = {
+      user: { id: 5 },
+      ...uncapped,
+      track: { bountyEntry: vi.fn(async () => undefined) },
+    } as never;
+    await upsertBountyEntryHandler({ input: sent as never, ctx: editor });
+    expect(mockUpsertEntry.mock.calls[0][0].replaceImages).toBeUndefined();
+  });
+
   it('delete never returns meta', async () => {
     mockDeleteBounty.mockResolvedValue(row);
     const result = await deleteBountyHandler({ input: { id: 9 }, ctx });
@@ -402,16 +461,12 @@ describe('bounty images on a capped site', () => {
     expect(result.images).toEqual([]);
   });
 
-  // The edit form is filled from this read and saves back only the images it was shown.
   it.each([
     ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
     ['a moderator', { user: { id: 77, isModerator: true }, features: { canViewNsfw: false } }],
-  ])(
-    'the detail page keeps every image for %s, whose edit saves back what it is shown',
-    async (_l, ctx) => {
-      expect(await detail(ctx)).toEqual([10, 11]);
-    }
-  );
+  ])('the detail page caps %s like any other viewer', async (_l, ctx) => {
+    expect(await detail(ctx)).toEqual([10]);
+  });
 
   it('entry lists and entry detail send a capped viewer no image above the cap', async () => {
     mockGetEntries.mockResolvedValue([{ id: 3, user: { id: OWNER } }] as never);
@@ -426,11 +481,11 @@ describe('bounty images on a capped site', () => {
     expect(ids(entry.images)).toEqual([30]);
   });
 
-  it('entry detail keeps every image for the entry owner, whose edit saves back what it is shown', async () => {
+  it('entry detail caps the entry owner like any other viewer', async () => {
     mockImagesByEntity.mockResolvedValue([image(30, NsfwLevel.PG, 3), image(31, NsfwLevel.X, 3)]);
     const ctx = { user: { id: OWNER }, features: { canViewNsfw: false } };
     const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
-    expect(ids(entry.images)).toEqual([30, 31]);
+    expect(ids(entry.images)).toEqual([30]);
   });
 
   it('an uncapped viewer keeps every image', async () => {
@@ -445,6 +500,174 @@ describe('bounty images on a capped site', () => {
     mockImagesByEntity.mockResolvedValue([image(30, NsfwLevel.PG, 3), image(31, NsfwLevel.X, 3)]);
     const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: stranger });
     expect(ids(entry.images)).toEqual([30, 31]);
+  });
+});
+
+describe('an nsfw-flagged bounty in the feed', () => {
+  // A queued answer a test does not consume would otherwise reach the next one.
+  beforeEach(() => dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]));
+  const feedInput = { limit: 10, period: 'AllTime', sort: 'Newest' } as never;
+  const flagged = (moderatorNsfwLevel: number | null = null) => ({
+    id: 1,
+    name: 'B',
+    nsfw: true,
+    nsfwLevel: 60,
+    moderatorNsfwLevel,
+    tags: [],
+    user: { id: 5 },
+  });
+  const scanRow = (scanLevel: number | null, byScan = true, content: number = NsfwLevel.PG) => [
+    { id: 1, byScan, scanCurrent: true, scanLevel, scanVersion: '1', content },
+  ];
+  const feed = async (bounty: object, rows: object[]) => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([bounty]);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce(rows);
+    mockImagesForBounties.mockResolvedValue({
+      1: [{ id: 10, userId: 5, nsfwLevel: NsfwLevel.PG, nsfwLefel: NsfwLevel.PG, tags: [] }],
+    });
+    return (await getInfiniteBountiesHandler({ input: feedInput, ctx: stranger })).items;
+  };
+  const visibleAt = (items: unknown[], browsingLevel: number) =>
+    filterPreferences({
+      type: 'bounties',
+      data: items as never,
+      hiddenPreferences: {
+        hiddenUsers: new Map(),
+        blockRelations: new Map(),
+        hiddenTags: new Map(),
+        hiddenModels: new Map(),
+        hiddenModel3Ds: new Map(),
+        hiddenImages: new Map(),
+        hiddenLoading: false,
+        moderatedTags: [],
+        systemHiddenTags: new Map(),
+      },
+      browsingLevel,
+      currentUser: { id: 6 } as never,
+      canViewNsfw: true,
+    }).items.length > 0;
+
+  it('lists a bounty its text rated R to an R browser, and hides it at PG-13', async () => {
+    const items = await feed(flagged(), scanRow(NsfwLevel.R));
+    expect(items[0]).toMatchObject({
+      nsfwLevel: NsfwLevel.R,
+      images: [{ nsfwLevel: NsfwLevel.R }],
+    });
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R)).toBe(true);
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13)).toBe(false);
+  });
+
+  it('rates a text-rated bounty up to its images when they rate higher', async () => {
+    const items = await feed(flagged(), scanRow(NsfwLevel.R, true, NsfwLevel.X));
+    expect(items[0]).toMatchObject({ nsfwLevel: NsfwLevel.X });
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R)).toBe(false);
+    expect(visibleAt(items, NsfwLevel.X)).toBe(true);
+  });
+
+  it('keeps a flag with no recorded rating XXX-only', async () => {
+    const notRated = [
+      [],
+      scanRow(NsfwLevel.R, false),
+      scanRow(NsfwLevel.PG13),
+      scanRow(NsfwLevel.Blocked),
+      [{ ...scanRow(NsfwLevel.R)[0], scanVersion: null }],
+      [{ ...scanRow(NsfwLevel.R)[0], scanLevel: null }],
+      [{ ...scanRow(NsfwLevel.R)[0], scanCurrent: false }],
+    ];
+    for (const rows of notRated) {
+      const items = await feed(flagged(), rows);
+      expect(items[0]).toMatchObject({
+        nsfwLevel: NsfwLevel.XXX,
+        images: [{ nsfwLevel: NsfwLevel.XXX }],
+      });
+      expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X)).toBe(
+        false
+      );
+      expect(visibleAt(items, NsfwLevel.XXX)).toBe(true);
+    }
+  });
+
+  it('lets a moderator rating beat the text rating, up or down', async () => {
+    let items = await feed(flagged(NsfwLevel.X), scanRow(NsfwLevel.R));
+    expect(items[0]).toMatchObject({ nsfwLevel: NsfwLevel.X });
+    expect(visibleAt(items, NsfwLevel.R)).toBe(false);
+    expect(visibleAt(items, NsfwLevel.X)).toBe(true);
+    items = await feed(flagged(NsfwLevel.PG13), scanRow(NsfwLevel.X));
+    expect(items[0]).toMatchObject({ nsfwLevel: NsfwLevel.PG13 });
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13)).toBe(true);
+    // The handler skips the text lookup for a moderator-rated bounty; the level must not depend on that.
+    const bounty = { nsfw: true, nsfwLevel: 60 };
+    expect(bountyNsfwFlagLevel({ ...bounty, moderatorNsfwLevel: NsfwLevel.X }, NsfwLevel.R)).toBe(
+      NsfwLevel.X
+    );
+    expect(
+      bountyNsfwFlagLevel({ ...bounty, moderatorNsfwLevel: NsfwLevel.PG13 }, NsfwLevel.X)
+    ).toBe(NsfwLevel.PG13);
+  });
+
+  it('keeps a moderator rating with no browsing level XXX-only', async () => {
+    const items = await feed(flagged(NsfwLevel.Blocked), scanRow(NsfwLevel.R));
+    expect(items[0]).toMatchObject({ nsfwLevel: NsfwLevel.XXX });
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X)).toBe(false);
+  });
+
+  it('never shows an image below its own level', async () => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([flagged()]);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce(scanRow(NsfwLevel.R));
+    mockImagesForBounties.mockResolvedValue({
+      1: [{ id: 10, userId: 5, nsfwLevel: NsfwLevel.X, nsfwLefel: NsfwLevel.X, tags: [] }],
+    });
+    const { items } = await getInfiniteBountiesHandler({ input: feedInput, ctx: stranger });
+    expect(items[0].images[0].nsfwLevel).toBe(NsfwLevel.X);
+  });
+
+  it('never sends the moderator rating field to the client', async () => {
+    const items = await feed(flagged(NsfwLevel.X), []);
+    expect(items[0]).not.toHaveProperty('moderatorNsfwLevel');
+  });
+});
+
+describe('an nsfw-flagged bounty page', () => {
+  // A queued answer a test does not consume would otherwise reach the next one.
+  beforeEach(() => dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]));
+  const page = async (moderatorNsfwLevel: number | null, rows: object[]) => {
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      id: 9,
+      name: 'B',
+      availability: 'Public',
+      poi: false,
+      nsfw: true,
+      nsfwLevel: 60,
+      moderatorNsfwLevel,
+      user: { id: 5 },
+      details: null,
+      tags: [],
+      meta: {},
+    });
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce(rows);
+    mockBountyImages.mockResolvedValue([
+      { id: 10, nsfwLevel: NsfwLevel.PG, tags: [] },
+      { id: 11, nsfwLevel: NsfwLevel.X, tags: [] },
+    ]);
+    const bounty = await getBountyHandler({ input: { id: 9 }, ctx: stranger });
+    return { levels: bounty.images.map((i) => i.nsfwLevel), bounty };
+  };
+  const scanned = (scanLevel: number) => [
+    { id: 9, byScan: true, scanCurrent: true, scanLevel, scanVersion: '1', content: NsfwLevel.PG },
+  ];
+
+  it('lifts its images to the rated level, never below their own', async () => {
+    expect((await page(null, scanned(NsfwLevel.R))).levels).toEqual([NsfwLevel.R, NsfwLevel.X]);
+    expect((await page(NsfwLevel.R, [])).levels).toEqual([NsfwLevel.R, NsfwLevel.X]);
+  });
+
+  it('leaves the images of a flag with no recorded rating at their own level, as before', async () => {
+    expect((await page(null, [])).levels).toEqual([NsfwLevel.PG, NsfwLevel.X]);
+  });
+
+  it('never sends the moderator rating field to the client', async () => {
+    expect((await page(NsfwLevel.R, [])).bounty).not.toHaveProperty('moderatorNsfwLevel');
   });
 });
 

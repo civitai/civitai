@@ -3,7 +3,7 @@ import { isRestrictedImage } from '~/shared/utils/restricted-image';
 
 /**
  * Whether a profile picture already fetched may be served to a viewer other than its owner: only
- * a Scanned one, and never one flagged `csam`. Deliberately stricter than
+ * a Scanned, rated one, and never one flagged `csam`. Deliberately stricter than
  * `servableProfilePictureSql`, which also admits a moderator-locked rating (`imageReviewedSql`):
  * these reads do not carry the lock fields, so strict Scanned is the rule at TS sites.
  * Only `csam` is checked, not any `needsReview`: a picture held for another review stays served,
@@ -34,7 +34,8 @@ export function servableProfilePicture<
   modelRestricted: boolean | null | undefined
 ) {
   if (!picture) return picture;
-  if (picture.ingestion !== 'Scanned' || needsReview === 'csam') return null;
+  if (picture.ingestion !== 'Scanned' || picture.nsfwLevel === 0 || needsReview === 'csam')
+    return null;
   if (isRestrictedImage({ nsfwLevel: picture.nsfwLevel ?? 0, modelRestricted })) return null;
   return picture;
 }

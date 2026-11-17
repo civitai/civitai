@@ -692,7 +692,12 @@ describe('getCrucibles — browsing level', () => {
         ingestion: CrucibleIngestionStatus.Scanned,
         image: {
           AND: [
-            { ingestion: ImageIngestionStatus.Scanned, needsReview: null, tosViolation: false },
+            {
+              ingestion: ImageIngestionStatus.Scanned,
+              nsfwLevel: { notIn: [0] },
+              needsReview: null,
+              tosViolation: false,
+            },
             imageNotRestrictedWhere(),
           ],
         },

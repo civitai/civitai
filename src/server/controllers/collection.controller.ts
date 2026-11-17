@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { omit } from 'lodash-es';
 import { TRPCError } from '@trpc/server';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
@@ -50,6 +51,7 @@ import {
   getPendingCollectionReviewCounts,
   getPendingReviewCount,
   getUserCollectionItemsByItem,
+  canSeeCollectionDetails,
   getUserCollectionPermissionsById,
   getUserCollectionPermissionsByIds,
   getUserCollectionsWithPermissions,
@@ -72,7 +74,7 @@ import {
 import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
-import { setModelShowcaseCollection } from '~/server/services/model.service';
+import { clearModelShowcaseAfterRemoval } from '~/server/services/model.service';
 import { addPostImage, createPost, deletePost } from '~/server/services/post.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
@@ -81,7 +83,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { relatedPostsBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
-import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
+import {
+  getRequestImageFilter,
+  isCoverShownByBrowsingRules,
+} from '~/server/services/blocked-browsing-tags.service';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -253,11 +258,8 @@ export const getCollectionByIdHandler = async ({
       isModerator: user?.isModerator,
     });
 
-    // If the user has 0 permission over this collection, they have no business asking for it.
-    // Unlike item reads (`canReadCollectionItems`), write (not writeReview) counts here: this returns
-    // metadata, not items.
     // The flags go back empty, as for a missing id, so the answer does not describe the collection.
-    if (!permissions.read && !permissions.write && !permissions.manage) {
+    if (!canSeeCollectionDetails(permissions)) {
       return {
         collection: null,
         permissions: createEmptyPermissions(input.id),
@@ -268,6 +270,7 @@ export const getCollectionByIdHandler = async ({
     }
 
     const collection = await getCollectionById({ input, viewer: ctx.user });
+    const coverShown = await isCoverShownByBrowsingRules(collection.image, ctx);
 
     // The catch covers the roster read alone — the reads above must still surface — because
     // getById backs the whole detail page and every other useCollection consumer.
@@ -301,7 +304,11 @@ export const getCollectionByIdHandler = async ({
 
     return {
       // Only an editor needs to know a cover is stored but hidden from them.
-      collection: { ...collection, coverHidden: permissions.manage && collection.coverHidden },
+      collection: {
+        ...collection,
+        image: coverShown ? collection.image : null,
+        coverHidden: permissions.manage && (collection.coverHidden || !coverShown),
+      },
       permissions,
       collaborators,
       pendingReviewCount,
@@ -355,14 +362,11 @@ export const saveItemHandler = async ({
       });
     }
 
-    // Remove collection from model showcase if removed
-    if (input.type === 'Model' && status === 'removed' && input.modelId) {
+    if (input.type === 'Model' && input.modelId && input.removeFromCollectionIds?.length) {
       // letting this run in the background to avoid blocking the response
-      setModelShowcaseCollection({
-        id: input.modelId,
-        collectionId: null,
-        userId: user.id,
-        isModerator: user.isModerator,
+      clearModelShowcaseAfterRemoval({
+        modelId: input.modelId,
+        collectionIds: input.removeFromCollectionIds,
       }).catch((error) =>
         logToAxiom({
           name: 'remove-model-showcase-collection',
@@ -623,11 +627,14 @@ export const collectionItemsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
+  const fullAccess = isSessionOrFullUserKey(ctx);
   const result = await getCollectionItemsByCollectionId({
     input,
     user: ctx.user,
     coverage: await coverageAudience(ctx.user ?? undefined),
     requireRead: true,
+    asModerator: !!ctx.user?.isModerator && fullAccess,
+    asOwner: fullAccess,
   });
 
   return {

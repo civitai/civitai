@@ -14,6 +14,7 @@
 //   - the orchestration that reads the database and the caches is transcribed below from
 //     getModelsInfiniteHandler / getModelsFeed (src/server/controllers/model.controller.ts),
 //     getModelsWithImagesAndModelVersions, getModelsRaw, holdForViewer, holdShowcaseImages,
+//     getUserCollectionPermissionsByIds (collection.service.ts, the `read` it decides),
 //     getShowcaseHeldLevels (src/server/services/model.service.ts), getCoverImages
 //     (model-cover.service.ts), getModelPaidAccessGates, getUserMetricPrivacyDefaultsMap,
 //     getValidCreatorMembershipMap, and the cache readers (createCachedObject and its appendFns in
@@ -297,6 +298,14 @@ const MODELS = {
     versions: [version(6012, 'Pony')],
   }),
 };
+// Collections as getUserCollectionPermissionsByIds reads them: the read configuration, the owner and
+// each user's contributor permissions.
+const COLLECTIONS = {
+  41: { id: 41, read: 'Public', userId: 1002, contributors: {} },
+  42: { id: 42, read: 'Private', userId: 1001, contributors: { 1003: ['ADD'] } },
+  43: { id: 43, read: 'Private', userId: 1002, contributors: { 1003: ['VIEW', 'ADD'] } },
+  44: { id: 44, read: 'Unlisted', userId: 1002, contributors: {} },
+};
 // imagesForModelVersionsCache: each version's showcase (cache order).
 const VERSION_IMAGES = {
   6001: [
@@ -352,7 +361,7 @@ const K = {
   basic: 'packed:caches:basic-users',
   userCosmetics: 'packed:caches:user-cosmetics',
   cosmetics: 'packed:caches:cosmetics2',
-  profile: 'packed:caches:profile-pictures:v2',
+  profile: 'packed:caches:profile-pictures:v3',
   data: 'packed:caches:data-for-model-2',
   modelTags: 'packed:caches:model-tags',
   basicTags: 'packed:caches:basic-tags',
@@ -424,6 +433,7 @@ class Trace {
       tags: new Map(),
       usernames: new Map(),
       privacy: new Map(),
+      collections: new Map(),
     };
   }
 }
@@ -542,14 +552,19 @@ function boundCursor(cursor) {
     );
 }
 
-/** The page query: the fixture's next page, checked against the cursor Node sends. */
-function pageQuery(input, take) {
-  const page = T.pages.shift();
-  if (!page) throw new Error(`${T.name}: Node asks for a page the fixture does not list`);
+/** The page query: the fixture's next page, checked against the cursor Node sends. With a collection
+ *  the page records the values Node binds into its CollectionItem semi-join (the collection, the
+ *  viewer its in-review items are kept for, the collection tag), which the harness checks feed-go
+ *  binds too. */
+function pageQuery(input, take, viewerId) {
+  const listed = T.pages.shift();
+  if (!listed) throw new Error(`${T.name}: Node asks for a page the fixture does not list`);
   const cursor = input.cursor ?? null;
-  if ((page.cursor ?? null) !== cursor)
-    throw new Error(`${T.name}: Node sends cursor ${cursor}, the fixture recorded ${page.cursor}`);
-  const ids = page.ids;
+  if ((listed.cursor ?? null) !== cursor)
+    throw new Error(
+      `${T.name}: Node sends cursor ${cursor}, the fixture recorded ${listed.cursor}`
+    );
+  const ids = listed.ids;
   if (ids.length > take + 1) throw new Error(`${T.name}: a page holds at most take + 1 rows`);
   const rows = ids.map((id) => {
     const m = MODELS[id];
@@ -558,7 +573,14 @@ function pageQuery(input, take) {
       cursorId: SORT_FIELDS[input.sort](m).map(pgText).join('|'),
     };
   });
-  T.pagesOut.push({ cursor, bound: mark(boundCursor(cursor)), rows: rows.map(mark) });
+  const page = { cursor, bound: mark(boundCursor(cursor)), rows: rows.map(mark) };
+  if (input.collectionId)
+    page.collection = {
+      collectionId: input.collectionId,
+      addedById: viewerId ?? null,
+      tagId: input.collectionTagId || null,
+    };
+  T.pagesOut.push(page);
   return rows;
 }
 
@@ -571,6 +593,28 @@ function getModelPaidAccessGates(modelIds) {
     }
   }
   return out;
+}
+
+/** getUserCollectionPermissionsById (collection.service.ts) as getModelsRaw calls it (no
+ *  isModerator), for the two flags getModelsRaw reads: `read` and `publicCollection`. */
+function getUserCollectionPermissionsById({ id, userId }) {
+  const collection = COLLECTIONS[id];
+  T.db.collections.set(id, collection ?? null);
+  const permissions = { read: false, isOwner: false, publicCollection: false };
+  if (!collection) return permissions;
+  if (collection.read === 'Public' || collection.read === 'Unlisted') {
+    permissions.read = true;
+    permissions.publicCollection = true;
+  }
+  if (!userId) return permissions;
+  if (userId === collection.userId) {
+    permissions.isOwner = true;
+    permissions.read = true;
+  }
+  const contributorPermissions = collection.contributors[userId] ?? null;
+  if (!contributorPermissions || permissions.isOwner) return permissions;
+  if (contributorPermissions.includes('VIEW')) permissions.read = true;
+  return permissions;
 }
 
 /** getModelsRaw (model.service.ts) for the inputs the fixtures send. */
@@ -597,8 +641,19 @@ function getModelsRaw({ input, user: sessionUser, include, eventDecorationViewer
     if (!target) throw new Error('a username Node would look up on the primary is not modelled');
     T.db.usernames.set(name, target.id);
   }
-  const hidePrivateModels = !username && !user;
-  const models = pageQuery(input, take ?? 100);
+  let isPrivate = false;
+  if (input.collectionId) {
+    const permissions = getUserCollectionPermissionsById({
+      userId: sessionUser?.id,
+      id: input.collectionId,
+    });
+    if (!permissions.read) return { items: [], isPrivate: true };
+    // getAvailableCollectionItemsFilterForUser's item filter is part of the page query (recorded by
+    // pageQuery for the harness to check).
+    isPrivate = !permissions.publicCollection;
+  }
+  const hidePrivateModels = !username && !user && !input.collectionId;
+  const models = pageQuery(input, take ?? 100, sessionUser?.id);
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
   const userBasicData = cacheFetch(K.basic, userIds);
@@ -709,7 +764,7 @@ function getModelsRaw({ input, user: sessionUser, include, eventDecorationViewer
       };
     })
     .filter(Boolean);
-  return { items, nextCursor, isPrivate: false };
+  return { items, nextCursor, isPrivate };
 }
 
 /** getCosmeticsForUsers (user.service.ts). */
@@ -1232,11 +1287,93 @@ const SPECS = [
     fallback: 'input-query',
   },
   {
-    name: 'fallback-collection',
-    description: 'A collection is read with its permissions: not ported.',
+    name: 'collection-public-signed-out',
+    description:
+      'A Public collection signed out: read by anyone, only its accepted items (the page query binds no viewer), and a Private version is listed (hidePrivateModels is off with a collection).',
+    host: HOST.green,
+    input: { collectionId: 41, sort: 'Highest Rated', limit: 3, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5002, 5005] }],
+  },
+  {
+    name: 'collection-private-owner',
+    description:
+      'A Private collection read by its owner: served, the page query keeping the owner’s own in-review items.',
     host: HOST.blue,
-    input: { collectionId: 7, browsingLevel: 1 },
-    fallback: 'input-collectionId',
+    viewer: 1001,
+    input: { collectionId: 42, sort: 'Newest', limit: 2, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5005] }],
+  },
+  {
+    name: 'collection-private-other-viewer',
+    description:
+      'The same Private collection for a viewer who is a contributor without VIEW: no read, an empty answer with no nextCursor, and no page query.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { collectionId: 42, sort: 'Newest', limit: 2, browsingLevel: 31 },
+    pages: [],
+  },
+  {
+    name: 'collection-private-signed-out',
+    description:
+      'A Private collection signed out: an empty answer, cacheable like every signed-out one.',
+    host: HOST.green,
+    input: { collectionId: 42, sort: 'Newest', limit: 2, browsingLevel: 31 },
+    pages: [],
+  },
+  {
+    name: 'collection-private-contributor-view',
+    description:
+      'A Private collection read through a contributor row with VIEW, narrowed to one collection tag.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: {
+      collectionId: 43,
+      collectionTagId: 77,
+      sort: 'Highest Rated',
+      limit: 2,
+      browsingLevel: 31,
+    },
+    pages: [{ cursor: null, ids: [5002, 5009] }],
+  },
+  {
+    name: 'collection-missing',
+    description: 'A collection that does not exist reads for no one: an empty answer.',
+    host: HOST.blue,
+    viewer: 1001,
+    input: { collectionId: 49, browsingLevel: 31 },
+    pages: [],
+  },
+  {
+    name: 'collection-unlisted-page2-loop',
+    description:
+      'An Unlisted collection from a cursor: a short first page loops to a second one from its lookahead, each page filtered by the collection.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: {
+      collectionId: 44,
+      sort: 'Highest Rated',
+      limit: 3,
+      browsingLevel: 1,
+      cursor: '90|100|5001',
+    },
+    pages: [
+      { cursor: '90|100|5001', ids: [5001, 5003, 5007, 5009] },
+      { cursor: '4|4|5009', ids: [5009, 5002] },
+    ],
+  },
+  {
+    name: 'fallback-collection-recently-added',
+    description: 'Recently Added orders by the collection item: not ported.',
+    host: HOST.blue,
+    input: { collectionId: 41, sort: 'Recently Added', browsingLevel: 1 },
+    fallback: 'model-sort-recently-added',
+  },
+  {
+    name: 'fallback-collection-fraction',
+    description: 'A collection id that is not an integer: not ported.',
+    host: HOST.blue,
+    input: { collectionId: 41.5, browsingLevel: 1 },
+    fallback: 'model-collection-id',
   },
   {
     name: 'fallback-number-cursor',
@@ -1271,7 +1408,7 @@ function redisEntries(dropKeys) {
 
 function dbTables() {
   const m2o = (map, f) => [...map.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(f);
-  return {
+  const tables = {
     modelPages: T.pagesOut,
     paidAccess: m2o(T.db.paidAccess, ([modelId, deadline]) => mark({ modelId, deadline })),
     coverImages: m2o(
@@ -1281,6 +1418,20 @@ function dbTables() {
     tags: m2o(T.db.tags, ([name, id]) => ({ name, id })).filter((t) => t.id != null),
     creators: m2o(T.db.usernames, ([username, id]) => ({ username, id })),
   };
+  // Only a fixture that reads a collection lists the table (a missing collection is no row).
+  if (T.db.collections.size)
+    tables.collections = m2o(T.db.collections, ([, c]) => c)
+      .filter((c) => c != null)
+      .map((c) => ({
+        id: c.id,
+        read: c.read,
+        userId: c.userId,
+        contributors: Object.entries(c.contributors).map(([userId, permissions]) => ({
+          userId: Number(userId),
+          permissions,
+        })),
+      }));
+  return tables;
 }
 
 const dir = join(HERE, 'model-getall');

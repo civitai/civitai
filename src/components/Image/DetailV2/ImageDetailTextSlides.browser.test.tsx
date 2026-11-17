@@ -1,5 +1,5 @@
 import Router from 'next/router';
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
@@ -9,6 +9,7 @@ import {
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
 import type { DetailText } from '~/components/Image/Detail/detail-items';
+import { anchorImageIndex } from '~/components/Image/Detail/detail-items';
 import {
   ImageDetailProvider,
   useImageDetailContext,
@@ -38,8 +39,16 @@ const IMAGES = [image(101, 0), image(102, 1), image(103, 2)];
 // Text 7 took image 101's index, so it reads between 101 and 102.
 const TEXT = { id: 7, index: 0, content: '<p>Meanwhile</p>', nsfwLevel: 1 };
 
-const { flags, calls, chapters, postGetDelay } = vi.hoisted(() => ({
-  postGetDelay: { value: false },
+const { flags, calls, chapters, postGate } = vi.hoisted(() => ({
+  // The post read, held back until the test releases it.
+  postGate: {
+    held: false,
+    listeners: new Set<() => void>(),
+    release() {
+      this.held = false;
+      this.listeners.forEach((listener) => listener());
+    },
+  },
   flags: { storylines: true, storylineText: true } as Record<string, boolean>,
   calls: { postGet: [] as boolean[], getForPosts: [] as boolean[] },
   chapters: { value: {} as Record<number, unknown> },
@@ -62,13 +71,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useQuery: ({ id }: { id: number }, opts?: { enabled?: boolean }) => {
         calls.postGet.push(opts?.enabled !== false);
         // A cold load: the post's texts arrive after the carousel has mounted on the image.
-        const [arrived, setArrived] = useState(!postGetDelay.value);
-        useEffect(() => {
-          if (arrived) return;
-          const timer = setTimeout(() => setArrived(true), 300);
-          return () => clearTimeout(timer);
-        }, [arrived]);
-        return { data: opts?.enabled === false || !arrived ? undefined : { id, texts: [TEXT] } };
+        const held = useSyncExternalStore(
+          (listener) => {
+            postGate.listeners.add(listener);
+            return () => postGate.listeners.delete(listener);
+          },
+          () => postGate.held
+        );
+        return { data: opts?.enabled === false || held ? undefined : { id, texts: [TEXT] } };
       },
     },
   }),
@@ -138,6 +148,27 @@ vi.mock('~/components/Collections/collection.utils', async (o) => ({
   useCollection: () => ({ collection: undefined, isLoading: false }),
 }));
 
+// The harness loads no Tailwind; embla measures its slides, so give them the layout they have.
+const layout = document.createElement('style');
+layout.textContent = `
+.flex{display:flex}.flex-1{flex:1 1 0%}.min-h-0{min-height:0}.h-full{height:100%}
+.items-stretch{align-items:stretch}.justify-stretch{justify-content:stretch}
+.overflow-hidden{overflow:hidden}.relative{position:relative}
+.flex-\\[0_0_100\\%\\]{flex:0 0 100%;min-width:0}
+`;
+document.head.appendChild(layout);
+
+/** The slide embla has in view, not the index the parent holds. */
+function slideInView() {
+  const viewport = document.querySelector('.touch-pan-y');
+  const slides = [...(viewport?.firstElementChild?.children ?? [])];
+  const mid = viewport ? viewport.getBoundingClientRect().left + viewport.clientWidth / 2 : 0;
+  return slides.findIndex((slide) => {
+    const rect = slide.getBoundingClientRect();
+    return rect.left <= mid && mid < rect.right;
+  });
+}
+
 /** ImageDetail2's carousel wiring, around the real provider. */
 function Detail() {
   const { items, index, navigateTo } = useImageDetailContext();
@@ -146,19 +177,26 @@ function Detail() {
     items,
     index,
     navigate: navigateTo,
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   return (
-    <div style={{ width: 400, height: 300, display: 'flex' }}>
+    <div>
       <button type="button" data-testid="next" onClick={carouselNavigation.next} />
       <output data-testid="shown">{items[carouselNavigation.index]?.key}</output>
       <output data-testid="items">{items.map((item) => item.key).join(',')}</output>
-      <ImageDetailCarousel
-        images={IMAGES}
-        items={items}
-        onSettle={handleSettle}
-        {...carouselNavigation}
-      />
+      {/* ImageDetail2's sidebar shows the anchor image of the carousel's slide */}
+      <output data-testid="sidebar">
+        {items[anchorImageIndex(items, carouselNavigation.index)]?.key}
+      </output>
+      <div style={{ width: 400, height: 300, display: 'flex' }}>
+        <ImageDetailCarousel
+          images={IMAGES}
+          items={items}
+          onSettle={handleSettle}
+          {...carouselNavigation}
+        />
+      </div>
     </div>
   );
 }
@@ -210,7 +248,7 @@ beforeEach(() => {
   chapters.value = { [POST]: { chapterId: 1 } };
   calls.postGet.length = 0;
   calls.getForPosts.length = 0;
-  postGetDelay.value = false;
+  postGate.held = false;
 });
 afterEach(() => {
   getBrowserRouter().replace({ query: {} }, '/');
@@ -236,10 +274,30 @@ describe('text slides in the image detail carousel', () => {
   });
 
   test('a cold load of ?text= lands on the text once the post read returns, and keeps its URL', async () => {
-    postGetDelay.value = true;
+    postGate.held = true;
     await openAt(101, { text: 7 });
+    // The carousel is up on the anchor image and the post read is still out.
+    await vi.waitFor(() => expect(slideInView()).toBe(0));
+    expect(page.getByTestId('items').element().textContent).toBe('img:101,img:102,img:103');
+    postGate.release();
     await expect.element(shown()).toHaveTextContent('txt:7');
+    await vi.waitFor(() => expect(slideInView()).toBe(1));
     expect(location.pathname + location.search).toBe('/images/101?text=7');
+  });
+
+  test('a cold load of an image after a text stays on that image once the text arrives', async () => {
+    postGate.held = true;
+    await openAt(102);
+    await vi.waitFor(() => expect(slideInView()).toBe(1));
+    postGate.release();
+    // Text 7 is inserted before image 102, which moves 102 up one slide.
+    await expect
+      .element(page.getByTestId('items'))
+      .toHaveTextContent('img:101,txt:7,img:102,img:103');
+    await expect.element(shown()).toHaveTextContent('img:102');
+    await expect.element(page.getByTestId('sidebar')).toHaveTextContent('img:102');
+    await vi.waitFor(() => expect(slideInView()).toBe(2));
+    expect(location.pathname + location.search).toBe('/images/102');
   });
 
   test('an unknown text id opens the image the URL names', async () => {
